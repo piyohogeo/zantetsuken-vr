@@ -272,7 +272,12 @@ namespace Zantetsu.MeshCut
     /// accepted (DESIGN 5.2, exception 8); the colour limit alone never refuses a camera. Within an ordinary colour the
     /// order is initialisation, every volume group of the colour, every cap job of the colour. The draw ranges each
     /// registration's volumes are compared and drawn with are a table built with the snapshot, in its registration
-    /// order, and adopted with it.
+    /// order, and adopted with it. Every cap is shaded by the one shading of DESIGN 5.3 that the body and the real caps
+    /// use (<c>VpShadeSurface</c>), with its own outward normal: those normals are put on the GPU once per adoption, one
+    /// per cap vertex of the adopted snapshot, and this display's cap materials read them. Every cap is drawn in
+    /// DESIGN 5.3's colour for a temporary cut face
+    /// (<see cref="VpCutSurfaceColour.CurrentProvisional"/>: the shared ordinary colour, or red while the one debug
+    /// switch is on), read once per preparation and the same in every colour, the last one included.
     /// </para>
     /// <para>
     /// **One stencil batch per registered camera.** A camera is registered with <see cref="TryRegisterCamera"/>, up to
@@ -383,6 +388,12 @@ namespace Zantetsu.MeshCut
         private readonly CameraStencil[] _cameraStencils;
         private readonly int _stencilCommandCapacity;
         private readonly int _stencilCapVertexCapacity;
+
+        // The outward normal of every cap vertex of the adopted snapshot, in its order: the scratch it is gathered in
+        // and the buffer the cap materials read. Fixed at the cap vertex capacity, written by count, never grown.
+        private readonly Vector4[] _capNormals;
+        private readonly GraphicsBuffer _capNormalBuffer;
+        private int _capNormalCount;
         private readonly int _stencilCapIndexCapacity;
 
         // What the stencil batches of cameras no longer registered had counted, so the totals do not go backwards.
@@ -557,8 +568,17 @@ namespace Zantetsu.MeshCut
             public VpStencilPreparation preparation;
         }
 
-        /// <summary>The provisional cap colour of DESIGN 5.3: red until the geometry is committed.</summary>
-        private static readonly Color ProvisionalCapColour = Color.red;
+        private static readonly int CapNormalsId = Shader.PropertyToID("_VpCapNormals");
+        private static readonly int CapShadedId = Shader.PropertyToID("_VpCapShaded");
+
+        /// <summary>
+        /// The colour every cap this display draws is given: DESIGN 5.3's own choice for a temporary cut face
+        /// (<see cref="VpCutSurfaceColour.CurrentProvisional"/>) -- the shared ordinary colour, or red while the one
+        /// debug switch is on. It is read once per camera preparation and carried in that preparation's colour records,
+        /// so a change takes effect at the next preparation of each camera; nothing here reaches into a camera prepared
+        /// already. Reading it changes no geometry, transfer, section or material.
+        /// </summary>
+        private static Color ProvisionalCapColour => VpCutSurfaceColour.CurrentProvisional;
 
         // The frame whose collection succeeded, and the frame that may draw. They are not the same: a frame whose
         // collection was refused for room may still draw the snapshot adopted earlier.
@@ -583,6 +603,7 @@ namespace Zantetsu.MeshCut
             VpGpuIndexedGeometryBuffers buffers,
             VpIndexedIndirectDrawBatch batch,
             VpStencilCapMaterials stencilMaterials,
+            GraphicsBuffer capNormals,
             VpStencilSettings settings,
             int commandCapacity,
             int instanceCapacity,
@@ -616,6 +637,20 @@ namespace Zantetsu.MeshCut
             // (TryDeriveCapacities).
             _stencilCommandCapacity = derived.stencilCommands;
             _stencilCapVertexCapacity = derived.capVertices;
+
+            // DESIGN 5.3: one outward normal per cap vertex, so that the cap pass shades a temporary cut face with the
+            // same function the body and the real caps use. The buffer was made with the other GPU resources and is
+            // this display's from here on; its room is the cap vertices' own, never grown, written by count when a
+            // snapshot is taken up, and given back with this display.
+            _capNormals = new Vector4[derived.capVertices];
+            _capNormalBuffer = capNormals;
+            for (int c = 0; c < stencilMaterials.ColorCount; c++)
+            {
+                Material cap = stencilMaterials.Cap(c);
+                cap.SetBuffer(CapNormalsId, _capNormalBuffer);
+                cap.SetFloat(CapShadedId, 1f);
+            }
+
             _stencilCapIndexCapacity = derived.capIndices;
             _candidateStencilCommands = new VpIndirectCommand[_stencilCommandCapacity];
             _candidateStencilTransforms = new Matrix4x4[_stencilCommandCapacity];
@@ -965,6 +1000,7 @@ namespace Zantetsu.MeshCut
             VpGpuIndexedGeometryBuffers buffers = null;
             VpIndexedIndirectDrawBatch batch = null;
             VpStencilCapMaterials stencilMaterials = null;
+            GraphicsBuffer capNormals = null;
             bool taken = false;
             try
             {
@@ -982,10 +1018,15 @@ namespace Zantetsu.MeshCut
                     return false;
                 }
 
+                // DESIGN 5.3: one outward normal per cap vertex for the cap pass to shade with. Made here, beside the
+                // other GPU resources, so that anything failing before the display takes them gives this back too.
+                capNormals = new GraphicsBuffer(
+                    GraphicsBuffer.Target.Structured, Math.Max(1, derived.capVertices), sizeof(float) * 4);
+
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
-                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, derived, snapshot,
-                    building, capJobs, frameSource);
+                    batch, stencilMaterials, capNormals, stencilSettings, commandCapacity, instanceCapacity, derived,
+                    snapshot, building, capJobs, frameSource);
                 taken = true;
                 return true;
             }
@@ -993,6 +1034,7 @@ namespace Zantetsu.MeshCut
             {
                 if (!taken)
                 {
+                    capNormals?.Dispose();
                     stencilMaterials?.Dispose();
                     batch?.Dispose();
                     buffers?.Dispose();
@@ -1387,6 +1429,9 @@ namespace Zantetsu.MeshCut
 
             CapJobsClassifiedForTest?.Invoke(_capJobs);
 
+            // DESIGN 5.3's colour for a temporary cut face, read once here: every colour of this preparation, the last
+            // one included, is given the same one, and the choice never changes how the jobs, groups or colours came out.
+            Color capColour = ProvisionalCapColour;
             int capsDrawn = 0;
             int colours = _capJobs.ColourCount;
             for (int colour = 0; colour < colours; colour++)
@@ -1435,7 +1480,7 @@ namespace Zantetsu.MeshCut
                 }
 
                 _candidateStencilColors[colourCount++] = new VpStencilCapColor(
-                    volumeStart, commandCount - volumeStart, capStart, capIndexCount - capStart, ProvisionalCapColour);
+                    volumeStart, commandCount - volumeStart, capStart, capIndexCount - capStart, capColour);
             }
 
             _arrangedVolumes = commandCount;
@@ -1446,6 +1491,48 @@ namespace Zantetsu.MeshCut
                 _capJobs.OrdinaryVolumeGroupCount, _capJobs.LastColourRenderFragmentCount, _capJobs.LastColourJobCount);
             return true;
         }
+
+        /// <summary>
+        /// The outward normal of every cap vertex the snapshot about to be taken up holds, in its order, put on the GPU
+        /// for the cap materials to shade with (DESIGN 5.3). It is written **before** that snapshot is adopted and with
+        /// the body's upload, so that a GPU call that throws stops the display as broken with the previous snapshot
+        /// still the adopted one, rather than leaving new bodies beside normals that may or may not have arrived. The
+        /// room was fixed when this display was made and the count was found to fit a moment ago; it is checked here
+        /// all the same, before anything is written, and a snapshot with no cap vertex writes nothing at all. Nothing
+        /// is allocated.
+        /// </summary>
+        private void UploadCapNormals(VpMultiCutSnapshot snapshot)
+        {
+            int vertices = snapshot.CapVertexCount;
+            if (vertices < 0 || vertices > _capNormals.Length)
+            {
+                throw new InvalidOperationException("the snapshot holds more cap vertices than this display's room");
+            }
+
+            for (int c = 0; c < snapshot.CapCount; c++)
+            {
+                snapshot.TryGetCap(c, out VpMultiCutCap cap);
+                Vector3 outward = cap.outwardNormal;
+                var normal = new Vector4(outward.x, outward.y, outward.z, 0f);
+                for (int v = 0; v < cap.vertexCount; v++)
+                {
+                    _capNormals[cap.vertexStart + v] = normal;
+                }
+            }
+
+            if (vertices > 0)
+            {
+                _capNormalBuffer.SetData(_capNormals, 0, 0, vertices);
+            }
+
+            _capNormalCount = vertices;
+        }
+
+        /// <summary>Makes the cap normals' GPU write throw once, to reach the broken path. For tests only; null otherwise.</summary>
+        internal Func<bool> RefuseCapNormalUploadForTest { get; set; }
+
+        /// <summary>How many cap-vertex normals the last upload put on the GPU. For tests.</summary>
+        internal int CapNormalCount => _capNormalCount;
 
         /// <summary>A refused preparation: the cap records are settled by the snapshot, and nothing else was made.</summary>
         private static VpStencilPreparation Refusal(VpStencilPreparationOutcome outcome, int capRecords)
@@ -1988,6 +2075,7 @@ namespace Zantetsu.MeshCut
             }
 
             _stencilMaterials.Dispose();
+            _capNormalBuffer.Dispose();
             _batch.Dispose();
             _buffers.Dispose();
         }
@@ -2131,6 +2219,15 @@ namespace Zantetsu.MeshCut
             bool uploaded;
             try
             {
+                // The cap normals of the snapshot about to be taken up go first, under this same guard: what reached
+                // the GPU cannot be established after a throw, so the display stops rather than drawing new bodies
+                // with normals of another build.
+                if (RefuseCapNormalUploadForTest != null && RefuseCapNormalUploadForTest())
+                {
+                    throw new InvalidOperationException("the cap normals' upload was refused for a test");
+                }
+
+                UploadCapNormals(_building);
                 uploaded = RefuseBodyUploadForTest != null && RefuseBodyUploadForTest()
                     ? false
                     : _batch.TryUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips, singlePassInstanced);
@@ -2151,7 +2248,8 @@ namespace Zantetsu.MeshCut
                     + "stops");
             }
 
-            // 8. The candidate becomes the adopted snapshot; the arrays and the snapshots change places.
+            // 8. Everything the GPU needed has arrived: the candidate becomes the adopted snapshot, and the arrays and
+            //    the snapshots change places.
             Adopt(commands);
             CommandUploads++;
 
@@ -2385,6 +2483,8 @@ namespace Zantetsu.MeshCut
             colours = stencilCommands > 0 || capIndexCount > 0 ? 1 : 0;
             if (colours > 0)
             {
+                // Only the counts and the form of this record are asked about; it is never uploaded or drawn, and the
+                // colour is the same one a real preparation would use.
                 _candidateStencilColors[0] = new VpStencilCapColor(0, stencilCommands, 0, capIndexCount, ProvisionalCapColour);
             }
         }

@@ -15,6 +15,12 @@
 // The vertices arrive already in world space, with the side's separation applied, so this transforms and does nothing
 // else to them.
 //
+// **Shading (DESIGN 5.3).** When the caller has bound this material a normal for every cap vertex and turned
+// `_VpCapShaded` on, the fragment is the base colour through `VpShadeSurface` -- the same function, light and shadow
+// the body and the real caps are drawn with -- using the cap's own outward normal in world space. Caps of different
+// sides therefore take different shades within one colour. With nothing bound the material draws the flat base colour
+// as it always has; the normals are the caller's to keep in step with the vertices it uploaded.
+//
 // **Both eyes.** The vertices do not depend on the instance, so under Single Pass Instanced the batch issues the caps
 // as two instances, one per eye, and the stereo output is initialised from the instance id as the colour pass does;
 // each instance is then transformed by its own eye's matrix into its own slice. Outside stereo instancing the second
@@ -55,10 +61,17 @@ Shader "Zantetsu/VP Stencil Cap"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "VpCutSurfaceShading.hlsl"
 
             StructuredBuffer<float4> _VpCapVertices;
+
+            // One outward normal in world space per cap vertex, in the same order, bound by the caller together with
+            // _VpCapShaded. Read only where _VpCapShaded is on.
+            StructuredBuffer<float4> _VpCapNormals;
 
             // 2 when the batch was uploaded for Single Pass Instanced, otherwise 1.
             uint _VpInstanceMultiplier;
@@ -67,6 +80,10 @@ Shader "Zantetsu/VP Stencil Cap"
 
             CBUFFER_START(UnityPerMaterial)
             half4 _BaseColor;
+
+            // 1 when the caller has bound a normal per cap vertex and wants the shared shading; 0 (the default) draws
+            // the flat base colour, which is what this pass did before.
+            float _VpCapShaded;
             CBUFFER_END
 
             struct Attributes
@@ -81,6 +98,8 @@ Shader "Zantetsu/VP Stencil Cap"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                float3 normalWS : TEXCOORD0;
+                float3 positionWS : TEXCOORD1;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -108,11 +127,21 @@ Shader "Zantetsu/VP Stencil Cap"
 
                 float3 positionWS = _VpCapVertices[input.vertexID].xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
+                output.positionWS = positionWS;
+
+                // The cap's own outward normal, per vertex: one colour may hold caps of several sides, so a single
+                // normal for the colour would shade them alike.
+                output.normalWS = _VpCapShaded > 0.0 ? _VpCapNormals[input.vertexID].xyz : float3(0.0, 1.0, 0.0);
                 return output;
             }
 
             half4 Fragment(Varyings input) : SV_Target
             {
+                if (_VpCapShaded > 0.0)
+                {
+                    return half4(VpShadeSurface(_BaseColor.rgb, input.normalWS, input.positionWS), _BaseColor.a);
+                }
+
                 return _BaseColor;
             }
             ENDHLSL

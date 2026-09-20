@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Who owns the cut surface colour and the one debug switch that goes with it (DESIGN 5.3). The values live as
+    /// Who owns the cut surface colours and the one debug switch that goes with them (DESIGN 5.3). The values live as
     /// **global shader constants**, not as material properties: the switch is one switch for every cut surface being
     /// drawn, so putting it on a material or a per-draw property block would mean setting it again for each object and
     /// getting it wrong for the one that was missed.
@@ -24,8 +24,17 @@ namespace Zantetsu.Rendering
     /// exactly as they are. Nothing here runs per frame or per object, and no draw applies the defaults.
     /// </para>
     /// <para>
-    /// This is the real cap's colour choice alone. The temporary cut faces of DESIGN 5.3 (red while debugging) and the
-    /// common toon shading it describes are not part of it.
+    /// **Two cut surfaces, one switch.** A real cap committed into the geometry reads <see cref="Current"/>: the
+    /// ordinary colour, or the debug colour (green) while the switch is on. A temporary cut face drawn through the
+    /// stencil reads <see cref="CurrentProvisional"/>: the same ordinary colour, or
+    /// <see cref="DefaultProvisionalDebugColour"/> (red) while that same switch is on. There is one switch for both, and
+    /// the ordinary colour is the same colour definition for both; only the two debug colours differ, which is what
+    /// tells a temporary cut face from a real one while debugging.
+    /// </para>
+    /// <para>
+    /// This is the colour choice alone. Both kinds of cut surface then go through the one shading the VP surfaces share
+    /// (<c>VpShadeSurface</c> in VpCutSurfaceShading.hlsl), a temporary cap with its own outward normal. The common toon
+    /// shading of DESIGN 5.3 -- its shading steps, outline and light response -- is still not part of this.
     /// </para>
     /// </summary>
     public static class VpCutSurfaceColour
@@ -35,6 +44,13 @@ namespace Zantetsu.Rendering
 
         /// <summary>What a real cap becomes while the debug switch is on.</summary>
         public static readonly Color DefaultDebugColour = new Color(0.15f, 0.75f, 0.2f, 1f);
+
+        /// <summary>
+        /// What a temporary cut face -- one the stencil draws before the geometry is committed -- becomes while the same
+        /// debug switch is on: red (DESIGN 5.3). It is one definition for every such face; unlike the two colours above
+        /// it is not set from outside, so nothing can make a temporary face take the real cap's debug colour.
+        /// </summary>
+        public static readonly Color DefaultProvisionalDebugColour = Color.red;
 
         private static readonly int ColourId = Shader.PropertyToID("_VpCutSurfaceColor");
         private static readonly int DebugColourId = Shader.PropertyToID("_VpCutSurfaceDebugColor");
@@ -118,6 +134,20 @@ namespace Zantetsu.Rendering
             {
                 EnsureInitialized();
                 return Shader.GetGlobalFloat(DebugId) > 0f ? Shader.GetGlobalColor(DebugColourId) : Shader.GetGlobalColor(ColourId);
+            }
+        }
+
+        /// <summary>
+        /// The colour a temporary cut face takes now: the ordinary cut surface colour, the same one a real cap takes,
+        /// or <see cref="DefaultProvisionalDebugColour"/> while the debug switch is on. A caller that draws temporary
+        /// faces reads this rather than <see cref="Current"/>, which would give them the real cap's debug colour.
+        /// </summary>
+        public static Color CurrentProvisional
+        {
+            get
+            {
+                EnsureInitialized();
+                return Shader.GetGlobalFloat(DebugId) > 0f ? DefaultProvisionalDebugColour : Shader.GetGlobalColor(ColourId);
             }
         }
 

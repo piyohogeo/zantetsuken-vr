@@ -60,6 +60,24 @@ namespace Zantetsu.MeshCut.Tests
             _between = null;
         }
 
+        // DESIGN 5.3: a temporary cut face is the shared ordinary colour in an ordinary view and red only while the one
+        // debug switch is on. The cases below read the caps as red pixels, so each turns the switch on for itself and
+        // puts back whatever was set before, exception or not.
+        private VpCutSurfaceColour.State _cutSurfaceColours;
+
+        [SetUp]
+        public void ShowCutFacesInTheDebugColour()
+        {
+            _cutSurfaceColours = VpCutSurfaceColour.Capture();
+            VpCutSurfaceColour.SetDebugEnabled(true);
+        }
+
+        [TearDown]
+        public void PutTheCutFaceColoursBack()
+        {
+            VpCutSurfaceColour.Restore(_cutSurfaceColours);
+        }
+
         [TearDown]
         public void DestroyObjects()
         {
