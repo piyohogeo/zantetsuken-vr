@@ -313,12 +313,37 @@ namespace Zantetsu.PhysicsCut
         /// <summary>
         /// Takes the dispatcher the work runs through, how many cuts may hold their reservation at once, and the
         /// cooking profile. The purpose decides the destination: <see cref="WorkPurpose.AdmittedPhysics"/>, the urgent
-        /// Unity job system, is what an admitted cut's physics is. The reservation count is the caller's pacing, not a
-        /// product value.
+        /// Unity job system, is what an admitted cut's physics is.
+        /// <para>
+        /// <paramref name="concurrentReservations"/> bounds **how many requests may hold a reservation at once**. One
+        /// reservation is an arena sized by the kernel's worst case for that input, the small arrays the job reports
+        /// through, one writable mesh data of the worst-case mesh count, and that many <see cref="Mesh"/> objects; it
+        /// is held from the moment it is taken until the products are handed over or the cut ends, which spans the
+        /// numerical work, the main-thread mesh application and the bake. Requests differ in size, so **this is a
+        /// count, not a byte limit**: it does not on its own promise any fixed amount of memory (DESIGN 4.4 keeps the
+        /// resources finite; this is the count that keeps them so).
+        /// </para>
+        /// <para>
+        /// It is a different limit from the ones that bound execution -- the dispatcher's waiting capacity (how many
+        /// works may wait), each destination's capacity (how many accepted works are not yet collected) and the frame
+        /// budget (how many submissions and collections a frame allows). Being different does not make it separate in
+        /// effect: **a cut that cannot reserve is never offered**, so this count also bounds how many can be in flight.
+        /// </para>
+        /// <para>
+        /// Requests are independent: each has an arena and a working set of its own, and nothing of one cut is read or
+        /// written by another. Two owners may therefore hold reservations and be with the dispatcher at the same time.
+        /// One owner waiting for its bake does not stop another's numerical work **provided the other has what it
+        /// needs**: a free reservation here, a place at the destination, frame budget, and the memory its own
+        /// reservation asks for.
+        /// </para>
+        /// <para>
+        /// It has **no default on purpose**. A value belongs to whoever builds this and knows the memory it may hold
+        /// at once; one silently inherited from here would be a product setting nobody chose.
+        /// </para>
         /// </summary>
         public PhysicsCutCook(
             SharedWorkDispatcher dispatcher,
-            int concurrentReservations = 1,
+            int concurrentReservations,
             MeshColliderCookingOptions cooking = DefaultCooking,
             WorkPurpose purpose = WorkPurpose.AdmittedPhysics)
         {
@@ -351,6 +376,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>How many cuts hold a reservation right now.</summary>
         public int Reserving => _reserved;
+
+        /// <summary>How many cuts may hold a reservation at once, as this was built with.</summary>
+        public int ConcurrentReservations => _reservations;
 
         /// <summary>The cooking profile this bakes with, and that a collider using its meshes must match.</summary>
         public MeshColliderCookingOptions Cooking => _cooking;

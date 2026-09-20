@@ -759,6 +759,16 @@ Provisional一式の構築不能、またはLogical Publication前にFinal Physi
 
 **実行分担。** Owner単位の分類、非交差ConvexのSide継承、交差Convexのplane clip、交点・切断面生成、必要な内接削減、質量特性の近似とCollider入力生成を、4.3のurgentなmanaged Unity Job内から呼ぶBurst static kernelへまとめ、MeshDataへ出力する。Main ThreadでUnity Meshへ適用した後、managed Jobで必要な`Physics.BakeMesh`を行い、既存の安全なMain Thread／Physics境界でFinal Commitする。この分担は受付済みPhysicsの新規投入を対象とし、投入済み投機は4.4に従って継続する。投機・任意追加分割の数値処理とBakeは4.3のBackground Poolへ置き、MainのMesh適用・採否・公開境界を共用する。数値処理の内部工程を必須の別Job・公開Stage・状態にしない。複数Ownerを外側でBatch Scheduleしてよく、Job型、配列layout、Mesh資源の保持形状は実装詳細とする。
 
+**同時予約件数（2026-09-21）。**Physics Cut/Cookは、1つの切断が抱える資源——kernelのworst-case容量で確保したarena、Jobが報告に使う小配列、worst-case枚数分のwritable mesh dataとUnity Mesh——を**予約**として数え、**同時に予約を保持できるRequest数**に上限を置く。予約は取得から成果物の引渡し（またはCut終了）まで保持し、その区間は数値処理・MainのMesh適用・Bakeにまたがる。**これは件数の上限であって、固定のバイト上限ではない。**各Requestの規模は入力によって異なるため、件数だけで一定のメモリ量を保証しない。4.4の有限な資源使用は、この件数によって保つ。
+
+**実行枠とは別の制限だが、無関係ではない。**実行側を縛るのは、Dispatcherの**waitingCapacity**（待機キューに置ける数）、各実行先の**capacity**（受理済みで未回収のWork数）、および**frame budget**（1フレームの投入・回収の機会数）である（4.4）。予約件数はこれらとは別の軸だが、**予約できなければ投入されない**ので、実効的な並行数にも影響する。
+
+**Requestは互いに独立である。**arenaと作業用資源はRequestごとに持ち、ある切断の領域を別の切断が読み書きしない。したがって**独立Ownerは同時に予約を保持し、同時にDispatcherへ投入できる**。**一方がBakeの投入・完了を待っていても、その予約保持は別Ownerの数値処理投入を妨げない**——ただし他方が進むには、**残る予約枠・実行先の空き・frame予算・自身の予約に要する資源**が揃っていることが条件である。Physics側はworst-case予約のままとし、Geometry側の見積り・再試行方式は持ち込まない。入力の読取寿命、未公開成果物の所有権、取消・失敗時の一度だけの回収は変更しない。実行中の資源は早期に返さず、Workが回収された時点で返す。
+
+**件数の既定値は置かない。**同時に許す量を知るのは構成根であり、黙って引き継がれた既定値は誰も選んでいない製品設定になる。上限到達時は従来どおり、後続Requestは予約を取らず未投入のまま待ち、解放後に再開する（拒否ではない）。
+
+**現状（2026-09-21）。**PhysicsCutCookを組み立てる**構成根は未接続**であり、**製品値は未選定**である。この時点で行ったのは、既定値の撤去による**必須引数化**と、**予約数2での並行性の確認**（同時予約・同時Schedule、Bake完了回収の保留中の他Owner進行、逆順完了、取消と失敗それぞれの回収、上限到達時の待機と再開）までである。製品の並列度を変更したわけではない。
+
 受付に必要なrobust support scanは7.6に従って同期実行してよい。同節で分割対象としたConvexだけを採用面d = 0で切り、その他は対応Sideへ未切断で継承する。既存Bake共有枠・Dispatcher・Work依存を使い、cut/cookの分担を理由に新しいSchedulerや公開状態を作らない。
 
 **数値Kernel。** Phase 3.9で先行実装し、現在のCompound Convex B-rep、採用面と同じ局所frameのsigned distance・support分類、親質量等の必要値、およびcaller提供のscratch／output範囲を受ける。7.6で確定したdistance・分類を共用し、別の受付判定で置き換えない。正負B-rep、質量特性、実使用量と成否を返し、入力Convexから未切断継承先・正負出力への対応を取得できるものとする。対応は当該呼出し内の情報でよく、恒久Convex IDを要求しない。呼出側は数値Workの投入から実行完了まで入力B-rep・採用面・distance／support分類・親質量等を保持して不変とし、scratch／output範囲も有効に保つ。Kernelは予約外へ書かず、完了後に参照を保持しない。outputの後続利用中の保持・回収は既存の資源寿命に従う。Unity Object、資源取得、Schedule、公開・退役はKernelの外で扱う。具体的な型・field・layout・関数名は実装詳細とする。Phase 4では同じmanaged Job内で数値処理とMeshData出力を接続でき、分離を理由に別Job・永続中間成果物・引渡し状態を要求しない。

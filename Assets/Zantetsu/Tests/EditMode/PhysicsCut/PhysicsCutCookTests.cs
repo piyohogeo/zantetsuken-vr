@@ -27,7 +27,7 @@ namespace Zantetsu.PhysicsCut.Tests
 
         private sealed class Fixture : IDisposable
         {
-            public UnityJobWorkExecutor job;
+            public IWorkExecutor job;
             public WorkerPoolExecutor geometry;
             public WorkerPoolExecutor background;
             public SharedWorkDispatcher dispatcher;
@@ -79,17 +79,205 @@ namespace Zantetsu.PhysicsCut.Tests
             int waitingCapacity = 8,
             int reservedForUrgent = 2,
             int frameBudget = 32,
-            int jobCapacity = 4)
+            int jobCapacity = 4,
+            HoldingExecutor holding = null)
         {
             var f = new Fixture
             {
-                job = new UnityJobWorkExecutor(jobCapacity),
+                job = holding == null ? (IWorkExecutor)new UnityJobWorkExecutor(jobCapacity) : holding,
                 geometry = WorkerPoolExecutor.GeometryPool(2),
                 background = WorkerPoolExecutor.BackgroundPool(2),
             };
             f.dispatcher = new SharedWorkDispatcher(waitingCapacity, reservedForUrgent, frameBudget, f.job, f.geometry, f.background);
             f.cook = new PhysicsCutCook(f.dispatcher, reservations);
             return f;
+        }
+
+        /// <summary>
+        /// The Unity Job destination as the product uses it -- the work's own <see cref="IDispatchWork.Begin"/>, the
+        /// work's own <see cref="IDispatchWork.IsComplete"/> -- with one thing added for the tests: a piece of work
+        /// the test has kept back is not handed back to the main thread, however finished it is.
+        /// <para>
+        /// **Nothing is ever completed by force and nothing unfinished is ever handed over.** Keeping work back only
+        /// delays a collection that would otherwise have happened; releasing it does not make it finish. This is how
+        /// a test decides the order two cuts are collected in, which is otherwise the machine's to decide.
+        /// </para>
+        /// </summary>
+        private sealed class HoldingExecutor : IWorkExecutor
+        {
+            private struct Slot
+            {
+                public IDispatchWork work;
+                public Exception beginFailure;
+            }
+
+            private readonly List<Slot> _held = new List<Slot>();
+            private readonly List<IDispatchWork> _keptBack = new List<IDispatchWork>();
+            private readonly List<IDispatchWork> _accepted = new List<IDispatchWork>();
+            private bool _closed;
+
+            internal HoldingExecutor(int capacity)
+            {
+                Capacity = capacity;
+            }
+
+            public WorkDestination Destination => WorkDestination.UnityJob;
+
+            public int Capacity { get; }
+
+            public int Held => _held.Count;
+
+            public bool CanAccept => !_closed && _held.Count < Capacity;
+
+            /// <summary>Every piece of work this destination has taken, in the order it took them.</summary>
+            internal IReadOnlyList<IDispatchWork> Accepted => _accepted;
+
+            /// <summary>Holds this work back from collection, whatever state it reaches.</summary>
+            internal void KeepBack(IDispatchWork work)
+            {
+                if (!_keptBack.Contains(work))
+                {
+                    _keptBack.Add(work);
+                }
+            }
+
+            /// <summary>Lets a work that was kept back be collected again, if and when it has really finished.</summary>
+            internal void Release(IDispatchWork work)
+            {
+                _keptBack.Remove(work);
+            }
+
+            /// <summary>Lets everything kept back be collected again.</summary>
+            internal void ReleaseAll()
+            {
+                _keptBack.Clear();
+            }
+
+            /// <summary>Whether that work is one the test is holding back from collection, finished or not.</summary>
+            internal bool IsKeptBack(IDispatchWork work)
+            {
+                return IndexOf(work) >= 0 && _keptBack.Contains(work);
+            }
+
+            /// <summary>Whether that work has really finished and is only waiting because the test is holding it.</summary>
+            internal bool FinishedButKeptBack(IDispatchWork work)
+            {
+                int i = IndexOf(work);
+                return i >= 0 && _keptBack.Contains(work) && _held[i].work.IsComplete;
+            }
+
+            public bool TryAccept(IDispatchWork work)
+            {
+                if (work == null)
+                {
+                    throw new ArgumentNullException(nameof(work));
+                }
+
+                if (!CanAccept)
+                {
+                    return false;
+                }
+
+                _held.Add(new Slot { work = work });
+                _accepted.Add(work);
+                return true;
+            }
+
+            public void BeginAccepted(IDispatchWork work)
+            {
+                if (IndexOf(work) < 0)
+                {
+                    throw new InvalidOperationException("this destination has not accepted that work");
+                }
+
+                try
+                {
+                    work.Begin();
+                }
+                catch (Exception failure)
+                {
+                    Remember(work, failure);
+                    throw;
+                }
+            }
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                for (int i = 0; i < _held.Count; i++)
+                {
+                    Slot held = _held[i];
+
+                    // Unfinished work is never handed over -- and neither is work the test is holding back.
+                    if (!held.work.IsComplete || _keptBack.Contains(held.work))
+                    {
+                        continue;
+                    }
+
+                    _held.RemoveAt(i);
+                    work = held.work;
+                    completion = held.beginFailure == null
+                        ? WorkCompletion.Finished
+                        : WorkCompletion.Failed(held.beginFailure);
+                    return true;
+                }
+
+                work = null;
+                completion = default;
+                return false;
+            }
+
+            public void CloseForNewWork()
+            {
+                _closed = true;
+            }
+
+            public bool StopAndConfirm(int timeoutMilliseconds)
+            {
+                // Whatever the test was holding is let go here, so that a stop is not blocked by the test itself.
+                _keptBack.Clear();
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < timeoutMilliseconds)
+                {
+                    bool allDone = true;
+                    for (int i = 0; i < _held.Count; i++)
+                    {
+                        allDone &= _held[i].work.IsComplete;
+                    }
+
+                    if (allDone)
+                    {
+                        return true;
+                    }
+
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                return false;
+            }
+
+            private void Remember(IDispatchWork work, Exception failure)
+            {
+                int i = IndexOf(work);
+                if (i >= 0)
+                {
+                    Slot held = _held[i];
+                    held.beginFailure = failure;
+                    _held[i] = held;
+                }
+            }
+
+            private int IndexOf(IDispatchWork work)
+            {
+                for (int i = 0; i < _held.Count; i++)
+                {
+                    if (ReferenceEquals(_held[i].work, work))
+                    {
+                        return i;
+                    }
+                }
+
+                return -1;
+            }
         }
 
         /// <summary>A piece of urgent work that occupies the destination until the test lets it go.</summary>
@@ -126,6 +314,28 @@ namespace Zantetsu.PhysicsCut.Tests
             h.Add(Translated(CaseGenerator.Box(), new double3(2.5, 0.0, 0.0)));      // crosses y = 0
             h.Add(Translated(CaseGenerator.Box(), new double3(0.0, 3.0, 0.0)));      // wholly above
             h.Add(Translated(CaseGenerator.Box(), new double3(2.5, -3.0, 0.0)));     // wholly below
+            h.Build();
+            return h;
+        }
+
+        /// <summary>
+        /// The same kind of owner with far more convexes, so that its numerical work and its bake take substantially
+        /// longer than a <see cref="MixedCompound"/>'s. Used where two cuts run together and the order they finish in
+        /// has to be the other way round from the order they were submitted.
+        /// </summary>
+        private static OwnerCutHarness HeavyCompound()
+        {
+            var h = new OwnerCutHarness();
+            h.planeN = new float3(0f, 1f, 0f);
+            h.planeW = 0f;
+            h.eps = 1e-5f;
+            h.parentMass = 192.0;
+            for (int i = 0; i < 64; i++)
+            {
+                // Every one of them crosses y = 0, so every one is split, meshed and baked.
+                h.Add(Translated(CaseGenerator.Box(), new double3(2.5 * i, 0.0, 0.0)));
+            }
+
             h.Build();
             return h;
         }
@@ -449,6 +659,364 @@ namespace Zantetsu.PhysicsCut.Tests
                 a.Products.Dispose();
                 b.Products.Dispose();
                 Assert.That(f.cook.Reserving, Is.Zero);
+            }
+        }
+
+        /// <summary>
+        /// With room for two, two independent owners hold reservations at the same time and both are really submitted:
+        /// each has a job of its own that began, which is what counts here -- being in the queue is not being run. The
+        /// numbers each of them comes back with are its own input's, compared against that input run through the
+        /// kernel directly.
+        /// </summary>
+        [Test]
+        public void TwoIndependentOwners_HoldReservationsAtOnce_AndAreBothReallySubmitted()
+        {
+            using (OwnerCutHarness first = MixedCompound())
+            using (OwnerCutHarness second = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, jobCapacity: 4))
+            {
+                ConvexCutOwnerResult firstAlone = Reference(first, out _);
+                ConvexCutOwnerResult secondAlone = Reference(second, out _);
+                PhysicsCutRequest a = f.cook.Submit(in first.input, float4x4.identity);
+                PhysicsCutRequest b = f.cook.Submit(in second.input, float4x4.identity);
+
+                // Both take room in the one pump that offers them, because nothing about them is shared.
+                f.cook.Pump();
+                Assert.That(a.HoldsReservation && b.HoldsReservation, Is.True, "both hold a reservation at once");
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "and the cook counts two");
+
+                // Submitted means a job of its own began, not that it reached the queue.
+                f.dispatcher.BeginFrame(1);
+                f.dispatcher.Dispatch();
+                Assert.That(a.scheduled, Is.GreaterThan(0), "the first owner's numerical job began");
+                Assert.That(b.scheduled, Is.GreaterThan(0), "and so did the second's, in the same opportunity");
+
+                f.RunUntil(() => a.IsOver && b.IsOver, "both cuts end");
+                Assert.That(a.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the first succeeded");
+                Assert.That(b.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "and so did the second");
+                AssertSameNumbers(in firstAlone, a.Products.Result, "the first owner beside another");
+                AssertSameNumbers(in secondAlone, b.Products.Result, "the second owner beside another");
+                a.Products.Dispose();
+                b.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "and nothing is held afterwards");
+            }
+        }
+
+        /// <summary>
+        /// One owner holding its reservation while it waits for its bake does not stop another's numerical work. The
+        /// test keeps the first owner's **bake** back from collection, so that owner really is waiting for its bake
+        /// and not merely un-pumped; then the second owner is submitted and its own numerical job is scheduled while
+        /// that wait goes on.
+        /// <para>
+        /// What is held back is named: the collection of the first owner's bake work. The bake itself runs; nothing is
+        /// forced to complete and nothing unfinished is handed over.
+        /// </para>
+        /// <para>
+        /// The second owner going on needs room left in all of it -- a free reservation, a place at the destination,
+        /// and frame budget -- and the fixture leaves all three.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void OneOwnerWaitingForItsBakeToBeCollected_DoesNotStopAnothersNumericalWork()
+        {
+            var holding = new HoldingExecutor(4);
+            using (OwnerCutHarness first = MixedCompound())
+            using (OwnerCutHarness second = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, holding: holding))
+            {
+                ConvexCutOwnerResult secondAlone = Reference(second, out _);
+                PhysicsCutRequest a = f.cook.Submit(in first.input, float4x4.identity);
+                f.RunUntil(() => holding.Accepted.Count >= 2, "the first owner's bake reaches the destination");
+
+                // [0] is its numerical work, [1] the bake that followed it. The bake's collection is what is held.
+                IDispatchWork bake = holding.Accepted[1];
+                holding.KeepBack(bake);
+                f.RunUntil(() => holding.FinishedButKeptBack(bake), "its bake finishes and waits on the test");
+                Assert.That(a.Stage, Is.EqualTo(PhysicsCutStage.Baking), "the first owner is waiting for its bake");
+                Assert.That(a.IsOver, Is.False, "and is not over");
+                Assert.That(a.HoldsReservation, Is.True, "holding its reservation the whole time");
+
+                // The second owner, submitted into that wait.
+                PhysicsCutRequest b = f.cook.Submit(in second.input, float4x4.identity);
+                f.RunUntil(() => b.scheduled > 0, "the other owner's numerical job is scheduled");
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "both hold room: the one waiting on its bake, and the new one");
+                Assert.That(a.Stage, Is.EqualTo(PhysicsCutStage.Baking), "the first is still waiting on its bake");
+                Assert.That(
+                    holding.FinishedButKeptBack(bake), Is.True,
+                    "which is waiting on the test and on nothing else");
+
+                // Let the first owner's bake be collected, and both run out.
+                holding.Release(bake);
+                f.RunUntil(() => a.IsOver && b.IsOver, "both cuts end");
+                Assert.That(a.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the one that waited succeeded");
+                Assert.That(b.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "and so did the other");
+                AssertSameNumbers(in secondAlone, b.Products.Result, "the owner that ran beside a bake");
+                a.Products.Dispose();
+                b.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "and nothing is held at the end");
+            }
+        }
+
+        /// <summary>
+        /// Two owners finishing the other way round from the order they were submitted, with the order decided here
+        /// rather than by how long the work happens to take. The first owner's numerical work is kept back from
+        /// collection; the second owner then goes the whole way -- numbers, meshes applied, bake, products -- and ends
+        /// while the first has not. Only then is the first let through, and it ends after.
+        /// <para>
+        /// Nothing is forced to complete: the work that is kept back really has finished, and is simply not handed
+        /// over until the test says so. Each request comes back with its own products -- its own convex counts, mass,
+        /// volume and centre of mass -- and not the other's.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TwoOwnersFinishingInReverseOrder_EachKeepsItsOwnProducts()
+        {
+            var holding = new HoldingExecutor(4);
+            using (OwnerCutHarness heavy = HeavyCompound())
+            using (OwnerCutHarness light = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, holding: holding))
+            {
+                ConvexCutOwnerResult heavyAlone = Reference(heavy, out _);
+                ConvexCutOwnerResult lightAlone = Reference(light, out _);
+                Assert.That(
+                    heavyAlone.splitConvexCount, Is.GreaterThan(lightAlone.splitConvexCount),
+                    "the two owners are really different pieces of work");
+
+                PhysicsCutRequest big = f.cook.Submit(in heavy.input, float4x4.identity);
+                PhysicsCutRequest small = f.cook.Submit(in light.input, float4x4.identity);
+
+                f.cook.Pump();
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "both hold room at once");
+                f.dispatcher.BeginFrame(1);
+                f.dispatcher.Dispatch();
+                Assert.That(holding.Accepted.Count, Is.EqualTo(2), "both numerical works were taken by the destination");
+                Assert.That(big.scheduled, Is.GreaterThan(0), "the first owner's numerical job was scheduled");
+                Assert.That(small.scheduled, Is.GreaterThan(0), "and so was the second's");
+
+                // The first owner's numbers are kept back, so it cannot go on until the test allows it.
+                IDispatchWork firstNumbers = holding.Accepted[0];
+                holding.KeepBack(firstNumbers);
+
+                f.RunUntil(() => small.IsOver, "the owner submitted second goes the whole way and ends");
+                Assert.That(
+                    big.IsOver, Is.False,
+                    "while the one submitted first has not: it is still at " + big.Stage);
+                Assert.That(big.HoldsReservation, Is.True, "and is still holding its own room");
+                Assert.That(small.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the one that ended first succeeded");
+                AssertSameNumbers(in lightAlone, small.Products.Result, "the light owner's own products");
+
+                // Now the first, which ends after the second.
+                holding.Release(firstNumbers);
+                f.RunUntil(() => big.IsOver, "and the one submitted first ends after it");
+                Assert.That(big.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "it succeeded too");
+                AssertSameNumbers(in heavyAlone, big.Products.Result, "the heavy owner's own products");
+                Assert.That(
+                    big.Products.Result.splitConvexCount, Is.Not.EqualTo(small.Products.Result.splitConvexCount),
+                    "and the two did not come back with each other's");
+                small.Products.Dispose();
+                big.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "nothing is held once both are over");
+            }
+        }
+
+        /// <summary>
+        /// One of two owners given up after it took its reservation and was submitted. The one given up is never
+        /// interrupted: what it holds comes back when its work is collected, and never before. The other is untouched
+        /// -- its own reservation, its own products.
+        /// </summary>
+        [Test]
+        public void OneOwnerGivenUpAfterItsReservation_LeavesTheOtherWhole()
+        {
+            using (OwnerCutHarness doomed = MixedCompound())
+            using (OwnerCutHarness kept = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, jobCapacity: 4))
+            {
+                ConvexCutOwnerResult keptAlone = Reference(kept, out _);
+                PhysicsCutRequest a = f.cook.Submit(in doomed.input, float4x4.identity);
+                PhysicsCutRequest b = f.cook.Submit(in kept.input, float4x4.identity);
+
+                f.cook.Pump();
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "both hold room");
+                f.dispatcher.BeginFrame(1);
+                f.dispatcher.Dispatch();
+                Assert.That(a.scheduled, Is.GreaterThan(0), "the one about to be given up was really submitted");
+
+                // Given up while its work is with the dispatcher: it is marked, not interrupted.
+                Assert.That(f.cook.Abandon(a), Is.True, "it is given up");
+                Assert.That(a.IsOver, Is.False, "and is not over on the spot, because its work is out");
+                Assert.That(a.HoldsReservation, Is.True, "so nothing it holds has come back yet");
+                Assert.That(b.HoldsReservation, Is.True, "and the other's room is its own");
+
+                f.RunUntil(() => a.IsOver, "the one given up ends when its work is collected");
+                Assert.That(a.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Abandoned), "it was abandoned");
+                Assert.That(a.Products, Is.Null, "with nothing handed over");
+                AssertHoldsNoResources(a, "the one given up, once collected");
+                Assert.That(a.HoldsReservation, Is.False, "and its reservation is closed, at collection and not before");
+
+                f.RunUntil(() => b.IsOver, "the other runs to its end");
+                Assert.That(b.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "untouched by the other being given up");
+                AssertSameNumbers(in keptAlone, b.Products.Result, "the owner beside one given up");
+                b.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "and nothing is held afterwards");
+            }
+        }
+
+        /// <summary>
+        /// One of two owners **fails** after it had taken its reservation and been submitted -- which is a different
+        /// thing from being given up. The failure is made in the one place the product already lets a test make one:
+        /// the collection of its numerical work throws, so this is a cut that failed while being collected.
+        /// <para>
+        /// The order is the test's, not the machine's: the owner that succeeds is kept back from collection until the
+        /// end, so the failure is collected while that one is demonstrably still holding its reservation, and the room
+        /// a third owner is then given can only be the room the failure returned.
+        /// </para>
+        /// <para>
+        /// What the failure gave back is checked region by region on the request itself -- arena, the four report
+        /// arrays, the writable mesh data and the meshes -- not from the reservation count alone.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void OneOwnerFailingAfterItsReservation_LeavesTheOtherWhole_AndFreesItsRoom()
+        {
+            var holding = new HoldingExecutor(4);
+            using (OwnerCutHarness doomed = MixedCompound())
+            using (OwnerCutHarness kept = MixedCompound())
+            using (OwnerCutHarness waiting = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, holding: holding))
+            {
+                ConvexCutOwnerResult keptAlone = Reference(kept, out _);
+                ConvexCutOwnerResult waitingAlone = Reference(waiting, out _);
+                PhysicsCutRequest a = f.cook.Submit(in doomed.input, float4x4.identity);
+                PhysicsCutRequest b = f.cook.Submit(in kept.input, float4x4.identity);
+                PhysicsCutRequest c = f.cook.Submit(in waiting.input, float4x4.identity);
+
+                var thrown = new InvalidOperationException("taking this owner's work back threw");
+                int hits = 0;
+                a.collectHook = () =>
+                {
+                    hits++;
+                    throw thrown;
+                };
+
+                // 1. Two hold room and are scheduled; the third waits at the limit with nothing of its own.
+                f.cook.Pump();
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "the two that fit hold room");
+                f.dispatcher.BeginFrame(1);
+                f.dispatcher.Dispatch();
+                Assert.That(holding.Accepted.Count, Is.EqualTo(2), "both numerical works were taken by the destination");
+                Assert.That(a.scheduled, Is.GreaterThan(0), "the one that will fail was really scheduled");
+                Assert.That(b.scheduled, Is.GreaterThan(0), "and so was the other");
+                Assert.That(c.Stage, Is.EqualTo(PhysicsCutStage.Waiting), "the third waits at the limit");
+                Assert.That(c.HoldsReservation, Is.False, "with no room of its own");
+                Assert.That(c.scheduled, Is.Zero, "and nothing scheduled");
+
+                // 2. The one that will succeed is kept back from collection, so only the failure can be collected.
+                //    Its work may or may not have finished running by then; that is not controlled and is not needed.
+                //    What matters is that it cannot be collected, so it cannot give its reservation back.
+                holding.KeepBack(holding.Accepted[1]);
+                f.RunUntil(() => a.IsOver, "the failing owner is collected and ends");
+
+                // 3. It failed, handed nothing over, and gave back its own resources -- named one by one.
+                Assert.That(hits, Is.EqualTo(1), "its collection was the one that threw");
+                Assert.That(a.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.CookFailed), "it failed");
+                Assert.That(a.Failure, Is.SameAs(thrown), "carrying what was thrown");
+                Assert.That(a.Products, Is.Null, "with no part of a result handed over");
+                AssertHoldsNoResources(a, "the failure, once collected");
+                Assert.That(a.HoldsReservation, Is.False, "and its reservation is closed");
+                Assert.That(b.HoldsReservation, Is.True, "the other still holds its own room");
+
+                // The third may have been given the freed room in the very pump that collected the failure, because
+                // the cook advances its requests in the order they were submitted. Either way that room can only be
+                // the failure's: the other has demonstrably not given its own up, and is checked again below.
+                Assert.That(f.cook.Reserving, Is.LessThanOrEqualTo(2), "never more than the limit holds room");
+                Assert.That(b.IsOver, Is.False, "and is not over");
+                Assert.That(
+                    holding.IsKeptBack(holding.Accepted[1]), Is.True,
+                    "because its work is one the test is holding back from collection -- whether that work has "
+                    + "finished running is not a condition here, and is not controlled");
+
+                // 4. The third is given room and scheduled -- while the other is still holding its own, so the room it
+                //    was given can only be the room the failure returned.
+                f.RunUntil(() => c.scheduled > 0, "the owner that was waiting is given room and scheduled");
+                Assert.That(b.HoldsReservation, Is.True, "the succeeding owner never gave its room up for this");
+                Assert.That(b.IsOver, Is.False);
+                Assert.That(c.HoldsReservation, Is.True, "the third holds the room the failure freed");
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "which brings the count back to the limit");
+
+                // 5. Released, the other two run out and each comes back with its own numbers.
+                holding.ReleaseAll();
+                f.RunUntil(() => b.IsOver && c.IsOver, "the other two run to their ends");
+                Assert.That(b.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the owner beside the failure succeeded");
+                AssertSameNumbers(in keptAlone, b.Products.Result, "the owner beside a failure");
+                Assert.That(c.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "and so did the one that took its room");
+                AssertSameNumbers(in waitingAlone, c.Products.Result, "the owner given the room a failure freed");
+                b.Products.Dispose();
+                c.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "nothing is held at the end");
+                Assert.That(f.cook.ActiveCount, Is.Zero, "and the cook holds nothing");
+            }
+        }
+
+        /// <summary>
+        /// Every resource one reservation holds, checked on the request itself rather than inferred from the count of
+        /// reservations: the arena, the four arrays the job reports through, the writable mesh data and the meshes.
+        /// </summary>
+        private static void AssertHoldsNoResources(PhysicsCutRequest request, string what)
+        {
+            Assert.That(request.arena, Is.Null, what + ": the arena went back");
+            Assert.That(request.meshIds.IsCreated, Is.False, what + ": the mesh ids");
+            Assert.That(request.meshBounds.IsCreated, Is.False, what + ": the mesh bounds");
+            Assert.That(request.meshVertexCounts.IsCreated, Is.False, what + ": the vertex counts");
+            Assert.That(request.bakeDone.IsCreated, Is.False, what + ": the bake flags");
+            Assert.That(request.report.IsCreated, Is.False, what + ": the report");
+            Assert.That(request.meshDataHeld, Is.False, what + ": the writable mesh data");
+            Assert.That(request.meshes, Is.Null, what + ": the meshes");
+        }
+
+        /// <summary>
+        /// At the limit the existing contract still holds: with room for two, a third owner waits unoffered, with
+        /// nothing scheduled, until one of the two gives its reservation back -- and then it runs.
+        /// </summary>
+        [Test]
+        public void AThirdOwnerAtTheLimit_WaitsUnoffered_AndRunsOnceRoomIsFree()
+        {
+            using (OwnerCutHarness first = MixedCompound())
+            using (OwnerCutHarness second = MixedCompound())
+            using (OwnerCutHarness third = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 2, jobCapacity: 4))
+            {
+                ConvexCutOwnerResult thirdAlone = Reference(third, out _);
+                PhysicsCutRequest a = f.cook.Submit(in first.input, float4x4.identity);
+                PhysicsCutRequest b = f.cook.Submit(in second.input, float4x4.identity);
+                PhysicsCutRequest c = f.cook.Submit(in third.input, float4x4.identity);
+
+                f.cook.Pump();
+                Assert.That(f.cook.Reserving, Is.EqualTo(2), "two hold room, which is all there is");
+                Assert.That(c.Stage, Is.EqualTo(PhysicsCutStage.Waiting), "the third is not offered at all");
+                Assert.That(c.scheduled, Is.Zero, "and nothing of it is scheduled");
+                Assert.That(c.HoldsReservation, Is.False, "nor does it hold room");
+
+                bool sawItWaitingAtTheLimit = false;
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(a.IsOver && b.IsOver))
+                {
+                    f.Pump();
+                    Assert.That(f.cook.Reserving, Is.LessThanOrEqualTo(2), "never more than the limit holds room");
+                    if (f.cook.Reserving == 2 && c.Stage == PhysicsCutStage.Waiting)
+                    {
+                        sawItWaitingAtTheLimit = true;
+                        Assert.That(c.scheduled, Is.Zero, "and while it waits it schedules nothing");
+                    }
+                }
+
+                Assert.That(sawItWaitingAtTheLimit, Is.True, "the third really waited while the limit was reached");
+                f.RunUntil(() => c.IsOver, "and it runs once room comes free");
+                Assert.That(c.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the third succeeded after waiting");
+                AssertSameNumbers(in thirdAlone, c.Products.Result, "the owner that waited for room");
+                a.Products.Dispose();
+                b.Products.Dispose();
+                c.Products.Dispose();
+                Assert.That(f.cook.Reserving, Is.Zero, "and nothing is held at the end");
             }
         }
 
