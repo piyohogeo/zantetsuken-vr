@@ -262,6 +262,61 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// The shape of one side of a Provisional pair (DESIGN 7.1.1): the source's **own** convexes, the ones the
+        /// 7.6 classification put on this side, shared exactly as they are.
+        /// <para>
+        /// No cut is made here, no collider mesh is copied and nothing is baked here: each part names the very mesh
+        /// the source's own collider uses and takes a hold on whoever owns it, so those meshes outlive this side however
+        /// the source ends. A convex the plane crosses belongs to both sides and is named by both, which is what
+        /// DESIGN 7.1.1 allows when it accepts the ghost contacts of a shared old convex. The B-rep is copied into
+        /// this side's own bank, as every shape's is, because the numerical kernel reads one bank.
+        /// </para>
+        /// </summary>
+        internal static PhysicsOwnerShape ProvisionalSide(PhysicsOwnerShape source, IReadOnlyList<int> convexes)
+        {
+            if (source == null || convexes == null)
+            {
+                throw new ArgumentNullException(source == null ? nameof(source) : nameof(convexes));
+            }
+
+            if (convexes.Count == 0)
+            {
+                throw new ArgumentException("a side with no convex is not an owner", nameof(convexes));
+            }
+
+            var shape = new PhysicsOwnerShape(source.LocalToOwner);
+            try
+            {
+                var parts = new Part[convexes.Count];
+                for (int i = 0; i < convexes.Count; i++)
+                {
+                    int c = convexes[i];
+                    if (c < 0 || c >= source._convexes.Length)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(convexes), c, "not a convex of the source");
+                    }
+
+                    parts[i] = new Part
+                    {
+                        bank = source.Bank,
+                        range = source._convexes[c],
+                        mesh = source._meshes[c],
+                        source = source.SourceOf(c),
+                    };
+                }
+
+                shape.Fill(parts);
+            }
+            catch
+            {
+                shape.Dispose();
+                throw;
+            }
+
+            return shape;
+        }
+
+        /// <summary>
         /// The shape of one side of a finished cut: the convexes that side adopted, each produced here or inherited
         /// from <paramref name="parent"/>, copied into this side's own bank.
         /// <para>

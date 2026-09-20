@@ -699,7 +699,7 @@ namespace Zantetsu.PhysicsCut
         /// shear is refused: the colliders would then describe a different shape from the one the mass properties
         /// were integrated over, and neither of the two could be corrected without changing the other.
         /// </summary>
-        private static bool TryRigid(float4x4 transform, out quaternion rotation, out float3 offset)
+        internal static bool TryRigid(float4x4 transform, out quaternion rotation, out float3 offset)
         {
             rotation = quaternion.identity;
             offset = float3.zero;
