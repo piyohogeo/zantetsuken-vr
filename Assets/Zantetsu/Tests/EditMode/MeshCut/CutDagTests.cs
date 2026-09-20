@@ -5,6 +5,7 @@ using System.Threading;
 using NUnit.Framework;
 using Unity.Collections;
 using Unity.Mathematics;
+using UnityEngine;
 using Zantetsu.MeshCut.Verification;
 using Zantetsu.Rendering;
 
@@ -284,6 +285,92 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId fragment = anchors == null ? f.ledger.AddFragment() : f.ledger.AddFragment(anchors);
             f.dag.RegisterBaseGeometry(fragment, geometry);
             return fragment;
+        }
+
+        /// <summary>
+        /// The same box, registered with the mapping from the lineage's logical frame to the geometry's own
+        /// coordinates. The geometry itself is identical to the one <see cref="NewBranch"/> makes: only the frame the
+        /// caller says its planes arrive in is different.
+        /// </summary>
+        private static LogicalFragmentId NewBranchInFrame(
+            Fixture f, Matrix4x4 lineageToGeometryLocal, float3 offset = default)
+        {
+            SyntheticMesh mesh = SyntheticGeometry.Box(2, new float3(1f, 1f, 1f), offset, true)
+                .Finish(new LogicalMeshBuilder.AttributeOptions { CreaseAngle = 30, CylindricalUv = true });
+            var submeshes = new VpGeometrySubmesh[mesh.SubmeshIndexCounts.Count];
+            int at = 0;
+            for (int s = 0; s < submeshes.Length; s++)
+            {
+                submeshes[s] = new VpGeometrySubmesh(at, mesh.SubmeshIndexCounts[s], s);
+                at += mesh.SubmeshIndexCounts[s];
+            }
+
+            Assert.That(
+                f.storage.TryAppendCuttable(
+                    mesh.Vertices, mesh.Indices, mesh.TopologyOfVertex, mesh.TopologyVertexCount, submeshes,
+                    out VpStoredGeometry geometry, out _),
+                Is.True,
+                "the box is appended as a cut input");
+            LogicalFragmentId fragment = f.ledger.AddFragment();
+            f.dag.RegisterBaseGeometry(fragment, geometry, lineageToGeometryLocal);
+            return fragment;
+        }
+
+        /// <summary>
+        /// A quarter turn about Z followed by a translation, written out entry by entry so that every number in it is
+        /// exact and nothing about how a quaternion rounds is assumed. It takes a point of the lineage's frame to the
+        /// same point in the geometry's own coordinates: x goes to +y, y goes to -x, and the whole is moved by t.
+        /// </summary>
+        private static Matrix4x4 TurnedFrame(Vector3 t)
+        {
+            var m = new Matrix4x4();
+            m.SetColumn(0, new Vector4(0f, 1f, 0f, 0f));
+            m.SetColumn(1, new Vector4(-1f, 0f, 0f, 0f));
+            m.SetColumn(2, new Vector4(0f, 0f, 1f, 0f));
+            m.SetColumn(3, new Vector4(t.x, t.y, t.z, 1f));
+            return m;
+        }
+
+        /// <summary>
+        /// The plane <paramref name="plane"/> of the lineage's frame in the coordinates of a geometry placed by
+        /// <paramref name="frame"/>, worked out here rather than asked of the product: for y = R x + t, a point x
+        /// satisfies dot(n, x) + d = 0 exactly when y satisfies dot(R n, y) + (d - dot(R n, t)) = 0. Only the
+        /// rotation and the translation of the frame are used, which is all these cases have in them.
+        /// </summary>
+        private static float4 PlaneInGeometryByHand(float4 plane, Matrix4x4 frame)
+        {
+            Vector4 x = frame.GetColumn(0);
+            Vector4 y = frame.GetColumn(1);
+            Vector4 z = frame.GetColumn(2);
+            Vector4 t = frame.GetColumn(3);
+            var turned = new float3(
+                (x.x * plane.x) + (y.x * plane.y) + (z.x * plane.z),
+                (x.y * plane.x) + (y.y * plane.y) + (z.y * plane.z),
+                (x.z * plane.x) + (y.z * plane.y) + (z.z * plane.z));
+            float moved = plane.w - ((turned.x * t.x) + (turned.y * t.y) + (turned.z * t.z));
+            return new float4(turned, moved);
+        }
+
+        private static void AssertPlaneIs(float4 actual, float4 expected, string what)
+        {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(1e-6f), what + ": the normal's x");
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(1e-6f), what + ": the normal's y");
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(1e-6f), what + ": the normal's z");
+            Assert.That(actual.w, Is.EqualTo(expected.w).Within(1e-6f), what + ": d");
+        }
+
+        /// <summary>What one committed side amounts to, as numbers two separate storages can be compared by.</summary>
+        private static string SideShape(Fixture f, VpStorageCutSide side)
+        {
+            if (side.IsEmpty)
+            {
+                return "empty";
+            }
+
+            Assert.That(
+                f.storage.TryGetIndexState(side.geometry.indexRange, out _, out _, out int indices), Is.True,
+                "the side's indices are readable");
+            return (side.IsProduced ? "produced" : "borrowed") + " v=" + side.geometry.vertexCount + " i=" + indices;
         }
 
         private static float4 Tilted(float3 through)
@@ -878,6 +965,243 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(f.ledger.Budget.IncompleteCutOperationCount, Is.Zero, "and the budget unit came back once");
                 Assert.That(f.fault.faults.Count, Is.EqualTo(1), "still reported only once");
                 Assert.That(f.dag.ActiveCount, Is.Zero, "and nothing is left");
+            }
+        }
+
+        // ----- 9. the adopted plane and the kernel's plane ---------------------------------------------------------
+
+        /// <summary>
+        /// A caller whose logical frame is the geometry's own coordinates is unaffected: the kernel is given the very
+        /// plane that was admitted, and so is the commit.
+        /// </summary>
+        [Test]
+        public void AnIdentityFrame_GivesTheKernelTheAdmittedPlaneUnchanged()
+        {
+            using (Fixture f = NewFixture(gated: true))
+            {
+                LogicalFragmentId body = NewBranch(f, float3.zero);
+                float4 plane = Tilted(float3.zero);
+                CutOperationId a = Admit(f, body, plane);
+                PublishPhysics(f, a, out _, out _);
+                f.commit.allowEverything = true;
+
+                f.RunGatedUntil(() => f.dag.StageOf(a) != CutGeometryStage.WaitingForBasis, "the cut is offered");
+
+                Assert.That(f.dag.TryGetKernelPlane(a, out float4 kernel), Is.True, "the kernel was given a plane");
+                AssertPlaneIs(kernel, plane, "the plane the kernel was given is the one that was admitted");
+
+                f.RunGatedUntil(() => f.commit.committed.Count == 1, "it commits");
+                AssertPlaneIs(f.commit.seen[0].plane, plane, "and the commit publishes the same plane");
+                Assert.That(
+                    f.ledger.TryGetOperation(a, out LogicalCutOperation record) && record.plane.Equals(plane), Is.True,
+                    "the ledger still holds the plane it adopted");
+            }
+        }
+
+        /// <summary>
+        /// A frame with a turn and a translation in it: the kernel is given the plane in the geometry's coordinates,
+        /// worked out here from the frame rather than asked of the conversion, and the geometry that comes out is the
+        /// same as a control cut at that plane directly, through a branch registered the identity way. The admitted
+        /// plane and the converted one are genuinely different, which is what makes the comparison worth anything.
+        /// </summary>
+        [Test]
+        public void AFrameWithATurnAndATranslation_CutsWhereTheSamePlaneGivenDirectlyCuts()
+        {
+            Matrix4x4 frame = TurnedFrame(new Vector3(0.25f, -0.4f, 0.15f));
+            var admitted = new float4(0f, 1f, 0f, 0f);
+            float4 byHand = PlaneInGeometryByHand(admitted, frame);
+
+            // The quarter turn takes the plane's +y normal to -x, and the translation moves it off the origin.
+            AssertPlaneIs(byHand, new float4(-1f, 0f, 0f, 0.25f), "the plane in the geometry's own coordinates");
+            Assert.That(
+                math.any(math.abs(byHand - admitted) > 1e-3f), Is.True,
+                "the two planes are not the same, so cutting at the wrong one would show");
+
+            string mapped;
+            string control;
+            using (Fixture f = NewFixture())
+            {
+                LogicalFragmentId body = NewBranchInFrame(f, frame);
+                CutOperationId a = Admit(f, body, admitted);
+                PublishPhysics(f, a, out _, out _);
+
+                // Read while the cut is still holding it: a committed cut has been let go of by then.
+                f.RunUntil(() => f.dag.TryGetKernelPlane(a, out _), "the cut is offered to the kernel");
+                Assert.That(f.dag.TryGetKernelPlane(a, out float4 kernel), Is.True, "the kernel was given a plane");
+                AssertPlaneIs(kernel, byHand, "the kernel cuts at the plane in the geometry's coordinates");
+
+                f.commit.allowEverything = true;
+                f.RunUntil(() => f.commit.committed.Count == 1, "the cut in the turned frame commits");
+                mapped = SideShape(f, f.commit.seen[0].positive) + " | " + SideShape(f, f.commit.seen[0].negative)
+                    + " | caps=" + f.commit.seen[0].capTriangles;
+            }
+
+            using (Fixture f = NewFixture())
+            {
+                // The control: the same box, no frame to speak of, cut at the geometry-local plane directly.
+                LogicalFragmentId body = NewBranch(f, float3.zero);
+                CutOperationId a = Admit(f, body, byHand);
+                PublishPhysics(f, a, out _, out _);
+                f.commit.allowEverything = true;
+                f.RunUntil(() => f.commit.committed.Count == 1, "the control cut commits");
+                control = SideShape(f, f.commit.seen[0].positive) + " | " + SideShape(f, f.commit.seen[0].negative)
+                    + " | caps=" + f.commit.seen[0].capTriangles;
+            }
+
+            Assert.That(mapped, Is.EqualTo(control), "both cuts made the same two sides");
+        }
+
+        /// <summary>
+        /// B is admitted and published on A's child while A's geometry is still unfinished, and only then does A
+        /// commit. B is not held up for the geometry, and when its turn comes it is cut in the frame A's commit left
+        /// the child in - the same frame, since this commit does not rebuild a child's coordinates.
+        /// </summary>
+        [Test]
+        public void AFrameIsInheritedThroughTheCommit_ByACutAdmittedBeforeIt()
+        {
+            Matrix4x4 frame = TurnedFrame(new Vector3(0.25f, -0.4f, 0.15f));
+            using (Fixture f = NewFixture(gated: true))
+            {
+                LogicalFragmentId body = NewBranchInFrame(f, frame);
+                CutOperationId a = Admit(f, body, new float4(0f, 1f, 0f, 0f));
+                PublishPhysics(f, a, out LogicalFragmentId aPositive, out _);
+
+                // Admitted and published on a child that has no geometry at all yet.
+                var bPlane = new float4(1f, 0f, 0f, -0.2f);
+                CutOperationId b = Admit(f, aPositive, bPlane);
+                PublishPhysics(f, b, out _, out _);
+                Assert.That(f.dag.TryGetGeometry(aPositive, out _), Is.False, "the child has no geometry when B is admitted");
+                Assert.That(f.dag.TryGetKernelPlane(b, out _), Is.False, "and B has not been offered anything to cut");
+
+                f.commit.allowEverything = true;
+                f.RunGatedUntil(() => f.commit.committed.Count == 1, "A commits");
+
+                Assert.That(
+                    f.dag.TryGetGeometryFrame(aPositive, out Matrix4x4 childFrame), Is.True,
+                    "the child is in a frame of its own from the commit on");
+                Assert.That(childFrame, Is.EqualTo(frame), "which is the frame its basis was read in");
+
+                Assert.That(f.dag.TryGetKernelPlane(b, out float4 kernel), Is.True, "B became ready in that same update");
+                AssertPlaneIs(
+                    kernel, PlaneInGeometryByHand(bPlane, frame), "B was cut in the frame it inherited, not in the lineage's");
+
+                f.RunGatedUntil(() => f.commit.committed.Count == 2, "B commits after it");
+                Assert.That(f.commit.committed, Is.EqualTo(new[] { a, b }), "in that order");
+            }
+        }
+
+        /// <summary>
+        /// Converting for the kernel does not write the converted value anywhere else: the ledger's adopted plane and
+        /// the plane each commit publishes stay the values that were admitted, for the child's cut as well as the
+        /// first one.
+        /// </summary>
+        [Test]
+        public void TheConvertedPlane_DoesNotReplaceTheAdoptedOneOrTheCommitsOwn()
+        {
+            Matrix4x4 frame = TurnedFrame(new Vector3(0.25f, -0.4f, 0.15f));
+            using (Fixture f = NewFixture())
+            {
+                LogicalFragmentId body = NewBranchInFrame(f, frame);
+                var aPlane = new float4(0f, 1f, 0f, 0f);
+                CutOperationId a = Admit(f, body, aPlane);
+                PublishPhysics(f, a, out LogicalFragmentId aPositive, out _);
+                f.commit.allowEverything = true;
+                f.RunUntil(() => f.commit.committed.Count == 1, "the first cut commits");
+
+                var bPlane = new float4(1f, 0f, 0f, -0.2f);
+                CutOperationId b = Admit(f, aPositive, bPlane);
+                PublishPhysics(f, b, out _, out _);
+                f.RunUntil(() => f.commit.committed.Count == 2, "the child's cut commits");
+
+                AssertPlaneIs(f.commit.seen[0].plane, aPlane, "the first commit publishes the plane that was admitted");
+                AssertPlaneIs(f.commit.seen[1].plane, bPlane, "and so does the child's");
+                Assert.That(
+                    f.ledger.TryGetOperation(a, out LogicalCutOperation first) && first.plane.Equals(aPlane), Is.True,
+                    "the ledger's adopted plane is untouched");
+                Assert.That(
+                    f.ledger.TryGetOperation(b, out LogicalCutOperation second) && second.plane.Equals(bPlane), Is.True,
+                    "for the child's operation too");
+            }
+        }
+
+        /// <summary>
+        /// A plane that misses the geometry: one side is the input borrowed back and the other is empty. Both keep the
+        /// frame, so a later cut of either is still read in the geometry's coordinates - the borrowed side is cut
+        /// there, and the empty side passes it on to its own children.
+        /// </summary>
+        [Test]
+        public void AnEmptySideAndABorrowedInput_KeepTheFrameForWhatComesNext()
+        {
+            Matrix4x4 frame = TurnedFrame(new Vector3(0.25f, -0.4f, 0.15f));
+            using (Fixture f = NewFixture())
+            {
+                LogicalFragmentId body = NewBranchInFrame(f, frame);
+
+                // Far off in the lineage's frame, and still far off once carried into the geometry's.
+                // Carried into the geometry's coordinates this is x = -7.75, which the box is wholly on one side of:
+                // the positive side comes back empty and the negative one is the input borrowed back.
+                CutOperationId a = Admit(f, body, new float4(0f, 1f, 0f, -8f));
+                PublishPhysics(f, a, out LogicalFragmentId empty, out LogicalFragmentId kept);
+                f.commit.allowEverything = true;
+                f.RunUntil(() => f.commit.committed.Count == 1, "the cut that missed commits");
+
+                Assert.That(f.dag.TryGetGeometry(kept, out _), Is.True, "one side kept the geometry");
+                Assert.That(f.dag.HasNoGeometry(empty), Is.True, "and the other has none");
+                Assert.That(
+                    f.dag.TryGetGeometryFrame(kept, out Matrix4x4 keptFrame) && keptFrame == frame, Is.True,
+                    "the side that borrowed the input is still in the same frame");
+                Assert.That(
+                    f.dag.TryGetGeometryFrame(empty, out Matrix4x4 emptyFrame) && emptyFrame == frame, Is.True,
+                    "and so is the empty one");
+
+                // The borrowed side, cut again: still converted, not taken as if the frames were the same.
+                var bPlane = new float4(1f, 0f, 0f, -0.2f);
+                CutOperationId b = Admit(f, kept, bPlane);
+                PublishPhysics(f, b, out _, out _);
+                f.RunUntil(() => f.dag.TryGetKernelPlane(b, out _), "the borrowed side is offered to the kernel");
+                Assert.That(f.dag.TryGetKernelPlane(b, out float4 kernel), Is.True, "its kernel was given a plane");
+                AssertPlaneIs(kernel, PlaneInGeometryByHand(bPlane, frame), "in the frame the side kept");
+                f.RunUntil(() => f.commit.committed.Count == 2, "the borrowed side is cut again");
+
+                // The empty side, cut again: no kernel, and the frame travels on to its children all the same.
+                CutOperationId c = Admit(f, empty, bPlane);
+                PublishPhysics(f, c, out LogicalFragmentId cPositive, out LogicalFragmentId cNegative);
+                f.RunUntil(() => f.commit.committed.Count == 3, "the empty side commits as empty");
+                Assert.That(f.dag.TryGetKernelPlane(c, out _), Is.False, "a cut of nothing has no kernel plane");
+                Assert.That(
+                    f.dag.TryGetGeometryFrame(cPositive, out Matrix4x4 cFrame) && cFrame == frame, Is.True,
+                    "its children keep the correspondence");
+                Assert.That(f.dag.TryGetGeometryFrame(cNegative, out _), Is.True, "both of them");
+            }
+        }
+
+        /// <summary>
+        /// A basis is the geometry and the frame it was read in together. With the result already in hand, the source
+        /// is registered again with the same geometry in a different frame: the result was cut somewhere else now, so
+        /// it is not adopted, and nothing is committed at the wrong plane.
+        /// </summary>
+        [Test]
+        public void AResultCutInAFrameTheSourceNoLongerHas_IsNotAdopted()
+        {
+            using (Fixture f = NewFixture(gated: true))
+            {
+                LogicalFragmentId body = NewBranchInFrame(f, Matrix4x4.identity);
+                CutOperationId a = Admit(f, body, Tilted(float3.zero));
+                PublishPhysics(f, a, out _, out _);
+
+                f.RunGatedUntil(() => f.dag.StageOf(a) == CutGeometryStage.CpuPublished, "the result is in hand");
+                Assert.That(f.dag.TryGetGeometry(body, out VpStoredGeometry basis), Is.True, "the source still has its geometry");
+
+                // The same geometry, said to be in a different frame from now on.
+                f.dag.RegisterBaseGeometry(body, basis, TurnedFrame(new Vector3(0.25f, -0.4f, 0.15f)));
+                f.commit.allowEverything = true;
+                f.Frame();
+
+                Assert.That(f.commit.committed, Is.Empty, "the result is not committed");
+                Assert.That(f.dag.StageOf(a), Is.EqualTo(CutGeometryStage.Reclaimed), "the cut ended without one");
+                Assert.That(
+                    StateOf(f, a), Is.EqualTo(LogicalCutOperationState.Terminated),
+                    "and the ledger was told once, the ordinary way");
             }
         }
 

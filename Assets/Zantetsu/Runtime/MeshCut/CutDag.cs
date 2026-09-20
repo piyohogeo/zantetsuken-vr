@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using UnityEngine;
 using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut
@@ -168,6 +169,16 @@ namespace Zantetsu.MeshCut
     /// side has nothing to retire.
     /// </para>
     /// <para>
+    /// **The two planes** (DESIGN 5.2). An adopted plane is a value in its source fragment's own logical frame, and
+    /// that is what the ledger keeps, what a commit publishes and what a boundary record holds. The kernel cuts in the
+    /// coordinates of the committed geometry it reads, which is a different frame, so the same plane is carried into
+    /// that frame here — once, when the cut is offered, with the conversion that already exists — and used for the
+    /// kernel alone. Neither the ledger's value nor the commit's is overwritten by the converted one. The mapping
+    /// comes from the caller with the base geometry, the same mapping the caller gives the display's registration;
+    /// nothing here reads a renderer's state to find it, and a geometry whose mapping is not known is not cut with a
+    /// made-up identity.
+    /// </para>
+    /// <para>
     /// **Authority after publication** (DESIGN 8). That an operation was published is not on its own the right to
     /// adopt a result that arrives later. A result is adopted while its branch still has a live fragment to read it
     /// and the basis it was cut from is still the source's current geometry. A cut of a descendant, or another
@@ -186,6 +197,8 @@ namespace Zantetsu.MeshCut
         private readonly List<Node> _nodes = new List<Node>();
         private readonly Dictionary<LogicalFragmentId, VpStoredGeometry> _geometryOf =
             new Dictionary<LogicalFragmentId, VpStoredGeometry>();
+        private readonly Dictionary<LogicalFragmentId, Matrix4x4> _frameOf =
+            new Dictionary<LogicalFragmentId, Matrix4x4>();
         private readonly HashSet<LogicalFragmentId> _withoutGeometry = new HashSet<LogicalFragmentId>();
         private readonly Dictionary<CutOperationId, VpStorageCutStatus> _faults =
             new Dictionary<CutOperationId, VpStorageCutStatus>();
@@ -218,11 +231,19 @@ namespace Zantetsu.MeshCut
         public bool IsDrained => _nodes.Count == 0 && _cuts.ActiveCount == 0;
 
         /// <summary>
-        /// Says which geometry a fragment is, for the first fragment of a branch: the geometry it was registered with
-        /// before anything was cut (DESIGN 4.5.6, the registered base geometry of the first cut). Every later fragment
-        /// gets its geometry from the commit of the cut that produced it, and is never registered here.
+        /// Says which geometry a fragment is, and in which coordinates, for the first fragment of a branch: the
+        /// geometry it was registered with before anything was cut (DESIGN 4.5.6, the registered base geometry of the
+        /// first cut). Every later fragment gets both from the commit of the cut that produced it, and is never
+        /// registered here.
         /// </summary>
-        public void RegisterBaseGeometry(LogicalFragmentId fragment, VpStoredGeometry geometry)
+        /// <param name="lineageToGeometryLocal">
+        /// The mapping from the lineage's common logical frame — the frame an adopted plane is in — to this geometry's
+        /// own coordinates. This is the caller's to give, and is the same mapping the caller registers the display
+        /// with, so that the plane a cut is temporarily shown at and the plane its kernel really cuts at are the one
+        /// plane. Nothing here reads it from a renderer.
+        /// </param>
+        public void RegisterBaseGeometry(
+            LogicalFragmentId fragment, VpStoredGeometry geometry, Matrix4x4 lineageToGeometryLocal)
         {
             if (!fragment.IsSet)
             {
@@ -230,7 +251,27 @@ namespace Zantetsu.MeshCut
             }
 
             _geometryOf[fragment] = geometry;
+            _frameOf[fragment] = lineageToGeometryLocal;
             _withoutGeometry.Remove(fragment);
+        }
+
+        /// <summary>
+        /// The same, for a caller whose logical frame **is** the geometry's own coordinates. That is the whole of what
+        /// this overload says: it is the identity mapping asserted, not a mapping left out. A caller whose two frames
+        /// differ registers the mapping instead — one that is not registered is never guessed at here.
+        /// </summary>
+        public void RegisterBaseGeometry(LogicalFragmentId fragment, VpStoredGeometry geometry)
+        {
+            RegisterBaseGeometry(fragment, geometry, Matrix4x4.identity);
+        }
+
+        /// <summary>
+        /// The frame the geometry a fragment is cut in now is expressed in, if that fragment has one. A side an
+        /// earlier cut left empty keeps its frame too: what it is cut from next is still read in these coordinates.
+        /// </summary>
+        public bool TryGetGeometryFrame(LogicalFragmentId fragment, out Matrix4x4 lineageToGeometryLocal)
+        {
+            return _frameOf.TryGetValue(fragment, out lineageToGeometryLocal);
         }
 
         /// <summary>The geometry a fragment is cut from now, if it has one.</summary>
@@ -254,6 +295,11 @@ namespace Zantetsu.MeshCut
         /// is not published yet is passed over, and nothing of it is kept to be tried again later. The anchors are the
         /// caller's to distribute before publication (DESIGN 7.1).
         /// </summary>
+        /// <param name="plane">
+        /// The plane in the source fragment's own logical frame (DESIGN 5.2). It is kept as it is: this is the value
+        /// the ledger adopts and the value a commit publishes, and the kernel's own is made from it when the cut is
+        /// offered, without replacing it.
+        /// </param>
         public LogicalCutAdmission TryAdmit(
             LogicalFragmentId source,
             float4 plane,
@@ -375,6 +421,24 @@ namespace Zantetsu.MeshCut
             return node == null ? default : node.basis;
         }
 
+        /// <summary>
+        /// The plane one cut's kernel was really given, in the basis geometry's own coordinates, for the tests about
+        /// the conversion. Set once the cut has been offered.
+        /// </summary>
+        internal bool TryGetKernelPlane(CutOperationId operation, out float4 plane)
+        {
+            Node node = Find(operation);
+            if (node == null || node.stage == CutGeometryStage.WaitingForBasis || node.basisIsEmpty)
+            {
+                // Not offered yet, or a cut of an empty geometry, which has no kernel and so no plane of its own.
+                plane = default;
+                return false;
+            }
+
+            plane = node.kernelPlane;
+            return true;
+        }
+
         /// <summary>The result a cut is holding before it is committed or given back, for the tests about ownership.</summary>
         internal bool TryGetResultBeforeCommit(CutOperationId operation, out VpStorageCutResult result)
         {
@@ -481,10 +545,32 @@ namespace Zantetsu.MeshCut
         /// source an earlier commit settled as empty needs no kernel at all: the cut of an empty geometry is two empty
         /// sides, an ordinary result that travels on to the children through the ordinary commit, in the ordinary
         /// order, with no dummy geometry anywhere.
+        /// <para>
+        /// This is also where the adopted plane becomes the kernel's plane, and the only place it does: the basis and
+        /// the frame that basis is in are read together, here, at the moment the cut is really offered — so a cut
+        /// admitted long before its ancestor committed takes the frame the commit left, not one from admission time —
+        /// and the conversion happens once. A basis whose frame is not known, or a plane that will not convert into
+        /// it, is a cut that cannot be run rather than one run at some other plane.
+        /// </para>
         /// </summary>
         private bool TryStart(Node node)
         {
-            if (_withoutGeometry.Contains(node.source))
+            // Declared up front because a source settled as empty never looks one up, and the two paths join below.
+            VpStoredGeometry basis = default;
+            bool empty = _withoutGeometry.Contains(node.source);
+            if (!empty && !_geometryOf.TryGetValue(node.source, out basis))
+            {
+                return false;
+            }
+
+            if (!_frameOf.TryGetValue(node.source, out Matrix4x4 frame))
+            {
+                // Its geometry is there and the coordinates it is in are not. Nothing is filled in for that.
+                return Fail(node, VpStorageCutStatus.InvalidInput, null);
+            }
+
+            node.basisFrame = frame;
+            if (empty)
             {
                 node.basisIsEmpty = true;
                 node.cut = new VpStorageCutResult { status = VpStorageCutStatus.Ok };
@@ -492,9 +578,12 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
-            if (!_geometryOf.TryGetValue(node.source, out VpStoredGeometry basis))
+            // The adopted plane lives in the lineage's logical frame; the kernel reads the geometry's own. The one
+            // conversion, with the existing one, leaving node.plane — what the ledger adopted and what the commit
+            // will publish — exactly as it is.
+            if (!VpCutPlane.TryGeometryLocalToWorld(node.plane, frame, out float4 kernelPlane))
             {
-                return false;
+                return Fail(node, VpStorageCutStatus.InvalidInput, null);
             }
 
             if (!VpStorageCutInput.TryAcquire(_storage, basis, out VpStorageCutInput input))
@@ -503,7 +592,8 @@ namespace Zantetsu.MeshCut
             }
 
             node.basis = basis;
-            node.request = _cuts.Submit(input, node.plane, default);
+            node.kernelPlane = kernelPlane;
+            node.request = _cuts.Submit(input, kernelPlane, default);
             node.stage = CutGeometryStage.Running;
             return true;
         }
@@ -549,9 +639,14 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            // A basis is the geometry **and** the frame it was read in: a result cut from the right geometry in a
+            // frame the source no longer has is as much the wrong result as one cut from a replaced geometry. The
+            // matrices are compared value by value, because Matrix4x4's own equality is approximate.
             bool basisStillCurrent = node.basisIsEmpty
-                ? _withoutGeometry.Contains(node.source)
-                : _geometryOf.TryGetValue(node.source, out VpStoredGeometry current) && current.Equals(node.basis);
+                ? _withoutGeometry.Contains(node.source) && CurrentFrameIs(node)
+                : _geometryOf.TryGetValue(node.source, out VpStoredGeometry current)
+                    && current.Equals(node.basis)
+                    && CurrentFrameIs(node);
             if (!basisStillCurrent)
             {
                 // What it was cut from is no longer what the source is. Adopting it would put the display back onto
@@ -570,9 +665,10 @@ namespace Zantetsu.MeshCut
             // The sides are the commit's from here: what it does with them, and what it hands each child, is its own.
             node.holdsProduced = false;
             _geometryOf.Remove(node.source);
+            _frameOf.Remove(node.source);
             _withoutGeometry.Remove(node.source);
-            Settle(record.positive, node.cut.positive, committed.positive);
-            Settle(record.negative, node.cut.negative, committed.negative);
+            Settle(record.positive, node.cut.positive, committed.positive, node.basisFrame);
+            Settle(record.negative, node.cut.negative, committed.negative, node.basisFrame);
             node.stage = CutGeometryStage.Committed;
             node.over = true;
 
@@ -581,13 +677,21 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        private void Settle(LogicalFragmentId fragment, VpStorageCutSide side, VpStoredGeometry committed)
+        /// <summary>
+        /// What one side is from the commit on. The frame travels with it: this commit does not rebuild a child's
+        /// coordinates — a produced side is written in the coordinates its basis was read in, and a side that is the
+        /// input borrowed back keeps the very geometry — so a later cut of this side is read in the same frame. An
+        /// empty side keeps it too, so that the correspondence is not lost where a branch is empty for a while.
+        /// </summary>
+        private void Settle(
+            LogicalFragmentId fragment, VpStorageCutSide side, VpStoredGeometry committed, Matrix4x4 frame)
         {
             if (!fragment.IsSet)
             {
                 return;
             }
 
+            _frameOf[fragment] = frame;
             if (side.IsEmpty)
             {
                 _geometryOf.Remove(fragment);
@@ -736,6 +840,29 @@ namespace Zantetsu.MeshCut
             }
         }
 
+        /// <summary>Whether the source is still in the very frame this cut's basis was read in.</summary>
+        private bool CurrentFrameIs(Node node)
+        {
+            return _frameOf.TryGetValue(node.source, out Matrix4x4 current) && SameFrame(current, node.basisFrame);
+        }
+
+        /// <summary>
+        /// Value by value, with no tolerance: Matrix4x4's own equality is approximate, and a frame that is merely
+        /// close to the one a result was cut in is a different frame.
+        /// </summary>
+        private static bool SameFrame(Matrix4x4 a, Matrix4x4 b)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                if (a[i] != b[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private Node Find(CutOperationId operation)
         {
             for (int i = 0; i < _nodes.Count; i++)
@@ -754,8 +881,17 @@ namespace Zantetsu.MeshCut
         {
             internal CutOperationId operation;
             internal LogicalFragmentId source;
+            /// <summary>The adopted plane, in the source fragment's logical frame. Never replaced.</summary>
             internal float4 plane;
+
+            /// <summary>The same plane in the basis geometry's own coordinates: what the kernel was given.</summary>
+            internal float4 kernelPlane;
+
             internal VpStoredGeometry basis;
+
+            /// <summary>The frame the basis was read in, which its two sides go on in.</summary>
+            internal Matrix4x4 basisFrame;
+
             internal bool basisIsEmpty;
             internal VpStorageCutRequest request;
             internal VpStorageCutResult cut;
