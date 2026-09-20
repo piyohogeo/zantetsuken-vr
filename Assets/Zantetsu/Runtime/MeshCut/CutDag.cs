@@ -45,6 +45,12 @@ namespace Zantetsu.MeshCut
         public readonly VpStorageCutSide positive;
         public readonly VpStorageCutSide negative;
 
+        /// <summary>
+        /// Cap triangles the kernel really made for this cut. This is the evidence that the cut has a surface
+        /// boundary at all: zero means there is none to record (DESIGN 4.5.6, 8).
+        /// </summary>
+        public readonly int capTriangles;
+
         internal CutGeometryCommit(
             CutOperationId operation,
             LogicalFragmentId source,
@@ -52,8 +58,10 @@ namespace Zantetsu.MeshCut
             LogicalFragmentId negativeFragment,
             float4 plane,
             VpStorageCutSide positive,
-            VpStorageCutSide negative)
+            VpStorageCutSide negative,
+            int capTriangles)
         {
+            this.capTriangles = capTriangles;
             this.operation = operation;
             this.source = source;
             this.positiveFragment = positiveFragment;
@@ -552,7 +560,8 @@ namespace Zantetsu.MeshCut
             }
 
             var commit = new CutGeometryCommit(
-                node.operation, node.source, record.positive, record.negative, node.plane, node.cut.positive, node.cut.negative);
+                node.operation, node.source, record.positive, record.negative, node.plane, node.cut.positive,
+                node.cut.negative, node.cut.kernel.capTriangles);
             if (!_commit.TryCommit(in commit, out CutGeometryCommitted committed))
             {
                 return false;

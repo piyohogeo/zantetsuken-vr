@@ -291,6 +291,40 @@ namespace Zantetsu.Rendering
             return false;
         }
 
+        /// <summary>
+        /// Whether this table could take <paramref name="count"/> more geometries, each with one display instance,
+        /// right now. It asks by the same rule a registration chooses its slots by — a slot that is not live and has
+        /// not used its last generation — so a caller that needs two is not told yes and then refused. A slot whose
+        /// generations are spent is not room, however free it looks. Nothing is taken or changed here.
+        /// </summary>
+        public bool HasRoomForGeometriesWithDisplayInstances(int count)
+        {
+            if (count <= 0)
+            {
+                return true;
+            }
+
+            int geometries = 0;
+            for (int s = 0; s < _geometries.Length && geometries < count; s++)
+            {
+                if (!_geometries[s].live && _geometries[s].generation != _lastGeneration)
+                {
+                    geometries++;
+                }
+            }
+
+            int instances = 0;
+            for (int s = 0; s < _instances.Length && instances < count; s++)
+            {
+                if (!_instances[s].live && _instances[s].generation != _lastGeneration)
+                {
+                    instances++;
+                }
+            }
+
+            return geometries >= count && instances >= count;
+        }
+
         private VpGeometryReference TakeGeometrySlot(int slot, VpStoredGeometry geometry)
         {
             ref GeometrySlot taken = ref _geometries[slot];

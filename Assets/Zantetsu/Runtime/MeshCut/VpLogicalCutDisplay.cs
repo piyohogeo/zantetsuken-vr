@@ -330,6 +330,73 @@ namespace Zantetsu.MeshCut
     /// broken: what reached the GPU cannot be established, and only <see cref="Dispose"/> is left. Main thread only.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// One surface boundary a geometry commit really published (DESIGN 4.5.6, 8): the cut it came from, the two sides
+    /// it lies between, the adopted plane and the frame that plane is in, and how much surface the cut really made.
+    /// A cut that made no surface -- the plane missed the geometry, or one side is empty -- has no record at all.
+    /// <para>
+    /// This is not the "already reflected" set a registration carries. That set says which temporary clip and cap are
+    /// no longer drawn, and a cut that made no surface still belongs to it; this says which boundary exists in the
+    /// geometry. The cut operation is the identity of both the boundary and its plane: no new permanent id is made.
+    /// </para>
+    /// </summary>
+    public readonly struct LogicalCutBoundaryRecord
+    {
+        internal LogicalCutBoundaryRecord(
+            CutOperationId operation,
+            LogicalFragmentId positive,
+            LogicalFragmentId negative,
+            VpStoredGeometry positiveGeometry,
+            VpStoredGeometry negativeGeometry,
+            Matrix4x4 positiveObjectToWorld,
+            Matrix4x4 negativeObjectToWorld,
+            Vector4 plane,
+            Matrix4x4 lineageToGeometryLocal,
+            int capTriangles,
+            long generation)
+        {
+            this.operation = operation;
+            this.positive = positive;
+            this.negative = negative;
+            this.positiveGeometry = positiveGeometry;
+            this.negativeGeometry = negativeGeometry;
+            this.positiveObjectToWorld = positiveObjectToWorld;
+            this.negativeObjectToWorld = negativeObjectToWorld;
+            this.plane = plane;
+            this.lineageToGeometryLocal = lineageToGeometryLocal;
+            this.capTriangles = capTriangles;
+            this.generation = generation;
+        }
+
+        /// <summary>The cut this boundary is of, which is the identity of the boundary and of its plane.</summary>
+        public readonly CutOperationId operation;
+
+        /// <summary>The fragment on the plane's positive side, and the one on its negative side.</summary>
+        public readonly LogicalFragmentId positive, negative;
+
+        /// <summary>
+        /// The geometry each side was at the commit, named and not owned: what it was, not what the fragment is
+        /// afterwards. A later cut of either side replaces that fragment's geometry and does not change this, and
+        /// nothing here keeps the geometry alive or delays its retirement.
+        /// </summary>
+        public readonly VpStoredGeometry positiveGeometry, negativeGeometry;
+
+        /// <summary>Where each side's geometry stood at the commit: its own placement, separation included.</summary>
+        public readonly Matrix4x4 positiveObjectToWorld, negativeObjectToWorld;
+
+        /// <summary>The adopted plane, in the lineage's frame -- the frame it was admitted in.</summary>
+        public readonly Vector4 plane;
+
+        /// <summary>From that lineage frame to the coordinates the two sides' geometry is in.</summary>
+        public readonly Matrix4x4 lineageToGeometryLocal;
+
+        /// <summary>Cap triangles the cut made. Always positive: a record exists only where a surface does.</summary>
+        public readonly int capTriangles;
+
+        /// <summary>The display generation this was published at.</summary>
+        public readonly long generation;
+    }
+
     public sealed class VpLogicalCutDisplay : IDisposable
     {
         private sealed class Shown
@@ -408,6 +475,13 @@ namespace Zantetsu.MeshCut
         private readonly int _instanceCapacity;
 
         private readonly List<Shown> _shown = new List<Shown>(2);
+
+        // Registrations a committed cut replaced. They are no longer collected, but what they hold is still what the
+        // adopted snapshot is drawing, so they are let go only after the next adoption has taken their place.
+        private readonly List<Shown> _retiring = new List<Shown>(2);
+
+        // The surface boundaries the commits have published, in the order they were published.
+        private readonly List<LogicalCutBoundaryRecord> _boundaries = new List<LogicalCutBoundaryRecord>(2);
         private readonly List<VpMultiCutRegistration> _registrations = new List<VpMultiCutRegistration>(2);
 
         // The adopted snapshot and the one a collection builds beside it. They change places on adoption, so the one
@@ -1721,6 +1795,397 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>
+        /// Puts one committed cut's real geometry in place of the body it was cut from (DESIGN 4.5.6): the two sides,
+        /// where each of them stands, the boundary each now reflects and the surface boundary the cut really made, as
+        /// one consistent change. The cut's own temporary clip and cap go with it, because each side is registered as
+        /// reflecting this cut's boundary on its own side; every later cut of the branch stays temporary and is
+        /// rebuilt on the new bodies at the next collection.
+        /// <para>
+        /// **Where each side stands.** A snapshot sums the separation of every cut from the registration's root
+        /// downwards, and requires the placement to already hold whatever separated that root. A commit moves the root
+        /// down to the two sides, so this takes that cut's own separation -- the same rule, from the cut's settled
+        /// anchor distribution and its world plane -- into each side's placement. What the snapshot still sums is only
+        /// what is below the new root, so nothing is lost and nothing is counted twice.
+        /// </para>
+        /// <para>
+        /// **What it does not wait for.** Nothing here adopts a snapshot, prepares a camera or draws: it changes what
+        /// the *next* collection will be built from. A collection that has already settled this frame keeps drawing
+        /// what it settled, and this commit is in the one after it — a prepared snapshot is never left with one side
+        /// old and one side new. The body it replaces keeps its geometry and display instances until that next
+        /// collection has been adopted, so nothing a prepared snapshot still reads is freed early.
+        /// </para>
+        /// <para>
+        /// **The sides.** A produced side becomes a registration of its own. A side that is the input borrowed back
+        /// keeps that very registration, re-keyed to the child that borrowed it, with nothing transferred and nothing
+        /// taken. An empty side is registered as nothing at all: no renderer and no stand-in geometry, and its logical
+        /// and physics child is untouched. A cut whose two sides are both empty has nothing shown for it and is
+        /// accepted as a change to nothing.
+        /// </para>
+        /// <para>
+        /// **What it transfers.** The vertices the cut appended go across once, and the two sides' indices are one
+        /// contiguous run and go across in one <c>SetData</c> — never one transfer per side (DESIGN 4.5.6). A side
+        /// that reuses the input transfers nothing at all. Every ordinary refusal is decided **before** the transfer,
+        /// so a cut offered again never sends the same run twice.
+        /// </para>
+        /// <para>
+        /// **The boundary.** Where the cut really made a surface — <paramref name="capTriangles"/> above zero, with
+        /// both sides produced — one <see cref="LogicalCutBoundaryRecord"/> is published here with it. Where it made
+        /// none there is no record: the "already reflected" set a side carries is a different thing and is set either
+        /// way.
+        /// </para>
+        /// <para>
+        /// Refused, changing nothing at all, when the body is not shown here, when a produced side cannot be prepared,
+        /// resolved to materials or placed within the snapshot's input contract, when what it needs does not fit the
+        /// drawing capacity or the reference table's room, when a separation cannot be settled, or when the display has
+        /// stopped. Nothing is taken and nothing is transferred on any of those, so the cut keeps its two sides and may
+        /// be offered again.
+        /// </para>
+        /// </summary>
+        public bool TryCommitCut(
+            LogicalFragmentId source,
+            CutOperationId operation,
+            Vector4 plane,
+            LogicalFragmentId positiveFragment,
+            in VpStorageCutSide positive,
+            LogicalFragmentId negativeFragment,
+            in VpStorageCutSide negative,
+            int capTriangles)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            ThrowIfPreparing();
+            if (_halted || !source.IsSet || !operation.IsSet)
+            {
+                return false;
+            }
+
+            Shown body = null;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_shown[i].fragment == source)
+                {
+                    body = _shown[i];
+                    break;
+                }
+            }
+
+            if (body == null)
+            {
+                // Nothing of this body is shown. Two empty sides change nothing, so that is not a refusal; a side with
+                // geometry cannot be placed without the body's placement, so it is.
+                return positive.IsEmpty && negative.IsEmpty;
+            }
+
+            var face = new VpCapFace(_ledger, operation);
+            if (positive.IsBorrowed || negative.IsBorrowed)
+            {
+                // The plane did not cut: one child is the input itself. The registration stays exactly as it is, with
+                // the child's name, the separation of its own side taken into its placement, and the boundary it now
+                // reflects -- there is no surface here, so no boundary record is published.
+                bool positiveBorrows = positive.IsBorrowed;
+                float side = positiveBorrows ? 1f : -1f;
+                LogicalFragmentId kept = positiveBorrows ? positiveFragment : negativeFragment;
+                if (!kept.IsSet || !TryTakeSeparation(operation, side, body, out Vector3 keptOffset))
+                {
+                    return false;
+                }
+
+                body.fragment = kept;
+                body.objectToWorld = Separated(body.objectToWorld, keptOffset);
+                body.reflected = Reflecting(body.reflected, face, side);
+                return true;
+            }
+
+            if (positive.IsEmpty && negative.IsEmpty)
+            {
+                // Neither side has geometry: the body stops being shown, and no child is registered for it.
+                Retire(body);
+                return true;
+            }
+
+            // Everything that can be judged without changing anything, first: the two sides, where they stand, the
+            // drawing room after the swap and the reference table's room. Only then is anything transferred or taken.
+            VpIndirectCommand[] positiveCommands = null;
+            Material[] positiveMaterials = null;
+            Bounds positiveBounds = default;
+            Vector3 positiveOffset = Vector3.zero;
+            VpIndirectCommand[] negativeCommands = null;
+            Material[] negativeMaterials = null;
+            Bounds negativeBounds = default;
+            Vector3 negativeOffset = Vector3.zero;
+            int commands = 0;
+            int registrations = 0;
+            if (positive.IsProduced)
+            {
+                if (!positiveFragment.IsSet
+                    || !TryTakeSeparation(operation, 1f, body, out positiveOffset)
+                    || !TryPrepareSide(positive.geometry, body, positiveOffset, out positiveCommands, out positiveMaterials, out positiveBounds))
+                {
+                    return false;
+                }
+
+                commands += positiveCommands.Length;
+                registrations++;
+            }
+
+            if (negative.IsProduced)
+            {
+                if (!negativeFragment.IsSet
+                    || !TryTakeSeparation(operation, -1f, body, out negativeOffset)
+                    || !TryPrepareSide(negative.geometry, body, negativeOffset, out negativeCommands, out negativeMaterials, out negativeBounds))
+                {
+                    return false;
+                }
+
+                commands += negativeCommands.Length;
+                registrations++;
+            }
+
+            if (commands == 0)
+            {
+                return false;
+            }
+
+            // Two different rooms, judged apart. The drawing data is judged on what is drawn after the swap: the body
+            // goes and the sides that replace it come, each at one render fragment. Holding the body's own geometry and
+            // display instances until the next adoption is not drawing data at all -- it is room in the reference
+            // table, and the table is asked by its own rule whether both sides could really be taken.
+            int bodyInstances = body.commands.Length * Math.Max(1, body.renderFragmentsShown);
+            if (ShownCommandCount() - body.commands.Length + commands > _commandCapacity
+                || CurrentInstanceCount() - bodyInstances + commands > _instanceCapacity
+                || !_table.HasRoomForGeometriesWithDisplayInstances(registrations))
+            {
+                return false;
+            }
+
+            // One vertex transfer for what the cut appended -- both sides share it -- and one index transfer for the
+            // two sides together, which is the one contiguous run they were written as.
+            VpStoredGeometry appended = positive.IsProduced ? positive.geometry : negative.geometry;
+            int vertices;
+            int indices;
+            try
+            {
+                if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                        _storage, _buffers.VertexBuffer, appended.vertexStart, appended.vertexCount, out vertices))
+                {
+                    return false;
+                }
+
+                bool uploaded = positive.IsProduced && negative.IsProduced
+                    ? VpStoredGeometryTransfer.TryUploadPublishedIndexRun(
+                        _storage, _buffers.IndexBuffer, positive.geometry.indexRange, negative.geometry.indexRange, out indices)
+                    : VpStoredGeometryTransfer.TryUploadPublishedIndices(
+                        _storage,
+                        _buffers.IndexBuffer,
+                        positive.IsProduced ? positive.geometry.indexRange : negative.geometry.indexRange,
+                        out indices);
+                if (!uploaded)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                _broken = true;
+                throw;
+            }
+
+            VertexTransfers += vertices > 0 ? 1 : 0;
+            IndexTransfers += indices > 0 ? 1 : 0;
+
+            // The room was checked above, so taking these cannot fail for want of it. One that fails all the same is
+            // this display's own invariant broken, not an ordinary refusal: nothing here may give a produced side's
+            // index range back, because the cut still owns it until a commit is established.
+            if (positive.IsProduced)
+            {
+                TakeBody(
+                    positiveFragment, positive.geometry, body, positiveOffset, positiveCommands, positiveMaterials,
+                    positiveBounds, Reflecting(body.reflected, face, 1f));
+            }
+
+            if (negative.IsProduced)
+            {
+                TakeBody(
+                    negativeFragment, negative.geometry, body, negativeOffset, negativeCommands, negativeMaterials,
+                    negativeBounds, Reflecting(body.reflected, face, -1f));
+            }
+
+            if (capTriangles > 0 && positive.IsProduced && negative.IsProduced)
+            {
+                _boundaries.Add(new LogicalCutBoundaryRecord(
+                    operation,
+                    positiveFragment,
+                    negativeFragment,
+                    positive.geometry,
+                    negative.geometry,
+                    Separated(body.objectToWorld, positiveOffset),
+                    Separated(body.objectToWorld, negativeOffset),
+                    plane,
+                    body.lineageToGeometryLocal,
+                    capTriangles,
+                    _generation));
+            }
+
+            Retire(body);
+            return true;
+        }
+
+        /// <summary>
+        /// Where one shown registration stands: the placement it is drawn at, which holds every separation above its
+        /// own root. What a snapshot adds below that root is the snapshot's, not this.
+        /// </summary>
+        internal bool TryGetShownPlacement(LogicalFragmentId fragment, out Matrix4x4 objectToWorld)
+        {
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_shown[i].fragment == fragment)
+                {
+                    objectToWorld = _shown[i].objectToWorld;
+                    return true;
+                }
+            }
+
+            objectToWorld = Matrix4x4.identity;
+            return false;
+        }
+
+        /// <summary>The surface boundaries the commits have published.</summary>
+        public int BoundaryRecordCount => _boundaries.Count;
+
+        /// <summary>One published surface boundary, in the order they were published.</summary>
+        public bool TryGetBoundaryRecord(int index, out LogicalCutBoundaryRecord record)
+        {
+            if (index < 0 || index >= _boundaries.Count)
+            {
+                record = default;
+                return false;
+            }
+
+            record = _boundaries[index];
+            return true;
+        }
+
+        /// <summary>
+        /// The separation of one side of one cut, by the same rule a snapshot sums (DESIGN 5.5): the cut's own world
+        /// plane normal times the separation, on the side that its settled anchor distribution left free, and nothing
+        /// at all on a side its anchors fix. False when the cut's distribution or plane cannot be read, which is a
+        /// refusal and not a zero.
+        /// </summary>
+        private bool TryTakeSeparation(CutOperationId operation, float side, Shown body, out Vector3 offset)
+        {
+            offset = Vector3.zero;
+            if (!_ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution)
+                || !_ledger.TryGetOperation(operation, out LogicalCutOperation cut))
+            {
+                return false;
+            }
+
+            if (FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount))
+            {
+                return true;
+            }
+
+            if (!VpCutPlane.TryGeometryLocalToWorld(cut.plane, body.lineageToGeometryLocal, out float4 local)
+                || !VpCutPlane.TryGeometryLocalToWorld(local, body.objectToWorld, out float4 world))
+            {
+                return false;
+            }
+
+            offset = side * new Vector3(world.x, world.y, world.z) * Separation;
+            return IsFiniteOffset(offset);
+        }
+
+        private static bool IsFiniteOffset(Vector3 offset)
+        {
+            return float.IsFinite(offset.x) && float.IsFinite(offset.y) && float.IsFinite(offset.z);
+        }
+
+        /// <summary>The body's placement with one side's separation taken into it.</summary>
+        private static Matrix4x4 Separated(Matrix4x4 objectToWorld, Vector3 offset)
+        {
+            return offset == Vector3.zero ? objectToWorld : Matrix4x4.Translate(offset) * objectToWorld;
+        }
+
+        /// <summary>One side of a commit, judged where it will really stand: the body's placement plus its own separation.</summary>
+        private bool TryPrepareSide(
+            VpStoredGeometry geometry,
+            Shown body,
+            Vector3 offset,
+            out VpIndirectCommand[] commands,
+            out Material[] commandMaterials,
+            out Bounds localBounds)
+        {
+            Matrix4x4 placement = Separated(body.objectToWorld, offset);
+            return TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
+                && VpMultiCutSnapshot.IsWithinInputContract(localBounds, placement, body.lineageToGeometryLocal)
+                && VpMultiCutSnapshot.IsWithinSectionBounds(
+                    localBounds, placement, VpCapBoundsPolygon.EpsilonFor(localBounds));
+        }
+
+        /// <summary>
+        /// Takes one produced side in, where it stands. The room was decided before anything was transferred, so a
+        /// refusal here is an invariant broken rather than an ordinary outcome, and it stops the display.
+        /// </summary>
+        private void TakeBody(
+            LogicalFragmentId fragment,
+            VpStoredGeometry geometry,
+            Shown body,
+            Vector3 offset,
+            VpIndirectCommand[] commands,
+            Material[] commandMaterials,
+            Bounds localBounds,
+            VpClipBoundary[] reflected)
+        {
+            if (!_table.TryRegisterGeometryWithDisplayInstance(
+                    geometry, out VpGeometryReference reference, out VpDisplayInstanceReference instance))
+            {
+                _broken = true;
+                throw new InvalidOperationException(
+                    "a committed side could not be registered although its room was taken into account");
+            }
+
+            var ranges = new VpGeometryRange[commands.Length];
+            for (int c = 0; c < commands.Length; c++)
+            {
+                ranges[c] = commands[c].range;
+            }
+
+            var entry = new Shown
+            {
+                fragment = fragment,
+                geometry = geometry,
+                reference = reference,
+                objectToWorld = Separated(body.objectToWorld, offset),
+                lineageToGeometryLocal = body.lineageToGeometryLocal,
+                reflected = reflected,
+                commands = commands,
+                commandMaterials = commandMaterials,
+                ranges = ranges,
+                localBounds = localBounds,
+            };
+            entry.instances.Add(instance);
+            _shown.Add(entry);
+        }
+
+        /// <summary>
+        /// Stops collecting a body and keeps what it holds until the next adoption has replaced what is drawn from it.
+        /// </summary>
+        private void Retire(Shown body)
+        {
+            _shown.Remove(body);
+            _retiring.Add(body);
+        }
+
+        /// <summary>What a side reflects once it is committed: what the body reflected, and this cut on its own side.</summary>
+        private static VpClipBoundary[] Reflecting(VpClipBoundary[] reflected, VpCapFace face, float side)
+        {
+            var with = new VpClipBoundary[reflected.Length + 1];
+            Array.Copy(reflected, with, reflected.Length);
+            with[reflected.Length] = new VpClipBoundary(face, side);
+            return with;
+        }
+
         // ----- frames ----------------------------------------------------------------------------------------------
 
         /// <summary>
@@ -2055,6 +2520,13 @@ namespace Zantetsu.MeshCut
                 ReleaseReferences(_shown[i]);
             }
 
+            for (int i = 0; i < _retiring.Count; i++)
+            {
+                // A body a commit replaced and whose next collection never came: it is the frame boundary here too.
+                ReleaseReferences(_retiring[i]);
+            }
+
+            _retiring.Clear();
             _shown.Clear();
             _registrations.Clear();
             _geometries.Restart(0);
@@ -2254,7 +2726,14 @@ namespace Zantetsu.MeshCut
             CommandUploads++;
 
             // 9. Only now is the display's own state changed: the references no longer needed are given back, and a
-            //    registered fragment that is retired is let go.
+            //    registered fragment that is retired is let go. A body a commit replaced goes here too, never earlier:
+            //    until this adoption it was what the snapshot on screen was drawn from.
+            for (int r = _retiring.Count - 1; r >= 0; r--)
+            {
+                ReleaseReferences(_retiring[r]);
+                _retiring.RemoveAt(r);
+            }
+
             for (int g = _shown.Count - 1; g >= 0; g--)
             {
                 Shown entry = _shown[g];
@@ -2662,6 +3141,18 @@ namespace Zantetsu.MeshCut
             for (int i = 0; i < _shown.Count; i++)
             {
                 count += _shown[i].commands.Length * Math.Max(1, _shown[i].renderFragmentsShown);
+            }
+
+            return count;
+        }
+
+        /// <summary>The commands every registration would draw at one render fragment each: the room a swap must fit.</summary>
+        private int ShownCommandCount()
+        {
+            int count = 0;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                count += _shown[i].commands.Length;
             }
 
             return count;
