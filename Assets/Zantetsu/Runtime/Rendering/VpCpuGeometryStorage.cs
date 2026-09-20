@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 
@@ -64,7 +65,13 @@ namespace Zantetsu.Rendering
         // At most one cut output reservation is open at a time, because an open one holds the uncommitted tails of the
         // vertices, the mapping, the submeshes and the blocks: a second writer into the same tails would have its work
         // overwritten or would overwrite what the first is about to commit.
-        private VpCutOutputReservation _openCutOutput;
+        // Room is given out as spans, so several cuts may hold room in the same arrays at once and write only their
+        // own. The index side already had an allocator; these are its counterparts for the parts addressed by
+        // position.
+        private readonly VpSpanAllocator _vertexSpans;
+        private readonly VpSpanAllocator _submeshSpans;
+        private readonly VpSpanAllocator _vertexBlockSpans;
+        private readonly List<VpCutOutputReservation> _openCutOutputs = new List<VpCutOutputReservation>();
         private int _submeshCount;
         private int _vertexBlockCount;
         private bool _disposed;
@@ -91,6 +98,11 @@ namespace Zantetsu.Rendering
             _vertices = new VpCpuVertexStorage(vertexCapacity, allocator);
             try
             {
+                // Inside the try: these can throw on a capacity the vertex storage accepted, and the vertices are
+                // already native memory by then.
+                _vertexSpans = new VpSpanAllocator(vertexCapacity);
+                _submeshSpans = new VpSpanAllocator(submeshCapacity);
+                _vertexBlockSpans = new VpSpanAllocator(vertexBlockCapacity);
                 _indices = new VpCpuIndexStorage(indexCapacity, indexDescriptorCapacity, allocator);
                 _topologyOfVertex = new NativeArray<int>(vertexCapacity, allocator);
                 _submeshes = new NativeArray<VpGeometrySubmesh>(submeshCapacity, allocator);
@@ -124,11 +136,33 @@ namespace Zantetsu.Rendering
 
         public int VertexCapacity => _vertices.Capacity;
 
+        /// <summary>
+        /// How many vertex slots are free: neither held by an open reservation nor taken by something published. It
+        /// is what a further reservation may be given, and it comes back when a reservation is cancelled or commits
+        /// less than it took. Retiring a geometry does not return its vertices, which is unchanged by this.
+        /// </summary>
+        public int FreeVertexRoom => _vertexSpans.Capacity - _vertexSpans.Used;
+
+        /// <summary>The largest single vertex span that could be reserved right now, which fragmentation lowers.</summary>
+        public int LargestFreeVertexSpan => _vertexSpans.LargestFreeSpan;
+
+        /// <summary>How many separate free vertex spans there are: one when the free room is in one piece.</summary>
+        public int FreeVertexSpanCount => _vertexSpans.FreeSpanCount;
+
+        /// <summary>How many submesh descriptor slots are free, by the same rule as the vertices.</summary>
+        public int FreeSubmeshRoom => _submeshSpans.Capacity - _submeshSpans.Used;
+
+        /// <summary>How many vertex block slots are free, by the same rule as the vertices.</summary>
+        public int FreeVertexBlockRoom => _vertexBlockSpans.Capacity - _vertexBlockSpans.Used;
+
         public int VertexCount => _vertices.Count;
 
         public int IndexCapacity => _indices.IndexCapacity;
 
         public int IndexDescriptorCapacity => _indices.DescriptorCapacity;
+
+        /// <summary>How many indices are free for a reservation, the way <see cref="FreeVertexRoom"/> is.</summary>
+        public int FreeIndexRoom => _indices.FreeIndexRoom;
 
         public int SubmeshCapacity => _submeshes.Length;
 
@@ -176,7 +210,7 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             geometry = default;
-            if (mesh == null || _openCutOutput != null)
+            if (mesh == null || _openCutOutputs.Count > 0)
             {
                 return false;
             }
@@ -195,16 +229,16 @@ namespace Zantetsu.Rendering
                     return false;
                 }
 
-                int vertexStart = _vertices.Count;
                 int vertexCount = data.vertexCount;
-                int submeshStart = _submeshCount;
                 int submeshCount = data.subMeshCount;
-                int blockStart = _vertexBlockCount;
-                if (vertexCount > _vertices.Capacity - vertexStart
-                    || submeshCount > _submeshes.Length - submeshStart
-                    || 1 > _vertexBlocks.Length - blockStart
-                    || !_indices.TryReserve((int)totalIndexCount, out VpIndexRangeHandle indexRange))
+                if (!TryTakeSpans(vertexCount, submeshCount, 1, out int vertexStart, out int submeshStart, out int blockStart))
                 {
+                    return false;
+                }
+
+                if (!_indices.TryReserve((int)totalIndexCount, out VpIndexRangeHandle indexRange))
+                {
+                    GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                     return false;
                 }
 
@@ -212,7 +246,7 @@ namespace Zantetsu.Rendering
                 try
                 {
                     published = _indices.TryGetReservedWriteView(indexRange, out NativeArray<uint> indices)
-                        && VpMeshConverter.TryConvert(data, _vertices.GetUncommittedTail(vertexCount), indices, out _, out _)
+                        && VpMeshConverter.TryConvert(data, _vertices.GetSpan(vertexStart, vertexCount), indices, out _, out _)
                         && TryRebase(indices, vertexStart, vertexCount)
                         && WriteMeshSubmeshes(data, submeshStart)
                         && WriteOwnBlock(blockStart, vertexStart, vertexCount)
@@ -220,6 +254,7 @@ namespace Zantetsu.Rendering
                 }
                 catch
                 {
+                    GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                     CancelWhileThrowing(indexRange);
                     throw;
                 }
@@ -227,12 +262,11 @@ namespace Zantetsu.Rendering
                 if (!published)
                 {
                     _indices.TryCancelReservation(indexRange);
+                    GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                     return false;
                 }
 
-                _vertices.Commit(vertexCount);
-                _submeshCount += submeshCount;
-                _vertexBlockCount = blockStart + 1;
+                PublishSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 geometry = new VpStoredGeometry(vertexStart, vertexCount, indexRange, false, 0, submeshStart, submeshCount, blockStart, 1);
                 RecordAppend(indexRange, geometry);
                 return true;
@@ -314,32 +348,39 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             geometry = default;
-            if (vertices == null || localIndices == null || topologyOfVertex == null || submeshes == null || _openCutOutput != null)
+            if (vertices == null || localIndices == null || topologyOfVertex == null || submeshes == null || _openCutOutputs.Count > 0)
             {
                 return false;
             }
 
-            int vertexStart = _vertices.Count;
             int vertexCount = vertices.Length;
             int indexCount = localIndices.Length;
-            int submeshStart = _submeshCount;
             int submeshCount = submeshes.Length;
-            int blockStart = _vertexBlockCount;
             if (topologyVertexCount < 0
                 || topologyOfVertex.Length != vertexCount
                 || indexCount % 3 != 0
                 || !AreTopologyIdsInRange(topologyOfVertex, topologyVertexCount)
-                || !AreIndicesInRange(localIndices, vertexStart, vertexCount)
                 || !DoSubmeshesCover(submeshes, 0, submeshes.Length, indexCount))
             {
                 return false;
             }
 
-            if (vertexCount > _vertices.Capacity - vertexStart
-                || submeshCount > _submeshes.Length - submeshStart
-                || 1 > _vertexBlocks.Length - blockStart
-                || !_indices.TryReserve(indexCount, out VpIndexRangeHandle indexRange))
+            // Where the vertices go is the allocator's answer now, and the indices are checked against it, so the room
+            // is taken before that check and given back if it fails.
+            if (!TryTakeSpans(vertexCount, submeshCount, 1, out int vertexStart, out int submeshStart, out int blockStart))
             {
+                return false;
+            }
+
+            if (!AreIndicesInRange(localIndices, vertexStart, vertexCount))
+            {
+                GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
+                return false;
+            }
+
+            if (!_indices.TryReserve(indexCount, out VpIndexRangeHandle indexRange))
+            {
+                GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 return false;
             }
 
@@ -349,13 +390,14 @@ namespace Zantetsu.Rendering
                 if (!_indices.TryGetReservedWriteView(indexRange, out NativeArray<uint> indexView))
                 {
                     _indices.TryCancelReservation(indexRange);
+                    GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                     return false;
                 }
 
-                NativeArray<VpRenderVertex> vertexTail = _vertices.GetUncommittedTail(vertexCount);
+                NativeArray<VpRenderVertex> vertexSpan = _vertices.GetSpan(vertexStart, vertexCount);
                 for (int v = 0; v < vertexCount; v++)
                 {
-                    vertexTail[v] = vertices[v];
+                    vertexSpan[v] = vertices[v];
                     _topologyOfVertex[vertexStart + v] = topologyOfVertex[v];
                 }
 
@@ -371,11 +413,12 @@ namespace Zantetsu.Rendering
 
                 WriteOwnBlock(blockStart, vertexStart, vertexCount);
 
-                // The last step that can fail: what follows only advances the committed counts.
+                // The last step that can fail: what follows only publishes the spans already written.
                 published = _indices.TryPublish(indexRange);
             }
             catch
             {
+                GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 CancelWhileThrowing(indexRange);
                 throw;
             }
@@ -383,12 +426,11 @@ namespace Zantetsu.Rendering
             if (!published)
             {
                 _indices.TryCancelReservation(indexRange);
+                GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 return false;
             }
 
-            _vertices.Commit(vertexCount);
-            _submeshCount += submeshCount;
-            _vertexBlockCount = blockStart + 1;
+            PublishSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
             geometry = new VpStoredGeometry(
                 vertexStart, vertexCount, indexRange, true, topologyVertexCount, submeshStart, submeshCount, blockStart, 1, cutInputAccepted);
             RecordAppend(indexRange, geometry);
@@ -405,9 +447,11 @@ namespace Zantetsu.Rendering
         /// <param name="submeshCapacity">Descriptors the two sides may use together, normally twice the parent's.</param>
         /// <param name="vertexBlockCapacity">Blocks the children's shared list may use, normally the parent's plus one.</param>
         /// <remarks>
-        /// One reservation at a time. While one is open it holds the uncommitted vertex, mapping, submesh and block
-        /// tails, so a second reservation and both append paths are refused without changing anything until it is
-        /// committed or cancelled. A commit that fails leaves it open, to be cancelled.
+        /// **Several reservations may be open at once.** Each holds spans of its own -- vertices with their mapping
+        /// entries, submesh descriptors, vertex blocks, and an index range -- so two cuts of this storage write in
+        /// different places and their kernels may run together. A span is never moved, so taking one while a worker
+        /// writes another leaves that worker's views valid. What is refused while any reservation is open is an
+        /// append, which is unchanged. A commit that fails leaves its reservation open, to be cancelled.
         /// </remarks>
         public bool TryReserveCutOutput(
             VpStoredGeometry parent,
@@ -419,8 +463,7 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             reservation = null;
-            if (_openCutOutput != null
-                || !IsMetadataReadable(parent)
+            if (!IsMetadataReadable(parent)
                 || newVertexCapacity < 0
                 || newIndexCapacity < 0
                 || submeshCapacity < 0
@@ -429,14 +472,14 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            int vertexStart = _vertices.Count;
-            int submeshStart = _submeshCount;
-            int blockStart = _vertexBlockCount;
-            if (newVertexCapacity > _vertices.Capacity - vertexStart
-                || submeshCapacity > _submeshes.Length - submeshStart
-                || vertexBlockCapacity > _vertexBlocks.Length - blockStart
-                || !_indices.TryReserve(newIndexCapacity, out VpIndexRangeHandle indexRange))
+            if (!TryTakeSpans(newVertexCapacity, submeshCapacity, vertexBlockCapacity, out int vertexStart, out int submeshStart, out int blockStart))
             {
+                return false;
+            }
+
+            if (!_indices.TryReserve(newIndexCapacity, out VpIndexRangeHandle indexRange))
+            {
+                GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
                 return false;
             }
 
@@ -446,6 +489,7 @@ namespace Zantetsu.Rendering
                     || !_indices.TryGetState(indexRange, out _, out int indexStart, out _))
                 {
                     _indices.TryCancelReservation(indexRange);
+                    GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
                     return false;
                 }
 
@@ -459,25 +503,27 @@ namespace Zantetsu.Rendering
                     blockStart,
                     submeshCapacity,
                     vertexBlockCapacity,
-                    _vertices.GetUncommittedTail(newVertexCapacity),
+                    _vertices.GetSpan(vertexStart, newVertexCapacity),
                     _topologyOfVertex.GetSubArray(vertexStart, newVertexCapacity),
                     indexView);
             }
             catch
             {
                 reservation = null;
+                GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
                 CancelWhileThrowing(indexRange);
                 throw;
             }
 
-            _openCutOutput = reservation;
+            _openCutOutputs.Add(reservation);
             return true;
         }
 
         /// <summary>
-        /// Gives back an open reservation without committing anything: the index range returns to the allocator and the
-        /// vertices, mapping entries and metadata written into the uncommitted tails stay invisible and are simply
-        /// overwritten by the next reservation. Returns false for a null, foreign or already closed reservation.
+        /// Gives back an open reservation without committing anything: the index range returns to its allocator and
+        /// **every span goes back whole**, to be handed out again. What was written into them stays where it is and is
+        /// simply overwritten by whoever takes those slots next; nothing of it was ever visible. No other
+        /// reservation's spans are touched. Returns false for a null, foreign or already closed reservation.
         /// </summary>
         public bool TryCancelCutOutput(VpCutOutputReservation reservation)
         {
@@ -488,7 +534,11 @@ namespace Zantetsu.Rendering
             }
 
             reservation.closed = true;
-            _openCutOutput = null;
+            _openCutOutputs.Remove(reservation);
+            GiveBackSpans(
+                reservation.vertexStart, reservation.NewVertexCapacity,
+                reservation.submeshStart, reservation.submeshCapacity,
+                reservation.vertexBlockStart, reservation.vertexBlockCapacity);
             return _indices.TryCancelReservation(reservation.indexRange);
         }
 
@@ -583,10 +633,18 @@ namespace Zantetsu.Rendering
             }
 
             reservation.closed = true;
-            _openCutOutput = null;
-            _vertices.Commit(newVertexCount);
-            _submeshCount = submeshStart + submeshCount;
-            _vertexBlockCount = blockStart + blockCount;
+            _openCutOutputs.Remove(reservation);
+
+            // Only what was used is published, and the rest of each span goes back at once, so a run that reserved
+            // generously and wrote little leaves the room it did not need to the next cut.
+            PublishSpans(
+                reservation.vertexStart, newVertexCount,
+                submeshStart, submeshCount,
+                blockStart, blockCount);
+            GiveBackSpans(
+                reservation.vertexStart + newVertexCount, reservation.NewVertexCapacity - newVertexCount,
+                submeshStart + submeshCount, reservation.submeshCapacity - submeshCount,
+                blockStart + blockCount, reservation.vertexBlockCapacity - blockCount);
 
             // What the cut produces inherits the parent's acceptance as a cut input, without being judged again
             // (DESIGN 6.2: the cut side inherits the invariants of an accepted input). The parent is the one the
@@ -719,12 +777,15 @@ namespace Zantetsu.Rendering
             }
 
             _disposed = true;
-            if (_openCutOutput != null)
+
+            // Every open reservation dies with the storage: their views point into memory that is about to go, and
+            // there may be several of them.
+            for (int i = 0; i < _openCutOutputs.Count; i++)
             {
-                // An open reservation dies with the storage: its views point into memory that is about to go.
-                _openCutOutput.closed = true;
-                _openCutOutput = null;
+                _openCutOutputs[i].closed = true;
             }
+
+            _openCutOutputs.Clear();
 
             _indices.Dispose();
             _vertexBlocks.Dispose();
@@ -733,10 +794,59 @@ namespace Zantetsu.Rendering
             _vertices.Dispose();
         }
 
+        /// <summary>
+        /// Whether every vertex of <paramref name="count"/> from <paramref name="start"/> is published: taken, and
+        /// held by no open reservation. **The high-water is not the answer.** Spans publish in whatever order their
+        /// cuts finish, so below it there may be a reservation still being written into, or room that has come back
+        /// free -- and neither may be read or transferred as though it were a published vertex.
+        /// </summary>
+        internal bool ArePublishedVertices(int start, int count)
+        {
+            if (count == 0)
+            {
+                return start >= 0 && start <= _vertices.Capacity;
+            }
+
+            if (!_vertexSpans.IsWhollyTaken(start, count))
+            {
+                return false;
+            }
+
+            int end = start + count;
+            for (int i = 0; i < _openCutOutputs.Count; i++)
+            {
+                VpCutOutputReservation open = _openCutOutputs[i];
+                int openStart = open.VertexStart;
+                int openEnd = openStart + open.NewVertexCapacity;
+                if (openStart < end && start < openEnd)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// A window on published vertices, for a reader that takes them where they are. False when any slot of the
+        /// range is not published: open, or free. **Not "below the high-water"** -- see
+        /// <see cref="ArePublishedVertices"/>.
+        /// </summary>
+        public bool TryGetCommittedVertices(int start, int count, out NativeArray<VpRenderVertex> range)
+        {
+            return TryGetCommittedVertexRange(start, count, out range);
+        }
+
         /// <inheritdoc cref="VpCpuVertexStorage.TryGetCommittedRange"/>
         internal bool TryGetCommittedVertexRange(int start, int count, out NativeArray<VpRenderVertex> range)
         {
             ThrowIfDisposed();
+            if (!ArePublishedVertices(start, count))
+            {
+                range = default;
+                return false;
+            }
+
             return _vertices.TryGetCommittedRange(start, count, out range);
         }
 
@@ -831,13 +941,68 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// Whether the reservation is this storage's own open one: the object it handed out and has not yet committed
-        /// or cancelled. A reservation of another storage, or one this storage has already closed, is not it.
+        /// Takes one span of each array, or none at all: a request that cannot be met in full gives back whatever it
+        /// had taken before answering. Room refused here is room this storage does not have free right now, which is
+        /// an ordinary outcome and not a failure of the cut.
+        /// </summary>
+        private bool TryTakeSpans(
+            int vertexCount, int submeshCount, int blockCount,
+            out int vertexStart, out int submeshStart, out int blockStart)
+        {
+            submeshStart = 0;
+            blockStart = 0;
+            if (!_vertexSpans.TryTake(vertexCount, out vertexStart))
+            {
+                return false;
+            }
+
+            if (!_submeshSpans.TryTake(submeshCount, out submeshStart))
+            {
+                _vertexSpans.GiveBack(vertexStart, vertexCount);
+                return false;
+            }
+
+            if (!_vertexBlockSpans.TryTake(blockCount, out blockStart))
+            {
+                _submeshSpans.GiveBack(submeshStart, submeshCount);
+                _vertexSpans.GiveBack(vertexStart, vertexCount);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Gives three spans back, each merging with its free neighbours. An empty span gives back nothing.</summary>
+        private void GiveBackSpans(
+            int vertexStart, int vertexCount, int submeshStart, int submeshCount, int blockStart, int blockCount)
+        {
+            _vertexSpans.GiveBack(vertexStart, vertexCount);
+            _submeshSpans.GiveBack(submeshStart, submeshCount);
+            _vertexBlockSpans.GiveBack(blockStart, blockCount);
+        }
+
+        /// <summary>
+        /// Makes three written spans visible. Each count is how far publishing has reached, not how many slots are
+        /// live: spans publish in whatever order their cuts finish, so a slot below one of these may belong to a span
+        /// still open or to one given back, and no published geometry names it.
+        /// </summary>
+        private void PublishSpans(
+            int vertexStart, int vertexCount, int submeshStart, int submeshCount, int blockStart, int blockCount)
+        {
+            _vertices.Publish(vertexStart, vertexCount);
+            _submeshCount = Math.Max(_submeshCount, submeshStart + submeshCount);
+            _vertexBlockCount = Math.Max(_vertexBlockCount, blockStart + blockCount);
+        }
+
+        /// <summary>
+        /// Whether the reservation is one of this storage's open ones: an object it handed out and has not yet
+        /// committed or cancelled. **There may be several**; a reservation of another storage, or one this storage has
+        /// already closed, is not among them.
         /// </summary>
         private bool IsOpenReservation(VpCutOutputReservation reservation)
         {
             return reservation != null
-                && ReferenceEquals(reservation, _openCutOutput)
+                && _openCutOutputs.Contains(reservation)
                 && !reservation.closed
                 && _indices.TryGetState(reservation.indexRange, out VpIndexRangeState state, out _, out _)
                 && state == VpIndexRangeState.Reserved;

@@ -50,6 +50,21 @@ namespace Zantetsu.Rendering
 
         public int DescriptorCapacity => _table.DescriptorCapacity;
 
+        /// <summary>How many indices are free, over all free ranges, which is the room left for reservations.</summary>
+        public int FreeIndexRoom
+        {
+            get
+            {
+                int free = 0;
+                for (int i = 0; i < _freeRangeCount; i++)
+                {
+                    free += _freeCounts[i];
+                }
+
+                return free;
+            }
+        }
+
         /// <summary>
         /// Reserves <paramref name="indexCount"/> indices at the start of the first free range that holds them, or an
         /// empty range at 0. Returns false with a default handle when the count is negative, no single free range is

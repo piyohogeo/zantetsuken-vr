@@ -86,6 +86,15 @@ namespace Zantetsu.Rendering
         public int NewIndexCapacity => _newIndices.Length;
 
         /// <summary>The largest number of submesh descriptors the two sides may use together.</summary>
+        /// <summary>Where this reservation's vertices begin: its own span, shared with no other.</summary>
+        public int VertexStart => vertexStart;
+
+        /// <summary>Where this reservation's submesh descriptors begin: its own span, shared with no other.</summary>
+        public int SubmeshStart => submeshStart;
+
+        /// <summary>Where this reservation's vertex blocks begin: its own span, shared with no other.</summary>
+        public int VertexBlockStart => vertexBlockStart;
+
         public int SubmeshCapacity => submeshCapacity;
 
         /// <summary>The largest number of vertex blocks the children's shared block list may use.</summary>

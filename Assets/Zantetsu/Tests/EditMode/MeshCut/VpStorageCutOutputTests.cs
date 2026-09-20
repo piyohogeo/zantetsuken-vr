@@ -253,6 +253,117 @@ namespace Zantetsu.MeshCut.Tests
             return indices;
         }
 
+        /// <summary>
+        /// Two reservations, the later one committed first. The high-water then reaches past the earlier one, whose
+        /// slots are open and being written into -- **not published**, and not to be read as committed. Once that
+        /// reservation is cancelled the same slots are free, which is not committed either, and a cut given them
+        /// afterwards publishes there properly.
+        /// </summary>
+        [Test]
+        public void SlotsUnderTheHighWater_AreNotCommittedUnlessTheyWerePublished()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                VpStoredGeometry subject = Append(storage, prepared);
+
+                Assert.That(storage.TryReserveCutOutput(subject, 8, 12, 4, 2, out VpCutOutputReservation early), Is.True, "the earlier room");
+                Assert.That(storage.TryReserveCutOutput(subject, 8, 12, 4, 2, out VpCutOutputReservation late), Is.True, "the later room");
+                int earlyStart = early.VertexStart;
+                int lateStart = late.VertexStart;
+                Assert.That(lateStart, Is.GreaterThan(earlyStart), "the layout: the later room is further along");
+
+                // The later one commits first, which carries the high-water past the earlier one's slots.
+                CommitTwoSides(storage, late, 8);
+                Assert.That(
+                    storage.VertexCount, Is.GreaterThanOrEqualTo(lateStart + 8),
+                    "publishing the later room moved the high-water past the earlier room");
+                Assert.That(
+                    storage.TryGetCommittedVertices(earlyStart, 8, out _), Is.False,
+                    "and the earlier room is still open: its slots are not committed, whatever the high-water says");
+                Assert.That(
+                    storage.TryGetCommittedVertices(lateStart, 8, out _), Is.True,
+                    "while the room that was published is");
+
+                // Cancelled, the same slots are free. Free is not committed either.
+                Assert.That(storage.TryCancelCutOutput(early), Is.True, "the earlier room goes back");
+                Assert.That(
+                    storage.TryGetCommittedVertices(earlyStart, 8, out _), Is.False,
+                    "free slots under the high-water are not committed");
+
+                // And a cut given those slots afterwards publishes there, which then does read as committed.
+                Assert.That(storage.TryReserveCutOutput(subject, 8, 12, 4, 2, out VpCutOutputReservation again), Is.True, "the room is taken again");
+                Assert.That(again.VertexStart, Is.EqualTo(earlyStart), "the very slots that came free");
+                Assert.That(
+                    storage.TryGetCommittedVertices(earlyStart, 8, out _), Is.False,
+                    "still not committed while it is open");
+                CommitTwoSides(storage, again, 8);
+                Assert.That(
+                    storage.TryGetCommittedVertices(earlyStart, 8, out _), Is.True,
+                    "and committed once it is published");
+            }
+        }
+
+        /// <summary>
+        /// Commits one reservation as two ordinary sides, so that its room becomes published geometry. The topology
+        /// count it publishes is the parent's, which a commit may not go below.
+        /// </summary>
+        private static void CommitTwoSides(VpCpuGeometryStorage storage, VpCutOutputReservation reservation, int vertices)
+        {
+            var submeshes = new[]
+            {
+                new VpGeometrySubmesh(0, 3, 0),
+                new VpGeometrySubmesh(0, 3, 0),
+            };
+            NativeArray<VpRenderVertex> newVertices = reservation.NewVertices;
+            NativeArray<int> newTopology = reservation.NewVertexTopology;
+            NativeArray<uint> newIndices = reservation.NewIndices;
+            for (int v = 0; v < vertices; v++)
+            {
+                newVertices[v] = default;
+                newTopology[v] = 0;
+            }
+
+            for (int i = 0; i < 6; i++)
+            {
+                newIndices[i] = reservation.NewVertexBase;
+            }
+
+            Assert.That(
+                storage.TryCommitCutOutput(
+                    reservation, vertices, reservation.Parent.topologyVertexCount, 3, 3, submeshes, 1, 1, out _, out _),
+                Is.True,
+                "the reservation commits");
+        }
+
+        /// <summary>Two reservations' spans are disjoint in every array they were given room in.</summary>
+        private static void AssertReservationsDoNotOverlap(VpCutOutputReservation first, VpCutOutputReservation second)
+        {
+            AssertSpansAreApart(
+                (int)first.NewVertexBase, first.NewVertexCapacity,
+                (int)second.NewVertexBase, second.NewVertexCapacity, "vertices");
+            AssertSpansAreApart(
+                first.SubmeshStart, first.SubmeshCapacity,
+                second.SubmeshStart, second.SubmeshCapacity, "submeshes");
+            AssertSpansAreApart(
+                first.VertexBlockStart, first.VertexBlockCapacity,
+                second.VertexBlockStart, second.VertexBlockCapacity, "blocks");
+        }
+
+        private static void AssertSpansAreApart(int firstStart, int firstCount, int secondStart, int secondCount, string what)
+        {
+            if (firstCount == 0 || secondCount == 0)
+            {
+                return;
+            }
+
+            Assert.That(
+                firstStart >= secondStart + secondCount || secondStart >= firstStart + firstCount,
+                Is.True,
+                "the two reservations' " + what + " are apart: [" + firstStart + ", " + (firstStart + firstCount)
+                + ") and [" + secondStart + ", " + (secondStart + secondCount) + ")");
+        }
+
         private static int PhysicalStart(VpCpuGeometryStorage storage, VpIndexRangeHandle handle)
         {
             Assert.That(storage.TryGetIndexState(handle, out _, out int start, out _), Is.True, "index state");
@@ -847,8 +958,13 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// Two reservations open at once are given room of their own: their vertex, submesh and block spans do not
+        /// overlap. Appends are refused while any reservation is open, which was true before and still is, and a
+        /// refusal changes nothing.
+        /// </summary>
         [Test]
-        public void AnOpenReservation_KeepsTheAppendTailsToItselfUntilItIsClosed()
+        public void TwoOpenReservations_AreGivenRoomOfTheirOwn_AndAppendsAreStillRefused()
         {
             Prepared prepared = BuildPrepared();
             Prepared other = BuildQuad(new float3(4, 4, 4));
@@ -862,9 +978,10 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(storage.TryReserveCutOutput(subject, 16, 24, 4, 2, out VpCutOutputReservation reservation), Is.True, "reserve");
 
-                // while it is open, nothing else may write into the tails it holds
-                Assert.That(storage.TryReserveCutOutput(subject, 8, 12, 4, 2, out VpCutOutputReservation second), Is.False, "a second reservation");
-                Assert.That(second, Is.Null);
+                // A second reservation is given room of its own rather than refused, and the two do not overlap.
+                Assert.That(storage.TryReserveCutOutput(subject, 8, 12, 4, 2, out VpCutOutputReservation second), Is.True, "a second reservation");
+                Assert.That(second, Is.Not.Null);
+                AssertReservationsDoNotOverlap(reservation, second);
                 Assert.That(
                     storage.TryAppendPrepared(other.Vertices, other.Indices, other.TopologyOfVertex, other.TopologyVertexCount, other.Submeshes, out VpStoredGeometry prepAppended),
                     Is.False,
@@ -888,7 +1005,10 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.VertexBlockCount, Is.EqualTo(blockCount), "no block committed");
                 Assert.That(TopologyOf(storage, subject), Is.EqualTo(topologyBefore), "the existing mapping is untouched");
                 Assert.That(PublishedCount(storage, subject.indexRange), Is.EqualTo(IndexCount), "and so is its index range");
-                Assert.That(reservation.IsClosed, Is.False, "the reservation is still the open one");
+                Assert.That(reservation.IsClosed, Is.False, "the first reservation is still open");
+                Assert.That(second.IsClosed, Is.False, "and so is the second");
+                Assert.That(storage.TryCancelCutOutput(second), Is.True, "the second goes back on its own");
+                Assert.That(reservation.IsClosed, Is.False, "which leaves the first open");
 
                 Assert.That(storage.TryCancelCutOutput(reservation), Is.True, "cancel");
 

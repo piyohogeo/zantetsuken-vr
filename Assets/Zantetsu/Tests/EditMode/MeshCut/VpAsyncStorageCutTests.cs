@@ -145,6 +145,140 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
+        /// The two sides of one cut run by itself, in a storage of its own, as the reader sees them. What a cut run
+        /// beside others must come to, whatever room it was given and whenever it finished.
+        /// </summary>
+        private static (List<string> positive, List<string> negative) CutOnItsOwn(
+            SyntheticMesh mesh, float4 plane, int vertexCapacity = 4096, int indexCapacity = 16384)
+        {
+            using (var alone = new VpCpuGeometryStorage(vertexCapacity, indexCapacity, 64, 256, 256, Allocator.Persistent))
+            {
+                VpStoredGeometry box = Append(alone, mesh);
+                using (VpStorageCutInput input = Acquire(alone, box))
+                {
+                    Assert.That(VpStorageCut.TryExecute(alone, input, plane, out VpStorageCutResult result), Is.True, "the cut on its own");
+                    Assert.That(result.positive.IsProduced && result.negative.IsProduced, Is.True, "it produced both sides");
+                    return (Materialise(alone, result.positive.geometry), Materialise(alone, result.negative.geometry));
+                }
+            }
+        }
+
+        /// <summary>
+        /// One cut's two sides against what that cut comes to on its own. This is the check that a cut run beside
+        /// others produced the right geometry, rather than merely something of the right kind.
+        /// </summary>
+        private static void AssertIsTheSameCutAsOnItsOwn(
+            Fixture f, VpStorageCutRequest request, (List<string> positive, List<string> negative) alone, string what)
+        {
+            VpStorageCutResult result = request.Result;
+            Assert.That(result.positive.IsProduced && result.negative.IsProduced, Is.True, what + ": both sides are new geometry");
+            Assert.That(
+                Materialise(f.storage, result.positive.geometry), Is.EqualTo(alone.positive),
+                what + ": the positive side is the geometry this cut makes on its own");
+            Assert.That(
+                Materialise(f.storage, result.negative.geometry), Is.EqualTo(alone.negative),
+                what + ": and so is the negative side");
+        }
+
+        /// <summary>
+        /// Two cuts' published rooms, in every array they were given one: the vertices they share, the index space
+        /// their sides really occupy, and the vertex blocks. The blocks' contents are read too, because a block that
+        /// named another cut's vertices would still sit in a range of its own.
+        /// </summary>
+        private static void AssertRoomsDoNotOverlap(Fixture f, VpStorageCutRequest a, VpStorageCutRequest b)
+        {
+            (int start, int count) verticesOfA = VerticesOf(a);
+            (int start, int count) verticesOfB = VerticesOf(b);
+            AssertRangesAreApart(verticesOfA, verticesOfB, "vertices");
+
+            foreach (VpStoredGeometry first in SidesOf(a))
+            {
+                foreach (VpStoredGeometry second in SidesOf(b))
+                {
+                    AssertRangesAreApart(IndicesOf(f, first), IndicesOf(f, second), "indices");
+                    AssertRangesAreApart(
+                        (first.submeshStart, first.submeshCount), (second.submeshStart, second.submeshCount), "submeshes");
+                }
+            }
+
+            // Every block of each side names vertices inside that cut's own span, mapping entries included.
+            foreach (VpStoredGeometry side in SidesOf(a))
+            {
+                AssertBlocksNameOnly(f, side, verticesOfA, "the first cut");
+            }
+
+            foreach (VpStoredGeometry side in SidesOf(b))
+            {
+                AssertBlocksNameOnly(f, side, verticesOfB, "the second cut");
+            }
+        }
+
+        private static void AssertBlocksNameOnly(
+            Fixture f, VpStoredGeometry side, (int start, int count) own, string what)
+        {
+            Assert.That(
+                f.storage.TryGetVertexBlocks(side, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out _),
+                Is.True, what + ": blocks");
+            bool sawItsOwn = false;
+            for (int b = 0; b < blocks.Length; b++)
+            {
+                if (blocks[b].vertexCount == 0)
+                {
+                    continue;
+                }
+
+                bool isItsOwn = blocks[b].vertexStart == own.start && blocks[b].vertexCount == own.count;
+                sawItsOwn |= isItsOwn;
+                if (!isItsOwn)
+                {
+                    // The parent's blocks, which lie before either cut's room.
+                    Assert.That(
+                        blocks[b].vertexStart + blocks[b].vertexCount <= own.start || blocks[b].vertexStart >= own.start + own.count,
+                        Is.True,
+                        what + ": a block it did not append names none of its appended vertices");
+                }
+            }
+
+            if (own.count > 0)
+            {
+                Assert.That(sawItsOwn, Is.True, what + ": the block it appended names exactly the vertices it appended");
+            }
+        }
+
+        private static IEnumerable<VpStoredGeometry> SidesOf(VpStorageCutRequest request)
+        {
+            if (request.Result.positive.IsProduced)
+            {
+                yield return request.Result.positive.geometry;
+            }
+
+            if (request.Result.negative.IsProduced)
+            {
+                yield return request.Result.negative.geometry;
+            }
+        }
+
+        private static (int start, int count) IndicesOf(Fixture f, VpStoredGeometry side)
+        {
+            Assert.That(f.storage.TryGetIndexState(side.indexRange, out _, out int start, out int count), Is.True, "the index range");
+            return (start, count);
+        }
+
+        private static void AssertRangesAreApart((int start, int count) first, (int start, int count) second, string what)
+        {
+            if (first.count == 0 || second.count == 0)
+            {
+                return;
+            }
+
+            Assert.That(
+                first.start >= second.start + second.count || second.start >= first.start + first.count,
+                Is.True,
+                "the two cuts' " + what + " are apart: [" + first.start + ", " + (first.start + first.count) + ") and ["
+                + second.start + ", " + (second.start + second.count) + ")");
+        }
+
+        /// <summary>
         /// One side as its reader sees it: every index in order, resolved to the vertex it names and that vertex's
         /// topology id, plus the submesh descriptors. Two sides that compare equal by this are the same geometry, in
         /// the same order, whichever storage and whichever route produced them.
@@ -208,7 +342,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "with a cut");
                 Assert.That(request.cutThreadId, Is.Not.EqualTo(f.mainThreadId), "the cut ran on a worker");
                 Assert.That(request.collectThreadId, Is.EqualTo(f.mainThreadId), "the collection is the main thread's");
-                Assert.That(f.runner.Reserving, Is.Null, "and nothing of the storage is still reserved");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "and nothing of the storage is still reserved");
                 Assert.That(f.runner.ActiveCount, Is.Zero, "the runner holds nothing");
             }
         }
@@ -281,7 +415,8 @@ namespace Zantetsu.MeshCut.Tests
                 // the input's size, and only the run itself finds out.
                 RunUntilAccepted(f, gate, request, VpStorageCutStage.Cutting);
                 Assert.That(request.HoldsReservation, Is.True, "the attempt holds an output reservation");
-                Assert.That(f.runner.Reserving, Is.SameAs(request), "and it is this cut that holds it");
+                Assert.That(request.HoldsReservation, Is.True, "and it is this cut that holds it");
+                Assert.That(f.runner.ReservingCount, Is.EqualTo(1), "and it is the only one holding room");
 
                 gate.RunOneOnAWorker();
                 f.RunUntilOver(request);
@@ -291,7 +426,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(request.Result.negative.geometry.indexRange, Is.EqualTo(box.indexRange), "which is the input itself");
                 Assert.That(request.Result.positive.IsEmpty, Is.True, "and the other side is empty");
                 Assert.That(request.Result.positive.geometry.indexRange, Is.EqualTo(default(VpIndexRangeHandle)), "with no range of its own");
-                Assert.That(f.runner.Reserving, Is.Null, "the reservation is not held any more");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "the reservation is not held any more");
                 Assert.That(
                     f.storage.VertexCount, Is.EqualTo(verticesBefore),
                     "and the storage holds exactly the vertices it held before the cut");
@@ -359,7 +494,7 @@ namespace Zantetsu.MeshCut.Tests
                     request.Result.attempts, Is.GreaterThan(1),
                     "the layout: the estimate really is too small for this input, so it reserved again");
                 Assert.That(seenPublished, Is.Zero, "and nothing was published before it succeeded");
-                Assert.That(f.runner.Reserving, Is.Null, "the last reservation is committed or gone");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "the last reservation is committed or gone");
                 TestContext.WriteLine(
                     "an estimate too small: attempts " + request.Result.attempts
                     + ", kernel status " + request.Result.kernel.status);
@@ -387,49 +522,978 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the cut succeeded in the end");
                 Assert.That(request.Attempts, Is.GreaterThan(1), "after more than one run of the kernel");
                 Assert.That(request.Result.positive.IsProduced && request.Result.negative.IsProduced, Is.True, "with both sides produced");
-                Assert.That(f.runner.Reserving, Is.Null, "and the reservation is back");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "and the reservation is back");
             }
         }
 
-        // ----- two cuts over one reservation ---------------------------------------------------------------------------
+        // ----- two cuts of one storage, at the same time ------------------------------------------------------------
 
         /// <summary>
-        /// Two cuts asked for together: the storage keeps one cut reservation at a time, so the second waits for the
-        /// first — unoffered, not refused and not blocking the main thread — and runs as soon as the first has given
-        /// the reservation back. Neither is failed for the other's sake.
+        /// Two independent cuts of one storage asked for together: both hold room of their own at the same time and
+        /// both are with the dispatcher at the same time, neither waiting for the other's turn. Each succeeds, and the
+        /// vertices they were given do not overlap.
+        /// <para>
+        /// Holding room and being offered are watched while the cuts run, because afterwards there is nothing to see.
+        /// The rooms are compared through what the two results actually published, not through the reservations, so a
+        /// pair that merely looked concurrent could not pass.
+        /// </para>
         /// </summary>
         [Test]
-        public void TwoCuts_DoNotCollideOverTheOneReservation_AndTheSecondFollowsTheFirst()
+        public void TwoCutsOfOneStorage_HoldRoomAndRunAtTheSameTime()
         {
             using (Fixture f = NewFixture())
             {
-                VpStoredGeometry first = Append(f.storage, Box());
-                VpStoredGeometry second = Append(f.storage, Box(2));
+                SyntheticMesh firstMesh = Box();
+                SyntheticMesh secondMesh = Box(2);
+                (List<string> positive, List<string> negative) firstAlone = CutOnItsOwn(firstMesh, Tilted());
+                (List<string> positive, List<string> negative) secondAlone = CutOnItsOwn(secondMesh, Tilted());
+                VpStoredGeometry first = Append(f.storage, firstMesh);
+                VpStoredGeometry second = Append(f.storage, secondMesh);
                 VpStorageCutRequest a = f.runner.Submit(Acquire(f.storage, first), Tilted(), default);
                 VpStorageCutRequest b = f.runner.Submit(Acquire(f.storage, second), Tilted(), default);
 
-                bool sawOneWaitingForTheOther = false;
+                bool sawBothHoldingRoom = false;
+                bool sawBothWithTheDispatcher = false;
                 var clock = Stopwatch.StartNew();
                 while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(a.IsOver && b.IsOver))
                 {
                     f.Frame();
-                    Assert.That(
-                        a.HoldsReservation && b.HoldsReservation,
-                        Is.False,
-                        "the two never hold the storage's one reservation at the same time");
-                    if (a.HoldsReservation && b.Stage == VpStorageCutStage.Ready)
-                    {
-                        sawOneWaitingForTheOther = true;
-                    }
-
+                    sawBothHoldingRoom |= a.HoldsReservation && b.HoldsReservation;
+                    sawBothWithTheDispatcher |=
+                        a.Stage == VpStorageCutStage.Cutting && b.Stage == VpStorageCutStage.Cutting;
                     Thread.Sleep(1);
                 }
 
                 Assert.That(a.IsOver && b.IsOver, Is.True, "both cuts ended within the deadline");
                 Assert.That(a.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the first cut succeeded");
                 Assert.That(b.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "and so did the second");
-                Assert.That(sawOneWaitingForTheOther, Is.True, "the second really did wait, ready and unoffered, for the first");
-                Assert.That(f.runner.Reserving, Is.Null, "nothing is reserved afterwards");
+                Assert.That(sawBothHoldingRoom, Is.True, "the two held room of their own at the same time");
+                Assert.That(sawBothWithTheDispatcher, Is.True, "and were both with the dispatcher at the same time");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "nothing is reserved afterwards");
+                AssertIsTheSameCutAsOnItsOwn(f, a, firstAlone, "the first cut");
+                AssertIsTheSameCutAsOnItsOwn(f, b, secondAlone, "the second cut");
+                AssertRoomsDoNotOverlap(f, a, b);
+            }
+        }
+
+        /// <summary>
+        /// The vertices two cuts published do not overlap. Read from the sides they produced, which is where the
+        /// vertices really are, rather than from the reservations they were given.
+        /// </summary>
+        private static void AssertVerticesDoNotOverlap(VpStorageCutRequest a, VpStorageCutRequest b)
+        {
+            (int start, int count) one = VerticesOf(a);
+            (int start, int count) two = VerticesOf(b);
+            if (one.count == 0 || two.count == 0)
+            {
+                return;
+            }
+
+            Assert.That(
+                one.start >= two.start + two.count || two.start >= one.start + one.count,
+                Is.True,
+                "the two cuts wrote into different vertices: [" + one.start + ", " + (one.start + one.count) + ") and ["
+                + two.start + ", " + (two.start + two.count) + ")");
+        }
+
+        /// <summary>The vertices one cut's sides share, as the storage published them.</summary>
+        private static (int start, int count) VerticesOf(VpStorageCutRequest request)
+        {
+            VpStorageCutResult result = request.Result;
+            VpStoredGeometry side = result.positive.IsProduced ? result.positive.geometry : result.negative.geometry;
+            return (side.vertexStart, side.vertexCount);
+        }
+
+        /// <summary>
+        /// Two cuts both with a worker, finished in the opposite order to the one they were offered in. Each result is
+        /// its own: the sides are the ones that cut produced, and the vertices they published do not overlap. Finishing
+        /// second is not finishing behind -- the later cut publishes where its own room is, not after the other's.
+        /// </summary>
+        [Test]
+        public void TwoCutsFinishingInReverseOrder_EachPublishIntoItsOwnRoom()
+        {
+            var gate = new GatedExecutor();
+            using (Fixture f = NewFixture(gate))
+            {
+                SyntheticMesh firstMesh = Box();
+                SyntheticMesh secondMesh = Box(2);
+                (List<string> positive, List<string> negative) firstAlone = CutOnItsOwn(firstMesh, Tilted());
+                (List<string> positive, List<string> negative) secondAlone = CutOnItsOwn(secondMesh, Tilted());
+                VpStoredGeometry first = Append(f.storage, firstMesh);
+                VpStoredGeometry second = Append(f.storage, secondMesh);
+                VpStorageCutRequest a = f.runner.Submit(Acquire(f.storage, first), Tilted(), default);
+                VpStorageCutRequest b = f.runner.Submit(Acquire(f.storage, second), Tilted(), default);
+
+                RunUntilAccepted(f, gate, a, VpStorageCutStage.Cutting);
+                RunUntilAccepted(f, gate, b, VpStorageCutStage.Cutting);
+                Assert.That(a.HoldsReservation && b.HoldsReservation, Is.True, "both hold room of their own");
+                Assert.That(gate.Accepted, Is.EqualTo(2), "and both are with the executor, neither waiting for the other");
+
+                // The one offered second runs and is collected first.
+                gate.RunLastOnAWorker();
+                f.RunUntilOver(b, "the second cut ends");
+                Assert.That(b.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the cut that finished first succeeded");
+                Assert.That(a.IsOver, Is.False, "and the other is still running");
+                Assert.That(a.HoldsReservation, Is.True, "still holding its own room");
+
+                gate.RunOneOnAWorker();
+                f.RunUntilOver(a, "the first cut ends");
+                Assert.That(a.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "and the one that finished second succeeded too");
+
+                AssertIsTheSameCutAsOnItsOwn(f, a, firstAlone, "the cut that finished second");
+                AssertIsTheSameCutAsOnItsOwn(f, b, secondAlone, "the cut that finished first");
+                AssertRoomsDoNotOverlap(f, a, b);
+                Assert.That(f.runner.ReservingCount, Is.Zero, "and no room is held afterwards");
+            }
+        }
+
+        /// <summary>
+        /// One of two cuts is given up while its worker still has it. The other keeps its room, finishes and publishes
+        /// normally, and what the abandoned one held comes back only when its worker hands it over -- not early, while
+        /// that worker may still be writing into it.
+        /// </summary>
+        [Test]
+        public void OneCutAbandonedMidRun_LeavesTheOtherAlone_AndGivesItsRoomBackOnlyOnCollection()
+        {
+            var gate = new GatedExecutor();
+            using (Fixture f = NewFixture(gate))
+            {
+                SyntheticMesh keptMesh = Box(2);
+                (List<string> positive, List<string> negative) keptAlone = CutOnItsOwn(keptMesh, Tilted());
+                VpStoredGeometry first = Append(f.storage, Box());
+                VpStoredGeometry second = Append(f.storage, keptMesh);
+                VpStorageCutRequest doomed = f.runner.Submit(Acquire(f.storage, first), Tilted(), default);
+                VpStorageCutRequest kept = f.runner.Submit(Acquire(f.storage, second), Tilted(), default);
+
+                RunUntilAccepted(f, gate, doomed, VpStorageCutStage.Cutting);
+                RunUntilAccepted(f, gate, kept, VpStorageCutStage.Cutting);
+
+                Assert.That(f.runner.Abandon(doomed), Is.True, "it is given up");
+                Assert.That(
+                    doomed.IsOver, Is.False,
+                    "but not ended here: a cut a worker is running is marked, never interrupted");
+                Assert.That(doomed.HoldsReservation, Is.True, "its room is still its own while its worker has it");
+                Assert.That(kept.HoldsReservation, Is.True, "and the other's is untouched");
+
+                // The kept cut runs and publishes while the other is still being given up.
+                gate.RunLastOnAWorker();
+                f.RunUntilOver(kept, "the kept cut ends");
+                Assert.That(kept.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the kept cut succeeded");
+                AssertIsTheSameCutAsOnItsOwn(f, kept, keptAlone, "the kept cut");
+                Assert.That(doomed.IsOver, Is.False, "the abandoned one has not ended yet");
+
+                gate.RunOneOnAWorker();
+                f.RunUntilOver(doomed, "the abandoned cut is collected");
+                Assert.That(doomed.Stage, Is.EqualTo(VpStorageCutStage.Abandoned), "it ends abandoned");
+                Assert.That(doomed.HoldsReservation, Is.False, "and only then is its room given back");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "nothing is held afterwards");
+                AssertLeaseWasReturned(f.storage, first, "after the abandoned cut was collected");
+            }
+        }
+
+        /// <summary>
+        /// One cut whose first reservation is too small, beside one that is not. The short one gives its room back and
+        /// takes a larger one, and through all of it the other's room and result are untouched: it publishes what it
+        /// produced, and the two still do not overlap.
+        /// </summary>
+        [Test]
+        public void OneCutReservingAgain_DoesNotDisturbTheOther()
+        {
+            var gate = new GatedExecutor();
+            using (Fixture f = NewFixture(gate))
+            {
+                SyntheticMesh retryingMesh = Box(2);
+                SyntheticMesh steadyMesh = Box(2);
+                (List<string> positive, List<string> negative) retryingAlone = CutOnItsOwn(retryingMesh, Tilted());
+                (List<string> positive, List<string> negative) steadyAlone = CutOnItsOwn(steadyMesh, Tilted());
+                VpStoredGeometry first = Append(f.storage, retryingMesh);
+                VpStoredGeometry second = Append(f.storage, steadyMesh);
+
+                // Far too little for its own output, so it must give this back and ask for more.
+                var tight = new VpStorageCutOptions { newVertexCapacity = 1, newIndexCapacity = 3, scratchBytes = 1 };
+                VpStorageCutRequest retrying = f.runner.Submit(Acquire(f.storage, first), Tilted(), tight);
+                VpStorageCutRequest steady = f.runner.Submit(Acquire(f.storage, second), Tilted(), default);
+
+                // Both take room and are offered; then the short one runs and comes back for more **while the other
+                // is still holding its own room**, which is the order this case is about.
+                RunUntilAccepted(f, gate, retrying, VpStorageCutStage.Cutting);
+                RunUntilAccepted(f, gate, steady, VpStorageCutStage.Cutting);
+                VpCutOutputReservation steadyRoom = steady.Reservation;
+                Assert.That(steadyRoom, Is.Not.Null, "the steady cut holds room");
+
+                gate.RunOneOnAWorker();
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && retrying.Result.attempts < 1)
+                {
+                    f.Frame();
+                }
+
+                f.Frame();
+                Assert.That(retrying.Result.attempts, Is.GreaterThanOrEqualTo(1), "the short attempt was collected");
+                Assert.That(retrying.IsOver, Is.False, "and it is asking again rather than failing");
+                Assert.That(
+                    ReferenceEquals(steady.Reservation, steadyRoom), Is.True,
+                    "the other cut's room is the very one it had: re-reserving did not take or move it");
+                Assert.That(steady.HoldsReservation, Is.True, "and it still holds it");
+
+                // Let both finish, in whatever order the gate has them.
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(retrying.IsOver && steady.IsOver))
+                {
+                    if (gate.Accepted > 0)
+                    {
+                        gate.RunOneOnAWorker();
+                    }
+
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(retrying.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the retrying cut succeeded");
+                Assert.That(retrying.Result.attempts, Is.GreaterThan(1), "after reserving again");
+                Assert.That(steady.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "and the other was undisturbed");
+                AssertIsTheSameCutAsOnItsOwn(f, retrying, retryingAlone, "the retrying cut");
+                AssertIsTheSameCutAsOnItsOwn(f, steady, steadyAlone, "the steady cut");
+                AssertRoomsDoNotOverlap(f, retrying, steady);
+                Assert.That(f.runner.ReservingCount, Is.Zero, "and no room is held afterwards");
+            }
+        }
+
+        /// <summary>
+        /// One cut fails outright beside one that succeeds. The asynchronous route never gives a cut up for the
+        /// number of tries, so the failing one asks for more room than the storage holds at all: it waits while the
+        /// other is holding room, and ends as a capacity failure once nothing is. The other publishes the geometry it
+        /// would have on its own, and the failure leaves nothing behind.
+        /// </summary>
+        [Test]
+        public void OneCutFailing_LeavesTheOtherWithItsOwnResult()
+        {
+            using (Fixture f = NewFixture())
+            {
+                SyntheticMesh goodMesh = Box(2);
+                (List<string> positive, List<string> negative) goodAlone = CutOnItsOwn(goodMesh, Tilted());
+                VpStoredGeometry doomedBox = Append(f.storage, Box());
+                VpStoredGeometry goodBox = Append(f.storage, goodMesh);
+
+                // More vertices than the storage has room for at all, so no reservation can ever be given: asking
+                // again would not help, and the cut ends as a capacity failure.
+                var hopeless = new VpStorageCutOptions
+                {
+                    newVertexCapacity = f.storage.VertexCapacity + 1,
+                    newIndexCapacity = 3,
+                };
+                VpStorageCutRequest failing = f.runner.Submit(Acquire(f.storage, doomedBox), Tilted(), hopeless);
+                VpStorageCutRequest good = f.runner.Submit(Acquire(f.storage, goodBox), Tilted(), default);
+
+                f.RunUntilOver(failing, "the failing cut ends");
+                f.RunUntilOver(good, "the other ends");
+
+                Assert.That(
+                    failing.Result.status, Is.EqualTo(VpStorageCutStatus.StorageCapacity),
+                    "the first cut failed for room the storage does not have");
+                Assert.That(failing.Result.positive.IsProduced, Is.False, "and published nothing");
+                Assert.That(failing.Result.negative.IsProduced, Is.False);
+                Assert.That(good.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the other succeeded all the same");
+                AssertIsTheSameCutAsOnItsOwn(f, good, goodAlone, "the cut beside a failure");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "and the failure held nothing at the end");
+                AssertLeaseWasReturned(f.storage, doomedBox, "after the failure");
+                TestContext.WriteLine(
+                    "one cut failed as " + failing.Result.status + " after " + failing.Result.attempts
+                    + " attempt(s) while the other published its own geometry");
+            }
+        }
+
+        /// <summary>
+        /// Room comes back two ways, and neither leaves anything behind. A cut given up before it was offered returns
+        /// everything it took, so rounds of that leave the free room exactly where it was. A cut that commits returns
+        /// the part of its reservation it did not write, which is most of it: the estimate reserves generously and a
+        /// run writes little, and the difference is free again at once rather than at the end of anything.
+        /// <para>
+        /// Retiring a published geometry is a different question and is unchanged here: its index range goes back and
+        /// its vertices do not.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void RoomGivenUpAndRoomNotUsed_AreBothFreeAgainAtOnce()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry box = Append(f.storage, Box(2));
+                int freeAtTheStart = f.storage.FreeVertexRoom;
+                int submeshesAtTheStart = f.storage.FreeSubmeshRoom;
+                int blocksAtTheStart = f.storage.FreeVertexBlockRoom;
+
+                // Given up before it is ever offered: everything it took goes straight back, every round.
+                for (int round = 0; round < 3; round++)
+                {
+                    VpStorageCutRequest abandoned = f.runner.Submit(Acquire(f.storage, box), Tilted(), default);
+                    f.Frame();
+                    Assert.That(f.runner.Abandon(abandoned), Is.True, "round " + round + ": it is given up");
+                    f.RunUntilOver(abandoned, "round " + round + ": it ends");
+                    Assert.That(
+                        f.storage.FreeVertexRoom, Is.EqualTo(freeAtTheStart),
+                        "round " + round + ": the vertices it held are free again");
+                    Assert.That(f.storage.FreeSubmeshRoom, Is.EqualTo(submeshesAtTheStart), "round " + round + ": and its descriptors");
+                    Assert.That(f.storage.FreeVertexBlockRoom, Is.EqualTo(blocksAtTheStart), "round " + round + ": and its blocks");
+                    Assert.That(
+                        f.storage.FreeVertexSpanCount, Is.EqualTo(1),
+                        "round " + round + ": the free room is in one piece, so nothing is lost to fragments");
+                }
+
+                // And one that really cuts: what it did not write is free the moment it commits.
+                VpStorageCutRequest cut = f.runner.Submit(Acquire(f.storage, box), Tilted(), default);
+                f.RunUntilOver(cut, "the cut ends");
+                Assert.That(cut.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "it succeeded");
+
+                int wrote = cut.Result.positive.IsProduced ? cut.Result.positive.geometry.vertexCount : 0;
+                int freeNow = f.storage.FreeVertexRoom;
+                TestContext.WriteLine(
+                    "free vertex room " + freeAtTheStart + " -> " + freeNow + " after a cut that published "
+                    + wrote + " vertices; free spans " + f.storage.FreeVertexSpanCount);
+                Assert.That(
+                    freeNow, Is.EqualTo(freeAtTheStart - wrote),
+                    "only what it published is still taken: the rest of its reservation came back");
+                Assert.That(
+                    f.storage.LargestFreeVertexSpan, Is.EqualTo(freeNow),
+                    "and it came back next to the rest, so the free room is still in one piece");
+            }
+        }
+
+        /// <summary>Both sides of one cut, each whole and neither overlapping the other in the index space.</summary>
+        private static void AssertSidesAreWholeAndDisjoint(VpStorageCutRequest request, string what)
+        {
+            VpStorageCutResult result = request.Result;
+            Assert.That(
+                result.positive.IsProduced || result.positive.IsEmpty || result.positive.IsBorrowed,
+                Is.True, what + ": the positive side is one of the three kinds");
+            Assert.That(
+                result.negative.IsProduced || result.negative.IsEmpty || result.negative.IsBorrowed,
+                Is.True, what + ": and so is the negative side");
+            if (result.positive.IsProduced && result.negative.IsProduced)
+            {
+                Assert.That(
+                    result.positive.geometry.indexRange.Equals(result.negative.geometry.indexRange), Is.False,
+                    what + ": the two sides have index ranges of their own");
+            }
+        }
+
+        /// <summary>
+        /// Two kernels of one storage really running at the same time, on workers of their own. Each piece of work is
+        /// started on its own thread; the threads meet at a rendezvous **before** the kernel, and what is timed is the
+        /// kernel call itself, from just before it to just after. The evidence is that those two spans **overlap** on
+        /// two different threads -- arriving together is only what makes the overlap likely, and is not the claim. A
+        /// rendezvous that is not reached inside the deadline is recorded and fails the case rather than passing
+        /// quietly. The meshes are large enough that a kernel is not over in an instant.
+        /// <para>
+        /// The rendezvous lives in the executor, which is the test's own. Nothing of the product waits or
+        /// synchronises, and the cut asks for nothing of the kind.
+        /// </para>
+        /// <para>
+        /// Queue time, running time and collection are told apart, because being in the queue is not running and being
+        /// run is not collected.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TwoKernelsOfOneStorage_RunOnWorkersAtTheSameTime()
+        {
+            using (var both = new ConcurrentExecutor(2))
+            using (Fixture f = NewFixture(both, 65536, 262144))
+            {
+                // Big enough that a kernel lasts long enough to be caught overlapping, rather than being over inside
+                // the moment two threads take to leave the rendezvous.
+                SyntheticMesh firstMesh = Box(20);
+                SyntheticMesh secondMesh = Box(20);
+                (List<string> positive, List<string> negative) firstAlone = CutOnItsOwn(firstMesh, Tilted(), 65536, 262144);
+                (List<string> positive, List<string> negative) secondAlone = CutOnItsOwn(secondMesh, Tilted(), 65536, 262144);
+                VpStoredGeometry first = Append(f.storage, firstMesh);
+                VpStoredGeometry second = Append(f.storage, secondMesh);
+                VpStorageCutRequest a = f.runner.Submit(Acquire(f.storage, first), Tilted(), default);
+                VpStorageCutRequest b = f.runner.Submit(Acquire(f.storage, second), Tilted(), default);
+
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(a.IsOver && b.IsOver))
+                {
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(a.IsOver && b.IsOver, Is.True, "both cuts ended within the deadline");
+                Assert.That(both.WaitedInVain, Is.False, "neither worker gave up waiting at the rendezvous");
+                Assert.That(
+                    both.TwoKernelsOverlapped, Is.True,
+                    "two kernel calls overlapped in time, on different threads");
+                Assert.That(
+                    both.ThreadsThatRan.Count, Is.EqualTo(2),
+                    "and they were different threads: " + string.Join(", ", both.ThreadsThatRan));
+                Assert.That(a.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the first cut succeeded");
+                Assert.That(b.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "and so did the second");
+                AssertIsTheSameCutAsOnItsOwn(f, a, firstAlone, "the first cut");
+                AssertIsTheSameCutAsOnItsOwn(f, b, secondAlone, "the second cut");
+                AssertRoomsDoNotOverlap(f, a, b);
+                TestContext.WriteLine(
+                    "queued " + both.Queued + ", run " + both.Started + " (on " + both.ThreadsThatRan.Count
+                    + " threads), collected " + both.Collected + "; kernel calls overlapped: " + both.TwoKernelsOverlapped
+                    + ", for " + both.OverlapMilliseconds.ToString("0.000") + " ms");
+            }
+        }
+
+        /// <summary>
+        /// One cut fails **after** it has taken room and been accepted by the executor, which is where a worker's
+        /// exception falls. Both cuts hold room of their own and are with the executor before either runs; then one
+        /// throws where its kernel would be.
+        /// <para>
+        /// What this shows, and the cancellation case does not: the failure keeps its room until it is collected and
+        /// publishes no part of a result, the collection gives back both that room and the input it held, that room
+        /// can be used again afterwards, and the other cut keeps its own room and produces what it would have alone.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void OneCutThrowingOnItsWorker_KeepsItsRoomUntilCollection_AndTheOtherIsWhole()
+        {
+            using (var both = new ConcurrentExecutor(1))
+            using (Fixture f = NewFixture(both))
+            {
+                SyntheticMesh goodMesh = Box(2);
+                SyntheticMesh doomedMesh = Box();
+                (List<string> positive, List<string> negative) goodAlone = CutOnItsOwn(goodMesh, Tilted());
+                VpStoredGeometry doomedBox = Append(f.storage, doomedMesh);
+                VpStoredGeometry goodBox = Append(f.storage, goodMesh);
+
+                // The input the cut after the failure will use, appended here with the others so that no append falls
+                // between the measurements below. It is the same mesh as the doomed one, so it asks for the same room.
+                VpStoredGeometry sameShapeAgain = Append(f.storage, doomedMesh);
+
+                // Nothing runs until both have taken room and been accepted, so the failure below is a failure of a
+                // cut that already holds a reservation -- not one that never got one.
+                both.HoldRunsBack();
+                VpStorageCutRequest failing = f.runner.Submit(Acquire(f.storage, doomedBox), Tilted(), default);
+                VpStorageCutRequest good = f.runner.Submit(Acquire(f.storage, goodBox), Tilted(), default);
+
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && both.Queued < 2)
+                {
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(both.Queued, Is.EqualTo(2), "both were accepted by the executor");
+                Assert.That(failing.HoldsReservation, Is.True, "the one that will fail holds room");
+                Assert.That(good.HoldsReservation, Is.True, "and so does the other");
+                VpCutOutputReservation failingRoom = failing.Reservation;
+                VpCutOutputReservation goodRoom = good.Reservation;
+                AssertRangesAreApart(
+                    (failingRoom.VertexStart, failingRoom.NewVertexCapacity),
+                    (goodRoom.VertexStart, goodRoom.NewVertexCapacity),
+                    "the two reservations hold vertex room of their own");
+
+                // Every region the failure is holding, so that its return can be seen region by region.
+                Room heldByTheFailure = RoomOf(failingRoom);
+                Room freeWithBothHeld = FreeRoom(f.storage);
+
+                // The work the executor took first is the failing one, and it is the one watched from here on.
+                IDispatchWork doomedWork = both.FirstAccepted;
+                Assert.That(doomedWork, Is.Not.Null, "the failing cut's work");
+                both.ThrowInsteadOfRunning = w => ReferenceEquals(w, doomedWork);
+                both.LetThroughAlone(doomedWork);
+
+                // That one work has thrown and is waiting to be handed back. The other is still held before its
+                // kernel, so nothing of it can be mistaken for this.
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !both.IsWaitingToBeHandedBack(doomedWork))
+                {
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(
+                    both.IsWaitingToBeHandedBack(doomedWork), Is.True,
+                    "the failing cut's own work has run and is waiting to be handed back");
+                Assert.That(good.IsOver, Is.False, "the other has not even run yet");
+                Assert.That(failing.IsOver, Is.False, "and the failure is not over before it is collected");
+                Assert.That(
+                    ReferenceEquals(failing.Reservation, failingRoom), Is.True,
+                    "it still holds the very room it took: nothing is given back early");
+                Assert.That(failing.Result.positive.IsProduced, Is.False, "no part of a result is published");
+                Assert.That(failing.Result.negative.IsProduced, Is.False);
+                AssertFreeRoomIs(f.storage, freeWithBothHeld, "before the failure is collected, nothing came back");
+
+                // Collected -- and only it, because the other is still held back.
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !failing.IsOver)
+                {
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(failing.IsOver, Is.True, "the failure was collected");
+                Assert.That(
+                    failing.Result.status, Is.EqualTo(VpStorageCutStatus.InternalError),
+                    "the worker's exception ended that cut");
+                Assert.That(failing.Failure, Is.Not.Null, "and the exception was carried back");
+                Assert.That(failing.Result.positive.IsProduced, Is.False, "it published nothing at all");
+                Assert.That(failing.Result.negative.IsProduced, Is.False);
+                Assert.That(failing.HoldsReservation, Is.False, "the collection gave its room back");
+                AssertFreeRoomIs(
+                    f.storage, freeWithBothHeld.Plus(heldByTheFailure),
+                    "the collection gave back every region it held, and only its own");
+
+                // The other cut is untouched by any of this: still the same reservation, still not run.
+                Assert.That(good.IsOver, Is.False, "the other cut is still held before its kernel");
+                Assert.That(
+                    ReferenceEquals(good.Reservation, goodRoom), Is.True,
+                    "and holds the very room it took, through the other's failure and its collection");
+
+                // The room that came back is the room the next reservation is given. The same geometry is cut again,
+                // so the sizes asked for are the same and no append is mixed in to move anything.
+                VpStorageCutRequest afterwards = f.runner.Submit(Acquire(f.storage, sameShapeAgain), Tilted(), default);
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !afterwards.HoldsReservation)
+                {
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(afterwards.HoldsReservation, Is.True, "the cut after the failure was given room");
+                Room takenAgain = RoomOf(afterwards.Reservation);
+                Assert.That(takenAgain.vertices, Is.EqualTo(heldByTheFailure.vertices), "the same vertex room, as sizes");
+                Assert.That(
+                    afterwards.Reservation.VertexStart, Is.EqualTo(failingRoom.VertexStart),
+                    "and at the very place the failure gave back: the vertices");
+                Assert.That(
+                    afterwards.Reservation.IndexStart, Is.EqualTo(failingRoom.IndexStart),
+                    "the indices");
+                Assert.That(
+                    afterwards.Reservation.SubmeshStart, Is.EqualTo(failingRoom.SubmeshStart),
+                    "the submesh descriptors");
+                Assert.That(
+                    afterwards.Reservation.VertexBlockStart, Is.EqualTo(failingRoom.VertexBlockStart),
+                    "and the vertex blocks");
+
+                // The input the failure held is free of it: retiring its range succeeds and leaves it Free at once,
+                // which a read lease still out would not allow. This comes after the measurements above, because
+                // retiring gives index room back and would move what the reservation above was compared against.
+                AssertLeaseWasReturned(f.storage, doomedBox, "after the worker threw");
+
+                // Now let everything finish, and the cut that was beside the failure is the cut it would have been.
+                both.ThrowInsteadOfRunning = null;
+                both.ReleaseRuns();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(good.IsOver && afterwards.IsOver))
+                {
+                    f.Frame();
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(good.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the other cut succeeded");
+                AssertIsTheSameCutAsOnItsOwn(f, good, goodAlone, "the cut beside a worker's exception");
+                Assert.That(
+                    afterwards.Result.status, Is.EqualTo(VpStorageCutStatus.Ok),
+                    "and so did the one given the room the failure returned");
+                Assert.That(both.WaitedInVain, Is.False, "no worker gave up waiting to be let through");
+                TestContext.WriteLine(
+                    "a worker threw after its reservation: free vertices " + freeWithBothHeld.vertices + " while held, "
+                    + (freeWithBothHeld.vertices + heldByTheFailure.vertices) + " once collected; the next reservation took "
+                    + "vertices at " + failingRoom.VertexStart + ", indices at " + failingRoom.IndexStart
+                    + ", submeshes at " + failingRoom.SubmeshStart + ", blocks at " + failingRoom.VertexBlockStart);
+            }
+        }
+
+        /// <summary>How much of each region something holds, or how much of each is free.</summary>
+        private readonly struct Room
+        {
+            internal readonly int vertices;
+            internal readonly int indices;
+            internal readonly int submeshes;
+            internal readonly int blocks;
+
+            internal Room(int vertices, int indices, int submeshes, int blocks)
+            {
+                this.vertices = vertices;
+                this.indices = indices;
+                this.submeshes = submeshes;
+                this.blocks = blocks;
+            }
+
+            internal Room Plus(Room other)
+            {
+                return new Room(
+                    vertices + other.vertices, indices + other.indices, submeshes + other.submeshes, blocks + other.blocks);
+            }
+        }
+
+        private static Room RoomOf(VpCutOutputReservation reservation)
+        {
+            return new Room(
+                reservation.NewVertexCapacity, reservation.NewIndexCapacity, reservation.SubmeshCapacity,
+                reservation.VertexBlockCapacity);
+        }
+
+        private static Room FreeRoom(VpCpuGeometryStorage storage)
+        {
+            return new Room(
+                storage.FreeVertexRoom, storage.FreeIndexRoom, storage.FreeSubmeshRoom, storage.FreeVertexBlockRoom);
+        }
+
+        /// <summary>Every region's free amount at once, so that a return is seen region by region and not just in the VB.</summary>
+        private static void AssertFreeRoomIs(VpCpuGeometryStorage storage, Room expected, string what)
+        {
+            Assert.That(storage.FreeVertexRoom, Is.EqualTo(expected.vertices), what + ": the vertices");
+            Assert.That(storage.FreeIndexRoom, Is.EqualTo(expected.indices), what + ": the indices");
+            Assert.That(storage.FreeSubmeshRoom, Is.EqualTo(expected.submeshes), what + ": the submesh descriptors");
+            Assert.That(storage.FreeVertexBlockRoom, Is.EqualTo(expected.blocks), what + ": the vertex blocks");
+        }
+
+        /// <summary>
+        /// A geometry pool that really runs its work on threads of its own, several at a time. It brings
+        /// <c>together</c> threads to a rendezvous **before** the kernel and then times the kernel call itself, so
+        /// what it reports is when the runs really overlapped and not merely when the threads arrived. A rendezvous
+        /// that times out is recorded and made to fail the test rather than passing quietly.
+        /// <para>
+        /// It can also hold every run back until the test releases it, and make one chosen piece of work throw where
+        /// the kernel would be, which is a worker's exception as the dispatcher sees one.
+        /// </para>
+        /// <para>
+        /// What it counts is told apart: taken into the queue, begun on a thread, and handed back.
+        /// </para>
+        /// </summary>
+        private sealed class ConcurrentExecutor : IWorkExecutor, IDisposable
+        {
+            private readonly object _lock = new object();
+            private readonly List<Thread> _threads = new List<Thread>();
+            private readonly Queue<KeyValuePair<IDispatchWork, WorkCompletion>> _finished =
+                new Queue<KeyValuePair<IDispatchWork, WorkCompletion>>();
+            private readonly System.Collections.Generic.HashSet<int> _threadsThatRan = new System.Collections.Generic.HashSet<int>();
+            private readonly List<KernelRun> _runs = new List<KernelRun>();
+            private readonly ManualResetEventSlim _released = new ManualResetEventSlim(true);
+            private readonly Barrier _rendezvous;
+            private IDispatchWork _letThrough;
+            private bool _closed;
+            private int _held;
+
+            internal ConcurrentExecutor(int together)
+            {
+                _rendezvous = together > 1 ? new Barrier(together) : null;
+            }
+
+            /// <summary>One kernel call, as the thread that made it saw it.</summary>
+            internal struct KernelRun
+            {
+                internal int thread;
+                internal long begunAt;
+                internal long endedAt;
+            }
+
+            public WorkDestination Destination => WorkDestination.GeometryPool;
+
+            public int Capacity => 4;
+
+            public int Held => Volatile.Read(ref _held);
+
+            public bool CanAccept => !_closed && Held < Capacity;
+
+            /// <summary>How many pieces of work were taken into the queue.</summary>
+            internal int Queued { get; private set; }
+
+            /// <summary>How many were begun on a thread.</summary>
+            internal int Started;
+
+            /// <summary>How many were handed back to the main thread.</summary>
+            internal int Collected { get; private set; }
+
+            /// <summary>Set when a rendezvous or a release was not reached inside the deadline.</summary>
+            internal bool WaitedInVain;
+
+            /// <summary>Chooses the one piece of work that throws where its kernel would be. Null makes none throw.</summary>
+            internal Func<IDispatchWork, bool> ThrowInsteadOfRunning;
+
+            /// <summary>The first piece of work this executor took, which is the first that was offered to it.</summary>
+            internal IDispatchWork FirstAccepted { get; private set; }
+
+            /// <summary>How many runs are waiting to be handed back.</summary>
+            internal int Waiting
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return _finished.Count;
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Whether two kernel calls really overlapped: two runs on different threads, each begun before the other
+            /// had ended. Read after the runs are over.
+            /// </summary>
+            internal bool TwoKernelsOverlapped
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        for (int i = 0; i < _runs.Count; i++)
+                        {
+                            for (int j = i + 1; j < _runs.Count; j++)
+                            {
+                                KernelRun a = _runs[i];
+                                KernelRun b = _runs[j];
+                                if (a.thread != b.thread && a.begunAt < b.endedAt && b.begunAt < a.endedAt)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+
+                        return false;
+                    }
+                }
+            }
+
+            /// <summary>How long the kernel calls overlapped, in milliseconds, for the record.</summary>
+            internal double OverlapMilliseconds
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        double most = 0;
+                        for (int i = 0; i < _runs.Count; i++)
+                        {
+                            for (int j = i + 1; j < _runs.Count; j++)
+                            {
+                                KernelRun a = _runs[i];
+                                KernelRun b = _runs[j];
+                                if (a.thread == b.thread)
+                                {
+                                    continue;
+                                }
+
+                                long from = Math.Max(a.begunAt, b.begunAt);
+                                long to = Math.Min(a.endedAt, b.endedAt);
+                                if (to > from)
+                                {
+                                    most = Math.Max(most, (to - from) * 1000.0 / Stopwatch.Frequency);
+                                }
+                            }
+                        }
+
+                        return most;
+                    }
+                }
+            }
+
+            /// <summary>Holds every run just before its kernel until <see cref="ReleaseRuns"/>.</summary>
+            internal void HoldRunsBack()
+            {
+                _released.Reset();
+            }
+
+            /// <summary>Lets the held runs go on into their kernels.</summary>
+            internal void ReleaseRuns()
+            {
+                _released.Set();
+            }
+
+            /// <summary>Lets one held run, and only that one, go on into its kernel.</summary>
+            internal void LetThroughAlone(IDispatchWork work)
+            {
+                lock (_lock)
+                {
+                    _letThrough = work;
+                }
+            }
+
+            /// <summary>Whether that one piece of work has run and is waiting to be handed back to the main thread.</summary>
+            internal bool IsWaitingToBeHandedBack(IDispatchWork work)
+            {
+                lock (_lock)
+                {
+                    foreach (KeyValuePair<IDispatchWork, WorkCompletion> ended in _finished)
+                    {
+                        if (ReferenceEquals(ended.Key, work))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+            }
+
+            /// <summary>Waits until this run is let through, and says whether it was rather than timing out.</summary>
+            private bool WaitToBeLetThrough(IDispatchWork work)
+            {
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds)
+                {
+                    if (_released.IsSet)
+                    {
+                        return true;
+                    }
+
+                    lock (_lock)
+                    {
+                        if (ReferenceEquals(_letThrough, work))
+                        {
+                            return true;
+                        }
+                    }
+
+                    Thread.Sleep(1);
+                }
+
+                return false;
+            }
+
+            /// <summary>The threads work really ran on.</summary>
+            internal System.Collections.Generic.HashSet<int> ThreadsThatRan
+            {
+                get
+                {
+                    lock (_lock)
+                    {
+                        return new System.Collections.Generic.HashSet<int>(_threadsThatRan);
+                    }
+                }
+            }
+
+            public bool TryAccept(IDispatchWork work)
+            {
+                if (!CanAccept)
+                {
+                    return false;
+                }
+
+                Queued++;
+                if (FirstAccepted == null)
+                {
+                    FirstAccepted = work;
+                }
+
+                Interlocked.Increment(ref _held);
+                var thread = new Thread(() => Run(work)) { IsBackground = true };
+                lock (_lock)
+                {
+                    _threads.Add(thread);
+                }
+
+                thread.Start();
+                return true;
+            }
+
+            public void BeginAccepted(IDispatchWork work)
+            {
+                // A pool's own worker begins what it accepted; this one started its thread already.
+            }
+
+            private void Run(IDispatchWork work)
+            {
+                Interlocked.Increment(ref Started);
+                lock (_lock)
+                {
+                    _threadsThatRan.Add(Thread.CurrentThread.ManagedThreadId);
+                }
+
+                // Everything that holds a thread back happens **before** the kernel, so that what is timed below is
+                // the kernel call and nothing else. This waiting is the executor's, which is the test's: the cut asks
+                // for nothing of the kind.
+                if (!WaitToBeLetThrough(work))
+                {
+                    WaitedInVain = true;
+                }
+
+                if (_rendezvous != null)
+                {
+                    try
+                    {
+                        if (!_rendezvous.SignalAndWait(DeadlineMilliseconds))
+                        {
+                            WaitedInVain = true;
+                        }
+                    }
+                    catch (BarrierPostPhaseException)
+                    {
+                        WaitedInVain = true;
+                    }
+                }
+
+                Exception failure = null;
+                long begunAt = Stopwatch.GetTimestamp();
+                try
+                {
+                    if (ThrowInsteadOfRunning != null && ThrowInsteadOfRunning(work))
+                    {
+                        throw new InvalidOperationException("the worker threw where its kernel would be");
+                    }
+
+                    work.Begin();
+                }
+                catch (Exception e)
+                {
+                    failure = e;
+                }
+
+                long endedAt = Stopwatch.GetTimestamp();
+                lock (_lock)
+                {
+                    _runs.Add(new KernelRun
+                    {
+                        thread = Thread.CurrentThread.ManagedThreadId,
+                        begunAt = begunAt,
+                        endedAt = endedAt,
+                    });
+                }
+
+                lock (_lock)
+                {
+                    _finished.Enqueue(new KeyValuePair<IDispatchWork, WorkCompletion>(
+                        work, failure == null ? WorkCompletion.Finished : WorkCompletion.Failed(failure)));
+                }
+            }
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                lock (_lock)
+                {
+                    if (_finished.Count == 0)
+                    {
+                        work = null;
+                        completion = default;
+                        return false;
+                    }
+
+                    KeyValuePair<IDispatchWork, WorkCompletion> ended = _finished.Dequeue();
+                    Interlocked.Decrement(ref _held);
+                    Collected++;
+                    work = ended.Key;
+                    completion = ended.Value;
+                    return true;
+                }
+            }
+
+            public void CloseForNewWork()
+            {
+                _closed = true;
+            }
+
+            /// <summary>Lets go of anything still held back, so no thread is left waiting at shutdown.</summary>
+            public void Dispose()
+            {
+                _released.Set();
+                _rendezvous?.Dispose();
+                _released.Dispose();
+            }
+
+            public bool StopAndConfirm(int timeoutMilliseconds)
+            {
+                _closed = true;
+                _released.Set();
+                List<Thread> running;
+                lock (_lock)
+                {
+                    running = new List<Thread>(_threads);
+                }
+
+                foreach (Thread thread in running)
+                {
+                    thread.Join(timeoutMilliseconds);
+                }
+
+                return true;
             }
         }
 
@@ -448,7 +1512,7 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Abandoned), "and is over");
                 Assert.That(f.runner.ActiveCount, Is.Zero, "the runner holds nothing");
-                Assert.That(f.runner.Reserving, Is.Null, "nothing was reserved");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "nothing was reserved");
                 AssertLeaseWasReturned(f.storage, box, "after giving up before the offer");
             }
         }
@@ -481,7 +1545,7 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Abandoned), "it ended as abandoned");
                 Assert.That(request.Result.status, Is.Not.EqualTo(VpStorageCutStatus.Ok), "nothing was published from it");
-                Assert.That(f.runner.Reserving, Is.Null, "the reservation is back");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "the reservation is back");
                 AssertLeaseWasReturned(f.storage, box, "after giving up a running cut");
 
                 // And the storage is usable again: another cut of another geometry goes through.
@@ -513,7 +1577,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Finished), "it is over");
                 Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.InternalError), "as an internal error");
                 Assert.That(request.Failure, Is.SameAs(failing.thrown), "carrying what the worker threw");
-                Assert.That(f.runner.Reserving, Is.Null, "nothing is reserved");
+                Assert.That(f.runner.ReservingCount, Is.Zero, "nothing is reserved");
                 Assert.That(f.runner.ActiveCount, Is.Zero, "and the runner holds nothing");
                 AssertLeaseWasReturned(f.storage, box, "after a worker fell over");
             }
@@ -699,7 +1763,7 @@ namespace Zantetsu.MeshCut.Tests
                 RunUntilAccepted(f, gate, request, VpStorageCutStage.Cutting);
 
                 Assert.That(request.HoldsReservation, Is.True, "the output reservation is open");
-                Assert.That(f.runner.Reserving, Is.SameAs(request), "and it is the one cut holding it");
+                Assert.That(f.runner.ReservingCount, Is.EqualTo(1), "and it is the one cut holding room");
                 Assert.That(f.dispatcher.Cancel(request.ticket), Is.False, "the cut is submitted, not merely queued");
                 f.runner.Dispose();
                 gate.RunOneOnAWorker();
@@ -712,13 +1776,16 @@ namespace Zantetsu.MeshCut.Tests
         private static void RunUntilAccepted(Fixture f, GatedExecutor gate, VpStorageCutRequest request, VpStorageCutStage stage)
         {
             var clock = Stopwatch.StartNew();
-            while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !(gate.Accepted == 1 && request.Stage == stage))
+            while (clock.ElapsedMilliseconds < DeadlineMilliseconds
+                   && !(gate.Accepted > 0 && request.Stage == stage))
             {
                 f.Frame();
             }
 
             Assert.That(request.Stage, Is.EqualTo(stage), "the cut reached " + stage);
-            Assert.That(gate.Accepted, Is.EqualTo(1), "and its work is with the destination");
+            Assert.That(
+                gate.Accepted, Is.GreaterThan(0),
+                "and work is with the destination; several cuts may be offered in the one pump");
         }
 
         /// <summary>
@@ -736,7 +1803,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(request.IsOver, Is.True, "the closed runner took " + what + " back");
             Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Abandoned), "as abandoned");
             Assert.That(request.Result.status, Is.Not.EqualTo(VpStorageCutStatus.Ok), "publishing nothing");
-            Assert.That(f.runner.Reserving, Is.Null, "the storage's reservation is free");
+            Assert.That(f.runner.ReservingCount, Is.Zero, "the storage's reservation is free");
             Assert.That(request.HoldsReservation, Is.False, "and the cut holds none");
             Assert.That(request.scratch.IsCreated, Is.False, "the scratch is disposed");
             Assert.That(request.outputRanges.IsCreated, Is.False, "the range array is disposed");
@@ -786,9 +1853,24 @@ namespace Zantetsu.MeshCut.Tests
             /// <summary>Runs the work held longest on a worker thread of its own, to the end.</summary>
             public void RunOneOnAWorker()
             {
+                RunOnAWorker(0);
+            }
+
+            /// <summary>
+            /// Runs the work held **shortest** on a worker of its own, so that a case can have two cuts finish in the
+            /// opposite order to the one they were offered in.
+            /// </summary>
+            public void RunLastOnAWorker()
+            {
                 Assert.That(_accepted.Count, Is.GreaterThan(0), "there is work to run");
-                IDispatchWork work = _accepted[0];
-                _accepted.RemoveAt(0);
+                RunOnAWorker(_accepted.Count - 1);
+            }
+
+            private void RunOnAWorker(int index)
+            {
+                Assert.That(_accepted.Count, Is.GreaterThan(index), "there is work to run");
+                IDispatchWork work = _accepted[index];
+                _accepted.RemoveAt(index);
                 Exception failure = null;
                 var thread = new Thread(() =>
                 {

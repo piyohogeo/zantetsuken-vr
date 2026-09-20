@@ -97,6 +97,13 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Whether the storage's one cut reservation is held by this cut right now.</summary>
         public bool HoldsReservation => reservation != null && !reservation.IsClosed;
+
+        /// <summary>
+        /// The room this cut holds, or null when it holds none. Several cuts of one storage hold room at
+        /// once, so which room a cut has is part of what it is: a cut that reserved again is the same cut with
+        /// a different one, and a cut beside it keeps the very object it had.
+        /// </summary>
+        public VpCutOutputReservation Reservation => reservation;
     }
 
     /// <summary>
@@ -118,11 +125,10 @@ namespace Zantetsu.MeshCut
     /// calls <see cref="Pump"/> once each time it is willing to let cuts move, on the main thread.
     /// </para>
     /// <para>
-    /// **The storage's one reservation.** A storage keeps one cut output reservation at a time, so one cut at a time
-    /// is in its reserved-and-running stretch. A later cut is not refused and does not wait on a lock for it: it stays
-    /// in <see cref="VpStorageCutStage.Ready"/>, unoffered, and is offered as soon as the earlier one has given the
-    /// reservation back. This runner is the only holder of that reservation for the cuts it runs; a synchronous cut of
-    /// the same storage in the same stretch would be refused as a capacity failure.
+    /// **Several cuts at once.** A storage gives each cut spans of its own, so more than one may be in its
+    /// reserved-and-running stretch and their kernels may run together. A cut the storage cannot give room to right
+    /// now is not refused and does not wait on a lock: it stays in <see cref="VpStorageCutStage.Ready"/>, unoffered,
+    /// and is offered when room comes free. What such a cut waits for is room, not a turn.
     /// </para>
     /// </summary>
     public sealed unsafe class VpAsyncStorageCut : IDisposable
@@ -132,7 +138,6 @@ namespace Zantetsu.MeshCut
         private readonly WorkPurpose _purpose;
         private readonly List<VpStorageCutRequest> _requests = new List<VpStorageCutRequest>();
         private readonly Dictionary<VpStorageCutRequest, Work> _work = new Dictionary<VpStorageCutRequest, Work>();
-        private VpStorageCutRequest _reserving;
         private bool _closed;
 
         /// <summary>
@@ -167,8 +172,34 @@ namespace Zantetsu.MeshCut
         /// <summary>How many cuts are neither finished nor abandoned.</summary>
         public int ActiveCount => _requests.Count;
 
-        /// <summary>The cut whose reservation is open, if one is.</summary>
-        public VpStorageCutRequest Reserving => _reserving;
+        /// <summary>Whether some cut of this runner's other than <paramref name="request"/> is holding room.</summary>
+        private bool HoldsRoomOtherThan(VpStorageCutRequest request)
+        {
+            for (int i = 0; i < _requests.Count; i++)
+            {
+                if (_requests[i] != request && _requests[i].HoldsReservation)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>How many of this runner's cuts hold an output reservation right now.</summary>
+        public int ReservingCount
+        {
+            get
+            {
+                int held = 0;
+                for (int i = 0; i < _requests.Count; i++)
+                {
+                    held += _requests[i].HoldsReservation ? 1 : 0;
+                }
+
+                return held;
+            }
+        }
 
         /// <summary>
         /// Accepts one cut of <paramref name="input"/>'s geometry by <paramref name="plane"/> and gives back the handle
@@ -392,8 +423,14 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// Takes what one attempt needs and points the kernel's output at it: the reservation, the scratch, and the
-        /// input as it stands right now. False when another cut holds the storage's one reservation, which is not a
-        /// failure and changes nothing.
+        /// input as it stands right now. False when it did not take them, which is not always a failure.
+        /// <para>
+        /// **Room refused while other cuts of this runner hold some is a wait.** It changes nothing, the cut stays in
+        /// <see cref="VpStorageCutStage.Ready"/> and asks again at the next pump, by which time a cut that has settled
+        /// may have given its room back. Only a refusal with no other cut of this runner holding anything says the
+        /// room is not there to be had, and that ends the cut as a capacity failure. A holder outside this runner --
+        /// a synchronous cut of the same storage -- is not visible here and such a refusal is read as the second kind.
+        /// </para>
         /// <para>
         /// Every attempt reserves. Whether the plane misses the geometry is only known once the run has looked, and
         /// such a reservation goes back whole and unused when the result is settled.
@@ -403,11 +440,6 @@ namespace Zantetsu.MeshCut
         {
             if (!request.HoldsReservation)
             {
-                if (_reserving != null && _reserving != request)
-                {
-                    return false;
-                }
-
                 if (!VpStorageCut.TryReserve(
                         _storage,
                         request.Parent,
@@ -416,12 +448,17 @@ namespace Zantetsu.MeshCut
                         request.newIndexCapacity,
                         out VpCutOutputReservation reservation))
                 {
+                    if (HoldsRoomOtherThan(request))
+                    {
+                        // Somebody else of this runner's is holding what is free: this cut simply waits here.
+                        return false;
+                    }
+
                     Finish(request, VpStorageCutStatus.StorageCapacity);
                     return false;
                 }
 
                 request.reservation = reservation;
-                _reserving = request;
             }
 
             if (!request.scratch.IsCreated || request.scratch.Length < request.scratchBytes)
@@ -619,10 +656,6 @@ namespace Zantetsu.MeshCut
                 request.reservation = null;
             }
 
-            if (_reserving == request)
-            {
-                _reserving = null;
-            }
         }
 
         /// <summary>

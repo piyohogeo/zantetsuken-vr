@@ -222,7 +222,6 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            int verticesBefore = _storage.VertexCount;
             using (input)
             {
                 VpStorageCut.TryExecute(_storage, input, plane, options, out cut);
@@ -292,7 +291,7 @@ namespace Zantetsu.MeshCut
                 // metadata are not, and cannot be: that part of the storage is append-only.
                 Reclaim(sides, children);
                 result = new VpCutDisplayResult(
-                    VpCutDisplayOutcome.DisplayPreparationFailed, cut, _shown.Count, _storage.VertexCount - verticesBefore);
+                    VpCutDisplayOutcome.DisplayPreparationFailed, cut, _shown.Count, AppendedVertices(in cut));
                 return false;
             }
 
@@ -433,6 +432,20 @@ namespace Zantetsu.MeshCut
         /// knows it exists. A side that reuses the input is the parent and is never in this array. What the cut
         /// appended to the vertices and the metadata stays where it is.
         /// </summary>
+        /// <summary>
+        /// How many vertices one cut appended, named by the sides that share them. Not the distance the storage's
+        /// high-water moved: a cut may be given room below it, and then that distance says nothing.
+        /// </summary>
+        private static int AppendedVertices(in VpStorageCutResult cut)
+        {
+            if (cut.positive.IsProduced)
+            {
+                return cut.positive.geometry.vertexCount;
+            }
+
+            return cut.negative.IsProduced ? cut.negative.geometry.vertexCount : 0;
+        }
+
         private void Reclaim(VpStorageCutSide[] sides, Shown[] children)
         {
             for (int i = 0; i < sides.Length; i++)

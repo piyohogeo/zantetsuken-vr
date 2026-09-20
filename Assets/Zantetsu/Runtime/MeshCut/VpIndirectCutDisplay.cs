@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using Zantetsu.Rendering;
@@ -208,6 +209,12 @@ namespace Zantetsu.MeshCut
         /// <summary>Vertex transfers this display has issued, its first upload included.</summary>
         public int VertexTransfers { get; private set; }
 
+        /// <summary>
+        /// The buffers this display owns, so that a test can read back what really reached the GPU. The product path
+        /// has no reason to reach inside: what is drawn is settled by <see cref="BeginFrame"/> and <see cref="Render"/>.
+        /// </summary>
+        internal VpGpuIndexedGeometryBuffers Buffers => _buffers;
+
         /// <summary>Index transfers this display has issued, its first upload included.</summary>
         public int IndexTransfers { get; private set; }
 
@@ -354,13 +361,13 @@ namespace Zantetsu.MeshCut
                 };
 
                 built._shown.Add(shown);
-                if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(storage, buffers.VertexBuffer, 0, storage.VertexCount, out int vertices)
+                if (!TryUploadEveryBlock(storage, buffers.VertexBuffer, geometry, out int vertexTransfers)
                     || !VpStoredGeometryTransfer.TryUploadPublishedIndices(storage, buffers.IndexBuffer, geometry.indexRange, out int indices))
                 {
                     return false;
                 }
 
-                built.CountTransfers(vertices, indices);
+                built.CountTransfers(vertexTransfers, indices);
                 if (!built.TryUploadCommandsFor(built._shown))
                 {
                     return false;
@@ -648,7 +655,6 @@ namespace Zantetsu.MeshCut
                 return new VpIndirectCutResult(VpIndirectCutOutcome.CutRefused, cut, _shown.Count, 0, 0, 0, 0, 0);
             }
 
-            int verticesBefore = _storage.VertexCount;
             using (input)
             {
                 VpStorageCut.TryExecute(_storage, input, plane, options, out cut);
@@ -670,7 +676,12 @@ namespace Zantetsu.MeshCut
 
             sides[0] = cut.positive;
             sides[1] = cut.negative;
-            int appended = _storage.VertexCount - verticesBefore;
+
+            // The vertices this cut appended, named by the sides that share them. Not the distance the storage's
+            // high-water moved: a cut may be given room below it, and then that distance is zero.
+            VpStoredGeometry named = cut.positive.IsProduced ? cut.positive.geometry : cut.negative.geometry;
+            int appendedStart = named.vertexStart;
+            int appended = named.vertexCount;
             int vertexTransfers = 0;
             int indexTransfers = 0;
             int transferredVertices = 0;
@@ -711,7 +722,7 @@ namespace Zantetsu.MeshCut
                 {
                     touchedGpu = true;
                     if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
-                            _storage, _buffers.VertexBuffer, verticesBefore, appended, out transferredVertices))
+                            _storage, _buffers.VertexBuffer, appendedStart, appended, out transferredVertices))
                     {
                         _spare.Clear();
                         Reclaim(sides, prepared);
@@ -871,6 +882,57 @@ namespace Zantetsu.MeshCut
         /// Material for each. That position is what makes the GPU a mirror of the storage. No index is copied out: the
         /// transfer reads the storage where it lies.
         /// </summary>
+        /// <summary>
+        /// Fills a new buffer with every published vertex range the geometry names, which is what its indices may
+        /// reach into. A cut result's own <c>vertexStart</c>/<c>vertexCount</c> covers only the vertices that cut
+        /// added; the rest it inherits from its parent, and a buffer made just now holds none of them. Each block is
+        /// transferred where it stands, so no unpublished room between them is read or written -- which is why this is
+        /// not a bulk transfer of everything below the high-water.
+        /// <para>
+        /// An ordinary update after a cut is different and stays as it is: the parent's vertices are already in the
+        /// buffer, so only what the cut added goes across, in one transfer.
+        /// </para>
+        /// <para>
+        /// <paramref name="transfers"/> is how many transfers were really issued -- one per block that had vertices in
+        /// it, and none for an empty one -- which is what the display counts. It is not one per call.
+        /// </para>
+        /// </summary>
+        private static bool TryUploadEveryBlock(
+            VpCpuGeometryStorage storage,
+            GraphicsBuffer destination,
+            VpStoredGeometry geometry,
+            out int transfers)
+        {
+            transfers = 0;
+            if (!storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out _))
+            {
+                // A geometry with no mapping names no blocks, and then its own range is all there is.
+                if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                        storage, destination, geometry.vertexStart, geometry.vertexCount, out int only))
+                {
+                    return false;
+                }
+
+                transfers = only > 0 ? 1 : 0;
+                return true;
+            }
+
+            for (int b = 0; b < blocks.Length; b++)
+            {
+                VpGeometryVertexBlock block = blocks[b];
+                if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                        storage, destination, block.vertexStart, block.vertexCount, out int one))
+                {
+                    transfers = 0;
+                    return false;
+                }
+
+                transfers += one > 0 ? 1 : 0;
+            }
+
+            return true;
+        }
+
         private static bool TryPrepare(
             VpCpuGeometryStorage storage,
             IReadOnlyDictionary<int, Material> materialsBySourceIndex,
@@ -990,12 +1052,13 @@ namespace Zantetsu.MeshCut
             shown.hasRegistration = false;
         }
 
-        private void CountTransfers(int vertices, int indices)
+        /// <summary>
+        /// Records what the first upload really issued. <paramref name="vertexTransfers"/> is a count of transfers,
+        /// not a flag: a geometry of several blocks goes across in one transfer per block that has vertices in it.
+        /// </summary>
+        private void CountTransfers(int vertexTransfers, int indices)
         {
-            if (vertices > 0)
-            {
-                VertexTransfers++;
-            }
+            VertexTransfers += vertexTransfers;
 
             if (indices > 0)
             {

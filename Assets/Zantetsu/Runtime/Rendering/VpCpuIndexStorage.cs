@@ -33,6 +33,9 @@ namespace Zantetsu.Rendering
 
         public int DescriptorCapacity => _allocator.DescriptorCapacity;
 
+        /// <summary>How many indices are free for a reservation, over all free ranges.</summary>
+        public int FreeIndexRoom => _allocator.FreeIndexRoom;
+
         /// <inheritdoc cref="VpIndexRangeAllocator.TryReserve"/>
         public bool TryReserve(int indexCount, out VpIndexRangeHandle handle)
         {

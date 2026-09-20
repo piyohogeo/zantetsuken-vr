@@ -4,10 +4,17 @@ using Unity.Collections;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Fixed-capacity, append-only CPU VP vertex storage (DESIGN 4.5.3). Vertices are written into the uncommitted tail
-    /// and become visible when committed; committed vertices are never moved or overwritten while the storage lives,
-    /// and they have no read lease in Phase 0.93. After <see cref="Dispose"/>, the view, the tail and committing throw
-    /// ObjectDisposedException; disposing again does nothing.
+    /// Fixed-capacity CPU VP vertex storage (DESIGN 4.5.3). Room is given out as spans by the geometry storage's own
+    /// allocator, and a writer fills the span it holds; a span becomes visible when it is published. Published vertices
+    /// are never moved while the storage lives, and they have no read lease in Phase 0.93.
+    /// <para>
+    /// <see cref="Count"/> is how far publishing has reached, not how many vertices are live: several spans may be
+    /// open at once and publish in any order, so a slot below it may be one nobody has published, or one that was
+    /// published and whose geometry has gone. Such a slot holds whatever it last held, and no published geometry names
+    /// it. What is read is always named by a geometry's own vertex range.
+    /// </para>
+    /// After <see cref="Dispose"/>, the view, the spans and publishing throw ObjectDisposedException; disposing again
+    /// does nothing.
     /// </summary>
     public sealed class VpCpuVertexStorage : IDisposable
     {
@@ -27,9 +34,10 @@ namespace Zantetsu.Rendering
 
         public int Capacity { get; }
 
+        /// <summary>How far publishing has reached: every published vertex lies below this.</summary>
         public int Count { get; private set; }
 
-        /// <summary>The committed vertices, [0, Count). A view into the storage, not a copy.</summary>
+        /// <summary>The vertices publishing has reached, [0, Count). A view into the storage, not a copy.</summary>
         public NativeArray<VpRenderVertex>.ReadOnly Vertices
         {
             get
@@ -40,15 +48,17 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// A writable view of the <paramref name="count"/> vertices after the committed ones. They stay invisible until
-        /// <see cref="Commit"/>, and an abandoned write is simply overwritten by the next one. Only the main thread
-        /// writes through it. Throws when the count is negative or exceeds the free tail.
+        /// A writable view of the <paramref name="count"/> vertices from <paramref name="start"/>: the span its holder
+        /// was given room for, and nothing beyond it. They stay invisible until <see cref="Publish"/>, and a span given
+        /// back unwritten is simply taken again later. **The holder of that span writes through it**, which may be a
+        /// worker: several spans are open at once and each is written where it was given room. Throws when the span
+        /// lies outside the capacity.
         /// </summary>
-        internal NativeArray<VpRenderVertex> GetUncommittedTail(int count)
+        internal NativeArray<VpRenderVertex> GetSpan(int start, int count)
         {
             ThrowIfDisposed();
-            ThrowIfBeyondTail(count);
-            return _vertices.GetSubArray(Count, count);
+            ThrowIfOutsideCapacity(start, count);
+            return _vertices.GetSubArray(start, count);
         }
 
         /// <summary>
@@ -70,12 +80,16 @@ namespace Zantetsu.Rendering
             return true;
         }
 
-        /// <summary>Makes the next <paramref name="count"/> written vertices visible. Throws when the count is negative or exceeds the free tail.</summary>
-        internal void Commit(int count)
+        /// <summary>
+        /// Makes the <paramref name="count"/> vertices from <paramref name="start"/> visible, which moves
+        /// <see cref="Count"/> on when they reach further than anything published before. Throws when the span lies
+        /// outside the capacity.
+        /// </summary>
+        internal void Publish(int start, int count)
         {
             ThrowIfDisposed();
-            ThrowIfBeyondTail(count);
-            Count += count;
+            ThrowIfOutsideCapacity(start, count);
+            Count = Math.Max(Count, start + count);
         }
 
         public void Dispose()
@@ -89,11 +103,12 @@ namespace Zantetsu.Rendering
             _vertices.Dispose();
         }
 
-        private void ThrowIfBeyondTail(int count)
+        private void ThrowIfOutsideCapacity(int start, int count)
         {
-            if (count < 0 || count > Capacity - Count)
+            if (start < 0 || count < 0 || start > Capacity - count)
             {
-                throw new ArgumentOutOfRangeException(nameof(count), count, "Must fit the free vertex tail.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(count), count, "A span lies within the capacity: " + count + " from " + start + " of " + Capacity + ".");
             }
         }
 

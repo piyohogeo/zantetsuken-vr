@@ -133,6 +133,12 @@ namespace Zantetsu.MeshCut.Tests
             return new VpCpuGeometryStorage(2048, indexCapacity, 32, 128, 128, Allocator.Persistent);
         }
 
+        private static VpStorageCutInput Acquire(VpCpuGeometryStorage storage, VpStoredGeometry geometry)
+        {
+            Assert.That(VpStorageCutInput.TryAcquire(storage, geometry, out VpStorageCutInput input), Is.True, "acquire the input");
+            return input;
+        }
+
         private static VpStoredGeometry Append(VpCpuGeometryStorage storage, Prepared prepared)
         {
             Assert.That(
@@ -282,6 +288,96 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(IndexState(storage, parent), Is.EqualTo(VpIndexRangeState.Free), "the parent's range was retired");
                     Assert.That(table.LiveGeometryCount, Is.EqualTo(2), "only the children are registered");
                     Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(2));
+                }
+            }
+        }
+
+        /// <summary>
+        /// A display made for a side a cut produced must be given the parent's vertices as well as the ones the cut
+        /// added. The side's own <c>vertexStart</c>/<c>vertexCount</c> covers only what the cut appended, while its
+        /// indices reach back into the parent's block, and a buffer made just now holds nothing at all. What is read
+        /// back from the GPU is compared with the storage, block by block.
+        /// <para>
+        /// This is the first transfer into a new buffer. An ordinary update after a cut is a different case and is
+        /// covered above: there the parent's vertices are in the buffer already, so only the appended ones go across.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void ADisplayMadeForACutSide_IsGivenTheParentsVerticesAndTheOnesTheCutAdded()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                VpStoredGeometry parent = Append(storage, prepared);
+                VpStoredGeometry side;
+                using (VpStorageCutInput input = Acquire(storage, parent))
+                {
+                    Assert.That(
+                        VpStorageCut.TryExecute(storage, input, CrossingPlane(), out VpStorageCutResult cut), Is.True,
+                        "the cut goes through");
+                    Assert.That(cut.positive.IsProduced, Is.True, "and produced a positive side");
+                    side = cut.positive.geometry;
+                }
+
+                Assert.That(
+                    storage.TryGetVertexBlocks(side, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out _),
+                    Is.True,
+                    "the side names its blocks");
+                Assert.That(blocks.Length, Is.EqualTo(2), "the parent's block and the one the cut added");
+                Assert.That(
+                    blocks[1].vertexStart, Is.EqualTo(side.vertexStart), "the side's own range is only the second of them");
+
+                // The side really does reach back: at least one of its indices names a vertex of the parent's block.
+                Assert.That(
+                    storage.TryAcquireIndexReadLease(side.indexRange, out VpIndexReadLease lease, out NativeArray<uint>.ReadOnly indices),
+                    Is.True,
+                    "the side's indices can be read");
+                bool reachesBack = false;
+                for (int i = 0; i < indices.Length && !reachesBack; i++)
+                {
+                    reachesBack = indices[i] < (uint)side.vertexStart;
+                }
+
+                Assert.That(storage.TryReleaseIndexReadLease(lease), Is.True, "the lease goes back");
+                Assert.That(reachesBack, Is.True, "the side's indices name vertices the cut did not append");
+
+                // A display of its own for that side, and then what the GPU actually holds.
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                Assert.That(TryCreate(storage, table, side, out VpIndirectCutDisplay second), Is.True, "create for the side");
+                using (second)
+                {
+                    Assert.That(
+                        second.VertexTransfers, Is.EqualTo(blocks.Length),
+                        "one transfer per block, which is what was really issued");
+                    var onTheGpu = new VpRenderVertex[second.Buffers.VertexCapacity];
+                    second.Buffers.VertexBuffer.GetData(onTheGpu);
+
+                    int checkedVertices = 0;
+                    for (int b = 0; b < blocks.Length; b++)
+                    {
+                        VpGeometryVertexBlock block = blocks[b];
+                        Assert.That(
+                            storage.TryGetCommittedVertices(block.vertexStart, block.vertexCount, out NativeArray<VpRenderVertex> inStorage),
+                            Is.True,
+                            "block " + b + " is published in the storage");
+                        for (int v = 0; v < block.vertexCount; v++)
+                        {
+                            VpRenderVertex want = inStorage[v];
+                            VpRenderVertex got = onTheGpu[block.vertexStart + v];
+                            Assert.That(
+                                got.position, Is.EqualTo(want.position),
+                                "block " + b + ", vertex " + v + ": the position on the GPU");
+                            Assert.That(
+                                got.normal, Is.EqualTo(want.normal),
+                                "block " + b + ", vertex " + v + ": the normal on the GPU");
+                            Assert.That(
+                                got.uv0, Is.EqualTo(want.uv0),
+                                "block " + b + ", vertex " + v + ": the uv on the GPU");
+                            checkedVertices++;
+                        }
+                    }
+
+                    Assert.That(checkedVertices, Is.GreaterThan(side.vertexCount), "the parent's vertices were checked too");
                 }
             }
         }

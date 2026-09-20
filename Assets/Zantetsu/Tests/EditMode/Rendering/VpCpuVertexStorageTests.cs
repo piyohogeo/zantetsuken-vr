@@ -16,12 +16,13 @@ namespace Zantetsu.Rendering.Tests
             return new VpRenderVertex { position = new Vector3(x, 0f, 0f), normal = Vector3.up, uv0 = new Vector2(x, 1f) };
         }
 
-        private static void WriteTail(VpCpuVertexStorage storage, params float[] xs)
+        /// <summary>Writes into the span from <paramref name="start"/>, as the holder of that span would.</summary>
+        private static void WriteSpan(VpCpuVertexStorage storage, int start, params float[] xs)
         {
-            NativeArray<VpRenderVertex> tail = storage.GetUncommittedTail(xs.Length);
+            NativeArray<VpRenderVertex> span = storage.GetSpan(start, xs.Length);
             for (int i = 0; i < xs.Length; i++)
             {
-                tail[i] = Vertex(xs[i]);
+                span[i] = Vertex(xs[i]);
             }
         }
 
@@ -39,52 +40,78 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
-        public void CommittedTailWrites_AppendAfterTheEarlierVertices()
+        public void PublishedSpans_AreVisibleWhereTheyWereWritten()
         {
             using (var storage = new VpCpuVertexStorage(8, Allocator.Persistent))
             {
-                WriteTail(storage, 1f, 2f, 3f);
-                Assert.That(storage.Vertices.Length, Is.Zero, "uncommitted writes are invisible");
+                WriteSpan(storage, 0, 1f, 2f, 3f);
+                Assert.That(storage.Vertices.Length, Is.Zero, "an unpublished span is invisible");
 
-                storage.Commit(3);
-                WriteTail(storage, 4f, 5f);
-                storage.Commit(2);
+                storage.Publish(0, 3);
+                WriteSpan(storage, 3, 4f, 5f);
+                storage.Publish(3, 2);
 
                 Assert.That(storage.Count, Is.EqualTo(5));
                 Assert.That(storage.Vertices.ToArray(), Is.EqualTo(new[] { Vertex(1f), Vertex(2f), Vertex(3f), Vertex(4f), Vertex(5f) }));
             }
         }
 
+        /// <summary>
+        /// Two spans open at once, published in the order they were finished rather than the order they were taken.
+        /// Each is visible where it was written, and the slots of the one still open lie below the count without
+        /// belonging to anything published.
+        /// </summary>
         [Test]
-        public void AnAbandonedTailWrite_IsOverwrittenByTheNextOne()
+        public void SpansPublishedOutOfOrder_AreEachVisibleWhereTheyWere()
         {
             using (var storage = new VpCpuVertexStorage(8, Allocator.Persistent))
             {
-                WriteTail(storage, 1f);
-                storage.Commit(1);
-                WriteTail(storage, 7f, 8f, 9f);
+                WriteSpan(storage, 0, 1f, 2f);
+                WriteSpan(storage, 2, 3f, 4f);
 
-                WriteTail(storage, 2f, 3f);
-                storage.Commit(2);
+                storage.Publish(2, 2);
+                Assert.That(storage.Count, Is.EqualTo(4), "publishing the later span reaches past the earlier one");
+                Assert.That(
+                    storage.Vertices.ToArray(),
+                    Is.EqualTo(new[] { Vertex(1f), Vertex(2f), Vertex(3f), Vertex(4f) }),
+                    "and the earlier span's slots hold what was written into them, published or not");
+
+                storage.Publish(0, 2);
+                Assert.That(storage.Count, Is.EqualTo(4), "publishing what lies behind does not move the count back");
+            }
+        }
+
+        [Test]
+        public void AnAbandonedSpanWrite_IsOverwrittenByWhoeverTakesItNext()
+        {
+            using (var storage = new VpCpuVertexStorage(8, Allocator.Persistent))
+            {
+                WriteSpan(storage, 0, 1f);
+                storage.Publish(0, 1);
+                WriteSpan(storage, 1, 7f, 8f, 9f);
+
+                WriteSpan(storage, 1, 2f, 3f);
+                storage.Publish(1, 2);
 
                 Assert.That(storage.Vertices.ToArray(), Is.EqualTo(new[] { Vertex(1f), Vertex(2f), Vertex(3f) }));
             }
         }
 
         [TestCase(-1)]
-        [TestCase(6)]
-        public void TailsAndCommitsOutsideTheFreeTail_ThrowWithoutChangingTheCount(int count)
+        [TestCase(9)]
+        public void SpansOutsideTheCapacity_ThrowWithoutChangingTheCount(int count)
         {
             using (var storage = new VpCpuVertexStorage(8, Allocator.Persistent))
             {
-                WriteTail(storage, 1f, 2f, 3f);
-                storage.Commit(3);
+                WriteSpan(storage, 0, 1f, 2f, 3f);
+                storage.Publish(0, 3);
 
-                Assert.Throws<ArgumentOutOfRangeException>(() => storage.GetUncommittedTail(count), "tail");
-                Assert.Throws<ArgumentOutOfRangeException>(() => storage.Commit(count), "commit");
+                Assert.Throws<ArgumentOutOfRangeException>(() => storage.GetSpan(0, count), "span");
+                Assert.Throws<ArgumentOutOfRangeException>(() => storage.Publish(0, count), "publish");
+                Assert.Throws<ArgumentOutOfRangeException>(() => storage.GetSpan(6, 3), "a span past the end");
 
                 Assert.That(storage.Count, Is.EqualTo(3));
-                Assert.That(storage.GetUncommittedTail(5).Length, Is.EqualTo(5), "the whole free tail");
+                Assert.That(storage.GetSpan(3, 5).Length, Is.EqualTo(5), "the rest of the capacity is still a span");
             }
         }
 
@@ -95,8 +122,8 @@ namespace Zantetsu.Rendering.Tests
             storage.Dispose();
 
             Assert.Throws<ObjectDisposedException>(() => _ = storage.Vertices, "view");
-            Assert.Throws<ObjectDisposedException>(() => storage.GetUncommittedTail(1), "tail");
-            Assert.Throws<ObjectDisposedException>(() => storage.Commit(0), "commit");
+            Assert.Throws<ObjectDisposedException>(() => storage.GetSpan(0, 1), "span");
+            Assert.Throws<ObjectDisposedException>(() => storage.Publish(0, 0), "publish");
             Assert.DoesNotThrow(storage.Dispose, "dispose again");
         }
     }
