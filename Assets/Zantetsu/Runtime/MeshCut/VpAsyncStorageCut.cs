@@ -1,0 +1,677 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Mathematics;
+using Zantetsu.Rendering;
+
+namespace Zantetsu.MeshCut
+{
+    /// <summary>How far one asynchronous cut has come.</summary>
+    public enum VpStorageCutStage
+    {
+        /// <summary>Accepted, and waiting to be offered to the dispatcher. Nothing of the storage is held yet.</summary>
+        Waiting = 0,
+
+        /// <summary>Its capacity query is with the dispatcher.</summary>
+        Querying = 1,
+
+        /// <summary>
+        /// Its sizes are known and it is waiting for the room to run: the storage's one cut reservation, and a place
+        /// in the dispatcher's queue. A cut that waits here is not offered to the dispatcher at all.
+        /// </summary>
+        Ready = 2,
+
+        /// <summary>Its reservation is open and the cut itself is with the dispatcher.</summary>
+        Cutting = 3,
+
+        /// <summary>Over, with a result: the two sides on success, the reason on every other status.</summary>
+        Finished = 4,
+
+        /// <summary>Given up by the caller, or cancelled with the dispatcher. Everything it held has gone back.</summary>
+        Abandoned = 5,
+    }
+
+    /// <summary>
+    /// One cut asked for through <see cref="VpAsyncStorageCut"/>: the caller's handle on it while it runs and the
+    /// result when it is over. Everything the cut needs while it runs — the input adapter and its read lease, the
+    /// scratch, the output reservation and the small arrays the kernel writes its ranges into — is held here from the
+    /// moment it is accepted until it ends, and given back exactly once at that moment.
+    /// <para>
+    /// The handle is read on the main thread. <see cref="Result"/> means nothing before <see cref="Stage"/> is
+    /// <see cref="VpStorageCutStage.Finished"/>, and a finished cut keeps its result for as long as the caller keeps
+    /// the handle: nothing of the runner's touches it again. The geometries a successful cut produced are the
+    /// caller's, on exactly the terms of the synchronous entry (<see cref="VpStorageCutSide"/>) — produced, borrowed
+    /// or empty.
+    /// </para>
+    /// </summary>
+    public sealed unsafe class VpStorageCutRequest
+    {
+        internal VpStorageCutInput input;
+        internal float4 plane;
+        internal VpStorageCutOptions options;
+        internal int rangeCount;
+
+        internal NativeArray<MeshCutIndexRange> outputRanges;
+        internal VpGeometrySubmesh[] submeshes;
+        internal NativeArray<byte> scratch;
+
+        internal MeshCutInput kernelInput;
+        internal MeshCutOutput output;
+        internal MeshCutCapacity capacity;
+        internal MeshCutResult kernelResult;
+
+        internal int newVertexCapacity, newIndexCapacity, scratchBytes;
+        internal bool reservesNothing;
+        internal VpCutOutputReservation reservation;
+        internal WorkTicket ticket;
+        internal bool abandoning;
+
+        /// <summary>The thread each part ran on, kept for the tests that check where the work really happened.</summary>
+        internal int queryThreadId, cutThreadId, collectThreadId;
+
+        internal VpStorageCutRequest(VpStorageCutInput input, float4 plane, in VpStorageCutOptions options)
+        {
+            this.input = input;
+            this.plane = plane;
+            this.options = options;
+            Parent = input.Geometry;
+            rangeCount = input.RangeCount;
+            Result = new VpStorageCutResult { status = VpStorageCutStatus.InvalidInput };
+        }
+
+        /// <summary>The geometry being cut.</summary>
+        public VpStoredGeometry Parent { get; }
+
+        /// <summary>How far it has come.</summary>
+        public VpStorageCutStage Stage { get; internal set; } = VpStorageCutStage.Waiting;
+
+        /// <summary>Whether it is over, either way.</summary>
+        public bool IsOver => Stage == VpStorageCutStage.Finished || Stage == VpStorageCutStage.Abandoned;
+
+        /// <summary>The result, once <see cref="Stage"/> is <see cref="VpStorageCutStage.Finished"/>.</summary>
+        public VpStorageCutResult Result { get; internal set; }
+
+        /// <summary>What a worker threw, when one did; null otherwise.</summary>
+        public Exception Failure { get; internal set; }
+
+        /// <summary>How many kernel runs of the cut itself it has taken, re-runs after a short reservation included.</summary>
+        public int Attempts { get; internal set; }
+
+        /// <summary>Whether the storage's one cut reservation is held by this cut right now.</summary>
+        public bool HoldsReservation => reservation != null && !reservation.IsClosed;
+    }
+
+    /// <summary>
+    /// Runs the cut kernel over a geometry a <see cref="VpCpuGeometryStorage"/> owns without occupying the main thread
+    /// with it: the same kernel, the same storage and the same rules as <see cref="VpStorageCut"/>, taken apart into
+    /// what a worker may do and what only the main thread may do (DESIGN 4.3, 4.5.6).
+    /// <para>
+    /// **The division.** Reading the geometry's shape is work: the capacity query walks every triangle, so it belongs
+    /// on a worker with the cut itself. Holding the input's read lease, taking and giving back the output reservation
+    /// and turning a finished run into stored geometries belong to the main thread, because the storage is the main
+    /// thread's. One cut therefore goes: offered → capacity query on a worker → reservation on the main thread → the
+    /// cut on a worker → the two sides published on the main thread. A reservation that turns out to be too small is
+    /// given back and a larger one taken, and the cut runs again, by the same rule the synchronous entry uses.
+    /// </para>
+    /// <para>
+    /// **What it does not do.** It publishes nothing beyond the storage's own commit: no ledger, no transfer to the
+    /// GPU, no display. The geometries it produces are handed to the caller, who decides what becomes of them. It
+    /// owns no dispatcher and drives no frame — the caller brings the dispatcher it already has, opens the frames and
+    /// calls <see cref="Pump"/> once each time it is willing to let cuts move, on the main thread.
+    /// </para>
+    /// <para>
+    /// **The storage's one reservation.** A storage keeps one cut output reservation at a time, so one cut at a time
+    /// is in its reserved-and-running stretch. A later cut is not refused and does not wait on a lock for it: it stays
+    /// in <see cref="VpStorageCutStage.Ready"/>, unoffered, and is offered as soon as the earlier one has given the
+    /// reservation back. This runner is the only holder of that reservation for the cuts it runs; a synchronous cut of
+    /// the same storage in the same stretch would be refused as a capacity failure.
+    /// </para>
+    /// </summary>
+    public sealed unsafe class VpAsyncStorageCut : IDisposable
+    {
+        private readonly VpCpuGeometryStorage _storage;
+        private readonly SharedWorkDispatcher _dispatcher;
+        private readonly WorkPurpose _purpose;
+        private readonly List<VpStorageCutRequest> _requests = new List<VpStorageCutRequest>();
+        private readonly Dictionary<VpStorageCutRequest, Work> _work = new Dictionary<VpStorageCutRequest, Work>();
+        private VpStorageCutRequest _reserving;
+        private bool _closed;
+
+        /// <summary>
+        /// Takes the storage whose geometries are cut and the dispatcher the cuts are run through. The purpose decides
+        /// the destination: <see cref="WorkPurpose.AdmittedGeometry"/>, the geometry pool, is what an admitted cut is.
+        /// </summary>
+        public VpAsyncStorageCut(
+            VpCpuGeometryStorage storage,
+            SharedWorkDispatcher dispatcher,
+            WorkPurpose purpose = WorkPurpose.AdmittedGeometry)
+        {
+            if (storage == null)
+            {
+                throw new ArgumentNullException(nameof(storage));
+            }
+
+            if (dispatcher == null)
+            {
+                throw new ArgumentNullException(nameof(dispatcher));
+            }
+
+            if (!WorkPurposes.IsDefined(purpose))
+            {
+                throw new ArgumentOutOfRangeException(nameof(purpose), purpose, "not a defined work purpose");
+            }
+
+            _storage = storage;
+            _dispatcher = dispatcher;
+            _purpose = purpose;
+        }
+
+        /// <summary>How many cuts are neither finished nor abandoned.</summary>
+        public int ActiveCount => _requests.Count;
+
+        /// <summary>The cut whose reservation is open, if one is.</summary>
+        public VpStorageCutRequest Reserving => _reserving;
+
+        /// <summary>
+        /// Accepts one cut of <paramref name="input"/>'s geometry by <paramref name="plane"/> and gives back the handle
+        /// to follow it by. **The adapter becomes this runner's**: it is held, with its read lease, until the cut is
+        /// over or abandoned, and disposed then. Nothing of the storage is taken here, and nothing runs until
+        /// <see cref="Pump"/> and the dispatcher have had their turn.
+        /// <para>
+        /// The options are the synchronous entry's, with one difference: <see cref="VpStorageCutOptions.maxAttempts"/>
+        /// is that entry's pacing within one call and is not used here. A reservation that proves too small is simply
+        /// taken again, larger, at a later opportunity, so a cut is never given up on for the number of tries — only
+        /// for a requirement that does not grow, one too large to express, or a storage that cannot hold it.
+        /// </para>
+        /// </summary>
+        public VpStorageCutRequest Submit(VpStorageCutInput input, float4 plane, in VpStorageCutOptions options)
+        {
+            if (_closed)
+            {
+                throw new ObjectDisposedException(nameof(VpAsyncStorageCut));
+            }
+
+            if (input == null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            if (input.IsDisposed)
+            {
+                throw new ArgumentException("the input adapter has been disposed", nameof(input));
+            }
+
+            var request = new VpStorageCutRequest(input, plane, options);
+            if (request.rangeCount <= 0)
+            {
+                // Nothing the kernel could read: refused here, and the adapter it was given — the lease with it — goes
+                // back at once rather than being held for a cut that will never run.
+                input.Dispose();
+                request.input = null;
+                request.Stage = VpStorageCutStage.Finished;
+                return request;
+            }
+
+            request.outputRanges = new NativeArray<MeshCutIndexRange>(2 * request.rangeCount, Allocator.Persistent);
+            request.submeshes = new VpGeometrySubmesh[2 * request.rangeCount];
+            _requests.Add(request);
+            _work.Add(request, new Work(request));
+            return request;
+        }
+
+        /// <summary>
+        /// Moves every cut as far as it can go without waiting for anything, on the main thread: offers what is ready
+        /// to the dispatcher, takes and gives back reservations, and turns runs the dispatcher has already collected
+        /// into results. Called once per frame, alongside <see cref="SharedWorkDispatcher.Dispatch"/>; calling it more
+        /// often is harmless and calling it less only makes cuts slower.
+        /// <para>
+        /// After <see cref="Dispose"/> this still works, and must still be called: nothing new is offered or reserved,
+        /// but a cut a worker was running is taken back here once the dispatcher hands it over, and only then does
+        /// what it held — its reservation, its scratch and its input lease — go back. Pumping stops being necessary
+        /// when <see cref="ActiveCount"/> reaches zero.
+        /// </para>
+        /// </summary>
+        public void Pump()
+        {
+
+            // In the order they were asked for, so that the one waiting longest for the storage's reservation is the
+            // one that gets it.
+            for (int i = 0; i < _requests.Count; i++)
+            {
+                Advance(_requests[i]);
+            }
+
+            for (int i = _requests.Count - 1; i >= 0; i--)
+            {
+                VpStorageCutRequest request = _requests[i];
+                if (request.IsOver)
+                {
+                    _requests.RemoveAt(i);
+                    _work.Remove(request);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gives up on a cut. One that has not been offered, or is still waiting in the dispatcher's queue, ends here
+        /// and gives everything back at once. One a worker is already running is never interrupted: it is marked, and
+        /// everything it holds goes back when the dispatcher hands it over, with nothing published. Returns whether
+        /// this call was what ended it.
+        /// </summary>
+        public bool Abandon(VpStorageCutRequest request)
+        {
+            if (request == null)
+            {
+                throw new ArgumentNullException(nameof(request));
+            }
+
+            if (request.IsOver || !_requests.Contains(request))
+            {
+                return false;
+            }
+
+            if (request.Stage == VpStorageCutStage.Waiting
+                || request.Stage == VpStorageCutStage.Ready
+                || _dispatcher.Cancel(request.ticket))
+            {
+                End(request, VpStorageCutStage.Abandoned);
+                _requests.Remove(request);
+                _work.Remove(request);
+                return true;
+            }
+
+            // Running, or finished and not yet collected: it is not interrupted, and the next pump after its
+            // collection gives everything back.
+            request.abandoning = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Closes the runner: no cut is accepted after this, and every cut no worker is using — one never offered, and
+        /// one still waiting in the dispatcher's queue — ends here as abandoned with everything it held given back.
+        /// <para>
+        /// A cut a worker is already running is never interrupted, so this is a close and not an end. It is marked,
+        /// and the caller finishes the job the ordinary way: keep dispatching, or stop the dispatcher, and keep
+        /// calling <see cref="Pump"/> until <see cref="ActiveCount"/> is zero. Each of those cuts is then taken back
+        /// on the main thread, publishes nothing, and gives back its reservation, its scratch and its input lease.
+        /// Closing twice does nothing.
+        /// </para>
+        /// </summary>
+        public void Dispose()
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _closed = true;
+            for (int i = _requests.Count - 1; i >= 0; i--)
+            {
+                VpStorageCutRequest request = _requests[i];
+                if (request.Stage == VpStorageCutStage.Waiting
+                    || request.Stage == VpStorageCutStage.Ready
+                    || _dispatcher.Cancel(request.ticket))
+                {
+                    End(request, VpStorageCutStage.Abandoned);
+                    _requests.RemoveAt(i);
+                    _work.Remove(request);
+                    continue;
+                }
+
+                request.abandoning = true;
+            }
+        }
+
+        private void Advance(VpStorageCutRequest request)
+        {
+            Work work = _work[request];
+            if (_closed && request.Stage != VpStorageCutStage.Querying && request.Stage != VpStorageCutStage.Cutting)
+            {
+                // Closed: nothing is offered or reserved any more. What a worker still holds is all that is left to
+                // take back, and that is the two stages below.
+                return;
+            }
+
+            switch (request.Stage)
+            {
+                case VpStorageCutStage.Waiting:
+                    // The views the worker reads are taken here, on the main thread, and only then is the query
+                    // offered: a worker asks the storage nothing itself.
+                    if (!TryReadInput(request))
+                    {
+                        return;
+                    }
+
+                    Offer(request, work, cutting: false);
+                    return;
+
+                case VpStorageCutStage.Querying:
+                    if (!work.ended || !TakeCompletion(request, work))
+                    {
+                        return;
+                    }
+
+                    if (request.capacity.invalidInput != 0)
+                    {
+                        Finish(request, VpStorageCutStatus.InvalidInput);
+                        return;
+                    }
+
+                    // The query already knows when no triangle crosses the plane: that run reserves no output at all,
+                    // so a cut that changes nothing leaves no trace.
+                    request.reservesNothing = request.capacity.wholeMeshSide != 0;
+                    request.newVertexCapacity = request.options.newVertexCapacity > 0
+                        ? request.options.newVertexCapacity
+                        : request.capacity.newVertices;
+                    request.newIndexCapacity = request.options.newIndexCapacity > 0
+                        ? request.options.newIndexCapacity
+                        : request.capacity.newIndices;
+                    request.scratchBytes = math.max(
+                        1,
+                        request.options.scratchBytes > 0 ? request.options.scratchBytes : request.capacity.scratchBytes);
+                    request.Stage = VpStorageCutStage.Ready;
+                    goto case VpStorageCutStage.Ready;
+
+                case VpStorageCutStage.Ready:
+                    if (!TryTakeRoom(request))
+                    {
+                        // Somebody else holds the storage's one reservation: this cut simply waits here, unoffered.
+                        return;
+                    }
+
+                    Offer(request, work, cutting: true);
+                    return;
+
+                case VpStorageCutStage.Cutting:
+                    if (!work.ended || !TakeCompletion(request, work))
+                    {
+                        return;
+                    }
+
+                    Settle(request);
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// Takes what one attempt needs and points the kernel's output at it: the reservation, unless the query
+        /// already said the plane misses the geometry, the scratch, and the input as it stands right now. False when
+        /// another cut holds the storage's one reservation, which is not a failure and changes nothing.
+        /// </summary>
+        private bool TryTakeRoom(VpStorageCutRequest request)
+        {
+            if (!request.reservesNothing && !request.HoldsReservation)
+            {
+                if (_reserving != null && _reserving != request)
+                {
+                    return false;
+                }
+
+                if (!VpStorageCut.TryReserve(
+                        _storage,
+                        request.Parent,
+                        request.rangeCount,
+                        request.newVertexCapacity,
+                        request.newIndexCapacity,
+                        out VpCutOutputReservation reservation))
+                {
+                    Finish(request, VpStorageCutStatus.StorageCapacity);
+                    return false;
+                }
+
+                request.reservation = reservation;
+                _reserving = request;
+            }
+
+            if (!request.scratch.IsCreated || request.scratch.Length < request.scratchBytes)
+            {
+                if (request.scratch.IsCreated)
+                {
+                    request.scratch.Dispose();
+                }
+
+                request.scratch = new NativeArray<byte>(request.scratchBytes, Allocator.Persistent);
+            }
+
+            if (!TryReadInput(request))
+            {
+                return false;
+            }
+
+            var output = new MeshCutOutput
+            {
+                outputRanges = (MeshCutIndexRange*)request.outputRanges.GetUnsafePtr(),
+                scratch = (byte*)request.scratch.GetUnsafePtr(),
+                scratchBytes = request.scratch.Length,
+            };
+            if (request.options.nodeEdgeKeys.IsCreated && request.options.nodeParams.IsCreated)
+            {
+                // An optional record for a caller that asked for it, into that caller's own arrays.
+                output.nodeEdgeKeys = (long*)request.options.nodeEdgeKeys.GetUnsafePtr();
+                output.nodeParams = (float*)request.options.nodeParams.GetUnsafePtr();
+                output.nodeCapacity = math.min(request.options.nodeEdgeKeys.Length, request.options.nodeParams.Length);
+            }
+
+            VpStorageCut.PointAtReservation(ref output, request.reservation);
+            request.output = output;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the geometry as it stands into the input the worker will use: the storage's own vertex, index and
+        /// topology views, taken on the main thread and kept valid by the read lease the adapter holds. Both parts
+        /// that run on a worker are handed this, so neither asks the storage anything itself.
+        /// </summary>
+        private bool TryReadInput(VpStorageCutRequest request)
+        {
+            if (request.input.TryGetInput(request.plane, out request.kernelInput))
+            {
+                return true;
+            }
+
+            Finish(request, VpStorageCutStatus.InvalidInput);
+            return false;
+        }
+
+        /// <summary>Turns a collected cut into its two sides, or into the next attempt, or into the reason it ended.</summary>
+        private void Settle(VpStorageCutRequest request)
+        {
+            request.Attempts++;
+            MeshCutResult kernel = request.kernelResult;
+            VpStorageCutResult result = request.Result;
+            result.kernel = kernel;
+            result.attempts = request.Attempts;
+            if (kernel.status == MeshCutStatus.Ok)
+            {
+                if (!_storage.TryGetSubmeshes(request.Parent, out NativeArray<VpGeometrySubmesh>.ReadOnly parentSubmeshes)
+                    || parentSubmeshes.Length != request.rangeCount)
+                {
+                    request.Result = result;
+                    Finish(request, VpStorageCutStatus.InternalError);
+                    return;
+                }
+
+                // The one place a side is described and published, shared with the synchronous entry: the reservation
+                // is committed, or given back whole when the plane turned out to miss the geometry.
+                VpStorageCut.TryFinish(
+                    _storage,
+                    request.Parent,
+                    request.reservation,
+                    in kernel,
+                    request.outputRanges,
+                    request.submeshes,
+                    parentSubmeshes,
+                    request.rangeCount,
+                    ref result);
+                request.Result = result;
+                Finish(request, result.status);
+                return;
+            }
+
+            if (!VpStorageCut.TryNextAttempt(
+                    in kernel,
+                    ref request.newVertexCapacity,
+                    ref request.newIndexCapacity,
+                    ref request.scratchBytes,
+                    ref result))
+            {
+                request.Result = result;
+                Finish(request, result.status);
+                return;
+            }
+
+            // A short reservation is not a failure: it goes back whole, so another cut may have it, and this one asks
+            // for a larger one at a later opportunity.
+            request.Result = result;
+            request.reservesNothing = false;
+            ReleaseReservation(request);
+            request.Stage = VpStorageCutStage.Ready;
+        }
+
+        /// <summary>
+        /// Reads what the dispatcher gave back. False when the run did not happen or must not be used: a worker's
+        /// exception and a cancellation both end the cut here, and so does the caller having given up on it.
+        /// </summary>
+        private bool TakeCompletion(VpStorageCutRequest request, Work work)
+        {
+            work.ended = false;
+            WorkCompletion completion = work.completion;
+            if (request.abandoning)
+            {
+                End(request, VpStorageCutStage.Abandoned);
+                return false;
+            }
+
+            switch (completion.outcome)
+            {
+                case WorkOutcome.Finished:
+                    return true;
+
+                case WorkOutcome.Failed:
+                    request.Failure = completion.failure;
+                    Finish(request, VpStorageCutStatus.InternalError);
+                    return false;
+
+                default:
+                    End(request, VpStorageCutStage.Abandoned);
+                    return false;
+            }
+        }
+
+        private void Offer(VpStorageCutRequest request, Work work, bool cutting)
+        {
+            work.cutting = cutting;
+            work.ended = false;
+            if (!_dispatcher.TryEnqueue(_purpose, work, out WorkTicket ticket))
+            {
+                // No place for it right now. It keeps whatever it has taken and is offered again at the next pump.
+                return;
+            }
+
+            request.ticket = ticket;
+            request.Stage = cutting ? VpStorageCutStage.Cutting : VpStorageCutStage.Querying;
+        }
+
+        private void Finish(VpStorageCutRequest request, VpStorageCutStatus status)
+        {
+            VpStorageCutResult result = request.Result;
+            result.status = status;
+            result.attempts = request.Attempts;
+            request.Result = result;
+            End(request, VpStorageCutStage.Finished);
+        }
+
+        /// <summary>Gives back everything one cut held, exactly once, and settles its stage.</summary>
+        private void End(VpStorageCutRequest request, VpStorageCutStage stage)
+        {
+            ReleaseReservation(request);
+            if (request.scratch.IsCreated)
+            {
+                request.scratch.Dispose();
+                request.scratch = default;
+            }
+
+            if (request.outputRanges.IsCreated)
+            {
+                request.outputRanges.Dispose();
+                request.outputRanges = default;
+            }
+
+            if (request.input != null)
+            {
+                request.input.Dispose();
+                request.input = null;
+            }
+
+            request.kernelInput = default;
+            request.output = default;
+            request.Stage = stage;
+        }
+
+        private void ReleaseReservation(VpStorageCutRequest request)
+        {
+            if (request.reservation != null)
+            {
+                if (!request.reservation.IsClosed)
+                {
+                    _storage.TryCancelCutOutput(request.reservation);
+                }
+
+                request.reservation = null;
+            }
+
+            if (_reserving == request)
+            {
+                _reserving = null;
+            }
+        }
+
+        /// <summary>
+        /// One cut's worker side, offered twice: once for the capacity query and once for the cut. Both are the
+        /// kernel and nothing else — no storage, no Unity object, no allocation — reading views the main thread
+        /// handed over and writing only this cut's own scratch, ranges and reservation.
+        /// </summary>
+        private sealed class Work : IDispatchWork
+        {
+            private readonly VpStorageCutRequest _request;
+            internal bool cutting;
+            internal bool ended;
+            internal WorkCompletion completion;
+
+            internal Work(VpStorageCutRequest request)
+            {
+                _request = request;
+            }
+
+            public void Begin()
+            {
+                if (cutting)
+                {
+                    _request.cutThreadId = Thread.CurrentThread.ManagedThreadId;
+                    MeshCutResult kernel = default;
+                    MeshCutKernel.Execute(in _request.kernelInput, in _request.output, ref kernel);
+                    _request.kernelResult = kernel;
+                    return;
+                }
+
+                _request.queryThreadId = Thread.CurrentThread.ManagedThreadId;
+                MeshCutCapacity capacity = default;
+                MeshCutKernel.QueryCapacity(in _request.kernelInput, ref capacity);
+                _request.capacity = capacity;
+            }
+
+            public bool IsComplete => true;
+
+            public void Collect(WorkCompletion completion)
+            {
+                // Only the news. What it means for the storage is the main thread's own next pump, so that taking a
+                // reservation and publishing a side never happen inside a dispatch.
+                _request.collectThreadId = Thread.CurrentThread.ManagedThreadId;
+                this.completion = completion;
+                ended = true;
+            }
+        }
+    }
+}

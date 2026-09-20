@@ -233,13 +233,7 @@ namespace Zantetsu.MeshCut
                     try
                     {
                         if (!reservesNothing
-                            && !storage.TryReserveCutOutput(
-                                parent,
-                                newVertexCapacity,
-                                newIndexCapacity,
-                                2 * rangeCount,
-                                parent.blockCount + 1,
-                                out reservation))
+                            && !TryReserve(storage, parent, rangeCount, newVertexCapacity, newIndexCapacity, out reservation))
                         {
                             result.status = VpStorageCutStatus.StorageCapacity;
                             return false;
@@ -259,61 +253,22 @@ namespace Zantetsu.MeshCut
                             output.nodeCapacity = math.min(options.nodeEdgeKeys.Length, options.nodeParams.Length);
                         }
 
-                        if (reservation != null)
-                        {
-                            output.newVertices = (VpRenderVertex*)reservation.NewVertices.GetUnsafePtr();
-                            output.newVertexBase = reservation.NewVertexBase;
-                            output.newVertexCapacity = reservation.NewVertexCapacity;
-                            output.newVertexTopology = (int*)reservation.NewVertexTopology.GetUnsafePtr();
-                            output.newIndices = (uint*)reservation.NewIndices.GetUnsafePtr();
-
-                            // The base of DESIGN 4.5.6 is where the reservation sits in the storage's index buffer, so
-                            // the produced ranges come back as the positions the two sides are really published at.
-                            output.newIndexBase = (uint)reservation.IndexStart;
-                            output.newIndexCapacity = reservation.NewIndexCapacity;
-                        }
+                        PointAtReservation(ref output, reservation);
 
                         var kernel = new MeshCutResult();
                         MeshCutKernel.Execute(in kernelInput, in output, ref kernel);
                         result.kernel = kernel;
-                        switch (kernel.status)
+                        if (kernel.status == MeshCutStatus.Ok)
                         {
-                            case MeshCutStatus.Ok:
-                                return TryFinish(storage, parent, reservation, in kernel, outputRanges, submeshes, parentSubmeshes, rangeCount, ref result);
+                            return TryFinish(storage, parent, reservation, in kernel, outputRanges, submeshes, parentSubmeshes, rangeCount, ref result);
+                        }
 
-                            case MeshCutStatus.CapacityVertex:
-                            case MeshCutStatus.CapacityIndex:
-                                reservesNothing = false;
-                                bool vertexFell = kernel.status == MeshCutStatus.CapacityVertex;
-                                if (!TryAdvance(
-                                        vertexFell ? kernel.requiredVertexCapacity : kernel.requiredIndexCapacity,
-                                        vertexFell ? newVertexCapacity : newIndexCapacity,
-                                        ref result))
-                                {
-                                    return false;
-                                }
-
-                                newVertexCapacity = math.max(newVertexCapacity, kernel.requiredVertexCapacity);
-                                newIndexCapacity = math.max(newIndexCapacity, kernel.requiredIndexCapacity);
-                                break;
-
-                            case MeshCutStatus.CapacityScratch:
-                                reservesNothing = false;
-                                if (!TryAdvance(kernel.recommendedScratchBytes, scratchBytes, ref result))
-                                {
-                                    return false;
-                                }
-
-                                scratchBytes = kernel.recommendedScratchBytes;
-                                break;
-
-                            case MeshCutStatus.InternalError:
-                                result.status = VpStorageCutStatus.InternalError;
-                                return false;
-
-                            default:
-                                result.status = VpStorageCutStatus.InvalidInput;
-                                return false;
+                        // A run that did not succeed is judged by the one shared rule, so this route and the
+                        // asynchronous one grow their reservations by exactly the same steps.
+                        reservesNothing = false;
+                        if (!TryNextAttempt(in kernel, ref newVertexCapacity, ref newIndexCapacity, ref scratchBytes, ref result))
+                        {
+                            return false;
                         }
                     }
                     finally
@@ -346,11 +301,106 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Sets aside the room one attempt of a cut needs: the vertices and indices the caller asks for, a descriptor
+        /// for each side of every submesh, and the parent's blocks plus the one block the cut appends. The shape of
+        /// that request lives only here, so every route reserves the same way.
+        /// </summary>
+        internal static bool TryReserve(
+            VpCpuGeometryStorage storage,
+            VpStoredGeometry parent,
+            int rangeCount,
+            int newVertexCapacity,
+            int newIndexCapacity,
+            out VpCutOutputReservation reservation)
+        {
+            return storage.TryReserveCutOutput(
+                parent,
+                newVertexCapacity,
+                newIndexCapacity,
+                2 * rangeCount,
+                parent.blockCount + 1,
+                out reservation);
+        }
+
+        /// <summary>
+        /// Points one kernel output at the space a reservation holds, or leaves it as it is when there is no
+        /// reservation because the plane was already known to miss the geometry.
+        /// </summary>
+        internal static void PointAtReservation(ref MeshCutOutput output, VpCutOutputReservation reservation)
+        {
+            if (reservation == null)
+            {
+                return;
+            }
+
+            output.newVertices = (VpRenderVertex*)reservation.NewVertices.GetUnsafePtr();
+            output.newVertexBase = reservation.NewVertexBase;
+            output.newVertexCapacity = reservation.NewVertexCapacity;
+            output.newVertexTopology = (int*)reservation.NewVertexTopology.GetUnsafePtr();
+            output.newIndices = (uint*)reservation.NewIndices.GetUnsafePtr();
+
+            // The base of DESIGN 4.5.6 is where the reservation sits in the storage's index buffer, so the produced
+            // ranges come back as the positions the two sides are really published at.
+            output.newIndexBase = (uint)reservation.IndexStart;
+            output.newIndexCapacity = reservation.NewIndexCapacity;
+        }
+
+        /// <summary>
+        /// What follows a kernel run that did not succeed: either the reservation figures are raised so that running
+        /// again asks a different question — the figures come back raised and this returns true — or the run is over,
+        /// and <paramref name="result"/> carries the status that says why running again cannot help. The capacity rule
+        /// of DESIGN 6 lives only here; where the attempts are spent, in one call or over several dispatches, is the
+        /// route's own business.
+        /// </summary>
+        internal static bool TryNextAttempt(
+            in MeshCutResult kernel,
+            ref int newVertexCapacity,
+            ref int newIndexCapacity,
+            ref int scratchBytes,
+            ref VpStorageCutResult result)
+        {
+            switch (kernel.status)
+            {
+                case MeshCutStatus.CapacityVertex:
+                case MeshCutStatus.CapacityIndex:
+                    bool vertexFell = kernel.status == MeshCutStatus.CapacityVertex;
+                    if (!TryAdvance(
+                            vertexFell ? kernel.requiredVertexCapacity : kernel.requiredIndexCapacity,
+                            vertexFell ? newVertexCapacity : newIndexCapacity,
+                            ref result))
+                    {
+                        return false;
+                    }
+
+                    newVertexCapacity = math.max(newVertexCapacity, kernel.requiredVertexCapacity);
+                    newIndexCapacity = math.max(newIndexCapacity, kernel.requiredIndexCapacity);
+                    return true;
+
+                case MeshCutStatus.CapacityScratch:
+                    if (!TryAdvance(kernel.recommendedScratchBytes, scratchBytes, ref result))
+                    {
+                        return false;
+                    }
+
+                    scratchBytes = kernel.recommendedScratchBytes;
+                    return true;
+
+                case MeshCutStatus.InternalError:
+                    result.status = VpStorageCutStatus.InternalError;
+                    return false;
+
+                default:
+                    result.status = VpStorageCutStatus.InvalidInput;
+                    return false;
+            }
+        }
+
+        /// <summary>
         /// Whether a figure the kernel asked for is a step forward. One that is not larger than what it was already
         /// given would have the next attempt ask the same question again, and a negative one is a requirement too large
         /// to express: neither is a retry, and each ends the run with a status of its own.
         /// </summary>
-        private static bool TryAdvance(int wanted, int given, ref VpStorageCutResult result)
+        internal static bool TryAdvance(int wanted, int given, ref VpStorageCutResult result)
         {
             if (wanted < 0)
             {
@@ -371,7 +421,7 @@ namespace Zantetsu.MeshCut
         /// Turns a successful kernel run into stored geometries: the reuse case gives the input back borrowed and keeps
         /// the reservation unused, and the ordinary case publishes the used part of the reservation as the two sides.
         /// </summary>
-        private static bool TryFinish(
+        internal static bool TryFinish(
             VpCpuGeometryStorage storage,
             VpStoredGeometry parent,
             VpCutOutputReservation reservation,
