@@ -586,6 +586,40 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Retires one live fragment on its own (DESIGN 7.10): it stops being a current target, it lets its anchor set
+        /// go, and an operation it was the source of ends as stale with its budget unit returned — the fragment is no
+        /// longer there for a result to be applied to. Nothing else is touched: a sibling, an ancestor and every
+        /// already published child stay exactly as they are, and this is not the abort of a cut (DESIGN 7.1.3), which
+        /// is <see cref="Abort"/>. False when the fragment is not live, with nothing changed.
+        /// </summary>
+        public bool Retire(LogicalFragmentId fragment)
+        {
+            if (!TryIndex(fragment, out int index))
+            {
+                throw new ArgumentException("not a fragment of this ledger", nameof(fragment));
+            }
+
+            Fragment record = _fragments[index];
+            if (record.state != LogicalFragmentState.Live)
+            {
+                return false;
+            }
+
+            if (record.activeOperation.IsSet && TryIndex(record.activeOperation, out int operationIndex))
+            {
+                // Its own cut can no longer be published to it, so that operation ends here, once, the way an
+                // authority it lost ends one.
+                End(operationIndex, LogicalCutOperationState.Stale);
+            }
+
+            record.state = LogicalFragmentState.Retired;
+            record.activeOperation = default;
+            record.anchors = null;
+            _fragments[index] = record;
+            return true;
+        }
+
+        /// <summary>
         /// Records that something other than the fragment's own cut changed its ownership (DESIGN 8: 別Transaction・
         /// Maintenance・GC・外部SystemのOwner／Shape／Constraint構成変更). A result for an operation admitted before
         /// this arrives as Stale. The fragment itself stays as it is, anchors included, and no other fragment is
