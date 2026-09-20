@@ -60,7 +60,7 @@ namespace Zantetsu.PhysicsCut
             negative = default;
             planeNormalOwner = default;
 
-            // The shape's bank is read below. One that has been given back has no vertices to scan.
+            // A shape that has been given back is not one to draw a mass from, whatever it still remembers.
             if (shape == null || shape.IsFreed)
             {
                 return false;
@@ -142,43 +142,46 @@ namespace Zantetsu.PhysicsCut
                 && math.all(math.isfinite(negative.inertiaRotation.value));
         }
 
-        /// <summary>Every convex vertex of the shape, in the actor's frame, in one axis-aligned range.</summary>
-        private static bool TryBox(PhysicsOwnerShape shape, out float3 lo, out float3 hi)
+        /// <summary>
+        /// The shape's own box, carried into the actor's frame. The shape already knows the box its convexes lie in,
+        /// in its own local frame, from when it was built; all that is left here is the eight corners of that box
+        /// through <see cref="PhysicsOwnerShape.LocalToOwner"/>, wrapped again as an axis-aligned range.
+        /// <para>
+        /// **No vertex of any convex is read.** Wrapping a box that was turned gives a box no smaller than the one a
+        /// scan of the vertices would give, and often larger; that is accepted, because what this box is for is a
+        /// division by volume and it must only be sure to contain the shape. Nothing here looks for principal axes or
+        /// a smallest box.
+        /// </para>
+        /// </summary>
+        internal static bool TryBox(PhysicsOwnerShape shape, out float3 lo, out float3 hi)
         {
-            lo = new float3(float.PositiveInfinity);
-            hi = new float3(float.NegativeInfinity);
-            float4x4 localToOwner = shape.LocalToOwner;
-            int seen = 0;
-            for (int c = 0; c < shape.ConvexCount; c++)
-            {
-                ConvexBrepRangeVertices(shape, c, out float3* vertices, out int count);
-                for (int i = 0; i < count; i++)
-                {
-                    float3 at = math.transform(localToOwner, vertices[i]);
-                    if (!math.all(math.isfinite(at)))
-                    {
-                        return false;
-                    }
-
-                    lo = math.min(lo, at);
-                    hi = math.max(hi, at);
-                    seen++;
-                }
-            }
-
-            if (seen == 0 || !math.all(math.isfinite(lo)) || !math.all(math.isfinite(hi)))
+            lo = default;
+            hi = default;
+            if (!shape.TryLocalBounds(out float3 localLo, out float3 localHi))
             {
                 return false;
             }
 
-            return true;
-        }
+            float4x4 localToOwner = shape.LocalToOwner;
+            lo = new float3(float.PositiveInfinity);
+            hi = new float3(float.NegativeInfinity);
+            for (int corner = 0; corner < 8; corner++)
+            {
+                var at = new float3(
+                    (corner & 1) == 0 ? localLo.x : localHi.x,
+                    (corner & 2) == 0 ? localLo.y : localHi.y,
+                    (corner & 4) == 0 ? localLo.z : localHi.z);
+                float3 inOwner = math.transform(localToOwner, at);
+                if (!math.all(math.isfinite(inOwner)))
+                {
+                    return false;
+                }
 
-        private static void ConvexBrepRangeVertices(PhysicsOwnerShape shape, int convex, out float3* vertices, out int count)
-        {
-            Zantetsu.ConvexCut.ConvexBrepRange range = shape.Convex(convex);
-            vertices = shape.Bank.vertices + range.vertexBase;
-            count = range.vertexCount;
+                lo = math.min(lo, inOwner);
+                hi = math.max(hi, inOwner);
+            }
+
+            return math.all(math.isfinite(lo)) && math.all(math.isfinite(hi));
         }
 
         private static float3 Centroid(double volume, double3 moment, float3 fallback)

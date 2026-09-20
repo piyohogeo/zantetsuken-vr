@@ -95,11 +95,13 @@ namespace Zantetsu.PhysicsCut.Tests
 
         /// <summary>
         /// The general form. <paramref name="ranges"/> replaces the convexes the shape is made of, which is how the
-        /// degenerate diagnostic shapes below are made; the meshes then still come from the whole polytopes, since
-        /// what those cases are about is the box, not the collider.
+        /// degenerate diagnostic shapes below are made; each mesh is then built from **that range's own vertices**,
+        /// because a shape's box is taken from its colliders and a diagnostic shape has to present the degenerate box
+        /// it is there to present -- the whole polytope's collider would give it a full one.
         /// </summary>
         private Source NewSource(float4x4 localToOwner, List<ConvexPoly> polys, ConvexBrepRange[] ranges)
         {
+            ConvexBrepRange[] givenRanges = ranges;
             var s = new Source { harness = new OwnerCutHarness() };
             s.harness.planeN = new float3(0f, 1f, 0f);
             s.harness.planeW = 0f;
@@ -124,7 +126,10 @@ namespace Zantetsu.PhysicsCut.Tests
             s.meshes = new List<Mesh>();
             for (int i = 0; i < ranges.Length; i++)
             {
-                s.meshes.Add(CookedConvex(polys[math.min(i, polys.Count - 1)], "Source " + i));
+                s.meshes.Add(
+                    givenRanges == null
+                        ? CookedConvex(polys[math.min(i, polys.Count - 1)], "Source " + i)
+                        : ColliderOfRange(s.harness.input.bank, ranges[i], "Source " + i));
             }
 
             s.source = PhysicsShapeSource.External();
@@ -157,6 +162,23 @@ namespace Zantetsu.PhysicsCut.Tests
             mesh.vertices = vertices;
             mesh.triangles = triangles.ToArray();
             UnityEngine.Physics.BakeMesh(mesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking);
+            return mesh;
+        }
+
+        /// <summary>
+        /// A collider for exactly the vertices one range names. It has no faces: these are the degenerate diagnostic
+        /// shapes, which have no volume to triangulate, and what a shape reads from a collider is its bounds.
+        /// </summary>
+        private static Mesh ColliderOfRange(ConvexBrepBank bank, ConvexBrepRange range, string name)
+        {
+            var vertices = new Vector3[range.vertexCount];
+            for (int v = 0; v < range.vertexCount; v++)
+            {
+                vertices[v] = bank.vertices[range.vertexBase + v];
+            }
+
+            var mesh = new Mesh { name = name, hideFlags = HideFlags.HideAndDontSave };
+            mesh.vertices = vertices;
             return mesh;
         }
 
@@ -443,6 +465,454 @@ namespace Zantetsu.PhysicsCut.Tests
                     math.length(combined), Is.LessThan(1e-4),
                     "the two parts recombine to the centre of the box for " + plane);
             }
+        }
+
+        // ----- the box itself: where it comes from, and when it is settled -----------------------------------------
+
+        /// <summary>
+        /// The box the masses are divided from encloses the source, with several convexes and a frame that both turns
+        /// and moves. The expected box is worked out here by walking every vertex of every convex through the same
+        /// frame -- which is what the builder used to do and no longer does -- and the builder's box must contain it.
+        /// <para>
+        /// Containing it, not equalling it: the shape's box is the union of its colliders' own boxes, carried over by
+        /// its eight corners, so a turned frame leaves it wider than the vertices need. That is allowed, as long as
+        /// nothing of the source falls outside.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TheBox_EnclosesEveryVertex_ThroughATurnedAndMovedFrame()
+        {
+            float4x4 localToOwner = float4x4.TRS(
+                new float3(1.5f, -2.25f, 0.75f),
+                quaternion.Euler(0.4f, -0.9f, 0.25f),
+                new float3(1f));
+            Source s = NewSource(localToOwner, new double3(0.0, 0.0, 0.0), new double3(2.5, 0.0, 0.0));
+
+            Assert.That(s.shape.TryLocalBounds(out float3 localLo, out float3 localHi), Is.True, "the shape has a box");
+            Assert.That(
+                ProvisionalBoxMass.TryBox(s.shape, out float3 lo, out float3 hi), Is.True,
+                "and it carries into the actor's frame");
+
+            // Every vertex of every convex, through the same frame: what the old scan would have produced.
+            var scanLo = new float3(float.PositiveInfinity);
+            var scanHi = new float3(float.NegativeInfinity);
+            for (int c = 0; c < s.shape.ConvexCount; c++)
+            {
+                ConvexBrepRange range = s.shape.Convex(c);
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    float3 at = s.shape.Bank.vertices[range.vertexBase + v];
+                    Assert.That(
+                        math.all(at >= localLo) && math.all(at <= localHi), Is.True,
+                        "convex " + c + " vertex " + v + " is inside the shape's own box, with nothing allowed for");
+                    float3 inOwner = math.transform(localToOwner, at);
+                    scanLo = math.min(scanLo, inOwner);
+                    scanHi = math.max(scanHi, inOwner);
+                }
+            }
+
+            Assert.That(
+                math.all(lo <= scanLo) && math.all(hi >= scanHi), Is.True,
+                "the box the builder uses encloses every vertex, with nothing allowed for: it is [" + lo + ", " + hi
+                + "] and the vertices reach [" + scanLo + ", " + scanHi + "]");
+        }
+
+        /// <summary>
+        /// Where the owner is in the world is not part of the box. The same shape is built into two candidates whose
+        /// placements differ in position and rotation, and the shape's own box is the same object it was: moving an
+        /// owner is not a reason to look at a single vertex again.
+        /// </summary>
+        [Test]
+        public void MovingOrTurningTheOwner_DoesNotChangeTheShapesBox()
+        {
+            Source s = NewSource(float4x4.identity, new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+            Assert.That(s.shape.TryLocalBounds(out float3 loBefore, out float3 hiBefore), Is.True, "the shape has a box");
+
+            ProvisionalOwnerCandidate atRest = Build(
+                NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors()));
+            var moved = new PhysicsOwnerPlacement(
+                new float3(12f, -4f, 7f), quaternion.Euler(0.54f, -1.29f, 0.21f));
+            ProvisionalOwnerCandidate elsewhere = Build(NewInput(s, plane, moved, default, Anchors()));
+
+            Assert.That(s.shape.TryLocalBounds(out float3 loAfter, out float3 hiAfter), Is.True, "it still has one");
+            Assert.That(loAfter, Is.EqualTo(loBefore), "and it is the box it was: the low corner");
+            Assert.That(hiAfter, Is.EqualTo(hiBefore), "and the high corner");
+            Assert.That(
+                elsewhere.Positive.Mass, Is.EqualTo(atRest.Positive.Mass).Within(1e-9),
+                "so the mass the box divides into is the same wherever the owner is");
+            Assert.That(elsewhere.Negative.Mass, Is.EqualTo(atRest.Negative.Mass).Within(1e-9));
+        }
+
+        /// <summary>
+        /// A shape made of a different arrangement gets its own box, settled when that shape is made. Two shapes over
+        /// the same source convexes -- one of both, one of the first alone -- have boxes of their own, and the smaller
+        /// one's is the smaller.
+        /// </summary>
+        [Test]
+        public void AShapeOfADifferentArrangement_HasItsOwnBox()
+        {
+            Source both = NewSource(float4x4.identity, new double3(0.0, 0.0, 0.0), new double3(4.0, 0.0, 0.0));
+            Assert.That(both.shape.TryLocalBounds(out float3 bothLo, out float3 bothHi), Is.True, "the pair has a box");
+
+            Source one = NewSource(float4x4.identity, new double3(0.0, 0.0, 0.0));
+            Assert.That(one.shape.TryLocalBounds(out float3 oneLo, out float3 oneHi), Is.True, "and so has the single");
+
+            Assert.That(bothHi.x, Is.GreaterThan(oneHi.x + 1f), "the pair reaches further along x than the single");
+            Assert.That(oneLo.x, Is.EqualTo(bothLo.x).Within(1e-4f), "and they begin at the same place");
+            Assert.That(
+                oneHi.y, Is.EqualTo(bothHi.y).Within(1e-4f), "with the same reach in the directions they do not differ in");
+        }
+
+        /// <summary>
+        /// Building a provisional pair works nothing out from vertices for its boxes: the boxes come across from the
+        /// source. Every vertex of the source's bank is moved far away **after** the source shape was made, and the
+        /// pair is then built: each side's box is the one the source held for the convexes that side was given, not
+        /// one drawn from where the vertices now are.
+        /// <para>
+        /// A build that walked the vertices for its boxes -- which is what an earlier version of this did, once per
+        /// side and twice for a convex the plane crosses -- would come back with boxes a thousand units away.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void BuildingASide_TakesItsBoxFromTheSource_AndWalksNoVertex()
+        {
+            Source s = NewSource(
+                float4x4.identity, new double3(0.0, 3.0, 0.0), new double3(0.0, -3.0, 0.0), new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+
+            // What the source holds for each of its convexes, before anything is disturbed.
+            var sourceLo = new float3[s.shape.ConvexCount];
+            var sourceHi = new float3[s.shape.ConvexCount];
+            for (int c = 0; c < s.shape.ConvexCount; c++)
+            {
+                s.shape.ConvexBounds(c, out sourceLo[c], out sourceHi[c]);
+            }
+
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+
+            // Not something the product ever does. Every vertex is moved, so anything that reads one to make a box
+            // gives itself away.
+            for (int c = 0; c < s.shape.ConvexCount; c++)
+            {
+                ConvexBrepRange range = s.shape.Convex(c);
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    s.shape.Bank.vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
+                }
+            }
+
+            ProvisionalOwnerCandidate candidate = Build(in input);
+
+            AssertSideBoxesCameFromTheSource(candidate.PositiveShape, sourceLo, sourceHi, "the positive side");
+            AssertSideBoxesCameFromTheSource(candidate.NegativeShape, sourceLo, sourceHi, "the negative side");
+        }
+
+        /// <summary>
+        /// Every convex box a side holds is one of the source's own, unchanged. Matched by value, because which of the
+        /// source's convexes a side was given is the classification's business and not this check's.
+        /// </summary>
+        private static void AssertSideBoxesCameFromTheSource(
+            PhysicsOwnerShape side, float3[] sourceLo, float3[] sourceHi, string what)
+        {
+            Assert.That(side, Is.Not.Null, what + ": there is a shape");
+            for (int c = 0; c < side.ConvexCount; c++)
+            {
+                side.ConvexBounds(c, out float3 lo, out float3 hi);
+                bool matched = false;
+                for (int from = 0; from < sourceLo.Length && !matched; from++)
+                {
+                    matched = lo.Equals(sourceLo[from]) && hi.Equals(sourceHi[from]);
+                }
+
+                Assert.That(
+                    matched, Is.True,
+                    what + ": convex " + c + "'s box [" + lo + ", " + hi
+                    + "] is one the source already held, not one drawn from where the vertices are now");
+            }
+        }
+
+        /// <summary>
+        /// A collider whose stored bounds fall slightly **inside** the convex -- which is what the centre-and-size
+        /// pair of floats a mesh keeps can do to the numbers that were measured -- is still wholly inside the box the
+        /// shape keeps. The overhang is measured first, so that a run where the rounding happened not to bite says so
+        /// rather than passing on nothing.
+        /// </summary>
+        [Test]
+        public void AColliderWhoseBoundsFallInsideItsConvex_IsStillWhollyInsideTheShapesBox()
+        {
+            var harness = new OwnerCutHarness { planeN = new float3(0f, 1f, 0f), planeW = 0f, eps = 1e-5f, parentMass = ParentMass };
+
+            // Values chosen so that the centre-and-size round trip a Mesh does is not exact.
+            harness.Add(new ConvexPoly(
+                new[]
+                {
+                    new double3(0.1, 0.1, 0.1), new double3(0.2, 0.1, 0.1), new double3(0.2, 0.2, 0.1), new double3(0.1, 0.2, 0.1),
+                    new double3(0.1, 0.1, 0.2), new double3(0.2, 0.1, 0.2), new double3(0.2, 0.2, 0.2), new double3(0.1, 0.2, 0.2),
+                },
+                new[]
+                {
+                    new[] { 0, 3, 2, 1 }, new[] { 4, 5, 6, 7 }, new[] { 0, 1, 5, 4 },
+                    new[] { 1, 2, 6, 5 }, new[] { 2, 3, 7, 6 }, new[] { 3, 0, 4, 7 },
+                }));
+            harness.Build();
+            _disposables.Add(harness);
+
+            ConvexBrepRange range = harness.input.convexes[0];
+            var measuredLo = new float3(float.PositiveInfinity);
+            var measuredHi = new float3(float.NegativeInfinity);
+            for (int v = 0; v < range.vertexCount; v++)
+            {
+                float3 at = harness.input.bank.vertices[range.vertexBase + v];
+                measuredLo = math.min(measuredLo, at);
+                measuredHi = math.max(measuredHi, at);
+            }
+
+            // A mesh given exactly those numbers the way a cooked collider is given them: as a centre and a size.
+            var mesh = new Mesh { name = "Rounded", hideFlags = HideFlags.HideAndDontSave };
+            mesh.vertices = new[] { (Vector3)measuredLo, (Vector3)measuredHi, (Vector3)((measuredLo + measuredHi) * 0.5f) };
+            float3 centre = (measuredLo + measuredHi) * 0.5f;
+            mesh.bounds = new Bounds(centre, measuredHi - measuredLo);
+
+            var source = PhysicsShapeSource.External();
+            PhysicsOwnerShape shape = null;
+            try
+            {
+                float3 storedLo = mesh.bounds.min;
+                float3 storedHi = mesh.bounds.max;
+                Assert.That(
+                    math.any(storedLo > measuredLo) || math.any(storedHi < measuredHi), Is.True,
+                    "the round trip really did fall inside: measured [" + measuredLo + ", " + measuredHi
+                    + "] came back as [" + storedLo + ", " + storedHi + "]");
+
+                shape = PhysicsOwnerShape.Authored(
+                    harness.input.bank, new[] { range }, new List<Mesh> { mesh }, source, float4x4.identity);
+                Assert.That(shape.TryLocalBounds(out float3 lo, out float3 hi), Is.True, "the shape has a box");
+                ConvexBrepRange inShape = shape.Convex(0);
+                for (int v = 0; v < inShape.vertexCount; v++)
+                {
+                    float3 at = shape.Bank.vertices[inShape.vertexBase + v];
+                    Assert.That(
+                        math.all(at >= lo) && math.all(at <= hi), Is.True,
+                        "vertex " + v + " at " + at + " is inside [" + lo + ", " + hi + "], with nothing allowed for");
+                }
+            }
+            finally
+            {
+                shape?.Dispose();
+                UnityEngine.Object.DestroyImmediate(mesh);
+            }
+        }
+
+        /// <summary>
+        /// A side built from a subset of the source's convexes keeps a box of its own that holds that subset. Both
+        /// sides of a real provisional pair are checked, each against the convexes it was actually given -- not
+        /// against the source's.
+        /// </summary>
+        [Test]
+        public void EachProvisionalSidesBox_HoldsTheConvexesThatSideWasGiven()
+        {
+            Source s = NewSource(
+                float4x4.identity, new double3(0.0, 3.0, 0.0), new double3(0.0, -3.0, 0.0), new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerCandidate candidate = Build(
+                NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors()));
+
+            AssertBoxHoldsItsOwnConvexes(candidate.PositiveShape, "the positive side");
+            AssertBoxHoldsItsOwnConvexes(candidate.NegativeShape, "the negative side");
+        }
+
+        /// <summary>
+        /// The shapes a real cut and cook produce keep boxes that hold their own convexes. The numbers come back from
+        /// the product's own cook -- meshes written by the job and given the bounds it measured, which are floats and
+        /// may have been rounded inwards on the way -- so this is where a box drawn from a collider alone would come
+        /// up short.
+        /// </summary>
+        [Test]
+        public void EachCutSidesBox_HoldsTheConvexesThatSideWasGiven()
+        {
+            var job = new UnityJobWorkExecutor(4);
+            using (OwnerCutHarness h = MixedCompoundForCook())
+            using (WorkerPoolExecutor geometry = WorkerPoolExecutor.GeometryPool(2))
+            using (WorkerPoolExecutor background = WorkerPoolExecutor.BackgroundPool(2))
+            {
+                var dispatcher = new SharedWorkDispatcher(8, 2, 32, job, geometry, background);
+                using (var cook = new PhysicsCutCook(dispatcher, 1))
+                {
+                    PhysicsCutRequest request = cook.Submit(in h.input, float4x4.identity);
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    while (!request.IsOver && clock.ElapsedMilliseconds < 30000)
+                    {
+                        dispatcher.BeginFrame((int)clock.ElapsedMilliseconds + 1);
+                        dispatcher.Dispatch();
+                        cook.Pump();
+                        System.Threading.Thread.Sleep(1);
+                    }
+
+                    Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the cut and cook succeeded");
+                    PhysicsCutProducts products = request.Products;
+                    var productsSource = PhysicsShapeSource.For(products);
+
+                    // A parent to inherit from, with a collider per convex built from that convex.
+                    var parentMeshes = new List<Mesh>();
+                    var parentRanges = new ConvexBrepRange[h.input.convexCount];
+                    for (int c = 0; c < parentRanges.Length; c++)
+                    {
+                        parentRanges[c] = h.input.convexes[c];
+                        parentMeshes.Add(ColliderOfRange(h.input.bank, parentRanges[c], "Parent " + c));
+                    }
+
+                    var parentSource = PhysicsShapeSource.External();
+                    PhysicsOwnerShape parent = PhysicsOwnerShape.Authored(
+                        h.input.bank, parentRanges, parentMeshes, parentSource, float4x4.identity);
+                    PhysicsOwnerShape positive = PhysicsOwnerShape.OfSide(parent, products, productsSource, true);
+                    PhysicsOwnerShape negative = PhysicsOwnerShape.OfSide(parent, products, productsSource, false);
+                    try
+                    {
+                        AssertBoxHoldsItsOwnConvexes(positive, "the positive side of a real cut");
+                        AssertBoxHoldsItsOwnConvexes(negative, "the negative side of a real cut");
+                    }
+                    finally
+                    {
+                        positive.Dispose();
+                        negative.Dispose();
+                        parent.Dispose();
+                        products.Dispose();
+                        foreach (Mesh mesh in parentMeshes)
+                        {
+                            UnityEngine.Object.DestroyImmediate(mesh);
+                        }
+                    }
+                }
+
+                dispatcher.Shutdown(30000);
+            }
+        }
+
+        /// <summary>A compound the plane really cuts, for the cook to have something to produce.</summary>
+        private static OwnerCutHarness MixedCompoundForCook()
+        {
+            var h = new OwnerCutHarness
+            {
+                planeN = new float3(0f, 1f, 0f),
+                planeW = 0f,
+                eps = 1e-5f,
+                parentMass = ParentMass,
+            };
+            h.Add(Translated(CaseGenerator.Box(), new double3(0.0, 0.0, 0.0)));
+            h.Add(Translated(CaseGenerator.Box(), new double3(2.5, 0.0, 0.0)));
+            h.Add(Translated(CaseGenerator.Box(), new double3(0.0, 3.0, 0.0)));
+            h.Build();
+            return h;
+        }
+
+        /// <summary>
+        /// A shape's own box holds every vertex of every convex that shape is made of, with nothing allowed for. The
+        /// slack the authored entry allows is that check's; a box that is kept has to hold what is in it.
+        /// </summary>
+        private static void AssertBoxHoldsItsOwnConvexes(PhysicsOwnerShape shape, string what)
+        {
+            Assert.That(shape, Is.Not.Null, what + ": there is a shape");
+            Assert.That(shape.TryLocalBounds(out float3 lo, out float3 hi), Is.True, what + ": it has a box");
+            for (int c = 0; c < shape.ConvexCount; c++)
+            {
+                ConvexBrepRange range = shape.Convex(c);
+                Assert.That(range.vertexCount, Is.GreaterThan(0), what + ": convex " + c + " has vertices");
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    float3 at = shape.Bank.vertices[range.vertexBase + v];
+                    Assert.That(
+                        math.all(at >= lo) && math.all(at <= hi), Is.True,
+                        what + ": convex " + c + " vertex " + v + " at " + at + " is inside [" + lo + ", " + hi + "]");
+                }
+
+                Mesh mesh = shape.MeshOf(c);
+                if (mesh != null)
+                {
+                    Bounds bounds = mesh.bounds;
+                    Assert.That(
+                        math.all((float3)bounds.min >= lo) && math.all((float3)bounds.max <= hi), Is.True,
+                        what + ": the collider of convex " + c + " is inside the box too");
+                }
+            }
+        }
+
+        /// <summary>
+        /// An authored collider whose bounds do not cover the convex it is given for is refused where it is taken in,
+        /// not carried into a box that would be too small. A mesh in another frame -- here, the same collider moved
+        /// away from its convex -- is the same fault and shows up the same way.
+        /// </summary>
+        [Test]
+        public void AnAuthoredColliderThatDoesNotEncloseItsConvex_IsRefusedAtTheEntry()
+        {
+            var harness = new OwnerCutHarness { planeN = new float3(0f, 1f, 0f), planeW = 0f, eps = 1e-5f, parentMass = ParentMass };
+            harness.Add(CaseGenerator.Box());
+            harness.Build();
+            _disposables.Add(harness);
+
+            // The convex's own collider, moved away from it: the bounds no longer cover the convex.
+            Mesh elsewhere = CookedConvex(Translated(CaseGenerator.Box(), new double3(10.0, 0.0, 0.0)), "Elsewhere");
+            var ranges = new[] { harness.input.convexes[0] };
+            var source = PhysicsShapeSource.External();
+            try
+            {
+                ArgumentException thrown = Assert.Throws<ArgumentException>(
+                    () => PhysicsOwnerShape.Authored(harness.input.bank, ranges, new List<Mesh> { elsewhere }, source, float4x4.identity),
+                    "a collider that does not enclose its convex is refused");
+                Assert.That(thrown.Message, Does.Contain("does not enclose"), "and says so");
+                Assert.That(source.Users, Is.Zero, "with no hold taken on whoever owns it");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(elsewhere);
+            }
+        }
+
+        /// <summary>
+        /// Nothing walks the source's vertices to draw the box the masses come from. Every vertex of the source's
+        /// bank is moved far away after that shape was made and before the pair is built: a build that drew its box
+        /// from them would come back with different masses, and one that uses the box settled when the shape was made
+        /// comes back with the same.
+        /// <para>
+        /// **This is about the box alone.** Building a pair still copies the source's B-rep into each side's own bank,
+        /// as every shape's construction does; that copy is unchanged here. Each side's own box is **not** worked out
+        /// from what it copied -- it inherits the source's box for each convex it was given, which
+        /// <see cref="BuildingASide_TakesItsBoxFromTheSource_AndWalksNoVertex"/> is about. Neither is what the masses
+        /// are drawn from: those come from the source shape's own box.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void NothingScansTheSourcesVerticesForTheBox_SoMovingThemAfterwardsChangesTheMassesNotAtAll()
+        {
+            Source s = NewSource(float4x4.identity, new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+
+            // The one input, settled now and used for both builds. Its 7.6 classification is the caller's and is
+            // worked out from the vertices here, once, so that moving them below cannot change what is being built --
+            // only where the box would come from.
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            ProvisionalOwnerCandidate before = Build(in input);
+
+            // Not something the product ever does: the bank is written here to prove where the box did not come from.
+            for (int c = 0; c < s.shape.ConvexCount; c++)
+            {
+                ConvexBrepRange range = s.shape.Convex(c);
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    s.shape.Bank.vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
+                }
+            }
+
+            ProvisionalOwnerCandidate after = Build(in input);
+
+            Assert.That(
+                after.Positive.Mass, Is.EqualTo(before.Positive.Mass).Within(1e-12),
+                "the masses are the ones the collider boxes give, not the ones the vertices would");
+            Assert.That(after.Negative.Mass, Is.EqualTo(before.Negative.Mass).Within(1e-12));
+            Assert.That(
+                after.Positive.CenterOfMass, Is.EqualTo(before.Positive.CenterOfMass),
+                "and so is the centre of mass");
+            Assert.That(after.Positive.InertiaTensor, Is.EqualTo(before.Positive.InertiaTensor), "and the inertia");
         }
 
         // ----- the two fallbacks, apart from each other --------------------------------------------------------------

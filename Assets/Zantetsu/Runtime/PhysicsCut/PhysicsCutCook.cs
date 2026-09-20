@@ -65,12 +65,13 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public readonly struct PhysicsCutPart
     {
-        internal PhysicsCutPart(int inputConvex, bool borrowed, ConvexBrepRange range, Mesh mesh)
+        internal PhysicsCutPart(int inputConvex, bool borrowed, ConvexBrepRange range, Mesh mesh, float3x2 bounds)
         {
             this.inputConvex = inputConvex;
             this.borrowed = borrowed;
             this.range = range;
             this.mesh = mesh;
+            this.bounds = bounds;
         }
 
         /// <summary>The input convex it came from.</summary>
@@ -87,6 +88,18 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The baked collider mesh of a produced part; null for a borrowed one.</summary>
         public readonly Mesh mesh;
+
+        /// <summary>
+        /// The box this produced part lies in, in the numerical local frame: the low corner in <c>c0</c> and the high
+        /// one in <c>c1</c>, as the job measured them while it wrote the mesh. It is carried here so that whoever
+        /// builds a shape from this part has a box for it without reading a vertex.
+        /// <para>
+        /// These are the measurements themselves, not the mesh's own <see cref="UnityEngine.Mesh.bounds"/>, which is
+        /// the same numbers put through a centre-and-size pair of floats and can come back very slightly inside them.
+        /// Meaningless for a borrowed part, which brings no mesh and whose box its parent already has.
+        /// </para>
+        /// </summary>
+        public readonly float3x2 bounds;
     }
 
     /// <summary>
@@ -798,14 +811,18 @@ namespace Zantetsu.PhysicsCut
                     // and nothing of it is this cut's to give back.
                     unsafe
                     {
-                        products.Add(outcome.InheritsPositive, new PhysicsCutPart(c, true, request.input.convexes[c], null));
+                        products.Add(
+                            outcome.InheritsPositive,
+                            new PhysicsCutPart(
+                                c, true, request.input.convexes[c], null,
+                                new float3x2(new float3(float.NaN), new float3(float.NaN))));
                     }
 
                     continue;
                 }
 
-                products.Add(true, new PhysicsCutPart(c, false, outcome.positive, Take(request, ref mesh)));
-                products.Add(false, new PhysicsCutPart(c, false, outcome.negative, Take(request, ref mesh)));
+                products.Add(true, new PhysicsCutPart(c, false, outcome.positive, Take(request, ref mesh, out float3x2 positiveBox), positiveBox));
+                products.Add(false, new PhysicsCutPart(c, false, outcome.negative, Take(request, ref mesh, out float3x2 negativeBox), negativeBox));
             }
 
             // The arena and the meshes are the products' from here; what is left is only this cut's working set.
@@ -818,15 +835,24 @@ namespace Zantetsu.PhysicsCut
             request.Stage = PhysicsCutStage.Finished;
         }
 
-        /// <summary>The next mesh the job really filled, in the order the job wrote them.</summary>
-        private static Mesh Take(PhysicsCutRequest request, ref int mesh)
+        /// <summary>
+        /// The next mesh the job really filled, in the order the job wrote them, with the box the job measured for it.
+        /// </summary>
+        private static Mesh Take(PhysicsCutRequest request, ref int mesh, out float3x2 bounds)
         {
             while (mesh < request.meshes.Length && request.meshes[mesh] == null)
             {
                 mesh++;
             }
 
-            return mesh < request.meshes.Length ? request.meshes[mesh++] : null;
+            if (mesh >= request.meshes.Length)
+            {
+                bounds = new float3x2(new float3(float.NaN), new float3(float.NaN));
+                return null;
+            }
+
+            bounds = request.meshBounds[mesh];
+            return request.meshes[mesh++];
         }
 
         /// <summary>Ends one cut without products, giving back everything it holds, exactly once.</summary>

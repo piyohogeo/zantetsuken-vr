@@ -151,11 +151,16 @@ namespace Zantetsu.PhysicsCut
         private readonly List<PhysicsShapeSource> _sources = new List<PhysicsShapeSource>(2);
         private readonly List<Mesh> _meshes = new List<Mesh>(4);
         private ConvexBrepRange[] _convexes = Array.Empty<ConvexBrepRange>();
+        private float3[] _convexLo = Array.Empty<float3>();
+        private float3[] _convexHi = Array.Empty<float3>();
         private NativeArray<float3> _vertices;
         private NativeArray<int> _faceOffsets;
         private NativeArray<int> _faceIndices;
         private NativeArray<int> _faceEdges;
         private NativeArray<BrepEdge> _edges;
+        private float3 _localLo = new float3(float.PositiveInfinity);
+        private float3 _localHi = new float3(float.NegativeInfinity);
+        private bool _localBoundsUsable = true;
         private int _workUsers;
         private bool _ownerDone;
         private bool _freed;
@@ -179,6 +184,17 @@ namespace Zantetsu.PhysicsCut
             return _convexes[index];
         }
 
+        /// <summary>
+        /// The box one convex of this shape lies in, in this shape's local frame. It was settled once, where that
+        /// convex entered the system -- at the authored entry, or from what the cut's job measured while it wrote the
+        /// collider -- and has been carried from shape to shape since. Nothing recomputes it from vertices.
+        /// </summary>
+        public void ConvexBounds(int index, out float3 lo, out float3 hi)
+        {
+            lo = _convexLo[index];
+            hi = _convexHi[index];
+        }
+
         /// <summary>The cooked collider mesh of one convex. It belongs to a <see cref="PhysicsShapeSource"/>, not here.</summary>
         public Mesh MeshOf(int index)
         {
@@ -187,6 +203,43 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The meshes by convex index, which is what a cut of this owner inherits from.</summary>
         public IReadOnlyList<Mesh> Meshes => _meshes;
+
+        /// <summary>
+        /// The box every convex of this shape lies inside, in **this shape's own local frame** -- the frame
+        /// <see cref="LocalToOwner"/> maps from, which is the frame the bank's vertices are in.
+        /// <para>
+        /// It is the union of its convexes' own boxes (<see cref="ConvexBounds"/>). Each of those was settled where
+        /// that convex entered the system -- walked once at the authored entry, or taken from what the cut's job
+        /// measured as it wrote the collider -- and has been **carried from shape to shape** since. Building a shape
+        /// unions boxes it was handed; **it reads no vertex to do it**, however many shapes are built.
+        /// </para>
+        /// <para>
+        /// Each convex's box holds that convex itself, not merely what its collider claims: the authored one is the
+        /// collider's bounds widened to the vertices actually seen there, and a produced one is the job's own
+        /// measurements, which the mesh's stored bounds can sit very slightly inside. The collider's bounds are in it
+        /// as well, because the collider is what physics touches and it may reach further than the convex.
+        /// </para>
+        /// <para>
+        /// It is settled when the shape is built and never computed again. What it depends on -- which convexes this
+        /// shape is made of and where each sits inside it -- is fixed for the shape's life, so a shape whose
+        /// arrangement differs is a different shape and gets its own. **Where the owner is in the world is not part of
+        /// it**, and moving or turning the owner cannot change it.
+        /// </para>
+        /// <para>
+        /// False when the shape has no convex or a vertex that is not finite. The out values are written either way,
+        /// and on false they are whatever the partial union had reached -- not a box to use.
+        /// </para>
+        /// </summary>
+        public bool TryLocalBounds(out float3 lo, out float3 hi)
+        {
+            lo = _localLo;
+            hi = _localHi;
+            return _localBoundsUsable
+                && _convexes.Length > 0
+                && math.all(math.isfinite(_localLo))
+                && math.all(math.isfinite(_localHi))
+                && math.all(_localHi >= _localLo);
+        }
 
         /// <summary>How many pieces of work are still reading this bank.</summary>
         public int WorkUsers => _workUsers;
@@ -247,7 +300,14 @@ namespace Zantetsu.PhysicsCut
                 var parts = new Part[convexes.Count];
                 for (int i = 0; i < convexes.Count; i++)
                 {
-                    parts[i] = new Part { bank = bank, range = convexes[i], mesh = meshes[i], source = source };
+                    // The one place a mesh from outside is taken on trust, so the trust is checked here rather than
+                    // wherever its bounds are later read -- and the one walk of these vertices, whose result becomes
+                    // this convex's box and is never worked out again.
+                    RequireMeshBoundsEnclose(bank, convexes[i], meshes[i], i, out float3 lo, out float3 hi);
+                    parts[i] = new Part
+                    {
+                        bank = bank, range = convexes[i], mesh = meshes[i], source = source, lo = lo, hi = hi,
+                    };
                 }
 
                 shape.Fill(parts);
@@ -302,6 +362,11 @@ namespace Zantetsu.PhysicsCut
                         range = source._convexes[c],
                         mesh = source._meshes[c],
                         source = source.SourceOf(c),
+
+                        // The source already knows this convex's box; a side of it is the same convex in the same
+                        // frame, so the box comes across as it is.
+                        lo = source._convexLo[c],
+                        hi = source._convexHi[c],
                     };
                 }
 
@@ -353,8 +418,23 @@ namespace Zantetsu.PhysicsCut
                             range = parent._convexes[part.inputConvex],
                             mesh = parent._meshes[part.inputConvex],
                             source = parent.SourceOf(part.inputConvex),
+
+                            // Inherited uncut: the parent's box for that very convex.
+                            lo = parent._convexLo[part.inputConvex],
+                            hi = parent._convexHi[part.inputConvex],
                         }
-                        : new Part { bank = products.Bank, range = part.range, mesh = part.mesh, source = productsSource };
+                        : new Part
+                        {
+                            bank = products.Bank,
+                            range = part.range,
+                            mesh = part.mesh,
+                            source = productsSource,
+
+                            // Produced: what the job measured while it wrote this convex's mesh, widened by the
+                            // collider's own bounds where those are usable. Neither is read from a vertex here.
+                            lo = ProducedLow(part),
+                            hi = ProducedHigh(part),
+                        };
                 }
 
                 shape.Fill(parts);
@@ -406,6 +486,10 @@ namespace Zantetsu.PhysicsCut
             internal ConvexBrepRange range;
             internal Mesh mesh;
             internal PhysicsShapeSource source;
+
+            /// <summary>The box this convex lies in, in the local frame. Settled by whoever made this part.</summary>
+            internal float3 lo;
+            internal float3 hi;
         }
 
         private readonly List<int> _sourceOf = new List<int>(4);
@@ -413,6 +497,127 @@ namespace Zantetsu.PhysicsCut
         private PhysicsShapeSource SourceOf(int convex)
         {
             return _sources[_sourceOf[convex]];
+        }
+
+        /// <summary>
+        /// That an authored mesh really is the collider of the convex it was given for: its own bounds cover that
+        /// convex, in the same frame. A mesh that is not the collider of its convex is an input fault, and it is
+        /// refused here, once, at the only entry that takes a mesh from outside -- not carried into a shape where it
+        /// would describe something else than the convex beside it.
+        /// <para>
+        /// **This is a check on the input, not what makes the shape's box safe.** The box includes the convex's own
+        /// vertices, so it holds them whatever a collider claims. Nor does this catch every frame mismatch: a box in
+        /// another frame that happens to be large enough still covers the convex and still passes.
+        /// </para>
+        /// <para>
+        /// A shape made by a cut is not checked here: a produced convex's mesh is written from that very convex, and
+        /// an inherited one carries a mesh that passed here already.
+        /// </para>
+        /// <para>
+        /// The comparison allows a small slack, relative to the box's own size, because the bounds are floats built
+        /// from those same vertices and are allowed to be no tighter than rounding leaves them. The slack is this
+        /// check's alone: the box that is kept is not widened by it, and does not need to be.
+        /// </para>
+        /// </summary>
+        private static void RequireMeshBoundsEnclose(
+            ConvexBrepBank bank, ConvexBrepRange range, Mesh mesh, int index, out float3 boxLo, out float3 boxHi)
+        {
+            if (mesh == null)
+            {
+                throw new ArgumentException("convex " + index + " has no collider mesh", "meshes");
+            }
+
+            Bounds bounds = mesh.bounds;
+            float3 lo = bounds.min;
+            float3 hi = bounds.max;
+            if (!math.all(math.isfinite(lo)) || !math.all(math.isfinite(hi)) || math.any(hi < lo))
+            {
+                throw new ArgumentException(
+                    "the collider mesh of convex " + index + " has no usable bounds", "meshes");
+            }
+
+            if (range.vertexCount <= 0)
+            {
+                throw new ArgumentException("convex " + index + " has no vertex", "convexes");
+            }
+
+            // The one walk of these vertices. What it finds becomes this convex's box, so the slack below decides
+            // only whether the input is refused, never how wide the box that is kept turns out to be.
+            float3 slack = math.max(new float3(1e-4f), math.abs(hi - lo) * 1e-4f);
+            boxLo = lo;
+            boxHi = hi;
+            for (int v = 0; v < range.vertexCount; v++)
+            {
+                float3 at = bank.vertices[range.vertexBase + v];
+                if (!math.all(math.isfinite(at)))
+                {
+                    throw new ArgumentException("convex " + index + " has a vertex that is not finite", "convexes");
+                }
+
+                if (math.any(at < lo - slack) || math.any(at > hi + slack))
+                {
+                    throw new ArgumentException(
+                        "the collider mesh of convex " + index + " does not enclose that convex: its bounds are ["
+                        + lo + ", " + hi + "] and the convex reaches " + at
+                        + ". The mesh and the convex must be in the same frame.",
+                        "meshes");
+                }
+
+                boxLo = math.min(boxLo, at);
+                boxHi = math.max(boxHi, at);
+            }
+        }
+
+        /// <summary>
+        /// The low corner of a produced part's box: what the job measured while it wrote that convex's mesh, taken
+        /// together with the mesh's own bounds where those are usable. The measurements are the safe ones -- the
+        /// mesh's bounds are the same numbers through a centre-and-size pair of floats and can sit very slightly
+        /// inside them -- and the mesh's are kept as well because the collider is what physics touches.
+        /// </summary>
+        private static float3 ProducedLow(PhysicsCutPart part)
+        {
+            float3 lo = part.bounds.c0;
+            if (part.mesh == null)
+            {
+                return lo;
+            }
+
+            float3 fromMesh = part.mesh.bounds.min;
+            return math.all(math.isfinite(fromMesh)) ? math.min(lo, fromMesh) : lo;
+        }
+
+        private static float3 ProducedHigh(PhysicsCutPart part)
+        {
+            float3 hi = part.bounds.c1;
+            if (part.mesh == null)
+            {
+                return hi;
+            }
+
+            float3 fromMesh = part.mesh.bounds.max;
+            return math.all(math.isfinite(fromMesh)) ? math.max(hi, fromMesh) : hi;
+        }
+
+        /// <summary>
+        /// Widens this shape's local box by one part's own box -- the one that part was handed, not one worked out
+        /// here. A box that is not usable leaves the shape without one at all, rather than with a box that covers only
+        /// some of it. **No vertex is read.**
+        /// </summary>
+        private void AddToLocalBounds(float3 lo, float3 hi)
+        {
+            if (!_localBoundsUsable)
+            {
+                return;
+            }
+
+            if (!math.all(math.isfinite(lo)) || !math.all(math.isfinite(hi)) || math.any(hi < lo))
+            {
+                _localBoundsUsable = false;
+                return;
+            }
+
+            _localLo = math.min(_localLo, lo);
+            _localHi = math.max(_localHi, hi);
         }
 
         private void Fill(Part[] parts)
@@ -443,6 +648,8 @@ namespace Zantetsu.PhysicsCut
             };
 
             _convexes = new ConvexBrepRange[parts.Length];
+            _convexLo = new float3[parts.Length];
+            _convexHi = new float3[parts.Length];
             int vBase = 0, fBase = 0, iBase = 0, eBase = 0;
             for (int i = 0; i < parts.Length; i++)
             {
@@ -468,6 +675,9 @@ namespace Zantetsu.PhysicsCut
                 eBase += r.edgeCount;
 
                 _meshes.Add(parts[i].mesh);
+                _convexLo[i] = parts[i].lo;
+                _convexHi[i] = parts[i].hi;
+                AddToLocalBounds(parts[i].lo, parts[i].hi);
                 int at = _sources.IndexOf(parts[i].source);
                 if (at < 0)
                 {

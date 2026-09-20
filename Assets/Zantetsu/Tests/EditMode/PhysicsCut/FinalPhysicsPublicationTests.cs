@@ -144,16 +144,34 @@ namespace Zantetsu.PhysicsCut.Tests
             return new ConvexPoly { V = moved, F = poly.F };
         }
 
-        private static List<Mesh> CookedCubes(int count)
+        /// <summary>
+        /// One collider mesh per convex: the box that convex lies in, in the convex's own frame. A cube at the origin
+        /// would do for a test that only needs a mesh to exist, but an authored mesh is taken as the collider of its
+        /// own convex -- its bounds are what the provisional mass is drawn from -- so it has to be where the convex is.
+        /// </summary>
+        private static unsafe List<Mesh> CookedConvexBoxes(
+            ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> ranges)
         {
-            var meshes = new List<Mesh>(count);
-            for (int i = 0; i < count; i++)
+            var meshes = new List<Mesh>(ranges.Count);
+            for (int i = 0; i < ranges.Count; i++)
             {
+                ConvexBrepRange range = ranges[i];
+                var lo = new float3(float.PositiveInfinity);
+                var hi = new float3(float.NegativeInfinity);
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    float3 at = bank.vertices[range.vertexBase + v];
+                    lo = math.min(lo, at);
+                    hi = math.max(hi, at);
+                }
+
                 var mesh = new Mesh { name = "Authored " + i, hideFlags = HideFlags.HideAndDontSave };
                 mesh.vertices = new[]
                 {
-                    new Vector3(-1f, -1f, -1f), new Vector3(1f, -1f, -1f), new Vector3(1f, 1f, -1f), new Vector3(-1f, 1f, -1f),
-                    new Vector3(-1f, -1f, 1f), new Vector3(1f, -1f, 1f), new Vector3(1f, 1f, 1f), new Vector3(-1f, 1f, 1f),
+                    new Vector3(lo.x, lo.y, lo.z), new Vector3(hi.x, lo.y, lo.z),
+                    new Vector3(hi.x, hi.y, lo.z), new Vector3(lo.x, hi.y, lo.z),
+                    new Vector3(lo.x, lo.y, hi.z), new Vector3(hi.x, lo.y, hi.z),
+                    new Vector3(hi.x, hi.y, hi.z), new Vector3(lo.x, hi.y, hi.z),
                 };
                 mesh.triangles = new[]
                 {
@@ -186,7 +204,6 @@ namespace Zantetsu.PhysicsCut.Tests
             };
             w.dispatcher = new SharedWorkDispatcher(8, 2, 32, w.job, w.geometry, w.background);
             w.cook = new PhysicsCutCook(w.dispatcher, 1);
-            w.authoredMeshes = CookedCubes(w.harness.input.convexCount);
             w.authoredSource = PhysicsShapeSource.External();
 
             var ranges = new ConvexBrepRange[w.harness.input.convexCount];
@@ -194,6 +211,8 @@ namespace Zantetsu.PhysicsCut.Tests
             {
                 ranges[c] = w.harness.input.convexes[c];
             }
+
+            w.authoredMeshes = CookedConvexBoxes(w.harness.input.bank, ranges);
 
             PhysicsOwnerShape shape = PhysicsOwnerShape.Authored(
                 w.harness.input.bank, ranges, w.authoredMeshes, w.authoredSource, float4x4.identity);
@@ -742,9 +761,9 @@ namespace Zantetsu.PhysicsCut.Tests
             World w, out GameObject root, Matrix4x4? geometryLocalToOwner = null)
         {
             w.registry.Retire(w.source);
-            List<Mesh> meshes = CookedCubes(1);
-            w.authoredMeshes.AddRange(meshes);
             var ranges = new[] { w.harness.input.convexes[0] };
+            List<Mesh> meshes = CookedConvexBoxes(w.harness.input.bank, ranges);
+            w.authoredMeshes.AddRange(meshes);
             PhysicsOwnerShape shape = PhysicsOwnerShape.Authored(
                 w.harness.input.bank, ranges, meshes, PhysicsShapeSource.External(), float4x4.identity);
             root = new GameObject("Replacement");
