@@ -107,18 +107,41 @@ namespace Zantetsu.MeshCut
 
         // ------------------------------------------------------------------ layout
 
-        static int Align16(int bytes) => (bytes + 15) / 16 * 16;
+        /// <summary>
+        /// Sizes are worked out in 64 bits throughout, so that no product, sum or alignment wraps before
+        /// <see cref="Fits"/> has judged it. A figure is only ever narrowed to an int there.
+        /// </summary>
+        static long Align16(long bytes) => (bytes + 15) / 16 * 16;
+
+        /// <summary>
+        /// Whether a size can be used as an int. False leaves <paramref name="bytes"/> at zero, which is why no
+        /// caller may use it: a size that cannot be expressed ends the run, and is never rounded into a small
+        /// reservation.
+        /// </summary>
+        /// <summary>
+        /// The recommendation for a requirement that cannot be expressed as an int. Negative by contract:
+        /// <c>VpStorageCut.TryAdvance</c> reads a negative requirement as too large to express and ends the run
+        /// rather than retrying, which is the existing route for this.
+        /// </summary>
+        const int TooLarge = -1;
+
+        static bool Fits(long value, out int bytes)
+        {
+            bool fits = value >= 0 && value <= int.MaxValue;
+            bytes = fits ? (int)value : 0;
+            return fits;
+        }
 
         /// <summary>Bytes of the classification part (needed by every run, including a whole-mesh reuse): triangle classes, per-range counts, the per-topology-vertex distance memo.</summary>
-        static int PhaseABytes(int T, int R, int N) => Align16(T) + Align16(4 * R) + Align16(4 * R) + Align16(4 * math.max(1, N)) + Align16(math.max(1, N));
+        static long PhaseABytes(long T, long R, long N) => Align16(T) + Align16(4 * R) + Align16(4 * R) + Align16(4 * math.max(1L, N)) + Align16(math.max(1L, N));
 
         /// <summary>Bytes of the crossing-dependent fixed part (edge map, nodes, segments, contours, projection).</summary>
-        static int PhaseBBytes(int K, out int nodeCap, out int mapCap)
+        static long PhaseBBytes(long K, out long nodeCap, out long mapCap)
         {
-            nodeCap = math.max(1, 2 * K);
+            nodeCap = math.max(1L, 2 * K);
             mapCap = 16;
             while (mapCap < nodeCap * 4) mapCap <<= 1;
-            int bytes = 0;
+            long bytes = 0;
             bytes += Align16(mapCap * 8) + Align16(mapCap * 4);
             bytes += Align16(nodeCap * sizeof(Node));
             bytes += Align16(math.max(1, K) * sizeof(Crossing));
@@ -130,52 +153,161 @@ namespace Zantetsu.MeshCut
             return bytes;
         }
 
-        static int ArenaEstimate(int K) => 256 * math.max(1, 2 * K) + 32 * 1024;
+        static long ArenaEstimate(long K) => 256 * math.max(1L, 2 * K) + 32 * 1024;
         static int AuxEstimate(int K) => math.max(32, K / 4);
 
+        /// <summary>
+        /// How many triangles of a surface of <paramref name="T"/> a plane is taken to cross, before anything about
+        /// the geometry is read: <see cref="CrossingsPerRoot"/> times the square root of the triangle count, and never
+        /// more than all of them.
+        /// <para>
+        /// **This is a rule of thumb for an opening reservation, not a law.** The reasoning behind its shape is that a
+        /// plane meets a surface along a curve, so the triangles it crosses tend to form a band whose length grows
+        /// with the square root of the area; the multiple was chosen from a handful of ordinary closed shapes the
+        /// measurements cover, where the count came to a few times the root. Nothing here holds for an arbitrary
+        /// input, and a shape the plane runs along can cross far more.
+        /// </para>
+        /// <para>
+        /// Being wrong is ordinary. A run given too little stops before writing outside its reservation and says what
+        /// it needed, and the caller's existing rule reserves again and runs again -- as many times as that rule
+        /// allows, not once. Even where the estimate reaches T, the cap's auxiliary vertices and its arena are still
+        /// estimated; and putting a scratch shortfall right can be followed by a vertex or index shortfall found on
+        /// the attempt after it.
+        /// </para>
+        /// </summary>
+        const int CrossingsPerRoot = 8;
+
+        static int EstimatedCrossings(int T)
+        {
+            if (T <= 0)
+            {
+                return 0;
+            }
+
+            long band = (long)math.ceil(CrossingsPerRoot * math.sqrt((double)T));
+            return (int)math.min(T, math.max(1L, band));
+        }
+
+        /// <summary>
+        /// The three reservation figures for a run of <paramref name="T"/> triangles of which <paramref name="K"/>
+        /// cross the plane. The one place they are written: <see cref="QueryCapacity"/> passes the K it counted and
+        /// <see cref="EstimateCapacity"/> the K it guessed, and neither can mean anything different by them.
+        /// <para>
+        /// False when any of the three cannot be expressed as an int. The figures are then left as they were and no
+        /// smaller ones are put in their place: a run this size cannot be reserved for at all, which the caller reports
+        /// (<see cref="MeshCutCapacity.capacityOverflow"/>).
+        /// </para>
+        /// </summary>
+        static bool ReservationFigures(int T, int K, int R, int N, ref MeshCutCapacity cap)
+        {
+            if (!Fits(PhaseABytes(T, R, N), out int phaseA))
+            {
+                return false;
+            }
+
+            if (K <= 0)
+            {
+                if (!Fits(3L * T, out int wholeIndices))
+                {
+                    return false;
+                }
+
+                cap.newVertices = 0;
+                cap.newIndices = wholeIndices;
+                cap.scratchBytes = phaseA;
+                return true;
+            }
+
+            int aux = AuxEstimate(K);
+            if (!Fits(12L * K + 2L * aux, out int vertices)
+                || !Fits(3L * ((long)T + 6L * K + 4L * aux), out int indices)
+                || !Fits(Align16(4L * aux * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3), out int leftover)
+                || !Fits(PhaseABytes(T, R, N) + PhaseBBytes(K, out _, out _) + leftover, out int scratch))
+            {
+                return false;
+            }
+
+            cap.newVertices = vertices;
+            cap.newIndices = indices;
+            cap.scratchBytes = scratch;
+            return true;
+        }
+
+        /// <summary>
+        /// How many triangles the input's ranges describe, and whether those ranges are within the index view. Counts
+        /// only: no vertex, index or triangle is read. A count too large for an int is not a count.
+        /// </summary>
+        static bool TryCountTriangles(in MeshCutInput input, out int T)
+        {
+            long total = 0;
+            bool valid = input.indices != null;
+            for (int r = 0; r < input.rangeCount; r++)
+            {
+                MeshCutIndexRange range = input.ranges[r];
+                if (range.indexCount < 0 || range.indexCount % 3 != 0 || (long)range.indexStart + range.indexCount > input.indexViewLength)
+                {
+                    valid = false;
+                }
+
+                total += math.max(0, range.indexCount) / 3;
+                if (total > int.MaxValue)
+                {
+                    T = int.MaxValue;
+                    return false;
+                }
+            }
+
+            T = (int)total;
+            return valid;
+        }
+
+        // The offsets below add up to exactly PhaseABytes / PhaseBBytes, and a caller lays out only after that
+        // total has been judged to fit an int, so each running offset is within it.
         static void LayoutPhaseA(byte* scratch, int T, int R, int N, ref Layout l)
         {
             int off = 0;
-            l.cls = (sbyte*)(scratch + off); off += Align16(T);
-            l.posCount = (int*)(scratch + off); off += Align16(4 * R);
-            l.negCount = (int*)(scratch + off); off += Align16(4 * R);
-            l.dist = (float*)(scratch + off); off += Align16(4 * math.max(1, N));
-            l.sideMemo = (sbyte*)(scratch + off); off += Align16(math.max(1, N));
+            l.cls = (sbyte*)(scratch + off); off += (int)Align16(T);
+            l.posCount = (int*)(scratch + off); off += (int)Align16(4L * R);
+            l.negCount = (int*)(scratch + off); off += (int)Align16(4L * R);
+            l.dist = (float*)(scratch + off); off += (int)Align16(4L * math.max(1, N));
+            l.sideMemo = (sbyte*)(scratch + off); off += (int)Align16(math.max(1, N));
             l.fixedBytes = off;
         }
 
         static void LayoutPhaseB(byte* scratch, int scratchBytes, int K, ref Layout l)
         {
             int off = l.fixedBytes;
-            PhaseBBytes(K, out int nodeCap, out int mapCap);
+            PhaseBBytes(K, out long nodeCapacity, out long mapCapacity);
+            int nodeCap = (int)nodeCapacity;
+            int mapCap = (int)mapCapacity;
             l.nodeCap = nodeCap; l.mapMask = mapCap - 1;
-            l.mapKeys = (long*)(scratch + off); off += Align16(mapCap * 8);
-            l.mapValues = (int*)(scratch + off); off += Align16(mapCap * 4);
-            l.nodes = (Node*)(scratch + off); off += Align16(nodeCap * sizeof(Node));
-            l.crossings = (Crossing*)(scratch + off); off += Align16(math.max(1, K) * sizeof(Crossing));
-            l.segFromPos = (int*)(scratch + off); off += Align16(math.max(1, K) * 4);
-            l.segToPos = (int*)(scratch + off); off += Align16(math.max(1, K) * 4);
-            l.segFromNeg = (int*)(scratch + off); off += Align16(math.max(1, K) * 4);
-            l.segToNeg = (int*)(scratch + off); off += Align16(math.max(1, K) * 4);
-            l.next = (int*)(scratch + off); off += Align16(nodeCap * 4);
-            l.prev = (int*)(scratch + off); off += Align16(nodeCap * 4);
-            l.used = scratch + off; off += Align16(nodeCap);
-            l.contourNodes = (int*)(scratch + off); off += Align16(nodeCap * 4);
-            l.contourStart = (int*)(scratch + off); off += Align16((nodeCap + 1) * 4);
-            l.contourClosed = scratch + off; off += Align16(nodeCap);
-            l.U = (float*)(scratch + off); off += Align16(nodeCap * 4);
-            l.V = (float*)(scratch + off); off += Align16(nodeCap * 4);
-            l.nodePos = (float3*)(scratch + off); off += Align16(nodeCap * 12);
+            l.mapKeys = (long*)(scratch + off); off += (int)Align16(mapCap * 8);
+            l.mapValues = (int*)(scratch + off); off += (int)Align16(mapCap * 4);
+            l.nodes = (Node*)(scratch + off); off += (int)Align16(nodeCap * sizeof(Node));
+            l.crossings = (Crossing*)(scratch + off); off += (int)Align16(math.max(1, K) * sizeof(Crossing));
+            l.segFromPos = (int*)(scratch + off); off += (int)Align16(math.max(1, K) * 4);
+            l.segToPos = (int*)(scratch + off); off += (int)Align16(math.max(1, K) * 4);
+            l.segFromNeg = (int*)(scratch + off); off += (int)Align16(math.max(1, K) * 4);
+            l.segToNeg = (int*)(scratch + off); off += (int)Align16(math.max(1, K) * 4);
+            l.next = (int*)(scratch + off); off += (int)Align16(nodeCap * 4);
+            l.prev = (int*)(scratch + off); off += (int)Align16(nodeCap * 4);
+            l.used = scratch + off; off += (int)Align16(nodeCap);
+            l.contourNodes = (int*)(scratch + off); off += (int)Align16(nodeCap * 4);
+            l.contourStart = (int*)(scratch + off); off += (int)Align16((nodeCap + 1) * 4);
+            l.contourClosed = scratch + off; off += (int)Align16(nodeCap);
+            l.U = (float*)(scratch + off); off += (int)Align16(nodeCap * 4);
+            l.V = (float*)(scratch + off); off += (int)Align16(nodeCap * 4);
+            l.nodePos = (float3*)(scratch + off); off += (int)Align16(nodeCap * 12);
             l.records = (NewVertex*)(scratch + off);
             int fixedRecords = 6 * nodeCap;
-            off += Align16(fixedRecords * sizeof(NewVertex));
+            off += (int)Align16(fixedRecords * sizeof(NewVertex));
             l.fixedBytes = off;
             // Whatever is left: a quarter for auxiliary vertex records, the rest for the per-cycle cap arena. Both scale
             // with the scratch size, so a larger reservation on the next attempt admits more contacts.
             int leftover = math.max(0, scratchBytes - off);
             int auxRecords = leftover / 4 / sizeof(NewVertex);
             l.recordCap = fixedRecords + auxRecords;
-            off += Align16(auxRecords * sizeof(NewVertex));
+            off += (int)Align16(auxRecords * sizeof(NewVertex));
             // records are contiguous: fixed part and aux part share one array
             l.arena = new ScratchArena(scratch + off, math.max(0, scratchBytes - off));
         }
@@ -301,13 +433,47 @@ namespace Zantetsu.MeshCut
         // ------------------------------------------------------------------ capacity
 
         /// <summary>
-        /// Reservation figures for <paramref name="input"/> (DESIGN 6.1 "容量照会"). Runs the classification pass
-        /// without scratch (every corner's distance evaluated, no memo). Three kinds of figure, see <see cref="MeshCutCapacity"/>:
-        /// triangleCount and crossingTriangles are exact; newVertices and newIndices are upper bounds over the crossing
-        /// count (12 render vertices per crossing triangle, 3 (T + 6 K) indices) plus an estimate of the cap auxiliary
-        /// vertices (2 render vertices and 12 indices each); scratchBytes is exact for the classification and crossing
-        /// parts plus an estimate of the per-cycle cap arena. A run that exceeds a figure fails before writing outside
-        /// the reservation and reports the exact vertex / index need or a recommended scratch size.
+        /// The reservation figures for <paramref name="input"/> from its size alone: the triangle count its ranges
+        /// describe, and figures for an estimated crossing count (<see cref="CrossingsPerRoot"/>). **Nothing of the
+        /// geometry is read** -- no vertex, no index, no triangle -- so this costs the ranges and nothing more. It is
+        /// what the product reserves from (DESIGN 6.1).
+        /// <para>
+        /// The figures have the same meaning as <see cref="QueryCapacity"/>'s and are computed by the same function;
+        /// what differs is that K is guessed rather than counted, so they are neither bounds nor exact.
+        /// <see cref="MeshCutCapacity.crossingTriangles"/> and <see cref="MeshCutCapacity.wholeMeshSide"/> are left
+        /// unset for that reason: whether the plane misses the geometry is not knowable without looking at it, and the
+        /// run itself says so. A run given too little fails before writing outside its reservation and reports what it
+        /// needed, which the caller's retry rule uses to reserve again -- possibly more than once.
+        /// </para>
+        /// </summary>
+        [BurstCompile]
+        public static void EstimateCapacity(in MeshCutInput input, ref MeshCutCapacity cap)
+        {
+            cap = default;
+            if (input.rangeCount <= 0 || input.ranges == null) { cap.invalidInput = 1; return; }
+            int N = input.topology.topologyVertexCount;
+            bool rangesValid = TryCountTriangles(in input, out int T);
+            cap.triangleCount = T;
+            // even an invalid input gets the classification scratch, so a run reports InvalidInput rather than CapacityScratch
+            if (Fits(PhaseABytes(T, input.rangeCount, N), out int classification)) { cap.scratchBytes = classification; }
+            if (!rangesValid || T <= 0 || input.vertices == null) { cap.invalidInput = 1; return; }
+            if (!ReservationFigures(T, EstimatedCrossings(T), input.rangeCount, N, ref cap)) { cap.capacityOverflow = 1; }
+        }
+
+        /// <summary>
+        /// Reservation figures for <paramref name="input"/> with the crossing count **counted** (DESIGN 6.1
+        /// "容量照会"): the classification pass runs without scratch, every corner's distance evaluated and no
+        /// memo. What is measured is the crossing count: triangleCount and crossingTriangles are exact. **The figures
+        /// built from it are not.** newVertices and newIndices bound that counted crossing count and then add an
+        /// *estimate* of the cap auxiliary vertices; scratchBytes is exact for the classification and crossing parts
+        /// and adds an *estimate* of the per-cycle cap arena. A run from these figures can still fall short, for the
+        /// same reasons an estimated crossing count can.
+        /// <para>
+        /// **This is not the product's capacity path** and no product code calls it: a pass over every triangle before
+        /// the cut is what <see cref="EstimateCapacity"/> exists to avoid. It is kept for callers that want the exact
+        /// figures for their own reasons -- the verification harness sizing a probe, and the measurement that compares
+        /// the two.
+        /// </para>
         /// </summary>
         [BurstCompile]
         public static void QueryCapacity(in MeshCutInput input, ref MeshCutCapacity cap)
@@ -316,38 +482,21 @@ namespace Zantetsu.MeshCut
             var pb = new Bounds(); var nb = new Bounds();
             if (input.rangeCount <= 0 || input.ranges == null) { cap.invalidInput = 1; return; }
             int N = input.topology.topologyVertexCount;
-            int T = 0;
-            bool rangesValid = input.indices != null;
-            for (int r = 0; r < input.rangeCount; r++)
-            {
-                MeshCutIndexRange range = input.ranges[r];
-                if (range.indexCount < 0 || range.indexCount % 3 != 0 || (long)range.indexStart + range.indexCount > input.indexViewLength) rangesValid = false;
-                T += math.max(0, range.indexCount) / 3;
-            }
+            bool rangesValid = TryCountTriangles(in input, out int T);
             cap.triangleCount = T;
             // even an invalid input gets the classification scratch, so a run reports InvalidInput rather than CapacityScratch
-            cap.scratchBytes = PhaseABytes(T, input.rangeCount, N);
+            bool classificationFits = Fits(PhaseABytes(T, input.rangeCount, N), out int classification);
+            if (classificationFits) { cap.scratchBytes = classification; }
             if (!rangesValid || T <= 0 || input.vertices == null || !Classify(in input, null, null, null, null, null, out _, out int K, out bool anyPos, out bool anyNeg, ref pb, ref nb)) { cap.invalidInput = 1; return; }
             cap.crossingTriangles = K;
-            int phaseA = PhaseABytes(T, input.rangeCount, N);
             if (!anyNeg || !anyPos)
             {
                 cap.wholeMeshSide = (sbyte)(anyNeg ? -1 : 1);
-                cap.scratchBytes = phaseA;
+                if (!classificationFits) { cap.capacityOverflow = 1; }
                 return;
             }
-            if (K == 0)
-            {
-                cap.newIndices = 3 * T;
-                cap.scratchBytes = phaseA;
-                return;
-            }
-            int aux = AuxEstimate(K);
-            cap.newVertices = 12 * K + 2 * aux;
-            cap.newIndices = 3 * (T + 6 * K + 4 * aux);
-            int phaseB = PhaseBBytes(K, out _, out _);
-            int leftover = 4 * aux * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3;
-            cap.scratchBytes = phaseA + phaseB + Align16(leftover);
+
+            if (!ReservationFigures(T, K, input.rangeCount, N, ref cap)) { cap.capacityOverflow = 1; }
         }
 
         // ------------------------------------------------------------------ execute
@@ -363,22 +512,24 @@ namespace Zantetsu.MeshCut
             MarkManaged(ref result);
             if (input.rangeCount <= 0 || input.ranges == null || output.outputRanges == null) { result.status = MeshCutStatus.InvalidInput; return; }
 
-            int T = 0;
-            for (int r = 0; r < input.rangeCount; r++)
-            {
-                MeshCutIndexRange range = input.ranges[r];
-                if (range.indexCount < 0 || range.indexCount % 3 != 0 || input.indices == null || (long)range.indexStart + range.indexCount > input.indexViewLength)
-                { result.status = MeshCutStatus.InvalidInput; return; }
-                T += range.indexCount / 3;
-            }
-            if (T <= 0 || input.vertices == null) { result.status = MeshCutStatus.InvalidInput; return; }
+            // Counted in 64 bits and judged before anything is laid out: a total that does not fit an int is not a
+            // count, whichever way it would have wrapped.
+            if (!TryCountTriangles(in input, out int T) || T <= 0 || input.vertices == null)
+            { result.status = MeshCutStatus.InvalidInput; return; }
 
             int N = input.topology.topologyVertexCount;
-            int phaseA = PhaseABytes(T, input.rangeCount, N);
+            if (!Fits(PhaseABytes(T, input.rangeCount, N), out int phaseA))
+            {
+                // No scratch of any size would do. TooLarge is what TryAdvance reads a negative requirement as.
+                result.status = MeshCutStatus.CapacityScratch;
+                result.recommendedScratchBytes = TooLarge;
+                return;
+            }
+
             if (output.scratch == null || output.scratchBytes < phaseA)
             {
                 result.status = MeshCutStatus.CapacityScratch;
-                result.recommendedScratchBytes = phaseA + ArenaEstimate(0);
+                result.recommendedScratchBytes = Fits(phaseA + ArenaEstimate(0), out int recommended) ? recommended : TooLarge;
                 return;
             }
             var l = new Layout();
@@ -418,12 +569,15 @@ namespace Zantetsu.MeshCut
             byte scratchOverflow = 0;
             if (K > 0)
             {
-                int phaseB = PhaseBBytes(K, out _, out _);
-                int minLeftover = 4096;
-                if (output.scratchBytes < phaseA + phaseB + minLeftover)
+                long phaseB = PhaseBBytes(K, out _, out _);
+                const int minLeftover = 4096;
+                if (!Fits(phaseA + phaseB + minLeftover, out int leastUsable) || output.scratchBytes < leastUsable)
                 {
                     result.status = MeshCutStatus.CapacityScratch;
-                    result.recommendedScratchBytes = phaseA + phaseB + Align16(4 * AuxEstimate(K) * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3);
+                    result.recommendedScratchBytes =
+                        Fits(phaseA + phaseB + Align16(4L * AuxEstimate(K) * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3), out int recommended)
+                            ? recommended
+                            : TooLarge;
                     return;
                 }
                 LayoutPhaseB(output.scratch, output.scratchBytes, K, ref l);
@@ -598,7 +752,10 @@ namespace Zantetsu.MeshCut
             if (scratchOverflow != 0)
             {
                 result.status = MeshCutStatus.CapacityScratch;
-                result.recommendedScratchBytes = l.fixedBytes + 2 * math.max(output.scratchBytes - l.fixedBytes, ArenaEstimate(K));
+                result.recommendedScratchBytes =
+                    Fits(l.fixedBytes + 2L * math.max((long)output.scratchBytes - l.fixedBytes, ArenaEstimate(K)), out int grown)
+                        ? grown
+                        : TooLarge;
                 return;
             }
             if (newVertexCount > output.newVertexCapacity || (newVertexCount > 0 && (output.newVertices == null || output.newVertexTopology == null)))

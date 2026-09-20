@@ -202,10 +202,18 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            // From the input's size, not from its contents: no pass over the geometry happens before the cut.
             var capacity = new MeshCutCapacity();
-            MeshCutKernel.QueryCapacity(in kernelInput, ref capacity);
+            MeshCutKernel.EstimateCapacity(in kernelInput, ref capacity);
             if (capacity.invalidInput != 0)
             {
+                return false;
+            }
+
+            if (capacity.capacityOverflow != 0)
+            {
+                // No reservation of any size would serve this input: not a retry, and never a smaller reservation.
+                result.status = VpStorageCutStatus.CapacityOverflow;
                 return false;
             }
 
@@ -215,10 +223,6 @@ namespace Zantetsu.MeshCut
             int scratchBytes = math.max(1, options.scratchBytes > 0 ? options.scratchBytes : capacity.scratchBytes);
             bool wantsNodes = options.nodeEdgeKeys.IsCreated && options.nodeParams.IsCreated;
             int attemptLimit = options.maxAttempts > 0 ? options.maxAttempts : MaxAttempts;
-
-            // The query already knows when no triangle crosses the plane: that run reserves no output at all, so a cut
-            // that changes nothing leaves no trace. A later disagreement is simply a capacity failure and re-runs.
-            bool reservesNothing = capacity.wholeMeshSide != 0;
 
             var outputRanges = new NativeArray<MeshCutIndexRange>(2 * rangeCount, Allocator.Persistent);
             try
@@ -232,8 +236,9 @@ namespace Zantetsu.MeshCut
                     VpCutOutputReservation reservation = null;
                     try
                     {
-                        if (!reservesNothing
-                            && !TryReserve(storage, parent, rangeCount, newVertexCapacity, newIndexCapacity, out reservation))
+                        // Every attempt reserves. A plane that turns out to miss the geometry is known only once
+                        // the run has looked, and its reservation goes back whole and unused in TryFinish.
+                        if (!TryReserve(storage, parent, rangeCount, newVertexCapacity, newIndexCapacity, out reservation))
                         {
                             result.status = VpStorageCutStatus.StorageCapacity;
                             return false;
@@ -265,7 +270,6 @@ namespace Zantetsu.MeshCut
 
                         // A run that did not succeed is judged by the one shared rule, so this route and the
                         // asynchronous one grow their reservations by exactly the same steps.
-                        reservesNothing = false;
                         if (!TryNextAttempt(in kernel, ref newVertexCapacity, ref newIndexCapacity, ref scratchBytes, ref result))
                         {
                             return false;

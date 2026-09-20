@@ -11,9 +11,10 @@ using Zantetsu.Rendering;
 namespace Zantetsu.MeshCut.Tests
 {
     /// <summary>
-    /// Cutting a stored geometry through the shared dispatcher instead of on the main thread: the capacity query and
-    /// the cut itself run on a geometry pool worker, the input lease, the output reservation and the publication stay
-    /// on the main thread, and what comes out is what the synchronous entry produces (DESIGN 4.3, 4.5.6).
+    /// Cutting a stored geometry through the shared dispatcher instead of on the main thread: the cut runs on a
+    /// geometry pool worker, and the sizes it is given, the input lease, the output reservation and the publication
+    /// stay on the main thread, and what comes out is what the synchronous entry produces (DESIGN 4.3, 4.5.6). One
+    /// cut is one kind of work: nothing is offered to the dispatcher to measure the input first.
     /// <para>
     /// These tests use the real pool, because where the work runs is the point of the unit. They never wait for a
     /// fixed time: each one drives frames until the cut is over or a generous deadline passes, and a deadline that
@@ -194,7 +195,7 @@ namespace Zantetsu.MeshCut.Tests
         /// thread, which is what this division exists for.
         /// </summary>
         [Test]
-        public void TheQueryAndTheCut_RunOnAWorker_AndAreCollectedOnTheMainThread()
+        public void TheCut_RunsOnAWorker_AndIsCollectedOnTheMainThread()
         {
             using (Fixture f = NewFixture())
             {
@@ -205,8 +206,7 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Finished), "it finished");
                 Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "with a cut");
-                Assert.That(request.queryThreadId, Is.Not.EqualTo(f.mainThreadId), "the capacity query ran on a worker");
-                Assert.That(request.cutThreadId, Is.Not.EqualTo(f.mainThreadId), "and so did the cut");
+                Assert.That(request.cutThreadId, Is.Not.EqualTo(f.mainThreadId), "the cut ran on a worker");
                 Assert.That(request.collectThreadId, Is.EqualTo(f.mainThreadId), "the collection is the main thread's");
                 Assert.That(f.runner.Reserving, Is.Null, "and nothing of the storage is still reserved");
                 Assert.That(f.runner.ActiveCount, Is.Zero, "the runner holds nothing");
@@ -255,17 +255,35 @@ namespace Zantetsu.MeshCut.Tests
         // ----- the sides the cut did not produce ---------------------------------------------------------------------
 
         /// <summary>
-        /// A plane that misses the geometry borrows the input back and leaves the other side empty, exactly as the
-        /// synchronous entry does: no reservation is taken, no geometry is created, and the input's lease comes back.
+        /// A plane that leaves the whole geometry on one side: that side borrows the input, the other is empty, and
+        /// **a reservation is taken for the attempt all the same**. Which side everything falls on is not knowable
+        /// from the input's size, so the attempt reserves and the run finds out; the reservation is then given back
+        /// unused.
+        /// <para>
+        /// What this case observes is that the reservation is open while the cut is with a worker, that the runner
+        /// holds none afterwards, and that the storage holds exactly the vertices it held before. That the giving
+        /// back happens whole, through the one path that returns an uncommitted reservation, is a property of
+        /// <c>VpStorageCut.TryFinish</c> read in the implementation, not something these three observations prove by
+        /// themselves.
+        /// </para>
         /// </summary>
         [Test]
-        public void APlaneThatMissesTheGeometry_BorrowsTheInputAndReservesNothing()
+        public void APlaneThatMissesTheGeometry_BorrowsTheInput_AndItsReservationGoesBackWhole()
         {
-            using (Fixture f = NewFixture())
+            var gate = new GatedExecutor();
+            using (Fixture f = NewFixture(gate))
             {
                 VpStoredGeometry box = Append(f.storage, Box(2));
+                int verticesBefore = f.storage.VertexCount;
                 VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, box), Clear(), default);
 
+                // A reservation is taken for the attempt: whether the plane misses the geometry is not knowable from
+                // the input's size, and only the run itself finds out.
+                RunUntilAccepted(f, gate, request, VpStorageCutStage.Cutting);
+                Assert.That(request.HoldsReservation, Is.True, "the attempt holds an output reservation");
+                Assert.That(f.runner.Reserving, Is.SameAs(request), "and it is this cut that holds it");
+
+                gate.RunOneOnAWorker();
                 f.RunUntilOver(request);
 
                 Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "the cut is not a failure");
@@ -273,8 +291,78 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(request.Result.negative.geometry.indexRange, Is.EqualTo(box.indexRange), "which is the input itself");
                 Assert.That(request.Result.positive.IsEmpty, Is.True, "and the other side is empty");
                 Assert.That(request.Result.positive.geometry.indexRange, Is.EqualTo(default(VpIndexRangeHandle)), "with no range of its own");
-                Assert.That(f.runner.Reserving, Is.Null, "nothing was reserved");
-                AssertLeaseWasReturned(f.storage, box, "after a cut that reserved nothing");
+                Assert.That(f.runner.Reserving, Is.Null, "the reservation is not held any more");
+                Assert.That(
+                    f.storage.VertexCount, Is.EqualTo(verticesBefore),
+                    "and the storage holds exactly the vertices it held before the cut");
+                AssertLeaseWasReturned(f.storage, box, "after a borrowed side");
+            }
+        }
+
+        /// <summary>
+        /// An input the estimate is too small for, at the ordinary settings and with nothing overridden: three
+        /// hundred separate bars in one geometry, cut across all of them, so that the plane crosses about two thirds
+        /// of the triangles -- far above the few times the square root the rule of thumb expects. The cut takes more than one attempt, each short
+        /// reservation goes back before the next is taken, nothing is published in between, and it succeeds.
+        /// <para>
+        /// This is the estimate falling short by itself. The case below, which sets the figures small through the
+        /// options, is a different thing and is kept apart from it.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AnEstimateTooSmallForTheInput_ReservesAgain_AndPublishesNothingUntilItSucceeds()
+        {
+            using (Fixture f = NewFixture(vertexCapacity: 262144, indexCapacity: 1048576))
+            {
+                SyntheticMesh bars = SyntheticGeometry.BarField(300, 1, 0.2f, 0.5f, float3.zero)
+                    .Finish(new LogicalMeshBuilder.AttributeOptions { CreaseAngle = 30, CylindricalUv = true });
+                VpStoredGeometry geometry = Append(f.storage, bars);
+                int submeshesBefore = f.storage.SubmeshCount;
+                var plane = new float4(0f, 1f, 0f, 0f);
+
+                // What the estimate asked for against what the plane really crosses, so that a failure here says
+                // whether the layout stopped holding rather than only that the count changed.
+                VpStorageCutInput measured = Acquire(f.storage, geometry);
+                Assert.That(measured.TryGetInput(plane, out MeshCutInput kernelInput), Is.True);
+                MeshCutCapacity counted = default;
+                MeshCutKernel.QueryCapacity(in kernelInput, ref counted);
+                MeshCutCapacity estimated = default;
+                MeshCutKernel.EstimateCapacity(in kernelInput, ref estimated);
+                measured.Dispose();
+                TestContext.WriteLine(
+                    "the layout: triangles " + counted.triangleCount + ", crossings counted " + counted.crossingTriangles
+                    + "; estimate reserves vertices " + estimated.newVertices + ", indices " + estimated.newIndices
+                    + ", scratch " + estimated.scratchBytes
+                    + "; a counted reservation would be vertices " + counted.newVertices
+                    + ", indices " + counted.newIndices + ", scratch " + counted.scratchBytes);
+
+                VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, geometry), plane, default);
+
+                int seenPublished = 0;
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !request.IsOver)
+                {
+                    f.Frame();
+                    if (!request.IsOver)
+                    {
+                        // Nothing of a cut in progress is in the storage: a short attempt publishes no part of itself.
+                        seenPublished = math.max(seenPublished, f.storage.SubmeshCount - submeshesBefore);
+                    }
+
+                    Thread.Sleep(1);
+                }
+
+                Assert.That(request.IsOver, Is.True, "the cut ends within the deadline");
+
+                Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "it succeeds in the end");
+                Assert.That(
+                    request.Result.attempts, Is.GreaterThan(1),
+                    "the layout: the estimate really is too small for this input, so it reserved again");
+                Assert.That(seenPublished, Is.Zero, "and nothing was published before it succeeded");
+                Assert.That(f.runner.Reserving, Is.Null, "the last reservation is committed or gone");
+                TestContext.WriteLine(
+                    "an estimate too small: attempts " + request.Result.attempts
+                    + ", kernel status " + request.Result.kernel.status);
             }
         }
 
@@ -431,30 +519,168 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
-        // ----- closing the runner while a worker still has a cut -------------------------------------------------------
+        // ----- what the sizes cost, before and after -------------------------------------------------------------------
 
         /// <summary>
-        /// Closing the runner while its capacity query is with a worker: the query is not interrupted, and once it has
-        /// run and been collected, everything it held goes back. The close is not the end — the caller keeps
-        /// dispatching and pumping — and nothing is published from it.
+        /// The comparison this unit is answerable for, over a few representative inputs: a small ordinary cut, a
+        /// larger one, and a plane that leaves everything on one side. For each, what a pass over every triangle
+        /// would have reserved is worked out and written down beside what the size alone reserves and what the run
+        /// really used, with the attempts it took and the number of worker submissions the dispatcher saw.
+        /// <para>
+        /// The figures are recorded, not judged: which of them is larger depends on how the estimate is tuned. What is
+        /// asserted is what has to hold whatever it is tuned to -- the cut succeeds, the product asks for no pre-scan,
+        /// and each attempt is one submission.
+        /// </para>
         /// </summary>
         [Test]
-        public void ClosingWhileTheQueryIsWithAWorker_GivesEverythingBackWhenItIsCollected()
+        public void TheSizes_CostNoPassOverTheGeometry_AndWhatTheyReserveIsRecorded()
         {
-            var gate = new GatedExecutor();
-            using (Fixture f = NewFixture(gate))
+            var cases = new (string what, SyntheticMesh mesh, float4 plane)[]
             {
-                VpStoredGeometry box = Append(f.storage, Box(2));
-                VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, box), Tilted(), default);
-                RunUntilAccepted(f, gate, request, VpStorageCutStage.Querying);
+                ("a small box, cut across", Box(2), new float4(0f, 1f, 0f, 0f)),
+                ("a larger box, cut on the slant", Box(8), Tilted()),
+                ("a plane that misses: everything on one side", Box(3), new float4(0f, 1f, 0f, -8f)),
+            };
 
-                Assert.That(f.dispatcher.Cancel(request.ticket), Is.False, "it is submitted, not merely queued");
-                f.runner.Dispose();
-                gate.RunOneOnAWorker();
+            foreach ((string what, SyntheticMesh mesh, float4 plane) in cases)
+            {
+                var counter = new CountingExecutor();
+                using (Fixture f = NewFixture(counter, vertexCapacity: 262144, indexCapacity: 1048576))
+                {
+                    VpStoredGeometry geometry = Append(f.storage, mesh);
 
-                DrainAndAssertNothingIsLeft(f, request, box, "the query");
+                    // What a pre-scan would have said. The product no longer runs this; it is worked out here only so
+                    // that the two can be put side by side.
+                    VpStorageCutInput scanned = Acquire(f.storage, geometry);
+                    Assert.That(scanned.TryGetInput(plane, out MeshCutInput kernelInput), Is.True);
+                    MeshCutCapacity byScan = default;
+                    MeshCutKernel.QueryCapacity(in kernelInput, ref byScan);
+                    MeshCutCapacity bySize = default;
+                    MeshCutKernel.EstimateCapacity(in kernelInput, ref bySize);
+                    scanned.Dispose();
+
+                    VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, geometry), plane, default);
+                    f.RunUntilOver(request);
+
+                    Assert.That(request.Stage, Is.EqualTo(VpStorageCutStage.Finished), what + ": it finished");
+                    Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), what + ": with a cut");
+                    Assert.That(
+                        counter.Runs, Is.EqualTo(request.Result.attempts),
+                        what + ": one worker submission per attempt, and none for measuring the input");
+
+                    // What the run wrote into its own reservation, told apart from what a borrowed side carries:
+                    // a borrowed side's indices are the input's own and nothing was written for them.
+                    MeshCutResult kernel = request.Result.kernel;
+                    bool borrowed = request.Result.positive.IsBorrowed || request.Result.negative.IsBorrowed;
+                    string written = borrowed
+                        ? "none: the input was borrowed"
+                        : "vertices " + kernel.newVertexCount + ", indices " + kernel.newIndexCount;
+                    string carried = borrowed
+                        ? "the input's own " + (kernel.positive.indexCount + kernel.negative.indexCount) + " indices, borrowed"
+                        : "none";
+
+                    TestContext.WriteLine(
+                        what + ":"
+                        + " triangles " + byScan.triangleCount
+                        + "; crossings counted " + byScan.crossingTriangles
+                        + "; QueryCapacity (computed here, not run by the product): vertices " + byScan.newVertices
+                        + ", indices " + byScan.newIndices + ", scratch " + byScan.scratchBytes
+                        + "; EstimateCapacity, what the product reserved from: vertices " + bySize.newVertices
+                        + ", indices " + bySize.newIndices + ", scratch " + bySize.scratchBytes
+                        + "; written into the reservation: " + written
+                        + "; carried without writing: " + carried
+                        + "; scratch used " + kernel.usedScratchBytes
+                        + "; attempts " + request.Result.attempts
+                        + "; worker submissions " + counter.Runs
+                        + "; pre-scans for capacity: before 1, now 0");
+                }
             }
         }
+
+        /// <summary>
+        /// A geometry pool that runs each piece of work at once on a worker thread of its own and counts them. The
+        /// count is the number of submissions the dispatcher made, which is what the comparison is about.
+        /// </summary>
+        private sealed class CountingExecutor : IWorkExecutor
+        {
+            private readonly Queue<KeyValuePair<IDispatchWork, WorkCompletion>> _finished =
+                new Queue<KeyValuePair<IDispatchWork, WorkCompletion>>();
+            private bool _closed;
+            private int _held;
+
+            public WorkDestination Destination => WorkDestination.GeometryPool;
+
+            public int Capacity => 4;
+
+            public int Held => _held;
+
+            public bool CanAccept => !_closed && _held < Capacity;
+
+            /// <summary>How many pieces of work this destination has been given.</summary>
+            internal int Runs { get; private set; }
+
+            public bool TryAccept(IDispatchWork work)
+            {
+                if (!CanAccept)
+                {
+                    return false;
+                }
+
+                _held++;
+                Runs++;
+                Exception failure = null;
+                var thread = new Thread(() =>
+                {
+                    try
+                    {
+                        work.Begin();
+                    }
+                    catch (Exception e)
+                    {
+                        failure = e;
+                    }
+                });
+                thread.Start();
+                Assert.That(thread.Join(DeadlineMilliseconds), Is.True, "the worker finished");
+                _finished.Enqueue(new KeyValuePair<IDispatchWork, WorkCompletion>(
+                    work, failure == null ? WorkCompletion.Finished : WorkCompletion.Failed(failure)));
+                return true;
+            }
+
+            public void BeginAccepted(IDispatchWork work)
+            {
+                // A pool's own worker begins what it accepted; here it has already run.
+            }
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                if (_finished.Count == 0)
+                {
+                    work = null;
+                    completion = default;
+                    return false;
+                }
+
+                KeyValuePair<IDispatchWork, WorkCompletion> ended = _finished.Dequeue();
+                _held--;
+                work = ended.Key;
+                completion = ended.Value;
+                return true;
+            }
+
+            public void CloseForNewWork()
+            {
+                _closed = true;
+            }
+
+            public bool StopAndConfirm(int timeoutMilliseconds)
+            {
+                _closed = true;
+                return true;
+            }
+        }
+
+        // ----- closing the runner while a worker still has a cut -------------------------------------------------------
 
         /// <summary>
         /// Closing the runner while the cut itself is with a worker, its output reservation open: the cut runs to the
@@ -470,10 +696,6 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry box = Append(f.storage, Box(2));
                 VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, box), Tilted(), default);
 
-                // Let the capacity query through, so that the reservation is taken and the cut itself is the work a
-                // worker holds when the runner is closed.
-                RunUntilAccepted(f, gate, request, VpStorageCutStage.Querying);
-                gate.RunOneOnAWorker();
                 RunUntilAccepted(f, gate, request, VpStorageCutStage.Cutting);
 
                 Assert.That(request.HoldsReservation, Is.True, "the output reservation is open");

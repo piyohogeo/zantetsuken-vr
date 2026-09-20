@@ -14,23 +14,21 @@ namespace Zantetsu.MeshCut
         /// <summary>Accepted, and waiting to be offered to the dispatcher. Nothing of the storage is held yet.</summary>
         Waiting = 0,
 
-        /// <summary>Its capacity query is with the dispatcher.</summary>
-        Querying = 1,
-
         /// <summary>
-        /// Its sizes are known and it is waiting for the room to run: the storage's one cut reservation, and a place
-        /// in the dispatcher's queue. A cut that waits here is not offered to the dispatcher at all.
+        /// Its sizes are settled and it is waiting for the room to run: the storage's one cut reservation, and a place
+        /// in the dispatcher's queue. A cut that waits here is not offered to the dispatcher at all. A cut whose
+        /// reservation turned out to be short comes back here with a larger one to ask for.
         /// </summary>
-        Ready = 2,
+        Ready = 1,
 
         /// <summary>Its reservation is open and the cut itself is with the dispatcher.</summary>
-        Cutting = 3,
+        Cutting = 2,
 
         /// <summary>Over, with a result: the two sides on success, the reason on every other status.</summary>
-        Finished = 4,
+        Finished = 3,
 
         /// <summary>Given up by the caller, or cancelled with the dispatcher. Everything it held has gone back.</summary>
-        Abandoned = 5,
+        Abandoned = 4,
     }
 
     /// <summary>
@@ -59,17 +57,15 @@ namespace Zantetsu.MeshCut
 
         internal MeshCutInput kernelInput;
         internal MeshCutOutput output;
-        internal MeshCutCapacity capacity;
         internal MeshCutResult kernelResult;
 
         internal int newVertexCapacity, newIndexCapacity, scratchBytes;
-        internal bool reservesNothing;
         internal VpCutOutputReservation reservation;
         internal WorkTicket ticket;
         internal bool abandoning;
 
         /// <summary>The thread each part ran on, kept for the tests that check where the work really happened.</summary>
-        internal int queryThreadId, cutThreadId, collectThreadId;
+        internal int cutThreadId, collectThreadId;
 
         internal VpStorageCutRequest(VpStorageCutInput input, float4 plane, in VpStorageCutOptions options)
         {
@@ -327,50 +323,49 @@ namespace Zantetsu.MeshCut
         private void Advance(VpStorageCutRequest request)
         {
             Work work = _work[request];
-            if (_closed && request.Stage != VpStorageCutStage.Querying && request.Stage != VpStorageCutStage.Cutting)
+            if (_closed && request.Stage != VpStorageCutStage.Cutting)
             {
                 // Closed: nothing is offered or reserved any more. What a worker still holds is all that is left to
-                // take back, and that is the two stages below.
+                // take back, and that is the one stage below.
                 return;
             }
 
             switch (request.Stage)
             {
                 case VpStorageCutStage.Waiting:
-                    // The views the worker reads are taken here, on the main thread, and only then is the query
-                    // offered: a worker asks the storage nothing itself.
+                    // The views the worker reads are taken here, on the main thread, and only then is anything
+                    // decided: a worker asks the storage nothing itself.
                     if (!TryReadInput(request))
                     {
                         return;
                     }
 
-                    Offer(request, work, cutting: false);
-                    return;
-
-                case VpStorageCutStage.Querying:
-                    if (!work.ended || !TakeCompletion(request, work))
-                    {
-                        return;
-                    }
-
-                    if (request.capacity.invalidInput != 0)
+                    // The sizes, from the input's own description. No worker and no pass over the geometry: the
+                    // ranges say how many triangles there are, and the rest is arithmetic (DESIGN 6.1).
+                    var capacity = new MeshCutCapacity();
+                    MeshCutKernel.EstimateCapacity(in request.kernelInput, ref capacity);
+                    if (capacity.invalidInput != 0)
                     {
                         Finish(request, VpStorageCutStatus.InvalidInput);
                         return;
                     }
 
-                    // The query already knows when no triangle crosses the plane: that run reserves no output at all,
-                    // so a cut that changes nothing leaves no trace.
-                    request.reservesNothing = request.capacity.wholeMeshSide != 0;
+                    if (capacity.capacityOverflow != 0)
+                    {
+                        // No reservation of any size would serve this input: not a retry, and never a smaller one.
+                        Finish(request, VpStorageCutStatus.CapacityOverflow);
+                        return;
+                    }
+
                     request.newVertexCapacity = request.options.newVertexCapacity > 0
                         ? request.options.newVertexCapacity
-                        : request.capacity.newVertices;
+                        : capacity.newVertices;
                     request.newIndexCapacity = request.options.newIndexCapacity > 0
                         ? request.options.newIndexCapacity
-                        : request.capacity.newIndices;
+                        : capacity.newIndices;
                     request.scratchBytes = math.max(
                         1,
-                        request.options.scratchBytes > 0 ? request.options.scratchBytes : request.capacity.scratchBytes);
+                        request.options.scratchBytes > 0 ? request.options.scratchBytes : capacity.scratchBytes);
                     request.Stage = VpStorageCutStage.Ready;
                     goto case VpStorageCutStage.Ready;
 
@@ -381,7 +376,7 @@ namespace Zantetsu.MeshCut
                         return;
                     }
 
-                    Offer(request, work, cutting: true);
+                    Offer(request, work);
                     return;
 
                 case VpStorageCutStage.Cutting:
@@ -396,13 +391,17 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Takes what one attempt needs and points the kernel's output at it: the reservation, unless the query
-        /// already said the plane misses the geometry, the scratch, and the input as it stands right now. False when
-        /// another cut holds the storage's one reservation, which is not a failure and changes nothing.
+        /// Takes what one attempt needs and points the kernel's output at it: the reservation, the scratch, and the
+        /// input as it stands right now. False when another cut holds the storage's one reservation, which is not a
+        /// failure and changes nothing.
+        /// <para>
+        /// Every attempt reserves. Whether the plane misses the geometry is only known once the run has looked, and
+        /// such a reservation goes back whole and unused when the result is settled.
+        /// </para>
         /// </summary>
         private bool TryTakeRoom(VpStorageCutRequest request)
         {
-            if (!request.reservesNothing && !request.HoldsReservation)
+            if (!request.HoldsReservation)
             {
                 if (_reserving != null && _reserving != request)
                 {
@@ -525,7 +524,6 @@ namespace Zantetsu.MeshCut
             // A short reservation is not a failure: it goes back whole, so another cut may have it, and this one asks
             // for a larger one at a later opportunity.
             request.Result = result;
-            request.reservesNothing = false;
             ReleaseReservation(request);
             request.Stage = VpStorageCutStage.Ready;
         }
@@ -560,9 +558,8 @@ namespace Zantetsu.MeshCut
             }
         }
 
-        private void Offer(VpStorageCutRequest request, Work work, bool cutting)
+        private void Offer(VpStorageCutRequest request, Work work)
         {
-            work.cutting = cutting;
             work.ended = false;
             if (!_dispatcher.TryEnqueue(_purpose, work, out WorkTicket ticket))
             {
@@ -571,7 +568,7 @@ namespace Zantetsu.MeshCut
             }
 
             request.ticket = ticket;
-            request.Stage = cutting ? VpStorageCutStage.Cutting : VpStorageCutStage.Querying;
+            request.Stage = VpStorageCutStage.Cutting;
         }
 
         private void Finish(VpStorageCutRequest request, VpStorageCutStatus status)
@@ -629,14 +626,13 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// One cut's worker side, offered twice: once for the capacity query and once for the cut. Both are the
-        /// kernel and nothing else — no storage, no Unity object, no allocation — reading views the main thread
-        /// handed over and writing only this cut's own scratch, ranges and reservation.
+        /// One cut's worker side: the cut itself, and nothing else is ever offered. It is the kernel and nothing more
+        /// — no storage, no Unity object, no allocation — reading views the main thread handed over and writing only
+        /// this cut's own scratch, ranges and reservation.
         /// </summary>
         private sealed class Work : IDispatchWork
         {
             private readonly VpStorageCutRequest _request;
-            internal bool cutting;
             internal bool ended;
             internal WorkCompletion completion;
 
@@ -647,19 +643,10 @@ namespace Zantetsu.MeshCut
 
             public void Begin()
             {
-                if (cutting)
-                {
-                    _request.cutThreadId = Thread.CurrentThread.ManagedThreadId;
-                    MeshCutResult kernel = default;
-                    MeshCutKernel.Execute(in _request.kernelInput, in _request.output, ref kernel);
-                    _request.kernelResult = kernel;
-                    return;
-                }
-
-                _request.queryThreadId = Thread.CurrentThread.ManagedThreadId;
-                MeshCutCapacity capacity = default;
-                MeshCutKernel.QueryCapacity(in _request.kernelInput, ref capacity);
-                _request.capacity = capacity;
+                _request.cutThreadId = Thread.CurrentThread.ManagedThreadId;
+                MeshCutResult kernel = default;
+                MeshCutKernel.Execute(in _request.kernelInput, in _request.output, ref kernel);
+                _request.kernelResult = kernel;
             }
 
             public bool IsComplete => true;

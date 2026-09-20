@@ -158,6 +158,12 @@ namespace Zantetsu.MeshCut
         public int triangleCount, crossingTriangles;
         /// <summary>+1 / -1 when every vertex lies on that side (no output needed, the input is reused); 0 otherwise.</summary>
         public sbyte wholeMeshSide;
+        /// <summary>
+        /// 1 when the figures for this input cannot be expressed as ints, however small a reservation would do. The
+        /// figures are then not to be used: no smaller ones are put in their place, and a caller ends the cut with a
+        /// capacity overflow rather than reserving less than the run would need.
+        /// </summary>
+        public byte capacityOverflow;
         /// <summary>1 when a range or index reference is invalid; the scratch figure then covers only the classification pass so a run reports InvalidInput.</summary>
         public byte invalidInput;
     }
