@@ -314,6 +314,7 @@ namespace Zantetsu.MeshCut
         /// </param>
         /// <param name="reflected">The boundaries the geometry already reflects. Required: null is not "none".</param>
         /// <param name="vertexEpsilon">The cap polygons' vertex-merge epsilon for this geometry.</param>
+        /// <summary>The same, for a geometry that has folded nothing into its own frame.</summary>
         public VpMultiCutRegistration(
             LogicalFragmentId root,
             Bounds localBounds,
@@ -321,10 +322,23 @@ namespace Zantetsu.MeshCut
             Matrix4x4 lineageToGeometryLocal,
             IReadOnlyCollection<VpClipBoundary> reflected,
             float vertexEpsilon)
+            : this(root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon, Matrix4x4.identity)
+        {
+        }
+
+        public VpMultiCutRegistration(
+            LogicalFragmentId root,
+            Bounds localBounds,
+            Matrix4x4 geometryLocalToWorld,
+            Matrix4x4 lineageToGeometryLocal,
+            IReadOnlyCollection<VpClipBoundary> reflected,
+            float vertexEpsilon,
+            Matrix4x4 foldedGeometryLocal)
         {
             this.root = root;
             this.localBounds = localBounds;
             this.geometryLocalToWorld = geometryLocalToWorld;
+            this.foldedGeometryLocal = foldedGeometryLocal;
             this.lineageToGeometryLocal = lineageToGeometryLocal;
             this.reflected = reflected;
             this.vertexEpsilon = vertexEpsilon;
@@ -333,6 +347,15 @@ namespace Zantetsu.MeshCut
         public readonly LogicalFragmentId root;
         public readonly Bounds localBounds;
         public readonly Matrix4x4 geometryLocalToWorld;
+
+        /// <summary>
+        /// What earlier commits took into this geometry's own frame, in that frame: the separations of the boundaries
+        /// this geometry now reflects. It is applied on top of a placement a fragment follows, so that what was folded
+        /// in moves with whatever that fragment follows instead of staying where it was folded. Identity when nothing
+        /// was folded, and unused when the registration's own placement is the one drawn at.
+        /// </summary>
+        public readonly Matrix4x4 foldedGeometryLocal;
+
         public readonly Matrix4x4 lineageToGeometryLocal;
         public readonly IReadOnlyCollection<VpClipBoundary> reflected;
         public readonly float vertexEpsilon;
@@ -835,7 +858,8 @@ namespace Zantetsu.MeshCut
             Matrix4x4 lineageToGeometryLocal,
             IReadOnlyCollection<VpClipBoundary> reflected,
             float separation,
-            float vertexEpsilon)
+            float vertexEpsilon,
+            IVpFragmentPlacement placement = null)
         {
             if (reflected == null)
             {
@@ -843,10 +867,10 @@ namespace Zantetsu.MeshCut
             }
 
             _single[0] = new VpMultiCutRegistration(
-                root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon);
+                root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon, Matrix4x4.identity);
             try
             {
-                return TryBuild(ledger, _single, separation, null);
+                return TryBuild(ledger, _single, separation, null, placement);
             }
             finally
             {
@@ -863,9 +887,12 @@ namespace Zantetsu.MeshCut
         /// <exception cref="ArgumentNullException">The ledger, the list or a registration's reflected set is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException">The separation or an epsilon is negative or not finite.</exception>
         public VpMultiCutBuildOutcome TryBuild(
-            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, float separation)
+            LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations,
+            float separation,
+            IVpFragmentPlacement placement = null)
         {
-            return TryBuild(ledger, registrations, separation, null);
+            return TryBuild(ledger, registrations, separation, null, placement);
         }
 
         /// <summary>
@@ -876,7 +903,8 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             IReadOnlyList<VpMultiCutRegistration> registrations,
             float separation,
-            VpMultiCutSnapshot reuseFrom)
+            VpMultiCutSnapshot reuseFrom,
+            IVpFragmentPlacement placement = null)
         {
             if (ledger == null)
             {
@@ -946,7 +974,7 @@ namespace Zantetsu.MeshCut
                     return Fail(outcome);
                 }
 
-                outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
+                outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart, placement);
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
                     return Fail(outcome);
@@ -1521,7 +1549,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome TryGroup(
             LogicalCutLedger ledger, in VpMultiCutRegistration registration, int registrationIndex, int branchStart,
-            int renderFragmentStart)
+            int renderFragmentStart, IVpFragmentPlacement placement)
         {
             IReadOnlyCollection<VpClipBoundary> reflected = registration.reflected;
             for (int b = branchStart; b < _branchCount; b++)
@@ -1573,14 +1601,59 @@ namespace Zantetsu.MeshCut
                     return VpMultiCutBuildOutcome.CapacityExceeded;
                 }
 
+                // Where this one stands. A fragment that follows a placement of its own is drawn there, with what
+                // earlier commits folded into this geometry's frame carried along; one that does not is drawn at the
+                // registration's placement, which is the ordinary answer and not a fallback for a failure.
+                if (!TryPlacementOf(placement, registration, root, out Matrix4x4 geometryLocalToWorld))
+                {
+                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+
                 _renderFragments[_renderFragmentCount] = new VpMultiCutRenderFragment(
-                    registrationIndex, registration.localBounds, registration.geometryLocalToWorld, root, rootPendingSide,
+                    registrationIndex, registration.localBounds, geometryLocalToWorld, root, rootPendingSide,
                     aggregated, b, 1, 0, 0, Vector3.zero, VpInstanceClip.None, 0, 0);
                 _branches[b] = WithRenderFragment(branch, _renderFragmentCount);
                 _renderFragmentCount++;
             }
 
             return VpMultiCutBuildOutcome.Built;
+        }
+
+        /// <summary>
+        /// Where one render fragment's shape stands: the placement its fragment follows, with this geometry's folded
+        /// separations on top of it, or the registration's own when it follows nothing. A placement that is not one is
+        /// refused exactly as the registration's would be.
+        /// </summary>
+        private static bool TryPlacementOf(
+            IVpFragmentPlacement placement, in VpMultiCutRegistration registration, LogicalFragmentId fragment,
+            out Matrix4x4 geometryLocalToWorld)
+        {
+            if (placement == null)
+            {
+                // Nothing follows anything here: the registration's placement is what everything of it is drawn at.
+                geometryLocalToWorld = registration.geometryLocalToWorld;
+                return true;
+            }
+
+            VpFragmentPlacementKind kind = placement.TryGetGeometryLocalToWorld(fragment, out Matrix4x4 followed);
+            if (kind == VpFragmentPlacementKind.Missing)
+            {
+                // It follows something and where was not said. Drawing it where it was registered would draw it where
+                // it used to be, so nothing is drawn from this input at all.
+                geometryLocalToWorld = default;
+                return false;
+            }
+
+            Matrix4x4 baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            if (!IsPlacement(baseline))
+            {
+                geometryLocalToWorld = default;
+                return false;
+            }
+
+            // What earlier commits took into this geometry's frame comes with it, wherever it is drawn.
+            geometryLocalToWorld = baseline * registration.foldedGeometryLocal;
+            return IsPlacement(geometryLocalToWorld);
         }
 
         /// <summary>
@@ -1665,10 +1738,13 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot reuseFrom)
         {
             LogicalFragmentId registrationRoot = registration.root;
-            Matrix4x4 geometryLocalToWorld = registration.geometryLocalToWorld;
             Matrix4x4 lineageToGeometryLocal = registration.lineageToGeometryLocal;
             float vertexEpsilon = registration.vertexEpsilon;
             VpMultiCutRenderFragment renderFragment = _renderFragments[index];
+
+            // This render fragment's own placement, decided when it was made: the separation it sums, the world planes
+            // of its boundaries and its cap polygons are all made with that one matrix.
+            Matrix4x4 geometryLocalToWorld = renderFragment.geometryLocalToWorld;
             VpMultiCutBranch representative = _branches[renderFragment.branchStart];
 
             // 1. The separation, down the lineage from the registration's root.
@@ -1724,7 +1800,8 @@ namespace Zantetsu.MeshCut
             {
                 VpClipBoundary boundary = _candidates[representative.candidateStart + j].boundary;
                 VpMultiCutBuildOutcome sectioned = TryTakeSection(
-                    boundary.face, _localPlanes[j], registration, reuseFrom, out int initial, out int sectionSlot);
+                    boundary.face, _localPlanes[j], registration, geometryLocalToWorld, reuseFrom, out int initial,
+                    out int sectionSlot);
                 if (sectioned != VpMultiCutBuildOutcome.Built)
                 {
                     return sectioned;
@@ -1782,13 +1859,13 @@ namespace Zantetsu.MeshCut
         /// the build is refused and nothing is taken without being kept.
         /// </summary>
         private VpMultiCutBuildOutcome TryTakeSection(
-            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, VpMultiCutSnapshot reuseFrom,
-            out int vertexCount, out int sectionSlot)
+            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld,
+            VpMultiCutSnapshot reuseFrom, out int vertexCount, out int sectionSlot)
         {
             vertexCount = 0;
             sectionSlot = -1;
             const int stride = VpCapBoundsPolygon.MaxVertices;
-            int found = FindSection(face, localPlane, registration);
+            int found = FindSection(face, localPlane, registration, geometryLocalToWorld);
             if (found >= 0)
             {
                 sectionSlot = found;
@@ -1803,7 +1880,7 @@ namespace Zantetsu.MeshCut
             }
 
             int slot = _sectionCount;
-            int reused = reuseFrom != null ? reuseFrom.FindSection(face, localPlane, registration) : -1;
+            int reused = reuseFrom != null ? reuseFrom.FindSection(face, localPlane, registration, geometryLocalToWorld) : -1;
             if (reused >= 0)
             {
                 vertexCount = reuseFrom._sections[reused].vertexCount;
@@ -1813,7 +1890,7 @@ namespace Zantetsu.MeshCut
             {
                 SectionBuildCount++;
                 if (!_section.TryBuild(
-                        registration.localBounds, localPlane, registration.geometryLocalToWorld,
+                        registration.localBounds, localPlane, geometryLocalToWorld,
                         registration.vertexEpsilon, _sectionVertices, slot * stride, out vertexCount, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.SectionNotTaken);
@@ -1825,7 +1902,7 @@ namespace Zantetsu.MeshCut
                 face = face,
                 localPlane = localPlane,
                 bounds = registration.localBounds,
-                placement = registration.geometryLocalToWorld,
+                placement = geometryLocalToWorld,
                 epsilon = registration.vertexEpsilon,
                 vertexCount = vertexCount,
             };
@@ -1835,7 +1912,8 @@ namespace Zantetsu.MeshCut
             return VpMultiCutBuildOutcome.Built;
         }
 
-        private int FindSection(VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration)
+        private int FindSection(
+            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld)
         {
             for (int i = 0; i < _sectionCount; i++)
             {
@@ -1843,7 +1921,7 @@ namespace Zantetsu.MeshCut
                 if (section.face == face
                     && Same(section.localPlane, localPlane)
                     && Same(section.bounds, registration.localBounds)
-                    && Same(section.placement, registration.geometryLocalToWorld)
+                    && Same(section.placement, geometryLocalToWorld)
                     && section.epsilon == registration.vertexEpsilon)
                 {
                     return i;
