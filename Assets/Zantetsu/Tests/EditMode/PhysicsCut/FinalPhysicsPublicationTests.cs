@@ -9,6 +9,8 @@ using UnityEngine;
 using Zantetsu.ConvexCut;
 using Zantetsu.ConvexCut.Tests;
 using Zantetsu.MeshCut;
+using Zantetsu.MeshCut.Tests;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut.Tests
 {
@@ -169,7 +171,8 @@ namespace Zantetsu.PhysicsCut.Tests
         /// One authored compound in the scene, its ledger fragment, and the correspondence between them: the state a
         /// first cut starts from.
         /// </summary>
-        private static World NewWorld(float3[] anchors, PhysicsOwnerPlacement placement)
+        private static World NewWorld(
+            float3[] anchors, PhysicsOwnerPlacement placement, Matrix4x4? geometryLocalToOwner = null)
         {
             var w = new World
             {
@@ -213,7 +216,7 @@ namespace Zantetsu.PhysicsCut.Tests
             }
 
             w.source = w.ledger.AddFragment(anchors);
-            w.registry.RegisterAuthored(w.source, root, body, shape);
+            w.registry.RegisterAuthored(w.source, root, body, shape, false, geometryLocalToOwner);
             return w;
         }
 
@@ -517,8 +520,10 @@ namespace Zantetsu.PhysicsCut.Tests
         [Test]
         public void PhysicsThatCannotBeEstablished_IsTakenToTheAbortAndLeavesTheProducts()
         {
-            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity))
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
             {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
                 CutOperationId operation = Admit(w);
                 PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
                 GameObject sourceRoot = w.SourceOwner.Root;
@@ -546,6 +551,18 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(w.ledger.IsCurrentTarget(w.source), Is.False, "the source is retired");
                 Assert.That(w.registry.TryGet(w.source, out PhysicsFragmentOwner _), Is.False, "and its physics ended with it");
                 Assert.That(sourceRoot == null, Is.True, "its body left the scene");
+
+                // The display ends with it: asking where it stands is refused, and the next collection draws nothing
+                // from that registration rather than putting it back where it was registered.
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "nothing says where a retired source stands");
+                VpMultiCutSnapshot ended = NewSnapshot();
+                Assert.That(
+                    Build(ended, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built),
+                    "a retired root is an ordinary collection, not a failure");
+                Assert.That(ended.RenderFragmentCount, Is.Zero, "with nothing drawn from it");
+                Assert.That(Has(ended, w.source), Is.False, "the retired source least of all");
 
                 // The products never became the publication's, so they are still the caller's to use and to give back.
                 foreach (Mesh mesh in producedMeshes)
@@ -641,15 +658,25 @@ namespace Zantetsu.PhysicsCut.Tests
         [Test]
         public void AReplacedOwnerThatToldTheLedger_EndsTheOperationAsStale()
         {
-            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity))
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
             {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
                 CutOperationId operation = Admit(w);
                 PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
                 PhysicsOwnerShape cutFrom = w.SourceOwner.Shape;
                 int taken = w.ledger.Budget.IncompleteCutOperationCount;
                 Assert.That(taken, Is.EqualTo(1), "the admitted operation holds one budget unit");
 
-                PhysicsOwnerShape replacementShape = ReplaceOwner(w, out GameObject replacementRoot);
+                // While it is still admitted, the source is drawn with that boundary as a temporary one.
+                VpMultiCutSnapshot admitted = NewSnapshot();
+                Assert.That(Build(admitted, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                Assert.That(Of(admitted, w.source).capCount, Is.GreaterThan(0), "the admitted boundary is drawn");
+
+                PhysicsOwnerShape replacementShape = ReplaceOwner(
+                    w, out GameObject replacementRoot, k_geometryLocalToOwner);
+                replacementRoot.transform.SetPositionAndRotation(
+                    new Vector3(2f, -1f, 0.5f), Quaternion.AngleAxis(20f, Vector3.forward));
                 w.ledger.NoteOwnershipChanged(w.source);
 
                 Assert.That(
@@ -674,6 +701,26 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(replacementRoot.activeInHierarchy, Is.True);
                 Assert.That(candidate.Positive.Root.activeInHierarchy, Is.False, "and the old candidate never entered the scene");
 
+                // What the display sees: the fragment still follows, and it follows the owner it has now, which is
+                // the replacement where the test put it. The boundary that ended as stale is no longer drawn.
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 followed),
+                    Is.EqualTo(VpFragmentPlacementKind.Following),
+                    "the live source still follows an owner");
+                Same(
+                    Expected(new Vector3(2f, -1f, 0.5f), Quaternion.AngleAxis(20f, Vector3.forward)), followed,
+                    "and it is the owner it has now");
+
+                VpMultiCutSnapshot stale = NewSnapshot();
+                Assert.That(Build(stale, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                VpMultiCutRenderFragment rf = Of(stale, w.source);
+                Assert.That(rf.capCount, Is.Zero, "the stale boundary is not drawn any more");
+                Assert.That(rf.clip.PlaneCount, Is.Zero, "and nothing is clipped by it");
+                Same(
+                    Expected(new Vector3(2f, -1f, 0.5f), Quaternion.AngleAxis(20f, Vector3.forward)),
+                    rf.geometryLocalToWorld,
+                    "the body is drawn at the owner it kept");
+
                 // Ended once: a second attempt finds nothing active, and the budget does not move again.
                 Assert.That(
                     Publish(w, operation, candidate, products, out LogicalFragmentId _, out LogicalFragmentId _, out LogicalCutResultOutcome again, float3.zero, 0f, cutFrom),
@@ -690,7 +737,8 @@ namespace Zantetsu.PhysicsCut.Tests
         /// Gives the source fragment a different owner, made of a different shape, the way something else in the world
         /// would. The old owner is retired; the meshes it had are the authored ones and stay.
         /// </summary>
-        private static PhysicsOwnerShape ReplaceOwner(World w, out GameObject root)
+        private static PhysicsOwnerShape ReplaceOwner(
+            World w, out GameObject root, Matrix4x4? geometryLocalToOwner = null)
         {
             w.registry.Retire(w.source);
             List<Mesh> meshes = CookedCubes(1);
@@ -707,7 +755,7 @@ namespace Zantetsu.PhysicsCut.Tests
             collider.cookingOptions = PhysicsCutCook.DefaultCooking;
             collider.convex = true;
             collider.sharedMesh = shape.MeshOf(0);
-            w.registry.RegisterAuthored(w.source, root, body, shape);
+            w.registry.RegisterAuthored(w.source, root, body, shape, false, geometryLocalToOwner);
             return shape;
         }
 
@@ -959,6 +1007,689 @@ namespace Zantetsu.PhysicsCut.Tests
                 }
 
                 Assert.That(w.ledger.Abort(second), Is.EqualTo(LogicalCutResultOutcome.Applied), "the second cut is not published here");
+            }
+        }
+
+        // ----- the display following the owners -----------------------------------------------------------------------
+
+        /// <summary>Where the display geometry of this lineage sits in its owner's coordinates: never the identity.</summary>
+        private static readonly Matrix4x4 k_geometryLocalToOwner = Matrix4x4.Translate(new Vector3(0f, 0.4f, 0f));
+
+        /// <summary>The other way round, for the registration: the plane the ledger holds is in the owner's frame.</summary>
+        private static readonly Matrix4x4 k_lineageToGeometryLocal = Matrix4x4.Translate(new Vector3(0f, -0.4f, 0f));
+
+        private static readonly Bounds k_box = new Bounds(Vector3.zero, Vector3.one * 2f);
+        private const float DisplaySeparation = 0.5f;
+
+        private static VpMultiCutSnapshot NewSnapshot()
+        {
+            return new VpMultiCutSnapshot(new VpMultiCutCapacities(64, 1024, 64, 512, 64));
+        }
+
+        /// <summary>
+        /// The placement a test works out for itself: the owner's transform as the test set it, with the
+        /// correspondence the test gave. Nothing of the lookup's answer is used to build it.
+        /// </summary>
+        private static Matrix4x4 Expected(Vector3 position, Quaternion rotation)
+        {
+            return Matrix4x4.TRS(position, rotation, Vector3.one) * k_geometryLocalToOwner;
+        }
+
+        private static void Same(Matrix4x4 expected, Matrix4x4 actual, string what)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                Assert.That(actual[i], Is.EqualTo(expected[i]).Within(2e-3f), what + " [" + i + "]");
+            }
+        }
+
+        private static void Same(Vector3 expected, Vector3 actual, string what)
+        {
+            Assert.That(actual.x, Is.EqualTo(expected.x).Within(2e-3f), what + ".x");
+            Assert.That(actual.y, Is.EqualTo(expected.y).Within(2e-3f), what + ".y");
+            Assert.That(actual.z, Is.EqualTo(expected.z).Within(2e-3f), what + ".z");
+        }
+
+        private static void Move(PhysicsFragmentOwner owner, Vector3 position, float degreesAboutZ)
+        {
+            owner.Root.transform.SetPositionAndRotation(position, Quaternion.AngleAxis(degreesAboutZ, Vector3.forward));
+        }
+
+        /// <summary>The registration this lineage is shown with: where its owner stood when it was registered.</summary>
+        private static VpMultiCutRegistration Registered(World w, Matrix4x4 geometryLocalToWorld)
+        {
+            return new VpMultiCutRegistration(
+                w.source, k_box, geometryLocalToWorld, k_lineageToGeometryLocal, Array.Empty<VpClipBoundary>(), 1e-4f);
+        }
+
+        private static VpMultiCutRenderFragment Of(VpMultiCutSnapshot snapshot, LogicalFragmentId fragment)
+        {
+            for (int r = 0; r < snapshot.RenderFragmentCount; r++)
+            {
+                Assert.That(snapshot.TryGetRenderFragment(r, out VpMultiCutRenderFragment found), Is.True);
+                if (found.root == fragment)
+                {
+                    return found;
+                }
+            }
+
+            Assert.Fail("nothing is drawn for that fragment");
+            return default;
+        }
+
+        private static bool Has(VpMultiCutSnapshot snapshot, LogicalFragmentId fragment)
+        {
+            for (int r = 0; r < snapshot.RenderFragmentCount; r++)
+            {
+                Assert.That(snapshot.TryGetRenderFragment(r, out VpMultiCutRenderFragment found), Is.True);
+                if (found.root == fragment)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static VpMultiCutBuildOutcome Build(
+            VpMultiCutSnapshot snapshot, World w, VpMultiCutRegistration registration, IVpFragmentPlacement lookup)
+        {
+            return snapshot.TryBuild(
+                w.ledger, new[] { registration }, DisplaySeparation, lookup);
+        }
+
+        /// <summary>A real display over the same ledger, with one cube in its storage to be cut and committed.</summary>
+        private sealed class DisplayScene : IDisposable
+        {
+            internal VpCpuGeometryStorage storage;
+            internal VpGeometryReferenceTable table;
+            internal VpLogicalCutDisplay display;
+            internal VpStoredGeometry geometry;
+            internal Material material;
+            internal int frame = 1;
+
+            public void Dispose()
+            {
+                display?.Dispose();
+                storage?.Dispose();
+                if (material != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(material);
+                }
+            }
+
+            internal void Collect()
+            {
+                frame++;
+                Assert.That(display.TryBeginFrame(), Is.True, "the display collects");
+            }
+
+            internal Vector3 Drawn(LogicalFragmentId fragment, Vector3 local)
+            {
+                for (int r = 0; r < display.RenderFragmentCount; r++)
+                {
+                    Assert.That(display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                    if (rf.root == fragment)
+                    {
+                        return rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset;
+                    }
+                }
+
+                Assert.Fail("nothing is drawn for that fragment");
+                return default;
+            }
+        }
+
+        private static DisplayScene NewDisplayScene(World w)
+        {
+            var scene = new DisplayScene
+            {
+                storage = new VpCpuGeometryStorage(8192, 32768, 64, 256, 256, Allocator.Persistent),
+            };
+            scene.table = new VpGeometryReferenceTable(scene.storage, 16, 32);
+            Shader shader = Shader.Find("Zantetsu/VP Indexed Indirect Unlit");
+            Assert.That(shader, Is.Not.Null, "the VP unlit shader");
+            scene.material = new Material(shader) { name = "body" };
+            var materials = new Dictionary<int, Material> { { 0, scene.material } };
+            Assert.That(
+                VpLogicalCutDisplay.TryCreate(
+                    scene.storage, scene.table, w.ledger, materials, null, null, 16, 16,
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates,
+                    VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(4), () => scene.frame,
+                    out scene.display),
+                Is.True,
+                "create the display");
+            scene.display.Separation = DisplaySeparation;
+            scene.geometry = AppendCube(scene.storage);
+            return scene;
+        }
+
+        private static readonly float3[] k_cubeCorners =
+        {
+            new float3(-1f, -1f, -1f), new float3(1f, -1f, -1f), new float3(1f, 1f, -1f), new float3(-1f, 1f, -1f),
+            new float3(-1f, -1f, 1f), new float3(1f, -1f, 1f), new float3(1f, 1f, 1f), new float3(-1f, 1f, 1f),
+        };
+
+        private static readonly int[][] k_cubeFaces =
+        {
+            new[] { 0, 3, 2, 1 }, new[] { 4, 5, 6, 7 }, new[] { 0, 1, 5, 4 },
+            new[] { 2, 3, 7, 6 }, new[] { 1, 2, 6, 5 }, new[] { 0, 4, 7, 3 },
+        };
+
+        private static VpStoredGeometry AppendCube(VpCpuGeometryStorage storage)
+        {
+            var vertices = new List<VpRenderVertex>();
+            var topology = new List<int>();
+            var indices = new List<uint>();
+            foreach (int[] c in k_cubeFaces)
+            {
+                float3 n = math.normalize(math.cross(
+                    k_cubeCorners[c[1]] - k_cubeCorners[c[0]], k_cubeCorners[c[2]] - k_cubeCorners[c[0]]));
+                uint b = (uint)vertices.Count;
+                for (int k = 0; k < 4; k++)
+                {
+                    vertices.Add(new VpRenderVertex
+                    {
+                        position = k_cubeCorners[c[k]], normal = n, uv0 = new float2(0.5f, 0.5f),
+                    });
+                    topology.Add(c[k]);
+                }
+
+                indices.AddRange(new[] { b, b + 1, b + 2, b, b + 2, b + 3 });
+            }
+
+            Assert.That(
+                storage.TryAppendCuttable(
+                    vertices.ToArray(), indices.ToArray(), topology.ToArray(), k_cubeCorners.Length,
+                    new[] { new VpGeometrySubmesh(0, indices.Count, 0) }, out VpStoredGeometry geometry, out _),
+                Is.True,
+                "append the cube as something that may be cut");
+            return geometry;
+        }
+
+        /// <summary>
+        /// A real geometry commit of one operation through the product's own entry: the shown geometry is cut at the
+        /// adopted plane carried into its own coordinates, and both sides are handed to the display.
+        /// </summary>
+        private static bool CommitGeometry(
+            DisplayScene scene, LogicalFragmentId source, CutOperationId cut, float4 plane,
+            LogicalFragmentId positive, LogicalFragmentId negative)
+        {
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(plane, k_lineageToGeometryLocal, out float4 geometryLocalPlane),
+                Is.True,
+                "the adopted plane, in the geometry's own coordinates");
+            Assert.That(
+                VpStorageCutInput.TryAcquire(scene.storage, scene.geometry, out VpStorageCutInput input), Is.True,
+                "read the geometry");
+            using (input)
+            {
+                Assert.That(
+                    VpStorageCut.TryExecute(scene.storage, input, geometryLocalPlane, out VpStorageCutResult result),
+                    Is.True,
+                    "cut it");
+                Assert.That(result.positive.IsProduced && result.negative.IsProduced, Is.True, "both sides produced");
+                return scene.display.TryCommitCut(
+                    source, cut, new Vector4(plane.x, plane.y, plane.z, plane.w), positive, in result.positive,
+                    negative, in result.negative, result.kernel.capTriangles);
+            }
+        }
+
+        /// <summary>
+        /// The cut is admitted and its owners are built, and only then does the source move and turn. While it is
+        /// pending it is drawn where it stands; once it is published both children are drawn there too, because the
+        /// publication puts them at the placement the source has by then rather than at the one the build read.
+        /// The drawn position — the placement with the separation on it — never goes back to the registration.
+        /// </summary>
+        [Test]
+        public void ASourceThatMovedAfterTheBuild_IsNeverDrawnWhereItWasRegistered()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
+                Vector3 registeredOrigin = registration.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero);
+
+                // Admitted, and the two owners built from where it was then.
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+
+                // It moves and turns after that, and before anything is published.
+                var moved = new Vector3(2.5f, -1.25f, 0.75f);
+                Quaternion turned = Quaternion.AngleAxis(35f, Vector3.forward);
+                Move(w.SourceOwner, moved, 35f);
+                Matrix4x4 movedPlacement = Expected(moved, turned);
+                Vector3 movedOrigin = movedPlacement.MultiplyPoint3x4(Vector3.zero);
+                Assert.That(
+                    (movedOrigin - registeredOrigin).magnitude, Is.GreaterThan(4f * DisplaySeparation),
+                    "the move is far enough that a drawn position could not be mistaken for the registration's");
+
+                VpMultiCutSnapshot before = NewSnapshot();
+                Assert.That(Build(before, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                VpMultiCutRenderFragment pending = Of(before, w.source);
+                Same(movedPlacement, pending.geometryLocalToWorld, "the pending source follows its owner");
+                Vector3 pendingDrawn = pending.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero) + pending.offset;
+                Assert.That(
+                    (pendingDrawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(DisplaySeparation + 2e-3f),
+                    "and is drawn there, separation included");
+                Assert.That(
+                    (pendingDrawn - registeredOrigin).magnitude, Is.GreaterThan(2f * DisplaySeparation),
+                    "not back where it was registered");
+
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId negative, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                VpMultiCutSnapshot after = NewSnapshot();
+                Assert.That(Build(after, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                foreach (LogicalFragmentId child in new[] { positive, negative })
+                {
+                    VpMultiCutRenderFragment rf = Of(after, child);
+                    Same(movedPlacement, rf.geometryLocalToWorld, "the child stands where the source did");
+                    Vector3 drawn = rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero) + rf.offset;
+                    Assert.That(
+                        (drawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(DisplaySeparation + 2e-3f),
+                        "and is drawn there, separation included");
+                    Assert.That(
+                        (drawn - registeredOrigin).magnitude, Is.GreaterThan(2f * DisplaySeparation),
+                        "not back where it was registered");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The two children move and turn independently afterwards. Each one's body, its clip half-space, its cap
+        /// plane, its cap's outward normal and every vertex of its cap polygon come from its own owner, and the
+        /// separation each takes runs along its own current normal.
+        /// </summary>
+        [Test]
+        public void TheTwoChildren_FollowTheirOwnOwners_InBodyClipAndCap()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
+
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId negative, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                // A quarter turn for one, a plain move for the other.
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner positiveOwner), Is.True);
+                Assert.That(w.registry.TryGet(negative, out PhysicsFragmentOwner negativeOwner), Is.True);
+                Move(positiveOwner, new Vector3(3f, 0f, 0f), 90f);
+                Move(negativeOwner, new Vector3(-2f, 1f, 0f), 0f);
+                Matrix4x4 expectedPositive = Expected(new Vector3(3f, 0f, 0f), Quaternion.AngleAxis(90f, Vector3.forward));
+                Matrix4x4 expectedNegative = Expected(new Vector3(-2f, 1f, 0f), Quaternion.identity);
+
+                VpMultiCutSnapshot snapshot = NewSnapshot();
+                Assert.That(Build(snapshot, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                VpMultiCutRenderFragment rfPositive = Of(snapshot, positive);
+                VpMultiCutRenderFragment rfNegative = Of(snapshot, negative);
+
+                Same(expectedPositive, rfPositive.geometryLocalToWorld, "the positive body");
+                Same(expectedNegative, rfNegative.geometryLocalToWorld, "the negative body");
+
+                // The adopted plane is y = 0 of the owner's frame. Turned a quarter about z it points along -x; the
+                // side that did not turn keeps +y. Worked out here, not read back from the lookup.
+                Same(new Vector3(-1f, 0f, 0f), rfPositive.offset.normalized, "the positive separation direction");
+                Same(new Vector3(0f, -1f, 0f), rfNegative.offset.normalized, "the negative separation direction");
+
+                Assert.That(rfPositive.clip.PlaneCount, Is.EqualTo(1), "the positive side is clipped by its one boundary");
+                Vector4 positiveClip = rfPositive.clip.SignedPlane(0);
+                Same(new Vector3(-1f, 0f, 0f), new Vector3(positiveClip.x, positiveClip.y, positiveClip.z), "the positive clip normal");
+                Assert.That(positiveClip.w, Is.EqualTo(3f).Within(2e-3f), "the positive clip is at its own owner");
+                Vector4 negativeClip = rfNegative.clip.SignedPlane(0);
+                Same(new Vector3(0f, -1f, 0f), new Vector3(negativeClip.x, negativeClip.y, negativeClip.z), "the negative clip normal");
+                Assert.That(negativeClip.w, Is.EqualTo(1f).Within(2e-3f), "the negative clip is at its own owner");
+
+                Assert.That(rfPositive.capCount, Is.GreaterThan(0), "the positive side has a cap");
+                Assert.That(snapshot.TryGetCap(rfPositive.capStart, out VpMultiCutCap capPositive), Is.True);
+                Same(new Vector3(1f, 0f, 0f), capPositive.outwardNormal, "the positive cap points out of the side that is kept");
+                Assert.That(capPositive.worldPlane.w, Is.EqualTo(3f).Within(2e-3f), "the positive cap plane stands at its owner");
+                for (int v = 0; v < capPositive.vertexCount; v++)
+                {
+                    Assert.That(snapshot.TryGetCapVertex(rfPositive.capStart, v, out Vector3 world), Is.True);
+                    Assert.That(world.x, Is.EqualTo(3f - DisplaySeparation).Within(2e-3f), "positive cap vertex " + v);
+                }
+
+                Assert.That(snapshot.TryGetCap(rfNegative.capStart, out VpMultiCutCap capNegative), Is.True);
+                Same(new Vector3(0f, 1f, 0f), capNegative.outwardNormal, "the negative cap outward normal");
+                for (int v = 0; v < capNegative.vertexCount; v++)
+                {
+                    Assert.That(snapshot.TryGetCapVertex(rfNegative.capStart, v, out Vector3 world), Is.True);
+                    Assert.That(world.y, Is.EqualTo(1f - DisplaySeparation).Within(2e-3f), "negative cap vertex " + v);
+                }
+            }
+        }
+
+        /// <summary>
+        /// An anchor fixes one side: it takes no separation at all, and it still follows its own owner. The free side
+        /// takes the separation once, along its own normal.
+        /// </summary>
+        [Test]
+        public void TheAnchoredSide_TakesNoSeparationAndStillFollowsItsOwner()
+        {
+            using (World w = NewWorld(new[] { new float3(0f, 0.5f, 0f) }, PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
+
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId negative, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner anchored), Is.True);
+                Assert.That(anchored.FixedByAnchors, Is.True, "the anchor is on the positive side");
+                Move(anchored, new Vector3(1.5f, 2f, 0f), 45f);
+                Matrix4x4 expected = Expected(new Vector3(1.5f, 2f, 0f), Quaternion.AngleAxis(45f, Vector3.forward));
+
+                VpMultiCutSnapshot snapshot = NewSnapshot();
+                Assert.That(Build(snapshot, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                VpMultiCutRenderFragment rf = Of(snapshot, positive);
+                Same(expected, rf.geometryLocalToWorld, "the anchored side follows its owner all the same");
+                Same(Vector3.zero, rf.offset, "and takes no separation");
+                Assert.That(
+                    Of(snapshot, negative).offset.magnitude, Is.EqualTo(DisplaySeparation).Within(2e-3f),
+                    "while the free side takes it once");
+            }
+        }
+
+        /// <summary>
+        /// The display frame is not the owner's frame. A point of the geometry is drawn at the owner's transform, with
+        /// that correspondence, plus the separation exactly once: the correspondence is not lost, and the separation
+        /// is neither dropped nor applied twice.
+        /// </summary>
+        [Test]
+        public void ADisplayFrameOffsetFromTheOwner_KeepsTheSeparationExactlyOnce()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
+
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId _, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner owner), Is.True);
+                var at = new Vector3(4f, -1f, 2f);
+                Move(owner, at, 0f);
+
+                VpMultiCutSnapshot snapshot = NewSnapshot();
+                Assert.That(Build(snapshot, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                VpMultiCutRenderFragment rf = Of(snapshot, positive);
+
+                // Worked out here: the owner is at `at`, the geometry sits 0.4 above it in its coordinates, and the
+                // positive side of y = 0 separates along +y by the display's separation, once.
+                foreach (Vector3 local in new[] { Vector3.zero, new Vector3(1f, 1f, 1f), new Vector3(-1f, 0.5f, -1f) })
+                {
+                    Vector3 expected = at + new Vector3(0f, 0.4f, 0f) + local + new Vector3(0f, DisplaySeparation, 0f);
+                    Same(expected, rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset, "a drawn point");
+                }
+
+                Assert.That(
+                    rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero).y, Is.EqualTo(at.y + 0.4f).Within(2e-3f),
+                    "the base placement carries the correspondence and not the separation");
+            }
+        }
+
+        /// <summary>
+        /// A second cut of one child, published the same way, and then the ancestor's geometry committed through the
+        /// display's own commit. The fragment between them is replaced and its owner is gone — nothing keeps it alive
+        /// to be drawn from — and the two living descendants each follow an owner of their own: their drawn positions
+        /// do not move across the real commit, and they still follow a turn made afterwards.
+        /// </summary>
+        [Test]
+        public void AfterASecondCutAndARealCommit_TheLivingDescendantsFollowWithoutTheReplacedOwner()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            using (DisplayScene scene = NewDisplayScene(w))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                scene.display.Placement = lookup;
+                Assert.That(
+                    scene.display.TryShow(
+                        w.source, scene.geometry, Expected(Vector3.zero, Quaternion.identity),
+                        k_lineageToGeometryLocal, Array.Empty<VpClipBoundary>()),
+                    Is.True,
+                    "the source is shown");
+
+                var adopted = new float4(w.harness.planeN, w.harness.planeW);
+                CutOperationId first = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, first, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, first, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId negative, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner middle), Is.True);
+                Move(middle, new Vector3(1f, 1f, 0f), 30f);
+
+                // B, on the positive child, from its own physics.
+                var plane = new float4(1f, 0f, 0f, 0f);
+                Assert.That(
+                    w.ledger.Admit(positive, plane, true, out CutOperationId second), Is.EqualTo(LogicalCutAdmission.Admitted));
+                Assert.That(
+                    w.ledger.PrepareAnchorDistribution(second, w.harness.eps, out AnchorDistributionResult distribution),
+                    Is.EqualTo(AnchorPreparationOutcome.Prepared));
+
+                LogicalFragmentId grandPositive;
+                LogicalFragmentId grandNegative;
+                using (var next = new SecondCutInput(middle, plane.xyz, plane.w, w.harness.eps))
+                {
+                    PhysicsOwnerShape cutFrom = middle.Shape;
+                    PhysicsCutRequest request = w.cook.Submit(in next.input, float4x4.identity);
+                    w.RunUntil(() => request.IsOver, "the second cut and cook end");
+                    Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the second cut produced something");
+
+                    var buildInput = new PhysicsOwnerBuildInput
+                    {
+                        products = request.Products,
+                        placement = middle.ReadPlacement(),
+                        sourceMotion = middle.ReadMotion(float3.zero),
+                        anchors = distribution,
+                        parentMass = middle.Mass,
+                        inheritedMeshes = middle.Shape.Meshes,
+                        name = "Grandchild",
+                    };
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryBuild(in buildInput, out PhysicsOwnerCandidate grandCandidate, out PhysicsOwnerBuildOutcome outcome),
+                        Is.True,
+                        "the two owners of the second cut were built: " + outcome);
+                    Assert.That(
+                        Publish(w, second, grandCandidate, request.Products, out grandPositive, out grandNegative, out LogicalCutResultOutcome _, float3.zero, 0f, cutFrom, positive),
+                        Is.EqualTo(PhysicsPublicationOutcome.Published),
+                        "the second publication went through");
+                }
+
+                Assert.That(
+                    w.registry.TryGet(positive, out PhysicsFragmentOwner _), Is.False,
+                    "the replaced fragment has no owner kept for the display");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(positive, out Matrix4x4 _),
+                    Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "and asking about it is refused rather than answered with where it was");
+
+                // The two descendants, each somewhere of its own.
+                Assert.That(w.registry.TryGet(grandPositive, out PhysicsFragmentOwner gp), Is.True);
+                Assert.That(w.registry.TryGet(grandNegative, out PhysicsFragmentOwner gn), Is.True);
+                Move(gp, new Vector3(4f, 0f, 0f), 0f);
+                Move(gn, new Vector3(-4f, 0f, 0f), 90f);
+
+                scene.Collect();
+                var beforePositive = new Vector3[k_points.Length];
+                var beforeNegative = new Vector3[k_points.Length];
+                for (int i = 0; i < k_points.Length; i++)
+                {
+                    beforePositive[i] = scene.Drawn(grandPositive, k_points[i]);
+                    beforeNegative[i] = scene.Drawn(grandNegative, k_points[i]);
+                }
+
+                // The ancestor's geometry, committed through the display's own entry with no intermediate owner
+                // anywhere: the first boundary stops being temporary and its share goes into each side's geometry.
+                Assert.That(
+                    CommitGeometry(scene, w.source, first, adopted, positive, negative), Is.True,
+                    "the geometry commit is established");
+                scene.Collect();
+                for (int i = 0; i < k_points.Length; i++)
+                {
+                    Same(beforePositive[i], scene.Drawn(grandPositive, k_points[i]), "the positive descendant's point " + i + " does not move");
+                    Same(beforeNegative[i], scene.Drawn(grandNegative, k_points[i]), "the negative descendant's point " + i + " does not move");
+                }
+
+                // And it still follows: a turn of that owner moves everything drawn from it by exactly that turn.
+                Matrix4x4 was = Matrix4x4.TRS(new Vector3(4f, 0f, 0f), Quaternion.identity, Vector3.one);
+                Move(gp, new Vector3(4f, 0.5f, 0f), 55f);
+                Matrix4x4 now = Matrix4x4.TRS(new Vector3(4f, 0.5f, 0f), Quaternion.AngleAxis(55f, Vector3.forward), Vector3.one);
+                Matrix4x4 moved = now * was.inverse;
+                scene.Collect();
+                for (int i = 0; i < k_points.Length; i++)
+                {
+                    Same(
+                        moved.MultiplyPoint3x4(beforePositive[i]), scene.Drawn(grandPositive, k_points[i]),
+                        "the committed descendant's point " + i + " turns with its owner");
+                    Same(
+                        beforeNegative[i], scene.Drawn(grandNegative, k_points[i]),
+                        "while the other descendant does not move with it");
+                }
+            }
+        }
+
+        private static readonly Vector3[] k_points =
+        {
+            Vector3.zero, new Vector3(1f, 1f, 1f), new Vector3(-1f, 0.5f, -0.25f), new Vector3(0.75f, -1f, 1f),
+        };
+
+        /// <summary>
+        /// A publication the ledger refuses changes no correspondence at all, and retiring one published side leaves
+        /// the other exactly as it is. The stale ending and the abort after a physics failure are covered where those
+        /// paths are tested, not here.
+        /// </summary>
+        [Test]
+        public void ALedgerRefusalAndAOneSidedRetirement_LeaveTheOtherCorrespondenceAlone()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+
+                // A cut the ledger refuses: nothing of the correspondence moves and the source keeps following.
+                CutOperationId unprepared = Admit(w, prepareAnchors: false);
+                FixedSupportAnchors.TryDistribute(
+                    Array.Empty<float3>(), new float4(w.harness.planeN, w.harness.planeW), w.harness.eps,
+                    new List<float3>(), new List<float3>(), out AnchorDistributionResult direct);
+                PhysicsOwnerCandidate refusedCandidate = Build(
+                    w, unprepared, out PhysicsCutProducts refusedProducts, in w.harness.input, direct);
+                int owners = w.registry.Count;
+                Assert.That(
+                    Publish(w, unprepared, refusedCandidate, refusedProducts, out LogicalFragmentId _, out LogicalFragmentId _, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.LedgerRefused));
+                Assert.That(w.registry.Count, Is.EqualTo(owners), "no correspondence was added or taken away");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
+                    "and the source still follows its own owner");
+                refusedCandidate.Dispose();
+                refusedProducts.Dispose();
+                Assert.That(w.ledger.Abort(unprepared), Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+                Assert.That(w.registry.TryGet(w.source, out PhysicsFragmentOwner _), Is.True, "the source was not retired for it");
+            }
+
+            // A published cut, then one side retired: the other is untouched.
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId negative, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                Assert.That(w.registry.Retire(negative), Is.True, "one side is retired");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(negative, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "the retired side is refused, not drawn where it was");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(positive, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
+                    "the living side is not ended with it");
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner living), Is.True);
+                Assert.That(living.Root != null && living.Root.activeInHierarchy, Is.True, "and its body is still in the scene");
+            }
+        }
+
+        /// <summary>
+        /// An owner **in the scene** whose display is arranged some other way says so. A fragment with no physics at
+        /// all, and one whose owner has left the scene, are both refused — with or without a correspondence — so that
+        /// a gap is never answered with the registration's placement.
+        /// </summary>
+        [Test]
+        public void AnArrangementIsAnAnswerAndAGapIsNot()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Static),
+                    "an owner that says nothing about its display is an arrangement");
+
+                LogicalFragmentId stranger = w.ledger.AddFragment();
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(stranger, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "a fragment with no owner is refused");
+
+                Assert.That(w.registry.Withdraw(w.source), Is.True);
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "an owner that has left the scene is a gap, whether or not it ever said anything");
+            }
+
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                Assert.That(w.registry.Withdraw(w.source), Is.True, "its owner leaves the scene");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "a following fragment whose owner has left is refused, not drawn where it was");
+            }
+        }
+
+        /// <summary>
+        /// A snapshot is settled once: an owner that moves afterwards does not move what has already been built, and
+        /// the next collection is where the move appears.
+        /// </summary>
+        [Test]
+        public void AnOwnerThatMovesAfterTheCollection_ChangesNothingUntilTheNextOne()
+        {
+            using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                VpMultiCutRegistration registration = Registered(w, Expected(Vector3.zero, Quaternion.identity));
+
+                CutOperationId operation = Admit(w);
+                PhysicsOwnerCandidate candidate = Build(w, operation, out PhysicsCutProducts products, in w.harness.input);
+                Assert.That(
+                    Publish(w, operation, candidate, products, out LogicalFragmentId positive, out LogicalFragmentId _, out LogicalCutResultOutcome _),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+                VpMultiCutSnapshot settled = NewSnapshot();
+                Assert.That(Build(settled, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                Matrix4x4 asSettled = Of(settled, positive).geometryLocalToWorld;
+
+                Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner owner), Is.True);
+                Move(owner, new Vector3(9f, -9f, 3f), 120f);
+                Same(asSettled, Of(settled, positive).geometryLocalToWorld, "what was settled did not move with the owner");
+
+                VpMultiCutSnapshot next = NewSnapshot();
+                Assert.That(Build(next, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                Same(
+                    Expected(new Vector3(9f, -9f, 3f), Quaternion.AngleAxis(120f, Vector3.forward)),
+                    Of(next, positive).geometryLocalToWorld,
+                    "and the next collection is where it appears");
             }
         }
 

@@ -111,8 +111,17 @@ namespace Zantetsu.PhysicsCut
     /// </para>
     /// <para>
     /// Geometry takes no part in this. The children are published without any, they can be cut again at once, and the
-    /// geometry responsibility stays with the cut DAG. The display is not switched here either: until a geometry
-    /// commit, what is drawn is still the source's registration, so this is not the whole of DESIGN 7.1.2.
+    /// geometry responsibility stays with the cut DAG: until a geometry commit, what is drawn is still the source's
+    /// registration, so this is not the whole of DESIGN 7.1.2.
+    /// </para>
+    /// <para>
+    /// **What the display follows switches with the correspondence, and at the same moment.** A lineage whose display
+    /// follows its owner says, on its first owner, where its display geometry sits in that owner's coordinates; both
+    /// children are given that same correspondence, because a publication puts them at the very placement the source
+    /// had rather than rebuilding a frame for each. The two child records carry it and are made before anything is
+    /// published, so the switch itself stays what it was — the children's records go in, the source's goes out — with
+    /// no second step and nothing to prepare in between. A lineage that says nothing about its display is unaffected
+    /// and its children say nothing either.
     /// </para>
     /// </summary>
     public static class FinalPhysicsPublication
@@ -217,12 +226,17 @@ namespace Zantetsu.PhysicsCut
 
                     // The records the correspondence will hold, and the room for them, made before the publication
                     // rather than after it, so that what is left afterwards is the switch itself and nothing more.
+                    // Each child is given the source's own display correspondence: it is a mapping into the owner's
+                    // coordinates, and both children begin at the placement the source has, so it carries as it is.
+                    // Nothing is taken from where the lineage was registered, and nothing of the display's
+                    // separation is added to it here.
+                    Matrix4x4? displayFrame = sourceOwner.GeometryLocalToOwner;
                     positiveOwner = new PhysicsFragmentOwner(
                         input.candidate.Positive.Root, input.candidate.Positive.Body, positiveShape,
-                        input.candidate.Positive.FixedByAnchors);
+                        input.candidate.Positive.FixedByAnchors, displayFrame);
                     negativeOwner = new PhysicsFragmentOwner(
                         input.candidate.Negative.Root, input.candidate.Negative.Body, negativeShape,
-                        input.candidate.Negative.FixedByAnchors);
+                        input.candidate.Negative.FixedByAnchors, displayFrame);
                     input.registry.Reserve(2);
                 }
                 catch (Exception)
@@ -280,7 +294,9 @@ namespace Zantetsu.PhysicsCut
 
                 // The correspondence first, so that both children have their owner before the old one goes. The
                 // children hold the inherited shapes already, so ending the source gives back only what nothing else
-                // is using, and it leaves the physics scene before it is destroyed.
+                // is using, and it leaves the physics scene before it is destroyed. What a display following this
+                // lineage sees switches here too and nowhere else: from this point each child stands where its own
+                // owner does, and the replaced source is not kept alive for anything to be drawn from.
                 input.registry.Add(positive, positiveOwner);
                 input.registry.Add(negative, negativeOwner);
                 input.candidate.Detach();

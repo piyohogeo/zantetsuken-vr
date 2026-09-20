@@ -16,12 +16,18 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class PhysicsFragmentOwner
     {
-        internal PhysicsFragmentOwner(GameObject root, Rigidbody body, PhysicsOwnerShape shape, bool fixedByAnchors)
+        internal PhysicsFragmentOwner(
+            GameObject root,
+            Rigidbody body,
+            PhysicsOwnerShape shape,
+            bool fixedByAnchors,
+            Matrix4x4? geometryLocalToOwner = null)
         {
             Root = root != null ? root : throw new ArgumentNullException(nameof(root));
             Body = body != null ? body : throw new ArgumentNullException(nameof(body));
             Shape = shape ?? throw new ArgumentNullException(nameof(shape));
             FixedByAnchors = fixedByAnchors;
+            GeometryLocalToOwner = geometryLocalToOwner;
         }
 
         public GameObject Root { get; private set; }
@@ -33,6 +39,37 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>This owner holds an anchor, so it is fixed (DESIGN 7.1).</summary>
         public bool FixedByAnchors { get; }
+
+        /// <summary>
+        /// How the display geometry of this fragment sits in this owner's own coordinates, for an owner whose display
+        /// follows it; none for one whose display is arranged some other way, which is a statement and not a gap
+        /// (DESIGN 5.6, 7.1.2). It is the caller's to give when the first owner of a lineage is registered, and the
+        /// children of a cut inherit it, because a publication does not rebuild a child's owner frame: both sides
+        /// start at the very placement the source had. It is **not** the cut DAG's lineage-to-geometry mapping, which
+        /// is about the plane a kernel cuts at and has nothing to do with where anything stands.
+        /// <para>
+        /// The separation the display draws with is no part of this: what a snapshot sums and what a geometry commit
+        /// folds in are the display's own, and a physical position or a separation impulse is never one of them.
+        /// </para>
+        /// </summary>
+        public Matrix4x4? GeometryLocalToOwner { get; }
+
+        /// <summary>
+        /// Where this owner's display geometry stands now: this owner's world transform, read at the moment it is
+        /// needed, with the correspondence above. False for an owner that has none, or one that has left the scene —
+        /// nothing of where it used to be is handed back.
+        /// </summary>
+        public bool TryReadGeometryLocalToWorld(out Matrix4x4 geometryLocalToWorld)
+        {
+            if (IsWithdrawn || Root == null || GeometryLocalToOwner == null)
+            {
+                geometryLocalToWorld = default;
+                return false;
+            }
+
+            geometryLocalToWorld = Root.transform.localToWorldMatrix * GeometryLocalToOwner.Value;
+            return true;
+        }
 
         /// <summary>Whether it has left the physics scene.</summary>
         public bool IsWithdrawn { get; private set; }
@@ -143,10 +180,20 @@ namespace Zantetsu.PhysicsCut
         /// Gives a fragment the owner it already has in the scene — an authored compound, before anything has been
         /// cut. A fragment that already has one is refused rather than replaced.
         /// </summary>
+        /// <param name="geometryLocalToOwner">
+        /// Where this lineage's display geometry sits in this owner's coordinates, for a display that follows it
+        /// (<see cref="PhysicsFragmentOwner.GeometryLocalToOwner"/>). Left out for a lineage whose display is
+        /// arranged some other way; every cut of this one inherits what is given here.
+        /// </param>
         public PhysicsFragmentOwner RegisterAuthored(
-            LogicalFragmentId fragment, GameObject root, Rigidbody body, PhysicsOwnerShape shape, bool fixedByAnchors = false)
+            LogicalFragmentId fragment,
+            GameObject root,
+            Rigidbody body,
+            PhysicsOwnerShape shape,
+            bool fixedByAnchors = false,
+            Matrix4x4? geometryLocalToOwner = null)
         {
-            var owner = new PhysicsFragmentOwner(root, body, shape, fixedByAnchors);
+            var owner = new PhysicsFragmentOwner(root, body, shape, fixedByAnchors, geometryLocalToOwner);
             Add(fragment, owner);
             return owner;
         }
