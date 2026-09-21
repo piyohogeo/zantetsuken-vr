@@ -187,7 +187,7 @@ namespace Zantetsu.MeshCut
     /// waiting for its basis, running, or holding its result — rather than being carried on for the record.
     /// </para>
     /// </summary>
-    public sealed class CutDag : IDisposable
+    public sealed class CutDag : IDisposable, IMainThreadPump
     {
         private readonly LogicalCutLedger _ledger;
         private readonly ICutGeometryCommit _commit;
@@ -349,14 +349,23 @@ namespace Zantetsu.MeshCut
         /// be committed, and offers what has become ready — including, in this same call, the cuts that were waiting
         /// for a commit that has just happened. Nothing here waits for anything.
         /// <para>
+        /// The cuts' own runner is pumped **again** whenever a node moved, because a commit here makes a child's cut
+        /// and that child has to be given its reservation and offered to be of any use this frame. Pumped only once at
+        /// the top, a child made below it would need a **further call** to this before it was reserved and offered --
+        /// which a caller may well make in the same frame, and which it then has to make. Doing it here is what makes
+        /// one call enough.
+        /// </para>
+        /// <para>
+        /// Returns whether anything really moved, so that a caller driving a frame knows whether to collect again.
+        /// </para>
+        /// <para>
         /// After <see cref="Dispose"/> this still works and must still be called: nothing is offered or committed any
         /// more, and what a worker still holds is taken back and given up as it arrives, until <see cref="IsDrained"/>.
         /// </para>
         /// </summary>
-        public void Pump()
+        public bool Pump()
         {
-            _cuts.Pump();
-
+            bool any = false;
             try
             {
                 // Ancestors first, and again while anything moved: a commit here can make the cuts of its children
@@ -364,11 +373,15 @@ namespace Zantetsu.MeshCut
                 bool moved = true;
                 while (moved)
                 {
-                    moved = false;
+                    // The runner first and again each time round: a child's cut made below is reserved and offered
+                    // here, in this call, rather than at the next one.
+                    moved = _cuts.Pump();
                     for (int i = 0; i < _nodes.Count; i++)
                     {
                         moved |= Advance(_nodes[i]);
                     }
+
+                    any |= moved;
                 }
             }
             finally
@@ -380,9 +393,12 @@ namespace Zantetsu.MeshCut
                     if (_nodes[i].over)
                     {
                         _nodes.RemoveAt(i);
+                        any = true;
                     }
                 }
             }
+
+            return any;
         }
 
         /// <summary>

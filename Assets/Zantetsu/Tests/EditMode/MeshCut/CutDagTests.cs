@@ -39,6 +39,7 @@ namespace Zantetsu.MeshCut.Tests
             public FakeCommit commit;
             public RecordingFault fault;
             public CutDag dag;
+            public SharedWorkFrame frame;
             private int _frame;
 
             public void Frame()
@@ -230,6 +231,8 @@ namespace Zantetsu.MeshCut.Tests
             fixture.dispatcher = new SharedWorkDispatcher(
                 waitingCapacity, reservedForUrgent, frameBudget, fixture.job, geometry, fixture.background);
             fixture.dag = new CutDag(fixture.storage, fixture.ledger, fixture.dispatcher, fixture.commit, fixture.fault);
+            fixture.frame = new SharedWorkFrame(fixture.dispatcher);
+            fixture.frame.Add(fixture.dag);
             return fixture;
         }
 
@@ -504,6 +507,69 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(f.commit.committed, Is.EqualTo(new[] { a, b }), "B commits after A, in that order");
                 Assert.That(f.ledger.Budget.IncompleteCutOperationCount, Is.Zero, "both budget units came back");
+            }
+        }
+
+        /// <summary>
+        /// A child's cut is **accepted by the destination** in the same frame its parent's commit happened in. One
+        /// update of the product's own frame entry does it: the parent's result is collected, the commit settles, the
+        /// child's cut is made and given its reservation, and the destination takes it.
+        /// <para>
+        /// **What this shows, exactly.** The cut is a real one and the geometry is really committed, but the commit is
+        /// this file's <c>FakeCommit</c> -- a caller standing in for the display's own -- not a display commit. The
+        /// destination is this file's gate, whose <c>BeginAccepted</c> does nothing and which runs work only when the
+        /// test tells it to, so what is seen is **acceptance**, not a <c>Begin</c> at acceptance. Reaching
+        /// <see cref="CutGeometryStage.Running"/> is not enough on its own -- that says the cut was made, not that
+        /// anything took it -- so the gate's own count of what it has taken is what settles it.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TheChildsCutIsSubmittedInTheFrameTheParentCommittedIn()
+        {
+            using (Fixture f = NewFixture(gated: true))
+            {
+                LogicalFragmentId body = NewBranch(f, float3.zero);
+                CutOperationId a = Admit(f, body, Tilted(float3.zero));
+                PublishPhysics(f, a, out LogicalFragmentId aPositive, out _);
+                CutOperationId b = Admit(f, aPositive, Tilted(new float3(0.2f, 0f, 0f)));
+                PublishPhysics(f, b, out _, out _);
+
+                // Frame 1, all of it: the parent's work is run and collected, and the commit is allowed, so the child
+                // becomes possible inside this one update.
+                f.commit.Allow(a);
+                var clock = Stopwatch.StartNew();
+                int acceptedBeforeTheCommit = 0;
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && f.commit.committed.Count == 0)
+                {
+                    acceptedBeforeTheCommit = f.gate.TotalAccepted;
+                    f.gate.RunEverythingWaiting();
+                    f.frame.Update(1);
+                }
+
+                Assert.That(f.commit.committed, Is.EqualTo(new[] { a }), "the parent committed");
+                Assert.That(
+                    f.dag.TryGetGeometry(aPositive, out VpStoredGeometry positiveGeometry), Is.True,
+                    "and its positive child has geometry");
+
+                // The child's work is with the destination, in this same frame.
+                Assert.That(f.dag.StageOf(b), Is.EqualTo(CutGeometryStage.Running), "the child's cut was made");
+                Assert.That(
+                    f.gate.TotalAccepted, Is.GreaterThan(acceptedBeforeTheCommit),
+                    "and something was taken by the destination after the commit, in the same frame: "
+                    + acceptedBeforeTheCommit + " -> " + f.gate.TotalAccepted);
+                Assert.That(
+                    f.dag.BasisOf(b), Is.EqualTo(positiveGeometry),
+                    "and it reads exactly what the parent's commit gave that child");
+
+                f.commit.Allow(b);
+                clock.Restart();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && f.commit.committed.Count < 2)
+                {
+                    f.gate.RunEverythingWaiting();
+                    f.frame.Update(1);
+                }
+
+                Assert.That(f.commit.committed, Is.EqualTo(new[] { a, b }), "both committed, in that order, in one frame");
             }
         }
 
@@ -1283,6 +1349,12 @@ namespace Zantetsu.MeshCut.Tests
             /// <summary>How many pieces of work are held and not begun.</summary>
             public int Accepted => _accepted.Count;
 
+            /// <summary>
+            /// How many pieces of work this has taken since it was made. Unlike <see cref="Accepted"/> this does not
+            /// go down again when one is run, so a case can say that something was taken **after** a given moment.
+            /// </summary>
+            public int TotalAccepted { get; private set; }
+
             public bool TryAccept(IDispatchWork work)
             {
                 if (!CanAccept)
@@ -1291,7 +1363,17 @@ namespace Zantetsu.MeshCut.Tests
                 }
 
                 _accepted.Add(work);
+                TotalAccepted++;
                 return true;
+            }
+
+            /// <summary>Runs everything held and not begun, each on a worker of its own, and waits for those threads.</summary>
+            public void RunEverythingWaiting()
+            {
+                while (_accepted.Count > 0)
+                {
+                    RunOneOnAWorker();
+                }
             }
 
             public void BeginAccepted(IDispatchWork work)

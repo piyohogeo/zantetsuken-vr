@@ -300,7 +300,7 @@ namespace Zantetsu.PhysicsCut
     /// by another shape, and the abort of a physics transaction is not connected yet.
     /// </para>
     /// </summary>
-    public sealed class PhysicsCutCook : IDisposable
+    public sealed class PhysicsCutCook : IDisposable, IMainThreadPump
     {
         /// <summary>
         /// The one cooking profile (DESIGN 7.3). It is the configuration the Phase 2.9 cook pass-through check used —
@@ -431,11 +431,16 @@ namespace Zantetsu.PhysicsCut
         /// dispatcher still holds is taken back and given up as it arrives, until <see cref="IsDrained"/>.
         /// </para>
         /// </summary>
-        public void Pump()
+        public bool Pump()
         {
+            bool moved = false;
             for (int i = 0; i < _requests.Count; i++)
             {
-                Advance(_requests[i]);
+                PhysicsCutRequest request = _requests[i];
+                PhysicsCutStage was = request.Stage;
+                bool held = request.HoldsReservation;
+                Advance(request);
+                moved |= request.Stage != was || request.HoldsReservation != held;
             }
 
             for (int i = _requests.Count - 1; i >= 0; i--)
@@ -443,8 +448,11 @@ namespace Zantetsu.PhysicsCut
                 if (_requests[i].IsOver)
                 {
                     _requests.RemoveAt(i);
+                    moved = true;
                 }
             }
+
+            return moved;
         }
 
         /// <summary>

@@ -32,6 +32,7 @@ namespace Zantetsu.PhysicsCut.Tests
             public WorkerPoolExecutor background;
             public SharedWorkDispatcher dispatcher;
             public PhysicsCutCook cook;
+            public SharedWorkFrame frame;
             private int _frame;
 
             public void Pump()
@@ -80,17 +81,148 @@ namespace Zantetsu.PhysicsCut.Tests
             int reservedForUrgent = 2,
             int frameBudget = 32,
             int jobCapacity = 4,
-            HoldingExecutor holding = null)
+            HoldingExecutor holding = null,
+            WatchedExecutor holdingJob = null)
         {
+            IWorkExecutor urgent = holdingJob;
+            if (urgent == null)
+            {
+                urgent = holding == null ? (IWorkExecutor)new UnityJobWorkExecutor(jobCapacity) : holding;
+            }
+
             var f = new Fixture
             {
-                job = holding == null ? (IWorkExecutor)new UnityJobWorkExecutor(jobCapacity) : holding,
+                job = urgent,
                 geometry = WorkerPoolExecutor.GeometryPool(2),
                 background = WorkerPoolExecutor.BackgroundPool(2),
             };
             f.dispatcher = new SharedWorkDispatcher(waitingCapacity, reservedForUrgent, frameBudget, f.job, f.geometry, f.background);
             f.cook = new PhysicsCutCook(f.dispatcher, reservations);
+            f.frame = new SharedWorkFrame(f.dispatcher);
+            f.frame.Add(f.cook);
             return f;
+        }
+
+        /// <summary>
+        /// The urgent destination, watched: what it accepted and was told to begin, in order, handing back only what
+        /// has really finished and the test has released. The work's own Begin is called, so a Unity job really is
+        /// scheduled; nothing is completed by force and nothing unfinished is handed over.
+        /// </summary>
+        private sealed class WatchedExecutor : IWorkExecutor
+        {
+            private readonly List<IDispatchWork> _held = new List<IDispatchWork>();
+            private readonly List<IDispatchWork> _released = new List<IDispatchWork>();
+            private bool _closed;
+
+            internal WatchedExecutor(int capacity)
+            {
+                Capacity = capacity;
+            }
+
+            internal List<IDispatchWork> Accepted { get; } = new List<IDispatchWork>();
+
+            internal List<IDispatchWork> Begun { get; } = new List<IDispatchWork>();
+
+            internal bool HoldEverything { get; set; } = true;
+
+            public WorkDestination Destination => WorkDestination.UnityJob;
+
+            public int Capacity { get; }
+
+            public int Held => _held.Count;
+
+            public bool CanAccept => !_closed && _held.Count < Capacity;
+
+            internal void Release(IDispatchWork work)
+            {
+                if (!_released.Contains(work))
+                {
+                    _released.Add(work);
+                }
+            }
+
+            internal void ReleaseEverything()
+            {
+                HoldEverything = false;
+            }
+
+            internal bool FinishedButHeld(IDispatchWork work)
+            {
+                return _held.Contains(work) && work.IsComplete && !Lets(work);
+            }
+
+            private bool Lets(IDispatchWork work)
+            {
+                return !HoldEverything || _released.Contains(work);
+            }
+
+            public bool TryAccept(IDispatchWork work)
+            {
+                if (!CanAccept)
+                {
+                    return false;
+                }
+
+                _held.Add(work);
+                Accepted.Add(work);
+                return true;
+            }
+
+            public void BeginAccepted(IDispatchWork work)
+            {
+                Begun.Add(work);
+                work.Begin();
+            }
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                for (int i = 0; i < _held.Count; i++)
+                {
+                    IDispatchWork candidate = _held[i];
+                    if (!candidate.IsComplete || !Lets(candidate))
+                    {
+                        continue;
+                    }
+
+                    _held.RemoveAt(i);
+                    work = candidate;
+                    completion = WorkCompletion.Finished;
+                    return true;
+                }
+
+                work = null;
+                completion = default;
+                return false;
+            }
+
+            public void CloseForNewWork()
+            {
+                _closed = true;
+            }
+
+            public bool StopAndConfirm(int timeoutMilliseconds)
+            {
+                _closed = true;
+                ReleaseEverything();
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < timeoutMilliseconds)
+                {
+                    bool allDone = true;
+                    for (int i = 0; i < _held.Count; i++)
+                    {
+                        allDone &= _held[i].IsComplete;
+                    }
+
+                    if (allDone)
+                    {
+                        return true;
+                    }
+
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                return false;
+            }
         }
 
         /// <summary>
@@ -620,6 +752,76 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(f.dispatcher.WaitingCount, Is.Zero, "the dispatcher waits for nothing of it");
                 Assert.That(f.dispatcher.SubmittedCount, Is.Zero, "and holds nothing of it");
                 Assert.That(f.dispatcher.TotalCollected, Is.EqualTo(2), "both works were collected, one for one");
+                request.Products.Dispose();
+            }
+        }
+
+        // ----- one frame, carried forward ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// The bake of a cut is submitted in the **same frame** its numerical work was collected in. One update of the
+        /// product's own frame entry does it: the numbers come back, the main thread applies the meshes, and the bake
+        /// that this made ready is submitted at a later occasion of that update -- not at the next frame.
+        /// <para>
+        /// The frame id does not change. What is watched is the destination: the bake work it accepted and was told to
+        /// begin, which for a Unity job is where that job is scheduled -- not where it starts running on a worker.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TheBakeIsSubmittedInTheFrameTheNumbersCameBackIn()
+        {
+            var watched = new WatchedExecutor(4);
+            using (OwnerCutHarness h = MixedCompound())
+            using (Fixture f = NewFixture(reservations: 1, holdingJob: watched))
+            {
+                PhysicsCutRequest request = f.cook.Submit(in h.input, float4x4.identity);
+
+                // The numerical work is submitted and begun; nothing has been collected, because it has not finished.
+                f.frame.Update(1);
+                Assert.That(watched.Accepted.Count, Is.EqualTo(1), "the numerical work was taken by the destination");
+                Assert.That(watched.Begun.Count, Is.EqualTo(1), "and its job was scheduled");
+                Assert.That(request.Stage, Is.EqualTo(PhysicsCutStage.Cutting));
+
+                IDispatchWork numbers = watched.Accepted[0];
+                var clock = Stopwatch.StartNew();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !watched.FinishedButHeld(numbers))
+                {
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                Assert.That(watched.FinishedButHeld(numbers), Is.True, "its job has finished and waits only on the test");
+
+                // Still frame 1: collected, meshes applied on the main thread, and the bake submitted.
+                watched.Release(numbers);
+                SharedWorkFrameProgress carried = f.frame.Update(1);
+
+                Assert.That(carried.collected, Is.GreaterThan(0), "the numbers were taken back");
+                Assert.That(
+                    watched.Accepted.Count, Is.EqualTo(2),
+                    "and the bake was submitted in the same frame, not the next one");
+                Assert.That(watched.Begun.Count, Is.EqualTo(2), "its job was scheduled too");
+                Assert.That(
+                    ReferenceEquals(watched.Accepted[1], numbers), Is.False, "which is a different work from the numbers");
+                Assert.That(request.Stage, Is.EqualTo(PhysicsCutStage.Baking), "the cut is at its bake");
+                Assert.That(
+                    carried.occasions, Is.GreaterThan(1),
+                    "and the update it happened in went round more than once: " + carried.occasions
+                    + " occasions. Which occasion submitted it is not read from this count.");
+
+                watched.ReleaseEverything();
+                clock.Restart();
+                while (clock.ElapsedMilliseconds < DeadlineMilliseconds && !request.IsOver)
+                {
+                    f.frame.Update(1);
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "and the whole cut finished");
+                TestContext.WriteLine(
+                    "frame 1 throughout; works really submitted, in order: numbers then bake, "
+                    + watched.Accepted.Count + " in all, begun " + watched.Begun.Count
+                    + "; the bake was submitted within the update that collected the numbers, which went round "
+                    + carried.occasions + " times");
                 request.Products.Dispose();
             }
         }

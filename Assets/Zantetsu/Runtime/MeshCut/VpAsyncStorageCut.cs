@@ -111,18 +111,21 @@ namespace Zantetsu.MeshCut
     /// with it: the same kernel, the same storage and the same rules as <see cref="VpStorageCut"/>, taken apart into
     /// what a worker may do and what only the main thread may do (DESIGN 4.3, 4.5.6).
     /// <para>
-    /// **The division.** Reading the geometry's shape is work: the capacity query walks every triangle, so it belongs
-    /// on a worker with the cut itself. Holding the input's read lease, taking and giving back the output reservation
-    /// and turning a finished run into stored geometries belong to the main thread, because the storage is the main
-    /// thread's. One cut therefore goes: offered → capacity query on a worker → reservation on the main thread → the
-    /// cut on a worker → the two sides published on the main thread. A reservation that turns out to be too small is
-    /// given back and a larger one taken, and the cut runs again, by the same rule the synchronous entry uses.
+    /// **The division.** The cut itself is a worker's. Holding the input's read lease, deciding the sizes, taking and
+    /// giving back the output reservation and turning a finished run into stored geometries belong to the main thread,
+    /// because the storage is the main thread's. One cut therefore goes: the sizes worked out on the main thread from
+    /// the input's own description, a reservation taken there, the cut on a worker, the two sides published on the main
+    /// thread. **No worker measures the input**: the ranges say how many triangles there are and the rest is
+    /// arithmetic (DESIGN 6.1), so there is no capacity query and nothing walks the geometry to find its size. A
+    /// reservation that turns out to be too small is given back and a larger one taken, and the cut runs again, by the
+    /// same rule the synchronous entry uses.
     /// </para>
     /// <para>
     /// **What it does not do.** It publishes nothing beyond the storage's own commit: no ledger, no transfer to the
     /// GPU, no display. The geometries it produces are handed to the caller, who decides what becomes of them. It
     /// owns no dispatcher and drives no frame — the caller brings the dispatcher it already has, opens the frames and
-    /// calls <see cref="Pump"/> once each time it is willing to let cuts move, on the main thread.
+    /// calls <see cref="Pump"/> at each occasion of a frame it is willing to let cuts move on, on the main thread.
+    /// <see cref="SharedWorkFrame"/> is what does that in the product.
     /// </para>
     /// <para>
     /// **Several cuts at once.** A storage gives each cut spans of its own, so more than one may be in its
@@ -131,7 +134,7 @@ namespace Zantetsu.MeshCut
     /// and is offered when room comes free. What such a cut waits for is room, not a turn.
     /// </para>
     /// </summary>
-    public sealed unsafe class VpAsyncStorageCut : IDisposable
+    public sealed unsafe class VpAsyncStorageCut : IDisposable, IMainThreadPump
     {
         private readonly VpCpuGeometryStorage _storage;
         private readonly SharedWorkDispatcher _dispatcher;
@@ -251,8 +254,13 @@ namespace Zantetsu.MeshCut
         /// <summary>
         /// Moves every cut as far as it can go without waiting for anything, on the main thread: offers what is ready
         /// to the dispatcher, takes and gives back reservations, and turns runs the dispatcher has already collected
-        /// into results. Called once per frame, alongside <see cref="SharedWorkDispatcher.Dispatch"/>; calling it more
-        /// often is harmless and calling it less only makes cuts slower.
+        /// into results. It may be called as often as a frame has occasions for it -- after every collection, so that
+        /// what the collection freed is used in the same frame -- and calling it less only makes cuts slower.
+        /// <para>
+        /// Returns whether anything really moved: a cut changed stage, took a reservation or gave one back, or ended.
+        /// A cut that stayed where it was -- refused a reservation, or offered to a queue with no place -- is not
+        /// movement, and a caller that goes round again on movement alone will not go round for one of those.
+        /// </para>
         /// <para>
         /// After <see cref="Dispose"/> this still works, and must still be called: nothing new is offered or reserved,
         /// but a cut a worker was running is taken back here once the dispatcher hands it over, and only then does
@@ -260,14 +268,19 @@ namespace Zantetsu.MeshCut
         /// when <see cref="ActiveCount"/> reaches zero.
         /// </para>
         /// </summary>
-        public void Pump()
+        public bool Pump()
         {
+            bool moved = false;
 
             // In the order they were asked for, so that the one waiting longest for the storage's reservation is the
             // one that gets it.
             for (int i = 0; i < _requests.Count; i++)
             {
-                Advance(_requests[i]);
+                VpStorageCutRequest request = _requests[i];
+                VpStorageCutStage was = request.Stage;
+                bool held = request.HoldsReservation;
+                Advance(request);
+                moved |= request.Stage != was || request.HoldsReservation != held;
             }
 
             for (int i = _requests.Count - 1; i >= 0; i--)
@@ -277,8 +290,11 @@ namespace Zantetsu.MeshCut
                 {
                     _requests.RemoveAt(i);
                     _work.Remove(request);
+                    moved = true;
                 }
             }
+
+            return moved;
         }
 
         /// <summary>
