@@ -532,6 +532,15 @@ namespace Zantetsu.MeshCut
         private readonly VpClipCandidate[] _candidates;
         private readonly VpClipSelectionState[] _states;
         private readonly VpMultiCutRenderFragment[] _renderFragments;
+
+        /// <summary>
+        /// Which fragment each render fragment stands where, settled with the structure. For an aggregate this is
+        /// its first living branch and not its root (DESIGN 5.2, D-187); for everything else it is the root itself.
+        /// </summary>
+        private readonly LogicalFragmentId[] _standsWhere;
+
+        private readonly VpMultiCutSideIdentity[] _sideIdentity;
+        private readonly VpMultiCutCapIdentity[] _capIdentity;
         private readonly VpCapConstraint[] _conditions;
         private readonly VpMultiCutCap[] _caps;
         private readonly Vector3[] _capVertices;
@@ -610,8 +619,11 @@ namespace Zantetsu.MeshCut
             _capacities = capacities;
             _branches = new VpMultiCutBranch[capacities.branches];
             _candidates = new VpClipCandidate[capacities.candidates];
+            _capIdentity = new VpMultiCutCapIdentity[capacities.candidates];
             _states = new VpClipSelectionState[capacities.candidates];
             _renderFragments = new VpMultiCutRenderFragment[capacities.renderFragments];
+            _standsWhere = new LogicalFragmentId[capacities.renderFragments];
+            _sideIdentity = new VpMultiCutSideIdentity[capacities.renderFragments];
             _conditions = new VpCapConstraint[capacities.caps];
             _caps = new VpMultiCutCap[capacities.caps];
             _capVertices = new Vector3[(int)capVertices];
@@ -635,6 +647,23 @@ namespace Zantetsu.MeshCut
         /// or from the snapshot it was told to reuse from. Counted whether or not that build succeeded.
         /// </summary>
         public int SectionBuildCount { get; private set; }
+
+        /// <summary>
+        /// How often the structure has been settled here: the lineage walked, the candidates collected, what is
+        /// Selected and Ignored decided, and the Ignored grouped. It rises once per build that reaches that work and
+        /// not at all when only placements are put in place again, which is what makes the difference observable.
+        /// </summary>
+        public long StructureBuilds { get; private set; }
+
+        /// <summary>
+        /// How often the structural checks over the ledger have run -- the walk up every registration's origins, of
+        /// which there are as many steps as the ledger has operations. It rises with <see cref="StructureBuilds"/>
+        /// and, like it, not when placements alone are settled.
+        /// </summary>
+        public long StructureValidations { get; private set; }
+
+        /// <summary>How often placements and what they decide have been settled, by either route.</summary>
+        public long PlacementPasses { get; private set; }
 
 
         /// <summary>What made the last build <see cref="VpMultiCutBuildOutcome.InvalidInput"/>; <see cref="VpMultiCutInvalidInput.None"/> otherwise.</summary>
@@ -727,6 +756,34 @@ namespace Zantetsu.MeshCut
             candidate = ok ? _candidates[index] : default;
             state = ok ? _states[index] : default;
             return ok;
+        }
+
+        /// <summary>
+        /// What the ledger said one render fragment's side was when this structure was settled. False past the end.
+        /// </summary>
+        internal bool TryGetSideIdentity(int index, out VpMultiCutSideIdentity identity)
+        {
+            if ((uint)index >= (uint)_renderFragmentCount)
+            {
+                identity = default;
+                return false;
+            }
+
+            identity = _sideIdentity[index];
+            return true;
+        }
+
+        /// <summary>What the ledger said one candidate's cap was when this structure was settled. False past the end.</summary>
+        internal bool TryGetCapIdentity(int index, out VpMultiCutCapIdentity identity)
+        {
+            if ((uint)index >= (uint)_candidateCount)
+            {
+                identity = default;
+                return false;
+            }
+
+            identity = _capIdentity[index];
+            return true;
         }
 
         public bool TryGetRenderFragment(int index, out VpMultiCutRenderFragment renderFragment)
@@ -863,55 +920,187 @@ namespace Zantetsu.MeshCut
                 reuseFrom = null;
             }
 
-            for (int g = 0; g < registrations.Count; g++)
-            {
-                VpMultiCutRegistration registration = registrations[g];
-                if (!IsWithinContract(registration.localBounds)
-                    || !IsPlacement(registration.geometryLocalToWorld)
-                    || !IsRigid(registration.lineageToGeometryLocal))
-                {
-                    return Fail(Invalid(VpMultiCutInvalidInput.InputContract));
-                }
-            }
-
             // Decided with no room of this snapshot's, so that no shortage below can be what hides it.
-            VpMultiCutBuildOutcome outcome = Validate(ledger, registrations);
+            VpMultiCutBuildOutcome outcome = TryBuildStructure(ledger, registrations);
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(outcome);
             }
 
-            for (int g = 0; g < registrations.Count; g++)
+            outcome = TryApplyPlacements(ledger, registrations, placement, reuseFrom);
+            if (outcome != VpMultiCutBuildOutcome.Built)
             {
-                VpMultiCutRegistration registration = registrations[g];
-                int branchStart = _branchCount;
-                int renderFragmentStart = _renderFragmentCount;
-                outcome = TryCollectBranches(ledger, g, registration.root, registration.reflected);
-                if (outcome != VpMultiCutBuildOutcome.Built)
-                {
-                    return Fail(outcome);
-                }
-
-                outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart, placement);
-                if (outcome != VpMultiCutBuildOutcome.Built)
-                {
-                    return Fail(outcome);
-                }
-
-                for (int r = renderFragmentStart; r < _renderFragmentCount; r++)
-                {
-                    outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
-                    if (outcome != VpMultiCutBuildOutcome.Built)
-                    {
-                        return Fail(outcome);
-                    }
-                }
+                return Fail(outcome);
             }
 
             _registrationCount = registrations.Count;
             IsBuilt = true;
             return VpMultiCutBuildOutcome.Built;
         }
+
+        /// <summary>
+        /// Builds this snapshot by taking <paramref name="structure"/>'s settled structure as it stands and settling
+        /// only what where things are decides: each render fragment's current placement, and from it the world planes,
+        /// the clip and the caps. **The ledger's structure is not checked again, the lineage is not walked, the
+        /// candidates are not collected again, and what is Selected or Ignored and how the Ignored were grouped are
+        /// taken over unchanged.** What is copied across is copied, not recomputed.
+        /// <para>
+        /// The caller is the one that knows nothing of the structure has changed, and says so by calling this instead
+        /// of <see cref="TryBuild(LogicalCutLedger, IReadOnlyList{VpMultiCutRegistration}, IVpFragmentPlacement)"/>.
+        /// False with <see cref="VpMultiCutBuildOutcome.CapacityExceeded"/> if this snapshot cannot hold that
+        /// structure, which a caller answers by building instead; a refusal otherwise leaves this snapshot unbuilt,
+        /// exactly as a refused build does, so half-settled placements are never what a frame draws from.
+        /// </para>
+        /// </summary>
+        internal VpMultiCutBuildOutcome TryBuildPlacementsFrom(
+            VpMultiCutSnapshot structure,
+            LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations,
+            IVpFragmentPlacement placement)
+        {
+            if (structure == null)
+            {
+                throw new ArgumentNullException(nameof(structure));
+            }
+
+            if (ledger == null)
+            {
+                throw new ArgumentNullException(nameof(ledger));
+            }
+
+            if (registrations == null)
+            {
+                throw new ArgumentNullException(nameof(registrations));
+            }
+
+            if (structure == this || !structure.IsBuilt || structure._registrationCount != registrations.Count)
+            {
+                throw new InvalidOperationException(
+                    "there is no settled structure to take, or it was settled over other registrations");
+            }
+
+            Clear();
+            _buildGeneration++;
+            _invalid = VpMultiCutInvalidInput.None;
+            SectionBuildCount = 0;
+            // The same validation the ordinary build makes, in the same order, with only the checks the settled
+            // structure has already answered left out.
+            VpMultiCutBuildOutcome checkedInputs = Validate(ledger, registrations, true);
+            if (checkedInputs != VpMultiCutBuildOutcome.Built)
+            {
+                return Fail(checkedInputs);
+            }
+
+            if (structure._branchCount > _branches.Length
+                || structure._candidateCount > _candidates.Length
+                || structure._candidateCount > _states.Length
+                || structure._renderFragmentCount > _renderFragments.Length)
+            {
+                return Fail(VpMultiCutBuildOutcome.CapacityExceeded);
+            }
+
+            Array.Copy(structure._branches, _branches, structure._branchCount);
+            Array.Copy(structure._candidates, _candidates, structure._candidateCount);
+
+            // What each candidate was decided to be -- Selected or Ignored -- is part of the structure, and the caps
+            // are clipped by it. Leaving it behind would cut every cap by the wrong half-spaces.
+            Array.Copy(structure._states, _states, structure._candidateCount);
+            Array.Copy(structure._capIdentity, _capIdentity, structure._candidateCount);
+            Array.Copy(structure._renderFragments, _renderFragments, structure._renderFragmentCount);
+            Array.Copy(structure._standsWhere, _standsWhere, structure._renderFragmentCount);
+            Array.Copy(structure._sideIdentity, _sideIdentity, structure._renderFragmentCount);
+            _branchCount = structure._branchCount;
+            _candidateCount = structure._candidateCount;
+            _renderFragmentCount = structure._renderFragmentCount;
+
+            VpMultiCutBuildOutcome placed = TryApplyPlacements(ledger, registrations, placement, structure);
+            if (placed != VpMultiCutBuildOutcome.Built)
+            {
+                return Fail(placed);
+            }
+
+            _registrationCount = registrations.Count;
+            IsBuilt = true;
+            return VpMultiCutBuildOutcome.Built;
+        }
+
+        /// <summary>
+        /// Everything the ledger and the registrations' own identities decide, and nothing that where they stand
+        /// does: the structural checks, the lineage walk, the candidates, what is Selected and what is Ignored, and
+        /// which branches an aggregate groups together. Each render fragment is left knowing **which fragment it
+        /// stands where** -- the placement itself is asked for in the other pass.
+        /// </summary>
+        private VpMultiCutBuildOutcome TryBuildStructure(
+            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations)
+        {
+            VpMultiCutBuildOutcome outcome = Validate(ledger, registrations, false);
+            if (outcome != VpMultiCutBuildOutcome.Built)
+            {
+                return outcome;
+            }
+
+            StructureBuilds++;
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                VpMultiCutRegistration registration = registrations[g];
+                int branchStart = _branchCount;
+                int candidateStart = _candidateCount;
+                int renderFragmentStart = _renderFragmentCount;
+                outcome = TryCollectBranches(ledger, g, registration.root, registration.reflected);
+                if (outcome != VpMultiCutBuildOutcome.Built)
+                {
+                    return outcome;
+                }
+
+                for (int c = candidateStart; c < _candidateCount; c++)
+                {
+                    _capIdentity[c] = CapIdentityOf(ledger, _candidates[c]);
+                }
+
+                outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
+                if (outcome != VpMultiCutBuildOutcome.Built)
+                {
+                    return outcome;
+                }
+            }
+
+            return VpMultiCutBuildOutcome.Built;
+        }
+
+        /// <summary>
+        /// Everything where things stand decides: that each registration's own placement is one and that a section of
+        /// its box there can be computed at all, then each render fragment's current placement and the world planes,
+        /// clip and caps that follow from it.
+        /// </summary>
+        private VpMultiCutBuildOutcome TryApplyPlacements(
+            LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations,
+            IVpFragmentPlacement placement,
+            VpMultiCutSnapshot reuseFrom)
+        {
+            PlacementPasses++;
+            for (int r = 0; r < _renderFragmentCount; r++)
+            {
+                VpMultiCutRenderFragment renderFragment = _renderFragments[r];
+                VpMultiCutRegistration registration = registrations[renderFragment.registration];
+                if (!TryPlacementOf(
+                        placement, registration, _standsWhere[r], out Matrix4x4 geometryLocalToWorld))
+                {
+                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+
+                _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
+                VpMultiCutBuildOutcome outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
+                if (outcome != VpMultiCutBuildOutcome.Built)
+                {
+                    return outcome;
+                }
+            }
+
+            return VpMultiCutBuildOutcome.Built;
+        }
+
+
 
         private void Clear()
         {
@@ -955,23 +1144,48 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome Validate(
             LogicalCutLedger ledger,
-            IReadOnlyList<VpMultiCutRegistration> registrations)
+            IReadOnlyList<VpMultiCutRegistration> registrations,
+            bool structureAlreadySettled)
         {
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                VpMultiCutRegistration registration = registrations[g];
+                if (!IsWithinContract(registration.localBounds)
+                    || !IsPlacement(registration.geometryLocalToWorld)
+                    || !IsRigid(registration.lineageToGeometryLocal))
+                {
+                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+            }
+
+            if (!structureAlreadySettled)
+            {
+                StructureValidations++;
+            }
+
             int steps = ledger.OperationCount + 1;
             for (int g = 0; g < registrations.Count; g++)
             {
                 VpMultiCutRegistration registration = registrations[g];
-                if (!ledger.TryGetFragmentState(registration.root, out _))
+                if (!structureAlreadySettled && !ledger.TryGetFragmentState(registration.root, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.Lineage);
                 }
 
-                // A section of this box, placed, can be computed in float at all, and every cap vertex it gives is bounded.
+                // A section of this box, placed, can be computed in float at all, and every cap vertex it gives is
+                // bounded. Where the box stands decides it, so it is asked again whenever that changes -- here, where
+                // it has always been asked, so that which refusal comes first is what it always was.
                 if (!VpSectionBounds.TryPlacedExtent(
-                        registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon,
-                        out _))
+                        registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.ConservativeSection);
+                }
+
+                if (structureAlreadySettled)
+                {
+                    // The rest of this is what the ledger and the lineage say, and it was settled when the structure
+                    // was. Only these checks are skipped; the order of the ones that remain is untouched.
+                    continue;
                 }
 
                 // No root on another's lineage: not the same root, and no other root above this one.
@@ -1022,66 +1236,72 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+            if (!structureAlreadySettled)
             {
-                VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
-                if (found != VpMultiCutBuildOutcome.Built)
+                // Everything below reads the ledger and nothing else: every operation in the order it was
+                // admitted, and for each one the lineage of the fragment it cut. It is as structural as the walk
+                // above, and is skipped for the same reason -- a settled structure has answered it already.
+                for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
                 {
-                    return found;
-                }
-
-                if (g < 0)
-                {
-                    continue;
-                }
-
-                VpMultiCutRegistration registration = registrations[g];
-                switch (operation.state)
-                {
-                    case LogicalCutOperationState.Aborted:
+                    VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
+                    if (found != VpMultiCutBuildOutcome.Built)
                     {
-                        // The source is retired: past an Ignored boundary when more of its chain is unreflected than the
-                        // selection can take. Every requirement is the previous candidate, so nothing is Ignored for order.
-                        VpMultiCutBuildOutcome counted = CountUnreflected(
-                            ledger, operation.source, registration.reflected, steps, out int unreflected);
-                        if (counted != VpMultiCutBuildOutcome.Built)
-                        {
-                            return counted;
-                        }
-
-                        if (unreflected > VpClipCandidates.Capacity)
-                        {
-                            return VpMultiCutBuildOutcome.RetiredInsideAggregate;
-                        }
-
-                        break;
+                        return found;
                     }
 
-                    case LogicalCutOperationState.Published:
-                    case LogicalCutOperationState.Completed:
-                    case LogicalCutOperationState.Terminated:
+                    if (g < 0)
                     {
-                        VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
-                        if (planed != VpMultiCutBuildOutcome.Built)
-                        {
-                            return planed;
-                        }
-
-                        break;
+                        continue;
                     }
 
-                    case LogicalCutOperationState.Admitted:
+                    VpMultiCutRegistration registration = registrations[g];
+                    switch (operation.state)
                     {
-                        if (ledger.TryGetPreparedAnchorDistribution(operation.id, out _))
+                        case LogicalCutOperationState.Aborted:
+                        {
+                            // The source is retired: past an Ignored boundary when more of its chain is unreflected than the
+                            // selection can take. Every requirement is the previous candidate, so nothing is Ignored for order.
+                            VpMultiCutBuildOutcome counted = CountUnreflected(
+                                ledger, operation.source, registration.reflected, steps, out int unreflected);
+                            if (counted != VpMultiCutBuildOutcome.Built)
+                            {
+                                return counted;
+                            }
+
+                            if (unreflected > VpClipCandidates.Capacity)
+                            {
+                                return VpMultiCutBuildOutcome.RetiredInsideAggregate;
+                            }
+
+                            break;
+                        }
+
+                        case LogicalCutOperationState.Published:
+                        case LogicalCutOperationState.Completed:
+                        case LogicalCutOperationState.Terminated:
                         {
                             VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
                             if (planed != VpMultiCutBuildOutcome.Built)
                             {
                                 return planed;
                             }
+
+                            break;
                         }
 
-                        break;
+                        case LogicalCutOperationState.Admitted:
+                        {
+                            if (ledger.TryGetPreparedAnchorDistribution(operation.id, out _))
+                            {
+                                VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
+                                if (planed != VpMultiCutBuildOutcome.Built)
+                                {
+                                    return planed;
+                                }
+                            }
+
+                            break;
+                        }
                     }
                 }
             }
@@ -1341,7 +1561,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome TryGroup(
             LogicalCutLedger ledger, in VpMultiCutRegistration registration, int registrationIndex, int branchStart,
-            int renderFragmentStart, IVpFragmentPlacement placement)
+            int renderFragmentStart)
         {
             IReadOnlyCollection<VpClipBoundary> reflected = registration.reflected;
             for (int b = branchStart; b < _branchCount; b++)
@@ -1405,14 +1625,12 @@ namespace Zantetsu.MeshCut
                 // branch. This branch is the group's first because a group's branches are contiguous in the walk and
                 // this is the one that makes the render fragment; the ones that join it later do not ask again.
                 // </para>
-                LogicalFragmentId standsWhere = aggregated ? branch.fragment : root;
-                if (!TryPlacementOf(placement, registration, standsWhere, out Matrix4x4 geometryLocalToWorld))
-                {
-                    return Invalid(VpMultiCutInvalidInput.InputContract);
-                }
-
+                // Which fragment this one stands where is settled here, with the rest of the structure. **Where that
+                // fragment is** is asked in the other pass, and asked again whenever anything moves.
+                _standsWhere[_renderFragmentCount] = aggregated ? branch.fragment : root;
+                _sideIdentity[_renderFragmentCount] = SideIdentityOf(ledger, registration.root, root, rootPendingSide);
                 _renderFragments[_renderFragmentCount] = new VpMultiCutRenderFragment(
-                    registrationIndex, registration.localBounds, geometryLocalToWorld, root, rootPendingSide,
+                    registrationIndex, registration.localBounds, Matrix4x4.identity, root, rootPendingSide,
                     aggregated, b, 1, 0, 0, VpInstanceClip.None, 0, 0);
                 _branches[b] = WithRenderFragment(branch, _renderFragmentCount);
                 _renderFragmentCount++;
@@ -1752,6 +1970,103 @@ namespace Zantetsu.MeshCut
             return new VpMultiCutRenderFragment(
                 r.registration, r.localBounds, r.geometryLocalToWorld, r.root, r.rootPendingSide, r.aggregated, r.branchStart, branchCount, r.conditionStart, r.conditionCount,
                 r.clip, r.capStart, r.capCount);
+        }
+
+        /// <summary>The same render fragment, standing where it now stands.</summary>
+        private static VpMultiCutRenderFragment WithPlacement(in VpMultiCutRenderFragment f, Matrix4x4 geometryLocalToWorld)
+        {
+            return new VpMultiCutRenderFragment(
+                f.registration, f.localBounds, geometryLocalToWorld, f.root, f.rootPendingSide, f.aggregated,
+                f.branchStart, f.branchCount, f.conditionStart, f.conditionCount, f.clip, f.capStart, f.capCount);
+        }
+
+        /// <summary>
+        /// What the ledger says one render fragment's side is. The pending case asks for the root's active operation;
+        /// the published case asks which cut made that root, which reads the operations in order -- and is why this is
+        /// settled once here rather than every frame.
+        /// </summary>
+        private static VpMultiCutSideIdentity SideIdentityOf(
+            LogicalCutLedger ledger, LogicalFragmentId registrationRoot, LogicalFragmentId root, float rootPendingSide)
+        {
+            if (rootPendingSide != 0f && ledger.TryGetActiveOperation(root, out CutOperationId pending))
+            {
+                return new VpMultiCutSideIdentity(
+                    pending, rootPendingSide, false, IsFixedSide(ledger, pending, rootPendingSide));
+            }
+
+            if (root != registrationRoot && ledger.TryGetOrigin(root, out CutOperationId origin, out float side))
+            {
+                return new VpMultiCutSideIdentity(origin, side, true, IsFixedSide(ledger, origin, side));
+            }
+
+            return new VpMultiCutSideIdentity(default, 0f, false, false);
+        }
+
+        /// <summary>What the ledger says one candidate's cap is: published or not, the child it made, and fixed or not.</summary>
+        private static VpMultiCutCapIdentity CapIdentityOf(LogicalCutLedger ledger, in VpClipCandidate candidate)
+        {
+            CutOperationId operation = candidate.boundary.face.operation;
+            float side = candidate.boundary.side;
+            bool published = !candidate.pending;
+            LogicalFragmentId child = default;
+            if (published && ledger.TryGetOperation(operation, out LogicalCutOperation cut))
+            {
+                child = side > 0f ? cut.positive : cut.negative;
+            }
+
+            return new VpMultiCutCapIdentity(published, child, IsFixedSide(ledger, operation, side));
+        }
+
+        /// <summary>Whether one side of one cut is fixed by the anchors its publication settled.</summary>
+        private static bool IsFixedSide(LogicalCutLedger ledger, CutOperationId operation, float side)
+        {
+            return ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution)
+                && FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount);
+        }
+
+        /// <summary>
+        /// The cut one render fragment is a side of, as the ledger says: which operation, which of its two sides,
+        /// whether that side is published, and whether it is fixed by its anchors.
+        /// <para>
+        /// Every part of this is a fact about the ledger and the lineage, so it is settled with the structure and
+        /// carried with it. Asking again every frame would mean walking the operations for each render fragment --
+        /// <see cref="LogicalCutLedger.TryGetOrigin"/> reads them in order -- which is what having a structure to
+        /// reuse is supposed to save.
+        /// </para>
+        /// </summary>
+        internal readonly struct VpMultiCutSideIdentity
+        {
+            internal VpMultiCutSideIdentity(CutOperationId operation, float side, bool published, bool fixedByAnchors)
+            {
+                this.operation = operation;
+                this.side = side;
+                this.published = published;
+                this.fixedByAnchors = fixedByAnchors;
+            }
+
+            internal readonly CutOperationId operation;
+            internal readonly float side;
+            internal readonly bool published;
+            internal readonly bool fixedByAnchors;
+        }
+
+        /// <summary>
+        /// What one candidate's cap is, as the ledger says: whether its boundary is published, which child that
+        /// publication made on this side, and whether that side is fixed. Settled and carried like a side's identity,
+        /// and for the same reason.
+        /// </summary>
+        internal readonly struct VpMultiCutCapIdentity
+        {
+            internal VpMultiCutCapIdentity(bool published, LogicalFragmentId child, bool fixedByAnchors)
+            {
+                this.published = published;
+                this.child = child;
+                this.fixedByAnchors = fixedByAnchors;
+            }
+
+            internal readonly bool published;
+            internal readonly LogicalFragmentId child;
+            internal readonly bool fixedByAnchors;
         }
 
         private static VpMultiCutBranch WithRenderFragment(in VpMultiCutBranch b, int renderFragment)

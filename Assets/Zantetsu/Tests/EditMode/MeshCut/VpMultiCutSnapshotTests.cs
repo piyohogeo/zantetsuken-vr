@@ -17,6 +17,47 @@ namespace Zantetsu.MeshCut.Tests
     /// </summary>
     public class VpMultiCutSnapshotTests
     {
+        /// <summary>
+        /// Which refusal comes first when two registrations are each wrong in their own way. The contract check runs
+        /// over **every** registration before anything else, so a later registration's broken contract is refused
+        /// before an earlier one's unusable section; and a root the ledger does not hold is refused before that same
+        /// registration's section. Reusing a settled structure leaves that order alone: it skips the checks the
+        /// structure has answered and nothing else.
+        /// </summary>
+        [Test]
+        public void WhichRefusalComesFirst_IsWhatItAlwaysWas()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId held = ledger.AddFragment();
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+
+            // A section that cannot be computed, and a contract that is not one. The contract wins, though it is the
+            // later registration: every contract is checked before any section is.
+            var unusableSection = new VpMultiCutRegistration(
+                held, new Bounds(Vector3.zero, new Vector3(float.MaxValue, float.MaxValue, float.MaxValue)),
+                Matrix4x4.identity, Matrix4x4.identity, k_none, 1f);
+            var brokenContract = new VpMultiCutRegistration(
+                ledger.AddFragment(), new Bounds(Vector3.zero, Vector3.one), Matrix4x4.zero, Matrix4x4.identity, k_none, 0f);
+            Assert.That(
+                snapshot.TryBuild(ledger, new[] { unusableSection, brokenContract }),
+                Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput));
+            Assert.That(
+                snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.InputContract),
+                "every contract is checked before any section");
+
+            // A root the ledger does not hold, on the registration whose section is also unusable: the lineage is
+            // asked first, as it always was.
+            var unknownRoot = new VpMultiCutRegistration(
+                new LogicalFragmentId(9999), unusableSection.localBounds, Matrix4x4.identity, Matrix4x4.identity, k_none, 1f);
+            Assert.That(
+                snapshot.TryBuild(ledger, new[] { unknownRoot }),
+                Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput));
+            Assert.That(
+                snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.Lineage),
+                "a root that is not there is refused before that registration's section is looked at");
+        }
+
+
         private const float Tolerance = 1e-4f;
 
         internal static readonly Bounds k_box = new Bounds(Vector3.zero, Vector3.one * 2f);

@@ -644,6 +644,22 @@ namespace Zantetsu.MeshCut
         private int _settledFrame = int.MinValue;
         private int _openFrame = int.MinValue;
         private bool _hasSnapshot;
+
+        /// <summary>
+        /// What the adopted snapshot's structure was settled from: the ledger's revision then, and this display's own.
+        /// Both must still hold for that structure to be taken over instead of settled again. -1 means nothing has
+        /// been settled yet.
+        /// </summary>
+        private long _structureLedgerRevision = -1;
+        private long _structureInputRevision = -1;
+
+        /// <summary>
+        /// Counts the changes to what this display itself puts into a snapshot: a registration shown or let go, a
+        /// geometry commit changing what a body is and reflects, a placement lookup being changed. The ledger counts
+        /// its own; this counts the rest, so that between them nothing a structure was settled from can change
+        /// unnoticed.
+        /// </summary>
+        private long _inputRevision;
         private bool _drawRegisteredThisFrame;
         private bool _broken;
         private bool _halted;
@@ -835,7 +851,22 @@ namespace Zantetsu.MeshCut
         /// means every registration is drawn at its own placement, which is what a display of shapes that move
         /// together does. It is read while a collection builds its snapshot and never while one draws.
         /// </summary>
-        public IVpFragmentPlacement Placement { get; set; }
+        public IVpFragmentPlacement Placement
+        {
+            get => _placement;
+            set
+            {
+                if (!ReferenceEquals(_placement, value))
+                {
+                    // Which lookup answers is part of what a structure was settled from, because a different one can
+                    // answer Missing where the last one followed something.
+                    _placement = value;
+                    InputChanged();
+                }
+            }
+        }
+
+        private IVpFragmentPlacement _placement;
 
         /// <summary>
         /// How many instances the last settled collection draws: per body, its command count times its render
@@ -1320,6 +1351,28 @@ namespace Zantetsu.MeshCut
         internal VpMultiCutSnapshot AdoptedSnapshot => _snapshot;
 
         /// <summary>
+        /// How often the structure has been settled from the ledger since this display was made: the lineage walked,
+        /// the candidates collected, the Selected and Ignored decided and grouped. A frame in which nothing of the
+        /// input changed leaves this where it was, however much anything moved.
+        /// </summary>
+        public long StructureBuilds => _snapshot.StructureBuilds + _building.StructureBuilds;
+
+        /// <summary>How often the structural checks over the ledger have run. Rises with <see cref="StructureBuilds"/>.</summary>
+        public long StructureValidations => _snapshot.StructureValidations + _building.StructureValidations;
+
+        /// <summary>How often placements and what they decide have been settled, by either route.</summary>
+        public long PlacementPasses => _snapshot.PlacementPasses + _building.PlacementPasses;
+
+        /// <summary>What this display's own inputs are at, for a test that wants to see a change noticed.</summary>
+        internal long InputRevision => _inputRevision;
+
+        /// <summary>Records that something this display puts into a snapshot has changed.</summary>
+        private void InputChanged()
+        {
+            _inputRevision++;
+        }
+
+        /// <summary>
         /// How many volume commands and cap indices the last arrangement made -- of whichever camera, successful or not.
         /// For tests, which read it right after the preparation it came from.
         /// </summary>
@@ -1763,6 +1816,7 @@ namespace Zantetsu.MeshCut
             };
             entry.instances.Add(instance);
             _shown.Add(entry);
+            InputChanged();
             return true;
         }
 
@@ -1830,6 +1884,10 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            // Whatever this comes to, it is about to change what a body is, what it reflects, or which bodies there
+            // are. Counted here, at the one way in, so that no path out of it can leave a change unnoticed; counting
+            // an attempt that changes nothing only costs one structure settled again.
+            InputChanged();
             Shown body = null;
             for (int i = 0; i < _shown.Count; i++)
             {
@@ -2161,6 +2219,7 @@ namespace Zantetsu.MeshCut
             };
             entry.instances.Add(instance);
             _shown.Add(entry);
+            InputChanged();
         }
 
         /// <summary>
@@ -2170,6 +2229,7 @@ namespace Zantetsu.MeshCut
         {
             _shown.Remove(body);
             _retiring.Add(body);
+            InputChanged();
         }
 
         /// <summary>What a side reflects once it is committed: what the body reflected, and this cut on its own side.</summary>
@@ -2573,7 +2633,31 @@ namespace Zantetsu.MeshCut
 
             // 2. One snapshot of every registration together, beside the adopted one. Room short is an ordinary
             //    refusal; anything else stops the display, decided here before this frame draws.
-            VpMultiCutBuildOutcome outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
+            //    <para>
+            //    The structure -- the ledger's own validity, the lineage, the candidates, what is Selected and what is
+            //    Ignored, and how the Ignored are grouped -- is settled again only when something it was settled from
+            //    has changed. Where things stand is settled every time, because that is what moving an actor changes.
+            //    A structure that cannot be taken over, for whatever reason, is settled again: taking it over is never
+            //    what decides whether a frame is right.
+            //    </para>
+            long ledgerRevision = _ledger.Revision;
+            long inputRevision = _inputRevision;
+            bool structureStillHolds = _hasSnapshot
+                && _snapshot.IsBuilt
+                && _structureLedgerRevision == ledgerRevision
+                && _structureInputRevision == inputRevision
+                && _snapshot.RegistrationCount == _registrations.Count;
+            VpMultiCutBuildOutcome outcome = structureStillHolds
+                ? _building.TryBuildPlacementsFrom(_snapshot, _ledger, _registrations, Placement)
+                : _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
+            if (structureStillHolds && outcome == VpMultiCutBuildOutcome.CapacityExceeded)
+            {
+                // The candidate could not hold that structure. Settling it again is what answers that, and only then
+                // is a shortage this display's to refuse for.
+                structureStillHolds = false;
+                outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
+            }
+
             CapPolygonBuilds += _building.SectionBuildCount;
             if (outcome == VpMultiCutBuildOutcome.CapacityExceeded)
             {
@@ -2716,8 +2800,12 @@ namespace Zantetsu.MeshCut
             }
 
             // 8. Everything the GPU needed has arrived: the candidate becomes the adopted snapshot, and the arrays and
-            //    the snapshots change places.
+            //    the snapshots change places. The revisions this structure answers to are recorded **here**, where the
+            //    update is really taken: a build that was refused anywhere above leaves them as they were, so the next
+            //    frame settles the structure again rather than treating an update it never took as dealt with.
             Adopt(commands);
+            _structureLedgerRevision = ledgerRevision;
+            _structureInputRevision = inputRevision;
             CommandUploads++;
 
             // 9. Only now is the display's own state changed: the references no longer needed are given back, and a
@@ -2737,6 +2825,7 @@ namespace Zantetsu.MeshCut
                 {
                     ReleaseReferences(entry);
                     _shown.RemoveAt(g);
+                    InputChanged();
                     continue;
                 }
 
@@ -2875,24 +2964,27 @@ namespace Zantetsu.MeshCut
             instanceCount = instance;
         }
 
-        /// <summary>What one render fragment is, as a side: the cut it is a side of, and whether that side is published.</summary>
+        /// <summary>
+        /// What one render fragment is, as a side: the cut it is a side of, and whether that side is published.
+        /// <para>
+        /// Every part of that is a fact about the ledger, settled when the structure was, and read back here. It used
+        /// to be asked of the ledger here instead -- once per render fragment, inside the loop over a body's commands
+        /// -- and finding which cut made a published root reads the operations in order, so a structure that was not
+        /// settled again was being walked over all the same.
+        /// </para>
+        /// </summary>
         private LogicalCutDisplaySide SideOf(Shown entry, int renderFragment, in VpMultiCutRenderFragment rf)
         {
-            if (rf.rootPendingSide != 0f && _ledger.TryGetActiveOperation(rf.root, out CutOperationId pending))
+            if (!_building.TryGetSideIdentity(renderFragment, out VpMultiCutSnapshot.VpMultiCutSideIdentity identity)
+                || !identity.operation.IsSet)
             {
                 return new LogicalCutDisplaySide(
-                    entry.fragment, renderFragment, pending, rf.rootPendingSide, false, default,
-                    FixedOf(pending, rf.rootPendingSide), rf.clip);
-            }
-
-            if (rf.root != entry.fragment && _ledger.TryGetOrigin(rf.root, out CutOperationId origin, out float side))
-            {
-                return new LogicalCutDisplaySide(
-                    entry.fragment, renderFragment, origin, side, true, rf.root, FixedOf(origin, side), rf.clip);
+                    entry.fragment, renderFragment, default, 0f, false, default, false, rf.clip);
             }
 
             return new LogicalCutDisplaySide(
-                entry.fragment, renderFragment, default, 0f, false, default, false, rf.clip);
+                entry.fragment, renderFragment, identity.operation, identity.side, identity.published,
+                identity.published ? rf.root : default, identity.fixedByAnchors, rf.clip);
         }
 
         /// <summary>One snapshot cap as a record: its boundary's cut and side, published or not, and its polygon's place.</summary>
@@ -2903,25 +2995,14 @@ namespace Zantetsu.MeshCut
             _building.TryGetBranch(rf.branchStart, out VpMultiCutBranch representative);
             _building.TryGetCandidate(representative.candidateStart + (capIndex - rf.capStart), out VpClipCandidate candidate, out _);
 
-            CutOperationId operation = cap.boundary.face.operation;
-            float side = cap.boundary.side;
-            bool published = !candidate.pending;
-            LogicalFragmentId child = default;
-            if (published && _ledger.TryGetOperation(operation, out LogicalCutOperation cut))
-            {
-                child = side > 0f ? cut.positive : cut.negative;
-            }
-
+            // What this cap's boundary is, as the ledger said when the structure was settled. Only where the cap is
+            // -- its world plane, its outward normal and its vertices -- comes from this frame.
+            int candidateIndex = representative.candidateStart + (capIndex - rf.capStart);
+            _building.TryGetCapIdentity(candidateIndex, out VpMultiCutSnapshot.VpMultiCutCapIdentity identity);
             return new LogicalCutCapRecord(
-                _shown[rf.registration].fragment, cap.renderFragment, operation, side, published, child,
-                FixedOf(operation, side), ToVector4(cap.worldPlane), cap.outwardNormal, cap.vertexStart,
-                cap.vertexCount);
-        }
-
-        private bool FixedOf(CutOperationId operation, float side)
-        {
-            return _ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution)
-                && FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount);
+                _shown[rf.registration].fragment, cap.renderFragment, cap.boundary.face.operation, cap.boundary.side,
+                identity.published, identity.child, identity.fixedByAnchors, ToVector4(cap.worldPlane),
+                cap.outwardNormal, cap.vertexStart, cap.vertexCount);
         }
 
         /// <summary>

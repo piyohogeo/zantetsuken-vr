@@ -126,6 +126,43 @@ namespace Zantetsu.MeshCut
         public int OperationCount => _operations.Count;
 
         /// <summary>
+        /// How often <see cref="TryGetOrigin"/> has been asked. That call reads the operations in order, so a caller
+        /// that should have settled an answer once and kept it shows up here as a count that keeps rising. It is for
+        /// tests to read; nothing of the ledger's behaviour depends on it.
+        /// </summary>
+        public long OriginLookups { get; private set; }
+
+        /// <summary>
+        /// How often <see cref="TryGetOperationAtAdmission"/> has been asked. A caller reading every operation in
+        /// order raises this once per operation and once more to find the end, so a pass over the whole list shows up
+        /// here even when it happens to find nothing and asks <see cref="TryGetOrigin"/> not at all. For tests.
+        /// </summary>
+        public long AdmissionOrderReads { get; private set; }
+
+        /// <summary>
+        /// Counts the changes made here. Every call that changes anything a reader could see -- a fragment added or
+        /// retired, a cut admitted, its anchors prepared or settled, a publication prepared or made, an abort, a
+        /// geometry completed, a termination, an ownership note -- leaves this higher than it found it, and nothing
+        /// else does.
+        /// <para>
+        /// It is here so that a reader can tell **whether** to look again without looking: a reader that remembers the
+        /// value it last read from can compare and stop there. It counts occasions, not what changed, and says nothing
+        /// about which fragment or operation moved -- a reader that needs that reads the ledger as usual.
+        /// </para>
+        /// <para>
+        /// It counts changes made **through this ledger**, whoever made them, so a change nobody told the display
+        /// about is still counted.
+        /// </para>
+        /// </summary>
+        public long Revision { get; private set; }
+
+        /// <summary>Records that something a reader could see has changed here.</summary>
+        private void Changed()
+        {
+            Revision++;
+        }
+
+        /// <summary>
         /// Adds a live fragment with no parent and no fixed support: a registered object, dynamic, before any cut.
         /// </summary>
         public LogicalFragmentId AddFragment()
@@ -215,6 +252,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public bool TryGetOperationAtAdmission(int position, out LogicalCutOperation operation)
         {
+            AdmissionOrderReads++;
             if (position < 0 || position >= _operations.Count)
             {
                 operation = default;
@@ -235,6 +273,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public bool TryGetOrigin(LogicalFragmentId fragment, out CutOperationId operation, out float side)
         {
+            OriginLookups++;
             operation = default;
             side = 0f;
             if (!TryIndex(fragment, out _))
@@ -360,6 +399,7 @@ namespace Zantetsu.MeshCut
             });
             fragment.activeOperation = operation;
             _fragments[sourceIndex] = fragment;
+            Changed();
             Budget.Take();
             return LogicalCutAdmission.Admitted;
         }
@@ -421,6 +461,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = positive;
             operation.preparedNegative = negative;
             _operations[operationIndex] = operation;
+            Changed();
 
             distribution = result;
             return AnchorPreparationOutcome.Prepared;
@@ -515,6 +556,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = null;
             operation.preparedNegative = null;
             _operations[operationIndex] = operation;
+            Changed();
 
             Fragment source = _fragments[sourceIndex];
             source.state = LogicalFragmentState.Replaced;
@@ -525,6 +567,7 @@ namespace Zantetsu.MeshCut
             // for the lifetime of the ledger. The list itself is not cleared — the children's sets are separate lists.
             source.anchors = null;
             _fragments[sourceIndex] = source;
+            Changed();
 
             return LogicalCutResultOutcome.Applied;
         }
@@ -568,6 +611,7 @@ namespace Zantetsu.MeshCut
             // A retired source is nothing's target any more, so it lets its set go as well. Nothing inherited it.
             source.anchors = null;
             _fragments[sourceIndex] = source;
+            Changed();
 
             return LogicalCutResultOutcome.Applied;
         }
@@ -623,6 +667,7 @@ namespace Zantetsu.MeshCut
             record.activeOperation = default;
             record.anchors = null;
             _fragments[index] = record;
+            Changed();
             return true;
         }
 
@@ -642,6 +687,7 @@ namespace Zantetsu.MeshCut
             Fragment record = _fragments[index];
             record.authority = checked(record.authority + 1);
             _fragments[index] = record;
+            Changed();
         }
 
         // The authority check every result goes through (DESIGN 8: Source生存性、SourceのActive CutOperationId、当該
@@ -692,6 +738,7 @@ namespace Zantetsu.MeshCut
                 {
                     source.activeOperation = default;
                     _fragments[sourceIndex] = source;
+                    Changed();
                 }
 
                 return LogicalCutResultOutcome.Stale;
@@ -721,6 +768,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = null;
             operation.preparedNegative = null;
             _operations[operationIndex] = operation;
+            Changed();
             Budget.Return();
         }
 
@@ -775,6 +823,7 @@ namespace Zantetsu.MeshCut
         {
             int id = _fragments.Count + 1;
             _fragments.Add(new Fragment { state = LogicalFragmentState.Live, anchors = anchors });
+            Changed();
             return new LogicalFragmentId(id);
         }
 
@@ -783,6 +832,7 @@ namespace Zantetsu.MeshCut
         {
             int id = _operations.Count + 1;
             _operations.Add(record);
+            Changed();
             return new CutOperationId(id);
         }
 

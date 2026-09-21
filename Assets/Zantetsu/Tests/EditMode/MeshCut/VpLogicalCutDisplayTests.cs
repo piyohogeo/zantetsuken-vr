@@ -223,6 +223,418 @@ namespace Zantetsu.MeshCut.Tests
             return side;
         }
 
+        // ----- what is settled again, and what is not ---------------------------------------------------------------
+
+        /// <summary>
+        /// Frames in which nothing of the input changed settle no structure again: the ledger is not checked over, the
+        /// lineage is not walked, the candidates are not collected and the Ignored are not grouped. What is counted is
+        /// that work itself, not how often a snapshot was asked for -- one is settled every frame either way.
+        /// </summary>
+        [Test]
+        public void FramesThatChangeNothing_SettleNoStructureAgain()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                CutOperationId cut = Admit(ledger, source);
+                Prepare(ledger, cut);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+
+                    long structures = display.StructureBuilds;
+                    long validations = display.StructureValidations;
+                    long placements = display.PlacementPasses;
+                    int sides = display.SideCount;
+                    Assert.That(structures, Is.GreaterThan(0), "the first frame did settle a structure");
+                    Assert.That(sides, Is.GreaterThan(0), "and it draws something");
+
+                    for (int f = 0; f < 4; f++)
+                    {
+                        NextFrame();
+                        Assert.That(display.TryBeginFrame(), Is.True, "frame " + f + " settles");
+                    }
+
+                    Assert.That(
+                        display.StructureBuilds, Is.EqualTo(structures),
+                        "no lineage was walked and no candidate collected again over four unchanged frames");
+                    Assert.That(
+                        display.StructureValidations, Is.EqualTo(validations),
+                        "and the ledger was not checked over again");
+                    Assert.That(
+                        display.PlacementPasses, Is.EqualTo(placements + 4),
+                        "while where things stand was settled once per frame");
+                    Assert.That(display.SideCount, Is.EqualTo(sides), "and what is drawn is what it was");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A body with a **history behind it** -- a published cut, one of whose children is cut again -- is drawn
+        /// over quiet frames without the ledger's operations being read at all.
+        /// <para>
+        /// Two counts say so, each at the place it is really made: how often the operations are read in admission
+        /// order, which is a pass over the whole list, and how often a fragment's origin is looked up, which walks
+        /// them looking for one. A pass that finds nothing raises the first and not the second, so both are needed.
+        /// The history is more than one cut deep because a source that is the registration's own root is found by the
+        /// first thing a pass looks at.
+        /// </para>
+        /// <para>
+        /// A body whose cut is only pending does not go down the published path at all, so it could not show this.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void QuietFramesDrawingAPublishedHistory_ReadTheOperationsNotAtAll()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    // Shown first: a source a cut has replaced is no longer one to register.
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+
+                    // One cut published, then its positive child cut and published again: the drawn branch is two
+                    // operations below the registration's root.
+                    CutOperationId first = Admit(ledger, source);
+                    Prepare(ledger, first);
+                    Assert.That(
+                        ledger.Publish(first, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied), "the first cut is published");
+                    CutOperationId second = Admit(ledger, positive);
+                    Prepare(ledger, second);
+                    Assert.That(
+                        ledger.Publish(second, out LogicalFragmentId deep, out LogicalFragmentId deepOther),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied), "and so is the second");
+                    Assert.That(negative.IsSet && deep.IsSet && deepOther.IsSet, Is.True);
+                    Assert.That(ledger.OperationCount, Is.EqualTo(2), "there are operations to read through");
+
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+
+                    // The published children really are what is drawn, so the path this is about is the one taken.
+                    Assert.That(display.SideCount, Is.GreaterThan(0), "something is drawn");
+                    bool anyPublished = false;
+                    for (int i = 0; i < display.SideCount; i++)
+                    {
+                        anyPublished |= SideOf(display, i).published;
+                    }
+
+                    Assert.That(anyPublished, Is.True, "and at least one drawn side is a published child");
+
+                    long structures = display.StructureBuilds;
+                    long origins = ledger.OriginLookups;
+                    long admissionReads = ledger.AdmissionOrderReads;
+                    for (int f = 0; f < 4; f++)
+                    {
+                        NextFrame();
+                        Assert.That(display.TryBeginFrame(), Is.True, "frame " + f + " settles");
+                    }
+
+                    Assert.That(display.StructureBuilds, Is.EqualTo(structures), "no structure was settled again");
+                    Assert.That(
+                        ledger.AdmissionOrderReads, Is.EqualTo(admissionReads),
+                        "the operations were not read through, in the snapshot or after it");
+                    Assert.That(ledger.OriginLookups, Is.EqualTo(origins), "and no origin was looked up either");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A camera moving settles no structure again, and does change what that camera's preparation comes to --
+        /// the facing and projection work that is its own.
+        /// </summary>
+        [Test]
+        public void MovingACamera_PreparesItAgain_WithoutSettlingTheStructureAgain()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                CutOperationId cut = Admit(ledger, source);
+                Prepare(ledger, cut);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    var target = Track(new RenderTexture(16, 16, 24, RenderTextureFormat.ARGB32)
+                    {
+                        depthStencilFormat = VpStencilAttachment.EightBitStencilFormat,
+                        antiAliasing = 1,
+                    });
+                    target.Create();
+                    Camera camera = Track(new GameObject("Camera Move Test")).AddComponent<Camera>();
+                    camera.enabled = false;
+                    camera.targetTexture = target;
+                    camera.transform.SetPositionAndRotation(new Vector3(0f, 1f, -6f), Quaternion.identity);
+                    Assert.That(display.TryRegisterCamera(camera), Is.True, "register the camera");
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+                    Assert.That(display.TryPrepareCamera(camera), Is.True, "prepare it");
+                    Assert.That(
+                        display.TryGetCameraStencil(camera, out VpStencilPreparation before, out _), Is.True,
+                        "it has a preparation");
+
+                    Assert.That(before.capRecords, Is.GreaterThan(0), "there is a cap for the camera to judge");
+
+                    long structures = display.StructureBuilds;
+                    long origins = ledger.OriginLookups;
+                    long admissionReads = ledger.AdmissionOrderReads;
+
+                    // Far below the cut, looking up: the caps of a cut at y = 0 face +y and -y, so which of them a
+                    // camera is on the outward side of changes with it. That judgement is the camera's own and
+                    // nothing the snapshot's structure knows about.
+                    camera.transform.SetPositionAndRotation(new Vector3(0f, -6f, 0f), Quaternion.Euler(-90f, 0f, 0f));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after the camera moved");
+                    Assert.That(display.TryPrepareCamera(camera), Is.True, "prepare it again");
+                    Assert.That(
+                        display.TryGetCameraStencil(camera, out VpStencilPreparation after, out _), Is.True,
+                        "and it has one again");
+
+                    Assert.That(
+                        after.capRecords, Is.EqualTo(before.capRecords), "the same caps were judged");
+                    bool judgementChanged = after.hiddenCaps != before.hiddenCaps
+                        || after.emptyCaps != before.emptyCaps
+                        || after.jobs != before.jobs
+                        || after.volumeGroups != before.volumeGroups
+                        || after.ordinaryVolumeGroups != before.ordinaryVolumeGroups
+                        || after.colours != before.colours;
+                    Assert.That(
+                        judgementChanged, Is.True,
+                        "and the judgement changed: from [hidden " + before.hiddenCaps + ", empty " + before.emptyCaps
+                        + ", jobs " + before.jobs + ", groups " + before.volumeGroups + ", colours " + before.colours
+                        + "] to [hidden " + after.hiddenCaps + ", empty " + after.emptyCaps + ", jobs " + after.jobs
+                        + ", groups " + after.volumeGroups + ", colours " + after.colours + "]");
+                    Assert.That(
+                        display.StructureBuilds, Is.EqualTo(structures),
+                        "a camera moving is not a reason to settle any structure");
+                    Assert.That(ledger.AdmissionOrderReads, Is.EqualTo(admissionReads), "nor to read the operations");
+                    Assert.That(ledger.OriginLookups, Is.EqualTo(origins), "nor to look up an origin");
+                }
+            }
+        }
+
+        /// <summary>
+        /// An owner that moves moves what is drawn, and settles no structure again. The body follows a placement of
+        /// its own through the lookup the product reads, which is the same object throughout: only what it answers
+        /// changes, as an actor moving in the scene changes it. This is a test input standing in for an owner, not a
+        /// real physics owner connected to one.
+        /// </summary>
+        [Test]
+        public void MovingAFollowedOwner_MovesWhatIsDrawn_WithoutSettlingTheStructureAgain()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                CutOperationId cut = Admit(ledger, source);
+                Prepare(ledger, cut);
+
+                var placements = new VpTestPlacements().Put(source, Vector3.zero);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    display.Placement = placements;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+
+                    long structures = display.StructureBuilds;
+                    long validations = display.StructureValidations;
+                    long placementPasses = display.PlacementPasses;
+                    Vector4 before = SideOf(display, 0).clip.SignedPlane(0);
+
+                    // The same lookup, answering somewhere else: the owner moved.
+                    placements.Put(source, new Vector3(7f, -3f, 2f));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after the move");
+
+                    Assert.That(
+                        display.StructureBuilds, Is.EqualTo(structures),
+                        "an owner moving is not a reason to walk its lineage again");
+                    Assert.That(
+                        display.StructureValidations, Is.EqualTo(validations), "nor to check the ledger over");
+                    Assert.That(
+                        display.PlacementPasses, Is.EqualTo(placementPasses + 1),
+                        "where it stands was settled once more");
+                    Assert.That(
+                        SideOf(display, 0).clip.SignedPlane(0), Is.Not.EqualTo(before),
+                        "and the world plane it is clipped by followed it");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A change to the cut state is noticed and settled, whoever made it: the ledger is written here and the
+        /// display is told nothing, and it settles the structure again all the same and draws the new state.
+        /// </summary>
+        [Test]
+        public void ChangesToTheCutState_AreNoticedThoughTheDisplayWasNotTold()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.Whole));
+
+                    // Admitted.
+                    long structures = display.StructureBuilds;
+                    CutOperationId cut = Admit(ledger, source);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after admission");
+                    Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "the admission was settled");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.AwaitingInputs));
+
+                    // Its anchors distributed.
+                    structures = display.StructureBuilds;
+                    Prepare(ledger, cut);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after preparation");
+                    Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "and so was the distribution");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
+
+                    // Published.
+                    structures = display.StructureBuilds;
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied), "the cut is published");
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after publication");
+                    Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "and so was the publication");
+                    Assert.That(positive.IsSet && negative.IsSet, Is.True);
+
+                    // A fragment retired, which nothing of the display was told about either. It is added and then
+                    // settled **before** the retirement, so that what the next settlement answers to is the
+                    // retirement alone and not the addition that came with it.
+                    LogicalFragmentId other = ledger.AddFragment();
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle with that fragment added");
+                    structures = display.StructureBuilds;
+
+                    Assert.That(ledger.Retire(other), Is.True, "and only then is it retired");
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after the retirement");
+                    Assert.That(
+                        display.StructureBuilds, Is.GreaterThan(structures),
+                        "the retirement on its own was noticed, though nothing of the display made it");
+                }
+            }
+        }
+
+        /// <summary>
+        /// While the structure is being taken over rather than settled again, an owner whose placement is no longer
+        /// said is still found out: the collection is refused instead of the body being drawn where it last was.
+        /// <para>
+        /// What happens after that is the existing contract for an input that is not one, and is unchanged here: the
+        /// display has **stopped**, and saying where the owner is again does not bring it back. A refusal for room is
+        /// the kind a later opportunity retries, and that is a different case.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AnOwnerThatGoesMissing_IsFoundOutWhileTheStructureIsBeingTakenOver()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                var placements = new VpTestPlacements().Put(source, Vector3.zero);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    display.Placement = placements;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the first frame");
+
+                    long structures = display.StructureBuilds;
+
+                    // The lookup stops answering for it. Nothing structural changed.
+                    placements.Forget(source);
+                    NextFrame();
+                    Assert.That(
+                        display.TryBeginFrame(), Is.False,
+                        "the frame is not settled: where that owner is was not said");
+                    Assert.That(
+                        display.StructureBuilds, Is.EqualTo(structures),
+                        "and that was found out without settling the structure again");
+
+                    // What follows is the existing contract for an input that is not one, unchanged here: the display
+                    // has stopped, and saying where it is again does not bring it back. Only a refusal for room is
+                    // the kind a later opportunity retries -- which is its own case.
+                    Assert.That(display.IsHalted, Is.True, "an input that is not one stops the display");
+                    placements.Put(source, new Vector3(1f, 2f, 3f));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.False, "and a stopped display settles nothing after that");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A frame that has been settled is not settled again inside itself, and a change made after it was settled
+        /// waits for the next frame rather than appearing in the middle of this one.
+        /// </summary>
+        [Test]
+        public void AChangeAfterAFrameIsSettled_WaitsForTheNextOne()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (new AfterTheFrame(NextFrame, display))
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle the frame");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.Whole));
+                    long structures = display.StructureBuilds;
+                    long placements = display.PlacementPasses;
+
+                    // Admitted and prepared after this frame was settled.
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+
+                    Assert.That(display.TryBeginFrame(), Is.True, "the same frame again is nothing at all");
+                    Assert.That(
+                        display.StructureBuilds, Is.EqualTo(structures), "nothing was settled again inside this frame");
+                    Assert.That(display.PlacementPasses, Is.EqualTo(placements), "not even where things stand");
+                    Assert.That(
+                        display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.Whole),
+                        "and what this frame draws is what it was settled as");
+
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "the next frame settles");
+                    Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "taking the change then");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
+                }
+            }
+        }
+
         // ----- the three states of one cut ------------------------------------------------------------------------
 
         /// <summary>
@@ -907,8 +1319,14 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(table.TryRetireGeometry(otherGeometry), Is.True);
                     Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(1), "only the body's own is held now");
 
+                    // The refused pass did not record the state it could not take, so the structure the retry needs is
+                    // settled again rather than the un-adopted update being treated as dealt with.
+                    long structuresBeforeTheRetry = display.StructureBuilds;
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True, "the same display settles the split now");
+                    Assert.That(
+                        display.StructureBuilds, Is.GreaterThan(structuresBeforeTheRetry),
+                        "the update the refusal did not take was settled at the retry, not skipped as already done");
                     Assert.That(display.SettledCollections, Is.EqualTo(settled + 1));
                     Assert.That(display.CommandUploads, Is.EqualTo(uploads + 1));
                     Assert.That(display.SideCount, Is.EqualTo(4), "two sides per command");

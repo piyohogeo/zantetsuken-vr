@@ -184,6 +184,95 @@ namespace Zantetsu.MeshCut.Tests
             return cut;
         }
 
+        /// <summary>
+        /// A geometry commit changes what the display itself is made of -- which body is which fragment, and what it
+        /// reflects -- so the structure is settled again at the next collection. Collections on either side of it,
+        /// which change nothing, settle no structure again.
+        /// <para>
+        /// The cut here is a **real one**: the shown geometry is read and split by the product's own kernel, and what
+        /// the commit is given is that result, not a pair of sides made up here.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AGeometryCommitOfARealCut_IsSettledAgain_AndQuietCollectionsAroundItAreNot()
+        {
+            Scene scene = NewScene();
+            try
+            {
+                LogicalCutLedger ledger = scene.ledger;
+                LogicalFragmentId root = ledger.AddFragment();
+                Assert.That(
+                    scene.display.TryShow(
+                        root, scene.geometry, k_geometryLocalToOwner, k_lineageToGeometryLocal,
+                        System.Array.Empty<VpClipBoundary>()),
+                    Is.True,
+                    "show the body");
+                scene.placements.of[root] = k_geometryLocalToOwner;
+
+                var plane = new float4(0f, 1f, 0f, 0f);
+                var (cut, positive, negative) = Cut(scene, root, plane);
+                scene.placements.of[positive] = k_geometryLocalToOwner;
+                scene.placements.of[negative] = k_geometryLocalToOwner;
+                Collect(scene);
+
+                // A collection that changes nothing settles no structure again.
+                long structures = scene.display.StructureBuilds;
+                long validations = scene.display.StructureValidations;
+                Collect(scene);
+                Assert.That(
+                    scene.display.StructureBuilds, Is.EqualTo(structures),
+                    "a collection with nothing changed settles no structure again");
+                Assert.That(scene.display.StructureValidations, Is.EqualTo(validations), "and checks the ledger not at all");
+
+                long inputs = scene.display.InputRevision;
+                Assert.That(
+                    CommitProduced(scene, root, cut, plane, positive, negative), Is.True, "the commit goes through");
+                Assert.That(
+                    scene.display.InputRevision, Is.GreaterThan(inputs),
+                    "which the display counts as a change to what it is made of");
+
+                Collect(scene);
+                Assert.That(
+                    scene.display.StructureBuilds, Is.GreaterThan(structures),
+                    "so the structure was settled again, at the ordinary boundary and not before it");
+                AssertDrawn(scene, positive, "the positive child after the commit");
+                AssertDrawn(scene, negative, "the negative child after the commit");
+
+                // What the commit changed is in the structure that was settled again: the one body has become the two
+                // children, each drawn whole where its own placement says, with the boundary between them now part of
+                // the geometry rather than a clip. Neither is drawn as a side of the cut any more, which is what
+                // committing it means.
+                for (int i = 0; i < scene.display.SideCount; i++)
+                {
+                    Assert.That(scene.display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
+                    Assert.That(
+                        side.operation == cut, Is.False,
+                        "side " + i + " is no longer clipped by the cut the commit carried");
+                }
+
+                // And each child still stands where its own placement says, over the structure that is reused after.
+                Matrix4x4 moved = Owner(new Vector3(2f, 0f, 0f), 0f) * k_geometryLocalToOwner;
+                scene.placements.of[positive] = moved;
+                long afterTheCommit = scene.display.StructureBuilds;
+                Collect(scene);
+                Assert.That(
+                    scene.display.StructureBuilds, Is.EqualTo(afterTheCommit),
+                    "moving a child after the commit settles no structure again");
+                AssertDrawn(scene, positive, "the positive child, moved, over the reused structure");
+
+                // And the collection after it is quiet again.
+                structures = scene.display.StructureBuilds;
+                Collect(scene);
+                Assert.That(
+                    scene.display.StructureBuilds, Is.EqualTo(structures),
+                    "the collection after the commit settles no structure again");
+            }
+            finally
+            {
+                Dispose(scene);
+            }
+        }
+
         private static (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) Cut(
             Scene scene, LogicalFragmentId source, float4 plane)
         {
@@ -742,6 +831,12 @@ namespace Zantetsu.MeshCut.Tests
         /// the first boundary through the display's own commit advances what is selected: the one aggregate becomes
         /// two, each rooted at its own side of the ignored cut and each standing where its own first living branch
         /// stands, and the branch that no longer has anything ignored goes back to its own placement.
+        /// <para>
+        /// It also watches what is settled again and what is not: the aggregate is taken over across quiet
+        /// collections, the commit settles it again, and moving a representative afterwards does not. The commit
+        /// here is the existing one of this file -- the positive side borrows the geometry it already had and the
+        /// negative side is empty -- so what is confirmed is that path, not a freshly cut pair.
+        /// </para>
         /// </summary>
         [Test]
         public void ACommitThatLeavesAnIgnoredBoundary_SplitsTheAggregateAndKeepsEachOneFollowing()
@@ -782,6 +877,25 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(before[0].root, Is.EqualTo(last), "rooted at the source of the ignored cut");
                 SamePlacement(mAbove, before[0].geometryLocalToWorld, "standing where its first living branch does");
 
+                // The aggregate is taken over, not settled again, over collections that change nothing. There is a
+                // long chain of operations behind it, so a pass over them all would show here.
+                long structures = scene.display.StructureBuilds;
+                long origins = ledger.OriginLookups;
+                long admissionReads = ledger.AdmissionOrderReads;
+                for (int c = 0; c < 3; c++)
+                {
+                    Collect(scene);
+                }
+
+                Assert.That(scene.display.StructureBuilds, Is.EqualTo(structures), "no structure was settled again");
+                Assert.That(ledger.OriginLookups, Is.EqualTo(origins), "no lineage was walked");
+                Assert.That(
+                    ledger.AdmissionOrderReads, Is.EqualTo(admissionReads),
+                    "and the operations were not read through at all");
+                List<VpMultiCutRenderFragment> unchanged = Aggregates(scene);
+                Assert.That(unchanged.Count, Is.EqualTo(1), "the same one shape is drawn");
+                SamePlacement(mAbove, unchanged[0].geometryLocalToWorld, "in the same place");
+
                 // The first boundary's geometry is committed through the display's own entry. The positive side
                 // borrows the geometry it already had, which is the side everything here descends from.
                 Assert.That(
@@ -791,6 +905,9 @@ namespace Zantetsu.MeshCut.Tests
                     Is.True,
                     "the first boundary is committed");
                 Collect(scene);
+                Assert.That(
+                    scene.display.StructureBuilds, Is.GreaterThan(structures),
+                    "the commit changed the structure, so it was settled again");
 
                 // One boundary left the candidates, so the selected window moved on by one. The ninth boundary is
                 // selected now, and what is ignored is the tenth -- a different root on each side of the ninth.
@@ -809,11 +926,18 @@ namespace Zantetsu.MeshCut.Tests
                     mBelow, belowGroup.geometryLocalToWorld,
                     "including the side that was not first before");
 
-                // Each follows its own first branch from here.
+                // Each follows its own first branch from here -- and moving one is not a reason to settle anything
+                // again or to read the operations.
+                structures = scene.display.StructureBuilds;
+                origins = ledger.OriginLookups;
+                admissionReads = ledger.AdmissionOrderReads;
                 Matrix4x4 movedBelow = Owner(new Vector3(-6f, 4f, 1f), 200f) * k_geometryLocalToOwner;
                 scene.placements.of[belowDeep] = movedBelow;
                 scene.placements.of[belowDeepOther] = movedBelow;
                 Collect(scene);
+                Assert.That(scene.display.StructureBuilds, Is.EqualTo(structures), "the move settled no structure again");
+                Assert.That(ledger.OriginLookups, Is.EqualTo(origins), "walked no lineage");
+                Assert.That(ledger.AdmissionOrderReads, Is.EqualTo(admissionReads), "and read no operations");
                 after = Aggregates(scene);
                 SamePlacement(
                     movedBelow, after.Find(rf => rf.root.Equals(below)).geometryLocalToWorld,

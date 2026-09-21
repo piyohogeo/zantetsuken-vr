@@ -75,6 +75,17 @@ namespace Zantetsu.MeshCut.Tests
             return this;
         }
 
+        /// <summary>
+        /// This fragment is no longer one this lookup answers for, so it is asked about and nothing is said -- an
+        /// owner that has gone, as far as a reader can tell.
+        /// </summary>
+        internal VpTestPlacements Forget(LogicalFragmentId fragment)
+        {
+            _following.Remove(fragment);
+            _static.Remove(fragment);
+            return this;
+        }
+
         /// <summary>This fragment is drawn where it was registered, said so on purpose.</summary>
         internal VpTestPlacements Static(LogicalFragmentId fragment)
         {
