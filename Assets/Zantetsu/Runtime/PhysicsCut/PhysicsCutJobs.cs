@@ -216,8 +216,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            data.SetVertexBufferParams(n, new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3));
-            data.SetIndexBufferParams(0, IndexFormat.UInt16);
+            SetPositionOnlyLayout(data, n);
             NativeArray<float3> vertices = data.GetVertexData<float3>();
             float3* source = output.bank.vertices + range.vertexBase;
             var lower = new float3(float.MaxValue);
@@ -248,9 +247,29 @@ namespace Zantetsu.PhysicsCut
 
         private static void Empty(Mesh.MeshData data)
         {
-            data.SetVertexBufferParams(0, new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3));
-            data.SetIndexBufferParams(0, IndexFormat.UInt16);
+            SetPositionOnlyLayout(data, 0);
             data.subMeshCount = 0;
+        }
+
+        /// <summary>
+        /// The one vertex layout every cooked element has: positions alone, and no index buffer.
+        /// <para>
+        /// **The attribute is handed over in a native array, not a managed one.** <see
+        /// cref="Mesh.MeshData.SetVertexBufferParams(int, VertexAttributeDescriptor[])"/> takes its attributes as
+        /// <c>params</c>, so each call allocates a managed array -- which Burst cannot compile (BC1028), and this job
+        /// is Burst-compiled. The overload taking a <see cref="NativeArray{T}"/> says the same thing with memory the
+        /// job can hold itself; <see cref="Allocator.Temp"/> is the allocator a job's own scratch uses, freed here in
+        /// the call that made it.
+        /// </para>
+        /// </summary>
+        private static void SetPositionOnlyLayout(Mesh.MeshData data, int vertexCount)
+        {
+            var attributes = new NativeArray<VertexAttributeDescriptor>(
+                1, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            attributes[0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3);
+            data.SetVertexBufferParams(vertexCount, attributes);
+            attributes.Dispose();
+            data.SetIndexBufferParams(0, IndexFormat.UInt16);
         }
     }
 

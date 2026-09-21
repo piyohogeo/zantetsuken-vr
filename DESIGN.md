@@ -925,6 +925,16 @@ Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 
 
 **残件（現在）。**Hit 検出そのもの（Actor→論理子の解決だけがここにある）、Scene 常設の構成根、建物 World D6、Character、分離 Impulse の算出式と「向き」、XR・性能測定。**A・B の時点で残件だった handoff は、この単位で成立した**——A の「Final handoff は残る」、B の「保持した成果物の行き先」はこの実装が受けている。handoff の成立は Phase 全体の完成を意味しない。
 
+CutWorldSandbox の IL2CPP Player 確認（2026-09-22）。接続済みの切断経路が Editor の外でも成立することを、**Windows x64・IL2CPP・Development Player** で確認した。性能評価でも全試験の Player 移植でもない。
+
+**build 入口。**対象 Scene（`Assets/Scenes/CutWorldSandbox.unity`）だけを明示する最小の入口をメニューと `-executeMethod` の双方から再実行できる形で用意した。**設定は読み取って記録するだけで変更しない**：backend が IL2CPP でなければ build せずに止まる。実設定は build ログに残る（`backend=IL2CPP target=StandaloneWindows64 il2cppConfiguration=Release il2cppCodeGeneration=OptimizeSpeed stripping=Minimal apiCompatibility=NET_Standard_2_0 graphicsApis=Direct3D11 autoGraphicsApi=False`）。Player・build ログ・Player ログ・画像はいずれもリポジトリ外に出す。
+
+**Editor では見えなかった 2 つの不成立要因。**①`Mesh.MeshData.SetVertexBufferParams` の `params VertexAttributeDescriptor[]` は呼出しごとに managed 配列を確保するため、Burst コンパイル対象の cook job で BC1028 になる。**Editor では試験 1 件の失敗で済むが、Player build はこれで止まる。**同じ指定を `NativeArray<VertexAttributeDescriptor>`（`Allocator.Temp`）で渡す 1 か所のヘルパにまとめて解消した。②stencil の 3 shader は `Shader.Find` で名前から探されるだけで、どのアセットからも参照されない。Player build には収録されず、`Shader.Find` が null を返して**表示の作成が失敗し、DESIGN 4 の共通 Player 終了 latch が起動直後に Player を終わらせる**。その 3 本だけを Always Included Shaders に加えて解消した。link.xml の包括追加、stripping の停止、Mono への切替はしていない。
+
+**確認した経路**（実 Player、ウィンドウ表示、`-nographics` なし）。①初期 body が**表示 material 自身の色で**描かれる、②切断要求が handoff を経て実 Geometry Commit に達する（**段階値はログで確認**し、画像から推定しない）、実 Actor を離すと正負の子それぞれと断面が見える、③公開された子を既存の入口から再切断でき、Physics・Geometry・表示まで進む、④通常終了で `IsReleased`／`IsDrained`／表示の破棄に到達する（**プロセスが閉じたことを資源回収の証拠にしない**）。**Provisional の対が立っていたのは 2 フレーム**で、その画像は取得していないため、**Provisional の見え方を Player で確認したとは書かない**。
+
+**確認していない範囲。**Hit 検出、XR、性能、Shadow／Depth／Stencil の全面検証、Scene unload・強制終了時の回収保証、手操作（Space／C／E）での Player 確認。
+
 最小 Scene・カメラ描画の接続（2026-09-21）。構成根までつながった切断経路を、Scene を再生すると実際に画面へ描かれる状態にした。
 
 **Scene と設定。**`Assets/Scenes/CutWorldSandbox.unity`（Build Settings 登録済み）に、`CutWorldRoot`＋明示した `CutWorldProfile` アセット、表示 material、描くカメラ、床、代表の切断対象と確認用入力を置く。Scene は Editor のメニュー（`Zantetsu/Build the cut world sandbox scene`）から**同じ値で作り直せる**。既存 Sandbox Scene は変更していない。**Scene を開いて Play するだけで再現**でき、試験が非公開 field を書き換えなければ起動しない構成にはしていない。確認用入力は既存の受付へ要求を渡すだけで、Hit 検出の代替も操作 UI 基盤も作らない。
