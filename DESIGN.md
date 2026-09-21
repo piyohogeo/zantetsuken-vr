@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・観測／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-09-20 |
+| 最終更新 | 2026-09-21 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -742,6 +742,8 @@ Half-edge、edge hash、圧縮adjacency、Contour表現、三角形化、局所�
 旧Cooked Convex GeometryをProvisional Shape Instanceへ結び付ける前に当該GeometryのProvisionalCollisionResourceLeaseを取得する。公開までは現在の旧物理を変更せず、途中のActor／Shape／ConstraintをGameplayや物理Stepへ部分公開しない。cleanupの内部順序は実装詳細であり、参照するShape／Actorと必要なPhysics Stepの寿命を満たして当該Leaseを一度だけ返す。別Leaseの参照消失は待たず、Geometry自体は全参照と最後のLease返却前に破棄しない。Timeoutだけで退役・Lease返却しない。
 
 構築に成功したProvisional一式は、安全なPhysics境界で旧ActorをSceneから外す操作と正負2 Actorおよび必要なConstraintのScene投入をall-or-noneに切り替える。LogicalFragmentは未分裂のまま、両ActorのHitを同じSource LogicalFragmentへ解決する。旧資源の回収は既存の参照・Physics Step寿命規則に従う。
+
+Provisionalを省略して直接Final Commitする場合を除き、切断受付時に必要入力が揃い、4.4の既存予算条件のもとでその描画フレーム内に安全なPhysics公開境界を確保できる通常ケースでは、Provisional一式の構築と公開を受付フレーム内で行う。呼出し側は実際のPlayerLoopと受付位置に合わせてこの経路を接続し、構築後の一律の翌フレーム送りやPump／Dispatchの呼出し順だけによる固定待ちを設けない。FinalのConvex切断・cookや表示Geometry切断の完了を待たない。入力未完了、予算終了または安全な公開機会がない場合は既存Pendingとして次の成立機会へ進め、構築不能時のAbort規則は変更しない。同フレーム化のための強制Complete・busy polling・再入は4.4に従って行わず、物理シミュレーションにも再入しない。Scene公開後の移動・分離は物理Stepの結果であり、同フレームに見える隙間は保証しない。
 
 Provisional生成のためにConvex切断、Mesh複製、Physics.BakeMeshを行わない。同系譜Sibling間のCollision responseだけを無効にし、外界とのCollisionは有効にする。旧Convex共有によるGhost Contact、早い接触、外部物体へのImpulse重複を許容する。点Anchorを持つ所有者は固定しOffset／Impulseは0、持たない側だけを動かす。GeometryのSide空／非空を物理固定の条件にしない。
 
@@ -1524,6 +1526,8 @@ T-005の削減成功例をPhase 3.9の再切断とPhase 4のT-091 cook／handoff
 T-007／T-083でA Geometry未完了のままBを受付・公開し、A Commitで現在B子孫へGA＋Temporary Bを適用してTemporary Aだけを回収する。B Kernel・CommitはA Commit後とし、同じ更新内でもよい。片枝の退役は生存SiblingのCommitを妨げず、全読者退役なら履歴完成だけの計算を続けず既存IncompleteOperationTraceとする。描画経路固有DescriptorはRendererが構築し、同じ描画Snapshotの全PassでCommitted GeometryとTemporary集合が一致する（一致するのは参照する集合であり、実際に適用するclip面は、本体・Depth・Shadowが全Selected面、Stencil Volumeが通常Colorでは自身のCap面だけ、最後のColorでは全Selected面。5.6、D-183、D-186）。
 
 T-074のOwner点集合の確認をT-091のProvisionalへ接続し、直接Finalを含め7.1の配分が一貫することを確認する。旧Cooked Geometry共有・Final Shape交換・再cookで再配分されず、既存recenterの写像で同じ点を表すことを少数の既存Fixtureで確認する。新しい試験体系は追加しない。
+
+T-091の公開タイミングは、7.1.1の条件が揃った代表ケースを製品の受付・公開経路に通し、FinalのConvex切断・cookと表示Geometry切断が未完了でも受付とProvisional公開の描画フレーム番号が一致することを確認する。試験だけで公開APIを直接呼び、製品の呼出し経路を未接続のまま本確認を完了扱いにしない。
 
 T-091のLease確認は、各旧Cooked GeometryをProvisional Shapeへ結び付ける前の取得、部分構築時の非公開、保護参照の解消と必要なPhysics Step後の一度だけの返却、最後の参照・Lease前のGeometry破棄禁止に絞る。少数の失敗・交換・Staleでuse-after-free、二重返却、leakがないことを確認し、内部破棄順は固定しない。cleanupの遅延でTransactionを延命せず、TimeoutだけではLeaseを返さない。
 
