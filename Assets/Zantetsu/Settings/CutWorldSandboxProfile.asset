@@ -1,0 +1,43 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 132efaec75dca934e8f3c7bc559b000a, type: 3}
+  m_Name: CutWorldSandboxProfile
+  m_EditorClassIdentifier: Zantetsu.PhysicsCut::Zantetsu.PhysicsCut.CutWorldProfile
+  vertexLimit: 128
+  concurrentCookReservations: 4
+  supportEpsilon: 0.0001
+  anchorEpsilon: 0.00001
+  vertexCapacity: 65536
+  indexCapacity: 262144
+  geometryDescriptorCapacity: 512
+  submeshCapacity: 2048
+  vertexBlockCapacity: 2048
+  waitingCapacity: 32
+  reservedForUrgent: 8
+  frameBudget: 64
+  unityJobCapacity: 8
+  geometryWorkerCount: 4
+  backgroundWorkerCount: 2
+  drawCommandCapacity: 256
+  drawInstanceCapacity: 512
+  geometryReferenceCapacity: 512
+  displayInstanceCapacity: 512
+  branchCapacity: 128
+  candidateCapacity: 512
+  chainDepth: 16
+  maxStencilColours: 4
+  capFacingEpsilon: 0.01
+  capPlaneEpsilon: 0.0001
+  capNdcMargin: {x: 0.01, y: 0.01}
+  stencilCameraCapacity: 4
+  maxIncompleteCuts: 32
+  shutdownTimeoutMilliseconds: 5000

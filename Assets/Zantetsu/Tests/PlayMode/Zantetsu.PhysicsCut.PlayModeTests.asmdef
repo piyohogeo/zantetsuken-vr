@@ -9,7 +9,8 @@
         "Zantetsu.Rendering",
         "Unity.Mathematics",
         "Unity.Collections",
-        "Unity.Burst"
+        "Unity.Burst",
+        "Zantetsu.Sandbox"
     ],
     "includePlatforms": [],
     "optionalUnityReferences": [

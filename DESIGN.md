@@ -925,6 +925,18 @@ Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 
 
 **残件（現在）。**Hit 検出そのもの（Actor→論理子の解決だけがここにある）、Scene 常設の構成根、建物 World D6、Character、分離 Impulse の算出式と「向き」、XR・性能測定。**A・B の時点で残件だった handoff は、この単位で成立した**——A の「Final handoff は残る」、B の「保持した成果物の行き先」はこの実装が受けている。handoff の成立は Phase 全体の完成を意味しない。
 
+最小 Scene・カメラ描画の接続（2026-09-21）。構成根までつながった切断経路を、Scene を再生すると実際に画面へ描かれる状態にした。
+
+**Scene と設定。**`Assets/Scenes/CutWorldSandbox.unity`（Build Settings 登録済み）に、`CutWorldRoot`＋明示した `CutWorldProfile` アセット、表示 material、描くカメラ、床、代表の切断対象と確認用入力を置く。Scene は Editor のメニュー（`Zantetsu/Build the cut world sandbox scene`）から**同じ値で作り直せる**。既存 Sandbox Scene は変更していない。**Scene を開いて Play するだけで再現**でき、試験が非公開 field を書き換えなければ起動しない構成にはしていない。確認用入力は既存の受付へ要求を渡すだけで、Hit 検出の代替も操作 UI 基盤も作らない。
+
+**カメラ描画。**`CutWorldCameraDrawing` が、与えられたカメラを表示へ登録し、**そのカメラの描画開始時**（`RenderPipelineManager.beginCameraRendering`）に `TryPrepareCamera` → `VpLogicalCutDisplay.Render(layer, camera)` を 1 回だけ呼ぶ。**収集は製品の LateUpdate、描画はその結果を使う**。**この位置にしたのは実測による**：本プロジェクト（Unity 6000.3.22f1・URP 17.3・D3D11）で、**この表示の呼出しにカメラを指定した場合**、同じ命令を Update／LateUpdate で登録すると記録上はすべて描画済みでも画素が 1 つも出ず、`beginCameraRendering` で登録すると出ることを測定した。これは**この構成・この呼出しについての観測**であり、Unity の描画 API 一般や他バージョン・他パイプライン、カメラを指定しない呼出しについては測定していない。表示は stencil 作業をカメラ単位で持つためカメラを指定する必要があり、指定を外す（全カメラ描画）選択は採らない。カメラ側から受付・Commit・Snapshot 構造の再評価は行わず、同じカメラに二重描画しない。表示が開いていないフレーム（`IsFrameOpen` が false）は何も描かず、それは正常な状態である。無効化・通常終了の後は、破棄済みの表示・buffer に触れない。material・Stencil・Depth・Shadow は既存契約のままで、新しい Renderer Framework も汎用カメラ管理も作っていない。**今回対応するカメラ構成は、単一カメラ・単一 layer・SolidColor の URP 既定**である。
+
+**断面の見せ方。**表示専用 Offset は追加していない。断面を露出させる確認は実 Actor の移動・回転で行い、Scene が渡す分離 Impulse は**確認用の値**として製品の未決の算出式・向きと区別している。人工的な隙間も、見えない断面の赤画素も要求しない。
+
+**確認**（PlayMode、実 Scene・実カメラ、実画素）。**対象はその色で数える**：床とクリア色はいずれも灰色なので、表示 material に混ざらない色を与え（側面＝青、端面＝橙）、切断面は表示自身の debug 色（実 Cap＝緑、Provisional の面＝赤）で数える。**「背景と違う画素」という数え方はしない**（床だけでも通ってしまう）。見たのは、①切断前に body がその Actor の位置に自分の色で描かれ、何も無い場所には無く、Cap も Provisional の面も 0 画素であること、②受付のフレームに Provisional の対が立ち、そのフレームの記録（観測部品が収集の後に書き取る）と**同じフレームの画像**に対象の画素があること、③ handoff と Geometry Commit を跨ぐ全フレームで対象の画素が 0 にならず、**Commit の後に収集が settle したフレーム**について、そのフレームの記録（Committed・対は立たない・body は描かれない・子がそれぞれ 1 断片）と**そのフレームの画像**（記録した子の位置に対象の画素がある）が対応すること、④ Commit 後に一方の子を実際に動かすと**各子の断面それぞれに Cap が出**、**断面の直外側**（同じ高さの体の真横と各子の反対側の端）には Cap が 1 画素も無く、離れた隙間には対象の画素が無いこと（Cap の漏れも旧表示の残留も無い）、⑤ Final の回収を保持して Provisional の期間を延ばした状態でも、同じ判定で各側の断面が Provisional の色で描かれ、直外側には出ないこと、⑥子の再切断後も描かれていること、⑦通常終了では受付と描画が閉じ、**通常フレームだけで**回収と解放に到達し、以後対象の画素が 0 になること。
+
+**確認していない範囲。**Shadow、生 Depth、Stencil buffer の内容そのもの、XR、性能。**描画全体を検証したとは書かない。**Scene unload・アプリ終了時の回収保証も、この単位では完成扱いにしない。
+
 最小構成根と PlayMode 自動駆動の接続（2026-09-21）。これまで試験側で組み立てていた部品を、製品側の構成根 1 つ（`CutWorldRoot` + `CutWorldProfile`）で結び、Unity の通常の Update／LateUpdate だけで 受付 → Provisional 公開 → Final handoff → 表示 Geometry Commit → 子の再切断 まで進む状態にした。新しい Scheduler・汎用 DI・独自 PlayerLoop は追加していない。
 
 **組み立てと所有者。**`CutWorldRoot`（MonoBehaviour、実行順 −200）が `Awake` で台帳・`PhysicsOwnerRegistry`・配置照会・storage・参照表・表示・dispatcher と 3 つの destination・`SharedWorkFrame`・`PhysicsCutCook`・`CutDag`（実 Commit は `VpDisplayGeometryCommit`、失敗通知は root 自身）・`ProvisionalCutDriver` を生成し、driver を bind する。**駆動はしない**：一つのものが駆動し、それは driver（Unity の Update／LateUpdate）である。構成根は「作る」「登録する」「終える」だけを行い、二重駆動しない。body の登録は `TryAddBody` 1 呼出しで、初期 Physics Shape・基準 Geometry・Fragment・表示登録を同時に結ぶ。拒否しうる表示登録を先に行い、拒否されたら発行した Fragment を退役させて**何も登録されていない状態で false を返す**（半登録を残さない）。成功した body の Object は**この世界のもの**になり、その Fragment の退役（＝その body を置き換える切断）で対応が破棄する。**2 つの frame 写像を別々に受け取る**：`lineageToGeometryLocal`（系統の論理 frame → Geometry 座標。カーネルの面変換と子への継承に使う）と `geometryLocalToOwner`（Geometry → 物理 Owner 座標。描画が Actor に追従する根拠）。

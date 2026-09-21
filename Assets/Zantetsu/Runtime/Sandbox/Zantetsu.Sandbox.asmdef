@@ -2,11 +2,19 @@
     "name": "Zantetsu.Sandbox",
     "rootNamespace": "Zantetsu.Sandbox",
     "references": [
-        "Zantetsu.Core"
+        "Zantetsu.Core",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.MeshCut",
+        "Zantetsu.Rendering",
+        "Zantetsu.ConvexCut",
+        "Unity.Mathematics",
+        "Unity.Collections",
+        "Unity.Burst",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,

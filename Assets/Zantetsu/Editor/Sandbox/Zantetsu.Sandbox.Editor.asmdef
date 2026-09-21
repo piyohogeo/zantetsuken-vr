@@ -3,7 +3,11 @@
     "rootNamespace": "Zantetsu.EditorTools.Sandbox",
     "references": [
         "Zantetsu.Core",
-        "Zantetsu.Sandbox"
+        "Zantetsu.Sandbox",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.MeshCut",
+        "Zantetsu.Rendering",
+        "Unity.Mathematics"
     ],
     "includePlatforms": [
         "Editor"

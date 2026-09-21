@@ -88,6 +88,13 @@ namespace Zantetsu.PhysicsCut
         internal Func<WorkDestination, IWorkExecutor> executors;
 
         /// <summary>
+        /// The same, for the **next** world built in this domain: a world a scene builds has already run its Awake by
+        /// the time anything outside could reach it, so a test that must decide when a finished work comes back puts
+        /// its destinations here before the scene is loaded. It is read once, by the next build, and cleared there.
+        /// </summary>
+        internal static Func<WorkDestination, IWorkExecutor> nextWorldExecutors;
+
+        /// <summary>
         /// The Player's termination API, called once when the termination request of DESIGN 4 is made. Null means the
         /// product's own; a test gives its own so that no test ends the editor.
         /// </summary>
@@ -258,11 +265,13 @@ namespace Zantetsu.PhysicsCut
             // drawn somewhere it used to be.
             Display.Placement = Placement;
 
-            _unityJob = executors?.Invoke(WorkDestination.UnityJob)
+            Func<WorkDestination, IWorkExecutor> destinations = executors ?? nextWorldExecutors;
+            nextWorldExecutors = null;
+            _unityJob = destinations?.Invoke(WorkDestination.UnityJob)
                         ?? new UnityJobWorkExecutor(profile.UnityJobCapacity);
-            _geometryPool = executors?.Invoke(WorkDestination.GeometryPool)
+            _geometryPool = destinations?.Invoke(WorkDestination.GeometryPool)
                             ?? WorkerPoolExecutor.GeometryPool(profile.GeometryWorkerCount);
-            _backgroundPool = executors?.Invoke(WorkDestination.BackgroundPool)
+            _backgroundPool = destinations?.Invoke(WorkDestination.BackgroundPool)
                               ?? WorkerPoolExecutor.BackgroundPool(profile.BackgroundWorkerCount);
             Dispatcher = new SharedWorkDispatcher(
                 profile.WaitingCapacity, profile.ReservedForUrgent, profile.FrameBudget, _unityJob, _geometryPool,

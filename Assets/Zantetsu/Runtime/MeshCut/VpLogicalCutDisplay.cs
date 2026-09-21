@@ -907,6 +907,13 @@ namespace Zantetsu.MeshCut
         /// <summary>Whether a draw has already been registered in the frame this display last settled.</summary>
         public bool HasDrawnThisFrame => _drawRegisteredThisFrame;
 
+        /// <summary>
+        /// Whether this frame has been opened for drawing: a collection has settled and <see cref="TryBeginFrame"/>
+        /// has opened it. A caller that draws asks this first -- a frame that is not open has nothing to draw, which
+        /// is an ordinary state and not an error, while <see cref="Render"/> refuses it as a mistake of order.
+        /// </summary>
+        public bool IsFrameOpen => _hasSnapshot && _openFrame == CurrentFrame;
+
         /// <summary>How many collections have settled a frame. A collection refused settles nothing.</summary>
         public int SettledCollections { get; private set; }
 
