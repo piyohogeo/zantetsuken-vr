@@ -455,6 +455,16 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>
+        /// The cut one operation's geometry is running, for the tests about what it holds while it runs: its
+        /// reservation of the storage's room, and the input it is reading. Null once the cut is over or was given up.
+        /// </summary>
+        internal VpStorageCutRequest RequestOf(CutOperationId operation)
+        {
+            Node node = Find(operation);
+            return node?.request;
+        }
+
         /// <summary>The result a cut is holding before it is committed or given back, for the tests about ownership.</summary>
         internal bool TryGetResultBeforeCommit(CutOperationId operation, out VpStorageCutResult result)
         {

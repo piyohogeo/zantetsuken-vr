@@ -925,6 +925,20 @@ Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 
 
 **残件（現在）。**Hit 検出そのもの（Actor→論理子の解決だけがここにある）、Scene 常設の構成根、建物 World D6、Character、分離 Impulse の算出式と「向き」、XR・性能測定。**A・B の時点で残件だった handoff は、この単位で成立した**——A の「Final handoff は残る」、B の「保持した成果物の行き先」はこの実装が受けている。handoff の成立は Phase 全体の完成を意味しない。
 
+物理受付と表示 Geometry DAG・Commit の接続（2026-09-21）。一度の受付で、同じ CutOperationId のもとに物理と表示 Geometry の両責務が動く製品経路を成立させた。
+
+**受付は一度だけ。**`ProvisionalCutDriver` は robust support の判定（DESIGN 7.6）で切断が成立すると判断した後に、台帳へ**一度だけ**受付を求める。表示 Geometry がある場合はその要求を `CutDag.TryAdmit` を通して出し、台帳が発行したまさにその Operation に Geometry の仕事が 1 つ登録される。表示 Geometry がない構成では従来どおり台帳へ直接求める。No-op（片側に支持がない平面）と受付拒否では Operation が生じないので、Geometry Node も Work も生じない。第二の台帳・独自 ID・汎用イベント基盤は追加していない。この接続では論理子公開を Final handoff に任せ、**DAG から重ねて `Publish` しない**（`CutDag` は受付を台帳へ行い、Geometry 完了時は `CompleteGeometry`、Commit なしの終了時は `Terminate` で台帳を更新する。行わないのは論理子の公開だけである）。
+
+**実際の Commit へ接続する。**Commit は `VpDisplayGeometryCommit`（`VpLogicalCutDisplay.TryCommitCut`）——GPU 転送と表示登録の更新を伴う実際の入口——であり、試験用の代替ではない。Commit が不成立なら何も変わらず、成果物は DAG が保持したまま後の機会に再提示される（部分公開はしない）。未完了枠は **Geometry 責務の完了時**に `CompleteGeometry` で返る。Final handoff は返さない。Geometry の失敗は `ICutGeometryFault` へ渡り、物理不成立へは読み替えない。表示 Offset・履歴の毎フレーム再探索・容量問合せ Worker は復活させていない。
+
+**座標。**受付面は Source fragment の論理 frame の値で、そのまま台帳が採用し Commit が公開する。カーネルが読む面はその値を**基準 Geometry 自身の frame**へ 1 度だけ変換したもので、変換は Geometry が読まれる時点で行う。物理 Owner の現在配置はそのどちらでもなく、描画がそれに追従するだけである。動いた Actor の現在位置から受付面を作り直すことも、Commit 時に Actor を戻すこともしない。
+
+**更新と終了。**駆動は `SharedWorkFrame` の**同一フレーム**で行う。`Advance` は**同じ frame id のまま、frame の更新と回収を交互に繰り返す**。回収は常に更新の直後にあり、**最後の更新の後にも必ず回収がある**：handoff による論理子公開はその Operation の Commit 条件であり、その Commit は子切断カーネルの依存解消である一方、frame の更新は別要求の数値・Bake を回収してその要求を handoff 可能にするからである。どちらを端に残しても、呼出し順だけで生じる固定待ちになる。追加の機会は、**直前の回収が実際に何かを終わらせ、かつフレームの残予算がある**ときだけ取る。この 2 つは別物で、一方が他方を代弁しない：frame の更新は予算 0 でも参加者を一度 Pump するので「更新が動いた」は「まだ進めてよい」ではなく、逆に更新が何も動かさなくても直後の回収が公開を進めることはある。そこで残予算は `SharedWorkDispatcher.RemainingBudget` に直接尋ね、回収は自分の進捗で語り、いずれにせよ回収が最後に来る。同じ id の再呼出しは予算を補充しない（`SharedWorkFrameProgress.Plus` は 1 フレーム分として合算する）。同期待ち・強制 Complete・busy polling は追加していない。Abort・Stale・明示終了では、DAG は台帳の状態を読んで自分の Node を終了し、未公開の成果物（生成した index range）と入力保持を既存の回収時点で返す。**Physics の要求記録が handoff 後に消えても Geometry の責務は残る**（Node は Commit か回収まで生きる）。Driver 終了後に残る Work の回収主体は **`SharedWorkFrame` に参加している `CutDag` 自身**であり、frame の所有者が pump する（`ProvisionalCutRecovery` と同じ扱い）。DAG の生成・破棄は呼出側のもので、この駆動は所有しない。
+
+**確認**（EditMode・製品更新入口経由・実 storage／実 display／実 GPU 転送／実 Actor）：①Geometry 未完了でも Provisional→Final と論理子公開が進み、後着の実 Commit で子が自分の Geometry を持ち未完了枠が返る。②Geometry が先に終わっても論理子公開前には Commit されず、公開後に適用される。③親 Geometry 未完了のまま Final 子を再切断でき、子のカーネルは親 Commit を待ち、**親が Commit したその更新で**実際に destination へ投入される。④描画は Commit の前後とも実 Actor の配置へ追従する（移動・回転を与えて確認）。⑤Geometry 実行中の明示終了では Commit されず、成果物と枠が一度だけ返り、物理側は既存規則どおり Source を退役させる。⑥1 要求に Operation と Geometry Node が 1 つずつ、No-op ではどちらも増えない。
+
+**なお未接続。**Scene 常設の構成根（storage・display・DAG・driver を実シーンで組み立てる場所）はこの単位の対象外で、基準 Geometry の登録と body の表示登録は呼出側が行う。Hit 検出、建物 World D6、Character、Impulse の算出・向き、XR・性能調整も対象外である。
+
 Provisional 受付・保持・駆動の接続（2026-09-21）。A の公開部品を製品コードから駆動する接続を実装した。
 
 **製品の呼出し箇所。**`ProvisionalCutDriver`（MonoBehaviour 1 つ、`Bind` で台帳・対応・Cook・`SharedWorkFrame`・表示を外から受け取り、何も生成・所有しない）。`Update` が呼ぶ `DriveUpdate` が、**その更新の中で**それまでに届いた要求（`Ask`）を取り上げ、各要求について **分類 → 受付 → Anchor 配分 → 未公開対の構築 → Provisional 公開 → Final 切断の投入**まで行い、続けて `SharedWorkFrame.Update` が同一フレームの残予算で回収・投入を進める。`LateUpdate` が呼ぶ `DriveLateUpdate` が**実際の表示入口** `VpLogicalCutDisplay.TryBeginFrame` を公開の**後**に呼ぶ（Snapshot の確定規則 5.6 には触れない）。別の位相にいる呼出側は `Ask` で要求を置き、更新の位相にいる呼出側は `RequestCut` を直接呼べる——どちらも同じ経路である。標準の FixedUpdate 自動シミュレーションを前提とし、切替区間に手動 Step も外部コールバックも挟まない。発火元（武器・試験・ツール）はこのドライバの外で、受付後の処理はすべてここを通る。

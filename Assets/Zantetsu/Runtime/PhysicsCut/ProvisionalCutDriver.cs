@@ -118,6 +118,7 @@ namespace Zantetsu.PhysicsCut
         private int _vertexLimit;
         private Func<int> _frameSource;
         private ProvisionalCutRecovery _recovery;
+        private CutDag _dag;
 
         /// <summary>
         /// The frame this driver counts by: the engine's, or whatever the caller counts with instead. A display created
@@ -158,6 +159,17 @@ namespace Zantetsu.PhysicsCut
         /// What counts frames, when it is not the engine: a caller that gives its display a frame source of its own
         /// gives this the same one, so that "published and collected in one frame" is one number and not two.
         /// </param>
+        /// <param name="dag">
+        /// Where the display geometry of an accepted cut is carried (DESIGN 4.5.6): the cut is admitted **through**
+        /// it, so one acceptance registers both duties at once and no second admission exists. It is the caller's --
+        /// created, given its storage, its commit and its failure reporting, and disposed by whoever owns it -- and it
+        /// is added to the bound frame here, so the work it holds is pumped by the frame's owner and outlives this
+        /// component, exactly as an ending record is.
+        /// <para>
+        /// Optional: without one, this driver is the physics path alone and nothing of the display geometry is carried
+        /// for its cuts. It is left out only where there is no display geometry to cut.
+        /// </para>
+        /// </param>
         public void Bind(
             LogicalCutLedger ledger,
             PhysicsOwnerRegistry registry,
@@ -167,7 +179,8 @@ namespace Zantetsu.PhysicsCut
             float supportEpsilon,
             float anchorEpsilon,
             int vertexLimit,
-            Func<int> frameSource = null)
+            Func<int> frameSource = null,
+            CutDag dag = null)
         {
             _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -196,6 +209,14 @@ namespace Zantetsu.PhysicsCut
                 frame.Add(_recovery);
             }
 
+            // The same reason, for the geometry of an accepted cut: the DAG holds work that outlives this component,
+            // and the frame is what pumps it. Adding it twice does nothing.
+            _dag = dag;
+            if (_dag != null)
+            {
+                frame.Add(_dag);
+            }
+
             IsBound = true;
         }
 
@@ -204,6 +225,12 @@ namespace Zantetsu.PhysicsCut
         /// bound frame, not by this driver, so they are finished even after this component has gone.
         /// </summary>
         public ProvisionalCutRecovery Recovery => _recovery;
+
+        /// <summary>
+        /// Where this driver's accepted cuts have their display geometry carried, when it was given one. It is not
+        /// this driver's to dispose: it is the caller's, and it is pumped by the bound frame.
+        /// </summary>
+        public CutDag Geometry => _dag;
 
         /// <summary>
         /// Asks for one cut. Everything from the classification to the publication happens **in this call**, on the
@@ -259,7 +286,16 @@ namespace Zantetsu.PhysicsCut
                 return ProvisionalCutAcceptance.EmptySide;
             }
 
-            admission = _ledger.Admit(ask.source, ask.plane, true, out CutOperationId operation);
+            // **One acceptance.** Where there is display geometry to cut, the ledger is asked through the DAG, which
+            // registers that cut's geometry work with the very operation the ledger issued; where there is none, the
+            // ledger is asked directly. Either way it is asked once, here, after the support scan has decided that
+            // there is a cut at all -- so a no-op and a refused admission leave no geometry work behind, because
+            // nothing was admitted for one to belong to. The plane is the adopted one, in the source fragment's own
+            // logical frame: the kernel's own is made from it where the geometry is read, and nothing here rebuilds it
+            // from where the actor happens to stand.
+            admission = _dag != null
+                ? _dag.TryAdmit(ask.source, ask.plane, true, out CutOperationId operation)
+                : _ledger.Admit(ask.source, ask.plane, true, out operation);
             if (admission != LogicalCutAdmission.Admitted)
             {
                 classification.Dispose();
@@ -323,10 +359,29 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// Carries everything forward as far as this frame allows: the shared frame collects what the workers finished
-        /// and submits what that made ready, and any cut that ended has its products taken into its own record.
+        /// and submits what that made ready, any cut that ended has its products taken into its own record and is
+        /// handed to its Final publication, and **what that publication made possible is carried on in this same
+        /// call**.
         /// <para>
-        /// The frame's budget is the frame's: calling this twice in one frame does not refill it, and nothing here
-        /// waits for a work that has not finished.
+        /// **The two alternate.** A handoff publishes an operation's two children, which is the condition the geometry
+        /// of that operation was waiting on to commit, which is in turn what a cut of one of those children was
+        /// waiting on to run — so a collection makes more for the frame to do. And the other way round: a turn of the
+        /// frame collects the numbers and the bake of some other cut, which is what makes *that* cut ready to be
+        /// handed over — so a turn of the frame makes more for the collection to do. Either one left at the end would
+        /// be a wait created by the order these calls happen to come in, so they alternate until neither has anything
+        /// more, and **the collection always comes last**: what the final turn of the frame brought back is taken into
+        /// its record here and not at the next call.
+        /// </para>
+        /// <para>
+        /// **It ends by itself.** A further turn is taken only when the collection before it really ended something
+        /// **and the frame still has budget to spend**. Those are two different things and neither stands for the
+        /// other: a turn of the frame pumps its participants even with nothing left to spend, so "the frame moved
+        /// something" is not "the frame may go on"; and a turn that moved nothing may still be followed by a
+        /// collection that published a cut, which is progress of its own. So the budget is asked for directly
+        /// (<see cref="SharedWorkDispatcher.RemainingBudget"/>), the collection speaks for itself, and the collection
+        /// is always the last thing done either way. The budget is never refilled:
+        /// <see cref="SharedWorkFrame.Update"/> with the same id continues that frame, and the turns are reported as
+        /// the one frame's work they are. Nothing is waited for, completed by force or polled.
         /// </para>
         /// </summary>
         public void Advance(int frameId)
@@ -336,8 +391,21 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            LastFrameProgress = _frame.Update(frameId);
-            CollectEndedCuts();
+            var progress = default(SharedWorkFrameProgress);
+            while (true)
+            {
+                progress = progress.Plus(_frame.Update(frameId));
+
+                // Always after a turn of the frame, including the last one: a result that came back in it is taken
+                // into its record and handed over here, not at the next call.
+                bool ended = CollectEndedCuts();
+                if (!ended || _frame.Dispatcher.RemainingBudget <= 0)
+                {
+                    break;
+                }
+            }
+
+            LastFrameProgress = progress;
         }
 
         /// <summary>
@@ -702,8 +770,15 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        private void CollectEndedCuts()
+        /// <summary>
+        /// Takes the finished cuts into their records, and hands each one that produced something to its Final
+        /// publication. True when something really ended here, which is what tells the caller that the frame has more
+        /// to do: a publication is what a geometry commit was waiting for, and that commit is what a child's cut was
+        /// waiting for.
+        /// </summary>
+        private bool CollectEndedCuts()
         {
+            bool moved = false;
             for (int i = _transactions.Count - 1; i >= 0; i--)
             {
                 ProvisionalCutTransaction at = _transactions[i];
@@ -712,6 +787,8 @@ namespace Zantetsu.PhysicsCut
                 {
                     continue;
                 }
+
+                moved = true;
 
                 // The products are taken into the record. A handoff reads their borrowed parts, and the hold on the
                 // input stays until it has.
@@ -731,6 +808,8 @@ namespace Zantetsu.PhysicsCut
                 // retired unless the ledger finds it stale -- and not merely as a record this driver forgets.
                 Abort(at);
             }
+
+            return moved;
         }
     }
 }

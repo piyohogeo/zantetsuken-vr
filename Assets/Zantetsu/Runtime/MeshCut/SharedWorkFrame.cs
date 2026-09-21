@@ -48,6 +48,18 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Whether this update moved anything at all.</summary>
         public bool MadeProgress => collected > 0 || submitted > 0 || mainThreadSteps > 0;
+
+        /// <summary>
+        /// Two updates of the **same** frame, added up, for a caller that carries its frame on after doing something
+        /// of its own in between. It is one frame's work reported as one number, not two frames' worth: the budget was
+        /// never refilled between them.
+        /// </summary>
+        public SharedWorkFrameProgress Plus(in SharedWorkFrameProgress other)
+        {
+            return new SharedWorkFrameProgress(
+                occasions + other.occasions, collected + other.collected, submitted + other.submitted,
+                mainThreadSteps + other.mainThreadSteps);
+        }
     }
 
     /// <summary>
