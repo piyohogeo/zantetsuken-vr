@@ -312,16 +312,23 @@ namespace Zantetsu.MeshCut
     /// One logical branch: a live fragment drawn whole (<see cref="pendingSide"/> 0), or one side of a live fragment's
     /// displayable pending cut (+1 or -1, with no child id -- none is issued before publication). Its candidates, in the
     /// ledger's admission order, and their selection are its own.
+    /// <para>
+    /// A branch with a side carries the cut that side belongs to (<see cref="pendingOperation"/>) beside the side
+    /// itself. The two are read from the ledger at the one moment the branch is made, so they cannot come to disagree,
+    /// and whoever needs to name this side later -- to ask where it stands, for instance -- has both without asking
+    /// the ledger again.
+    /// </para>
     /// </summary>
     public readonly struct VpMultiCutBranch
     {
         internal VpMultiCutBranch(
-            int registration, LogicalFragmentId fragment, float pendingSide, int candidateStart, int candidateCount,
-            int selectedCount, int renderFragment)
+            int registration, LogicalFragmentId fragment, float pendingSide, CutOperationId pendingOperation,
+            int candidateStart, int candidateCount, int selectedCount, int renderFragment)
         {
             this.registration = registration;
             this.fragment = fragment;
             this.pendingSide = pendingSide;
+            this.pendingOperation = pendingOperation;
             this.candidateStart = candidateStart;
             this.candidateCount = candidateCount;
             this.selectedCount = selectedCount;
@@ -333,6 +340,13 @@ namespace Zantetsu.MeshCut
 
         public readonly LogicalFragmentId fragment;
         public readonly float pendingSide;
+
+        /// <summary>
+        /// The accepted cut this branch is a side of, for a branch that has a side; unset for one drawn whole. It is
+        /// the operation the ledger named when this branch was made, not one looked up later.
+        /// </summary>
+        public readonly CutOperationId pendingOperation;
+
         public readonly int candidateStart;
         public readonly int candidateCount;
 
@@ -534,10 +548,20 @@ namespace Zantetsu.MeshCut
         private readonly VpMultiCutRenderFragment[] _renderFragments;
 
         /// <summary>
-        /// Which fragment each render fragment stands where, settled with the structure. For an aggregate this is
-        /// its first living branch and not its root (DESIGN 5.2, D-187); for everything else it is the root itself.
+        /// Who each render fragment stands where, settled with the structure: the branch that puts it there, named by
+        /// its fragment and -- when it is a side of an accepted cut -- by that cut and that side.
+        /// <para>
+        /// For an aggregate this is its **first living branch**, not its root (DESIGN 5.2, D-187): the root of an
+        /// aggregate is the source of the first Ignored boundary, and once that boundary is published the source
+        /// stands nowhere of its own. The shape drawn, the caps and the selected boundaries are still the root's.
+        /// </para>
+        /// <para>
+        /// It is **not** <see cref="_sideIdentity"/>. That one records what a render fragment is, as a side, for the
+        /// display, and an aggregate's is made from its root, which is a different fragment with a different side --
+        /// often none at all. Asking where something stands with that record would ask about the wrong one.
+        /// </para>
         /// </summary>
-        private readonly LogicalFragmentId[] _standsWhere;
+        private readonly VpMultiCutStandsAs[] _standsAs;
 
         private readonly VpMultiCutSideIdentity[] _sideIdentity;
         private readonly VpMultiCutCapIdentity[] _capIdentity;
@@ -622,7 +646,7 @@ namespace Zantetsu.MeshCut
             _capIdentity = new VpMultiCutCapIdentity[capacities.candidates];
             _states = new VpClipSelectionState[capacities.candidates];
             _renderFragments = new VpMultiCutRenderFragment[capacities.renderFragments];
-            _standsWhere = new LogicalFragmentId[capacities.renderFragments];
+            _standsAs = new VpMultiCutStandsAs[capacities.renderFragments];
             _sideIdentity = new VpMultiCutSideIdentity[capacities.renderFragments];
             _conditions = new VpCapConstraint[capacities.caps];
             _caps = new VpMultiCutCap[capacities.caps];
@@ -1007,7 +1031,7 @@ namespace Zantetsu.MeshCut
             Array.Copy(structure._states, _states, structure._candidateCount);
             Array.Copy(structure._capIdentity, _capIdentity, structure._candidateCount);
             Array.Copy(structure._renderFragments, _renderFragments, structure._renderFragmentCount);
-            Array.Copy(structure._standsWhere, _standsWhere, structure._renderFragmentCount);
+            Array.Copy(structure._standsAs, _standsAs, structure._renderFragmentCount);
             Array.Copy(structure._sideIdentity, _sideIdentity, structure._renderFragmentCount);
             _branchCount = structure._branchCount;
             _candidateCount = structure._candidateCount;
@@ -1084,7 +1108,7 @@ namespace Zantetsu.MeshCut
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 VpMultiCutRegistration registration = registrations[renderFragment.registration];
                 if (!TryPlacementOf(
-                        placement, registration, _standsWhere[r], out Matrix4x4 geometryLocalToWorld))
+                        placement, registration, _standsAs[r], out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
@@ -1434,13 +1458,14 @@ namespace Zantetsu.MeshCut
                         if (ledger.TryGetActiveOperation(at, out CutOperationId pending)
                             && ledger.TryGetPreparedAnchorDistribution(pending, out _))
                         {
-                            VpMultiCutBuildOutcome positive = TryAddBranch(ledger, registration, at, 1f, reflected);
+                            // The cut these two sides belong to is the one just read. It goes with them.
+                            VpMultiCutBuildOutcome positive = TryAddBranch(ledger, registration, at, 1f, pending, reflected);
                             if (positive != VpMultiCutBuildOutcome.Built)
                             {
                                 return positive;
                             }
 
-                            VpMultiCutBuildOutcome negative = TryAddBranch(ledger, registration, at, -1f, reflected);
+                            VpMultiCutBuildOutcome negative = TryAddBranch(ledger, registration, at, -1f, pending, reflected);
                             if (negative != VpMultiCutBuildOutcome.Built)
                             {
                                 return negative;
@@ -1448,7 +1473,7 @@ namespace Zantetsu.MeshCut
                         }
                         else
                         {
-                            VpMultiCutBuildOutcome whole = TryAddBranch(ledger, registration, at, 0f, reflected);
+                            VpMultiCutBuildOutcome whole = TryAddBranch(ledger, registration, at, 0f, default, reflected);
                             if (whole != VpMultiCutBuildOutcome.Built)
                             {
                                 return whole;
@@ -1496,7 +1521,7 @@ namespace Zantetsu.MeshCut
 
         private VpMultiCutBuildOutcome TryAddBranch(
             LogicalCutLedger ledger, int registration, LogicalFragmentId fragment, float pendingSide,
-            IReadOnlyCollection<VpClipBoundary> reflected)
+            CutOperationId pendingOperation, IReadOnlyCollection<VpClipBoundary> reflected)
         {
             if (_branchCount >= _branches.Length)
             {
@@ -1512,7 +1537,7 @@ namespace Zantetsu.MeshCut
 
             int selected = VpClipCandidates.Select(_candidates, _candidateCount, count, _states);
             _branches[_branchCount++] = new VpMultiCutBranch(
-                registration, fragment, pendingSide, _candidateCount, count, selected, -1);
+                registration, fragment, pendingSide, pendingOperation, _candidateCount, count, selected, -1);
             _candidateCount += count;
             return VpMultiCutBuildOutcome.Built;
         }
@@ -1627,7 +1652,11 @@ namespace Zantetsu.MeshCut
                 // </para>
                 // Which fragment this one stands where is settled here, with the rest of the structure. **Where that
                 // fragment is** is asked in the other pass, and asked again whenever anything moves.
-                _standsWhere[_renderFragmentCount] = aggregated ? branch.fragment : root;
+                // The branch itself, whole: which fragment, which accepted cut, which side of it. An aggregate is
+                // put where its first living branch is, and that branch's side is the side that stands there -- the
+                // root's side, recorded below for the display, belongs to another fragment and is not asked here.
+                _standsAs[_renderFragmentCount] =
+                    new VpMultiCutStandsAs(branch.fragment, branch.pendingOperation, branch.pendingSide);
                 _sideIdentity[_renderFragmentCount] = SideIdentityOf(ledger, registration.root, root, rootPendingSide);
                 _renderFragments[_renderFragmentCount] = new VpMultiCutRenderFragment(
                     registrationIndex, registration.localBounds, Matrix4x4.identity, root, rootPendingSide,
@@ -1645,7 +1674,7 @@ namespace Zantetsu.MeshCut
         /// registration's would be.
         /// </summary>
         private static bool TryPlacementOf(
-            IVpFragmentPlacement placement, in VpMultiCutRegistration registration, LogicalFragmentId fragment,
+            IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
             out Matrix4x4 geometryLocalToWorld)
         {
             if (placement == null)
@@ -1655,7 +1684,8 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
-            VpFragmentPlacementKind kind = placement.TryGetGeometryLocalToWorld(fragment, out Matrix4x4 followed);
+            VpFragmentPlacementKind kind = placement.TryGetGeometryLocalToWorld(
+                stands.fragment, stands.operation, stands.side, out Matrix4x4 followed);
             if (kind == VpFragmentPlacementKind.Missing)
             {
                 // It follows something and where was not said. Drawing it where it was registered would draw it where
@@ -2051,6 +2081,25 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Who a render fragment stands where: the branch that puts it there. A branch drawn whole names only its
+        /// fragment; one that is a side of an accepted cut names that cut and that side as well, so that a caller
+        /// which keeps something per side of an accepted cut can be asked about the right one.
+        /// </summary>
+        internal readonly struct VpMultiCutStandsAs
+        {
+            internal VpMultiCutStandsAs(LogicalFragmentId fragment, CutOperationId operation, float side)
+            {
+                this.fragment = fragment;
+                this.operation = operation;
+                this.side = side;
+            }
+
+            internal readonly LogicalFragmentId fragment;
+            internal readonly CutOperationId operation;
+            internal readonly float side;
+        }
+
+        /// <summary>
         /// What one candidate's cap is, as the ledger says: whether its boundary is published, which child that
         /// publication made on this side, and whether that side is fixed. Settled and carried like a side's identity,
         /// and for the same reason.
@@ -2072,7 +2121,8 @@ namespace Zantetsu.MeshCut
         private static VpMultiCutBranch WithRenderFragment(in VpMultiCutBranch b, int renderFragment)
         {
             return new VpMultiCutBranch(
-                b.registration, b.fragment, b.pendingSide, b.candidateStart, b.candidateCount, b.selectedCount, renderFragment);
+                b.registration, b.fragment, b.pendingSide, b.pendingOperation, b.candidateStart, b.candidateCount,
+                b.selectedCount, renderFragment);
         }
 
         private static Vector4 ToVector4(float4 value)

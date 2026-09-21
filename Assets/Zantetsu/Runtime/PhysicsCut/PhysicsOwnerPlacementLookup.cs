@@ -17,6 +17,14 @@ namespace Zantetsu.PhysicsCut
     /// not mixed in here.
     /// </para>
     /// <para>
+    /// **A published Provisional pair is answered side by side** (DESIGN 7.1.1). Its two actors move apart while the
+    /// fragment they stand in for is not split, so a caller asking about one side of that accepted cut is answered
+    /// from that side's actor. Asking about the same fragment **without** naming a side — or naming a different cut —
+    /// is <see cref="VpFragmentPlacementKind.Missing"/> while the pair is there: the body as a whole is not standing
+    /// anywhere any more, and neither half of it, nor the withdrawn source, is handed back in its place. A fragment
+    /// with no pair is answered exactly as it was before, side or no side.
+    /// </para>
+    /// <para>
     /// **A gap is never dressed up as an arrangement.** An owner **in the scene** that says where its display
     /// geometry sits is followed; one in the scene that says nothing of the kind is drawn where it was registered,
     /// which is that owner's statement about its display and not a fallback. Everything else is refused: a fragment
@@ -39,9 +47,39 @@ namespace Zantetsu.PhysicsCut
         }
 
         public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
-            LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld)
+            LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld)
         {
             geometryLocalToWorld = default;
+
+            // A published pair stands in for this fragment, so it is what answers -- by side. Nothing else of this
+            // fragment is in the scene while it is there.
+            if (_registry.TryGetProvisionalOf(fragment, out ProvisionalOwnerPair pair) && !pair.IsEnded)
+            {
+                bool names = operation.IsSet && operation.Equals(pair.Operation) && (side > 0f || side < 0f);
+                if (!names)
+                {
+                    // Asked about the body as a whole, or about some other cut of it. There is no one answer: the two
+                    // sides stand in different places, and the source has left the scene. Choosing a half, or the
+                    // place the body had before it was replaced, would draw it where it is not.
+                    return VpFragmentPlacementKind.Missing;
+                }
+
+                bool positive = side > 0f;
+                if (!pair.IsStanding(positive))
+                {
+                    return VpFragmentPlacementKind.Missing;
+                }
+
+                if (pair.GeometryLocalToOwner == null)
+                {
+                    // A pair whose display is arranged some other way, which is what having no correspondence means.
+                    return VpFragmentPlacementKind.Static;
+                }
+
+                return pair.TryReadGeometryLocalToWorld(positive, out geometryLocalToWorld)
+                    ? VpFragmentPlacementKind.Following
+                    : VpFragmentPlacementKind.Missing;
+            }
 
             // Whether there is an owner in the scene at all comes first. A fragment with no physics, and one whose
             // owner has left the scene, are both refused: where it was registered is where it was, and an

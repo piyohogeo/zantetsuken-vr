@@ -95,8 +95,9 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
-            LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld)
+            LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld)
         {
+            // Per fragment, as before: both sides of an accepted cut get the same answer here.
             if (_following.TryGetValue(fragment, out geometryLocalToWorld))
             {
                 return VpFragmentPlacementKind.Following;

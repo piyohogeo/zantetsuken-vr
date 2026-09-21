@@ -107,9 +107,30 @@ namespace Zantetsu.PhysicsCut
 
         public bool IsDisposed { get; private set; }
 
+        /// <summary>
+        /// The two actors, their shapes and the constraint have been handed over to a
+        /// <see cref="ProvisionalOwnerPair"/> and are not this one's any more.
+        /// </summary>
+        public bool IsDetached { get; private set; }
+
         public PhysicsOwnerSide Side(bool positive)
         {
             return positive ? Positive : Negative;
+        }
+
+        /// <summary>
+        /// Gives everything this built up to whoever published it: the two actors, the constraint on one of them and
+        /// the two shapes with the holds they took. This candidate stops naming them, so disposing it afterwards
+        /// destroys nothing and gives nothing back twice. From here the pair is what ends them.
+        /// </summary>
+        internal void Detach()
+        {
+            IsDetached = true;
+            Positive = null;
+            Negative = null;
+            PositiveShape = null;
+            NegativeShape = null;
+            Separation = null;
         }
 
         /// <summary>

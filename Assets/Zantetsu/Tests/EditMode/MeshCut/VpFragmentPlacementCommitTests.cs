@@ -54,8 +54,9 @@ namespace Zantetsu.MeshCut.Tests
             internal readonly HashSet<LogicalFragmentId> missing = new HashSet<LogicalFragmentId>();
 
             public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
-                LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld)
+                LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld)
             {
+                // Nothing here is kept per side, so both sides of an accepted cut get their fragment's answer.
                 if (missing.Contains(fragment))
                 {
                     geometryLocalToWorld = Matrix4x4.identity;

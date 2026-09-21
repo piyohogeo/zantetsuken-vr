@@ -151,13 +151,32 @@ namespace Zantetsu.PhysicsCut
     /// The key is the fragment the ledger already has; no identity is invented here, and no state of a publication is
     /// kept. A fragment has an owner or it does not.
     /// </para>
+    /// <para>
+    /// **The published Provisional pairs live here too**, beside that correspondence and without disturbing it
+    /// (DESIGN 7.1.1). A Provisional publishes no logical child, so its two actors have no fragment of their own and
+    /// the source keeps the one owner record it has -- withdrawn, waiting to be retired. The pair is kept on the cut
+    /// that made it, and the source it belongs to can be found from either of its actors, which is what lets a hit on
+    /// one of them resolve to the fragment they are both still part of.
+    /// </para>
     /// </summary>
     public sealed class PhysicsOwnerRegistry : IDisposable
     {
         private readonly Dictionary<LogicalFragmentId, PhysicsFragmentOwner> _owners =
             new Dictionary<LogicalFragmentId, PhysicsFragmentOwner>();
 
+        private readonly Dictionary<CutOperationId, ProvisionalOwnerPair> _pairsByOperation =
+            new Dictionary<CutOperationId, ProvisionalOwnerPair>();
+
+        private readonly Dictionary<LogicalFragmentId, ProvisionalOwnerPair> _pairsBySource =
+            new Dictionary<LogicalFragmentId, ProvisionalOwnerPair>();
+
+        private readonly Dictionary<Rigidbody, ProvisionalOwnerPair> _pairOfBody =
+            new Dictionary<Rigidbody, ProvisionalOwnerPair>();
+
         public int Count => _owners.Count;
+
+        /// <summary>How many published Provisional pairs are in the scene now.</summary>
+        public int ProvisionalPairCount => _pairsByOperation.Count;
 
         /// <summary>
         /// Makes room for a few more owners before anything is added, so that adding them cannot be what fails. It
@@ -174,6 +193,130 @@ namespace Zantetsu.PhysicsCut
         public bool TryGet(LogicalFragmentId fragment, out PhysicsFragmentOwner owner)
         {
             return _owners.TryGetValue(fragment, out owner);
+        }
+
+        /// <summary>The published Provisional pair of one accepted cut, if that cut has one in the scene.</summary>
+        public bool TryGetProvisional(CutOperationId operation, out ProvisionalOwnerPair pair)
+        {
+            return _pairsByOperation.TryGetValue(operation, out pair);
+        }
+
+        /// <summary>
+        /// The published Provisional pair standing in for one fragment, if there is one. A fragment has at most one:
+        /// a live fragment has at most one accepted cut (DESIGN 7.1).
+        /// </summary>
+        public bool TryGetProvisionalOf(LogicalFragmentId source, out ProvisionalOwnerPair pair)
+        {
+            return _pairsBySource.TryGetValue(source, out pair);
+        }
+
+        /// <summary>
+        /// Which fragment one body of a published Provisional pair belongs to, and which side of the cut it is.
+        /// **Both sides answer with the same source**: the fragment is not split until the Final publication
+        /// (DESIGN 7.1.1), so a hit on either actor is a hit on that one fragment.
+        /// <para>
+        /// This is the correspondence itself and nothing more. Finding which body was hit, and what a hit means, is
+        /// not written here.
+        /// </para>
+        /// </summary>
+        public bool TryResolveSource(Rigidbody body, out LogicalFragmentId source, out float side)
+        {
+            source = default;
+            side = 0f;
+            if (body == null || !_pairOfBody.TryGetValue(body, out ProvisionalOwnerPair pair) || pair.IsEnded)
+            {
+                return false;
+            }
+
+            source = pair.Source;
+            side = ReferenceEquals(pair.Positive?.Body, body) ? 1f : -1f;
+            return true;
+        }
+
+        /// <summary>
+        /// Makes room for one more Provisional pair before anything is added, so that adding it cannot be what fails
+        /// in the middle of a publication. It changes nothing else.
+        /// </summary>
+        public void ReserveProvisional()
+        {
+            _pairsByOperation.EnsureCapacity(_pairsByOperation.Count + 1);
+            _pairsBySource.EnsureCapacity(_pairsBySource.Count + 1);
+            _pairOfBody.EnsureCapacity(_pairOfBody.Count + 2);
+        }
+
+        /// <summary>
+        /// Takes a published pair into the correspondence: by its cut, by the source it stands in for, and by each of
+        /// its two bodies. The source keeps its own owner record, which the caller has withdrawn.
+        /// <para>
+        /// The two refusals below are **structural checks by the time this is called**: a caller publishing a pair
+        /// settles them before it moves anything, because by here the source has already left the scene and a refusal
+        /// would be too late to be anything but an internal error. The room was made by
+        /// <see cref="ReserveProvisional"/> for the same reason.
+        /// </para>
+        /// </summary>
+        internal void AddProvisional(ProvisionalOwnerPair pair)
+        {
+            if (pair == null)
+            {
+                throw new ArgumentNullException(nameof(pair));
+            }
+
+            if (_pairsByOperation.ContainsKey(pair.Operation))
+            {
+                throw new InvalidOperationException("that cut already has a published Provisional pair");
+            }
+
+            if (_pairsBySource.ContainsKey(pair.Source))
+            {
+                throw new InvalidOperationException("that fragment already has a published Provisional pair");
+            }
+
+            _pairsByOperation.Add(pair.Operation, pair);
+            _pairsBySource.Add(pair.Source, pair);
+            AddBody(pair.Positive, pair);
+            AddBody(pair.Negative, pair);
+        }
+
+        private void AddBody(PhysicsOwnerSide side, ProvisionalOwnerPair pair)
+        {
+            if (side?.Body != null)
+            {
+                _pairOfBody[side.Body] = pair;
+            }
+        }
+
+        /// <summary>
+        /// Ends one published Provisional pair and forgets it: both actors leave the scene and are destroyed, the
+        /// constraint with them, and the two shapes give their mesh holds back. False when that cut has no pair here.
+        /// <para>
+        /// **The source is not retired here and the ledger is not touched.** The source's own owner record is still
+        /// the caller's to retire, and a mesh the source's shape also holds goes back with it and not before. This is
+        /// the one way a published pair ends, whether the cut went on to a Final publication or was abandoned.
+        /// </para>
+        /// </summary>
+        public bool EndProvisional(CutOperationId operation)
+        {
+            if (!_pairsByOperation.TryGetValue(operation, out ProvisionalOwnerPair pair))
+            {
+                return false;
+            }
+
+            // Forgotten first, in all three places, and only then ended: the bodies a pair is found by are the
+            // pair's own, and ending it lets go of them.
+            _pairsByOperation.Remove(operation);
+            _pairsBySource.Remove(pair.Source);
+            RemoveBody(pair.Positive);
+            RemoveBody(pair.Negative);
+            pair.End();
+            return true;
+        }
+
+        private void RemoveBody(PhysicsOwnerSide side)
+        {
+            if (side?.Body != null)
+            {
+                _pairOfBody.Remove(side.Body);
+            }
         }
 
         /// <summary>
@@ -247,9 +390,18 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
-        /// <summary>Ends every owner left. What they were holding goes back with them.</summary>
+        /// <summary>Ends every owner and every published pair left. What they were holding goes back with them.</summary>
         public void Dispose()
         {
+            foreach (KeyValuePair<CutOperationId, ProvisionalOwnerPair> published in _pairsByOperation)
+            {
+                published.Value.End();
+            }
+
+            _pairsByOperation.Clear();
+            _pairsBySource.Clear();
+            _pairOfBody.Clear();
+
             foreach (KeyValuePair<LogicalFragmentId, PhysicsFragmentOwner> pair in _owners)
             {
                 pair.Value.Withdraw();

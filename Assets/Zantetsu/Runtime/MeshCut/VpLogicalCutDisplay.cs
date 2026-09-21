@@ -2130,7 +2130,8 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
-            switch (Placement.TryGetGeometryLocalToWorld(fragment, out Matrix4x4 followed))
+            // The body itself, not a side of anything: this is where the whole registration is drawn from.
+            switch (Placement.TryGetGeometryLocalToWorld(fragment, default, 0f, out Matrix4x4 followed))
             {
                 case VpFragmentPlacementKind.Following:
                     baseline = followed;

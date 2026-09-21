@@ -575,7 +575,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 // The display ends with it: asking where it stands is refused, and the next collection draws nothing
                 // from that registration rather than putting it back where it was registered.
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "nothing says where a retired source stands");
                 VpMultiCutSnapshot ended = NewSnapshot();
                 Assert.That(
@@ -724,7 +724,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 // What the display sees: the fragment still follows, and it follows the owner it has now, which is
                 // the replacement where the test put it. The boundary that ended as stale is no longer drawn.
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 followed),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 followed),
                     Is.EqualTo(VpFragmentPlacementKind.Following),
                     "the live source still follows an owner");
                 Same(
@@ -1530,7 +1530,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     w.registry.TryGet(positive, out PhysicsFragmentOwner _), Is.False,
                     "the replaced fragment has no owner kept for the display");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(positive, out Matrix4x4 _),
+                    lookup.TryGetGeometryLocalToWorld(positive, default, 0f, out Matrix4x4 _),
                     Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "and asking about it is refused rather than answered with where it was");
 
@@ -1609,7 +1609,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     Is.EqualTo(PhysicsPublicationOutcome.LedgerRefused));
                 Assert.That(w.registry.Count, Is.EqualTo(owners), "no correspondence was added or taken away");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
                     "and the source still follows its own owner");
                 refusedCandidate.Dispose();
                 refusedProducts.Dispose();
@@ -1630,10 +1630,10 @@ namespace Zantetsu.PhysicsCut.Tests
 
                 Assert.That(w.registry.Retire(negative), Is.True, "one side is retired");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(negative, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    lookup.TryGetGeometryLocalToWorld(negative, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "the retired side is refused, not drawn where it was");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(positive, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
+                    lookup.TryGetGeometryLocalToWorld(positive, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Following),
                     "the living side is not ended with it");
                 Assert.That(w.registry.TryGet(positive, out PhysicsFragmentOwner living), Is.True);
                 Assert.That(living.Root != null && living.Root.activeInHierarchy, Is.True, "and its body is still in the scene");
@@ -1652,17 +1652,17 @@ namespace Zantetsu.PhysicsCut.Tests
             {
                 var lookup = new PhysicsOwnerPlacementLookup(w.registry);
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Static),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Static),
                     "an owner that says nothing about its display is an arrangement");
 
                 LogicalFragmentId stranger = w.ledger.AddFragment();
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(stranger, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    lookup.TryGetGeometryLocalToWorld(stranger, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "a fragment with no owner is refused");
 
                 Assert.That(w.registry.Withdraw(w.source), Is.True);
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "an owner that has left the scene is a gap, whether or not it ever said anything");
             }
 
@@ -1671,7 +1671,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 var lookup = new PhysicsOwnerPlacementLookup(w.registry);
                 Assert.That(w.registry.Withdraw(w.source), Is.True, "its owner leaves the scene");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(w.source, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    lookup.TryGetGeometryLocalToWorld(w.source, default, 0f, out Matrix4x4 _), Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "a following fragment whose owner has left is refused, not drawn where it was");
             }
         }
@@ -1814,7 +1814,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(
                     w.registry.TryGet(lastSource, out PhysicsFragmentOwner _), Is.False, "and has no owner left");
                 Assert.That(
-                    lookup.TryGetGeometryLocalToWorld(lastSource, out Matrix4x4 _),
+                    lookup.TryGetGeometryLocalToWorld(lastSource, default, 0f, out Matrix4x4 _),
                     Is.EqualTo(VpFragmentPlacementKind.Missing),
                     "so nothing can say where it stands");
 

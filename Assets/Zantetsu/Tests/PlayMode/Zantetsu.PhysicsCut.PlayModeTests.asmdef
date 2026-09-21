@@ -1,0 +1,17 @@
+{
+    "name": "Zantetsu.PhysicsCut.PlayModeTests",
+    "rootNamespace": "Zantetsu.PhysicsCut.PlayModeTests",
+    "allowUnsafeCode": true,
+    "references": [
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.MeshCut",
+        "Zantetsu.ConvexCut",
+        "Unity.Mathematics",
+        "Unity.Collections",
+        "Unity.Burst"
+    ],
+    "includePlatforms": [],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

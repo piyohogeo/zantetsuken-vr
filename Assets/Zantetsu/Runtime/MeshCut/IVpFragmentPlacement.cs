@@ -34,9 +34,15 @@ namespace Zantetsu.MeshCut
     /// <see cref="VpFragmentPlacementKind.Static"/> and is drawn where it was registered, which is what that
     /// arrangement means. A fragment that follows something answers with where it is. One that follows something and
     /// cannot say where is <see cref="VpFragmentPlacementKind.Missing"/>, and is refused rather than drawn at a
-    /// placement that is no longer its own — the two are not the same answer and are not made into one here. A side
-    /// of a cut that has only been accepted is not a fragment of its own yet; its branch is its source, which answers
-    /// for itself.
+    /// placement that is no longer its own — the two are not the same answer and are not made into one here.
+    /// </para>
+    /// <para>
+    /// **A side of an accepted cut is asked about as that side.** It has no fragment of its own -- none is issued
+    /// before publication -- so the two sides of one accepted cut come here under the same fragment, named apart by
+    /// the cut and the side. A caller that has something for each side answers for each; one that has nothing for
+    /// either answers for the fragment, as it did before, and the two sides get the same answer. Answering for one
+    /// side out of a pair by handing back the other's place, or the place the fragment had before the pair existed,
+    /// is what <see cref="VpFragmentPlacementKind.Missing"/> is for.
     /// </para>
     /// <para>
     /// **What is asked for.** The base placement of the geometry's own local frame: where the shape is drawn. The
@@ -49,7 +55,16 @@ namespace Zantetsu.MeshCut
     /// </summary>
     public interface IVpFragmentPlacement
     {
-        /// <summary>Where <paramref name="fragment"/>'s shape stands, and whether it stands anywhere of its own.</summary>
-        VpFragmentPlacementKind TryGetGeometryLocalToWorld(LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld);
+        /// <summary>
+        /// Where the shape of one branch stands, and whether it stands anywhere of its own.
+        /// </summary>
+        /// <param name="fragment">The live fragment the branch is of.</param>
+        /// <param name="operation">
+        /// The accepted cut this branch is a side of, when it is one; unset when the branch is drawn whole. It is
+        /// never a published cut: a published one has children, and each child is a fragment that answers for itself.
+        /// </param>
+        /// <param name="side">+1 or -1 for a side of that cut, 0 for a branch drawn whole.</param>
+        VpFragmentPlacementKind TryGetGeometryLocalToWorld(
+            LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld);
     }
 }

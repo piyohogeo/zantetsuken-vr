@@ -40,10 +40,15 @@ namespace Zantetsu.MeshCut.Tests
             /// <summary>What a fragment nobody said anything about is answered with. Static by default.</summary>
             internal VpFragmentPlacementKind unknown = VpFragmentPlacementKind.Static;
 
+            /// <summary>What each call named, in order: the fragment, the cut it is a side of, and that side.</summary>
+            internal readonly List<(LogicalFragmentId fragment, CutOperationId operation, float side)> askedAs =
+                new List<(LogicalFragmentId, CutOperationId, float)>();
+
             public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
-                LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld)
+                LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld)
             {
                 asked.Add(fragment);
+                askedAs.Add((fragment, operation, side));
                 if (of.TryGetValue(fragment, out geometryLocalToWorld))
                 {
                     return VpFragmentPlacementKind.Following;
@@ -703,6 +708,101 @@ namespace Zantetsu.MeshCut.Tests
 
             Same(adopted, Of(snapshot, positive).geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "what was adopted stands");
             Assert.That(placements.asked.Count, Is.EqualTo(askedWhileBuilding), "and nothing asked again");
+        }
+
+        // ----- which branch the query names ------------------------------------------------------------------------
+
+        /// <summary>
+        /// The two sides of an accepted cut are asked about **as sides**: the same fragment, the cut they are sides
+        /// of, and +1 or -1. That is what lets a caller which keeps something per side -- a published Provisional
+        /// pair, for instance -- answer for the right one; a caller with nothing per side answers for the fragment and
+        /// both sides get that answer, which is what happens here.
+        /// </summary>
+        [Test]
+        public void EachSideOfAnAcceptedCut_IsAskedAboutAsThatSide()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            Assert.That(
+                ledger.Admit(root, new float4(0f, 1f, 0f, 0f), true, out CutOperationId accepted),
+                Is.EqualTo(LogicalCutAdmission.Admitted));
+            Assert.That(
+                ledger.PrepareAnchorDistribution(accepted, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
+
+            var placements = new Placements();
+            placements.of[root] = Owner(new Vector3(2f, 0f, 0f), 0f) * k_geometryLocalToOwner;
+
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+
+            var sides = new List<float>();
+            foreach ((LogicalFragmentId fragment, CutOperationId operation, float side) in placements.askedAs)
+            {
+                Assert.That(fragment, Is.EqualTo(root), "both sides are of the one fragment: none of its own is issued yet");
+                Assert.That(operation, Is.EqualTo(accepted), "and each names the cut it is a side of");
+                sides.Add(side);
+            }
+
+            Assert.That(sides, Is.EquivalentTo(new[] { 1f, -1f }), "one query for each side: " + sides.Count);
+        }
+
+        /// <summary>
+        /// An aggregate is asked about as its **first living branch**, side and all -- not as its root. The two are
+        /// different fragments here: the root was replaced by the Ignored cut and has no side of its own, while the
+        /// branch that puts the shape where it is stands as one side of its own accepted cut.
+        /// <para>
+        /// What the aggregate is recorded as, for the display, is the root and its side, and that does not change:
+        /// the record of what a render fragment is and the question of where it stands are about different things.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AnAggregate_IsAskedAboutAsItsFirstLivingBranch_NotItsRoot()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId last = Chain(ledger, root, VpClipCandidates.Capacity);
+            var (ignored, first, second) = Cut(ledger, last, new float4(1f, 0f, 0f, 0f));
+
+            // The branch that will be the aggregate's first living one is itself a side of an accepted cut.
+            Assert.That(
+                ledger.Admit(first, new float4(0f, 0f, 1f, 0f), true, out CutOperationId accepted),
+                Is.EqualTo(LogicalCutAdmission.Admitted));
+            Assert.That(
+                ledger.PrepareAnchorDistribution(accepted, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
+
+            var placements = new Placements();
+            placements.of[first] = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+            placements.of[second] = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+
+            VpMultiCutRenderFragment rf = Aggregate(snapshot);
+            Assert.That(rf.root, Is.EqualTo(last), "the aggregate is still rooted at the source of the ignored cut");
+            Assert.That(rf.rootPendingSide, Is.EqualTo(0f), "which is not a side of anything: that record is unchanged");
+
+            var asked = new List<(CutOperationId operation, float side)>();
+            foreach ((LogicalFragmentId fragment, CutOperationId operation, float side) in placements.askedAs)
+            {
+                if (fragment.Equals(first))
+                {
+                    asked.Add((operation, side));
+                }
+
+                Assert.That(fragment, Is.Not.EqualTo(last), "nothing asked where the replaced root stands");
+            }
+
+            Assert.That(asked.Count, Is.GreaterThan(0), "the first living branch is what was asked about");
+            foreach ((CutOperationId operation, float side) in asked)
+            {
+                Assert.That(
+                    operation, Is.EqualTo(accepted),
+                    "and it was named by its own accepted cut, not by the ignored one that made its root");
+                Assert.That(operation, Is.Not.EqualTo(ignored));
+                Assert.That(side, Is.Not.EqualTo(0f), "as one of that cut's sides");
+            }
         }
     }
 }
