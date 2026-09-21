@@ -941,5 +941,178 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(ledger.IsFixedOwner(negative), Is.True);
             Assert.That(AnchorsOf(ledger, source), Is.Empty, "and the replaced source let go of the set it handed on");
         }
+
+        // ----- where a fragment came from ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Every fragment a cut made knows which cut made it and which side of it it is, and a fragment added
+        /// directly knows that no cut did. That holds down a lineage: a child of a child names the cut that made
+        /// **it**, not the one that made its parent, so walking up is one step at a time and each step is its own
+        /// answer.
+        /// </summary>
+        [Test]
+        public void EachChildNamesTheCutThatMadeIt_AndARootNamesNone()
+        {
+            LogicalCutLedger ledger = NewLedger(4);
+            LogicalFragmentId root = ledger.AddFragment(new[] { k_high, k_onPlane, k_low });
+
+            CutOperationId first = AdmitOrFail(ledger, root, k_plane);
+            Assert.That(
+                PublishAfterPreparing(ledger, first, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            Assert.That(ledger.TryGetOrigin(root, out CutOperationId _, out float _), Is.False, "no cut made the root");
+            AssertOrigin(ledger, positive, first, 1f, "the positive child");
+            AssertOrigin(ledger, negative, first, -1f, "the negative child");
+
+            // A child of a child: the second cut is the one that made these two, and the first is one step further up.
+            CutOperationId second = AdmitOrFail(ledger, positive, k_otherPlane);
+            Assert.That(
+                PublishAfterPreparing(ledger, second, out LogicalFragmentId inner, out LogicalFragmentId outer),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            AssertOrigin(ledger, inner, second, 1f, "the grandchild on the positive side");
+            AssertOrigin(ledger, outer, second, -1f, "the grandchild on the negative side");
+            Assert.That(
+                OperationOf(ledger, second).source, Is.EqualTo(positive),
+                "and the step above it is the fragment that second cut was of");
+            AssertOrigin(ledger, positive, first, 1f, "which still names the cut that made it");
+        }
+
+        /// <summary>
+        /// A fragment this ledger never issued has no origin, and neither has the unset id. There is no way to ask
+        /// about a child before it is published either: its id does not exist until the publication that makes it,
+        /// and that publication settles where it came from in the same call.
+        /// </summary>
+        [Test]
+        public void AnIdThisLedgerNeverIssued_AndAnUnpublishedChild_HaveNoOrigin()
+        {
+            LogicalCutLedger ledger = NewLedger(4);
+            LogicalFragmentId root = ledger.AddFragment();
+            CutOperationId cut = AdmitOrFail(ledger, root, k_plane);
+
+            Assert.That(ledger.TryGetOrigin(default, out CutOperationId _, out float _), Is.False, "the unset id");
+
+            // The ids the children will be given, before there are any children: nothing answers for them.
+            var next = new LogicalFragmentId(ledger.FragmentCount + 1);
+            var afterThat = new LogicalFragmentId(ledger.FragmentCount + 2);
+            Assert.That(ledger.TryGetOrigin(next, out CutOperationId _, out float _), Is.False, "not issued yet");
+            Assert.That(ledger.TryGetOrigin(afterThat, out CutOperationId _, out float _), Is.False);
+            Assert.That(
+                OperationOf(ledger, cut).positive.IsSet, Is.False,
+                "and the cut itself has no child to name while it is only accepted");
+
+            Assert.That(
+                PublishAfterPreparing(ledger, cut, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            // The very ids that answered nothing a moment ago are the children, and they answer now.
+            Assert.That(positive, Is.EqualTo(next), "the first id issued is the positive child");
+            Assert.That(negative, Is.EqualTo(afterThat));
+            AssertOrigin(ledger, positive, cut, 1f, "which now names the cut that made it");
+            AssertOrigin(ledger, negative, cut, -1f);
+        }
+
+        /// <summary>
+        /// Where a fragment came from does not change. Completion and termination are two ways one published
+        /// operation can end, so each is shown on an operation of its own: the first cut completes its geometry, the
+        /// second is terminated without completing. In between, the first cut's positive child is cut again -- so it
+        /// becomes a source and is replaced -- and its sibling is retired on its own. Through all of it every
+        /// fragment goes on naming the cut that made it and the side it was.
+        /// </summary>
+        [Test]
+        public void TheOriginSurvivesCompletion_Termination_ARecut_AndARetirement()
+        {
+            LogicalCutLedger ledger = NewLedger(4);
+            LogicalFragmentId root = ledger.AddFragment();
+            CutOperationId first = AdmitOrFail(ledger, root, k_plane);
+            Assert.That(
+                PublishAfterPreparing(ledger, first, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            // The operation that made them completes its geometry. Completion and termination are two ways one
+            // published operation can end, so the other one is shown on the second cut below.
+            Assert.That(ledger.CompleteGeometry(first), Is.EqualTo(LogicalCutResultOutcome.Applied));
+            AssertOrigin(ledger, positive, first, 1f, "after the cut that made it completed");
+            AssertOrigin(ledger, negative, first, -1f);
+
+            // The positive child is cut again. Being a source now does not make it forget being a child.
+            CutOperationId second = AdmitOrFail(ledger, positive, k_otherPlane);
+            AssertOrigin(ledger, positive, first, 1f, "while it is itself being cut");
+            Assert.That(
+                PublishAfterPreparing(ledger, second, out LogicalFragmentId inner, out LogicalFragmentId outer),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            // That second cut ends the other way: terminated without its geometry completing.
+            Assert.That(ledger.Terminate(second), Is.EqualTo(LogicalCutResultOutcome.Applied));
+            AssertOrigin(ledger, inner, second, 1f, "after the cut that made it was terminated");
+            AssertOrigin(ledger, outer, second, -1f);
+
+            Assert.That(
+                StateOf(ledger, positive), Is.EqualTo(LogicalFragmentState.Replaced),
+                "the child has been replaced by its own children");
+            AssertOrigin(ledger, positive, first, 1f, "and still names the cut that made it, not the one it was of");
+            AssertOrigin(ledger, inner, second, 1f, "while its own children name theirs");
+            AssertOrigin(ledger, outer, second, -1f);
+
+            // The other side is retired on its own.
+            Assert.That(ledger.Retire(negative), Is.True);
+            Assert.That(StateOf(ledger, negative), Is.EqualTo(LogicalFragmentState.Retired));
+            AssertOrigin(ledger, negative, first, -1f, "a retired fragment still came from where it came from");
+        }
+
+        /// <summary>
+        /// Asking where a fragment came from is **one lookup, and reads nothing in admission order** -- with a good
+        /// many cuts published in between, and none of them of this fragment.
+        /// <para>
+        /// **That is the whole of what this observes.** <see cref="LogicalCutLedger.OriginLookups"/> counts the asking
+        /// and <see cref="LogicalCutLedger.AdmissionOrderReads"/> counts one other entrance; neither counts what a
+        /// call does inside the ledger, so an implementation that walked its own operations to find the answer would
+        /// pass this too. **That the answer is one read of the fragment's own record is a fact about the code**
+        /// (<see cref="LogicalCutLedger.TryGetOrigin"/>), confirmed by reading it and not by these counts.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AskingWhereAFragmentCameFrom_IsOneLookupAndReadsNothingInAdmissionOrder()
+        {
+            LogicalCutLedger ledger = NewLedger(64);
+            LogicalFragmentId root = ledger.AddFragment();
+            CutOperationId first = AdmitOrFail(ledger, root, k_plane);
+            Assert.That(
+                PublishAfterPreparing(ledger, first, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            // Many more cuts, none of them of this fragment.
+            LogicalFragmentId at = negative;
+            for (int i = 0; i < 12; i++)
+            {
+                CutOperationId cut = AdmitOrFail(ledger, at, k_otherPlane);
+                Assert.That(
+                    PublishAfterPreparing(ledger, cut, out LogicalFragmentId child, out LogicalFragmentId _),
+                    Is.EqualTo(LogicalCutResultOutcome.Applied));
+                at = child;
+            }
+
+            Assert.That(ledger.OperationCount, Is.GreaterThan(12), "the ledger holds a good many cuts now");
+
+            long before = ledger.OriginLookups;
+            long admissionReadsBefore = ledger.AdmissionOrderReads;
+            AssertOrigin(ledger, positive, first, 1f, "the first child, with everything else long since published");
+
+            Assert.That(ledger.OriginLookups, Is.EqualTo(before + 1), "the asking was counted once");
+            Assert.That(
+                ledger.AdmissionOrderReads, Is.EqualTo(admissionReadsBefore),
+                "and the admission-order entrance was not used at all");
+        }
+
+        private static void AssertOrigin(
+            LogicalCutLedger ledger, LogicalFragmentId fragment, CutOperationId expected, float expectedSide, string what = null)
+        {
+            Assert.That(
+                ledger.TryGetOrigin(fragment, out CutOperationId operation, out float side), Is.True,
+                (what ?? fragment.ToString()) + " came from a cut");
+            Assert.That(operation, Is.EqualTo(expected), (what ?? fragment.ToString()) + ": which cut");
+            Assert.That(side, Is.EqualTo(expectedSide), (what ?? fragment.ToString()) + ": which side");
+        }
     }
 }

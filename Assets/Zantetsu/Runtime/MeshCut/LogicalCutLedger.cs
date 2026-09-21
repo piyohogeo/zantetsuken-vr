@@ -75,8 +75,16 @@ namespace Zantetsu.MeshCut
 
             // The operation that replaced this fragment by publishing its two children. Set once, at publication,
             // and kept: a reader that finds a fragment Replaced needs it to reach the children, and an id is never
-            // reused, so it always names the operation that actually replaced it.
+            // reused, so it always means the operation that actually replaced it.
             public CutOperationId replacedBy;
+
+            // The other direction: the operation that **made** this fragment, and which of its two sides this is
+            // (+1 positive, -1 negative). Unset on a fragment added directly, which no cut made. Written once, by
+            // the publication that issues this id, and never written again: cutting this fragment in its turn,
+            // retiring it, and ending the operation that made it all leave it exactly as it was, because it is a
+            // fact about where this fragment came from and that does not change.
+            public CutOperationId origin;
+            public float originSide;
 
             // The source's ownership authority as a counter: bumped by NoteOwnershipChanged, snapshotted at admission,
             // and compared when the result arrives. Local to this fragment on purpose.
@@ -126,9 +134,11 @@ namespace Zantetsu.MeshCut
         public int OperationCount => _operations.Count;
 
         /// <summary>
-        /// How often <see cref="TryGetOrigin"/> has been asked. That call reads the operations in order, so a caller
-        /// that should have settled an answer once and kept it shows up here as a count that keeps rising. It is for
-        /// tests to read; nothing of the ledger's behaviour depends on it.
+        /// **How often <see cref="TryGetOrigin"/> has been asked** -- one per call, whatever the answer. It counted
+        /// passes over the operations once, when that is how the answer was found; it does not any more, because the
+        /// answer is read from the fragment itself. A caller that should have settled something once and kept it
+        /// still shows up here as a count that keeps rising, which is what it is read for. It is for tests; nothing
+        /// of the ledger's behaviour depends on it.
         /// </summary>
         public long OriginLookups { get; private set; }
 
@@ -267,32 +277,39 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// The published operation that made <paramref name="fragment"/>, and which of its two sides the fragment is:
-        /// +1 for the positive child, -1 for the negative. False for a fragment no cut made -- one added directly -- and
-        /// for one this ledger does not hold. Found by reading the operations' own records; nothing is stored for it,
-        /// and reading it changes nothing.
+        /// +1 for the positive child, -1 for the negative. False for a fragment no cut made -- one added directly --
+        /// and for one this ledger does not hold.
+        /// <para>
+        /// **It is read from the fragment's own record** (DESIGN 7.1.2), not looked for among the operations: the
+        /// answer was settled by the publication that made this fragment and costs the same however many cuts the
+        /// ledger has since held. It is one step of a lineage, not a lineage: walking up to an ancestor is that many
+        /// steps, each of them this one.
+        /// </para>
+        /// <para>
+        /// **It does not change.** Cutting this fragment again, retiring it, and completing or terminating the
+        /// operation that made it leave it as it is, because where a fragment came from is not something that
+        /// happens to it later. Ids are never reused, so the operation it names is always the one that made it.
+        /// </para>
         /// </summary>
         public bool TryGetOrigin(LogicalFragmentId fragment, out CutOperationId operation, out float side)
         {
             OriginLookups++;
             operation = default;
             side = 0f;
-            if (!TryIndex(fragment, out _))
+            if (!TryIndex(fragment, out int index))
             {
                 return false;
             }
 
-            for (int i = 0; i < _operations.Count; i++)
+            Fragment record = _fragments[index];
+            if (!record.origin.IsSet)
             {
-                Operation record = _operations[i];
-                if (record.positive == fragment || record.negative == fragment)
-                {
-                    operation = new CutOperationId(i + 1);
-                    side = record.positive == fragment ? 1f : -1f;
-                    return true;
-                }
+                return false;
             }
 
-            return false;
+            operation = record.origin;
+            side = record.originSide;
+            return true;
         }
 
         /// <summary>
@@ -543,9 +560,13 @@ namespace Zantetsu.MeshCut
 
             Operation operation = _operations[operationIndex];
 
-            // Publication: the children take the prepared sets as they are, with nothing reclassified or copied again.
-            positive = NewFragment(operation.preparedPositive);
-            negative = NewFragment(operation.preparedNegative);
+            // Publication: the children take the prepared sets as they are, with nothing reclassified or copied
+            // again, and each is made knowing the cut it comes from and which side of it it is. That is written in
+            // the same call that issues the id, so the children and their origins become visible together: there is
+            // no moment where a child can be asked about and answer nothing, and none where an unpublished child
+            // could be found by asking about an origin.
+            positive = NewFragment(operation.preparedPositive, id, 1f);
+            negative = NewFragment(operation.preparedNegative, id, -1f);
 
             operation.state = LogicalCutOperationState.Published;
             operation.positive = positive;
@@ -819,10 +840,22 @@ namespace Zantetsu.MeshCut
 
         // Only after ReserveFragments: the addition goes into reserved room and does not grow the list. The anchor
         // list handed in becomes the fragment's own; callers pass either a fresh copy or a prepared distribution.
-        private LogicalFragmentId NewFragment(List<float3> anchors)
+        /// <summary>
+        /// A new fragment id, with the anchors it starts with and where it came from. The origin is given here, at
+        /// the one place an id is issued, so that a fragment is never in the ledger without it: the publication that
+        /// makes a child names the cut and the side in the same call that creates it, and a fragment added directly
+        /// has none. Nothing writes it afterwards.
+        /// </summary>
+        private LogicalFragmentId NewFragment(List<float3> anchors, CutOperationId origin = default, float originSide = 0f)
         {
             int id = _fragments.Count + 1;
-            _fragments.Add(new Fragment { state = LogicalFragmentState.Live, anchors = anchors });
+            _fragments.Add(new Fragment
+            {
+                state = LogicalFragmentState.Live,
+                anchors = anchors,
+                origin = origin,
+                originSide = originSide,
+            });
             Changed();
             return new LogicalFragmentId(id);
         }

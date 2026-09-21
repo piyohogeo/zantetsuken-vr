@@ -2012,8 +2012,8 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// What the ledger says one render fragment's side is. The pending case asks for the root's active operation;
-        /// the published case asks which cut made that root, which reads the operations in order -- and is why this is
-        /// settled once here rather than every frame.
+        /// the published case asks which cut made that root. Both are facts about the structure, which is why they are
+        /// settled once here rather than asked again every frame.
         /// </summary>
         private static VpMultiCutSideIdentity SideIdentityOf(
             LogicalCutLedger ledger, LogicalFragmentId registrationRoot, LogicalFragmentId root, float rootPendingSide)
@@ -2059,9 +2059,10 @@ namespace Zantetsu.MeshCut
         /// whether that side is published, and whether it is fixed by its anchors.
         /// <para>
         /// Every part of this is a fact about the ledger and the lineage, so it is settled with the structure and
-        /// carried with it. Asking again every frame would mean walking the operations for each render fragment --
-        /// <see cref="LogicalCutLedger.TryGetOrigin"/> reads them in order -- which is what having a structure to
-        /// reuse is supposed to save.
+        /// carried with it. It is not settled here to save reading: asking where a fragment came from is one read of
+        /// that fragment (<see cref="LogicalCutLedger.TryGetOrigin"/>). It is settled here because it is **structure**
+        /// -- what a render fragment is, as a side -- and a frame that did not settle the structure again does not
+        /// settle this again either.
         /// </para>
         /// </summary>
         internal readonly struct VpMultiCutSideIdentity

@@ -2970,8 +2970,7 @@ namespace Zantetsu.MeshCut
         /// <para>
         /// Every part of that is a fact about the ledger, settled when the structure was, and read back here. It used
         /// to be asked of the ledger here instead -- once per render fragment, inside the loop over a body's commands
-        /// -- and finding which cut made a published root reads the operations in order, so a structure that was not
-        /// settled again was being walked over all the same.
+        /// -- which asked the structure again on frames that had settled it already.
         /// </para>
         /// </summary>
         private LogicalCutDisplaySide SideOf(Shown entry, int renderFragment, in VpMultiCutRenderFragment rf)
