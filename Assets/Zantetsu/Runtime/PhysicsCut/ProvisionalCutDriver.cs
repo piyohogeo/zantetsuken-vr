@@ -6,6 +6,21 @@ using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
 {
+    /// <summary>
+    /// The Player termination request of DESIGN 4, as the things that must stop see it: one non-persistent latch,
+    /// owned by the composition root and fixed one way by the first cause Main handled.
+    /// <para>
+    /// **What reads it stops doing two things**: accepting new cuts, and publishing what is not published yet. It is
+    /// read on the main thread, where those two happen. Nothing here ends anything, waits for anything or frees
+    /// anything -- that is the Player's own ending, and a different thing entirely.
+    /// </para>
+    /// </summary>
+    public interface ICutTerminationLatch
+    {
+        /// <summary>Whether the termination has been requested. Once true, it stays true.</summary>
+        bool TerminationRequested { get; }
+    }
+
     /// <summary>What one asked-for cut came to, as far as this driver is concerned.</summary>
     public enum ProvisionalCutAcceptance
     {
@@ -119,6 +134,7 @@ namespace Zantetsu.PhysicsCut
         private Func<int> _frameSource;
         private ProvisionalCutRecovery _recovery;
         private CutDag _dag;
+        private ICutTerminationLatch _latch;
 
         /// <summary>
         /// The frame this driver counts by: the engine's, or whatever the caller counts with instead. A display created
@@ -180,7 +196,8 @@ namespace Zantetsu.PhysicsCut
             float anchorEpsilon,
             int vertexLimit,
             Func<int> frameSource = null,
-            CutDag dag = null)
+            CutDag dag = null,
+            ICutTerminationLatch latch = null)
         {
             _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -208,6 +225,10 @@ namespace Zantetsu.PhysicsCut
                 _recovery = new ProvisionalCutRecovery();
                 frame.Add(_recovery);
             }
+
+            // Where the Player's termination request is read, when there is one: this driver is both the acceptance
+            // entrance and the entrance of the Final publication, which are the two things that stop.
+            _latch = latch;
 
             // The same reason, for the geometry of an accepted cut: the DAG holds work that outlives this component,
             // and the frame is what pumps it. Adding it twice does nothing.
@@ -255,6 +276,14 @@ namespace Zantetsu.PhysicsCut
             // not reach it: the empty-side case is the ledger's own NoOp -- classified before admission as not
             // splitting both sides -- and a request that does not hold together never gets that far either.
             admission = LogicalCutAdmission.NoOp;
+
+            // **Closed by the Player's termination request** (DESIGN 4): from the moment that latch is fixed, no cut
+            // is accepted. Nothing has changed here and nothing is ended -- the ending of the Player is its own.
+            if (_latch != null && _latch.TerminationRequested)
+            {
+                return ProvisionalCutAcceptance.NotAccepted;
+            }
+
             if (!IsBound || !ask.source.IsSet
                 || !math.all(math.isfinite(ask.plane)) || math.lengthsq(ask.plane.xyz) <= 0f
                 || !math.all(math.isfinite(ask.renderAnchor)))
@@ -513,6 +542,15 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void OnDestroy()
         {
+            if (_latch != null && _latch.TerminationRequested)
+            {
+                // The Player is ending (DESIGN 4). The ordinary ending of every cut -- the aborts, the retirements,
+                // the collection that follows them -- is exactly what that contract does not do, and being destroyed
+                // is not a reason to start it. An explicit ending is still an explicit ending: EndEveryCut called by
+                // a caller does what it always did.
+                return;
+            }
+
             EndEveryCut();
         }
 
@@ -680,6 +718,15 @@ namespace Zantetsu.PhysicsCut
         private void TryHandOff(ProvisionalCutTransaction transaction)
         {
             if (transaction.Pair == null || transaction.Pair.IsEnded || transaction.InputShape == null)
+            {
+                return;
+            }
+
+            // **Nothing unpublished is published after the termination request** (DESIGN 4). The latch may have been
+            // fixed earlier in this very update -- a geometry failure is reported while the frame is being carried,
+            // which is before this collection -- so it is read here and not only where a cut is accepted. The record
+            // keeps its products: ending it is the caller's, and the Player's ending guarantees no collection.
+            if (_latch != null && _latch.TerminationRequested)
             {
                 return;
             }

@@ -6,6 +6,7 @@
         "Zantetsu.PhysicsCut",
         "Zantetsu.MeshCut",
         "Zantetsu.ConvexCut",
+        "Zantetsu.Rendering",
         "Unity.Mathematics",
         "Unity.Collections",
         "Unity.Burst"

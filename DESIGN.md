@@ -925,6 +925,24 @@ Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 
 
 **残件（現在）。**Hit 検出そのもの（Actor→論理子の解決だけがここにある）、Scene 常設の構成根、建物 World D6、Character、分離 Impulse の算出式と「向き」、XR・性能測定。**A・B の時点で残件だった handoff は、この単位で成立した**——A の「Final handoff は残る」、B の「保持した成果物の行き先」はこの実装が受けている。handoff の成立は Phase 全体の完成を意味しない。
 
+最小構成根と PlayMode 自動駆動の接続（2026-09-21）。これまで試験側で組み立てていた部品を、製品側の構成根 1 つ（`CutWorldRoot` + `CutWorldProfile`）で結び、Unity の通常の Update／LateUpdate だけで 受付 → Provisional 公開 → Final handoff → 表示 Geometry Commit → 子の再切断 まで進む状態にした。新しい Scheduler・汎用 DI・独自 PlayerLoop は追加していない。
+
+**組み立てと所有者。**`CutWorldRoot`（MonoBehaviour、実行順 −200）が `Awake` で台帳・`PhysicsOwnerRegistry`・配置照会・storage・参照表・表示・dispatcher と 3 つの destination・`SharedWorkFrame`・`PhysicsCutCook`・`CutDag`（実 Commit は `VpDisplayGeometryCommit`、失敗通知は root 自身）・`ProvisionalCutDriver` を生成し、driver を bind する。**駆動はしない**：一つのものが駆動し、それは driver（Unity の Update／LateUpdate）である。構成根は「作る」「登録する」「終える」だけを行い、二重駆動しない。body の登録は `TryAddBody` 1 呼出しで、初期 Physics Shape・基準 Geometry・Fragment・表示登録を同時に結ぶ。拒否しうる表示登録を先に行い、拒否されたら発行した Fragment を退役させて**何も登録されていない状態で false を返す**（半登録を残さない）。成功した body の Object は**この世界のもの**になり、その Fragment の退役（＝その body を置き換える切断）で対応が破棄する。**2 つの frame 写像を別々に受け取る**：`lineageToGeometryLocal`（系統の論理 frame → Geometry 座標。カーネルの面変換と子への継承に使う）と `geometryLocalToOwner`（Geometry → 物理 Owner 座標。描画が Actor に追従する根拠）。
+
+**設定は製品側から。**`CutWorldProfile`（ScriptableObject）1 つから供給する。Kernel の頂点上限は DESIGN の **L = 128**。Cook 同時予約数は既定 **4**（2 以上であることを検証で強制する：1 では独立 Owner の切断が直列化し、一方の完了待ちで他方が止まる）。storage 容量・dispatcher の待ち枠／緊急予約／フレーム予算・destination の容量・表示の各容量・分類 epsilon・Anchor epsilon・未完了 Cut の上限・終了の期限もここに置く。**容量設定は「件数」であって固定バイト上限ではない**（epsilon は長さ、終了期限は時間である）。分離 Impulse の算出式と「向き」はここで決めない（切断ごとに呼出側が 2 値で与える）。
+
+**通常更新への接続。**標準の FixedUpdate 自動シミュレーションを前提に、受付を取り上げた `Update` の中で Provisional を公開し、同じフレームの `LateUpdate` の実表示収集に反映する。同一フレーム内の追加機会は同じ残予算を使う（`Advance` の交互反復）。同期待ち・強制 Complete・busy polling・独自 PlayerLoop は追加していない。
+
+**終了の順序。**終了は一度要求し、**通常フレームを跨いで**進める。`Shutdown` の最初の呼出しで 受付停止 → 受付済み切断をすべて終了 → **driver の駆動停止** → DAG と Cook を閉じる（実行中は中断しない）。以後は構成根が、そのフレーム自身の id で frame を回す。**架空の frame id を作らないので予算は補充されない**：その回収も submit も、同じフレームの残予算を共有する（回収も予算を消費する）。回数は制限せず、呼出側が同じフレームでもう一度求めても同じ残予算の続きになる。外に出ているものが無くなってから dispatcher を停止し、**その確認結果が解放を決める**：workers の停止が確認できたときだけ Owner・表示・storage・destination を解放する。**期限の到来は確認ではない**ので、確認できない場合は何も解放せずにその旨を残す（Worker が読んでいる可能性のあるメモリを解放しない）。**回収に必要な Frame／Cook／DAG は driver より後に消える。**
+
+**共通 Player 終了（4 章）。**構成根が非永続の終了要求 latch を持ち、Renderer 初期化の前から存在する。共用 Geometry 切断の失敗と、**表示に必要な容量・Stencil 構成の不成立（初期化時）**が原因で、Main がその latch を一方向に確定する。確定後は**新規切断受付**（製品の受付入口が同じ latch を読む）と**未公開成果物の公開**——表示 Geometry Commit だけでなく **Final handoff による論理子公開**も——を閉じ、その後で一度だけログし、Player の終了 API を一度だけ呼ぶ。**これは通常終了ではない**：全 Work 回収・停止確認・資源解放は開始せず、構成根の `OnDestroy` でも、**駆動側（`ProvisionalCutDriver`）の `OnDestroy`** でも通常終了へ入らない（DESIGN 4 が回収・解放を保証しないため。明示的な終了呼出しは従来どおり）。profile の値の不整合やMaterial 欠落のような構成ミスは従来どおりログと無効化で、終了へは広げない。
+
+**共通 Player 終了（4 章）。**構成根が非永続の終了要求 latch を持つ。共用 Geometry 切断の失敗は Main でその latch を一方向に確定し、**新規切断受付**と**未公開成果物の Commit**（Commit を latch の後ろに置く）を閉じてから、一度だけログし、Player の終了 API を一度だけ呼ぶ。これは上の終了とは別経路であり、待ち合わせ・全 Work 回収・資源解放・Fragment 退役はしない。
+
+**確認**は PlayMode で、構成根を実際に生成・初期化し、試験から `Advance`／`DriveUpdate`／`DriveLateUpdate` を呼ばずに行った：①受付を取り上げたフレームで Provisional が公開され、**そのフレームの収集**で 1 つの body が 2 つの側として描かれる（Final 完了は待ち条件ではない）。②自動駆動だけで handoff と実 Geometry Commit が完了し、生成した子をもう一度切断できる。③2 つの独立 Owner の**物理 Work が同じ destination（Unity Job）へ同時に**渡っていることで並行を確認し（Stage 名や待ち行列ではなく、Owner ごとの数値 Work を識別する）、一方の完了待ちで他方が止まらない。④対象 Work を「完了済みだが未回収」に固定して終了を要求し、**予約と入力 Geometry の読取保持が残る**こと、解放後は**通常フレームだけで**回収と解放が完了することを確認した。⑤切断入力として受理されていない Geometry を切ろうとした失敗が終了要求を起こし、受付が閉じ、終了 API が一度だけ呼ばれ、**その後に通常終了へ入らない**ことを、終了 API を差し替えて確認した。⑥**別の要求の Final 成果物が回収可能な状態で**その失敗を起こし、**その成果物が実際に回収されたうえで**（要求は終わり、記録が成果物を保持している）、以後の更新の後段でも**論理子が公開されない**こと（対はそのまま）を確認した。
+
+**残件。**Scene 常設アセット（profile と root を持つ Scene／Prefab）と描画そのもの（`VpLogicalCutDisplay.Render` を呼ぶカメラ側）はこの単位に含めていない。Scene unload やアプリ終了で `OnDestroy` の順序が保証されない場合の終了は、**明示的な `Shutdown` とは別**であり未確認である。Hit 検出、建物 World D6、Character、Impulse の算出・向き、XR・性能調整も対象外。
+
 物理受付と表示 Geometry DAG・Commit の接続（2026-09-21）。一度の受付で、同じ CutOperationId のもとに物理と表示 Geometry の両責務が動く製品経路を成立させた。
 
 **受付は一度だけ。**`ProvisionalCutDriver` は robust support の判定（DESIGN 7.6）で切断が成立すると判断した後に、台帳へ**一度だけ**受付を求める。表示 Geometry がある場合はその要求を `CutDag.TryAdmit` を通して出し、台帳が発行したまさにその Operation に Geometry の仕事が 1 つ登録される。表示 Geometry がない構成では従来どおり台帳へ直接求める。No-op（片側に支持がない平面）と受付拒否では Operation が生じないので、Geometry Node も Work も生じない。第二の台帳・独自 ID・汎用イベント基盤は追加していない。この接続では論理子公開を Final handoff に任せ、**DAG から重ねて `Publish` しない**（`CutDag` は受付を台帳へ行い、Geometry 完了時は `CompleteGeometry`、Commit なしの終了時は `Terminate` で台帳を更新する。行わないのは論理子の公開だけである）。

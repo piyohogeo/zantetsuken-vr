@@ -8,6 +8,7 @@ using Zantetsu.Rendering;
 
 // So that the tests can drive the frame counter this display reads, which the product path takes from the engine.
 [assembly: InternalsVisibleTo("Zantetsu.Core.EditModeTests")]
+[assembly: InternalsVisibleTo("Zantetsu.PhysicsCut.PlayModeTests")]
 
 // The development display check of the logical caps. It runs in Edit Mode, where Time.frameCount does not advance
 // between calls, so it needs the same caller-supplied frame counter the tests use; it lives in an Editor assembly of

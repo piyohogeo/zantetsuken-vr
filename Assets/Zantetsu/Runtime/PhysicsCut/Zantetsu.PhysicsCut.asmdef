@@ -4,6 +4,7 @@
     "references": [
         "Zantetsu.ConvexCut",
         "Zantetsu.MeshCut",
+        "Zantetsu.Rendering",
         "Unity.Burst",
         "Unity.Mathematics",
         "Unity.Collections"
