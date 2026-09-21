@@ -773,6 +773,8 @@ ProvisionalとFinalは同じ受付Snapshot・採用面から得た正負子Owner
 
 正負2子ID、親・子・面・Sideを持つLogicalCutOperation、Final Owner参照、Anchor／frame、Hit／QueryとTemporary表示対応を未公開で準備する。安全な物理境界と同じMain Thread更新区間で、Final Physics Commit、Sourceの現在対象終了、Operationと2子公開、Hit／Query／Temporary追従先切替、Transaction終了、Pending CutからPhysics authorityを外す処理を行う。途中に新規受付、Query結果のLogical解決、他の所有変更、Renderer状態収集を挟まず、旧完全状態または新完全状態だけを観測させる。単一CPU命令のatomic storeは要求しない。
 
+公開時に確定する各LogicalFragmentの生成元Operationと正負Sideは、既存台帳内の不変な関係として保持し、履歴件数に依存しないO(1)の照会で取得する。子の公開と同じ境界で関係を公開し、公開前の子は見せない。直接登録した根には生成元がなく、不正IDの照会も生成元なしを返す。生成元Operationが完了・終端しても関係を変えず、既存のID非再利用規則を維持する。保持形式は実装詳細とし、既存のTryGetOrigin利用経路をこの直接照会へ置き換え、照会ごとのOperation履歴走査を残さない。
+
 Geometry Work、具体的Vertex／Index、実Cap、CutBoundaryRecord、GPU転送をPublication前提にしない。成功後は生存LogicalFragmentとFinal Physics Ownerが1対1となり、Geometry未完成でも各子を再切断・単独退役できる。親の現在対象終了は祖先Pending／Geometry Workの失効を意味せず、Geometry責務は4.5.6へ残す。
 
 #### 7.1.3 Abort・Staleと単独退役
@@ -1376,7 +1378,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-165 | Phase 4.3 建物World D6と一般外部Joint撤去 | 7.2.2を正本とし、建物由来の動的な1→2物理分裂子へ独立World D6を一つ生成する。垂直並進Free、水平並進・全回転Limited、3値によるDepth別指数Limitを使う。一般外部Jointの継承・付け替え・GC保護・予測を撤去する。建物は製品の切断対象、道路は非対象とする（O-005解決）。Runtime本体は独立Phase 4.3、任意分割・GC統合は5.6／5.7 | 人間承認済み、2026-09-10。7.2.2の品質・運動・費用・製品入力制限を許容する。Depthは7.2.2の予定値をProvisionalと正式子で共有し、非建物はfalse／0を維持する。実装・拘束効果の検証済みを意味しない |
 | D-166 | 固定Locomotion Occupancyと退出系撤去 | 7.2.3を正本としてLevel初期化時の固定Primitive集合と候補次姿勢Overlapによる要求全体Rejectだけを採用する。動的追従、ForcedOccupancyOverlapと退出状態・探索・専用ID・Profile・容量・作業領域、および退出系の専用試験を撤去し、Reject TraceからPolicyと侵入深度を削る。O-040を解決する | 人間承認済み、2026-09-10。切断・移動・退役後の通行境界不一致、未登録Geometryへの侵入、薄壁の飛越え、slide・部分移動なし、Lean後の人工移動停止、配置前提違反時の自動復旧なし、Reject詳細観測の喪失を許容する。Fade撤去と通常Geometry・物理契約は維持し、Runtime Occupancy更新は必要になった場合に別変更で決定する。実装済みを意味しない |
 | D-167 | 単一Segment SlashWave | 19.1のLatch／Frame／Span Candidate／Close境界、Raw候補とAcceptedSpanのrunning maximum、単一Segment、WaveLifetime、19.1.8のSlashWave VFXと開発UIを採用する | 人間承認済み、2026-09-11。VFX簡素化は2026-09-13承認。完了済み区間は再評価せず現在区間の増加領域へのHitを許容する。Estimator切替は生存Waveを変更せず、一時状態の寿命をWave内に閉じる。19.1.6の容量満杯時の新Latch見送り・非遅延発射と、Expire先行による末尾区間の命中抜けを許容 |
-| D-168 | 現在採用Convexと系譜Hit消費 | 19.1.7／19.1.9の4端点の閉凸包Sweep（退化を含む）と現在採用Convexを正本とし、直接消費したLogicalFragmentRefだけを一時保持、既存Operation履歴をO(N)走査する | 人間承認済み、2026-09-11。受付見送りでも同Slashでは再試行せず、無関係Fragmentは個別Hitできる。親API・Cache・通知・恒久履歴を追加しない |
+| D-168 | 現在採用Convexと系譜Hit消費 | 19.1.7／19.1.9の4端点の閉凸包Sweep（退化を含む）と現在採用Convexを正本とし、直接消費したLogicalFragmentRefだけを一時保持し、7.1.2の生成元関係をたどって祖先を判定する | 人間承認済み、2026-09-11。受付見送りでも同Slashでは再試行せず、無関係Fragmentは個別Hitできる。Slash専用の系譜Cache・通知・恒久的な消費履歴を追加しない |
 | D-169 | 基本Playable先行Phase | 0.55でUX、4.50～4.52でWaveと現在状態切断を先行完成し、Predictionを後段へ分ける。4.1は性能曲線、Slash Deadlineへの適用は4.53とする | 人間承認済み、2026-09-11。15章の依存・省略条件を正本とし、4.55の内部方式は変更しない。Traceの現行相関は21.16.6に従い、旧形式の扱いは17章に従う |
 | D-170 | 第一候補のGuide Ray交点 | 19.1.5.1のBegin剣先方向T、Begin→Latch Emitter chordのS、Live／Frozen Guide交点r／q、Invalid保持とClose後勾配を第一候補とする | 人間承認済み、2026-09-11。具体epsilon・q許容等はUI調整。Clamp、別交点Fallback、軸回転を追加せず、比較方式は同じ出力境界内で交換できる |
 | D-171 | 断面色と最小デバッグ | 5.3に従い通常は仮断面と実断面を共通トゥーンの固定グレー、デバッグ有効時は仮断面を赤、実断面を緑とする。実Capの固定負UV markerは表示色選択だけに使い、処理経路色と専用表示契約を撤去する | 人間承認済み、2026-09-11。元Assetの負UVによる通常表示・デバッグ表示の誤表示を許容し、UV検査・修正・登録拒否を追加しない。O-004を解決 |
@@ -1491,7 +1493,7 @@ Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10�
 | T-068 | 両眼Cap可視性Cull | Facingでは両眼ともepsilonを越えて明確に裏向きのCapだけを除外し、片眼可視・epsilon帯内・正負Capを誤って除外せずStencil仕事を削減する | 左右眼のFacing一致／不一致、epsilon境界の内外、正負Cap、Frustum内外の固定配置でCull判定、Stencil Draw／GPU時間、左右眼画像差を比較する |
 | T-069 | Owner単位Cut/Cook | 7.2の実行分担と一体Commitを確認する | 受付済みPhysicsの新規投入をurgent Unity Jobで実行し、Burst kernelからMeshDataへ出力する。Main ThreadのMesh適用後にmanaged Jobで`Physics.BakeMesh`を行う。同一Meshの同時Bakeがなく、stale非適用、all-or-none Commit、cook不成立時のAbortを少数Fixtureで確認する。cook後の品質差の扱いは7.3に従う |
 | T-072 | 固定物体の即時切断 | cook遅延中も7.1の配分でAnchorを持つ所有者全体が固定される。固定を理由に仮描画を省略しない。**表示専用Offsetは無いので、「Anchorなし側だけが仮分離する」ことは表示の条件にしない**（物理が離れた結果としてのみ見える） | 単一・両側・OnPlane Anchor、同Sideの離れた島、連続切断、先行結果Rejectを少数例で確認する。cook遅延caseでは固定・仮分離と固定側の誤Impulse・変位がないことを確認し、全体固定による浮遊とAnchor喪失後の大型物体の落下・回転を許容する。cook失敗caseではFinalを部分公開せず、7.1に従ってSourceを退役することを確認する |
-| T-074 | 点Anchorと論理切断公開 | 7.1のOwnerの点Anchor配分とFinal Physics／Logical Publication、後着Boundaryを確認する | Phase 1のHarness内合成Final成功／失敗入力で正負2子の一体公開またはSource退役を確認する。Sourceの現在集合だけからの正負／OnPlane両側継承、非identityなlocal frame、子再切断時のSibling不変・Anchor非復活を含む。Phase 3でGeometry Commit時のBoundary 0／後着、Operation／ChildからのTrace相関を確認し、実物理はPhase 4へ接続する。8章に従って他枝の世代更新とauthority喪失を区別する。欠落・重複・件数不一致・IncompleteOperationTraceを完全Traceの合格根拠にしない |
+| T-074 | 点Anchorと論理切断公開 | 7.1のOwnerの点Anchor配分とFinal Physics／Logical Publication、後着Boundaryを確認する | Phase 1のHarness内合成Final成功／失敗入力で正負2子の一体公開またはSource退役を確認する。7.1.2の生成元照会は根・正負子・再切断子孫、不正ID、公開前の非可視性とOperation終端後の関係維持を既存試験で確認し、既存照会経路からの履歴走査除去は実装確認とする。Sourceの現在集合だけからの正負／OnPlane両側継承、非identityなlocal frame、子再切断時のSibling不変・Anchor非復活を含む。Phase 3でGeometry Commit時のBoundary 0／後着、Operation／ChildからのTrace相関を確認し、実物理はPhase 4へ接続する。8章に従って他枝の世代更新とauthority喪失を区別する。欠落・重複・件数不一致・IncompleteOperationTraceを完全Traceの合格根拠にしない |
 | T-076 | Cut/Cook Profiling | 7.5の代表Fixtureで製品経路の費用を確認する | Owner当たりkernel時間、Cut/Cook全体時間、処理量、Bake数、Final Commit時間、scratch予約・使用量、失敗・stale・Abort数を確認し、O-035／O-039の調整に使う。保存形式と反復方法はHarness実装詳細とする |
 | T-083 | 共用Geometry切断 | 共通契約を満たす入力を任意平面で切り、実Capを含む各非空出力が同じ閉鎖・edge／vertex manifold・局所winding整合を継承し、4.5.6の正負直接配置と転送・公開条件を満たしてから、表示とStencilへ同じ世代・Triangle集合としてCommitされる | 箱、凹形、複数の閉Component、全体反転、skinning後Self-intersection、別TopologyのCoincident／Nested Componentを切る。planeがvertex／edge／faceを通る場合、同一点複数port、極小／面積0 Triangleを含め、元surfaceと逆向きのCap boundary、Cap内部Edgeの2 incidence、単一vertex fan、canonical position、finite属性、再切断後の同契約を小さいFixtureのオフラインHarnessで検査する。面積0 Triangleを含む非空GeometryとTriangle数0の空出力を区別し、後者へdummy Mesh／Cap／Rendererを作らない。合成Final成功で2子を先に公開し、Geometryが片側または両側空でも子数を変えずRendererなしとする。Boundary 0／後着と祖先順Commitを確認する。用途別の二度目の切断／Cap生成／Uploadと製品Runtime出力Validatorがなく、世代不一致の通常不採用と出力予約不足時の非公開を確認する。出力予約不足だけは4.5.3の再予約・再実行を許容し、プール容量限界は4.5.4に従う。全Mesh self-intersection／inside-outside検査、旧救済経路、方式別試験を追加しない |
 | T-084 | 共用Geometry入力Gate | 正常な閉Meshと全体反転を受理し、Boundary Edge、局所winding不整合、3面以上Edge、複数fan共有Vertexを切断可能Geometryとして登録しない。属性seamと別Topologyの同位置Componentを混同しない | 正向き箱、全体反転、複数の閉Component、Self-intersection、別TopologyのCoincident／Nested Component、UV／Normal seamを受理する。開放Boundary、1／3／4面Edge、T-junction、局所反転、複数fan共有Vertex、共有position不一致、NaN／Inf、不正index／Topology参照を入力準備時にRejectする。Runtime生成の面積0 TriangleをGeometry全体の空と誤判定せず、片側空No-opはこの入力Gateではなく7.6の現在Convex分類で判定する。全Mesh自己交差、inside／outside、signed volume、向き正規化を実行せず、同じ不合格行列をStencil描画試験へ重複させない |
@@ -2103,8 +2105,8 @@ VFXは`SourceSlashPlane`上の表示専用表現とし、事前生成した静�
 
 1. 生存中Slashは、直接Hitを消費した不透明な`LogicalFragmentRef`の小さな一時集合だけを保持する。
 2. 新しい候補Fragmentが実Segment Sweepと交差したとき、候補自身またはいずれかの祖先が消費済みかを確認する。
-3. 祖先判定は、Cut Stateが既に保持する`LogicalCutOperation`履歴の親IDと直接子IDを読み取り、必要時に線形走査して行う。
-4. 新しい親参照field／API、逆引き表、系譜Cache、子公開通知、切断側からSlashへの消費状態伝播を追加しない。
+3. 祖先判定は、7.1.2の生成元関係と、そのOperationの親IDを必要な段数だけたどる。
+4. Slash専用の系譜Cache、子公開通知、切断側からSlashへの消費状態伝播を追加しない。
 5. 祖先に消費済みFragmentがなければ、現在候補をSlash側集合へ追加してから、既存の切断受付へHitを一度だけ渡す。
 6. 切断受付、片側空No-op、受付上限見送り、未公開親による受付拒否等の結果にかかわらず、同じSlashでは当該系譜を再試行しない。
 7. 消費済みFragmentと祖先関係を持たない別の現在Fragmentは、同じSlashからそれぞれ独立に命中できる。
@@ -2112,7 +2114,7 @@ VFXは`SourceSlashPlane`上の表示専用表現とし、事前生成した静�
 9. 別`SlashId`は同じ現在LogicalFragmentへ通常どおり命中できる。
 10. 集合はSlash終了時に回収し、LogicalFragmentへ恒久的なSlash履歴を追加しない。
 
-通常の切断Operation履歴は公開順で親が子より前に存在するため、末尾からの一回の線形走査等で祖先を復元できる実装を許容する。極端な世代数を想定せず、当たり候補ごとのO(N)走査を初期正本とする。計算量改善を目的とするMetadataは実測で必要になった場合だけ別提案とする。
+生成元照会のO(1)条件を、祖先探索全体やSnapshot構築の定時間保証へ広げない。入力変更時のSnapshot再構築と現在の切断状態の確認は維持し、履歴の削除・圧縮・GCや汎用Cache、第二の台帳を追加しない。
 
 Slash Hit Detectorの公開意味には`ObjectId`を含めず、`LogicalFragmentRef`だけを扱う。Cut Stateが既存履歴を探索する内部実装でObject scopeやGenerationを使うことは妨げない。`ObjectGeneration`等は投機成果物の採否へ維持するが、Slashの一括Hit消費単位にはしない。
 
