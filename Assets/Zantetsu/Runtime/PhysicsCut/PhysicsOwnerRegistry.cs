@@ -173,6 +173,9 @@ namespace Zantetsu.PhysicsCut
         private readonly Dictionary<Rigidbody, ProvisionalOwnerPair> _pairOfBody =
             new Dictionary<Rigidbody, ProvisionalOwnerPair>();
 
+        private readonly Dictionary<Rigidbody, LogicalFragmentId> _fragmentOfBody =
+            new Dictionary<Rigidbody, LogicalFragmentId>();
+
         public int Count => _owners.Count;
 
         /// <summary>How many published Provisional pairs are in the scene now.</summary>
@@ -187,6 +190,7 @@ namespace Zantetsu.PhysicsCut
             if (count > 0)
             {
                 _owners.EnsureCapacity(_owners.Count + count);
+                _fragmentOfBody.EnsureCapacity(_fragmentOfBody.Count + count);
             }
         }
 
@@ -219,6 +223,44 @@ namespace Zantetsu.PhysicsCut
         /// not written here.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Which live fragment one body is, and which side of a cut it is if it is one of a published Provisional
+        /// pair's two actors. **One entrance for both**, because the same actor is both in turn: while a cut is
+        /// provisional its two actors answer with the source they are still part of and with the side they are, and
+        /// once that cut is published each of them answers with the child it has become, whose side is nothing --
+        /// zero -- because a published child is a fragment and not a side of anything.
+        /// <para>
+        /// A body whose owner has left the physics scene answers with nothing: what was withdrawn is not there to be
+        /// resolved to, and neither is one that was retired.
+        /// </para>
+        /// <para>
+        /// This is the correspondence itself and nothing more. Finding which body was hit, and what a hit means, is
+        /// not written here.
+        /// </para>
+        /// </summary>
+        public bool TryResolveFragment(Rigidbody body, out LogicalFragmentId fragment, out float side)
+        {
+            if (TryResolveSource(body, out fragment, out side))
+            {
+                return true;
+            }
+
+            if (body == null || !_fragmentOfBody.TryGetValue(body, out fragment))
+            {
+                fragment = default;
+                return false;
+            }
+
+            if (!_owners.TryGetValue(fragment, out PhysicsFragmentOwner owner) || owner.IsWithdrawn)
+            {
+                fragment = default;
+                return false;
+            }
+
+            side = 0f;
+            return true;
+        }
+
         public bool TryResolveSource(Rigidbody body, out LogicalFragmentId source, out float side)
         {
             source = default;
@@ -283,6 +325,37 @@ namespace Zantetsu.PhysicsCut
             {
                 _pairOfBody[side.Body] = pair;
             }
+        }
+
+        /// <summary>
+        /// Takes one published Provisional pair out of the correspondence and **hands its two actors over** instead of
+        /// ending them: the objects stay in the scene exactly as they are, the sibling constraint is destroyed with the
+        /// pair, and the shapes those actors stand on go over with them -- no mesh hold is given back here. False when
+        /// that cut has no pair here.
+        /// <para>
+        /// It is for the handoff to a Final publication (DESIGN 7.2), where the same actors are given the final shape
+        /// and registered as the children's owners. The caller registers those owners before this, and they are what
+        /// holds the shapes from here on.
+        /// **<see cref="EndProvisional"/> is the other thing** and destroys them; calling that here would destroy the
+        /// actors the children are.
+        /// </para>
+        /// </summary>
+        internal bool TryHandOverProvisional(
+            CutOperationId operation, out PhysicsOwnerSide positive, out PhysicsOwnerSide negative)
+        {
+            positive = null;
+            negative = null;
+            if (!_pairsByOperation.TryGetValue(operation, out ProvisionalOwnerPair pair))
+            {
+                return false;
+            }
+
+            _pairsByOperation.Remove(operation);
+            _pairsBySource.Remove(pair.Source);
+            RemoveBody(pair.Positive);
+            RemoveBody(pair.Negative);
+            pair.HandOver(out positive, out negative);
+            return true;
         }
 
         /// <summary>
@@ -354,6 +427,13 @@ namespace Zantetsu.PhysicsCut
             }
 
             _owners.Add(fragment, owner);
+            if (owner.Body != null)
+            {
+                // And the way back, so that the actor this fragment is can be resolved to it: a child of a handoff is
+                // the very actor a Provisional side was, and it would otherwise stop resolving to anything the moment
+                // the pair left the correspondence.
+                _fragmentOfBody[owner.Body] = fragment;
+            }
         }
 
         /// <summary>
@@ -386,6 +466,11 @@ namespace Zantetsu.PhysicsCut
 
             owner.Withdraw();
             _owners.Remove(fragment);
+            if (owner.Body != null)
+            {
+                _fragmentOfBody.Remove(owner.Body);
+            }
+
             owner.Release();
             return true;
         }
@@ -402,6 +487,7 @@ namespace Zantetsu.PhysicsCut
             _pairsBySource.Clear();
             _pairOfBody.Clear();
 
+            _fragmentOfBody.Clear();
             foreach (KeyValuePair<LogicalFragmentId, PhysicsFragmentOwner> pair in _owners)
             {
                 pair.Value.Withdraw();

@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using Zantetsu.MeshCut;
 
@@ -83,6 +84,13 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether this pair has been ended: out of the scene, destroyed, and its holds given back.</summary>
         public bool IsEnded { get; private set; }
 
+        /// <summary>
+        /// Whether the shapes it holds are the final ones a handoff has begun switching to, rather than the temporary
+        /// ones it was published with. It says who gives them back: while this is false the pair does, and once the
+        /// actors have been handed over the children's owners do.
+        /// </summary>
+        public bool HoldsFinalShapes { get; private set; }
+
         public PhysicsOwnerSide Side(bool positive)
         {
             return positive ? Positive : Negative;
@@ -111,6 +119,83 @@ namespace Zantetsu.PhysicsCut
 
             geometryLocalToWorld = side.Root.transform.localToWorldMatrix * GeometryLocalToOwner.Value;
             return true;
+        }
+
+        /// <summary>
+        /// The shapes the two actors are being switched to are this pair's from here on, and the temporary ones it was
+        /// published with go back at the same moment -- their holds were this pair's.
+        /// <para>
+        /// **It is called as the switch begins** (DESIGN 7.2), before the actors stand on anything of the new shapes.
+        /// Until the actors are handed over, this pair is what holds them, so an exception in the middle of the switch
+        /// leaves them where the ordinary ending of a published pair
+        /// (<see cref="PhysicsOwnerRegistry.EndProvisional"/>) gives them back. Nothing else can reach them: they are
+        /// not the correspondence's yet, and a caller's local variable is not something an ending can find.
+        /// </para>
+        /// </summary>
+        internal void TakeFinalShapes(PhysicsOwnerShape positive, PhysicsOwnerShape negative)
+        {
+            if (IsEnded)
+            {
+                throw new InvalidOperationException("this pair has ended");
+            }
+
+            PhysicsOwnerShape wasPositive = PositiveShape;
+            PhysicsOwnerShape wasNegative = NegativeShape;
+            PositiveShape = positive;
+            NegativeShape = negative;
+            HoldsFinalShapes = true;
+            wasPositive?.Dispose();
+            wasNegative?.Dispose();
+        }
+
+        /// <summary>
+        /// Gives the two actors up to whoever takes them over, **without ending them**: the objects stay in the scene
+        /// and stay as they are, and the constraint is destroyed because it belongs to this pair and not to them. The
+        /// shapes go with the actors, and **nothing of them is given back here**. This pair stops naming any of it.
+        /// <para>
+        /// It is the handoff of DESIGN 7.2, where the same actors are given the final shape: the actor is the
+        /// authority and is not rebuilt. **It is not <see cref="End"/>**, which destroys them — the two are told apart
+        /// here so that taking a pair out of the correspondence cannot silently destroy actors somebody else now owns.
+        /// </para>
+        /// <para>
+        /// The shapes go with the actors when they are the final ones (<see cref="TakeFinalShapes"/>): the owners the
+        /// caller registers hold them, so giving them back here would take away what the children are standing on.
+        /// A pair that never got that far gives its own temporary shapes back, as it does when it ends.
+        /// </para>
+        /// </summary>
+        internal void HandOver(out PhysicsOwnerSide positive, out PhysicsOwnerSide negative)
+        {
+            positive = Positive;
+            negative = Negative;
+            if (IsEnded)
+            {
+                return;
+            }
+
+            IsEnded = true;
+            if (Separation != null)
+            {
+                if (Application.isPlaying)
+                {
+                    UnityEngine.Object.Destroy(Separation);
+                }
+                else
+                {
+                    UnityEngine.Object.DestroyImmediate(Separation);
+                }
+            }
+
+            Separation = null;
+            Positive = null;
+            Negative = null;
+            if (!HoldsFinalShapes)
+            {
+                PositiveShape?.Dispose();
+                NegativeShape?.Dispose();
+            }
+
+            PositiveShape = null;
+            NegativeShape = null;
         }
 
         /// <summary>

@@ -1278,7 +1278,642 @@ namespace Zantetsu.PhysicsCut.Tests
             return geometry;
         }
 
+        // ----- 8. the handoff to the Final publication ----------------------------------------------------------------
+
+        /// <summary>
+        /// The finished cut is handed to the Final publication of the same cut, in the update its products came back in:
+        /// the ledger publishes the two children, **and each child is the very Rigidbody its Provisional side was**.
+        /// Nothing was rebuilt.
+        /// </summary>
+        [Test]
+        public void TheFinishedCut_PublishesTwoChildrenOnTheSameActors()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                Rigidbody positiveBody = transaction.Pair.Positive.Body;
+                Rigidbody negativeBody = transaction.Pair.Negative.Body;
+                GameObject positiveRoot = transaction.Pair.Positive.Root;
+                int fragmentsBefore = w.ledger.FragmentCount;
+
+                RunUntil(w, 400, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+
+                Assert.That(w.ledger.FragmentCount, Is.EqualTo(fragmentsBefore + 2), "two children were published");
+                Assert.That(
+                    w.ledger.TryGetOperation(transaction.Operation, out LogicalCutOperation published)
+                        && published.positive.IsSet && published.negative.IsSet,
+                    Is.True,
+                    "the operation names both of them");
+                Assert.That(w.registry.ProvisionalPairCount, Is.Zero, "and the pair is out of the correspondence");
+
+                Assert.That(w.registry.TryGet(published.positive, out PhysicsFragmentOwner positiveOwner), Is.True);
+                Assert.That(w.registry.TryGet(published.negative, out PhysicsFragmentOwner negativeOwner), Is.True);
+                Assert.That(
+                    ReferenceEquals(positiveOwner.Body, positiveBody), Is.True,
+                    "the positive child is the very body its Provisional side was");
+                Assert.That(ReferenceEquals(negativeOwner.Body, negativeBody), Is.True, "and so is the negative child");
+                Assert.That(positiveRoot != null && positiveRoot.activeInHierarchy, Is.True, "still in the scene");
+                Assert.That(w.registry.TryGet(w.source, out PhysicsFragmentOwner _), Is.False, "the source was retired");
+            }
+        }
+
+        /// <summary>
+        /// The actor is the authority (DESIGN 7.2). An actor moved, turned and given a velocity while the cut was
+        /// running keeps its **pose, its centre-of-mass velocity and its angular velocity** across the handoff, and the
+        /// mass properties become the final ones. No separation impulse is applied a second time.
+        /// </summary>
+        [Test]
+        public void TheHandoffKeepsThePoseAndTheMotion_AndTakesTheFinalMassProperties()
+        {
+            using (World w = NewWorld())
+            {
+                // A separation impulse at publication, so that a second application would show.
+                ProvisionalCutTransaction transaction = Publish(w, 6f, 6f);
+                PhysicsOwnerSide positive = transaction.Pair.Positive;
+
+                // While the cut runs, the actor is moved, turned and given a motion of its own.
+                var movedTo = new Vector3(4f, 2f, -3f);
+                Quaternion turnedTo = Quaternion.Euler(10f, 25f, 40f);
+                positive.Root.transform.SetPositionAndRotation(movedTo, turnedTo);
+                positive.Body.linearVelocity = new Vector3(1.5f, -0.5f, 0.25f);
+                positive.Body.angularVelocity = new Vector3(0.2f, 0.4f, -0.1f);
+                float provisionalMass = positive.Body.mass;
+                Vector3 provisionalInertia = positive.Body.inertiaTensor;
+                Vector3 provisionalCentre = positive.Body.centerOfMass;
+                Vector3 linearBefore = positive.Body.linearVelocity;
+                Vector3 angularBefore = positive.Body.angularVelocity;
+                PhysicsOwnerSide negative = transaction.Pair.Negative;
+
+                RunUntil(w, 410, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+
+                Assert.That(
+                    positive.Root.transform.position, Is.EqualTo(movedTo).Using(Vector3Within(1e-4f)),
+                    "the pose is where the solver left it");
+                Assert.That(
+                    Quaternion.Angle(positive.Root.transform.rotation, turnedTo), Is.LessThan(1e-3f),
+                    "and so is the rotation");
+                Assert.That(
+                    positive.Body.linearVelocity, Is.EqualTo(linearBefore).Using(Vector3Within(1e-4f)),
+                    "the centre-of-mass velocity is carried across as it is -- no impulse applied again");
+                Assert.That(
+                    positive.Body.angularVelocity, Is.EqualTo(angularBefore).Using(Vector3Within(1e-4f)),
+                    "and the angular velocity too");
+                // The mass properties are the final ones. The mass of a symmetric cut is the same number the box
+                // approximation gave -- half the parent either way -- so what tells the two apart is the inertia: the
+                // provisional one is a box's, the final one is the shape's own.
+                Assert.That(
+                    positive.Body.mass + negative.Body.mass, Is.EqualTo((float)ParentMass).Within(1e-3f),
+                    "the two children's masses are the parent's, as the final rule requires");
+                Assert.That(
+                    (float)positive.Mass, Is.EqualTo(positive.Body.mass).Within(1e-4f),
+                    "and each body holds what that rule decided");
+                Assert.That(
+                    (float)negative.Mass, Is.EqualTo(negative.Body.mass).Within(1e-4f));
+                Assert.That(
+                    (positive.Body.inertiaTensor - provisionalInertia).magnitude, Is.GreaterThan(1e-3f),
+                    "the inertia is the shape's own now, not the temporary box's: " + provisionalInertia
+                    + " became " + positive.Body.inertiaTensor);
+                Assert.That(
+                    positive.Body.mass, Is.GreaterThan(0f),
+                    "and the mass is usable: " + provisionalMass + " became " + positive.Body.mass
+                    + ", centre " + provisionalCentre + " became " + positive.Body.centerOfMass);
+            }
+        }
+
+        /// <summary>
+        /// What the display follows moves from the two sides of one accepted cut to the two children of a published one:
+        /// the old Provisional correspondence is gone, each child answers for itself, and the real display collects both.
+        /// </summary>
+        [Test]
+        public void AfterTheHandoff_EachChildIsFollowedForItself()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                CutOperationId operation = transaction.Operation;
+                RunUntil(w, 420, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+
+                Assert.That(
+                    w.lookup.TryGetGeometryLocalToWorld(w.source, operation, 1f, out Matrix4x4 _),
+                    Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "the source has no Provisional pair to answer for it any more");
+
+                Assert.That(w.ledger.TryGetOperation(operation, out LogicalCutOperation published), Is.True);
+                Assert.That(
+                    w.lookup.TryGetGeometryLocalToWorld(published.positive, default, 0f, out Matrix4x4 positivePlace),
+                    Is.EqualTo(VpFragmentPlacementKind.Following),
+                    "and each child answers for itself");
+                Assert.That(
+                    w.lookup.TryGetGeometryLocalToWorld(published.negative, default, 0f, out Matrix4x4 negativePlace),
+                    Is.EqualTo(VpFragmentPlacementKind.Following));
+
+                w.registry.TryGet(published.positive, out PhysicsFragmentOwner positiveOwner);
+                Same(
+                    positiveOwner.Root.transform.localToWorldMatrix * k_geometryLocalToOwner, positivePlace,
+                    "the positive child is drawn where its own actor stands");
+                Assert.That(
+                    Approximately(positivePlace, negativePlace), Is.True,
+                    "and the two are still where they were: the handoff moves nothing");
+
+                // A collection through the real display sees the two published children.
+                VpMultiCutSnapshot snapshot = Collect(w, out VpMultiCutRegistration _);
+                Assert.That(snapshot.RenderFragmentCount, Is.EqualTo(2), "two render fragments, one per child");
+            }
+        }
+
+        /// <summary>
+        /// The lifetimes: the source's old colliders leave the physics scene with it, the final colliders are the ones on
+        /// the actors, the sibling constraint has gone, and the meshes the cut borrowed are still held -- by the final
+        /// shapes now -- and are given back once, when the children are retired.
+        /// </summary>
+        [Test]
+        public void TheHandoffMovesTheHoldsAndEndsTheConstraint_GivingBackOnce()
+        {
+            // Two convexes: the plane crosses the first and leaves the second wholly above it, so one side borrows an
+            // authored mesh uncut. A shape of one crossed convex borrows nothing, and nothing would be held to move.
+            using (World w = NewWorld(convexOffsets: new[] { new double3(0.0, 0.0, 0.0), new double3(0.0, 3.0, 0.0) }))
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                GameObject sourceRoot = w.root;
+                ConfigurableJoint joint = transaction.Pair.Separation;
+                PhysicsOwnerSide positive = transaction.Pair.Positive;
+                int producedBefore = positive.ProducedColliderCount;
+
+                RunUntil(w, 430, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+
+                Assert.That(joint == null, Is.True, "the sibling constraint ended with the pair");
+                Assert.That(sourceRoot == null, Is.True, "the source's own object, with its colliders, is gone");
+                Assert.That(positive.Colliders.Count, Is.GreaterThan(0), "the actor has its final colliders");
+                foreach (MeshCollider collider in positive.Colliders)
+                {
+                    Assert.That(collider != null && collider.sharedMesh != null, Is.True, "each with a cooked mesh");
+                    Assert.That(
+                        collider.cookingOptions, Is.EqualTo(PhysicsCutCook.DefaultCooking),
+                        "cooked with the profile the products were");
+                }
+
+                Assert.That(
+                    positive.ProducedColliderCount, Is.GreaterThan(0),
+                    "and at least one of them is a mesh this cut produced: " + producedBefore + " before");
+                Assert.That(
+                    positive.Colliders.Count, Is.GreaterThan(positive.ProducedColliderCount),
+                    "while another is an authored mesh borrowed uncut");
+
+                // The input's meshes are still held -- by the children's own shapes -- and the record let its own hold
+                // go once the borrowed parts had been read.
+                Assert.That(transaction.HoldsInput, Is.False, "the record's hold on the input went back");
+                Assert.That(transaction.Products, Is.Null, "and the products are the children's now");
+                Assert.That(w.meshSource.Users, Is.GreaterThan(0), "the authored meshes are still held by the children");
+                Assert.That(w.meshSource.IsReleased, Is.False);
+
+                // Retiring both children is what finally lets everything go, once.
+                Assert.That(w.ledger.TryGetOperation(transaction.Operation, out LogicalCutOperation published), Is.True);
+                Assert.That(w.registry.Retire(published.positive), Is.True);
+                Assert.That(w.registry.Retire(published.negative), Is.True);
+                Assert.That(w.meshSource.Users, Is.Zero, "nothing holds the authored meshes any more");
+                Assert.That(w.registry.Retire(published.positive), Is.False, "and retiring again does nothing");
+            }
+        }
+
+        /// <summary>
+        /// A cut whose source's authority moved while the cut was running is **stale**: the ledger refuses the handoff,
+        /// the products are given up with the record, and **no fragment is retired** -- the fragment that is there now is
+        /// not the one this cut was of.
+        /// </summary>
+        [Test]
+        public void AStaleFinalResult_IsNotApplied_AndRetiresNothing()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                int fragmentsBefore = w.ledger.FragmentCount;
+
+                // Somebody else took this fragment's physics over while the cut ran.
+                w.ledger.NoteOwnershipChanged(w.source);
+
+                RunUntil(w, 440, () => transaction.Phase == ProvisionalCutPhase.Recovered, "the result is given up");
+
+                Assert.That(w.ledger.FragmentCount, Is.EqualTo(fragmentsBefore), "no child was published");
+                Assert.That(w.registry.ProvisionalPairCount, Is.Zero, "the pair this driver published is ended");
+                Assert.That(
+                    w.ledger.TryGetFragmentState(w.source, out LogicalFragmentState state)
+                        && state == LogicalFragmentState.Live,
+                    Is.True,
+                    "and the fragment is still live: a stale result retires nothing");
+                Assert.That(transaction.Products, Is.Null, "the products were given up");
+                Assert.That(transaction.HoldsInput, Is.False, "with the hold on the input");
+                Assert.That(w.driver.Transactions.Count, Is.Zero);
+            }
+        }
+
+        /// <summary>
+        /// One of the published children can be cut again through the same product entrance, and the other is untouched
+        /// by it: its owner, its anchors and its fixity are what they were.
+        /// </summary>
+        [Test]
+        public void AChildCanBeCutAgain_AndItsSiblingIsUntouched()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction first = Publish(w);
+                RunUntil(w, 450, () => first.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+                Assert.That(w.ledger.TryGetOperation(first.Operation, out LogicalCutOperation published), Is.True);
+
+                w.registry.TryGet(published.negative, out PhysicsFragmentOwner siblingBefore);
+                bool siblingFixed = siblingBefore.FixedByAnchors;
+                var siblingAnchors = new List<float3>();
+                w.ledger.TryGetAnchors(published.negative, siblingAnchors);
+
+                // The positive child is asked for a cut of its own, through the same entrance.
+                var again = new ProvisionalCutAsk
+                {
+                    source = published.positive,
+                    plane = new float4(1f, 0f, 0f, 0f),
+                    renderAnchor = float3.zero,
+                };
+                Assert.That(
+                    w.driver.RequestCut(in again, out ProvisionalCutTransaction second, out LogicalCutAdmission admission),
+                    Is.EqualTo(ProvisionalCutAcceptance.Published),
+                    "the child was accepted and published in its turn");
+                Assert.That(admission, Is.EqualTo(LogicalCutAdmission.Admitted));
+                Assert.That(second.Source, Is.EqualTo(published.positive));
+
+                // And the sibling is exactly as it was.
+                w.registry.TryGet(published.negative, out PhysicsFragmentOwner siblingAfter);
+                Assert.That(ReferenceEquals(siblingAfter, siblingBefore), Is.True, "the sibling's owner is the same");
+                Assert.That(siblingAfter.FixedByAnchors, Is.EqualTo(siblingFixed), "with the same fixity");
+                var siblingNow = new List<float3>();
+                w.ledger.TryGetAnchors(published.negative, siblingNow);
+                Assert.That(siblingNow, Is.EquivalentTo(siblingAnchors), "and the same anchors");
+                Assert.That(
+                    w.ledger.TryGetFragmentState(published.negative, out LogicalFragmentState state)
+                        && state == LogicalFragmentState.Live,
+                    Is.True,
+                    "still live");
+            }
+        }
+
+        /// <summary>
+        /// **The meshes this cut made go back when the last child lets them go, and not before.** The handoff moves
+        /// their ownership to the two final shapes; the existing lifetime test watches the authored input, which comes
+        /// from outside and is nobody's here to give back, so this one watches what the cut itself produced.
+        /// </summary>
+        [Test]
+        public void TheCutsOwnMeshes_GoBackWithTheLastChildAndNotBefore()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                var authored = new List<Mesh>();
+                for (int c = 0; c < w.shape.ConvexCount; c++)
+                {
+                    authored.Add(w.shape.MeshOf(c));
+                }
+
+                RunUntil(w, 460, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+                Assert.That(w.ledger.TryGetOperation(transaction.Operation, out LogicalCutOperation published), Is.True);
+
+                // What the children's colliders are on, told apart from the authored meshes they borrowed.
+                var produced = new List<Mesh>();
+                foreach (bool positive in new[] { true, false })
+                {
+                    w.registry.TryGet(positive ? published.positive : published.negative, out PhysicsFragmentOwner child);
+                    foreach (MeshCollider collider in child.Root.GetComponentsInChildren<MeshCollider>())
+                    {
+                        if (collider.sharedMesh != null && !authored.Contains(collider.sharedMesh))
+                        {
+                            produced.Add(collider.sharedMesh);
+                        }
+                    }
+                }
+
+                Assert.That(produced.Count, Is.GreaterThan(0), "this cut made meshes of its own");
+                foreach (Mesh mesh in produced)
+                {
+                    Assert.That(mesh != null, Is.True, "and they are there while the children use them");
+                }
+
+                // One child retired: the products are still held -- by the other one.
+                Assert.That(w.registry.Retire(published.positive), Is.True);
+                foreach (Mesh mesh in produced)
+                {
+                    Assert.That(mesh != null, Is.True, "one child letting go gives nothing back: the other holds them");
+                }
+
+                Assert.That(w.registry.Retire(published.negative), Is.True);
+                foreach (Mesh mesh in produced)
+                {
+                    Assert.That(mesh == null, Is.True, "the cut's own meshes went back with the last child");
+                }
+
+                Assert.That(w.meshSource.Users, Is.Zero, "and the authored ones are held by nothing any more");
+            }
+        }
+
+        /// <summary>
+        /// **One side is never changed for a handoff the other side cannot take.** With the negative side's
+        /// preparation made to fail, the positive actor keeps the very colliders and the shape frame it had, nothing is
+        /// published, and the pair is still the one in the scene.
+        /// </summary>
+        [Test]
+        public void AFailureToPrepareTheSecondSide_LeavesTheFirstSideAsItWas()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                PhysicsOwnerSide positive = transaction.Pair.Positive;
+                var collidersBefore = new List<MeshCollider>(positive.Colliders);
+                int producedBefore = positive.ProducedColliderCount;
+                Vector3 frameBefore = positive.ShapeFrame.transform.localPosition;
+                Quaternion turnBefore = positive.ShapeFrame.transform.localRotation;
+                int fragmentsBefore = w.ledger.FragmentCount;
+
+                FinalHandoffPublication.preparingHook = side =>
+                {
+                    if (!side)
+                    {
+                        throw new InvalidOperationException("the second side cannot be prepared");
+                    }
+                };
+
+                try
+                {
+                    Assert.That(
+                        AdvanceUntilItThrows(w, 470), Is.True,
+                        "the preparation of the second side threw, through the product entrance");
+                }
+                finally
+                {
+                    FinalHandoffPublication.preparingHook = null;
+                }
+
+                Assert.That(
+                    positive.Colliders.Count, Is.EqualTo(collidersBefore.Count),
+                    "the first side has the colliders it had");
+                for (int i = 0; i < collidersBefore.Count; i++)
+                {
+                    Assert.That(
+                        ReferenceEquals(positive.Colliders[i], collidersBefore[i]), Is.True,
+                        "the very same ones, in the same order: element " + i);
+                    Assert.That(collidersBefore[i] != null && collidersBefore[i].enabled, Is.True, "still answering");
+                }
+
+                Assert.That(
+                    positive.ShapeFrame.GetComponents<MeshCollider>().Length, Is.EqualTo(collidersBefore.Count),
+                    "and the preparation that failed left nothing on the actor");
+                Assert.That(positive.ProducedColliderCount, Is.EqualTo(producedBefore));
+                Assert.That(positive.ShapeFrame.transform.localPosition, Is.EqualTo(frameBefore), "the frame is as it was");
+                Assert.That(Quaternion.Angle(positive.ShapeFrame.transform.localRotation, turnBefore), Is.LessThan(1e-3f));
+
+                Assert.That(w.ledger.FragmentCount, Is.EqualTo(fragmentsBefore), "nothing was published");
+                Assert.That(w.registry.ProvisionalPairCount, Is.EqualTo(1), "and the pair is still the one in the scene");
+                Assert.That(transaction.Pair.IsEnded, Is.False);
+                Assert.That(transaction.Products, Is.Not.Null, "the products are still this record's");
+                Assert.That(transaction.HoldsInput, Is.True, "with the hold the borrowed parts are read through");
+
+                // The record is still the one that can end this cut, and this is where that is done.
+                w.driver.EndEveryCut();
+                Assert.That(transaction.Products, Is.Null, "and ending it is what gives the products back");
+            }
+        }
+
+        /// <summary>
+        /// **What is published stays published, and what it owns goes with it.** An exception thrown after the handoff
+        /// has completed does not undo it: the children are there, and the record that held the products has already
+        /// let them go, so ending this driver afterwards does not destroy meshes the children's colliders are using.
+        /// </summary>
+        [Test]
+        public void AnExceptionAfterTheHandoff_LeavesTheProductsWithTheChildren()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                FinalHandoffPublication.publishedHook = () => throw new InvalidOperationException("after the handoff");
+                try
+                {
+                    Assert.That(
+                        AdvanceUntilItThrows(w, 480), Is.True, "it threw after the handoff, through the product entrance");
+                }
+                finally
+                {
+                    FinalHandoffPublication.publishedHook = null;
+                }
+
+                Assert.That(w.ledger.TryGetOperation(transaction.Operation, out LogicalCutOperation published), Is.True);
+                Assert.That(published.positive.IsSet && published.negative.IsSet, Is.True, "the children are published");
+                Assert.That(w.registry.TryGet(published.positive, out PhysicsFragmentOwner positiveChild), Is.True);
+                Assert.That(w.registry.TryGet(published.negative, out PhysicsFragmentOwner _), Is.True);
+
+                Assert.That(
+                    transaction.Phase, Is.EqualTo(ProvisionalCutPhase.HandedOff),
+                    "and the record says what it no longer owns");
+                Assert.That(transaction.Products, Is.Null, "the products are the children's");
+                Assert.That(transaction.HoldsInput, Is.False);
+                Assert.That(w.driver.Transactions.Count, Is.Zero, "the driver holds nothing for this cut");
+
+                var used = new List<Mesh>();
+                foreach (MeshCollider collider in positiveChild.Root.GetComponentsInChildren<MeshCollider>())
+                {
+                    used.Add(collider.sharedMesh);
+                }
+
+                Assert.That(used.Count, Is.GreaterThan(0));
+
+                // The ending that follows such an error must not take the children's meshes with it.
+                w.driver.EndEveryCut();
+                foreach (Mesh mesh in used)
+                {
+                    Assert.That(mesh != null, Is.True, "the children's meshes survive the driver's ending");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Each actor resolves to the fragment it is: to the source, with its side, while the cut is provisional, and to
+        /// **the child it became** once the cut is published. A retired child's actor resolves to nothing.
+        /// </summary>
+        [Test]
+        public void EachActorResolves_ToTheSourceAndThenToTheChildItBecame()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                Rigidbody positiveBody = transaction.Pair.Positive.Body;
+                Rigidbody negativeBody = transaction.Pair.Negative.Body;
+
+                Assert.That(
+                    w.registry.TryResolveFragment(positiveBody, out LogicalFragmentId whileProvisional, out float side),
+                    Is.True,
+                    "a provisional actor resolves to the fragment it is still part of");
+                Assert.That(whileProvisional, Is.EqualTo(w.source));
+                Assert.That(side, Is.EqualTo(1f), "with the side it is");
+
+                RunUntil(w, 490, () => transaction.Phase == ProvisionalCutPhase.HandedOff, "the handoff happens");
+                Assert.That(w.ledger.TryGetOperation(transaction.Operation, out LogicalCutOperation published), Is.True);
+
+                Assert.That(
+                    w.registry.TryResolveFragment(positiveBody, out LogicalFragmentId positiveChild, out float noSide),
+                    Is.True,
+                    "and the same actor resolves to the child it became");
+                Assert.That(positiveChild, Is.EqualTo(published.positive));
+                Assert.That(noSide, Is.EqualTo(0f), "a published child is a fragment, not a side of one");
+                Assert.That(
+                    w.registry.TryResolveFragment(negativeBody, out LogicalFragmentId negativeChild, out float _),
+                    Is.True);
+                Assert.That(negativeChild, Is.EqualTo(published.negative), "each to its own child");
+
+                Assert.That(w.registry.Retire(published.positive), Is.True);
+                Assert.That(
+                    w.registry.TryResolveFragment(positiveBody, out LogicalFragmentId _, out float _), Is.False,
+                    "a retired child's actor resolves to nothing");
+                Assert.That(
+                    w.registry.TryResolveFragment(negativeBody, out LogicalFragmentId stillThere, out float _), Is.True,
+                    "and its sibling is untouched");
+                Assert.That(stillThere, Is.EqualTo(published.negative));
+            }
+        }
+
+        /// <summary>
+        /// **An exception in the middle of the switch leaves nothing without an owner.** The actors are standing on the
+        /// final shapes by then; those shapes are the pair's, so nothing of them is given back while the actors use
+        /// them, and ending the cut afterwards gives them back once — with the actors, the products and the input.
+        /// </summary>
+        [Test]
+        public void AnExceptionWhileSwitching_LeavesTheNewShapesWithThePair_AndEndingTheCutGivesThemBack()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                CutOperationId operation = transaction.Operation;
+                PhysicsOwnerShape provisional = transaction.Pair.PositiveShape;
+                PhysicsOwnerSide positive = transaction.Pair.Positive;
+                int fragmentsBefore = w.ledger.FragmentCount;
+                var authored = new List<Mesh>();
+                for (int c = 0; c < w.shape.ConvexCount; c++)
+                {
+                    authored.Add(w.shape.MeshOf(c));
+                }
+
+                // After **both** sides have been given their final shape -- the hook throws on the negative one -- and
+                // before the ledger has published anything.
+                FinalHandoffPublication.establishedHook = side =>
+                {
+                    if (!side)
+                    {
+                        throw new InvalidOperationException("in the middle of the switch");
+                    }
+                };
+
+                try
+                {
+                    Assert.That(
+                        AdvanceUntilItThrows(w, 500), Is.True,
+                        "it threw in the middle of the switch, through the product entrance");
+                }
+                finally
+                {
+                    FinalHandoffPublication.establishedHook = null;
+                }
+
+                Assert.That(w.ledger.FragmentCount, Is.EqualTo(fragmentsBefore), "nothing was published");
+                Assert.That(w.registry.ProvisionalPairCount, Is.EqualTo(1), "and the pair is still the correspondence's");
+
+                PhysicsOwnerShape held = transaction.Pair.PositiveShape;
+                Assert.That(
+                    ReferenceEquals(held, provisional), Is.False,
+                    "the pair holds the shape the switch put the actors on");
+                Assert.That(held.IsFreed, Is.False, "which is not given back while they are standing on it");
+                Assert.That(provisional.IsFreed, Is.True, "while the one it replaced went back at that same moment");
+
+                // What the actors are standing on now, to be watched across the ending.
+                var used = new List<Mesh>();
+                foreach (MeshCollider collider in positive.Colliders)
+                {
+                    if (collider.sharedMesh != null && !authored.Contains(collider.sharedMesh))
+                    {
+                        used.Add(collider.sharedMesh);
+                    }
+                }
+
+                Assert.That(used.Count, Is.GreaterThan(0), "a mesh of the cut's own is among them");
+                foreach (Mesh mesh in used)
+                {
+                    Assert.That(mesh != null, Is.True, "and nothing of it was given back early");
+                }
+
+                Assert.That(
+                    w.registry.TryGet(w.source, out PhysicsFragmentOwner _), Is.True,
+                    "the source was not retired: nothing was published");
+
+                // The explicit ending of a cut that cannot go on.
+                Assert.That(w.driver.EndCut(operation), Is.True);
+
+                Assert.That(held.IsFreed, Is.True, "ending the cut gives back the shapes the pair was holding");
+                Assert.That(transaction.Products, Is.Null, "and the products the record still owned");
+                Assert.That(transaction.HoldsInput, Is.False);
+                foreach (Mesh mesh in used)
+                {
+                    Assert.That(mesh == null, Is.True, "the cut's own meshes went back, once");
+                }
+
+                Assert.That(w.meshSource.Users, Is.Zero, "nothing holds the authored meshes any more");
+                Assert.That(w.meshSource.IsReleased, Is.False, "which came from outside and are nobody's here");
+                foreach (Mesh mesh in authored)
+                {
+                    Assert.That(mesh != null, Is.True, "so they are still there");
+                }
+
+                Assert.That(w.registry.ProvisionalPairCount, Is.Zero, "the pair is out of the scene");
+                Assert.That(w.driver.Transactions.Count, Is.Zero, "and the driver holds nothing for this cut");
+            }
+        }
+
         // ----- helpers -------------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Carries the frame as <see cref="RunUntil"/> does, until the product entrance throws. True when it did.
+        /// </summary>
+        private static bool AdvanceUntilItThrows(World w, int frameId)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            for (int f = 0; clock.ElapsedMilliseconds < DeadlineMilliseconds; f++)
+            {
+                w.job.ReleaseEverything();
+                try
+                {
+                    w.driver.Advance(frameId + f);
+                }
+                catch (InvalidOperationException)
+                {
+                    return true;
+                }
+
+                System.Threading.Thread.Sleep(1);
+            }
+
+            return false;
+        }
+
+        private static void Same(Matrix4x4 expected, Matrix4x4 actual, string what)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                Assert.That(actual[i], Is.EqualTo(expected[i]).Within(1e-4f), what + ", element " + i);
+            }
+        }
+
+        private static bool Approximately(Matrix4x4 a, Matrix4x4 b)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                if (math.abs(a[i] - b[i]) > 1e-4f)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         private static IComparer<Vector3> Vector3Within(float tolerance)
         {

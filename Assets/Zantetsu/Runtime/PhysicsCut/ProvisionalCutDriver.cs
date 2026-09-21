@@ -268,8 +268,11 @@ namespace Zantetsu.PhysicsCut
 
             // The record is made before anything can be waited for, and it keeps the one classification: a cut that
             // waits here is taken up again from where it left off, not classified a second time.
+            // The parent mass of this cut, read from the source once, here: the temporary split and the final
+            // masses are both against this one number (DESIGN 7.2), and after the publication there is no source body
+            // left to read it from.
             var made = new ProvisionalCutTransaction(operation, ask.source, classification);
-            made.Asked(in ask);
+            made.Asked(in ask, owner.Mass);
             _transactions.Add(made);
             transaction = made;
             return TryEstablish(made, owner);
@@ -478,7 +481,7 @@ namespace Zantetsu.PhysicsCut
                 placement = owner.ReadPlacement(),
                 sourceMotion = owner.ReadMotion(ask.renderAnchor),
                 anchors = anchors,
-                parentMass = owner.Mass,
+                parentMass = transaction.ParentMass,
                 sourceInertia = owner.Body.inertiaTensor,
                 sourceInertiaRotation = owner.Body.inertiaTensorRotation,
                 cooking = _cook.Cooking,
@@ -595,6 +598,85 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// Hands one cut's finished products to the Final publication of the same cut (DESIGN 7.2). It is tried in the
+        /// collection that took the products in, and nothing is waited for.
+        /// <para>
+        /// **The answers are kept apart.** Published: the two actors are the logical children now and this record has
+        /// let everything go. Refused by the ledger -- a moved authority, a stale result -- **changes nothing of the
+        /// physics**, and a stale one retires no fragment, because the fragment that is there now is not the one this
+        /// cut was of; the products are given up with the rest of this record. A final set that cannot be established is
+        /// the ordinary physics failure of DESIGN 7.1.1: the pair out of the scene, the ledger's abort, and the source
+        /// retired unless the ledger finds it stale.
+        /// </para>
+        /// </summary>
+        private void TryHandOff(ProvisionalCutTransaction transaction)
+        {
+            if (transaction.Pair == null || transaction.Pair.IsEnded || transaction.InputShape == null)
+            {
+                return;
+            }
+
+            var handoff = new FinalHandoffInput
+            {
+                ledger = _ledger,
+                registry = _registry,
+                operation = transaction.Operation,
+                products = transaction.Products,
+                cutFrom = transaction.InputShape,
+
+                // The mass this cut was accepted with, not one read back from the two temporary bodies.
+                parentMass = transaction.ParentMass,
+            };
+
+            PhysicsPublicationOutcome handed;
+            try
+            {
+                handed = FinalHandoffPublication.TryHandOff(
+                    in handoff, out LogicalFragmentId _, out LogicalFragmentId _, out LogicalCutResultOutcome _);
+            }
+            catch (Exception)
+            {
+                // **Which side of the handover it threw on is what the correspondence says**: a cut that still has its
+                // pair never got as far as giving the actors away, and one that has none did. The publication moves
+                // the products' ownership at that same point, so the two cannot disagree; and a pair that is still
+                // there holds whatever the switch had begun putting the actors on, which the ending below gives back.
+                if (!_registry.TryGetProvisional(transaction.Operation, out ProvisionalOwnerPair standing)
+                    || standing.IsEnded)
+                {
+                    // The actors are the children's now and so are the products. This record is brought to where that
+                    // leaves it **before the error goes on**: holding them any longer would let the ending of this
+                    // record dispose meshes the published children's colliders are using.
+                    transaction.HandedOffTo();
+                    _transactions.Remove(transaction);
+                }
+
+                throw;
+            }
+
+            switch (handed)
+            {
+                case PhysicsPublicationOutcome.Published:
+                    transaction.HandedOffTo();
+                    _transactions.Remove(transaction);
+                    return;
+
+                case PhysicsPublicationOutcome.LedgerRefused:
+                    // Nothing of the physics changed, and nothing is aborted for a refusal: the pair this driver
+                    // published is ended and the products are given up with this record. The current source, which is
+                    // somebody else's now, is left alone.
+                    _registry.EndProvisional(transaction.Operation);
+                    Give(transaction);
+                    return;
+
+                default:
+                    // A final set that cannot be established, and a call that does not hold together, both end the
+                    // ordinary way rather than being tried again with the same input at every collection.
+                    Abort(transaction);
+                    return;
+            }
+        }
+
+        /// <summary>
         /// This record is done with: what it holds goes back as soon as it may, and this driver stops holding it. A
         /// submitted work that has not come back keeps the record alive until then — asking is not collecting — and it
         /// is the recovery, a participant of the bound frame, that carries it to the end.
@@ -631,11 +713,14 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
-                // The products are taken into the record and kept: a handoff will read their borrowed parts, and the
-                // hold on the input stays until then.
+                // The products are taken into the record. A handoff reads their borrowed parts, and the hold on the
+                // input stays until it has.
                 at.CutEnded(request.Outcome, request.Products);
                 if (at.Products != null)
                 {
+                    // And it is tried **now**, in the update the products came back in: putting it off to the next one
+                    // would be a frame spent on the order the calls happen to come in.
+                    TryHandOff(at);
                     continue;
                 }
 

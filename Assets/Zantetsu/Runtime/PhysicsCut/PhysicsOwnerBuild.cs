@@ -304,6 +304,119 @@ namespace Zantetsu.PhysicsCut
         {
             _colliders.Add(collider);
         }
+
+        /// <summary>
+        /// This side's colliders are these from now on. It is for the handoff of DESIGN 7.2, where the **same actor**
+        /// is given the final shape: the actor is the authority and is not rebuilt, so its colliders are what change.
+        /// The old components are not touched here -- <see cref="PreparedSideColliders.Adopt"/> is what stops them and
+        /// asks them to go, in that order -- and no mesh is touched at all: they belong to whoever owns them.
+        /// </summary>
+        internal void TakeColliders(List<MeshCollider> colliders, int produced)
+        {
+            _colliders.Clear();
+            _colliders.AddRange(colliders);
+            ProducedColliderCount = produced;
+        }
+    }
+
+    /// <summary>
+    /// The final colliders of one side of a handoff, **made before anything of that side is broken** (DESIGN 7.2):
+    /// the components are on the actor and cooked with the products' own profile already, and they are disabled, so
+    /// nothing in the physics scene answers for them yet.
+    /// <para>
+    /// **Why it is in two steps.** A side whose old colliders were destroyed before the other side was ready cannot be
+    /// put back as it was if the other side then fails, and there is no rebuilding what has been destroyed. So
+    /// everything that can fail -- adding a component, cooking a mesh -- happens in the preparation, and
+    /// <see cref="Adopt"/> is what is left of it: the old colliders stop answering at once, the shape frame takes the
+    /// products' own local frame, the new ones begin, and only then are the old ones asked to go.
+    /// </para>
+    /// <para>
+    /// **Stopping them comes before destroying them.** While the game is playing, destruction happens after the update
+    /// loop, and a collider merely waiting to be destroyed still answers queries. Disabling is immediate, which is what
+    /// makes "the old shape is gone from here on" true at the moment of the switch rather than at the end of the frame.
+    /// </para>
+    /// <para>
+    /// A preparation that is not adopted is withdrawn (<see cref="Withdraw"/>): the new components come off again and
+    /// the side is exactly as it was.
+    /// </para>
+    /// </summary>
+    public sealed class PreparedSideColliders
+    {
+        private readonly List<MeshCollider> _made;
+        private readonly List<MeshCollider> _replaced = new List<MeshCollider>(4);
+        private readonly int _produced;
+
+        internal PreparedSideColliders(PhysicsOwnerSide side, List<MeshCollider> made, int produced)
+        {
+            Side = side;
+            _made = made;
+            _produced = produced;
+        }
+
+        /// <summary>The side these were made for.</summary>
+        public PhysicsOwnerSide Side { get; }
+
+        /// <summary>How many colliders were made, all of them disabled until they are adopted.</summary>
+        public int Count => _made.Count;
+
+        /// <summary>Whether these are the side's colliders now.</summary>
+        public bool IsAdopted { get; private set; }
+
+        /// <summary>
+        /// The switch for one side, with nothing in it that can fail: the old colliders are disabled, the shape frame
+        /// is put into the products' numerical local frame, the new colliders are enabled and become the side's, and
+        /// the old ones are destroyed afterwards.
+        /// </summary>
+        internal void Adopt(quaternion localRotation, float3 localOffset)
+        {
+            if (IsAdopted)
+            {
+                return;
+            }
+
+            IsAdopted = true;
+            _replaced.AddRange(Side.Colliders);
+            for (int i = 0; i < _replaced.Count; i++)
+            {
+                if (_replaced[i] != null)
+                {
+                    _replaced[i].enabled = false;
+                }
+            }
+
+            Side.ShapeFrame.transform.SetLocalPositionAndRotation(localOffset, localRotation);
+            for (int i = 0; i < _made.Count; i++)
+            {
+                if (_made[i] != null)
+                {
+                    _made[i].enabled = true;
+                }
+            }
+
+            Side.TakeColliders(_made, _produced);
+            for (int i = 0; i < _replaced.Count; i++)
+            {
+                PhysicsOwnerBuilder.DestroyComponent(_replaced[i]);
+            }
+
+            _replaced.Clear();
+        }
+
+        /// <summary>Gives up an unadopted preparation: the components come off and the side is untouched.</summary>
+        internal void Withdraw()
+        {
+            if (IsAdopted)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _made.Count; i++)
+            {
+                PhysicsOwnerBuilder.DestroyComponent(_made[i]);
+            }
+
+            _made.Clear();
+        }
     }
 
     /// <summary>
@@ -639,30 +752,156 @@ namespace Zantetsu.PhysicsCut
             return atAnchor + math.cross(motion.angularVelocity, centerOfMassWorld - motion.renderAnchor);
         }
 
+        /// <summary>
+        /// The final mass properties of one side of a finished cut, in the owner frame -- **the same rule a direct
+        /// final split is built with**, for a caller that has an actor already and is replacing what is on it
+        /// (DESIGN 7.2). Nothing is computed differently here: it is that rule, reached from another place.
+        /// <para>
+        /// False with the reason, exactly as a build would refuse: a frame that is not rigid, masses that do not add
+        /// up to the parent's snapshot, an inertia the solver cannot be given.
+        /// </para>
+        /// </summary>
+        internal static bool TryFinalSideMass(
+            PhysicsCutProducts products,
+            double parentMass,
+            bool positive,
+            out double mass,
+            out float3 centerOfMass,
+            out float3 inertia,
+            out quaternion inertiaRotation,
+            out quaternion localRotation,
+            out float3 localOffset,
+            out PhysicsOwnerBuildOutcome outcome)
+        {
+            mass = 0.0;
+            centerOfMass = default;
+            inertia = default;
+            inertiaRotation = quaternion.identity;
+            localRotation = quaternion.identity;
+            localOffset = default;
+            if (products == null || !(parentMass > 0.0) || !math.isfinite(parentMass))
+            {
+                outcome = PhysicsOwnerBuildOutcome.InvalidInput;
+                return false;
+            }
+
+            if (products.PartCount(true) == 0 || products.PartCount(false) == 0)
+            {
+                outcome = PhysicsOwnerBuildOutcome.SideEmpty;
+                return false;
+            }
+
+            if (!TryRigid(products.LocalToOwner, out localRotation, out localOffset))
+            {
+                outcome = PhysicsOwnerBuildOutcome.FrameNotRigid;
+                return false;
+            }
+
+            ConvexCutOwnerResult result = products.Result;
+            if (!TryMass(in result, parentMass, positive, localRotation, localOffset, out SideMass side))
+            {
+                outcome = PhysicsOwnerBuildOutcome.MassNotUsable;
+                return false;
+            }
+
+            mass = side.mass;
+            centerOfMass = side.centerOfMass;
+            inertia = side.inertia;
+            inertiaRotation = side.inertiaRotation;
+            outcome = PhysicsOwnerBuildOutcome.Ok;
+            return true;
+        }
+
+        /// <summary>
+        /// Makes the final colliders of one side on the actor it already has -- in the same order and with the same
+        /// cooking profile a build would give them (DESIGN 7.3) -- and leaves them **disabled**, so that the side goes
+        /// on being what it was until the switch adopts them (<see cref="PreparedSideColliders"/>). Nothing of the
+        /// side's own is touched here.
+        /// </summary>
+        internal static PreparedSideColliders PrepareFinalColliders(
+            PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side)
+        {
+            var made = new List<MeshCollider>(4);
+            int produced;
+            try
+            {
+                produced = MakeColliders(products, inherited, side.positive, side.ShapeFrame, made, false);
+            }
+            catch (Exception)
+            {
+                // Half a set is no preparation. What was made comes off again and the side is as it was.
+                for (int i = 0; i < made.Count; i++)
+                {
+                    DestroyComponent(made[i]);
+                }
+
+                throw;
+            }
+
+            return new PreparedSideColliders(side, made, produced);
+        }
+
+        /// <summary>Whether every mesh the final colliders of both sides would need is there.</summary>
+        internal static bool FinalShapesArePresent(PhysicsCutProducts products, IReadOnlyList<Mesh> inherited)
+        {
+            return ShapesArePresent(products, inherited);
+        }
+
         private static void AddColliders(
             PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side, GameObject shapeFrame)
         {
-            int count = products.PartCount(side.positive);
+            var made = new List<MeshCollider>(4);
+            int produced = MakeColliders(products, inherited, side.positive, shapeFrame, made, true);
+            for (int i = 0; i < made.Count; i++)
+            {
+                side.Add(made[i]);
+            }
+
+            side.ProducedColliderCount = produced;
+        }
+
+        /// <summary>
+        /// The one place a side's colliders are made, for a build and for a handoff's preparation alike: one collider
+        /// per part, in the products' order, each cooked with the products' own profile. It returns how many of them
+        /// use a mesh this cut produced. Nothing of any side is changed here.
+        /// </summary>
+        private static int MakeColliders(
+            PhysicsCutProducts products,
+            IReadOnlyList<Mesh> inherited,
+            bool positive,
+            GameObject shapeFrame,
+            List<MeshCollider> into,
+            bool enabled)
+        {
+            int count = products.PartCount(positive);
             int produced = 0;
             for (int i = 0; i < count; i++)
             {
-                PhysicsCutPart part = products.Part(side.positive, i);
+                PhysicsCutPart part = products.Part(positive, i);
                 Mesh mesh = part.borrowed ? inherited[part.inputConvex] : part.mesh;
                 var collider = shapeFrame.AddComponent<MeshCollider>();
+
+                // In the list from the moment it exists, before it is set up at all: what is set up on it can throw --
+                // a mesh that cannot be cooked -- and a component the caller does not know about is one nothing takes
+                // off the actor again.
+                into.Add(collider);
+
+                // Disabled before anything else on a preparation: the cooking below is what this is for, and a
+                // collider that is not enabled cooks its mesh without entering the physics scene.
+                collider.enabled = enabled;
 
                 // The profile before the mesh, and the same profile for every part (DESIGN 7.3): a collider given the
                 // mesh first would cook it once with the wrong options.
                 collider.cookingOptions = products.Cooking;
                 collider.convex = true;
                 collider.sharedMesh = mesh;
-                side.Add(collider);
                 if (!part.borrowed)
                 {
                     produced++;
                 }
             }
 
-            side.ProducedColliderCount = produced;
+            return produced;
         }
 
         private static bool ShapesArePresent(PhysicsCutProducts products, IReadOnlyList<Mesh> inherited)
@@ -743,6 +982,28 @@ namespace Zantetsu.PhysicsCut
             if (side != null)
             {
                 DestroyObject(side.Root);
+            }
+        }
+
+        /// <summary>
+        /// Destroys one component the way objects are destroyed here: at once outside play, and after the update loop
+        /// while playing. A caller that needs the component to stop answering **now** disables it first — this only
+        /// asks for it to go.
+        /// </summary>
+        internal static void DestroyComponent(Component component)
+        {
+            if (component == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                UnityEngine.Object.Destroy(component);
+            }
+            else
+            {
+                UnityEngine.Object.DestroyImmediate(component);
             }
         }
 

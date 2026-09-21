@@ -895,6 +895,36 @@ Convex内部の識別は非公開の配列位置または実装handleでよい�
 - Provisional一式の未公開構築（f06f462、記録：Phase4Physicsのprovisional-build-20260920）：最終の関連試験**95/95**。これは新規16件を含む一回の結果であり、過程の9/9・72/72・94/94とは合算しない。確認したのは、一時質量の数値（対称・非対称・非軸平行の各切断について、各側の質量と重心を別に求めた閉形式と照合する）、候補が保持する記録値、D6の設定値、両側が同じMeshオブジェクトを共有すること、入力不備の拒否、未公開のままでの保持と破棄、構築途中の例外での回収である。**平板・線分・極端な数値といった診断用の入力を含む。**
   この単位では次を成立させていない。**実Bodyへの値の適用、Solverの拘束動作、Sibling衝突抑止の実動作**（両Actorをinactiveのまま物理Sceneへ入れず、Stepもしていない）。**公開後のLease、および必要なPhysics Stepを跨ぐ資源寿命**（一度もSceneへ入れない候補の取得・解放だけであり、仮の待ち時間やStep数も置いていない）。**Provisional公開、Final handoff、Hit／QueryとTemporary表示への接続。**建物World D6、Character、自動駆動と製品の構成根。全数・撮影・XR・Player・性能、統合後の追加検証。これらが残ることは、過去に別の経路・別の条件で確認済みの項目を未確認へ戻す意味ではなく、過去の画像を今回の証拠に流用する根拠にもならない。
 
+Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 Actor を**そのまま**Final へ移す実装。
+
+**同じ Actor で移行する。**正負それぞれの既存 Actor・Rigidbody・World 上の位置は変えず、その上に載っているもの——Collider と質量特性——を入れ替える。handoff 直前の **pose・COM 線速度・角速度をそのまま維持**し、Render Anchor への位置補正も、新 COM に合わせた速度変換も、受付時姿勢への巻戻しもしない。分離 Impulse は再適用しない（Provisional 公開時に一度）。Anchor 配分は受付時に確定したものを子が継ぐ（再配分しない）。Sibling D6 は対とともに終了し、運動補償は入れない。Final の質量・重心・慣性は**直接 Final と同じ規則**（`PhysicsOwnerBuilder` の既存計算を別の入口から使う）。直接 Final の経路は変更していない。
+
+**親質量は受付時の Snapshot である。**Final 質量の照合元は、その切断が受け付けられた時点で Source の Rigidbody から一度読んだ値であり、要求の所有記録（`ProvisionalCutTransaction.ParentMass`）が持つ。一時対の 2 Body を足し戻して親質量とはしない——一時質量は箱近似の分割と float 丸めを経ており、公開後に Body へ触れたものが入り込むため、Final 成果物の妥当性判定の基準にできない。同じ Snapshot を一時分割と Final 照合の両方が使う。
+
+**準備と公開境界を分ける。**公開済み構成を壊す前に、台帳の `PreparePublication`、正負の Final 質量特性、**正負両側の Final Collider（Actor 上に生成・Cook 済みで、有効化していない）**、正負の Final Shape（借用部分をこの時点で読み、Final 側が自分の保持を取る）、対応の枠を用意する。失敗しうるものはすべてこの準備に入るため、**負側の準備が失敗しても正側は変更されていない**。準備中の失敗では未公開の準備物（生成した Collider・Shape）だけを回収し、公開済み対はそのまま立っている。Collider は **Component を作った直後に回収対象へ登録**してから設定する：設定（Cook）で例外になった Component も、必ず外される側に入る。
+
+切替区間（Main Thread・物理 Step 外、間に受付・Query 解決・収集を挟まない）で、**対が Final Shape を受け取る**（同時に一時 Shape が返る）→ 両 Actor の Final 化 → 台帳の論理正負子公開 → 各子を Final Owner として登録 → **対を対応から外す（Actor は破棄しない）＋成果物の所有権移転** → 旧 Source の Owner を退役、を一体で行う。
+
+**切替中に使い始めた Shape は対が持つ。**Actor がその上に立つ前に対へ渡すので、切替途中で例外になっても、その Shape は「公開済み対の通常の終了」（`EndProvisional`）で Actor と一緒に回収される——呼出しのローカル変数だけに残ることはなく、この呼出し自身は切替以降 Dispose をしない。成功時は Actor とともに子の Owner へ移り、対は返さない。**成果物の所有権移転は対を対応から外すのと同じ点**に置いてあり、「その切断にまだ対があるか」と「成果物がまだ呼出側のものか」が同じ問いになる——切替の前後を判別する呼出側は対応に尋ねればよい。1 Actor の Final 化は**旧 Collider の無効化 → Shape Frame を成果物の数値 local frame へ → 準備済み Collider の有効化 → 旧 Collider の破棄要求**の順で、**無効化が破棄より先**である：Play 時の破棄は更新ループ後に遅延するため、破棄要求だけでは旧 Collider が同じフレームの Query に答え続ける。
+
+対の終了（`EndProvisional`、Actor を破棄する）と**所有権移転（`TryHandOverProvisional`、Actor を渡す）を別の操作として分けた**のが最小の変更である。Geometry 切断・Commit は待たず、物理公開で Geometry 責務の未完了枠を返すこともしない（台帳の Operation は公開後も終えない）。
+
+**Actor から論理子への解決。**対応は Body から fragment への逆引きを持ち、Provisional の間は両 Actor が「まだ分かれていない Source」とその側（±1）を答え、handoff 後は**各 Actor が自分がなった子**を答える（側は 0）。退役した子の Actor は何も答えない。Hit 検出そのものはここにはない。
+
+**駆動への接続。**B の `ProvisionalCutDriver` が成果物を回収したその更新の中で handoff を試みる（呼出し順だけで翌フレームへ送らない）。適用前に台帳・authority・所有構成・Cooking Profile を照合する。**通常の Actor 移動は Stale にしない**。失敗の区別：台帳の拒否（Stale を含む）は物理を変えず、**Stale では現在の Source を退役させない**／Final 構築不能は DESIGN 7.1.1 の通常の Abort へ／準備中の例外は作ったものを戻して伝播し、**切替開始後の例外は Scene が使用している資源（Final Shape が持つ Mesh 保持）を未公開資源として返さない**。
+
+**公開成立後に例外が出た場合**も、論理子・Final Owner・成果物の所有権移転はすでに済んでいる。駆動側は対応に対を尋ねてそれを判別し、**記録を「成果物を所有していない」状態へ合わせてから**例外を伝播する——そうしないと、後の終了処理が Final 子の Collider が使用中の Mesh を直接破棄する経路が残る。
+
+入力 Shape の保持は、借用部分の最後の読取りと Final 側の保持取得が終わってから返す。handoff 呼出し自身が成果物に取る保持は、成功・不採用・取消・失敗のいずれの経路でも**一度だけ**返す（`finally`）。所有権が移っていなければ返しても何も解放されず、移っていれば**最後の子が退役したときに**生成 Mesh と成果物が解放される。
+
+**確認**は EditMode の製品更新入口経由で、成功（同じ Rigidbody で正負子が公開される）、運動維持（移動・回転・速度を与えても pose と COM 線速度・角速度が維持され、質量特性だけ Final になる。Impulse の二重適用なし）、対応切替（旧 Source の Provisional 照会が Missing、各子が自分で答え、実表示の収集が 2 つになる）、寿命（旧 Collider と旧 Owner が消え、Final Collider が残り、D6 が終了し、借用 Mesh の保持が Final 側へ移って最後に一度だけ返る）、**生成 Mesh の最終回収**（子を 1 つ退役させても返らず、最後の子の退役で返る）、**片側準備失敗**（負側の準備を失敗させると正側の Collider・Shape Frame は同一のまま、公開なし、対はそのまま）、**公開後例外**（子は公開されたまま、記録は成果物を持たず、以後の終了処理が子の Mesh を壊さない）、Stale（適用せず、現在 Source を退役させない）、継続利用（公開した子をそのまま受付へ渡せ、兄弟は不変）、**Actor→論理子の解決**。後の 3 つは、**その欠陥を製品コードへ戻した対照実行でその試験だけが落ちる**ことを確かめてある。
+
+**切替途中の例外**は EditMode で 1 件：両側を Final 化した後・論理公開の前で例外にすると、公開は起きず対は対応に残り、**対が持つ Shape は切替が使い始めた新しい方**で、Actor が立っている間は返らない（一時 Shape はその時点で返っている）。明示終了すると、その Shape・成果物・入力保持が一度ずつ返り、生成 Mesh は破棄され、外から来た authored Mesh は解放されない。この試験も、新しい Shape を対へ渡さない旧形へ戻した対照でその 1 件だけが落ちることを確かめてある。
+
+**Play 時**は小さい PlayMode 試験で、handoff が返った時点で旧 Collider は破棄待ちのまま**どれも有効でなく**、Final Collider だけが有効であること、フレーム経過後も両 Actor が立っており旧 Collider・Sibling D6 が残らないこと、各 Actor が自分の子へ解決することを確認した。シミュレーションの Step・性能・XR は対象外である。
+
+**残件（現在）。**Hit 検出そのもの（Actor→論理子の解決だけがここにある）、Scene 常設の構成根、建物 World D6、Character、分離 Impulse の算出式と「向き」、XR・性能測定。**A・B の時点で残件だった handoff は、この単位で成立した**——A の「Final handoff は残る」、B の「保持した成果物の行き先」はこの実装が受けている。handoff の成立は Phase 全体の完成を意味しない。
+
 Provisional 受付・保持・駆動の接続（2026-09-21）。A の公開部品を製品コードから駆動する接続を実装した。
 
 **製品の呼出し箇所。**`ProvisionalCutDriver`（MonoBehaviour 1 つ、`Bind` で台帳・対応・Cook・`SharedWorkFrame`・表示を外から受け取り、何も生成・所有しない）。`Update` が呼ぶ `DriveUpdate` が、**その更新の中で**それまでに届いた要求（`Ask`）を取り上げ、各要求について **分類 → 受付 → Anchor 配分 → 未公開対の構築 → Provisional 公開 → Final 切断の投入**まで行い、続けて `SharedWorkFrame.Update` が同一フレームの残予算で回収・投入を進める。`LateUpdate` が呼ぶ `DriveLateUpdate` が**実際の表示入口** `VpLogicalCutDisplay.TryBeginFrame` を公開の**後**に呼ぶ（Snapshot の確定規則 5.6 には触れない）。別の位相にいる呼出側は `Ask` で要求を置き、更新の位相にいる呼出側は `RequestCut` を直接呼べる——どちらも同じ経路である。標準の FixedUpdate 自動シミュレーションを前提とし、切替区間に手動 Step も外部コールバックも挟まない。発火元（武器・試験・ツール）はこのドライバの外で、受付後の処理はすべてここを通る。

@@ -23,8 +23,14 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         Unestablished = 3,
 
+        /// <summary>
+        /// The final publication took them: the two actors are the logical children now, the products' ownership has
+        /// moved to the shapes those children hold, and this record has let go of everything -- once.
+        /// </summary>
+        HandedOff = 4,
+
         /// <summary>Over: everything this held has gone back, once.</summary>
-        Recovered = 4,
+        Recovered = 5,
     }
 
     /// <summary>
@@ -118,9 +124,22 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public ProvisionalCutAsk Ask { get; private set; }
 
-        internal void Asked(in ProvisionalCutAsk ask)
+        /// <summary>
+        /// The source's mass at the moment this cut was accepted -- **the parent mass of this cut** (DESIGN 7.2), read
+        /// once from the source's own body and kept here for every step that needs it: the temporary split, and the
+        /// final masses the handoff checks against it.
+        /// <para>
+        /// It is kept rather than read again because after the publication there is no source body to read: the two
+        /// actors carry a temporary mass between them, approximated and rounded, and what happens to those bodies in
+        /// the meantime is not this cut's parent mass.
+        /// </para>
+        /// </summary>
+        public double ParentMass { get; private set; }
+
+        internal void Asked(in ProvisionalCutAsk ask, double parentMass)
         {
             Ask = ask;
+            ParentMass = parentMass;
         }
 
         internal void Took(ProvisionalOwnerCandidate candidate)
@@ -185,7 +204,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool TryFinishIfCollected()
         {
-            if (Phase == ProvisionalCutPhase.Recovered)
+            if (Phase == ProvisionalCutPhase.Recovered || Phase == ProvisionalCutPhase.HandedOff)
             {
                 return true;
             }
@@ -240,6 +259,33 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// The handoff succeeded: the products are **not** given back here, because their ownership has moved to the
+        /// final shapes the children hold. What this record does let go of is the hold on the input shape -- the
+        /// borrowed parts have been read and the final shapes have taken their own holds, so nothing reads through this
+        /// one any more -- and it stops naming anything. Once.
+        /// </summary>
+        internal void HandedOffTo()
+        {
+            if (Phase == ProvisionalCutPhase.HandedOff || Phase == ProvisionalCutPhase.Recovered)
+            {
+                return;
+            }
+
+            Phase = ProvisionalCutPhase.HandedOff;
+            Candidate = null;
+            Pair = null;
+            Products = null;
+            Classification?.Dispose();
+            Classification = null;
+            if (_holdsInput)
+            {
+                _holdsInput = false;
+                _inputShape.ReleaseFromWork();
+                _inputShape = null;
+            }
+        }
+
+        /// <summary>
         /// Gives back everything this still holds, once: an unpublished pair is destroyed, the final products are
         /// given up, the classification goes back, and the hold on the input is let go **last**, because the products
         /// were reading through it.
@@ -252,7 +298,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal void Recover()
         {
-            if (Phase == ProvisionalCutPhase.Recovered)
+            if (Phase == ProvisionalCutPhase.Recovered || Phase == ProvisionalCutPhase.HandedOff)
             {
                 return;
             }
