@@ -723,6 +723,363 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
+        /// **Every produced convex's box is the rule itself, on a real cut's products**: what the job measured for
+        /// that convex, widened by its mesh's own bounds, each end judged finite on its own. The mesh is asked once
+        /// now instead of twice, and this says the answer did not change with it.
+        /// <para>
+        /// Beside the boxes it checks that an inherited convex keeps the parent's box and **the parent's mesh**, in
+        /// the order the products name them, and that the side's own box is the union of its convexes'. **That is
+        /// the whole of what this case checks**: the banks a side addresses and the holds it takes are checked by
+        /// <c>PhysicsOwnerShapeBorrowTests</c>, and nothing here repeats them.
+        /// </para>
+        /// <para>
+        /// Run twice: in the identity frame, and in one that is not. The parent is built in **the same frame the
+        /// products were cut in**, since both describe the same numerical coordinates; the boxes are in that
+        /// numerical local frame and the transform is carried, not applied, so the numbers are the same in both runs
+        /// and each shape reports the frame it was given.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void EachProducedConvexsBox_IsTheJobsExtremesWidenedByItsMesh()
+        {
+            foreach (float4x4 localToOwner in new[]
+                     {
+                         float4x4.identity,
+                         float4x4.TRS(new float3(3f, -2f, 5f), quaternion.RotateY(0.7f), new float3(1f, 1f, 1f)),
+                     })
+            {
+                string frame = localToOwner.Equals(float4x4.identity) ? "identity frame" : "a moved frame";
+                PhysicsCutProducts products = CutProductsOf(localToOwner, out OwnerCutHarness h, frame);
+                PhysicsOwnerShape parent = ParentOf(h, localToOwner);
+                var productsSource = PhysicsShapeSource.For(products);
+                PhysicsOwnerShape positive = Track(PhysicsOwnerShape.OfSide(parent, products, productsSource, true));
+                PhysicsOwnerShape negative = Track(PhysicsOwnerShape.OfSide(parent, products, productsSource, false));
+
+                Assert.That(positive.LocalToOwner, Is.EqualTo(localToOwner), frame + ": the side carries the frame it was cut in");
+                Assert.That(negative.LocalToOwner, Is.EqualTo(localToOwner), frame + ": and so does the other side");
+
+                foreach (bool side in new[] { true, false })
+                {
+                    PhysicsOwnerShape shape = side ? positive : negative;
+                    string what = frame + (side ? " positive" : " negative");
+                    Assert.That(
+                        shape.ConvexCount, Is.EqualTo(products.PartCount(side)),
+                        what + ": one convex per part the products name");
+
+                    var unionLo = new float3(float.PositiveInfinity);
+                    var unionHi = new float3(float.NegativeInfinity);
+                    int produced = 0;
+                    for (int i = 0; i < shape.ConvexCount; i++)
+                    {
+                        PhysicsCutPart part = products.Part(side, i);
+                        shape.ConvexBounds(i, out float3 lo, out float3 hi);
+                        unionLo = math.min(unionLo, lo);
+                        unionHi = math.max(unionHi, hi);
+
+                        if (part.borrowed)
+                        {
+                            parent.ConvexBounds(part.inputConvex, out float3 pLo, out float3 pHi);
+                            Assert.That(lo, Is.EqualTo(pLo).Using(Float3Exactly), what + " " + i + ": inherited low");
+                            Assert.That(hi, Is.EqualTo(pHi).Using(Float3Exactly), what + " " + i + ": inherited high");
+                            Assert.That(
+                                shape.MeshOf(i), Is.SameAs(parent.MeshOf(part.inputConvex)),
+                                what + " " + i + ": inherited mesh");
+                            continue;
+                        }
+
+                        produced++;
+                        Assert.That(shape.MeshOf(i), Is.SameAs(part.mesh), what + " " + i + ": the produced mesh");
+                        RuleBox(part, out float3 ruleLo, out float3 ruleHi);
+                        Assert.That(lo, Is.EqualTo(ruleLo).Using(Float3Exactly), what + " " + i + ": produced low");
+                        Assert.That(hi, Is.EqualTo(ruleHi).Using(Float3Exactly), what + " " + i + ": produced high");
+                        Assert.That(
+                            math.all(lo <= part.bounds.c0), Is.True,
+                            what + " " + i + ": the box holds the job's low " + part.bounds.c0 + " (box low " + lo + ")");
+                        Assert.That(
+                            math.all(hi >= part.bounds.c1), Is.True,
+                            what + " " + i + ": the box holds the job's high " + part.bounds.c1 + " (box high " + hi + ")");
+                    }
+
+                    Assert.That(produced, Is.GreaterThan(0), what + ": this side really has produced convexes");
+                    Assert.That(
+                        shape.TryLocalBounds(out float3 shapeLo, out float3 shapeHi), Is.True,
+                        what + ": the side has a usable box");
+                    Assert.That(shapeLo, Is.EqualTo(unionLo).Using(Float3Exactly), what + ": the side's low is the union");
+                    Assert.That(shapeHi, Is.EqualTo(unionHi).Using(Float3Exactly), what + ": the side's high is the union");
+                }
+            }
+        }
+
+        /// <summary>
+        /// **The situation the rounding argument is about, made on purpose.** A produced convex's mesh is given a box
+        /// that lies **inside** what the job measured for that convex, which is what a centre-and-size pair of floats
+        /// can come out as; another is given one that reaches past the job's high end only. The first convex's box
+        /// must be the job's extremes untouched -- the inside mesh pulls neither end in -- and the second's must be
+        /// widened at the high end and left alone at the low one, which is the two ends being judged apart.
+        /// </summary>
+        [Test]
+        public void AMeshBoxInsideTheJobsExtremes_PullsNeitherEndIn()
+        {
+            PhysicsCutProducts products = CutProductsOf(float4x4.identity, out OwnerCutHarness h, "shrunk mesh");
+            PhysicsOwnerShape parent = ParentOf(h, float4x4.identity);
+
+            // The produced parts of the positive side, and the two this case arranges.
+            var produced = new List<int>();
+            for (int i = 0; i < products.PartCount(true); i++)
+            {
+                if (!products.Part(true, i).borrowed && products.Part(true, i).mesh != null)
+                {
+                    produced.Add(i);
+                }
+            }
+
+            Assert.That(produced.Count, Is.GreaterThanOrEqualTo(2), "this cut produces at least two convexes on the positive side");
+
+            // **Inside on every axis.** Half the job's box, about its centre.
+            PhysicsCutPart inside = products.Part(true, produced[0]);
+            float3 insideLo = part_lo(inside), insideHi = part_hi(inside);
+            float3 centre = 0.5f * (insideLo + insideHi);
+            float3 half = 0.25f * (insideHi - insideLo);
+            inside.mesh.bounds = new Bounds(centre, 2f * half);
+            Assert.That(
+                math.all((float3)inside.mesh.bounds.min > insideLo) && math.all((float3)inside.mesh.bounds.max < insideHi),
+                Is.True,
+                "the mesh's box really is inside the job's on every axis");
+
+            // **Past the high end only**, on x: the low end stays inside, the high end reaches out.
+            PhysicsCutPart outsideHigh = products.Part(true, produced[1]);
+            float3 outLo = part_lo(outsideHigh), outHi = part_hi(outsideHigh);
+            var reach = new float3(1f, 0f, 0f);
+            float3 wantedLo = outLo + (0.25f * (outHi - outLo));
+            float3 wantedHi = outHi + reach;
+            outsideHigh.mesh.bounds = new Bounds(
+                (Vector3)(0.5f * (wantedLo + wantedHi)), (Vector3)(wantedHi - wantedLo));
+            Assert.That(
+                math.all((float3)outsideHigh.mesh.bounds.min > outLo), Is.True,
+                "its low end is inside the job's");
+            Assert.That(
+                ((float3)outsideHigh.mesh.bounds.max).x > outHi.x, Is.True,
+                "and its high end reaches past it");
+
+            var productsSource = PhysicsShapeSource.For(products);
+            PhysicsOwnerShape side = Track(PhysicsOwnerShape.OfSide(parent, products, productsSource, true));
+
+            side.ConvexBounds(produced[0], out float3 lo, out float3 hi);
+            Assert.That(lo, Is.EqualTo(part_lo(inside)).Using(Float3Exactly), "the inside mesh did not pull the low end in");
+            Assert.That(hi, Is.EqualTo(part_hi(inside)).Using(Float3Exactly), "nor the high end");
+
+            side.ConvexBounds(produced[1], out float3 lo2, out float3 hi2);
+            Assert.That(lo2, Is.EqualTo(part_lo(outsideHigh)).Using(Float3Exactly), "the low end is the job's, untouched");
+            Assert.That(
+                hi2, Is.EqualTo(math.max(part_hi(outsideHigh), (float3)outsideHigh.mesh.bounds.max)).Using(Float3Exactly),
+                "and the high end is widened to the mesh's");
+            Assert.That(hi2.x, Is.GreaterThan(part_hi(outsideHigh).x), "which really is past the job's high end");
+        }
+
+        /// <summary>
+        /// **The ending, with a cut still out.** A second cut is submitted and its work put in flight, and then the
+        /// case simply stops: the fixture's ending is what closes the runner, carries it to drained and stops the
+        /// dispatcher. Nothing here asserts about that cut's result -- what is under test is that the ending itself
+        /// confirms the stop and the drain before the input and the destinations are released.
+        /// </summary>
+        [Test]
+        public void TheEndingDrainsARunnerThatStillHasACutOut()
+        {
+            PhysicsCutProducts products = CutProductsOf(float4x4.identity, out OwnerCutHarness h, "with a cut still out");
+            Assert.That(products, Is.Not.Null, "the first cut finished");
+
+            // A second cut, left in flight. The ending registered by the helper is what finishes it.
+            PhysicsCutRequest outstanding = LastCook.Submit(in h.input, float4x4.identity);
+            LastDispatcher.BeginFrame(1);
+            LastDispatcher.Dispatch();
+            LastCook.Pump();
+            Assert.That(outstanding.IsOver, Is.False, "it is still out when this case ends");
+        }
+
+        private PhysicsCutCook LastCook { get; set; }
+
+        private SharedWorkDispatcher LastDispatcher { get; set; }
+
+        private static float3 part_lo(PhysicsCutPart part)
+        {
+            return part.bounds.c0;
+        }
+
+        private static float3 part_hi(PhysicsCutPart part)
+        {
+            return part.bounds.c1;
+        }
+
+        /// <summary>The rule a produced convex's box is made by, as this file reads it.</summary>
+        private static void RuleBox(PhysicsCutPart part, out float3 lo, out float3 hi)
+        {
+            lo = part.bounds.c0;
+            hi = part.bounds.c1;
+            if (part.mesh == null)
+            {
+                return;
+            }
+
+            float3 meshLo = part.mesh.bounds.min;
+            if (math.all(math.isfinite(meshLo)))
+            {
+                lo = math.min(lo, meshLo);
+            }
+
+            float3 meshHi = part.mesh.bounds.max;
+            if (math.all(math.isfinite(meshHi)))
+            {
+                hi = math.max(hi, meshHi);
+            }
+        }
+
+        /// <summary>
+        /// One real cut and cook in the given frame. **Everything it makes is registered for release as it is made**,
+        /// so a failure anywhere after -- including before any try block of the caller -- still gives it all back.
+        /// <para>
+        /// The ending is the one the cook's own fixture uses (<c>PhysicsCutCookTests.Fixture.Dispose</c>): the runner
+        /// is closed, carried to <see cref="PhysicsCutCook.IsDrained"/>, and the dispatcher is stopped and **asked
+        /// what it managed** -- and only then are the input and the destinations let go. A stop that is not confirmed
+        /// leaves the input **not** treated as safe to release, so the ending fails there rather than freeing a bank
+        /// a worker may still be reading. It is registered **after** them, and the fixture releases in reverse
+        /// order, so it runs first.
+        /// </para>
+        /// </summary>
+        private PhysicsCutProducts CutProductsOf(float4x4 localToOwner, out OwnerCutHarness harness, string what)
+        {
+            OwnerCutHarness h = MixedCompoundForCook();
+            _disposables.Add(h);
+            harness = h;
+
+            var job = new UnityJobWorkExecutor(4);
+            WorkerPoolExecutor geometry = WorkerPoolExecutor.GeometryPool(2);
+            _disposables.Add(geometry);
+            WorkerPoolExecutor background = WorkerPoolExecutor.BackgroundPool(2);
+            _disposables.Add(background);
+            var dispatcher = new SharedWorkDispatcher(8, 2, 32, job, geometry, background);
+            var cook = new PhysicsCutCook(dispatcher, 1);
+
+            // Registered **after** the input and the destinations, so the fixture's reverse order runs it first.
+            _disposables.Add(new Ending(() => EndTheCook(cook, dispatcher, what)));
+            LastCook = cook;
+            LastDispatcher = dispatcher;
+
+            PhysicsCutRequest request = cook.Submit(in h.input, localToOwner);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!request.IsOver && clock.ElapsedMilliseconds < 30000)
+            {
+                dispatcher.BeginFrame((int)clock.ElapsedMilliseconds + 1);
+                dispatcher.Dispatch();
+                cook.Pump();
+                System.Threading.Thread.Sleep(1);
+            }
+
+            Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), what + ": the cut and cook succeeded");
+            PhysicsCutProducts products = request.Products;
+            _disposables.Add(products);
+            return products;
+        }
+
+        /// <summary>
+        /// A parent to inherit from, in the same frame the products were cut in: one collider per convex, built from
+        /// that convex. Registered for release as it is made.
+        /// </summary>
+        private PhysicsOwnerShape ParentOf(OwnerCutHarness h, float4x4 localToOwner)
+        {
+            var meshes = new List<Mesh>();
+            _disposables.Add(new Ending(() =>
+            {
+                foreach (Mesh mesh in meshes)
+                {
+                    if (mesh != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(mesh);
+                    }
+                }
+            }));
+
+            var ranges = new ConvexBrepRange[h.input.convexCount];
+            for (int c = 0; c < ranges.Length; c++)
+            {
+                ranges[c] = h.input.convexes[c];
+                meshes.Add(ColliderOfRange(h.input.bank, ranges[c], "Parent " + c));
+            }
+
+            var source = PhysicsShapeSource.External();
+            return Track(PhysicsOwnerShape.Authored(h.input.bank, ranges, meshes, source, localToOwner));
+        }
+
+        /// <summary>
+        /// Closes one runner and its dispatcher and says whether everything came back, before anything the work was
+        /// reading is released. Nothing generic: it is this file's two cases' ending, written the way the cook's own
+        /// fixture writes it.
+        /// </summary>
+        private static void EndTheCook(PhysicsCutCook cook, SharedWorkDispatcher dispatcher, string what)
+        {
+            // Closing ends what was not submitted and marks what was; the caller carries it the rest of the way.
+            cook.Dispose();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!cook.IsDrained && clock.ElapsedMilliseconds < 30000)
+            {
+                dispatcher.BeginFrame((int)clock.ElapsedMilliseconds + 1);
+                dispatcher.Dispatch();
+                cook.Pump();
+            }
+
+            // The stop itself, and what it managed. A run that is already drained still goes through it, because the
+            // destinations are what hold the workers.
+            DispatchShutdownResult stopped = dispatcher.Shutdown(30000);
+            cook.Pump();
+
+            Assert.That(
+                stopped.workersStopped, Is.True,
+                what + ": every destination confirmed it had stopped, so what the work was reading may be released"
+                + " (cancelled " + stopped.cancelled + ", collected " + stopped.collected + ")");
+            Assert.That(
+                cook.IsDrained, Is.True,
+                what + ": the closed runner gave every cut back before the input is released");
+            Assert.That(
+                cook.Reserving, Is.Zero, what + ": and holds no reservation");
+            Assert.That(
+                dispatcher.WaitingCount, Is.Zero, what + ": the dispatcher waits for nothing");
+            Assert.That(
+                dispatcher.SubmittedCount, Is.Zero, what + ": and holds nothing");
+        }
+
+        private PhysicsOwnerShape Track(PhysicsOwnerShape shape)
+        {
+            _disposables.Add(shape);
+            return shape;
+        }
+
+        /// <summary>Something to run at teardown, in the fixture's own order.</summary>
+        private sealed class Ending : IDisposable
+        {
+            private readonly Action _run;
+
+            internal Ending(Action run)
+            {
+                _run = run;
+            }
+
+            public void Dispose()
+            {
+                _run();
+            }
+        }
+
+        /// <summary>Two boxes are the same box when every one of their six numbers is the same number.</summary>
+        private static readonly IComparer<float3> Float3Exactly = new ExactFloat3();
+
+        private sealed class ExactFloat3 : IComparer<float3>
+        {
+            public int Compare(float3 a, float3 b)
+            {
+                return math.all(a == b) ? 0 : 1;
+            }
+        }
+
+        /// <summary>
         /// The shapes a real cut and cook produce keep boxes that hold their own convexes. The numbers come back from
         /// the product's own cook -- meshes written by the job and given the bounds it measured, which are floats and
         /// may have been rounded inwards on the way -- so this is where a box drawn from a collider alone would come

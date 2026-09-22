@@ -496,8 +496,9 @@ namespace Zantetsu.PhysicsCut
                 for (int i = 0; i < count; i++)
                 {
                     PhysicsCutPart part = products.Part(positive, i);
-                    shape.Borrow(i, part.borrowed
-                        ? new Part
+                    if (part.borrowed)
+                    {
+                        shape.Borrow(i, new Part
                         {
                             bank = parent._banks[part.inputConvex],
                             bankOwner = parent._blockOwnerOf[part.inputConvex],
@@ -508,19 +509,21 @@ namespace Zantetsu.PhysicsCut
                             // Inherited uncut: the parent's box for that very convex.
                             lo = parent._convexLo[part.inputConvex],
                             hi = parent._convexHi[part.inputConvex],
-                        }
-                        : new Part
-                        {
-                            bank = products.Bank,
-                            range = part.range,
-                            mesh = part.mesh,
-                            source = productsSource,
-
-                            // Produced: what the job measured while it wrote this convex's mesh, widened by the
-                            // collider's own bounds where those are usable. Neither is read from a vertex here.
-                            lo = ProducedLow(part),
-                            hi = ProducedHigh(part),
                         });
+                        continue;
+                    }
+
+                    // Produced: the box of this convex, from one look at its mesh.
+                    ProducedBox(part, out float3 producedLow, out float3 producedHigh);
+                    shape.Borrow(i, new Part
+                    {
+                        bank = products.Bank,
+                        range = part.range,
+                        mesh = part.mesh,
+                        source = productsSource,
+                        lo = producedLow,
+                        hi = producedHigh,
+                    });
                 }
             }
             catch
@@ -671,33 +674,44 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// The low corner of a produced part's box: what the job measured while it wrote that convex's mesh, taken
-        /// together with the mesh's own bounds where those are usable. The measurements are the safe ones -- the
-        /// mesh's bounds are the same numbers through a centre-and-size pair of floats and can sit very slightly
-        /// inside them -- and the mesh's are kept as well because the collider is what physics touches.
+        /// The box of one produced convex: **what the job measured while it wrote that convex's mesh**, widened by
+        /// the mesh's own bounds where those are usable. No vertex is read, and nothing is cached -- the mesh is
+        /// asked **once**, and the two ends come out of that one answer.
+        /// <para>
+        /// **Both measurements are kept, and for different reasons.** The job's are the safe ones: the mesh reports
+        /// its bounds through a centre-and-size pair of floats and can come out very slightly inside them, and
+        /// because the widening only ever grows the box, that rounding can never pull the job's extremes in. The
+        /// mesh's are kept as well because the collider is what physics touches.
+        /// </para>
+        /// <para>
+        /// The rule is the one it always was. With no mesh, the job's extremes stand as they are. With one, each end
+        /// is judged finite **on its own**, so a mesh whose minimum is usable and whose maximum is not still widens
+        /// the low end.
+        /// </para>
         /// </summary>
-        private static float3 ProducedLow(PhysicsCutPart part)
+        private static void ProducedBox(PhysicsCutPart part, out float3 lo, out float3 hi)
         {
-            float3 lo = part.bounds.c0;
+            lo = part.bounds.c0;
+            hi = part.bounds.c1;
             if (part.mesh == null)
             {
-                return lo;
+                return;
             }
 
-            float3 fromMesh = part.mesh.bounds.min;
-            return math.all(math.isfinite(fromMesh)) ? math.min(lo, fromMesh) : lo;
-        }
-
-        private static float3 ProducedHigh(PhysicsCutPart part)
-        {
-            float3 hi = part.bounds.c1;
-            if (part.mesh == null)
+            // One look. Bounds is a value: its min and its max come from the same centre and extents, which is what
+            // the two calls this replaces each worked out for themselves.
+            Bounds box = part.mesh.bounds;
+            float3 low = box.min;
+            if (math.all(math.isfinite(low)))
             {
-                return hi;
+                lo = math.min(lo, low);
             }
 
-            float3 fromMesh = part.mesh.bounds.max;
-            return math.all(math.isfinite(fromMesh)) ? math.max(hi, fromMesh) : hi;
+            float3 high = box.max;
+            if (math.all(math.isfinite(high)))
+            {
+                hi = math.max(hi, high);
+            }
         }
 
         /// <summary>
