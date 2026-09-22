@@ -30,7 +30,11 @@ namespace Zantetsu.ConvexCut
     /// </summary>
     public unsafe struct ConvexCutOwnerInput
     {
+        /// <summary>The one bank every convex is read from, unless <see cref="banks"/> names one per convex.</summary>
         public ConvexBrepBank bank;
+
+        /// <summary>Optional, one per convex: the bank that convex's range addresses. Null reads every convex from <see cref="bank"/>.</summary>
+        public ConvexBrepBank* banks;
         public ConvexBrepRange* convexes;
         public int convexCount;
         /// <summary><see cref="ConvexSide"/> per convex.</summary>
@@ -208,7 +212,7 @@ namespace Zantetsu.ConvexCut
                 {
                     if (side != ConvexSide.Positive && side != ConvexSide.Negative && side != ConvexSide.NearPlaneToPositive)
                     { result.status = ConvexCutOwnerStatus.InvalidInput; result.failedConvex = c; output.outcomes[c] = outcome; return; }
-                    var view = input.bank.View(in r);
+                    var view = (input.banks != null ? input.banks[c] : input.bank).View(in r);
                     var m = new MassProperties();
                     MassPropertiesKernel.ComputeDouble(in view, ref m);
                     if (side == ConvexSide.Negative) { massNeg = massNeg + m; negCount++; } else { massPos = massPos + m; posCount++; }
@@ -232,7 +236,7 @@ namespace Zantetsu.ConvexCut
                 var pos = output.bank.OutputView(posV, plan.pos.vOut, posF, plan.pos.fOut, posI, plan.pos.iOut, posE, plan.pos.eOut);
                 var neg = output.bank.OutputView(negV, plan.neg.vOut, negF, plan.neg.fOut, negI, plan.neg.iOut, negE, plan.neg.eOut);
 
-                var inputView = input.bank.View(in r);
+                var inputView = (input.banks != null ? input.banks[c] : input.bank).View(in r);
                 var cutScratch = CutScratch.Layout(output.scratch, r.vertexCount, r.edgeCount, r.maxFaceLoop, plan.cutCap, plan.hashCap, plan.boundaryCap, out int cutBytes);
                 var stats = new CutStats();
                 int base_ = input.distanceBases[c];

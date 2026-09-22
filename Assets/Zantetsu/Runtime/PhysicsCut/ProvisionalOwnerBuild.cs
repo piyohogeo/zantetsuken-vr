@@ -317,7 +317,6 @@ namespace Zantetsu.PhysicsCut
             {
                 // Inactive before anything physical is on it, so nothing of this build enters the physics scene.
                 root.SetActive(false);
-                root.transform.SetPositionAndRotation(input.placement.position, input.placement.rotation);
 
                 var shapeFrame = new GameObject("Shape Frame");
                 shapeFrame.transform.SetParent(root.transform, false);

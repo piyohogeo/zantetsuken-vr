@@ -903,7 +903,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     Assert.That(w.registry.Retire(w.source), Is.True);
                     Assert.That(shape.IsFreed, Is.False, "the bank the work reads is still there");
                     Assert.That(shape.WorkUsers, Is.EqualTo(1));
-                    Assert.That(shape.Bank.vertices != null, Is.True, "and still readable");
+                    Assert.That(shape.BankOf(0).vertices != null, Is.True, "and still readable");
 
                     w.RunUntil(() => request.IsOver, "the cut ends");
                     Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the work ran on the retired owner's shape");
@@ -1878,6 +1878,7 @@ namespace Zantetsu.PhysicsCut.Tests
             private NativeArray<float> _distance;
             private NativeArray<sbyte> _class;
             private NativeArray<int> _bases;
+            private NativeArray<ConvexBrepBank> _banks;
 
             internal SecondCutInput(PhysicsFragmentOwner owner, float3 normal, float w, float eps)
             {
@@ -1894,6 +1895,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 _distance = new NativeArray<float>(vertices, Allocator.Persistent);
                 _class = new NativeArray<sbyte>(vertices, Allocator.Persistent);
                 _bases = new NativeArray<int>(count, Allocator.Persistent);
+                _banks = new NativeArray<ConvexBrepBank>(count, Allocator.Persistent);
 
                 var ranges = (ConvexBrepRange*)_ranges.GetUnsafePtr();
                 var sides = (byte*)_sides.GetUnsafePtr();
@@ -1906,11 +1908,12 @@ namespace Zantetsu.PhysicsCut.Tests
                 {
                     ConvexBrepRange range = shape.Convex(c);
                     ranges[c] = range;
+                    _banks[c] = shape.BankOf(c);
                     bases[c] = at;
                     int positive = 0, negative = 0;
                     for (int i = 0; i < range.vertexCount; i++)
                     {
-                        float3 v = shape.Bank.vertices[range.vertexBase + i];
+                        float3 v = shape.BankOf(c).vertices[range.vertexBase + i];
                         float s = math.dot(normal, v) + w;
                         distance[at + i] = s;
                         classes[at + i] = (sbyte)(s > 0f ? 1 : s < 0f ? -1 : 0);
@@ -1933,7 +1936,8 @@ namespace Zantetsu.PhysicsCut.Tests
 
                 input = new ConvexCutOwnerInput
                 {
-                    bank = shape.Bank,
+                    // A side's convexes live in different banks (the parent's and the cut's): one per convex.
+                    banks = (ConvexBrepBank*)_banks.GetUnsafePtr(),
                     convexes = ranges,
                     convexCount = count,
                     sides = sides,
@@ -1953,6 +1957,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 Free(ref _distance);
                 Free(ref _class);
                 Free(ref _bases);
+                Free(ref _banks);
             }
 
             private static void Free<T>(ref NativeArray<T> array)

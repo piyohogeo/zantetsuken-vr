@@ -1,6 +1,7 @@
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
+using UnityEngine;
 using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut
@@ -225,10 +226,12 @@ namespace Zantetsu.MeshCut
             int attemptLimit = options.maxAttempts > 0 ? options.maxAttempts : MaxAttempts;
 
             var outputRanges = new NativeArray<MeshCutIndexRange>(2 * rangeCount, Allocator.Persistent);
+            var rangeBounds = new NativeArray<float3>(4 * rangeCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             try
             {
                 // Inside the try, so that a failure to take it still gives the range array back.
                 var submeshes = new VpGeometrySubmesh[2 * rangeCount];
+                var submeshBounds = new VpGeometryBounds[2 * rangeCount];
                 for (int attempt = 1; attempt <= attemptLimit; attempt++)
                 {
                     result.attempts = attempt;
@@ -258,6 +261,8 @@ namespace Zantetsu.MeshCut
                             output.nodeCapacity = math.min(options.nodeEdgeKeys.Length, options.nodeParams.Length);
                         }
 
+                        output.rangeBoundsMin = (float3*)rangeBounds.GetUnsafePtr();
+                        output.rangeBoundsMax = (float3*)rangeBounds.GetUnsafePtr() + (2 * rangeCount);
                         PointAtReservation(ref output, reservation);
 
                         var kernel = new MeshCutResult();
@@ -265,7 +270,7 @@ namespace Zantetsu.MeshCut
                         result.kernel = kernel;
                         if (kernel.status == MeshCutStatus.Ok)
                         {
-                            return TryFinish(storage, parent, reservation, in kernel, outputRanges, submeshes, parentSubmeshes, rangeCount, ref result);
+                            return TryFinish(storage, parent, reservation, in kernel, outputRanges, rangeBounds, submeshes, submeshBounds, parentSubmeshes, rangeCount, ref result);
                         }
 
                         // A run that did not succeed is judged by the one shared rule, so this route and the
@@ -301,6 +306,7 @@ namespace Zantetsu.MeshCut
             finally
             {
                 outputRanges.Dispose();
+                rangeBounds.Dispose();
             }
         }
 
@@ -431,7 +437,9 @@ namespace Zantetsu.MeshCut
             VpCutOutputReservation reservation,
             in MeshCutResult kernel,
             NativeArray<MeshCutIndexRange> outputRanges,
+            NativeArray<float3> rangeBounds,
             VpGeometrySubmesh[] submeshes,
+            VpGeometryBounds[] submeshBounds,
             NativeArray<VpGeometrySubmesh>.ReadOnly parentSubmeshes,
             int rangeCount,
             ref VpStorageCutResult result)
@@ -464,8 +472,8 @@ namespace Zantetsu.MeshCut
 
             int positiveIndexCount = kernel.positive.indexCount;
             int negativeIndexCount = kernel.negative.indexCount;
-            if (!TryDescribeSide(outputRanges, submeshes, parentSubmeshes, 0, rangeCount, 0, positiveIndexCount, out int positiveSubmeshCount)
-                || !TryDescribeSide(outputRanges, submeshes, parentSubmeshes, rangeCount, rangeCount, positiveSubmeshCount, negativeIndexCount, out int negativeSubmeshCount))
+            if (!TryDescribeSide(outputRanges, rangeBounds, submeshes, submeshBounds, parentSubmeshes, 0, rangeCount, 0, positiveIndexCount, out int positiveSubmeshCount)
+                || !TryDescribeSide(outputRanges, rangeBounds, submeshes, submeshBounds, parentSubmeshes, rangeCount, rangeCount, positiveSubmeshCount, negativeIndexCount, out int negativeSubmeshCount))
             {
                 result.status = VpStorageCutStatus.InternalError;
                 return false;
@@ -480,6 +488,11 @@ namespace Zantetsu.MeshCut
                     submeshes,
                     positiveSubmeshCount,
                     negativeSubmeshCount,
+                    submeshBounds,
+                    kernel.positive.referencedLo,
+                    kernel.positive.referencedHi,
+                    kernel.negative.referencedLo,
+                    kernel.negative.referencedHi,
                     out VpStoredGeometry positive,
                     out VpStoredGeometry negative))
             {
@@ -504,7 +517,9 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private static bool TryDescribeSide(
             NativeArray<MeshCutIndexRange> outputRanges,
+            NativeArray<float3> rangeBounds,
             VpGeometrySubmesh[] submeshes,
+            VpGeometryBounds[] submeshBounds,
             NativeArray<VpGeometrySubmesh>.ReadOnly parentSubmeshes,
             int rangeStart,
             int rangeCount,
@@ -518,6 +533,9 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
+            // The kernel's bounds are per output range, minima first then maxima, in the ranges' own order; the
+            // submeshes keep that order, so the bounds are carried across one for one.
+            bool extents = rangeBounds.IsCreated && submeshBounds != null;
             int covered = 0;
             for (int r = 0; r < rangeCount; r++)
             {
@@ -528,6 +546,12 @@ namespace Zantetsu.MeshCut
                 }
 
                 submeshes[writeStart + r] = new VpGeometrySubmesh(covered, count, parentSubmeshes[r].materialIndex);
+                if (extents)
+                {
+                    submeshBounds[writeStart + r] = new VpGeometryBounds(
+                        (Vector3)rangeBounds[rangeStart + r], (Vector3)rangeBounds[(2 * rangeCount) + rangeStart + r]);
+                }
+
                 covered += count;
             }
 

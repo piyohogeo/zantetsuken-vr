@@ -880,12 +880,12 @@ Convex内部の識別は非公開の配列位置または実装handleでよい�
 
 **保守的な箱の取得（2026-09-21）。**この箱は**Shape自身が保持する**。
 
-- **Convex単位で保持し、継承する。**保守的なBoundsは**Convexごとに**持ち、**そのConvexが系に入った場所で一度だけ確定**して、以後はShapeからShapeへ**引き継ぐ**。Shapeの箱は、そのShapeが採用したConvexのBoundsの**集約**である。**Boundsの取得・集約について言えば、Shapeを構成する処理は渡されたBoundsを集約するだけで頂点を読まない**（Shape構成が行う既存のB-rep頂点コピーはそのまま残る。これはBoundsのための走査ではない）。
+- **Convex単位で保持し、継承する。**保守的なBoundsは**Convexごとに**持ち、**そのConvexが系に入った場所で一度だけ確定**して、以後はShapeからShapeへ**引き継ぐ**。Shapeの箱は、そのShapeが採用したConvexのBoundsの**集約**である。**Boundsの取得・集約について言えば、Shapeを構成する処理は渡されたBoundsを集約するだけで頂点を読まない**（これはBoundsのための走査ではない。**B-rep頂点の複製はauthored Shapeを構成するときだけ**であり、側のShapeは複製せず元のbankを借用する。2026-09-22の採用範囲を参照）。
   - **Authored（外部由来）**：入口検証でその頂点を走査する。**その一巡の結果**（Collider boundsと実頂点の和）をそのConvexのBoundsとする。走査はここだけである。
   - **生成Convex**：Jobが Mesh を書きながら測った min/max を成果物に載せて運ぶ。Mainで測り直さない。Mesh 自身の `bounds` は同じ数値を中心と大きさのfloat対に通したもので**内側へ丸まりうる**ため、Jobの測定値の側を採り、Collider boundsとは和をとる（物理が触れるのはColliderである）。
   - **継承Convex・Provisionalの部分集合**：対応するBoundsを**そのまま引き継ぐ**。
 - **座標系。**Shapeの**局所frame**（`LocalToOwner`の変換元、すなわちB-rep頂点と同じ系）。
-- **生成・更新の時期。**ConvexのBoundsはそのConvexが系に入った時、Shapeの箱はShapeを構成する時に、それぞれ一度だけ確定する。Shapeの**構成（どのConvexか）とShape内配置**はShapeの生存中に変わらないため、再計算しない。構成や配置が違えばそれは**別のShape**であり、その時に自分の箱を持つ。部分集合Shape・共有Shapeも同じ経路で構成されるので同じ扱いになる。**Provisionalの構築は正負それぞれのShapeを作るが、そこでBoundsのために頂点を読むことはない**（各側へのB-rep頂点コピーは従来どおり行う）。
+- **生成・更新の時期。**ConvexのBoundsはそのConvexが系に入った時、Shapeの箱はShapeを構成する時に、それぞれ一度だけ確定する。Shapeの**構成（どのConvexか）とShape内配置**はShapeの生存中に変わらないため、再計算しない。構成や配置が違えばそれは**別のShape**であり、その時に自分の箱を持つ。部分集合Shape・共有Shapeも同じ経路で構成されるので同じ扱いになる。**Provisionalの構築は正負それぞれのShapeを作るが、そこでBoundsのために頂点を読むことはない**（**各側はB-repを複製せず、元のbankをそのまま借用する**。2026-09-22の採用範囲を参照）。
 - **Ownerのworld移動・回転では再計算しない。**世界での位置はこの箱の一部ではない。
 - **Provisional構築時に毎回行うのは、その箱の8頂点を`LocalToOwner`でActor frameへ移し、軸並行に包み直すことだけ**である。回転を含むframeでは、頂点を走査した場合より箱は緩くなりうる。Source形状を確実に包む限りこれを許容し、主軸探索や最小体積OBBは行わない。
 - **入口検証。**外部由来のMeshを受け取る唯一の経路（authored Shapeの構成）で、**各Meshのboundsが対応Convexを覆っているか**を確認する。判定には**箱の大きさに対する相対の許容差**があり、**その範囲に収まる僅かなはみ出しは受理する**（floatのboundsがそれ自身の頂点より内側へ丸まりうるため）。**受理と、保持するBoundsは別である**——保持するBoundsには**実頂点を含める**ので、受理された僅かなはみ出しも保存箱の外には出ない。許容差を超えるはみ出しは拒否する。これは**入力の妥当性の検査**であって、保持する箱の安全性はこれに依存しない。**座標系の食い違いをすべて検出できるわけではない**——別座標系でも十分大きい箱なら覆ってしまう。切断が作ったShapeはこの検査を行わない。**Provisional構築のたびに検証を繰り返さない。**
@@ -905,7 +905,7 @@ Provisional→Final handoff（2026-09-21）。公開済み Provisional 対の 2 
 
 切替区間（Main Thread・物理 Step 外、間に受付・Query 解決・収集を挟まない）で、**対が Final Shape を受け取る**（同時に一時 Shape が返る）→ 両 Actor の Final 化 → 台帳の論理正負子公開 → 各子を Final Owner として登録 → **対を対応から外す（Actor は破棄しない）＋成果物の所有権移転** → 旧 Source の Owner を退役、を一体で行う。
 
-**切替中に使い始めた Shape は対が持つ。**Actor がその上に立つ前に対へ渡すので、切替途中で例外になっても、その Shape は「公開済み対の通常の終了」（`EndProvisional`）で Actor と一緒に回収される——呼出しのローカル変数だけに残ることはなく、この呼出し自身は切替以降 Dispose をしない。成功時は Actor とともに子の Owner へ移り、対は返さない。**成果物の所有権移転は対を対応から外すのと同じ点**に置いてあり、「その切断にまだ対があるか」と「成果物がまだ呼出側のものか」が同じ問いになる——切替の前後を判別する呼出側は対応に尋ねればよい。1 Actor の Final 化は**旧 Collider の無効化 → Shape Frame を成果物の数値 local frame へ → 準備済み Collider の有効化 → 旧 Collider の破棄要求**の順で、**無効化が破棄より先**である：Play 時の破棄は更新ループ後に遅延するため、破棄要求だけでは旧 Collider が同じフレームの Query に答え続ける。
+**切替中に使い始めた Shape は対が持つ。**Actor がその上に立つ前に対へ渡すので、切替途中で例外になっても、その Shape は「公開済み対の通常の終了」（`EndProvisional`）で Actor と一緒に回収される——呼出しのローカル変数だけに残ることはなく、この呼出し自身は切替以降 Dispose をしない。成功時は Actor とともに子の Owner へ移り、対は返さない。**成果物の所有権移転は対を対応から外すのと同じ点**に置いてあり、「その切断にまだ対があるか」と「成果物がまだ呼出側のものか」が同じ問いになる——切替の前後を判別する呼出側は対応に尋ねればよい。1 Actor の Final 化は**置換対象の旧 Collider の無効化 → Shape Frame を成果物の数値 local frame へ → 準備済み Collider の有効化 → 置換対象の破棄要求**の順で、**無効化が破棄より先**である：Play 時の破棄は更新ループ後に遅延するため、破棄要求だけでは旧 Collider が同じフレームの Query に答え続ける。**流用する Collider はこの順序に入らない**——側がすでに持つ Collider が、その部分の最終 Mesh をそのまま載せ、同じ cooking profile で、凸で、有効で、切替が設定する Shape Frame の姿勢が現在の姿勢と同じであれば、その Collider は無効化も破棄もされず切替の間ずっと答え続ける（2026-09-22 の採用範囲）。
 
 対の終了（`EndProvisional`、Actor を破棄する）と**所有権移転（`TryHandOverProvisional`、Actor を渡す）を別の操作として分けた**のが最小の変更である。Geometry 切断・Commit は待たず、物理公開で Geometry 責務の未完了枠を返すこともしない（台帳の Operation は公開後も終えない）。
 
@@ -934,6 +934,18 @@ CutWorldSandbox の IL2CPP Player 確認（2026-09-22）。接続済みの切断
 **確認した経路**（実 Player、ウィンドウ表示、`-nographics` なし）。①初期 body が**表示 material 自身の色で**描かれる、②切断要求が handoff を経て実 Geometry Commit に達する（**段階値はログで確認**し、画像から推定しない）、実 Actor を離すと正負の子それぞれと断面が見える、③公開された子を既存の入口から再切断でき、Physics・Geometry・表示まで進む、④通常終了で `IsReleased`／`IsDrained`／表示の破棄に到達する（**プロセスが閉じたことを資源回収の証拠にしない**）。**Provisional の対が立っていたのは 2 フレーム**で、その画像は取得していないため、**Provisional の見え方を Player で確認したとは書かない**。
 
 **確認していない範囲。**Hit 検出、XR、性能、Shadow／Depth／Stencil の全面検証、Scene unload・強制終了時の回収保証、手操作（Space／C／E）での Player 確認。
+
+Phase 4.1 固定費削減の採用範囲（2026-09-22）。切断経路の Main 固定費について、この単位で採用した変更と、その成立範囲だけを記す。測定の道具立て（区間 timer・API 台帳・Player の測定 driver・harness）と、未採用の描画保持は製品コードに含めない。
+
+- **Extent（走査の撤去）。**表示 Geometry の参照頂点範囲と bounds は、**その Geometry を作った側が記録する**：cut では Kernel が出力 index を書く各所（通常三角形・lone 三角形の分割・cap）で range ごとの min/max と側ごとの参照 lo/hi を積み、Main は O(range) の変換と記録だけを行う。登録経路（配列 append・Mesh append）は登録時に一度測って記録する。**描画は記録を読むだけで、index を走査しない**。記録のない Geometry は描画側が拒否する（測り直さない）。公開入口は bounds を必須とし、bounds なし・参照範囲不正の commit は公開せずに false を返す。
+- **OneBlock／Borrow。**authored Shape は自分の 1 block に B-rep を複製する（従来どおり）。**側の Shape は複製せず、各 Convex が元の bank をそのまま指す**。Kernel は Convex ごとの bank を読む。Shape・分類・arena の native 配列は、それぞれ 16 byte 整列の 1 block にまとめる。寿命は 3 つの計数で独立に決まる：Shape 自身の終了、Work の使用、**block の借用者**。借用者は block の**究極の所有者**を保持し、Mesh は借用者が自分で保持するので、所有者が Mesh 保持を先に手放しても Mesh は残る。
+- **Final Collider の流用。**借用 Convex について、側がすでに持つ Collider が同じ Mesh・同じ cooking profile・凸・有効で、切替が設定する Shape Frame の姿勢が現在と同じであれば、その Collider をそのまま最終集合に入れる。**置換対象だけ**を無効化し、切替後に破棄する。準備の失敗は**この呼出しが作ったものだけ**を戻し、流用した Collider は側のまま残す。
+- **scratch のゼロ初期化省略。**非同期 Geometry 切断の kernel scratch は `UninitializedMemory` で確保する。Kernel と cap は読む領域を必ず先に書く（明示初期化か、計数の範囲内の書込み）ので、ゼロ値に依存する領域はない。**同期経路は従来どおり初期化して確保**し、独立した比較基準として残す。Worker 側に初期化を足してはいない。
+- **小修正。**Provisional 側 Actor の姿勢設定を生成時に行わない（build と publish の Reposition は途中状態が要るので残す）。Final handoff は質量と運動だけを書き、publication が同じ Actor に設定済みの自動質量・kinematic フラグを再設定しない。Collider 準備の一時 list を減らす。
+
+**更新順による遅延削減（上の CPU 固定費削減とは別）。**`Update` と `LateUpdate` が使うフレーム源を構成根の `CurrentFrame` に統一し、`LateUpdate` では表示収集の**前に**同じフレーム id でもう一度 frame を進める。同じ id なので予算は補充されず、frame はその frame に与えられた分だけを使う。この 2 度目の turn は**完了の照会と回収を行う**：投入した仕事が更新側の turn の終了後に終わっていれば、次のフレームの更新を待たずに同じフレームで回収される。**完了待ちの busy polling も強制完了も追加しない**ので、`LateUpdate` までに終わっていない仕事はそのまま翌フレームへ持ち越す——待ちがなくなるわけではない（turn は何も動かなくなった時点で終わり、記録した run では、更新側の turn が終わった時点で投入した work はまだ戻っていなかった）。Sandbox の probe は driver より前（実行順 −150）に置き、同じフレームの driver 更新で受付が取り上げられるようにした——これは sandbox の都合であり、実際の Hit 経路がどこから要求するかを決めるものではない。
+
+**成立範囲（版を区別する）。**採用したこのコードで確認したのは Editor の**関連 EditMode 1061/1061・切断系 PlayMode 16/16**である。**性能としては、Character（19 convex）の Geometry 切断 pump が約 70 µs 減ったことだけが確認できている**（scratch のゼロ初期化省略。Windows x64 IL2CPP Development Player、正順・反転の比較）が、**これは整理前の計測版（区間 timer・台帳・測定 driver を含む版）での比較結果であり、採用コードを再 build して測り直したものではない**。**箱（1 convex）の切断 Main 約 0.31 ms は改善していない。**未解決のまま残すもの：一呼出しあたり約 100 µs の膨張の原因、遅延破棄の実費用（較正からの参考推定のみ）、間欠失敗、空 dispatch 約 15 µs、Collider 流用の照合が Convex 数に対して二乗になり得ること。
 
 最小 Scene・カメラ描画の接続（2026-09-21）。構成根までつながった切断経路を、Scene を再生すると実際に画面へ描かれる状態にした。
 

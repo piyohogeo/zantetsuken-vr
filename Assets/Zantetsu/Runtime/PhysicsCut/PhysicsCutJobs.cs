@@ -40,28 +40,28 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     internal sealed unsafe class PhysicsCutArena : IDisposable
     {
-        private NativeArray<float3> _vertices;
-        private NativeArray<int> _faceOffsets;
-        private NativeArray<int> _faceIndices;
-        private NativeArray<int> _faceEdges;
-        private NativeArray<BrepEdge> _edges;
-        private NativeArray<ConvexCutOutcome> _outcomes;
-        private NativeArray<byte> _scratch;
+        /// <summary>
+        /// The one native block the arena is: the bank's five tables, the outcomes and the scratch, each at a
+        /// 16-byte-aligned offset. One allocation, one release, and the products it is handed to free it as before.
+        /// </summary>
+        private NativeArray<byte> _block;
         private bool _disposed;
 
         internal PhysicsCutArena(in ConvexCutOwnerCapacity capacity, int convexCount)
         {
+            long verticesAt = 0;
+            long faceOffsetsAt = verticesAt + Align16((long)math.max(1, capacity.vertices) * sizeof(float3));
+            long faceIndicesAt = faceOffsetsAt + Align16((long)math.max(1, capacity.faceOffsets) * sizeof(int));
+            long faceEdgesAt = faceIndicesAt + Align16((long)math.max(1, capacity.faceIndices) * sizeof(int));
+            long edgesAt = faceEdgesAt + Align16((long)math.max(1, capacity.faceIndices) * sizeof(int));
+            long outcomesAt = edgesAt + Align16((long)math.max(1, capacity.edges) * sizeof(BrepEdge));
+            long scratchAt = outcomesAt + Align16((long)math.max(1, convexCount) * sizeof(ConvexCutOutcome));
+            long blockBytes = scratchAt + Align16((long)math.max(1, capacity.scratchBytes));
             try
             {
-                // A zero-length native array has no pointer to give, so every run is allocated at least one element;
-                // the capacities the kernel is told are the ones it asked for.
-                _vertices = new NativeArray<float3>(math.max(1, capacity.vertices), Allocator.Persistent);
-                _faceOffsets = new NativeArray<int>(math.max(1, capacity.faceOffsets), Allocator.Persistent);
-                _faceIndices = new NativeArray<int>(math.max(1, capacity.faceIndices), Allocator.Persistent);
-                _faceEdges = new NativeArray<int>(math.max(1, capacity.faceIndices), Allocator.Persistent);
-                _edges = new NativeArray<BrepEdge>(math.max(1, capacity.edges), Allocator.Persistent);
-                _outcomes = new NativeArray<ConvexCutOutcome>(math.max(1, convexCount), Allocator.Persistent);
-                _scratch = new NativeArray<byte>(math.max(1, capacity.scratchBytes), Allocator.Persistent);
+                // One element at least, as before, so there is always a pointer to give; and cleared, as the seven
+                // arrays were: nothing here assumes the kernel writes every byte first.
+                _block = new NativeArray<byte>(checked((int)blockBytes), Allocator.Persistent);
             }
             catch
             {
@@ -70,13 +70,14 @@ namespace Zantetsu.PhysicsCut
                 throw;
             }
 
+            byte* block = (byte*)_block.GetUnsafePtr();
             Bank = new ConvexBrepBank
             {
-                vertices = (float3*)_vertices.GetUnsafePtr(),
-                faceOffsets = (int*)_faceOffsets.GetUnsafePtr(),
-                faceIndices = (int*)_faceIndices.GetUnsafePtr(),
-                faceEdges = (int*)_faceEdges.GetUnsafePtr(),
-                edges = (BrepEdge*)_edges.GetUnsafePtr(),
+                vertices = (float3*)(block + verticesAt),
+                faceOffsets = (int*)(block + faceOffsetsAt),
+                faceIndices = (int*)(block + faceIndicesAt),
+                faceEdges = (int*)(block + faceEdgesAt),
+                edges = (BrepEdge*)(block + edgesAt),
             };
             Output = new ConvexCutOwnerOutput
             {
@@ -85,8 +86,8 @@ namespace Zantetsu.PhysicsCut
                 faceOffsetCapacity = capacity.faceOffsets,
                 faceIndexCapacity = capacity.faceIndices,
                 edgeCapacity = capacity.edges,
-                outcomes = (ConvexCutOutcome*)_outcomes.GetUnsafePtr(),
-                scratch = (byte*)_scratch.GetUnsafePtr(),
+                outcomes = (ConvexCutOutcome*)(block + outcomesAt),
+                scratch = block + scratchAt,
                 scratchBytes = capacity.scratchBytes,
             };
         }
@@ -103,13 +104,12 @@ namespace Zantetsu.PhysicsCut
             }
 
             _disposed = true;
-            Release(ref _vertices);
-            Release(ref _faceOffsets);
-            Release(ref _faceIndices);
-            Release(ref _faceEdges);
-            Release(ref _edges);
-            Release(ref _outcomes);
-            Release(ref _scratch);
+            Release(ref _block);
+        }
+
+        private static long Align16(long bytes)
+        {
+            return (bytes + 15) & ~15L;
         }
 
         private static void Release<T>(ref NativeArray<T> array)

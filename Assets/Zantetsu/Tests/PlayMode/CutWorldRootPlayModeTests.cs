@@ -635,7 +635,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(
                 observer.Frame, Is.EqualTo(askedUpIn),
                 "the reading is of the frame the cut was taken up in");
-            Assert.That(observer.Pairs, Is.EqualTo(1), "the pair stood in the scene in that frame");
+            Assert.That(
+                observer.Pairs, Is.EqualTo(1),
+                "the pair stood in the scene in that frame (asked up in " + askedUpIn + ", published in " + transaction.PublishedFrame
+                + ", handed off in " + transaction.HandedOffFrame + ", observer read frame " + observer.Frame
+                + ", phase now " + transaction.Phase + ")");
             Assert.That(
                 observer.Drawn, Is.EqualTo(2),
                 "and the body was drawn as the two sides of the cut in that frame's collection");
@@ -914,9 +918,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// <summary>
         /// **Nothing unpublished is published after the termination request, including later in the very update it was
         /// made in.** One cut's cook is finished and waiting to be collected; another body's geometry cannot be cut.
-        /// In the update where the frame collects the first one's bake, the second one's failure fixes the latch
-        /// first — it is reported while the frame is being carried — so the collection that follows does not hand the
-        /// first cut over, and no logical child is published for it.
+        /// The second one's failure fixes the latch, and only then is the first one's finished bake let go — so the
+        /// collection that follows, in that same carry, does not hand the first cut over and publishes no logical
+        /// child for it.
+        /// <para>
+        /// **The situation is made at a seam inside the carry, not at a frame boundary.** The hold is released from
+        /// the termination call itself: that is after the latch is fixed and before the call that is carrying the
+        /// frame returns, so the collection really happens with the latch in force. Releasing it earlier would let
+        /// the cut be handed over before there is any latch — which says nothing about this contract — and releasing
+        /// it later would leave the work uncollected, because the latch stops the driver, and a case that never
+        /// collects would pass whatever the product did.
+        /// </para>
         /// </summary>
         [UnityTest]
         public IEnumerator AfterTheTerminationRequest_AFinishedCutIsNotPublished_EvenLaterInThatUpdate()
@@ -936,7 +948,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     physics.HoldEverything = true;
                     return physics;
                 },
-                () => terminations++);
+                () =>
+                {
+                    terminations++;
+
+                    // **The seam.** The latch is fixed by now -- this is what being called means -- and the call
+                    // carrying the frame has not returned, so what is let go here is collected inside that same
+                    // carry, with the latch in force.
+                    physics?.ReleaseEverything();
+                });
 
             Assert.That(physics, Is.Not.Null);
             LogicalFragmentId cuttable = AddBody(root, new Vector3(-4f, 0f, 0f));
@@ -983,10 +1003,24 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(
                 OperationOf(root, operation).positive.IsSet, Is.False, "no child of it is published yet");
 
-            // Let that bake be collected from the next update on, and ask for the cut that cannot be done. The update
-            // that takes it up is where its geometry fails -- while the frame is carried, before the collection.
+            // The bake is **finished and not collected**: the destination handed it back and the hold kept it here.
+            Assert.That(physics.HoldEverything, Is.True, "the bake is still held, not let through");
+            Assert.That(
+                physics.Holding.Count, Is.GreaterThan(0),
+                "and it is finished work waiting to be collected, not work still running");
+            foreach (IDispatchWork heldWork in physics.Holding)
+            {
+                // **Asked of the work itself.** That the destination handed it back already means it finished --
+                // the executor only gives back work whose IsComplete is true -- but the case says so directly, so
+                // that it does not rest on how the executor happens to decide that.
+                Assert.That(
+                    heldWork.IsComplete, Is.True,
+                    "the held work reports that it has finished, so this really is finished-and-not-collected");
+            }
+
+            // Now ask for the cut that cannot be done. Its geometry fails while the frame is carried, which fixes
+            // the latch and calls the termination API -- and the hold is released from there, not from here.
             LogAssert.Expect(LogType.Error, new Regex("the Player is being ended"));
-            physics.ReleaseEverything();
             ProvisionalCutAsk fails = Ask(unusable, new float4(0f, 1f, 0f, 0f));
             Assert.That(root.TryAsk(in fails), Is.True);
 

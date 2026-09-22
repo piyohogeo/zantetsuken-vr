@@ -206,7 +206,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 int positive = 0, negative = 0;
                 for (int i = 0; i < range.vertexCount; i++)
                 {
-                    float3 v = s.shape.Bank.vertices[range.vertexBase + i];
+                    float3 v = s.shape.BankOf(c).vertices[range.vertexBase + i];
                     float d = math.dot(planeLocal.xyz, v) + planeLocal.w;
                     if (d > epsilon)
                     {
@@ -501,7 +501,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 ConvexBrepRange range = s.shape.Convex(c);
                 for (int v = 0; v < range.vertexCount; v++)
                 {
-                    float3 at = s.shape.Bank.vertices[range.vertexBase + v];
+                    float3 at = s.shape.BankOf(c).vertices[range.vertexBase + v];
                     Assert.That(
                         math.all(at >= localLo) && math.all(at <= localHi), Is.True,
                         "convex " + c + " vertex " + v + " is inside the shape's own box, with nothing allowed for");
@@ -598,7 +598,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 ConvexBrepRange range = s.shape.Convex(c);
                 for (int v = 0; v < range.vertexCount; v++)
                 {
-                    s.shape.Bank.vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
+                    s.shape.BankOf(c).vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
                 }
             }
 
@@ -691,7 +691,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 ConvexBrepRange inShape = shape.Convex(0);
                 for (int v = 0; v < inShape.vertexCount; v++)
                 {
-                    float3 at = shape.Bank.vertices[inShape.vertexBase + v];
+                    float3 at = shape.BankOf(0).vertices[inShape.vertexBase + v];
                     Assert.That(
                         math.all(at >= lo) && math.all(at <= hi), Is.True,
                         "vertex " + v + " at " + at + " is inside [" + lo + ", " + hi + "], with nothing allowed for");
@@ -820,7 +820,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(range.vertexCount, Is.GreaterThan(0), what + ": convex " + c + " has vertices");
                 for (int v = 0; v < range.vertexCount; v++)
                 {
-                    float3 at = shape.Bank.vertices[range.vertexBase + v];
+                    float3 at = shape.BankOf(c).vertices[range.vertexBase + v];
                     Assert.That(
                         math.all(at >= lo) && math.all(at <= hi), Is.True,
                         what + ": convex " + c + " vertex " + v + " at " + at + " is inside [" + lo + ", " + hi + "]");
@@ -899,7 +899,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 ConvexBrepRange range = s.shape.Convex(c);
                 for (int v = 0; v < range.vertexCount; v++)
                 {
-                    s.shape.Bank.vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
+                    s.shape.BankOf(c).vertices[range.vertexBase + v] += new float3(1000f, 1000f, 1000f);
                 }
             }
 

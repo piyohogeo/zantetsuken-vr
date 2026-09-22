@@ -127,12 +127,13 @@ namespace Zantetsu.PhysicsCut
     /// What one physics owner is made of: its convexes, each with the cooked collider mesh its shape uses and a hold
     /// on whoever owns that mesh.
     /// <para>
-    /// The B-rep is this owner's own copy, in one bank. It is copied rather than shared because the numerical kernel
-    /// reads one bank (DESIGN 7.2), and a side that inherited some convexes and had others produced for it would
-    /// otherwise have its shape spread over two. Copying is what makes the owner cuttable again on its own, which is
-    /// also what DESIGN 7.2 asks for by keeping the B-rep the authoritative input for the next cut. The copy is a
-    /// plain element copy: face offsets, face indices, face edges and edges are all local to their own convex, so
-    /// only the bases change.
+    /// An authored shape owns its B-rep in one block of its own, every convex copied in (a plain element copy: face
+    /// offsets, face indices, face edges and edges are all local to their own convex, so only the bases change). A
+    /// side made from another shape copies nothing: each of its convexes keeps the bank it already lives in -- the
+    /// source's or the parent's block, or the cut's products -- and the side holds the block's ultimate owner alive
+    /// (<see cref="AcquireAsBank"/>) for as long as it addresses it. The numerical kernel reads a bank per convex
+    /// (<c>ConvexCutOwnerInput.banks</c>), which is what lets a side's shape be spread over several blocks and
+    /// still be the authoritative input for the next cut (DESIGN 7.2).
     /// </para>
     /// <para>
     /// The collider meshes are not copied and not baked again. Each convex names the mesh its collider uses and the
@@ -151,13 +152,31 @@ namespace Zantetsu.PhysicsCut
         private readonly List<PhysicsShapeSource> _sources = new List<PhysicsShapeSource>(2);
         private readonly List<Mesh> _meshes = new List<Mesh>(4);
         private ConvexBrepRange[] _convexes = Array.Empty<ConvexBrepRange>();
+        private ConvexBrepBank[] _banks = Array.Empty<ConvexBrepBank>();
         private float3[] _convexLo = Array.Empty<float3>();
         private float3[] _convexHi = Array.Empty<float3>();
-        private NativeArray<float3> _vertices;
-        private NativeArray<int> _faceOffsets;
-        private NativeArray<int> _faceIndices;
-        private NativeArray<int> _faceEdges;
-        private NativeArray<BrepEdge> _edges;
+        /// <summary>
+        /// The one native block an authored shape's B-rep lives in: vertices, face offsets, face indices, face
+        /// edges and edges, each at a 16-byte-aligned offset. One allocation, one release; the bank's pointers
+        /// slice it. A side has none: its convexes address the banks they came from.
+        /// </summary>
+        private NativeArray<byte> _block;
+
+        /// <summary>
+        /// Per convex, the shape that owns the block its bank is: this shape for an authored convex, another shape
+        /// for one borrowed from an authored block, and null for one that lives in a cut's products (the products'
+        /// source keeps those). What a borrower holds is these owners, directly.
+        /// </summary>
+        private PhysicsOwnerShape[] _blockOwnerOf = Array.Empty<PhysicsOwnerShape>();
+
+        /// <summary>The block owners this one's convexes address, held until this shape is freed.</summary>
+        private readonly List<PhysicsOwnerShape> _bankOwners = new List<PhysicsOwnerShape>(2);
+
+        /// <summary>How many shapes address this one's block; the block is not freed while any does.</summary>
+        private int _bankUsers;
+
+        /// <summary>The mesh holds have gone back: the owner is done and no work reads this shape.</summary>
+        private bool _sourcesReleased;
         private float3 _localLo = new float3(float.PositiveInfinity);
         private float3 _localHi = new float3(float.NegativeInfinity);
         private bool _localBoundsUsable = true;
@@ -173,8 +192,27 @@ namespace Zantetsu.PhysicsCut
         /// <summary>From the numerical local frame these convexes are in to the owner's frame.</summary>
         public float4x4 LocalToOwner { get; }
 
-        /// <summary>The bank this owner's convexes live in. It is this shape's own.</summary>
-        public ConvexBrepBank Bank { get; private set; }
+        /// <summary>
+        /// The bank convex <paramref name="index"/>'s range addresses. An authored shape's convexes all live in its
+        /// own block; a side's live where they were before -- the source's or the parent's bank, or the cut's
+        /// products -- and this shape holds whoever keeps that bank alive.
+        /// </summary>
+        public ConvexBrepBank BankOf(int index)
+        {
+            return _banks[index];
+        }
+
+        /// <summary>How many shapes address this shape's block right now.</summary>
+        public int BankUsers => _bankUsers;
+
+        /// <summary>The shape that owns the block convex <paramref name="index"/> lives in, or null for a cut's products.</summary>
+        public PhysicsOwnerShape BlockOwnerOf(int index)
+        {
+            return _blockOwnerOf[index];
+        }
+
+        /// <summary>Whether this shape's mesh holds have gone back already (its owner done, its work collected).</summary>
+        public bool MeshHoldsReleased => _sourcesReleased;
 
         public int ConvexCount => _convexes.Length;
 
@@ -244,6 +282,28 @@ namespace Zantetsu.PhysicsCut
         /// <summary>How many pieces of work are still reading this bank.</summary>
         public int WorkUsers => _workUsers;
 
+        /// <summary>Another shape's convexes address this one's banks from now until it lets go; this shape stays for it.</summary>
+        private void AcquireAsBank()
+        {
+            if (_freed)
+            {
+                throw new ObjectDisposedException(nameof(PhysicsOwnerShape), "this shape has already gone back");
+            }
+
+            _bankUsers = checked(_bankUsers + 1);
+        }
+
+        private void ReleaseAsBank()
+        {
+            if (_bankUsers <= 0)
+            {
+                throw new InvalidOperationException("released as a bank more often than it was acquired");
+            }
+
+            _bankUsers--;
+            FreeIfIdle();
+        }
+
         /// <summary>Whether the bank and the mesh holds have gone back.</summary>
         public bool IsFreed => _freed;
 
@@ -310,7 +370,7 @@ namespace Zantetsu.PhysicsCut
                     };
                 }
 
-                shape.Fill(parts);
+                shape.Fill(parts, false);
             }
             catch
             {
@@ -328,8 +388,8 @@ namespace Zantetsu.PhysicsCut
         /// No cut is made here, no collider mesh is copied and nothing is baked here: each part names the very mesh
         /// the source's own collider uses and takes a hold on whoever owns it, so those meshes outlive this side however
         /// the source ends. A convex the plane crosses belongs to both sides and is named by both, which is what
-        /// DESIGN 7.1.1 allows when it accepts the ghost contacts of a shared old convex. The B-rep is copied into
-        /// this side's own bank, as every shape's is, because the numerical kernel reads one bank.
+        /// DESIGN 7.1.1 allows when it accepts the ghost contacts of a shared old convex. The B-rep is not copied:
+        /// each convex keeps the source's bank, and this side holds the source's block owner alive.
         /// </para>
         /// </summary>
         internal static PhysicsOwnerShape ProvisionalSide(PhysicsOwnerShape source, IReadOnlyList<int> convexes)
@@ -358,7 +418,8 @@ namespace Zantetsu.PhysicsCut
 
                     parts[i] = new Part
                     {
-                        bank = source.Bank,
+                        bank = source._banks[c],
+                        bankOwner = source._blockOwnerOf[c],
                         range = source._convexes[c],
                         mesh = source._meshes[c],
                         source = source.SourceOf(c),
@@ -370,7 +431,7 @@ namespace Zantetsu.PhysicsCut
                     };
                 }
 
-                shape.Fill(parts);
+                shape.Fill(parts, true);
             }
             catch
             {
@@ -383,7 +444,7 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The shape of one side of a finished cut: the convexes that side adopted, each produced here or inherited
-        /// from <paramref name="parent"/>, copied into this side's own bank.
+        /// from <paramref name="parent"/>, borrowed as they are: the parent's bank and block owner, not a copy.
         /// <para>
         /// A produced convex uses the mesh the cut cooked, held through <paramref name="productsSource"/>; an
         /// inherited one uses the parent's mesh for that same input convex, held through whatever owns it there. The
@@ -414,7 +475,8 @@ namespace Zantetsu.PhysicsCut
                     parts[i] = part.borrowed
                         ? new Part
                         {
-                            bank = parent.Bank,
+                            bank = parent._banks[part.inputConvex],
+                            bankOwner = parent._blockOwnerOf[part.inputConvex],
                             range = parent._convexes[part.inputConvex],
                             mesh = parent._meshes[part.inputConvex],
                             source = parent.SourceOf(part.inputConvex),
@@ -437,7 +499,7 @@ namespace Zantetsu.PhysicsCut
                         };
                 }
 
-                shape.Fill(parts);
+                shape.Fill(parts, true);
             }
             catch
             {
@@ -465,19 +527,34 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            _freed = true;
-            Release(ref _vertices);
-            Release(ref _faceOffsets);
-            Release(ref _faceIndices);
-            Release(ref _faceEdges);
-            Release(ref _edges);
-            Bank = default;
-            for (int i = 0; i < _sources.Count; i++)
+            // The owner is done and nothing of this shape's work is out: the mesh holds go back now, once. What
+            // any borrower reads of this shape is its block, and a borrower holds the meshes it uses itself.
+            if (!_sourcesReleased)
             {
-                _sources[i].Release();
+                _sourcesReleased = true;
+                for (int i = 0; i < _sources.Count; i++)
+                {
+                    _sources[i].Release();
+                }
+
+                _sources.Clear();
             }
 
-            _sources.Clear();
+            if (_bankUsers > 0)
+            {
+                return;
+            }
+
+            _freed = true;
+            Release(ref _block);
+            _banks = Array.Empty<ConvexBrepBank>();
+            _blockOwnerOf = Array.Empty<PhysicsOwnerShape>();
+            for (int i = 0; i < _bankOwners.Count; i++)
+            {
+                _bankOwners[i].ReleaseAsBank();
+            }
+
+            _bankOwners.Clear();
         }
 
         private struct Part
@@ -486,6 +563,9 @@ namespace Zantetsu.PhysicsCut
             internal ConvexBrepRange range;
             internal Mesh mesh;
             internal PhysicsShapeSource source;
+
+            /// <summary>The shape that owns the block <see cref="bank"/> is in, when a shape does; null when it is a cut's products'.</summary>
+            internal PhysicsOwnerShape bankOwner;
 
             /// <summary>The box this convex lies in, in the local frame. Settled by whoever made this part.</summary>
             internal float3 lo;
@@ -620,8 +700,41 @@ namespace Zantetsu.PhysicsCut
             _localHi = math.max(_localHi, hi);
         }
 
-        private void Fill(Part[] parts)
+        /// <summary>
+        /// Takes the parts. Borrowing, each convex keeps its range in the bank it came from, and this shape holds
+        /// the bank's keeper -- the owning shape, or the products' source it already holds for the mesh -- until it
+        /// is freed. Copying, every convex is copied into one block this shape owns, as an authored shape's are.
+        /// </summary>
+        private void Fill(Part[] parts, bool borrow)
         {
+            if (borrow)
+            {
+                _convexes = new ConvexBrepRange[parts.Length];
+                _banks = new ConvexBrepBank[parts.Length];
+                _blockOwnerOf = new PhysicsOwnerShape[parts.Length];
+                _convexLo = new float3[parts.Length];
+                _convexHi = new float3[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    _convexes[i] = parts[i].range;
+                    _banks[i] = parts[i].bank;
+                    _blockOwnerOf[i] = parts[i].bankOwner;
+                    _meshes.Add(parts[i].mesh);
+                    _convexLo[i] = parts[i].lo;
+                    _convexHi[i] = parts[i].hi;
+                    AddToLocalBounds(parts[i].lo, parts[i].hi);
+                    HoldSource(parts[i].source);
+                    if (parts[i].bankOwner != null && !_bankOwners.Contains(parts[i].bankOwner))
+                    {
+                        // Held before it is recorded: a hold that was not taken must not be let go later.
+                        parts[i].bankOwner.AcquireAsBank();
+                        _bankOwners.Add(parts[i].bankOwner);
+                    }
+                }
+
+                return;
+            }
+
             int vertices = 0, faceOffsets = 0, faceIndices = 0, edges = 0;
             for (int i = 0; i < parts.Length; i++)
             {
@@ -633,21 +746,29 @@ namespace Zantetsu.PhysicsCut
             }
 
             // One element each at least: a zero-length native array has no pointer to give.
-            _vertices = new NativeArray<float3>(math.max(1, vertices), Allocator.Persistent);
-            _faceOffsets = new NativeArray<int>(math.max(1, faceOffsets), Allocator.Persistent);
-            _faceIndices = new NativeArray<int>(math.max(1, faceIndices), Allocator.Persistent);
-            _faceEdges = new NativeArray<int>(math.max(1, faceIndices), Allocator.Persistent);
-            _edges = new NativeArray<BrepEdge>(math.max(1, edges), Allocator.Persistent);
+            long verticesAt = 0;
+            long faceOffsetsAt = verticesAt + Align16((long)math.max(1, vertices) * sizeof(float3));
+            long faceIndicesAt = faceOffsetsAt + Align16((long)math.max(1, faceOffsets) * sizeof(int));
+            long faceEdgesAt = faceIndicesAt + Align16((long)math.max(1, faceIndices) * sizeof(int));
+            long edgesAt = faceEdgesAt + Align16((long)math.max(1, faceIndices) * sizeof(int));
+            long blockBytes = edgesAt + Align16((long)math.max(1, edges) * sizeof(BrepEdge));
+
+            // Every byte of the block is written by the copies below, so it is not cleared first.
+            _block = new NativeArray<byte>(
+                checked((int)blockBytes), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            byte* block = (byte*)_block.GetUnsafePtr();
             var bank = new ConvexBrepBank
             {
-                vertices = (float3*)_vertices.GetUnsafePtr(),
-                faceOffsets = (int*)_faceOffsets.GetUnsafePtr(),
-                faceIndices = (int*)_faceIndices.GetUnsafePtr(),
-                faceEdges = (int*)_faceEdges.GetUnsafePtr(),
-                edges = (BrepEdge*)_edges.GetUnsafePtr(),
+                vertices = (float3*)(block + verticesAt),
+                faceOffsets = (int*)(block + faceOffsetsAt),
+                faceIndices = (int*)(block + faceIndicesAt),
+                faceEdges = (int*)(block + faceEdgesAt),
+                edges = (BrepEdge*)(block + edgesAt),
             };
 
             _convexes = new ConvexBrepRange[parts.Length];
+            _banks = new ConvexBrepBank[parts.Length];
+            _blockOwnerOf = new PhysicsOwnerShape[parts.Length];
             _convexLo = new float3[parts.Length];
             _convexHi = new float3[parts.Length];
             int vBase = 0, fBase = 0, iBase = 0, eBase = 0;
@@ -668,6 +789,8 @@ namespace Zantetsu.PhysicsCut
                 moved.faceIndexBase = iBase;
                 moved.edgeBase = eBase;
                 _convexes[i] = moved;
+                _banks[i] = bank;
+                _blockOwnerOf[i] = this;
 
                 vBase += r.vertexCount;
                 fBase += r.faceCount + 1;
@@ -678,20 +801,27 @@ namespace Zantetsu.PhysicsCut
                 _convexLo[i] = parts[i].lo;
                 _convexHi[i] = parts[i].hi;
                 AddToLocalBounds(parts[i].lo, parts[i].hi);
-                int at = _sources.IndexOf(parts[i].source);
-                if (at < 0)
-                {
-                    // One hold per source, however many of its meshes this owner uses.
-                    // Held before it is recorded: a hold that was not taken must not be let go later.
-                    parts[i].source.Acquire();
-                    at = _sources.Count;
-                    _sources.Add(parts[i].source);
-                }
+                HoldSource(parts[i].source);
+            }
+        }
 
-                _sourceOf.Add(at);
+        /// <summary>One hold per source, however many of its meshes this owner uses; held before it is recorded.</summary>
+        private void HoldSource(PhysicsShapeSource source)
+        {
+            int at = _sources.IndexOf(source);
+            if (at < 0)
+            {
+                source.Acquire();
+                at = _sources.Count;
+                _sources.Add(source);
             }
 
-            Bank = bank;
+            _sourceOf.Add(at);
+        }
+
+        private static long Align16(long bytes)
+        {
+            return (bytes + 15) & ~15L;
         }
 
         private static void Release<T>(ref NativeArray<T> array)

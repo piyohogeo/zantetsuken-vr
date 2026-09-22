@@ -103,7 +103,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private sealed class HoldingExecutor : IWorkExecutor
         {
             private readonly IWorkExecutor _inner;
-            private readonly List<IDispatchWork> _held = new List<IDispatchWork>();
+            private readonly List<(IDispatchWork work, WorkCompletion completion)> _held = new List<(IDispatchWork, WorkCompletion)>();
 
             internal HoldingExecutor(IWorkExecutor inner)
             {
@@ -134,9 +134,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             {
                 if (!HoldEverything && _held.Count > 0)
                 {
-                    work = _held[0];
+                    // Given back as the inner executor returned it: only the moment of collection is changed here,
+                    // never what the work ended as (finished, failed or cancelled).
+                    (work, completion) = _held[0];
                     _held.RemoveAt(0);
-                    completion = WorkCompletion.Finished;
                     return true;
                 }
 
@@ -150,7 +151,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     return true;
                 }
 
-                _held.Add(work);
+                _held.Add((work, completion));
                 work = null;
                 completion = default;
                 return false;

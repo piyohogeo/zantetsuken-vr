@@ -110,6 +110,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The frame the pair was published in, as the caller counted frames. Zero until it is published.</summary>
         public int PublishedFrame { get; private set; }
 
+        /// <summary>The frame the Final handoff happened in, or -1 while it has not; beside <see cref="PublishedFrame"/>, the two say whether both fell in one frame.</summary>
+        public int HandedOffFrame { get; private set; } = -1;
+
         /// <summary>Whether the hold on the input shape's bank and meshes is still taken.</summary>
         public bool HoldsInput => _holdsInput;
 
@@ -264,8 +267,9 @@ namespace Zantetsu.PhysicsCut
         /// borrowed parts have been read and the final shapes have taken their own holds, so nothing reads through this
         /// one any more -- and it stops naming anything. Once.
         /// </summary>
-        internal void HandedOffTo()
+        internal void HandedOffTo(int frame)
         {
+            HandedOffFrame = frame;
             if (Phase == ProvisionalCutPhase.HandedOff || Phase == ProvisionalCutPhase.Recovered)
             {
                 return;

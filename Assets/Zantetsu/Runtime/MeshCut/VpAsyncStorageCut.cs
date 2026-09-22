@@ -52,6 +52,12 @@ namespace Zantetsu.MeshCut
         internal int rangeCount;
 
         internal NativeArray<MeshCutIndexRange> outputRanges;
+
+        /// <summary>Per output range, the kernel's bounds: minima in the first half, maxima in the second.</summary>
+        internal NativeArray<float3> rangeBounds;
+
+        /// <summary>The same, laid out per described submesh (the order of <c>submeshes</c>) for the storage.</summary>
+        internal VpGeometryBounds[] submeshBounds;
         internal VpGeometrySubmesh[] submeshes;
         internal NativeArray<byte> scratch;
 
@@ -245,10 +251,43 @@ namespace Zantetsu.MeshCut
             }
 
             request.outputRanges = new NativeArray<MeshCutIndexRange>(2 * request.rangeCount, Allocator.Persistent);
+            request.rangeBounds = new NativeArray<float3>(4 * request.rangeCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             request.submeshes = new VpGeometrySubmesh[2 * request.rangeCount];
+            request.submeshBounds = new VpGeometryBounds[2 * request.rangeCount];
             _requests.Add(request);
             _work.Add(request, new Work(request));
             return request;
+        }
+
+        /// <summary>Test only: when set, every scratch handed out is filled with this byte first, so that a kernel reading what it did not write shows.</summary>
+        public static byte? ScratchPatternForTest;
+
+        /// <summary>
+        /// A request's scratch, allocated **without clearing**: the kernel writes every region it reads before it
+        /// reads it (the side memo, the map keys, the node, contour and record arrays, and every count-bounded
+        /// array of the cap), so a zeroed array bought nothing but the clearing of up to a megabyte on the main
+        /// thread per cut. The synchronous entry keeps its cleared allocation as the independent reference.
+        /// </summary>
+        private static NativeArray<byte> TakeScratch(int bytes)
+        {
+            var taken = new NativeArray<byte>(bytes, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            if (ScratchPatternForTest.HasValue)
+            {
+                UnsafeUtility.MemSet(taken.GetUnsafePtr(), ScratchPatternForTest.Value, taken.Length);
+            }
+
+            return taken;
+        }
+
+        private static void GiveBackScratch(ref NativeArray<byte> scratch)
+        {
+            if (!scratch.IsCreated)
+            {
+                return;
+            }
+
+            scratch.Dispose();
+            scratch = default;
         }
 
         /// <summary>
@@ -479,12 +518,9 @@ namespace Zantetsu.MeshCut
 
             if (!request.scratch.IsCreated || request.scratch.Length < request.scratchBytes)
             {
-                if (request.scratch.IsCreated)
-                {
-                    request.scratch.Dispose();
-                }
-
-                request.scratch = new NativeArray<byte>(request.scratchBytes, Allocator.Persistent);
+                // A retry that needs more room gives its array back first; a request never holds two.
+                GiveBackScratch(ref request.scratch);
+                request.scratch = TakeScratch(request.scratchBytes);
             }
 
             if (!TryReadInput(request))
@@ -495,6 +531,8 @@ namespace Zantetsu.MeshCut
             var output = new MeshCutOutput
             {
                 outputRanges = (MeshCutIndexRange*)request.outputRanges.GetUnsafePtr(),
+                rangeBoundsMin = (float3*)request.rangeBounds.GetUnsafePtr(),
+                rangeBoundsMax = (float3*)request.rangeBounds.GetUnsafePtr() + (2 * request.rangeCount),
                 scratch = (byte*)request.scratch.GetUnsafePtr(),
                 scratchBytes = request.scratch.Length,
             };
@@ -553,7 +591,9 @@ namespace Zantetsu.MeshCut
                     request.reservation,
                     in kernel,
                     request.outputRanges,
+                    request.rangeBounds,
                     request.submeshes,
+                    request.submeshBounds,
                     parentSubmeshes,
                     request.rangeCount,
                     ref result);
@@ -637,16 +677,18 @@ namespace Zantetsu.MeshCut
         private void End(VpStorageCutRequest request, VpStorageCutStage stage)
         {
             ReleaseReservation(request);
-            if (request.scratch.IsCreated)
-            {
-                request.scratch.Dispose();
-                request.scratch = default;
-            }
+            GiveBackScratch(ref request.scratch);
 
             if (request.outputRanges.IsCreated)
             {
                 request.outputRanges.Dispose();
                 request.outputRanges = default;
+            }
+
+            if (request.rangeBounds.IsCreated)
+            {
+                request.rangeBounds.Dispose();
+                request.rangeBounds = default;
             }
 
             if (request.input != null)

@@ -164,8 +164,10 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// The one build both entry points use. Everything is measured from the leased view itself — the lease is what
-        /// protects that read — and an index array is made only for a caller that asked for one.
+        /// The one build both entry points use. The extent -- the referenced vertex span and the bounds, per submesh
+        /// and whole -- is read from the storage's record, which every producer writes; nothing is measured from the
+        /// leased view here, and a geometry without a record is refused. The lease protects the index view, which
+        /// is copied into an array only for a caller that asked for one.
         /// </summary>
         private static bool TryBuild(
             VpCpuGeometryStorage storage,
@@ -207,8 +209,17 @@ namespace Zantetsu.Rendering
                 // Every submesh offset is below the view length, so this one bound covers all the commands as well.
                 if (view.Length == 0
                     || (long)indexBase + view.Length > int.MaxValue
-                    || !DoSubmeshesCoverTheView(submeshes, view.Length)
-                    || !TryMeasure(storage, blocks, view, out localBounds, out referencedStart, out referencedCount))
+                    || !DoSubmeshesCoverTheView(submeshes, view.Length))
+                {
+                    return false;
+                }
+
+                // What the geometry's producer recorded is taken as it stands: the same positions, measured once
+                // where the indices were written, by the producer that validated them. Nothing walks the indices
+                // here; what is checked is that the record is this geometry's (generation) and covers its submeshes.
+                if (!storage.TryGetPublishedExtent(geometry, out referencedStart, out referencedCount, out localBounds)
+                    || !storage.TryGetSubmeshBounds(geometry, out NativeArray<VpGeometryBounds>.ReadOnly recordedSubmeshBounds)
+                    || recordedSubmeshBounds.Length != submeshes.Length)
                 {
                     return false;
                 }
@@ -218,10 +229,9 @@ namespace Zantetsu.Rendering
                 for (int s = 0; s < submeshes.Length; s++)
                 {
                     VpGeometrySubmesh submesh = submeshes[s];
-                    if (!TryMeasureRange(storage, blocks, view, submesh.indexOffset, submesh.indexCount, localBounds, out Bounds submeshBounds))
-                    {
-                        return false;
-                    }
+
+                    // A submesh with no index draws nothing; its command carries the geometry's bounds.
+                    Bounds submeshBounds = submesh.indexCount > 0 ? recordedSubmeshBounds[s].ToBounds() : localBounds;
 
                     // indexOffset is relative to the geometry's own published range; the upload base is the only thing added.
                     var range = new VpGeometryRange(referencedStart, referencedCount, indexBase + submesh.indexOffset, submesh.indexCount);
@@ -274,108 +284,5 @@ namespace Zantetsu.Rendering
         /// The bounds and the referenced global vertex span of the whole geometry. Every index must fall inside one of
         /// the geometry's blocks: a number outside them is refused rather than drawn from whatever happens to be there.
         /// </summary>
-        private static bool TryMeasure(
-            VpCpuGeometryStorage storage,
-            NativeArray<VpGeometryVertexBlock>.ReadOnly blocks,
-            NativeArray<uint>.ReadOnly indices,
-            out Bounds localBounds,
-            out int referencedStart,
-            out int referencedCount)
-        {
-            localBounds = default;
-            referencedStart = 0;
-            referencedCount = 0;
-            NativeArray<VpRenderVertex>.ReadOnly committed = storage.Vertices;
-            long lowest = long.MaxValue;
-            long highest = long.MinValue;
-            Vector3 min = Vector3.zero;
-            Vector3 max = Vector3.zero;
-            for (int i = 0; i < indices.Length; i++)
-            {
-                uint global = indices[i];
-                if (!IsInABlock(blocks, global) || global >= (uint)committed.Length)
-                {
-                    return false;
-                }
-
-                Vector3 position = committed[(int)global].position;
-                if (i == 0)
-                {
-                    min = position;
-                    max = position;
-                }
-                else
-                {
-                    min = Vector3.Min(min, position);
-                    max = Vector3.Max(max, position);
-                }
-
-                lowest = Math.Min(lowest, global);
-                highest = Math.Max(highest, global);
-            }
-
-            localBounds = new Bounds((min + max) * 0.5f, max - min);
-            referencedStart = (int)lowest;
-            referencedCount = (int)(highest - lowest + 1);
-            return true;
-        }
-
-        /// <summary>The bounds of one submesh's own indices; an empty submesh takes the geometry's bounds, drawing nothing.</summary>
-        private static bool TryMeasureRange(
-            VpCpuGeometryStorage storage,
-            NativeArray<VpGeometryVertexBlock>.ReadOnly blocks,
-            NativeArray<uint>.ReadOnly indices,
-            int offset,
-            int count,
-            Bounds fallback,
-            out Bounds bounds)
-        {
-            bounds = fallback;
-            if (count == 0)
-            {
-                return true;
-            }
-
-            NativeArray<VpRenderVertex>.ReadOnly committed = storage.Vertices;
-            Vector3 min = Vector3.zero;
-            Vector3 max = Vector3.zero;
-            for (int i = 0; i < count; i++)
-            {
-                uint global = indices[offset + i];
-                if (!IsInABlock(blocks, global) || global >= (uint)committed.Length)
-                {
-                    return false;
-                }
-
-                Vector3 position = committed[(int)global].position;
-                if (i == 0)
-                {
-                    min = position;
-                    max = position;
-                }
-                else
-                {
-                    min = Vector3.Min(min, position);
-                    max = Vector3.Max(max, position);
-                }
-            }
-
-            bounds = new Bounds((min + max) * 0.5f, max - min);
-            return true;
-        }
-
-        private static bool IsInABlock(NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, uint global)
-        {
-            for (int b = 0; b < blocks.Length; b++)
-            {
-                VpGeometryVertexBlock block = blocks[b];
-                if (global >= (uint)block.vertexStart && global < (uint)(block.vertexStart + block.vertexCount))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 }

@@ -329,9 +329,11 @@ namespace Zantetsu.MeshCut.Tests
                 newIndices[i] = reservation.NewVertexBase;
             }
 
+            uint at = reservation.NewVertexBase;
             Assert.That(
                 storage.TryCommitCutOutput(
-                    reservation, vertices, reservation.Parent.topologyVertexCount, 3, 3, submeshes, 1, 1, out _, out _),
+                    reservation, vertices, reservation.Parent.topologyVertexCount, 3, 3, submeshes, 1, 1,
+                    new VpGeometryBounds[2], at, at, at, at, out _, out _),
                 Is.True,
                 "the reservation commits");
         }
@@ -946,7 +948,8 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(reservation.IsClosed, Is.True);
                 Assert.That(storage.TryCancelCutOutput(reservation), Is.False, "cancelling twice does nothing");
                 Assert.That(
-                    storage.TryCommitCutOutput(reservation, 0, ControlPoints, 3, 0, new[] { new VpGeometrySubmesh(0, 3, 0) }, 1, 0, out _, out _),
+                    storage.TryCommitCutOutput(
+                        reservation, 0, ControlPoints, 3, 0, new[] { new VpGeometrySubmesh(0, 3, 0) }, 1, 0, new VpGeometryBounds[1], 0, 0, 0, 0, out _, out _),
                     Is.False,
                     "committing a cancelled reservation does nothing");
                 Assert.That(storage.VertexCount, Is.EqualTo(RenderVertices), "nothing was committed");
@@ -1053,7 +1056,8 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(other.TryCancelCutOutput(reservation), Is.False, "another storage cannot cancel it");
                 Assert.That(
-                    other.TryCommitCutOutput(reservation, 0, ControlPoints, 3, 0, new[] { new VpGeometrySubmesh(0, 3, 0) }, 1, 0, out _, out _),
+                    other.TryCommitCutOutput(
+                        reservation, 0, ControlPoints, 3, 0, new[] { new VpGeometrySubmesh(0, 3, 0) }, 1, 0, new VpGeometryBounds[1], 0, 0, 0, 0, out _, out _),
                     Is.False,
                     "nor commit it");
                 Assert.That(reservation.IsClosed, Is.False, "and it stays open where it belongs");

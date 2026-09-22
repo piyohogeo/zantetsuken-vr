@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using NUnit.Framework;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Zantetsu.MeshCut.Verification;
 using Zantetsu.Rendering;
@@ -1769,6 +1770,58 @@ namespace Zantetsu.MeshCut.Tests
                 gate.RunOneOnAWorker();
 
                 DrainAndAssertNothingIsLeft(f, request, box, "the cut");
+            }
+        }
+
+        /// <summary>A fill pattern for every scratch the runner hands out during one test; none afterwards.</summary>
+        private sealed class ScratchPatternOn : IDisposable
+        {
+            public ScratchPatternOn(byte pattern)
+            {
+                VpAsyncStorageCut.ScratchPatternForTest = pattern;
+            }
+
+            public void Dispose()
+            {
+                VpAsyncStorageCut.ScratchPatternForTest = null;
+            }
+        }
+
+        [Test]
+        public void UninitialisedScratch_FilledWithPatterns_AndShapesOfDifferentSizesInTurn_GiveTheSameCutsAsTheSynchronousCut()
+        {
+            // The reference cuts run on the synchronous entry, whose scratch is allocated cleared every time and is
+            // untouched by the pattern: the reference is the conventional path, not merely another storage.
+            var attributes = new LogicalMeshBuilder.AttributeOptions { CreaseAngle = 30, CylindricalUv = true };
+            SyntheticMesh small = Box(2);
+            SyntheticMesh middle = Box(4);
+            SyntheticMesh large = SyntheticGeometry.BarField(60, 1, 0.2f, 0.5f, float3.zero).Finish(attributes);
+            float4 plane = Tilted();
+            (List<string> positive, List<string> negative) smallAlone = CutOnItsOwn(small, plane);
+            (List<string> positive, List<string> negative) middleAlone = CutOnItsOwn(middle, plane);
+            (List<string> positive, List<string> negative) largeAlone = CutOnItsOwn(large, plane, 262144, 1048576);
+            byte[] patterns = { 0xA5, 0x00, 0xFF, 0x5A };
+            foreach (byte pattern in patterns)
+            {
+                using (new ScratchPatternOn(pattern))
+                using (Fixture f = NewFixture(vertexCapacity: 262144, indexCapacity: 1048576))
+                {
+                    // small, large, small, middle, large: shapes of different sizes in turn, each cut's scratch
+                    // allocated uncleared and filled with the pattern, so that anything the kernel reads without
+                    // having written it would show as a difference.
+                    SyntheticMesh[] order = { small, large, small, middle, large };
+                    var alone = new[] { smallAlone, largeAlone, smallAlone, middleAlone, largeAlone };
+                    for (int i = 0; i < order.Length; i++)
+                    {
+                        VpStoredGeometry geometry = Append(f.storage, order[i]);
+                        VpStorageCutRequest request = f.runner.Submit(Acquire(f.storage, geometry), plane, default);
+                        f.RunUntilOver(request, "cut " + i + " with pattern " + pattern);
+                        Assert.That(request.Result.status, Is.EqualTo(VpStorageCutStatus.Ok), "cut " + i + " with pattern " + pattern);
+                        AssertIsTheSameCutAsOnItsOwn(f, request, alone[i], "cut " + i + " with pattern " + pattern.ToString("X2"));
+                        Assert.That(request.scratch.IsCreated, Is.False, "an ended request holds no scratch");
+                    }
+
+                }
             }
         }
 

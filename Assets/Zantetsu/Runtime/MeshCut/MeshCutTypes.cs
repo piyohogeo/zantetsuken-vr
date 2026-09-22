@@ -89,6 +89,13 @@ namespace Zantetsu.MeshCut
         public int newIndexCapacity;
         /// <summary>2 * input.rangeCount entries: positive side per input range, then negative side per input range.</summary>
         public MeshCutIndexRange* outputRanges;
+
+        /// <summary>
+        /// Optional, one entry per output range in the order of <see cref="outputRanges"/>: the bounds of every
+        /// vertex the range's indices name, caps included. Left null, nothing is written.
+        /// </summary>
+        public float3* rangeBoundsMin;
+        public float3* rangeBoundsMax;
         /// <summary>
         /// Optional node correspondence (null when not wanted): per intersection node, the topology edge it lies on
         /// packed as (lo &lt;&lt; 32 | hi) and its parameter from the lo endpoint. Node i has topology id
@@ -108,6 +115,9 @@ namespace Zantetsu.MeshCut
         public int indexCount;
         public byte reusesInput;
         public float3 boundsMin, boundsMax;
+
+        /// <summary>The lowest and highest vertex index the side's indices name; meaningful when indexCount > 0.</summary>
+        public uint referencedLo, referencedHi;
         public bool IsEmpty => indexCount == 0;
     }
 

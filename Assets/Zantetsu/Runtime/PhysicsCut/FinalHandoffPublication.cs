@@ -215,10 +215,10 @@ namespace Zantetsu.PhysicsCut
                     // published configuration is still what answers, and a failure of the second side leaves the first
                     // one exactly as it was.
                     positivePrepared = PhysicsOwnerBuilder.PrepareFinalColliders(
-                        input.products, sourceOwner.Shape.Meshes, positiveSide);
+                        input.products, sourceOwner.Shape.Meshes, positiveSide, localRotation, localOffset);
                     preparingHook?.Invoke(true);
                     negativePrepared = PhysicsOwnerBuilder.PrepareFinalColliders(
-                        input.products, sourceOwner.Shape.Meshes, negativeSide);
+                        input.products, sourceOwner.Shape.Meshes, negativeSide, localRotation, localOffset);
                     preparingHook?.Invoke(false);
 
                     // The borrowed parts are read here, from the shape the cut was of, and each final shape takes its
@@ -353,8 +353,9 @@ namespace Zantetsu.PhysicsCut
             side.AngularVelocity = angular;
 
             // The one place that writes a body, so the values it is published with are the values decided above. No
-            // impulse is added: the separation impulse was applied once, at the Provisional publication.
-            side.ApplyToBody();
+            // impulse is added: the separation impulse was applied once, at the Provisional publication. The flags
+            // the publication set on this same actor (automatic mass off, kinematic as the anchors decided) stand.
+            side.ApplyMassAndMotionToBody();
         }
 
         private static void Discard(PhysicsOwnerShape positive, PhysicsOwnerShape negative)

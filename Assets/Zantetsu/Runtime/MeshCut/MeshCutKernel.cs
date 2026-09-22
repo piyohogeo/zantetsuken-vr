@@ -639,6 +639,23 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            // The extent each side's ranges will be recorded with, grown where indices are emitted: per output range
+            // the bounds of the vertices its indices name, and per side the span of vertex indices named. The caps
+            // are emitted before the surfaces, so their bounds are kept per side here and joined to the range that
+            // takes them once that range is known.
+            bool extents = output.rangeBoundsMin != null && output.rangeBoundsMax != null;
+            if (extents)
+            {
+                for (int i = 0; i < 2 * input.rangeCount; i++)
+                {
+                    output.rangeBoundsMin[i] = new float3(float.PositiveInfinity);
+                    output.rangeBoundsMax[i] = new float3(float.NegativeInfinity);
+                }
+            }
+
+            uint refLoP = uint.MaxValue, refHiP = 0, refLoN = uint.MaxValue, refHiN = 0;
+            Bounds capBoundsPos = default, capBoundsNeg = default;
+
             // ---- index placement (DESIGN 4.5.6): surfaces are counted, caps follow each side's surface.
             int posSurf = 0, negSurf = 0;
             for (int r = 0; r < input.rangeCount; r++) { posSurf += l.posCount[r]; negSurf += l.negCount[r]; }
@@ -720,6 +737,16 @@ namespace Zantetsu.MeshCut
                             uint g0 = CapVertex(ref l, cycle, k, in cap, c0, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
                             uint g1 = CapVertex(ref l, cycle, k, in cap, c1, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
                             uint g2 = CapVertex(ref l, cycle, k, in cap, c2, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
+                            if (positive)
+                            {
+                                if (extents) { capBoundsPos.Add(CapPosition(ref l, cycle, k, in cap, c0)); capBoundsPos.Add(CapPosition(ref l, cycle, k, in cap, c1)); capBoundsPos.Add(CapPosition(ref l, cycle, k, in cap, c2)); }
+                                Reference(ref refLoP, ref refHiP, g0, g1, g2);
+                            }
+                            else
+                            {
+                                if (extents) { capBoundsNeg.Add(CapPosition(ref l, cycle, k, in cap, c0)); capBoundsNeg.Add(CapPosition(ref l, cycle, k, in cap, c1)); capBoundsNeg.Add(CapPosition(ref l, cycle, k, in cap, c2)); }
+                                Reference(ref refLoN, ref refHiN, g0, g1, g2);
+                            }
                             int at = capBase + capCursor;
                             if (at + 3 <= output.newIndexCapacity && output.newIndices != null)
                             {
@@ -824,12 +851,16 @@ namespace Zantetsu.MeshCut
                         if (c == 1)
                         {
                             output.newIndices[posCur] = src[0]; output.newIndices[posCur + 1] = src[1]; output.newIndices[posCur + 2] = src[2];
+                            if (extents) GrowTriangle(output.rangeBoundsMin + r, output.rangeBoundsMax + r, input.vertices, src[0], src[1], src[2]);
+                            Reference(ref refLoP, ref refHiP, src[0], src[1], src[2]);
                             posCur += 3;
                             continue;
                         }
                         if (c == -1)
                         {
                             output.newIndices[negCur] = src[0]; output.newIndices[negCur + 1] = src[1]; output.newIndices[negCur + 2] = src[2];
+                            if (extents) GrowTriangle(output.rangeBoundsMin + input.rangeCount + r, output.rangeBoundsMax + input.rangeCount + r, input.vertices, src[0], src[1], src[2]);
+                            Reference(ref refLoN, ref refHiN, src[0], src[1], src[2]);
                             negCur += 3;
                             continue;
                         }
@@ -842,6 +873,36 @@ namespace Zantetsu.MeshCut
                         output.newIndices[lc] = ia; output.newIndices[lc + 1] = gp; output.newIndices[lc + 2] = gq;
                         output.newIndices[oc] = gp; output.newIndices[oc + 1] = ib; output.newIndices[oc + 2] = ic;
                         output.newIndices[oc + 3] = gp; output.newIndices[oc + 4] = ic; output.newIndices[oc + 5] = gq;
+                        {
+                            // The lone corner's side takes (ia, p, q); the other takes (p, ib, ic) and (p, ic, q).
+                            int loneRange = lonePositive ? r : input.rangeCount + r;
+                            int otherRange = lonePositive ? input.rangeCount + r : r;
+                            if (extents)
+                            {
+                                float3 pp = output.newVertices[cr.slotP].position, pq = output.newVertices[cr.slotQ].position;
+                                Grow(output.rangeBoundsMin + loneRange, output.rangeBoundsMax + loneRange, input.vertices[ia].position);
+                                Grow(output.rangeBoundsMin + loneRange, output.rangeBoundsMax + loneRange, pp);
+                                Grow(output.rangeBoundsMin + loneRange, output.rangeBoundsMax + loneRange, pq);
+                                Grow(output.rangeBoundsMin + otherRange, output.rangeBoundsMax + otherRange, pp);
+                                Grow(output.rangeBoundsMin + otherRange, output.rangeBoundsMax + otherRange, input.vertices[ib].position);
+                                Grow(output.rangeBoundsMin + otherRange, output.rangeBoundsMax + otherRange, input.vertices[ic].position);
+                                Grow(output.rangeBoundsMin + otherRange, output.rangeBoundsMax + otherRange, pq);
+                            }
+
+                            if (lonePositive)
+                            {
+                                Reference(ref refLoP, ref refHiP, ia, gp, gq);
+                                Reference(ref refLoN, ref refHiN, gp, ib, ic);
+                                Reference(ref refLoN, ref refHiN, gq, gq, gq);
+                            }
+                            else
+                            {
+                                Reference(ref refLoN, ref refHiN, ia, gp, gq);
+                                Reference(ref refLoP, ref refHiP, gp, ib, ic);
+                                Reference(ref refLoP, ref refHiP, gq, gq, gq);
+                            }
+                        }
+
                         if (lonePositive) { posCur += 3; negCur += 6; } else { negCur += 3; posCur += 6; }
                     }
                     output.outputRanges[r] = new MeshCutIndexRange { indexStart = output.newIndexBase + (uint)posStart, indexCount = posCur - posStart };
@@ -850,6 +911,10 @@ namespace Zantetsu.MeshCut
                 // Caps join the side's last non-empty submesh range (DESIGN 6.1: no cap-only draw range).
                 if (posCapTris > 0) ExtendLastNonEmpty(output.outputRanges, 0, input.rangeCount, 3 * posCapTris);
                 if (negCapTris > 0) ExtendLastNonEmpty(output.outputRanges, input.rangeCount, input.rangeCount, 3 * negCapTris);
+
+                // The caps' bounds join the range that was just extended by them.
+                if (extents && posCapTris > 0) JoinCapBounds(output.outputRanges, output.rangeBoundsMin, output.rangeBoundsMax, 0, input.rangeCount, in capBoundsPos);
+                if (extents && negCapTris > 0) JoinCapBounds(output.outputRanges, output.rangeBoundsMin, output.rangeBoundsMax, input.rangeCount, input.rangeCount, in capBoundsNeg);
             }
 
             result.positive.indexStart = output.newIndexBase;
@@ -858,7 +923,50 @@ namespace Zantetsu.MeshCut
             result.negative.indexStart = output.newIndexBase + (uint)n0;
             result.negative.indexCount = n1;
             result.negative.boundsMin = negBounds.min; result.negative.boundsMax = negBounds.max;
+            result.positive.referencedLo = refLoP; result.positive.referencedHi = refHiP;
+            result.negative.referencedLo = refLoN; result.negative.referencedHi = refHiN;
             result.status = MeshCutStatus.Ok;
+        }
+
+        static void Grow(float3* mn, float3* mx, float3 p)
+        {
+            *mn = math.min(*mn, p);
+            *mx = math.max(*mx, p);
+        }
+
+        static void GrowTriangle(float3* mn, float3* mx, VpRenderVertex* vertices, uint a, uint b, uint c)
+        {
+            Grow(mn, mx, vertices[a].position);
+            Grow(mn, mx, vertices[b].position);
+            Grow(mn, mx, vertices[c].position);
+        }
+
+        static void Reference(ref uint lo, ref uint hi, uint a, uint b, uint c)
+        {
+            lo = math.min(lo, math.min(a, math.min(b, c)));
+            hi = math.max(hi, math.max(a, math.max(b, c)));
+        }
+
+        /// <summary>The position a cap triangle corner is at: a node's, or an auxiliary vertex's.</summary>
+        static float3 CapPosition(ref Layout l, int* cycle, int k, in CapOut cap, int local)
+        {
+            return local >= k ? cap.auxPos[local - k] : l.nodes[cycle[local]].position;
+        }
+
+        /// <summary>
+        /// One side's cap bounds join the bounds of the side's last non-empty range, the one
+        /// <see cref="ExtendLastNonEmpty"/> gave the caps to.
+        /// </summary>
+        static void JoinCapBounds(MeshCutIndexRange* ranges, float3* mn, float3* mx, int first, int count, in Bounds caps)
+        {
+            if (caps.any == 0) return;
+            for (int r = first + count - 1; r >= first; r--)
+            {
+                if (ranges[r].indexCount == 0) continue;
+                mn[r] = math.min(mn[r], caps.min);
+                mx[r] = math.max(mx[r], caps.max);
+                return;
+            }
         }
 
         static void ExtendLastNonEmpty(MeshCutIndexRange* ranges, int first, int count, int extra)

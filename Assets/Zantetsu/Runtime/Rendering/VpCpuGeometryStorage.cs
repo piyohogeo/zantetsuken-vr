@@ -53,12 +53,26 @@ namespace Zantetsu.Rendering
             public int blockStart;
             public int blockCount;
             public bool cutInputAccepted;
+
+            /// <summary>
+            /// Recorded with the geometry by its producer: the span of vertex indices its indices name and the
+            /// bounds of those vertices. Every producer records them (the appends measure once at the append, a cut
+            /// takes them from the kernel); a geometry without a record is refused by the draw, never measured there.
+            /// </summary>
+            public bool hasExtent;
+            public int referencedStart;
+            public int referencedCount;
+            public Vector3 boundsMin;
+            public Vector3 boundsMax;
         }
 
         private readonly VpCpuVertexStorage _vertices;
         private readonly VpCpuIndexStorage _indices;
         private NativeArray<int> _topologyOfVertex;
         private NativeArray<VpGeometrySubmesh> _submeshes;
+
+        /// <summary>Beside each submesh, the bounds of the vertices its indices name; valid where the geometry's record says so.</summary>
+        private NativeArray<VpGeometryBounds> _submeshBounds;
         private NativeArray<VpGeometryVertexBlock> _vertexBlocks;
         private readonly AppendRecord[] _appendOfDescriptor;
 
@@ -106,6 +120,7 @@ namespace Zantetsu.Rendering
                 _indices = new VpCpuIndexStorage(indexCapacity, indexDescriptorCapacity, allocator);
                 _topologyOfVertex = new NativeArray<int>(vertexCapacity, allocator);
                 _submeshes = new NativeArray<VpGeometrySubmesh>(submeshCapacity, allocator);
+                _submeshBounds = new NativeArray<VpGeometryBounds>(submeshCapacity, allocator);
                 _vertexBlocks = new NativeArray<VpGeometryVertexBlock>(vertexBlockCapacity, allocator);
 
                 // One record per index descriptor, taken once here so that publishing never has to allocate.
@@ -116,6 +131,11 @@ namespace Zantetsu.Rendering
                 if (_vertexBlocks.IsCreated)
                 {
                     _vertexBlocks.Dispose();
+                }
+
+                if (_submeshBounds.IsCreated)
+                {
+                    _submeshBounds.Dispose();
                 }
 
                 if (_submeshes.IsCreated)
@@ -269,6 +289,7 @@ namespace Zantetsu.Rendering
                 PublishSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 geometry = new VpStoredGeometry(vertexStart, vertexCount, indexRange, false, 0, submeshStart, submeshCount, blockStart, 1);
                 RecordAppend(indexRange, geometry);
+                RecordExtentByMeasuring(geometry);
                 return true;
             }
         }
@@ -409,6 +430,7 @@ namespace Zantetsu.Rendering
                 for (int s = 0; s < submeshCount; s++)
                 {
                     _submeshes[submeshStart + s] = submeshes[s];
+                    _submeshBounds[submeshStart + s] = MeasureSubmesh(vertices, localIndices, submeshes[s]);
                 }
 
                 WriteOwnBlock(blockStart, vertexStart, vertexCount);
@@ -434,6 +456,172 @@ namespace Zantetsu.Rendering
             geometry = new VpStoredGeometry(
                 vertexStart, vertexCount, indexRange, true, topologyVertexCount, submeshStart, submeshCount, blockStart, 1, cutInputAccepted);
             RecordAppend(indexRange, geometry);
+            RecordExtentFromSubmeshes(indexRange, submeshStart, submeshCount, vertexStart, localIndices, 0, indexCount);
+            return true;
+        }
+
+        /// <summary>
+        /// Records the extent of a geometry just published from a Mesh by measuring its published indices once, here
+        /// at the append -- the one producer that has no arrays of its own to measure from.
+        /// </summary>
+        private void RecordExtentByMeasuring(VpStoredGeometry geometry)
+        {
+            if (!TryAcquireIndexReadLease(geometry.indexRange, out VpIndexReadLease lease, out NativeArray<uint>.ReadOnly view))
+            {
+                return;
+            }
+
+            try
+            {
+                NativeArray<VpRenderVertex>.ReadOnly vertices = Vertices;
+                uint lo = uint.MaxValue, hi = 0;
+                for (int s = 0; s < geometry.submeshCount; s++)
+                {
+                    VpGeometrySubmesh submesh = _submeshes[geometry.submeshStart + s];
+                    var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                    var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                    for (int i = submesh.indexOffset; i < submesh.indexOffset + submesh.indexCount; i++)
+                    {
+                        uint g = view[i];
+                        if (g >= (uint)vertices.Length)
+                        {
+                            return;
+                        }
+
+                        Vector3 p = vertices[(int)g].position;
+                        min = Vector3.Min(min, p);
+                        max = Vector3.Max(max, p);
+                        lo = Math.Min(lo, g);
+                        hi = Math.Max(hi, g);
+                    }
+
+                    _submeshBounds[geometry.submeshStart + s] = new VpGeometryBounds(min, max);
+                }
+
+                if (view.Length > 0)
+                {
+                    RecordExtent(geometry.indexRange, geometry.submeshStart, geometry.submeshCount, (int)lo, (int)(hi - lo + 1));
+                }
+            }
+            finally
+            {
+                TryReleaseIndexReadLease(lease);
+            }
+        }
+
+        /// <summary>The bounds of the vertices one submesh's local indices name.</summary>
+        private static VpGeometryBounds MeasureSubmesh(VpRenderVertex[] vertices, uint[] localIndices, VpGeometrySubmesh submesh)
+        {
+            var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+            for (int i = submesh.indexOffset; i < submesh.indexOffset + submesh.indexCount; i++)
+            {
+                Vector3 p = vertices[localIndices[i]].position;
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+
+            return new VpGeometryBounds(min, max);
+        }
+
+        /// <summary>
+        /// Records an appended geometry's extent from the submesh bounds just written and its local indices: the
+        /// referenced span is the lowest to the highest index named, offset to the storage's vertex space.
+        /// </summary>
+        private void RecordExtentFromSubmeshes(
+            VpIndexRangeHandle indexRange, int submeshStart, int submeshCount, int vertexStart, uint[] localIndices,
+            int indexOffset, int indexCount)
+        {
+            if (indexCount <= 0)
+            {
+                return;
+            }
+
+            uint lo = uint.MaxValue, hi = 0;
+            for (int i = indexOffset; i < indexOffset + indexCount; i++)
+            {
+                lo = Math.Min(lo, localIndices[i]);
+                hi = Math.Max(hi, localIndices[i]);
+            }
+
+            RecordExtent(indexRange, submeshStart, submeshCount, vertexStart + (int)lo, (int)(hi - lo + 1));
+        }
+
+        /// <summary>
+        /// Records the extent of the geometry published under <paramref name="indexRange"/>: the union of its
+        /// submeshes' bounds (those with indices) and the referenced vertex span its producer reported.
+        /// </summary>
+        private void RecordExtent(VpIndexRangeHandle indexRange, int submeshStart, int submeshCount, int referencedStart, int referencedCount)
+        {
+            var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+            bool any = false;
+            for (int s = 0; s < submeshCount; s++)
+            {
+                if (_submeshes[submeshStart + s].indexCount <= 0)
+                {
+                    continue;
+                }
+
+                VpGeometryBounds b = _submeshBounds[submeshStart + s];
+                min = Vector3.Min(min, b.min);
+                max = Vector3.Max(max, b.max);
+                any = true;
+            }
+
+            if (!any || referencedCount <= 0)
+            {
+                return;
+            }
+
+            AppendRecord record = _appendOfDescriptor[indexRange.descriptor];
+            record.hasExtent = true;
+            record.referencedStart = referencedStart;
+            record.referencedCount = referencedCount;
+            record.boundsMin = min;
+            record.boundsMax = max;
+            _appendOfDescriptor[indexRange.descriptor] = record;
+        }
+
+        /// <summary>
+        /// The extent recorded for a published geometry: the span of storage vertex indices its indices name and
+        /// the bounds of those vertices, in the geometry's own coordinates. False for a geometry without a record
+        /// (an append whose indices could not be read), which the draw then refuses rather than measures.
+        /// </summary>
+        public bool TryGetPublishedExtent(VpStoredGeometry geometry, out int referencedStart, out int referencedCount, out Bounds localBounds)
+        {
+            ThrowIfDisposed();
+            referencedStart = 0;
+            referencedCount = 0;
+            localBounds = default;
+            if (!IsMetadataReadable(geometry))
+            {
+                return false;
+            }
+
+            AppendRecord record = _appendOfDescriptor[geometry.indexRange.descriptor];
+            if (record.generation != geometry.indexRange.generation || !record.hasExtent)
+            {
+                return false;
+            }
+
+            referencedStart = record.referencedStart;
+            referencedCount = record.referencedCount;
+            localBounds = new Bounds((record.boundsMin + record.boundsMax) * 0.5f, record.boundsMax - record.boundsMin);
+            return true;
+        }
+
+        /// <summary>The recorded bounds beside each of the geometry's submeshes; only meaningful where <see cref="TryGetPublishedExtent"/> is true.</summary>
+        public bool TryGetSubmeshBounds(VpStoredGeometry geometry, out NativeArray<VpGeometryBounds>.ReadOnly bounds)
+        {
+            ThrowIfDisposed();
+            bounds = default;
+            if (!IsMetadataReadable(geometry))
+            {
+                return false;
+            }
+
+            bounds = _submeshBounds.GetSubArray(geometry.submeshStart, geometry.submeshCount).AsReadOnly();
             return true;
         }
 
@@ -559,6 +747,13 @@ namespace Zantetsu.Rendering
         /// cannot be registered. That last check is made before anything is published, so a side is never published
         /// alone.
         /// </para>
+        /// <para>
+        /// The extent comes with the sides and is required: the bounds beside each described submesh
+        /// (<paramref name="submeshBounds"/>, in the submeshes' order, at least as many as are described) and, for
+        /// each produced side, its lowest and highest referenced storage vertex index. A commit without them is
+        /// refused rather than published without a record, because the draw refuses a geometry without one
+        /// (<see cref="TryGetPublishedExtent"/>) and measures nothing itself.
+        /// </para>
         /// </summary>
         public bool TryCommitCutOutput(
             VpCutOutputReservation reservation,
@@ -569,6 +764,11 @@ namespace Zantetsu.Rendering
             VpGeometrySubmesh[] submeshes,
             int positiveSubmeshCount,
             int negativeSubmeshCount,
+            VpGeometryBounds[] submeshBounds,
+            uint positiveReferencedLo,
+            uint positiveReferencedHi,
+            uint negativeReferencedLo,
+            uint negativeReferencedHi,
             out VpStoredGeometry positive,
             out VpStoredGeometry negative)
         {
@@ -596,7 +796,11 @@ namespace Zantetsu.Rendering
                 || blockCount > reservation.vertexBlockCapacity
                 || topologyVertexCount < parent.topologyVertexCount
                 || !DoSubmeshesCover(submeshes, 0, positiveSubmeshCount, positiveIndexCount)
-                || !DoSubmeshesCover(submeshes, positiveSubmeshCount, negativeSubmeshCount, negativeIndexCount))
+                || !DoSubmeshesCover(submeshes, positiveSubmeshCount, negativeSubmeshCount, negativeIndexCount)
+                || submeshBounds == null
+                || submeshBounds.Length < positiveSubmeshCount + negativeSubmeshCount
+                || (positiveIndexCount > 0 && positiveReferencedHi < positiveReferencedLo)
+                || (negativeIndexCount > 0 && negativeReferencedHi < negativeReferencedLo))
             {
                 return false;
             }
@@ -619,6 +823,7 @@ namespace Zantetsu.Rendering
             for (int s = 0; s < submeshCount; s++)
             {
                 _submeshes[submeshStart + s] = submeshes[s];
+                _submeshBounds[submeshStart + s] = submeshBounds[s];
             }
 
             // The last step that can fail, and it fails before publishing either side.
@@ -657,6 +862,7 @@ namespace Zantetsu.Rendering
                     reservation.vertexStart, newVertexCount, positiveRange, true, topologyVertexCount,
                     submeshStart, positiveSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(positiveRange, positive);
+                RecordExtent(positiveRange, submeshStart, positiveSubmeshCount, (int)positiveReferencedLo, (int)(positiveReferencedHi - positiveReferencedLo + 1));
             }
 
             if (negativeIndexCount > 0)
@@ -665,6 +871,7 @@ namespace Zantetsu.Rendering
                     reservation.vertexStart, newVertexCount, negativeRange, true, topologyVertexCount,
                     submeshStart + positiveSubmeshCount, negativeSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(negativeRange, negative);
+                RecordExtent(negativeRange, submeshStart + positiveSubmeshCount, negativeSubmeshCount, (int)negativeReferencedLo, (int)(negativeReferencedHi - negativeReferencedLo + 1));
             }
 
             return true;
@@ -789,6 +996,7 @@ namespace Zantetsu.Rendering
 
             _indices.Dispose();
             _vertexBlocks.Dispose();
+            _submeshBounds.Dispose();
             _submeshes.Dispose();
             _topologyOfVertex.Dispose();
             _vertices.Dispose();

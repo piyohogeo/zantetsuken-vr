@@ -507,16 +507,36 @@ namespace Zantetsu.PhysicsCut
             }
 
             _asked.Clear();
-            Advance(Time.frameCount);
+
+            // The frame this driver is in, from the one source it was given: the late update's turn below must be
+            // the **same** frame, or the dispatcher would take it for a new one and refill the budget.
+            Advance(CurrentFrame);
         }
 
         /// <summary>
-        /// What this driver does in <c>LateUpdate</c>: the display collects, after the publication of this same frame
-        /// and never inside it. The snapshot it settles is settled by its own rules (DESIGN 5.6); this only says when.
+        /// What this driver does in <c>LateUpdate</c>: carry the frame once more, and then let the display collect —
+        /// after the publication of this same frame and never inside it. The snapshot the display settles is settled
+        /// by its own rules (DESIGN 5.6); this only says when.
+        /// <para>
+        /// **The second turn is the same frame's, not a new one.** It is given the same frame id, so the budget is
+        /// not refilled and the frame spends what it was given: <see cref="SharedWorkFrame.Update"/> with an id it
+        /// has already begun continues that frame. It exists because a work submitted in the update can finish after
+        /// the update's own turns have ended — the turns stop as soon as nothing moves, and in the runs recorded the
+        /// submitted work had not come back by then — and without this, what is **already finished** would wait for
+        /// the next frame's update merely because of when the calls happen to come. Nothing is waited for here,
+        /// nothing is completed by force and nothing is polled:
+        /// this is one more ordinary occasion, later in the same frame, and it stops by the same rules.
+        /// </para>
         /// </summary>
         public bool DriveLateUpdate()
         {
-            return _display != null && _display.TryBeginFrame();
+            Advance(CurrentFrame);
+            if (_display == null)
+            {
+                return false;
+            }
+
+            return _display.TryBeginFrame();
         }
 
         private void Update()
@@ -761,7 +781,7 @@ namespace Zantetsu.PhysicsCut
                     // The actors are the children's now and so are the products. This record is brought to where that
                     // leaves it **before the error goes on**: holding them any longer would let the ending of this
                     // record dispose meshes the published children's colliders are using.
-                    transaction.HandedOffTo();
+                    transaction.HandedOffTo(CurrentFrame);
                     _transactions.Remove(transaction);
                 }
 
@@ -771,7 +791,7 @@ namespace Zantetsu.PhysicsCut
             switch (handed)
             {
                 case PhysicsPublicationOutcome.Published:
-                    transaction.HandedOffTo();
+                    transaction.HandedOffTo(CurrentFrame);
                     _transactions.Remove(transaction);
                     return;
 

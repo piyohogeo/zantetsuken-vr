@@ -220,7 +220,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 int positive = 0, negative = 0;
                 for (int i = 0; i < range.vertexCount; i++)
                 {
-                    float3 v = w.shape.Bank.vertices[range.vertexBase + i];
+                    float3 v = w.shape.BankOf(c).vertices[range.vertexBase + i];
                     float d = math.dot(planeLocal.xyz, v) + planeLocal.w;
                     if (d > w.harness.eps)
                     {

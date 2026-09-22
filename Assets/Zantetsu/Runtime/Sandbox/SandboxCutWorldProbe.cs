@@ -29,6 +29,13 @@ namespace Zantetsu.Sandbox
     /// </para>
     /// </summary>
     [DisallowMultipleComponent]
+    /// <remarks>
+    /// **It runs before the driver in the update phase** (order -150: after the root's -200, before the driver's
+    /// -100), so that an ask made from a key press here is taken up by the driver's update **of the same frame**.
+    /// Placed after the driver, the same ask waited a whole frame for nothing but the order of the calls. This is a
+    /// sandbox arrangement; it decides nothing about where a real hit path would ask from.
+    /// </remarks>
+    [DefaultExecutionOrder(-150)]
     public sealed class SandboxCutWorldProbe : MonoBehaviour
     {
         [Header("The world")]

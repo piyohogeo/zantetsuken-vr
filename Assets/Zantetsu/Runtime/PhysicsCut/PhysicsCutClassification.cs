@@ -32,11 +32,8 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed unsafe class PhysicsCutClassification : IDisposable
     {
-        private NativeArray<ConvexBrepRange> _convexes;
-        private NativeArray<byte> _sides;
-        private NativeArray<float> _signedDistance;
-        private NativeArray<sbyte> _signClass;
-        private NativeArray<int> _distanceBases;
+        /// <summary>The one native block the kernel's per-convex and per-vertex inputs live in, each at a 16-byte-aligned offset.</summary>
+        private NativeArray<byte> _block;
         private ConvexSide[] _sideValues;
         private ConvexCutOwnerInput _input;
 
@@ -96,27 +93,33 @@ namespace Zantetsu.PhysicsCut
             var made = new PhysicsCutClassification();
             try
             {
-                made._convexes = new NativeArray<ConvexBrepRange>(convexCount, Allocator.Persistent);
-                made._sides = new NativeArray<byte>(convexCount, Allocator.Persistent);
-                made._signedDistance = new NativeArray<float>(vertices, Allocator.Persistent);
-                made._signClass = new NativeArray<sbyte>(vertices, Allocator.Persistent);
-                made._distanceBases = new NativeArray<int>(convexCount, Allocator.Persistent);
+                long convexesAt = 0;
+                long banksAt = convexesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
+                long sidesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
+                long signedDistanceAt = sidesAt + Align16(convexCount);
+                long signClassAt = signedDistanceAt + Align16((long)vertices * sizeof(float));
+                long distanceBasesAt = signClassAt + Align16(vertices);
+                long blockBytes = distanceBasesAt + Align16((long)convexCount * sizeof(int));
+                made._block = new NativeArray<byte>(checked((int)blockBytes), Allocator.Persistent);
                 made._sideValues = new ConvexSide[convexCount];
 
-                var convexes = (ConvexBrepRange*)made._convexes.GetUnsafePtr();
-                var sides = (byte*)made._sides.GetUnsafePtr();
-                var signedDistance = (float*)made._signedDistance.GetUnsafePtr();
-                var signClass = (sbyte*)made._signClass.GetUnsafePtr();
-                var distanceBases = (int*)made._distanceBases.GetUnsafePtr();
+                byte* block = (byte*)made._block.GetUnsafePtr();
+                var convexes = (ConvexBrepRange*)(block + convexesAt);
+                var banks = (ConvexBrepBank*)(block + banksAt);
+                var sides = block + sidesAt;
+                var signedDistance = (float*)(block + signedDistanceAt);
+                var signClass = (sbyte*)(block + signClassAt);
+                var distanceBases = (int*)(block + distanceBasesAt);
 
-                ConvexBrepBank bank = shape.Bank;
                 int at = 0;
                 bool setSupportsPositive = false;
                 bool setSupportsNegative = false;
                 for (int c = 0; c < convexCount; c++)
                 {
                     ConvexBrepRange range = shape.Convex(c);
+                    ConvexBrepBank bank = shape.BankOf(c);
                     convexes[c] = range;
+                    banks[c] = bank;
 
                     // The distances of one convex are addressed from its own base, which is where this scan wrote
                     // them -- not from where its vertices happen to sit in the shape's bank.
@@ -174,7 +177,8 @@ namespace Zantetsu.PhysicsCut
 
                 made._input = new ConvexCutOwnerInput
                 {
-                    bank = bank,
+                    bank = default,
+                    banks = banks,
                     convexes = convexes,
                     convexCount = convexCount,
                     sides = sides,
@@ -247,11 +251,12 @@ namespace Zantetsu.PhysicsCut
             IsDisposed = true;
             _input = default;
             _sideValues = null;
-            Free(ref _convexes);
-            Free(ref _sides);
-            Free(ref _signedDistance);
-            Free(ref _signClass);
-            Free(ref _distanceBases);
+            Free(ref _block);
+        }
+
+        private static long Align16(long bytes)
+        {
+            return (bytes + 15) & ~15L;
         }
 
         private static void Free<T>(ref NativeArray<T> array)
