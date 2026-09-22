@@ -44,9 +44,21 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private readonly List<IDisposable> _disposables = new List<IDisposable>();
         private CutWorldProfile _profile;
 
+        /// <summary>
+        /// Destinations a case is holding the collection of. The fixture lets go of them **however the case ends**,
+        /// so an assertion that throws does not leave one holding.
+        /// </summary>
+        private readonly List<HoldingExecutor> _holding = new List<HoldingExecutor>();
+
         [TearDown]
         public void Cleanup()
         {
+            foreach (HoldingExecutor held in _holding)
+            {
+                held.ReleaseEverything();
+            }
+
+            _holding.Clear();
             foreach (IDisposable disposable in _disposables)
             {
                 disposable.Dispose();
@@ -91,8 +103,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private sealed class HoldingExecutor : IWorkExecutor
         {
             private readonly IWorkExecutor _inner;
-            private readonly List<IDispatchWork> _held = new List<IDispatchWork>();
-            private readonly List<IDispatchWork> _letThrough = new List<IDispatchWork>();
+
+            // **Each work with the completion its destination gave it.** What is changed here is when the collection
+            // sees a work, never what it ended as: a failure or a cancellation that goes through the hold comes out
+            // of it as a failure or a cancellation.
+            private readonly List<(IDispatchWork work, WorkCompletion completion)> _held =
+                new List<(IDispatchWork, WorkCompletion)>();
+
+            private readonly List<(IDispatchWork work, WorkCompletion completion)> _letThrough =
+                new List<(IDispatchWork, WorkCompletion)>();
 
             internal HoldingExecutor(IWorkExecutor inner)
             {
@@ -101,8 +120,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             internal bool HoldEverything { get; set; }
 
-            /// <summary>What it is holding back from the collection now.</summary>
-            internal IReadOnlyList<IDispatchWork> Holding => _held;
+            /// <summary>How many it is holding back from the collection now.</summary>
+            internal int HoldingCount => _held.Count;
+
+            /// <summary>One of the works it is holding back, oldest first.</summary>
+            internal IDispatchWork HeldWorkAt(int index)
+            {
+                return _held[index].work;
+            }
 
             public WorkDestination Destination => _inner.Destination;
 
@@ -124,21 +149,20 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
             {
-                // One that the case let through by itself, while the rest stay held.
+                // One that the case let through by itself, while the rest stay held. Given back as the destination
+                // returned it, work and completion together.
                 if (_letThrough.Count > 0)
                 {
-                    work = _letThrough[0];
+                    (work, completion) = _letThrough[0];
                     _letThrough.RemoveAt(0);
-                    completion = WorkCompletion.Finished;
                     return true;
                 }
 
-                // What was held back is handed on first, once the case has let it go.
+                // What was held back is handed on first, once the case has let it go -- again as it was taken.
                 if (!HoldEverything && _held.Count > 0)
                 {
-                    work = _held[0];
+                    (work, completion) = _held[0];
                     _held.RemoveAt(0);
-                    completion = WorkCompletion.Finished;
                     return true;
                 }
 
@@ -153,13 +177,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 // Finished and taken from the destination, but not handed on: the case decides when the collection
-                // sees it. The work itself ran to the end -- what is held is its collection.
-                _held.Add(work);
+                // sees it. The work itself ran to the end -- what is held is its collection, with the completion it
+                // came back with.
+                _held.Add((work, completion));
                 work = null;
                 completion = default;
                 return false;
             }
 
+            /// <summary>
+            /// Makes what is held collectable. It says **when**, and nothing else: no completion is rewritten here.
+            /// </summary>
             internal void ReleaseEverything()
             {
                 HoldEverything = false;
@@ -191,6 +219,177 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             {
                 return _inner.StopAndConfirm(timeoutMilliseconds) && _held.Count == 0;
             }
+        }
+
+        /// <summary>
+        /// A destination that ends work exactly as a case says, so that what the hold does to a completion can be
+        /// asked of the wrapper itself rather than inferred from a cut.
+        /// </summary>
+        private sealed class ScriptedExecutor : IWorkExecutor
+        {
+            private readonly Queue<(IDispatchWork work, WorkCompletion completion)> _finished =
+                new Queue<(IDispatchWork, WorkCompletion)>();
+
+            public WorkDestination Destination => WorkDestination.UnityJob;
+
+            public int Capacity => 8;
+
+            public int Held => _finished.Count;
+
+            public bool CanAccept => true;
+
+            /// <summary>Says that this work has ended, and how.</summary>
+            internal void Ended(IDispatchWork work, WorkCompletion completion)
+            {
+                _finished.Enqueue((work, completion));
+            }
+
+            public bool TryAccept(IDispatchWork work)
+            {
+                return true;
+            }
+
+            public void BeginAccepted(IDispatchWork work)
+            {
+            }
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                if (_finished.Count == 0)
+                {
+                    work = null;
+                    completion = default;
+                    return false;
+                }
+
+                (work, completion) = _finished.Dequeue();
+                return true;
+            }
+
+            public void CloseForNewWork()
+            {
+            }
+
+            public bool StopAndConfirm(int timeoutMilliseconds)
+            {
+                return _finished.Count == 0;
+            }
+        }
+
+        /// <summary>A piece of work that does nothing and can be told apart from the others by name.</summary>
+        private sealed class NamedWork : IDispatchWork
+        {
+            internal NamedWork(string name)
+            {
+                Name = name;
+            }
+
+            internal string Name { get; }
+
+            public bool IsComplete => true;
+
+            public void Begin()
+            {
+            }
+
+            public void Collect(WorkCompletion completion)
+            {
+            }
+
+            public override string ToString()
+            {
+                return Name;
+            }
+        }
+
+        /// <summary>
+        /// **The hold changes when the collection sees a work, and nothing about how it ended.** Three works end at
+        /// the destination as finished, failed and cancelled while the hold is on; each comes out of the hold as what
+        /// it was, the failure with its own exception, and **no work comes back twice**.
+        /// </summary>
+        [Test]
+        public void TheHoldGivesBackTheCompletionItWasGiven_AndEachWorkOnlyOnce()
+        {
+            var inner = new ScriptedExecutor();
+            var holding = new HoldingExecutor(inner) { HoldEverything = true };
+            var finished = new NamedWork("finished");
+            var failed = new NamedWork("failed");
+            var cancelled = new NamedWork("cancelled");
+            var failure = new InvalidOperationException("what the work threw");
+            inner.Ended(finished, WorkCompletion.Finished);
+            inner.Ended(failed, WorkCompletion.Failed(failure));
+            inner.Ended(cancelled, WorkCompletion.Cancelled);
+
+            // Held: the collection is given nothing at all, not an empty-handed success.
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(
+                    holding.TryTakeFinished(out IDispatchWork none, out WorkCompletion _), Is.False,
+                    "while the hold is on, the collection is handed nothing");
+                Assert.That(none, Is.Null, "and nothing is named as taken");
+            }
+
+            Assert.That(holding.HoldingCount, Is.EqualTo(3), "all three are held back from the collection");
+
+            holding.ReleaseEverything();
+
+            var taken = new List<IDispatchWork>();
+            Assert.That(holding.TryTakeFinished(out IDispatchWork first, out WorkCompletion firstEnd), Is.True);
+            taken.Add(first);
+            Assert.That(first, Is.SameAs(finished), "the works come back in the order the destination ended them");
+            Assert.That(firstEnd.outcome, Is.EqualTo(WorkOutcome.Finished), "and the first one ran to the end");
+
+            Assert.That(holding.TryTakeFinished(out IDispatchWork second, out WorkCompletion secondEnd), Is.True);
+            taken.Add(second);
+            Assert.That(second, Is.SameAs(failed));
+            Assert.That(
+                secondEnd.outcome, Is.EqualTo(WorkOutcome.Failed),
+                "**a failure is still a failure after the hold**, not a success");
+            Assert.That(secondEnd.failure, Is.SameAs(failure), "and it carries the same exception");
+
+            Assert.That(holding.TryTakeFinished(out IDispatchWork third, out WorkCompletion thirdEnd), Is.True);
+            taken.Add(third);
+            Assert.That(third, Is.SameAs(cancelled));
+            Assert.That(
+                thirdEnd.outcome, Is.EqualTo(WorkOutcome.Cancelled),
+                "**a cancellation is still a cancellation after the hold**");
+
+            Assert.That(taken, Is.Unique, "no work is handed to the collection twice");
+            Assert.That(
+                holding.TryTakeFinished(out IDispatchWork more, out WorkCompletion _), Is.False,
+                "and once each has been handed on, there is nothing left to hand on");
+            Assert.That(more, Is.Null);
+            Assert.That(holding.HoldingCount, Is.Zero, "nothing is still held");
+        }
+
+        /// <summary>
+        /// The same of letting **one** through while the rest stay held: the one let through keeps what it ended as,
+        /// and the others are still held.
+        /// </summary>
+        [Test]
+        public void LettingOneThrough_KeepsWhatThatWorkEndedAs()
+        {
+            var inner = new ScriptedExecutor();
+            var holding = new HoldingExecutor(inner) { HoldEverything = true };
+            var cancelled = new NamedWork("cancelled");
+            var stillHeld = new NamedWork("still held");
+            inner.Ended(cancelled, WorkCompletion.Cancelled);
+            inner.Ended(stillHeld, WorkCompletion.Finished);
+            Assert.That(holding.TryTakeFinished(out IDispatchWork _, out WorkCompletion _), Is.False);
+            Assert.That(holding.TryTakeFinished(out IDispatchWork _, out WorkCompletion _), Is.False);
+            Assert.That(holding.HoldingCount, Is.EqualTo(2));
+
+            Assert.That(holding.TryLetOneThrough(), Is.True, "the oldest of the two is let through");
+            Assert.That(holding.HoldingCount, Is.EqualTo(1), "the other stays held");
+
+            Assert.That(holding.TryTakeFinished(out IDispatchWork through, out WorkCompletion end), Is.True);
+            Assert.That(through, Is.SameAs(cancelled));
+            Assert.That(
+                end.outcome, Is.EqualTo(WorkOutcome.Cancelled),
+                "what was let through ended as the destination said it did");
+            Assert.That(
+                holding.TryTakeFinished(out IDispatchWork _, out WorkCompletion _), Is.False,
+                "and the hold is still on for the rest");
         }
 
         // ----- the world, built by the product's own root ---------------------------------------------------------------
@@ -578,13 +777,30 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         /// <summary>
         /// **The pair is published in the update the ask was taken up in, and both sides are drawn in that same
-        /// frame's collection.** Nothing of the final cut is waited for: the cook is still running when the display
+        /// frame's collection.** Nothing of the final cut is waited for: the cut is still Provisional when the display
         /// has already settled two sides.
+        /// <para>
+        /// **The cut is kept in its state before the handoff, because this case holds the collection of the finished
+        /// result.** The product may hand a cut over in the very update its products come back in, and the handoff
+        /// takes the pair out of the registry -- so a cut whose cook happened to be collected inside this frame would
+        /// leave no pair here to read, through no fault of the publication. What is held is the **collection** of a
+        /// result that has finished, which says nothing about whether a worker is still running, and the hold goes as
+        /// soon as the reading below is done.
+        /// </para>
         /// </summary>
         [UnityTest]
         public IEnumerator AnAskTakenUpByTheUpdateLoop_IsPublishedAndDrawnInThatFrame()
         {
-            CutWorldRoot root = NewWorld(out Shader _);
+            HoldingExecutor unityJob = null;
+            CutWorldRoot root = NewWorld(
+                out Shader _,
+                destination => destination == WorkDestination.UnityJob
+                    ? unityJob = new HoldingExecutor(new UnityJobWorkExecutor(8))
+                    : null,
+                null);
+            Assert.That(unityJob, Is.Not.Null, "the cut's physics work goes to the destination this case holds");
+            _holding.Add(unityJob);
+            unityJob.HoldEverything = true;
             LogicalFragmentId body = AddBody(root, Vector3.zero);
 
             // One collection with the body itself, so that what follows is a change and not the first sight of it.
@@ -644,6 +860,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 observer.Drawn, Is.EqualTo(2),
                 "and the body was drawn as the two sides of the cut in that frame's collection");
 
+            // The situation this case means really was in force while it read: the cut was still Provisional, and
+            // the handoff -- which is what takes the pair out of the registry -- had not happened in the frame that
+            // was read. (What the children become the root of is the display's own, later change, made at the
+            // geometry commit; it is not this, and this case does not reach it.)
+            Assert.That(
+                transaction.Phase, Is.Not.EqualTo(ProvisionalCutPhase.HandedOff),
+                "the cut was still Provisional throughout the frame that was read (handed off in "
+                + transaction.HandedOffFrame + ")");
+            Assert.That(
+                transaction.HandedOffFrame, Is.Not.EqualTo(askedUpIn),
+                "so nothing that was read depended on when the cook's result happened to be collected");
+
+            unityJob.ReleaseEverything();
             yield return EndWorld(root);
         }
 
@@ -812,7 +1041,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             // Fixed: finished at its destination and held back from the collection.
             yield return Until(
-                () => geometryPool.Holding.Count > 0,
+                () => geometryPool.HoldingCount > 0,
                 "its work finished and is held back from the collection");
             VpStorageCutRequest running = root.Geometry.RequestOf(operation);
             Assert.That(running, Is.Not.Null, "the DAG still holds that cut");
@@ -983,7 +1212,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 if (held != null && held.Cut != null && held.Cut.Stage == PhysicsCutStage.Baking
-                    && physics.Holding.Count > 0)
+                    && physics.HoldingCount > 0)
                 {
                     break;
                 }
@@ -997,7 +1226,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(
                 held.Cut.Stage, Is.EqualTo(PhysicsCutStage.Baking),
                 "the first cut's bake is with the destination");
-            Assert.That(physics.Holding.Count, Is.GreaterThan(0), "and it is held there, not collected");
+            Assert.That(physics.HoldingCount, Is.GreaterThan(0), "and it is held there, not collected");
 
             CutOperationId operation = held.Operation;
             Assert.That(
@@ -1006,10 +1235,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // The bake is **finished and not collected**: the destination handed it back and the hold kept it here.
             Assert.That(physics.HoldEverything, Is.True, "the bake is still held, not let through");
             Assert.That(
-                physics.Holding.Count, Is.GreaterThan(0),
+                physics.HoldingCount, Is.GreaterThan(0),
                 "and it is finished work waiting to be collected, not work still running");
-            foreach (IDispatchWork heldWork in physics.Holding)
+            for (int i = 0; i < physics.HoldingCount; i++)
             {
+                IDispatchWork heldWork = physics.HeldWorkAt(i);
                 // **Asked of the work itself.** That the destination handed it back already means it finished --
                 // the executor only gives back work whose IsComplete is true -- but the case says so directly, so
                 // that it does not rest on how the executor happens to decide that.
