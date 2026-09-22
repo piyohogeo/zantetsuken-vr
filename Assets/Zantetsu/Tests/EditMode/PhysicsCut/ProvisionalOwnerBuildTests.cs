@@ -1304,6 +1304,187 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(side.ProducedColliderCount, Is.EqualTo(1), "one convex of this side was produced by the cut");
         }
 
+        /// <summary>
+        /// **A side every part of which was produced here keeps nothing, and gets a new collider for each part.**
+        /// One box, crossed by the plane: each side is the cut's own half and nothing is inherited, so there is no
+        /// part that could keep a collider.
+        /// <para>
+        /// What the side had is replaced, as it is for any part that cannot be kept: the preparation makes one
+        /// collider per part and adopting them destroys what was there. The frame is not moved, and the side's own
+        /// colliders are untouched while the preparation is being made.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void ASideWhoseEveryPartWasProduced_KeepsNothing()
+        {
+            Source s = NewSource(float4x4.identity, new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            Assert.That(input.sides[0], Is.EqualTo(ConvexSide.Split), "the plane crosses the one box");
+
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+
+            foreach (bool positive in new[] { true, false })
+            {
+                PhysicsOwnerSide side = positive ? candidate.Positive : candidate.Negative;
+                PhysicsOwnerShape sideShape = positive ? candidate.PositiveShape : candidate.NegativeShape;
+                string what = positive ? "the positive side" : "the negative side";
+
+                int count = products.PartCount(positive);
+                Assert.That(count, Is.GreaterThan(0), what + ": it has parts");
+                for (int i = 0; i < count; i++)
+                {
+                    Assert.That(
+                        products.Part(positive, i).borrowed, Is.False,
+                        what + ": part " + i + " was produced here, not inherited");
+                }
+
+                var before = new List<MeshCollider>(side.Colliders);
+                Vector3 frameBefore = side.ShapeFrame.transform.localPosition;
+                Quaternion turnBefore = side.ShapeFrame.transform.localRotation;
+
+                PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                    products, s.shape.Meshes, side, sideShape,
+                    side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+
+                Assert.That(prepared.Count, Is.EqualTo(count), what + ": one final collider per part");
+                Assert.That(prepared.KeptCount, Is.Zero, what + ": nothing of the side was kept");
+                Assert.That(prepared.MadeCount, Is.EqualTo(count), what + ": every one was made here");
+
+                // Until they are adopted, the side is what it was.
+                Assert.That(side.Colliders.Count, Is.EqualTo(before.Count), what + ": the side still has its own");
+                for (int i = 0; i < before.Count; i++)
+                {
+                    Assert.That(
+                        ReferenceEquals(side.Colliders[i], before[i]), Is.True,
+                        what + ": collider " + i + " is the very same one");
+                    Assert.That(before[i] != null && before[i].enabled, Is.True, what + ": and still answering");
+                }
+
+                Assert.That(
+                    side.ShapeFrame.transform.localPosition, Is.EqualTo(frameBefore), what + ": the frame is where it was");
+                Assert.That(
+                    Quaternion.Angle(side.ShapeFrame.transform.localRotation, turnBefore), Is.LessThan(1e-3f), what);
+
+                prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+                Assert.That(side.Colliders.Count, Is.EqualTo(count), what + ": and takes the new set");
+                foreach (MeshCollider had in before)
+                {
+                    Assert.That(had == null, Is.True, what + ": what it had was replaced and destroyed");
+                }
+
+                Assert.That(
+                    side.ProducedColliderCount, Is.EqualTo(count), what + ": every convex of it came from the cut");
+            }
+        }
+
+        /// <summary>
+        /// **A side whose very first part is a borrowed one.** The convexes are ordered so that the one the plane
+        /// leaves wholly on this side comes before the one it crosses, so the preparation is reached on the first
+        /// turn of the loop rather than after some colliders have been made. The kept collider is that convex's own.
+        /// </summary>
+        [Test]
+        public void ASideWhoseFirstPartIsBorrowed_PreparesOnThatFirstTurn()
+        {
+            // Convex 0 is wholly above the plane; convex 1 is crossed by it.
+            Source s = NewSource(float4x4.identity, new double3(0.0, 3.0, 0.0), new double3(0.0, 0.0, 0.0));
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            Assert.That(input.sides[0], Is.EqualTo(ConvexSide.Positive), "the first convex is wholly above");
+            Assert.That(input.sides[1], Is.EqualTo(ConvexSide.Split), "and the second is crossed");
+
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsOwnerSide side = candidate.Positive;
+            PhysicsOwnerShape sideShape = candidate.PositiveShape;
+            var before = new List<MeshCollider>(side.Colliders);
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+
+            Assert.That(products.PartCount(true), Is.GreaterThan(1), "the positive side has more than one part");
+            Assert.That(
+                products.Part(true, 0).borrowed, Is.True,
+                "**the very first part is a borrowed one**, which is what this case is about");
+            Assert.That(products.Part(true, 0).inputConvex, Is.Zero, "and it is the convex left wholly above");
+
+            PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                products, s.shape.Meshes, side, sideShape,
+                side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+
+            Assert.That(prepared.Count, Is.EqualTo(products.PartCount(true)), "one final collider per part");
+            Assert.That(prepared.KeptCount, Is.EqualTo(1), "the first part kept the collider of its own convex");
+            Assert.That(
+                prepared.KeepsSideCollider(0), Is.True,
+                "and what it kept is the collider the side had for that convex");
+            Assert.That(
+                prepared.KeepsSideCollider(1), Is.False,
+                "while the crossed convex's is not kept");
+            Assert.That(prepared.MadeCount, Is.EqualTo(prepared.Count - 1), "the rest were made here");
+
+            prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+            Assert.That(side.Colliders, Has.Member(before[0]), "the kept one is still the side's");
+            Assert.That(before[1] == null, Is.True, "and the crossed convex's was replaced and destroyed");
+        }
+
+        /// <summary>
+        /// **A preparation that throws after it has already made a collider takes that collider off again.** The
+        /// entry is given a list of inherited meshes that is too short for the parts it will be asked about, so the
+        /// borrowed part -- which comes after a produced one -- cannot be looked up and the call throws. What was
+        /// made for the produced part comes off, and the side is exactly as it was.
+        /// <para>
+        /// **This is the recovery of the entry itself.** The handoff would not reach here with meshes missing: it
+        /// asks <see cref="PhysicsOwnerBuilder.FinalShapesArePresent"/> first. And the throw this case makes is the
+        /// mesh lookup, not the preparation -- **that the preparation's own throw would be caught by this same
+        /// catch is read from the code** (it sits inside that try), not shown here.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void APreparationThatThrowsAfterMakingOne_TakesItOffAndLeavesTheSide()
+        {
+            Source s = NewSourceWhereTwoConvexesShareAMesh();
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsOwnerSide side = candidate.Positive;
+            PhysicsOwnerShape sideShape = candidate.PositiveShape;
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+
+            Assert.That(products.Part(true, 0).borrowed, Is.False, "the first part is produced here");
+            Assert.That(products.Part(true, 1).borrowed, Is.True, "and a borrowed one comes after it");
+
+            var before = new List<MeshCollider>(side.Colliders);
+            int componentsBefore = side.ShapeFrame.GetComponents<MeshCollider>().Length;
+            int producedBefore = side.ProducedColliderCount;
+
+            // Too short for the convex the borrowed part names: the lookup for it cannot be made.
+            var tooShort = new List<Mesh> { s.shape.Meshes[0] };
+            Assert.That(
+                () => PhysicsOwnerBuilder.PrepareFinalColliders(
+                    products, tooShort, side, sideShape,
+                    side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition),
+                Throws.InstanceOf<ArgumentOutOfRangeException>(),
+                "the call throws once it reaches the borrowed part");
+
+            Assert.That(
+                side.ShapeFrame.GetComponents<MeshCollider>().Length, Is.EqualTo(componentsBefore),
+                "what it had made for the produced part is off the actor again");
+            Assert.That(side.Colliders.Count, Is.EqualTo(before.Count), "the side has the colliders it had");
+            for (int i = 0; i < before.Count; i++)
+            {
+                Assert.That(
+                    ReferenceEquals(side.Colliders[i], before[i]), Is.True, "the very same collider " + i);
+                Assert.That(before[i] != null && before[i].enabled, Is.True, "still answering");
+            }
+
+            Assert.That(side.ProducedColliderCount, Is.EqualTo(producedBefore), "and the count is as it was");
+
+            // The side is still preparable: giving it the meshes it needs makes an ordinary set.
+            PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                products, s.shape.Meshes, side, sideShape,
+                side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+            Assert.That(prepared.Count, Is.EqualTo(products.PartCount(true)), "one per part, as if nothing had happened");
+            prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+        }
+
         [Test]
         public void AColliderTheConditionsNoLongerAdmit_IsMadeAnew_AndTheOtherIsStillKept()
         {

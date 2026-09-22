@@ -961,29 +961,19 @@ namespace Zantetsu.PhysicsCut
             var ordered = new List<MeshCollider>(count);
             var made = new List<MeshCollider>(count);
             var keptFromSide = new bool[side.Colliders.Count];
-            bool frameStays = FrameStays(side.ShapeFrame.transform, localRotation, localOffset);
 
             // The side's collider for each input convex, by the correspondence the side shape carries. -1 where the
             // side has no collider for that convex, and set back to -1 once a part has taken it.
+            // <para>
+            // **It is worked out when the first part that could keep something is reached, and not before.** A side
+            // whose parts were all produced here keeps nothing, so it asks nothing: no frame comparison, no array,
+            // no walk of the side's convexes. Delaying it is safe because nothing the loop does before that point
+            // can change either answer -- making a collider adds a component to the frame's object and sets that
+            // component's own fields; it does not move the frame, it does not go into the side's own collider list,
+            // and it does not touch a collider the side already has.
+            // </para>
             int[] sideColliderOfInputConvex = null;
-            if (frameStays && sideShape != null)
-            {
-                sideColliderOfInputConvex = new int[products.InputConvexCount];
-                for (int c = 0; c < sideColliderOfInputConvex.Length; c++)
-                {
-                    sideColliderOfInputConvex[c] = -1;
-                }
-
-                int convexes = math.min(sideShape.ConvexCount, side.Colliders.Count);
-                for (int j = 0; j < convexes; j++)
-                {
-                    int c = sideShape.InputConvexOf(j);
-                    if (c >= 0 && c < sideColliderOfInputConvex.Length)
-                    {
-                        sideColliderOfInputConvex[c] = j;
-                    }
-                }
-            }
+            bool lookedForSomethingToKeep = false;
 
             int produced = 0;
             try
@@ -992,6 +982,32 @@ namespace Zantetsu.PhysicsCut
                 {
                     PhysicsCutPart part = products.Part(side.positive, i);
                     Mesh mesh = part.borrowed ? inherited[part.inputConvex] : part.mesh;
+                    if (part.borrowed && !lookedForSomethingToKeep)
+                    {
+                        // **Once for the side, whatever comes of it.** A side that cannot keep anything -- the frame
+                        // will move, or there is no shape to read the correspondence from -- settles that here too,
+                        // and the parts after this one do not ask again.
+                        lookedForSomethingToKeep = true;
+                        if (sideShape != null && FrameStays(side.ShapeFrame.transform, localRotation, localOffset))
+                        {
+                            sideColliderOfInputConvex = new int[products.InputConvexCount];
+                            for (int c = 0; c < sideColliderOfInputConvex.Length; c++)
+                            {
+                                sideColliderOfInputConvex[c] = -1;
+                            }
+
+                            int convexes = math.min(sideShape.ConvexCount, side.Colliders.Count);
+                            for (int j = 0; j < convexes; j++)
+                            {
+                                int c = sideShape.InputConvexOf(j);
+                                if (c >= 0 && c < sideColliderOfInputConvex.Length)
+                                {
+                                    sideColliderOfInputConvex[c] = j;
+                                }
+                            }
+                        }
+                    }
+
                     int at = part.borrowed && sideColliderOfInputConvex != null
                              && part.inputConvex >= 0 && part.inputConvex < sideColliderOfInputConvex.Length
                         ? sideColliderOfInputConvex[part.inputConvex]
