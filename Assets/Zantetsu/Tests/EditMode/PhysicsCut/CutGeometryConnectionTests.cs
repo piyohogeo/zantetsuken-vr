@@ -28,7 +28,19 @@ namespace Zantetsu.PhysicsCut.Tests
     /// <para>
     /// The simulation is not stepped and nothing is measured.
     /// </para>
+    /// <para>
+    /// **Each case here is run three times over, on what the blocks of a cut hold before anything writes them**
+    /// (DESIGN 7.2): as the product takes them, cleared the way they used to be, and filled with a pattern that is
+    /// nothing like zero. Coming out the same in all three says that **on the inputs and paths these cases reach**,
+    /// no result depended on what a block held to begin with. It does not prove that nothing is read before it is
+    /// written -- what says that is the reading and the writing, matched up region by region. This is the second
+    /// line of evidence beside it. The report's <c>ranToEnd</c> and the bake's <c>done</c> are cleared by the
+    /// product whatever this says, and the endings below are what says so.
+    /// </para>
     /// </summary>
+    [TestFixture(-1)]
+    [TestFixture(0x00)]
+    [TestFixture(0xCD)]
     public unsafe class CutGeometryConnectionTests
     {
         private const double ParentMass = 12.0;
@@ -43,16 +55,26 @@ namespace Zantetsu.PhysicsCut.Tests
         private readonly List<UnityEngine.Object> _objects = new List<UnityEngine.Object>();
         private readonly List<Mesh> _meshes = new List<Mesh>();
         private int _frame;
+        private readonly int _fill;
+        private int _fillWas;
+
+        public CutGeometryConnectionTests(int fill)
+        {
+            _fill = fill;
+        }
 
         [SetUp]
         public void ResetFrame()
         {
             _frame = 1;
+            _fillWas = PhysicsCutBlocks.Fill;
+            PhysicsCutBlocks.Fill = _fill;
         }
 
         [TearDown]
         public void Cleanup()
         {
+            PhysicsCutBlocks.Fill = _fillWas;
             foreach (IDisposable disposable in _disposables)
             {
                 disposable.Dispose();

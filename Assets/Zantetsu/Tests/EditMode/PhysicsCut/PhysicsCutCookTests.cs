@@ -20,10 +20,44 @@ namespace Zantetsu.PhysicsCut.Tests
     /// checked against the same kernel run directly, so that this connection is what is under test and not the
     /// kernel.
     /// </para>
+    /// <para>
+    /// **Each case here is run three times over, on what the blocks of a cut hold before anything writes them**
+    /// (DESIGN 7.2): as the product takes them, cleared the way they used to be, and filled with a pattern that is
+    /// nothing like zero. Coming out the same in all three says that **on the inputs and paths these cases reach**,
+    /// no result depended on what a block held to begin with. It does not prove that nothing is read before it is
+    /// written -- what says that is the reading and the writing, matched up region by region. This is the second
+    /// line of evidence beside it. The report's <c>ranToEnd</c> and the bake's <c>done</c> are cleared by the
+    /// product whatever this says, and the endings below are what says so.
+    /// </para>
     /// </summary>
+    [TestFixture(-1)]
+    [TestFixture(0x00)]
+    [TestFixture(0xCD)]
     public unsafe class PhysicsCutCookTests
     {
         private const int DeadlineMilliseconds = 30000;
+
+        private readonly int _fill;
+        private int _fillWas;
+
+        public PhysicsCutCookTests(int fill)
+        {
+            _fill = fill;
+        }
+
+        [SetUp]
+        public void TakeTheBlocksThisWay()
+        {
+            _fillWas = PhysicsCutBlocks.Fill;
+            PhysicsCutBlocks.Fill = _fill;
+        }
+
+        [TearDown]
+        public void PutTheBlocksBack()
+        {
+            PhysicsCutBlocks.Fill = _fillWas;
+        }
+
 
         private sealed class Fixture : IDisposable
         {
@@ -582,6 +616,105 @@ namespace Zantetsu.PhysicsCut.Tests
 
                 Assert.That(f.cook.Reserving, Is.Zero, "the reservation is back");
                 Assert.That(f.cook.ActiveCount, Is.Zero, "and the runner holds nothing");
+            }
+        }
+
+        /// <summary>
+        /// **An owner the reduction really runs on, through the product's arena.** The kernel's own tests reduce
+        /// these two (<c>reduce-light</c>, and <c>reduce-heavy</c>, which needs the small-ring path as well); here
+        /// they go through the cook, so the scratch the reduction lays out is **the arena's**, and what comes back is
+        /// compared with the same kernel run directly -- success, the produced convexes, and the mass properties.
+        /// <para>
+        /// This is the case that covers the reduction for the three ways of taking a block: the earlier failure case
+        /// refuses at the kernel's entrance (its vertex limit is below the minimum) and never reaches a reduction.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AnOwnerThatIsReduced_ComesThroughTheProductsArena_WithTheKernelsOwnNumbers()
+        {
+            foreach ((string name, OwnerCutHarness harness, bool expectR1) in new[]
+                     {
+                         ("reduce-light", OwnerFixtures.ReduceLight(0), false),
+                         ("reduce-heavy", OwnerFixtures.ReduceHeavy(0), true),
+                     })
+            {
+                using (OwnerCutHarness h = harness)
+                using (Fixture f = NewFixture())
+                {
+                    h.Build();
+                    ConvexCutOwnerResult expected = Reference(h, out ConvexCutOutcome[] expectedOutcomes);
+                    Assert.That(
+                        expected.status, Is.EqualTo(ConvexCutOwnerStatus.Ok),
+                        name + ": the reference run (red=" + (ReductionStatus)expected.reductionStatus + ")");
+
+                    // **The reduction really ran** in the reference, and the heavy one took the small-ring path.
+                    Assert.That(expected.reducedConvexCount, Is.GreaterThan(0), name + ": the reduction ran");
+                    Assert.That(expected.removedVertices, Is.GreaterThan(0), name + ": it removed vertices");
+                    if (expectR1)
+                    {
+                        Assert.That(expected.r1Invocations, Is.GreaterThan(0), name + ": the R1 path ran");
+                    }
+
+                    PhysicsCutRequest request = f.cook.Submit(in h.input, float4x4.identity);
+                    f.RunUntil(() => request.IsOver, name + ": the cut and cook end");
+
+                    Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), name + ": it ended with products");
+                    PhysicsCutProducts products = request.Products;
+                    Assert.That(products, Is.Not.Null, name);
+                    using (products)
+                    {
+                        // **The same reduction happened inside the product's arena**, not only in the reference.
+                        Assert.That(
+                            products.Result.reducedConvexCount, Is.EqualTo(expected.reducedConvexCount),
+                            name + ": the reduction ran the same number of times through the arena");
+                        Assert.That(
+                            products.Result.removedVertices, Is.EqualTo(expected.removedVertices),
+                            name + ": and removed the same vertices");
+                        Assert.That(
+                            products.Result.r1Invocations, Is.EqualTo(expected.r1Invocations),
+                            name + ": and took the small-ring path the same number of times");
+                        AssertSameNumbers(in expected, products.Result, name + " through the connection");
+                        Assert.That(
+                            products.Result.positiveMass + products.Result.negativeMass,
+                            Is.EqualTo(h.parentMass).Within(1e-9),
+                            name + ": the two sides carry the parent's mass");
+
+                        // What is checked of each produced convex: it comes of a convex the reference split, its
+                        // vertex count is the reference's and within the limit, and it was given a mesh. **The shapes
+                        // are not compared** -- same vertex count is not same convex, and nothing here reads the
+                        // positions. A reduction that went differently would usually change the count, but it need
+                        // not, and what rules that out is the listed numbers above, not this.
+                        int produced = 0;
+                        foreach (bool side in new[] { true, false })
+                        {
+                            for (int i = 0; i < products.PartCount(side); i++)
+                            {
+                                PhysicsCutPart part = products.Part(side, i);
+                                if (part.borrowed)
+                                {
+                                    continue;
+                                }
+
+                                ConvexCutOutcome outcome = expectedOutcomes[part.inputConvex];
+                                Assert.That(outcome.IsSplit, Is.True, name + ": a produced part comes of a split convex");
+                                ConvexBrepRange reference = side ? outcome.positive : outcome.negative;
+                                Assert.That(
+                                    part.range.vertexCount, Is.EqualTo(reference.vertexCount),
+                                    name + (side ? " positive" : " negative")
+                                    + ": the produced convex has the reference's reduced vertex count (the count, not the shape)");
+                                Assert.That(
+                                    part.range.vertexCount, Is.LessThanOrEqualTo(h.input.vertexLimit),
+                                    name + ": and is within the vertex limit");
+                                Assert.That(part.mesh, Is.Not.Null, name + ": and it was given a collider mesh");
+                                produced++;
+                            }
+                        }
+
+                        Assert.That(
+                            produced, Is.EqualTo(2 * expected.splitConvexCount),
+                            name + ": both sides of every split convex were produced");
+                    }
+                }
             }
         }
 

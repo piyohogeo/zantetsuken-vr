@@ -100,7 +100,9 @@ namespace Zantetsu.PhysicsCut
                 long signClassAt = signedDistanceAt + Align16((long)vertices * sizeof(float));
                 long distanceBasesAt = signClassAt + Align16(vertices);
                 long blockBytes = distanceBasesAt + Align16((long)convexCount * sizeof(int));
-                made._block = new NativeArray<byte>(checked((int)blockBytes), Allocator.Persistent);
+                // Every byte of this block that is read is written by the scan below, over the whole range each
+                // array is used across; a refusal part way reads none of it and gives it back.
+                made._block = PhysicsCutBlocks.Take<byte>(checked((int)blockBytes));
                 made._sideValues = new ConvexSide[convexCount];
 
                 byte* block = (byte*)made._block.GetUnsafePtr();

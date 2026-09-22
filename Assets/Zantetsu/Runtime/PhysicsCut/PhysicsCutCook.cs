@@ -591,9 +591,15 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 request.arena = new PhysicsCutArena(in capacity, request.input.convexCount);
-                request.meshIds = new NativeArray<int>(meshes, Allocator.Persistent);
-                request.meshBounds = new NativeArray<float3x2>(meshes, Allocator.Persistent);
-                request.meshVertexCounts = new NativeArray<int>(meshes, Allocator.Persistent);
+
+                // The job writes a count and a box for every slot before it reports, and this thread writes an id for
+                // every slot before the bake reads one, so none of the three is read as it came.
+                request.meshIds = PhysicsCutBlocks.Take<int>(meshes);
+                request.meshBounds = PhysicsCutBlocks.Take<float3x2>(meshes);
+                request.meshVertexCounts = PhysicsCutBlocks.Take<int>(meshes);
+
+                // **These two keep their clearing.** A zero in them is read as a meaning, not as a value written: an
+                // element of the bake that never came back, and a report of a run that never reached its end.
                 request.bakeDone = new NativeArray<byte>(meshes, Allocator.Persistent);
                 request.report = new NativeArray<PhysicsCutJobReport>(1, Allocator.Persistent);
 

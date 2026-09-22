@@ -59,9 +59,11 @@ namespace Zantetsu.PhysicsCut
             long blockBytes = scratchAt + Align16((long)math.max(1, capacity.scratchBytes));
             try
             {
-                // One element at least, as before, so there is always a pointer to give; and cleared, as the seven
-                // arrays were: nothing here assumes the kernel writes every byte first.
-                _block = new NativeArray<byte>(checked((int)blockBytes), Allocator.Persistent);
+                // One element at least, as before, so there is always a pointer to give. It is **not** cleared:
+                // the kernel writes an outcome for every input convex on the run whose outcomes are read, it writes
+                // the bank only where it says it produced something, and the clip and the reduction lay their own
+                // sentinels into the scratch before reading any of it.
+                _block = PhysicsCutBlocks.Take<byte>(checked((int)blockBytes));
             }
             catch
             {

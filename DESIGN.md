@@ -1111,6 +1111,18 @@ Player Body／Handとプロップ／破片のPhysX Layer接触を無効化し、
 
 自前B-repは次回切断・Final質量特性の正本に残し、cook後形状から再構成しない。Gameplay命中と受付は19.1.7／7.6を維持し、Unity Raycastへ置換しない。形状忠実性のためのcook前後のRuntime Oracle、thinness判定、形状修復・retryや、同じ一致条件によるPhase完了・製品合格Gateを設けない。既存Probe Oracleやcook smokeは診断に利用できる。数値Kernelの不正出力、P1 recenter・Cook Frameの座標変換ミスをcook品質差として許容せず、新しい成功戻り値・エラーの完全検出・Console解析・cook後形状抽出も要求しない。
 
+### 7.4 切断作業ブロックの初期化
+
+一つの切断が取る作業用ブロックのうち、**読む範囲がすべて先に書かれるもの**は初期化せずに取る。対象は次の5領域とする。分類走査の1ブロック（convex範囲・bank・side・signed distance・sign class・distance base）、Arenaの1ブロック（B-repの5表・outcome・scratch）、および予約時の`meshIds`・`meshBounds`・`meshVertexCounts`。
+
+**ゼロを意味として読む領域は初期化を残す。** Jobの報告（`ranToEnd`が「走らなかった実行」を表す）と、Bakeの完了印（要素ごとの0が「その要素は返ってこなかった」を表す）は、従来どおり確保時に消去する。初期化の省略を一律に広げない。
+
+省略の根拠は**読取りと書込みの対応付け**とする。分類走査は各配列を使用する全範囲に書く。Kernelは、outcomeを読む実行（成功）では全input convex分を書き、bankは自身が生成したと述べた範囲だけを読ませる。ClipとReductionは、自身のscratchへsentinelを書いてから読む（Reductionは容量からの配置と再利用を前提に、範囲外を死として明示初期化する）。予約の3配列は、Jobが全スロットへ数と箱を書き、Main threadが全スロットへidを書いてからBakeが読む。失敗・早期終了・取消・未実行・容量不足の各経路では、これらを読む前に終了する。
+
+初期内容を変える試験（取ったまま／ゼロ／ゼロと似ていない値）は**補強証拠**とし、省略の証明としない。Reductionの成功経路とR1経路を製品Arenaへ通す確認を含める。Arena内の全読取りの独立監査は完了していない。
+
+費用の確認は7.5の測定点に従う。確保オプションを切り替える計測用の分岐・カウンタ・ハーネスは**製品に置かない**。
+
 ### 7.5 Cut/Cook Profiling
 
 Phase 4.1は、代表Fixtureで製品経路の費用を確認する軽量な測定点とする。Burst Convex kernelのOwner当たり時間、Mesh適用とBakeを含むCut/Cook全体のEnd-to-End時間、owner/s・convex/s・Bake数、Final Commit時間、scratch予約量とピーク使用量、cook失敗・stale reject・Abort数を既存Profiler／Harnessで確認する。
@@ -1520,6 +1532,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-185 | Color上限による拒否の撤回と最後のColorの旧方式 | Color上限だけを理由とするカメラ準備・描画の拒否（D-183③）を撤回する。通常ColorはCap仕事方式を維持し、`MaxStencilColors`の最後のColorでは、通常Colorに入らない残りのCap仕事を旧方式（RenderFragment単位で全Selected面によりclipしたVolume）でまとめて描く。最後のColorに由来する欠け、Stencil混入、余計なCap、重複、誤ったDepth／Occlusionを許容する。余計なCapのDepthが他の物体や通常Colorの結果を隠すことも、この許容に含む | 人間判断、2026-09-20。通常Colorの割当て規則を緩める決定ではない。許容は5.2の品質例外8に限り、D-184の検証方針は変更しない。割当てと発行の具体はD-186、製品の上限値はO-034に残す。実装・確認は未実施（決定時点の記述）。2026-09-20追記：bb9cd38で実装し、local mainへ統合した。確認の範囲は5.6の「実装状況」を参照する |
 | D-186 | 最後のColorの割当てと発行 | D-185を具体化し、5.6に次を定める。①`N = MaxStencilColors >= 1`のうち、先頭の最大N−1枠を通常Color、最後の1枠を統合用に予約する。②通常Colorは、厳密一致のStencil Volume Groupと、初期断面による両眼の投影競合判定を維持する。通常Colorに入らないGroupは、その全Cap仕事をまとめて最後のColorへ送り、Groupの一部だけを通常側へ残さない。N=1では可視・非空の全Cap仕事が最後のColorに入る。残りがなければ、最後のColorの初期化・Volume・Capは発行しない。③最後のColorは、Stencilの128初期化 → 残りのCap仕事が属するRenderFragmentを重複排除し、各RenderFragmentの全Selected面でclipしたVolumeを1回ずつ（1回はGeometryの全submeshを描く一式） → 残りの各Cap仕事の切り詰め済み描画用Capを1回ずつ、の順とする。同じRenderFragmentの別のCapが通常Colorに割り当て済みでも、そのCapを最後のColorで再描画しない。④初期化とVolumeはDepthを書かず、Capは現在のDepth規則で描く。Depthの保存・復元は追加しない。⑤本体・Depth・Shadow、Snapshot、Selected／Ignored、断面キャッシュの規則は変えない。Ignored面のclip・Cap・断面生成は復活させない。Color上限以外の容量不足、不正入力、資源・世代・寿命による拒否は緩和しない。上限の自動拡張、同期的な追加描画、多段の救済は追加しない | TL具体化、2026-09-20。旧分類器や、epsilonによる旧互換判定（`CapCompatibilityKey`）の復活を要求しない。数は、通常ColorのVolume Group数、最後のColorで描くRenderFragment数、使用Color数、最後のColorのCap数を区別して扱う。実装・確認は未実施（決定時点の記述）。2026-09-20追記：bb9cd38で実装し、local mainへ統合した。確認の範囲は5.6の「実装状況」を参照する |
 | D-187 | Ignored集約の基準配置を先頭の生存枝から取る | 5.2／5.6に次を定める。Ignored境界で集約した一つのRenderFragmentの基準配置を、集約の根（最初のIgnored境界のSource）ではなく、**そのグループの走査順で先頭の生存枝について既存の配置照会が返す基準配置**とする。これはその枝のOwnerのworld変換とGeometry local→Owner localの対応（5.6）から作る値であり、Owner配置をそのまま描画行列にはしない。Geometryの原点とOwnerの原点が異なる場合もこの対応で保つ。**（2026-09-20、表示専用Offsetの撤去により更新）表示用Offsetの合算もGeometry Commitの分離畳み込みも、もはや存在しない。基準配置は先頭の生存枝の照会結果そのものである。**取るのは基準配置だけで、Ignored面をclip制約・描画用Capへ加えない。5.2の「異なる配置を持つ対象はまとめない」が比べるのは表示登録が保持する配置であり、同じ登録内の枝が別々の現在Owner配置にあることは本決定で許容する。別々の登録を新たにまとめる変更ではない。集約は引き続き一度だけ描き、枝ごとに本体を重複表示しない。Ignored面が残る間の、先頭枝以外の物理部分との位置・向き・形状の乖離、その乖離による他物体への表示上のめり込み、Selectedの範囲が進むとき・集約の根やグループや先頭枝が変わるとき・集約が解けるときの瞬間的な跳びと形状変化（完全に解ける前の変化を含む）を許容する。集約の根のOwner不在によって配置照会が答えられず表示が停止する経路は、この接続で解消する対象とする | 人間判断、2026-09-20。数値上限、品質Gate、人間確認は求めない。許容はIgnored集約の基準配置に限り、通常のSelected表示の規則と最後のColorの取扱い（品質例外8、D-185・D-186）は緩めない。先頭枝以外との乖離は相対並進・相対回転・形状の大きさに依存し、上限は示さない。D-181の集約規則（一度だけ描く、描画用clip・Volume・Capは選択済み境界だけから作る、候補・Side・選択状態を論理枝ごとに保持する）と、D-180のIgnored Cap板を作らない決定は変更しない。`RetiredInsideAggregate`（集約の内側の退役による停止）と、生存する追従対象にOwner自体が欠落した場合の扱いは、この決定で変更しない。実装・確認は未実施（決定時点の記述）。2026-09-20追記：f72f7d0で実装し、local mainへ統合した。変えたのは配置照会の対象だけで、集約の根・グループの同一性・Selectedの候補とSideは維持している。確認の範囲（3つの経路の区別と、未実施の項目）は5.6の「実装状況」を参照する |
+| D-188 | 切断作業ブロックの初期化省略 | 7.4に次を定める。①分類走査の1ブロック、Arenaの1ブロック、予約時の`meshIds`・`meshBounds`・`meshVertexCounts`の5領域を、初期化せずに確保する。②Jobの報告（`ranToEnd`）とBakeの完了印（`bakeDone`）は、0を「書かれなかった」ことの意味として読むため、確保時の消去を残す。③根拠は読取りと書込みの対応付けとし、初期内容を変える試験は補強証拠として扱う。確認にはReductionの成功経路とR1経路を製品Arenaへ通す場合を含める。④確保オプションを切り替える計測用の分岐・カウンタ・計測ハーネスは製品に置かない | TL指示による実装、2026-09-22。削除したゼロ書込みは1切断あたり箱14,720 B（内訳176／14,480／8／48／8）、Character m_8で164,400 B（4,608／159,472／40／240／40）。**時間の裏付けは、IL2CPP Playerでの「Character・予約区間」に限る**：成功したPlayer build 1本・測定4実行（正順2・反転2、箱とCharacterは同じPlayer）で、warm中央値が4実行とも19〜24 µs短い。**分類区間の差は確認できない**（±1 µs）。**切断Main計測区間合計の改善は未確認**とする（4実行とも新側が小さいが、実行間ばらつきが大きく、予約区間の差を超える分を説明できない）。**箱は符号が一定せず、時間短縮は未確認**。Editorでの同種比較も予約区間だけが両順序で短く、Main合計は確認できない。Arena内の全読取りの独立監査は未完了。実装は未コミット（決定時点の記述） |
 
 ## 13. 未決事項
 
