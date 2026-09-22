@@ -72,6 +72,185 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Free(ref _edges);
         }
 
+        /// <summary>The inertia the body really holds, as a tensor in its own frame: R diag(I) R^T.</summary>
+        private static float3x3 TensorOf(Rigidbody body)
+        {
+            float3x3 rotation = new float3x3(body.inertiaTensorRotation);
+            var diagonal = float3x3.zero;
+            diagonal.c0.x = body.inertiaTensor.x;
+            diagonal.c1.y = body.inertiaTensor.y;
+            diagonal.c2.z = body.inertiaTensor.z;
+            return math.mul(math.mul(rotation, diagonal), math.transpose(rotation));
+        }
+
+        /// <summary>
+        /// The body's inertia is the one decided for it, **compared as a tensor** so that the quaternion's sign and
+        /// the order of its axes cannot hide a difference.
+        /// </summary>
+        private static void AssertSameInertiaTensor(PhysicsOwnerSide side, string which)
+        {
+            float3x3 held = TensorOf(side.Body);
+            float3x3 rotation = new float3x3(side.InertiaRotation);
+            var diagonal = float3x3.zero;
+            diagonal.c0.x = side.InertiaTensor.x;
+            diagonal.c1.y = side.InertiaTensor.y;
+            diagonal.c2.z = side.InertiaTensor.z;
+            float3x3 expected = math.mul(math.mul(rotation, diagonal), math.transpose(rotation));
+            float difference = math.max(
+                math.max(math.length(held.c0 - expected.c0), math.length(held.c1 - expected.c1)),
+                math.length(held.c2 - expected.c2));
+            Assert.That(
+                difference, Is.LessThan(1e-2f),
+                which + " holds the inertia it was given, principal frame included");
+        }
+
+        private static IEqualityComparer<float3> Float3Within(float tolerance)
+        {
+            return new Float3Comparer(tolerance);
+        }
+
+        private sealed class Float3Comparer : IEqualityComparer<float3>
+        {
+            private readonly float _tolerance;
+
+            public Float3Comparer(float tolerance)
+            {
+                _tolerance = tolerance;
+            }
+
+            public bool Equals(float3 a, float3 b)
+            {
+                return math.length(a - b) <= _tolerance;
+            }
+
+            public int GetHashCode(float3 value)
+            {
+                return value.GetHashCode();
+            }
+        }
+
+        /// <summary>
+        /// A published pair is simulated with **the values the build decided**, and keeps them across ordinary
+        /// physics steps. The two automatic mass properties are now declared explicit before each side enters the
+        /// scene; this is what says the bodies are not quietly given automatic ones back, and that they really move
+        /// under the values they were given -- nothing here forces a step or drives the simulation.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator APublishedPair_KeepsTheBuildsMassProperties_AcrossOrdinaryPhysicsSteps()
+        {
+            _registry = new PhysicsOwnerRegistry();
+            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(8));
+
+            PhysicsOwnerShape shape = NewAuthoredShape(out Mesh _);
+            GameObject sourceRoot = NewSourceObject(shape);
+            LogicalFragmentId source = ledger.AddFragment();
+            _registry.RegisterAuthored(source, sourceRoot, sourceRoot.GetComponent<Rigidbody>(), shape, false, Matrix4x4.identity);
+
+            var plane = new float4(0f, 1f, 0f, 0f);
+            Assert.That(ledger.Admit(source, plane, true, out CutOperationId operation), Is.EqualTo(LogicalCutAdmission.Admitted));
+            Assert.That(
+                ledger.PrepareAnchorDistribution(operation, 1e-5f, out AnchorDistributionResult anchors),
+                Is.EqualTo(AnchorPreparationOutcome.Prepared));
+
+            var build = new ProvisionalOwnerBuildInput
+            {
+                sourceShape = shape,
+                sides = new[] { ConvexSide.Split },
+                planeLocal = plane,
+                placement = PhysicsOwnerPlacement.Identity,
+                sourceMotion = default,
+                anchors = anchors,
+                parentMass = ParentMass,
+
+                // Uneven, with a turned principal frame: an inertia that was recomputed instead of carried over
+                // could not pass for this one.
+                sourceInertia = new float3(2f, 5f, 9f),
+                sourceInertiaRotation = quaternion.AxisAngle(math.normalize(new float3(1f, 2f, 3f)), 0.7f),
+                cooking = PhysicsCutCook.DefaultCooking,
+                name = "Provisional",
+            };
+            Assert.That(
+                ProvisionalOwnerBuilder.TryBuild(
+                    in build, out ProvisionalOwnerCandidate candidate, out PhysicsOwnerBuildOutcome built),
+                Is.True, "the pair was built: " + built);
+
+            // The publication reads the motion from the source body itself, so that is what has to be moving.
+            Rigidbody sourceBody = sourceRoot.GetComponent<Rigidbody>();
+            sourceBody.linearVelocity = new Vector3(0.4f, -0.2f, 0.9f);
+            sourceBody.angularVelocity = new Vector3(0.3f, 1.1f, -0.5f);
+
+            var publication = new ProvisionalPhysicsPublicationInput
+            {
+                ledger = ledger,
+                registry = _registry,
+                operation = operation,
+                source = source,
+                candidate = candidate,
+                builtFrom = shape,
+                renderAnchor = float3.zero,
+            };
+            Assert.That(
+                ProvisionalPhysicsPublication.TryPublish(
+                    in publication, out ProvisionalOwnerPair pair, out LogicalCutResultOutcome _),
+                Is.EqualTo(PhysicsPublicationOutcome.Published));
+
+            var sides = new[] { pair.Positive, pair.Negative };
+            var startedAt = new Vector3[sides.Length];
+            for (int i = 0; i < sides.Length; i++)
+            {
+                PhysicsOwnerSide side = sides[i];
+                startedAt[i] = side.Root.transform.position;
+                string whichNow = side.positive ? "the positive side" : "the negative side";
+                Assert.That(side.Body.automaticCenterOfMass, Is.False, "the centre of mass is given, not computed");
+                Assert.That(side.Body.automaticInertiaTensor, Is.False, "and so is the inertia");
+                AssertSameInertiaTensor(side, whichNow + ", straight after the publication");
+                Assert.That(
+                    (float3)(Vector3)side.Body.linearVelocity, Is.EqualTo(side.LinearVelocity).Using(Float3Within(1e-3f)),
+                    whichNow + " carries the first split's velocity");
+                Assert.That(
+                    (float3)(Vector3)side.Body.angularVelocity, Is.EqualTo(side.AngularVelocity).Using(Float3Within(1e-3f)),
+                    whichNow + " carries the spin");
+                Assert.That(math.length(side.LinearVelocity), Is.GreaterThan(0.1f), whichNow + " was given one to carry");
+            }
+
+            // Ordinary frames: the simulation steps on its own, as it does in a game.
+            for (int f = 0; f < 5; f++)
+            {
+                yield return new WaitForFixedUpdate();
+            }
+
+            for (int i = 0; i < sides.Length; i++)
+            {
+                PhysicsOwnerSide side = sides[i];
+                string which = side.positive ? "the positive side" : "the negative side";
+                Assert.That(side.Body.automaticCenterOfMass, Is.False, which + " still says its centre of mass is given");
+                Assert.That(side.Body.automaticInertiaTensor, Is.False, which + " still says its inertia is given");
+                Assert.That(
+                    side.Body.mass, Is.EqualTo((float)side.Mass).Within(1e-4f),
+                    which + " still holds the build's mass after the steps");
+                Assert.That(
+                    (float3)(Vector3)side.Body.centerOfMass, Is.EqualTo(side.CenterOfMass).Using(Float3Within(1e-4f)),
+                    which + " still holds the build's centre of mass");
+                Assert.That(
+                    (float3)(Vector3)side.Body.inertiaTensor, Is.EqualTo(side.InertiaTensor).Using(Float3Within(1e-3f)),
+                    which + " still holds the build's inertia");
+
+                // The principal frame with it: the motion below is the simulation's to change, the mass properties
+                // are not.
+                AssertSameInertiaTensor(side, which + ", after the steps");
+                Assert.That(
+                    side.Body.isKinematic, Is.False, which + " is simulated, so the steps below mean something");
+                Assert.That(
+                    (side.Root.transform.position - startedAt[i]).sqrMagnitude, Is.GreaterThan(0f),
+                    which + " was moved by the simulation, under the values it was given");
+            }
+
+            _registry.Retire(source);
+            _registry.EndProvisional(operation);
+            candidate.Dispose();
+            yield return null;
+        }
+
         /// <summary>
         /// A published pair, its source retired first, then ended: nothing of it is in the scene or in the
         /// correspondence at that moment, and once the frame is over the objects are really gone. The meshes the pair

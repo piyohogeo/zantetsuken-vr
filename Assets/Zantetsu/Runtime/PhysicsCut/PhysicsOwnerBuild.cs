@@ -235,9 +235,28 @@ namespace Zantetsu.PhysicsCut
         public float3 AngularVelocity { get; internal set; }
 
         /// <summary>
+        /// Says that this body's centre of mass and inertia are given, not computed. **It may be called while the
+        /// object is out of the scene**: these two flags keep what they are given there, which was measured on this
+        /// path. Nothing is said here about any other property of a body that is out of the scene. It writes no
+        /// values -- the mass, the centre of mass, the inertia and the motion are <see cref="ApplyToBody"/>'s -- and
+        /// it touches nothing else about the body.
+        /// </summary>
+        internal void DeclareMassPropertiesExplicit()
+        {
+            if (Body == null)
+            {
+                return;
+            }
+
+            Body.automaticCenterOfMass = false;
+            Body.automaticInertiaTensor = false;
+        }
+
+        /// <summary>
         /// Writes the mass properties and the first-split motion onto the body. It is called when the side is built
-        /// and must be called again at publication, when the owner is in the scene: an inactive body keeps none of
-        /// this. It changes nothing about the owner's place in the scene, and publishes nothing by itself.
+        /// and must be called again at publication, when the owner is in the scene: the values below are written
+        /// there, and what an inactive body does with each of them is not something this relies on. It changes
+        /// nothing about the owner's place in the scene, and publishes nothing by itself.
         /// </summary>
         public void ApplyToBody()
         {

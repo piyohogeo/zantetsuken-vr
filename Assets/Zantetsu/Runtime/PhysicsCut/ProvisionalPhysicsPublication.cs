@@ -268,11 +268,17 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Puts one side into the scene and gives its body the values the build decided. A body that is not in the
-        /// scene cannot hold a centre of mass or an inertia, so this is where those values become real.
+        /// Puts one side into the scene and gives its body the values the build decided.
+        /// <para>
+        /// **The order here is the checked one**: the two automatic mass properties are turned off while the body is
+        /// still out of the scene -- both flags keep what they are given there, which was measured on this path --
+        /// and the mass, the centre of mass, the inertia and the motion are written **after** the activation, as
+        /// they were. Nothing is said here about any other property of a body that is out of the scene.
+        /// </para>
         /// </summary>
         private static bool Establish(PhysicsOwnerSide side, bool carriesTheConstraint)
         {
+            side.DeclareMassPropertiesExplicit();
             side.Root.SetActive(true);
             side.ApplyToBody();
             establishedHook?.Invoke(carriesTheConstraint);

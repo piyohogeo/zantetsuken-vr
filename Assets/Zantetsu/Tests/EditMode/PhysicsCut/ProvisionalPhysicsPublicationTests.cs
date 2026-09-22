@@ -250,9 +250,19 @@ namespace Zantetsu.PhysicsCut.Tests
             return result;
         }
 
+        /// <summary>
+        /// A source inertia that is **not uniform** and whose principal frame is **not the identity**, so that a
+        /// tensor which was recomputed instead of carried over could not pass for the one the build decided.
+        /// </summary>
+        private static readonly float3 UnevenInertia = new float3(2f, 5f, 9f);
+
+        private static readonly quaternion TurnedInertiaFrame =
+            quaternion.AxisAngle(math.normalize(new float3(1f, 2f, 3f)), 0.7f);
+
         /// <summary>The unpublished pair of that cut, built from the source as it stands now.</summary>
         private ProvisionalOwnerCandidate Build(
-            World w, CutOperationId operation, AnchorDistributionResult? distribution = null)
+            World w, CutOperationId operation, AnchorDistributionResult? distribution = null,
+            bool unevenInertia = false)
         {
             PhysicsFragmentOwner owner = w.SourceOwner;
             AnchorDistributionResult anchors;
@@ -277,8 +287,8 @@ namespace Zantetsu.PhysicsCut.Tests
                 sourceMotion = owner.ReadMotion(float3.zero),
                 anchors = anchors,
                 parentMass = owner.Mass,
-                sourceInertia = new float3(4f, 4f, 4f),
-                sourceInertiaRotation = quaternion.identity,
+                sourceInertia = unevenInertia ? UnevenInertia : new float3(4f, 4f, 4f),
+                sourceInertiaRotation = unevenInertia ? TurnedInertiaFrame : quaternion.identity,
                 cooking = PhysicsCutCook.DefaultCooking,
                 name = "Provisional",
             };
@@ -669,6 +679,160 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(w.SourceOwner.IsWithdrawn, Is.False, "the source keeps its own physics");
                 Assert.That(candidate.IsDetached, Is.False);
             }
+        }
+
+        /// <summary>
+        /// Both sides come out of the publication holding **the values the build decided**, not ones Unity worked out
+        /// from their colliders. The two automatic mass properties are declared explicit before the body enters the
+        /// scene now, so this is what says that the change did not cost the values: the mass, the centre of mass, the
+        /// inertia and the motion are read back from the bodies themselves and compared with the build's, on both
+        /// sides, and the automatic flags are off.
+        /// </summary>
+        [Test]
+        public void BothPublishedSides_HoldTheBuildsMassPropertiesAndMotion_NotAutomaticOnes()
+        {
+            using (World w = NewWorld())
+            {
+                CutOperationId operation = Admit(w);
+
+                // Not still, and not symmetric: the source is moving and spinning -- the publication reads the
+                // motion from the source body itself -- and the inertia is uneven with a turned principal frame.
+                SetSourceMoving(w);
+                ProvisionalOwnerCandidate candidate = Build(w, operation, null, true);
+                PhysicsOwnerSide positive = candidate.Positive;
+                PhysicsOwnerSide negative = candidate.Negative;
+
+                Publish(w, operation, candidate);
+
+                foreach (PhysicsOwnerSide side in new[] { positive, negative })
+                {
+                    string which = side.positive ? "the positive side" : "the negative side";
+                    Assert.That(side.Root.activeInHierarchy, Is.True, which + " is in the scene");
+                    Assert.That(
+                        side.Body.automaticCenterOfMass, Is.False,
+                        which + "'s centre of mass is given, not computed");
+                    Assert.That(
+                        side.Body.automaticInertiaTensor, Is.False, which + "'s inertia is given, not computed");
+                    Assert.That(
+                        side.Body.mass, Is.EqualTo((float)side.Mass).Within(1e-4f), which + " holds the build's mass");
+                    Assert.That(
+                        (float3)(Vector3)side.Body.centerOfMass, Is.EqualTo(side.CenterOfMass).Using(Float3Within(1e-4f)),
+                        which + " holds the build's centre of mass");
+                    Assert.That(
+                        (float3)(Vector3)side.Body.inertiaTensor, Is.EqualTo(side.InertiaTensor).Using(Float3Within(1e-3f)),
+                        which + " holds the build's inertia");
+                    Assert.That(
+                        math.length(side.InertiaTensor - new float3(side.InertiaTensor.x)), Is.GreaterThan(0.1f),
+                        which + "'s inertia is uneven, so a recomputed one could not pass for it");
+                    AssertSameInertiaTensor(side, which);
+                    Assert.That(
+                        (float3)(Vector3)side.Body.linearVelocity, Is.EqualTo(side.LinearVelocity).Using(Float3Within(1e-3f)),
+                        which + " holds the first split's velocity");
+                    Assert.That(
+                        math.length(side.LinearVelocity), Is.GreaterThan(0.1f), which + " was given a velocity to hold");
+                    Assert.That(
+                        (float3)(Vector3)side.Body.angularVelocity, Is.EqualTo(side.AngularVelocity).Using(Float3Within(1e-3f)),
+                        which + " holds the source's angular velocity");
+                    Assert.That(
+                        math.length(side.AngularVelocity), Is.GreaterThan(0.1f), which + " was given a spin to hold");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The side an anchor fixes is published kinematic **and holding the build's mass properties**: the flag and
+        /// the values are two different things, and the ordering change touches the values' own flags. The side that
+        /// carries the sibling constraint is the other one here, so the two cases stand side by side in one cut.
+        /// </summary>
+        [Test]
+        public void TheAnchorFixedSide_IsKinematic_AndHoldsTheBuildsMassProperties()
+        {
+            using (World w = NewWorld())
+            {
+                CutOperationId operation = Admit(w);
+
+                // One anchor above the plane fixes the positive side and leaves the negative one free (DESIGN 7.1).
+                FixedSupportAnchors.TryDistribute(
+                    new[] { new float3(0f, 0.5f, 0f) }, new float4(w.harness.planeN, w.harness.planeW), w.harness.eps,
+                    new List<float3>(), new List<float3>(), out AnchorDistributionResult anchors);
+                Assert.That(anchors.IsPositiveFixed, Is.True, "the anchor fixes the positive side");
+                Assert.That(anchors.IsNegativeFixed, Is.False, "and leaves the negative one free");
+
+                SetSourceMoving(w);
+                ProvisionalOwnerCandidate candidate = Build(w, operation, anchors, true);
+                PhysicsOwnerSide fixedSide = candidate.Positive;
+                PhysicsOwnerSide freeSide = candidate.Negative;
+
+                Publish(w, operation, candidate);
+
+                Assert.That(fixedSide.Body.isKinematic, Is.True, "the anchored side is fixed");
+                Assert.That(freeSide.Body.isKinematic, Is.False, "and the other one is simulated");
+                foreach (PhysicsOwnerSide side in new[] { fixedSide, freeSide })
+                {
+                    string which = side.FixedByAnchors ? "the anchored side" : "the free side";
+                    Assert.That(side.Body.automaticCenterOfMass, Is.False, which + "'s centre of mass is given");
+                    Assert.That(side.Body.automaticInertiaTensor, Is.False, which + "'s inertia is given");
+                    Assert.That(
+                        side.Body.mass, Is.EqualTo((float)side.Mass).Within(1e-4f), which + " holds the build's mass");
+                    Assert.That(
+                        (float3)(Vector3)side.Body.centerOfMass, Is.EqualTo(side.CenterOfMass).Using(Float3Within(1e-4f)),
+                        which + " holds the build's centre of mass");
+                    AssertSameInertiaTensor(side, which);
+                }
+
+                Assert.That(
+                    (float3)(Vector3)fixedSide.Body.linearVelocity, Is.EqualTo(float3.zero).Using(Float3Within(1e-4f)),
+                    "a fixed side takes no velocity");
+                Assert.That(
+                    (float3)(Vector3)fixedSide.Body.angularVelocity, Is.EqualTo(float3.zero).Using(Float3Within(1e-4f)),
+                    "and no spin");
+                Assert.That(
+                    math.length((float3)(Vector3)freeSide.Body.linearVelocity), Is.GreaterThan(0.1f),
+                    "while the free side carries the motion it was given");
+            }
+        }
+
+        /// <summary>
+        /// The source is given a velocity and a spin, so that the sides it is cut into have a motion to carry: the
+        /// publication reads the motion from this body, not from what the build was handed.
+        /// </summary>
+        private static void SetSourceMoving(World w)
+        {
+            Rigidbody body = w.SourceOwner.Body;
+            body.linearVelocity = new Vector3(0.4f, -0.2f, 0.9f);
+            body.angularVelocity = new Vector3(0.3f, 1.1f, -0.5f);
+        }
+
+        /// <summary>The inertia the body really holds, as a tensor in its own frame: R diag(I) R^T.</summary>
+        private static float3x3 TensorOf(Rigidbody body)
+        {
+            float3x3 rotation = new float3x3(body.inertiaTensorRotation);
+            var diagonal = float3x3.zero;
+            diagonal.c0.x = body.inertiaTensor.x;
+            diagonal.c1.y = body.inertiaTensor.y;
+            diagonal.c2.z = body.inertiaTensor.z;
+            return math.mul(math.mul(rotation, diagonal), math.transpose(rotation));
+        }
+
+        /// <summary>
+        /// The body's inertia is the build's, **compared as a tensor** so that the quaternion's sign and the order of
+        /// its axes cannot hide a difference.
+        /// </summary>
+        private static void AssertSameInertiaTensor(PhysicsOwnerSide side, string which)
+        {
+            float3x3 held = TensorOf(side.Body);
+            float3x3 rotation = new float3x3(side.InertiaRotation);
+            var diagonal = float3x3.zero;
+            diagonal.c0.x = side.InertiaTensor.x;
+            diagonal.c1.y = side.InertiaTensor.y;
+            diagonal.c2.z = side.InertiaTensor.z;
+            float3x3 expected = math.mul(math.mul(rotation, diagonal), math.transpose(rotation));
+            float difference = math.max(
+                math.max(math.length(held.c0 - expected.c0), math.length(held.c1 - expected.c1)),
+                math.length(held.c2 - expected.c2));
+            Assert.That(
+                difference, Is.LessThan(1e-2f),
+                which + " holds the build's inertia as a tensor, principal frame included");
         }
 
         /// <summary>

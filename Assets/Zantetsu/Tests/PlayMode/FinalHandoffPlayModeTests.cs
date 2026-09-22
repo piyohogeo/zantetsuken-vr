@@ -175,6 +175,39 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 Assert.That(side.Root.activeInHierarchy, Is.True, "the actor is in the scene throughout");
+
+                // The Provisional publication declared these explicit before the actor entered the scene; the
+                // handoff writes the final mass and motion onto the same actor and must not hand it back to
+                // automatic ones.
+                Assert.That(
+                    side.Body.automaticCenterOfMass, Is.False,
+                    "the actor's centre of mass is still given, not computed, after the handoff");
+                Assert.That(
+                    side.Body.automaticInertiaTensor, Is.False, "and so is its inertia");
+                Assert.That(
+                    side.Body.mass, Is.EqualTo((float)side.Mass).Within(1e-3f),
+                    "and it holds the mass the final shape decided");
+
+                // The inertia as a tensor, so the quaternion's sign and the order of its axes cannot hide a
+                // difference between what the final shape decided and what the body ended up with.
+                float3x3 rotation = new float3x3(side.Body.inertiaTensorRotation);
+                var held = float3x3.zero;
+                held.c0.x = side.Body.inertiaTensor.x;
+                held.c1.y = side.Body.inertiaTensor.y;
+                held.c2.z = side.Body.inertiaTensor.z;
+                float3x3 heldTensor = math.mul(math.mul(rotation, held), math.transpose(rotation));
+                float3x3 wanted = new float3x3(side.InertiaRotation);
+                var diagonal = float3x3.zero;
+                diagonal.c0.x = side.InertiaTensor.x;
+                diagonal.c1.y = side.InertiaTensor.y;
+                diagonal.c2.z = side.InertiaTensor.z;
+                float3x3 wantedTensor = math.mul(math.mul(wanted, diagonal), math.transpose(wanted));
+                Assert.That(
+                    math.max(
+                        math.max(math.length(heldTensor.c0 - wantedTensor.c0), math.length(heldTensor.c1 - wantedTensor.c1)),
+                        math.length(heldTensor.c2 - wantedTensor.c2)),
+                    Is.LessThan(1e-2f),
+                    "and the inertia the final shape decided, principal frame included");
             }
 
             yield return null;
