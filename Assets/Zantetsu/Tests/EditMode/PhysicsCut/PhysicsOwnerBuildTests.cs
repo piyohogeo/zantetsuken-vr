@@ -870,6 +870,271 @@ namespace Zantetsu.PhysicsCut.Tests
             }
         }
 
+        // ----- the final mass preparation, asked once for both sides -------------------------------------------------
+
+        /// <summary>The parent mass the crafted products below are cut from.</summary>
+        private const double FinalParentMass = 12.0;
+
+        /// <summary>
+        /// **The frame is settled once and each side is worked out in it, and the answer is the one the per-side
+        /// entry gives.** The sides are deliberately unlike each other -- different masses, centres and inertia
+        /// tensors -- and the products are in a frame that is not the identity, which is where a frame decomposed
+        /// once and a frame decomposed twice could part company.
+        /// <para>
+        /// The reference is <see cref="PhysicsOwnerBuilder.TryFinalSideMass"/> itself, which still does both halves
+        /// in one call: **the product compared with the product**, not with a copy of its arithmetic written here.
+        /// The inertia is compared as the tensor it stands for, rebuilt from each answer's principal moments and
+        /// rotation, so that two ways of naming the same tensor count as the same.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TheFrameSettledOnce_GivesEachSideWhatThePerSideEntryGives()
+        {
+            var frames = new[]
+            {
+                float4x4.identity,
+                float4x4.TRS(new float3(2f, -1f, 4f), quaternion.RotateZ(0.9f), new float3(1f, 1f, 1f)),
+            };
+
+            foreach (float4x4 localToOwner in frames)
+            {
+                string what = localToOwner.Equals(float4x4.identity) ? "identity frame" : "a moved frame";
+                using (CraftedProducts made = CraftProducts(AsymmetricResult(), localToOwner))
+                {
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalMassFrame(
+                            made.products, FinalParentMass, out quaternion rotation, out float3 offset,
+                            out PhysicsOwnerBuildOutcome frameOutcome),
+                        Is.True,
+                        what + ": the frame is settled once");
+                    Assert.That(frameOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok), what);
+
+                    foreach (bool positive in new[] { true, false })
+                    {
+                        string side = what + (positive ? " positive" : " negative");
+                        Assert.That(
+                            PhysicsOwnerBuilder.TryFinalSideMass(
+                                made.products, FinalParentMass, positive,
+                                out double wantMass, out float3 wantCentre, out float3 wantInertia,
+                                out quaternion wantRotation, out quaternion wantLocalRotation,
+                                out float3 wantLocalOffset, out PhysicsOwnerBuildOutcome wantOutcome),
+                            Is.True,
+                            side + ": the per-side entry gives an answer");
+                        Assert.That(wantOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok), side);
+                        Assert.That(wantLocalRotation, Is.EqualTo(rotation), side + ": the same frame rotation");
+                        Assert.That(wantLocalOffset, Is.EqualTo(wantLocalOffset), side + ": the same frame offset");
+                        Assert.That(offset, Is.EqualTo(wantLocalOffset), side + ": settled once, and the same");
+
+                        Assert.That(
+                            PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                                made.products, FinalParentMass, positive, rotation, offset,
+                                out double mass, out float3 centre, out float3 inertia,
+                                out quaternion inertiaRotation, out PhysicsOwnerBuildOutcome outcome),
+                            Is.True,
+                            side + ": and so does the one-frame entry");
+                        Assert.That(outcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok), side);
+                        Assert.That(mass, Is.EqualTo(wantMass), side + ": the same mass");
+                        Assert.That(centre, Is.EqualTo(wantCentre), side + ": the same centre of mass");
+                        AssertSameTensor(inertia, inertiaRotation, wantInertia, wantRotation, side);
+                    }
+
+                    // The case is not vacuous: the two sides really are different, and they add up to the parent.
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                            made.products, FinalParentMass, true, rotation, offset,
+                            out double positiveMass, out float3 positiveCentre, out float3 positiveInertia,
+                            out quaternion _, out PhysicsOwnerBuildOutcome _),
+                        Is.True);
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                            made.products, FinalParentMass, false, rotation, offset,
+                            out double negativeMass, out float3 negativeCentre, out float3 negativeInertia,
+                            out quaternion _, out PhysicsOwnerBuildOutcome _),
+                        Is.True);
+                    Assert.That(positiveMass, Is.Not.EqualTo(negativeMass), what + ": the masses are unlike");
+                    Assert.That(
+                        math.all(positiveCentre == negativeCentre), Is.False, what + ": the centres are unlike");
+                    Assert.That(
+                        math.all(positiveInertia == negativeInertia), Is.False, what + ": the inertias are unlike");
+                    Assert.That(
+                        positiveMass + negativeMass, Is.EqualTo(FinalParentMass).Within(1e-9),
+                        what + ": and they are the parent's mass");
+                }
+            }
+        }
+
+        /// <summary>
+        /// **The questions both sides share are refused once, and no side is worked out.** No products, a parent mass
+        /// that is not a mass, a side that came out empty, and a frame that is not rigid: each gives the refusal a
+        /// side's own call would have given, and the frame's answers stay at their defaults.
+        /// </summary>
+        [Test]
+        public void TheSharedQuestions_AreRefusedBeforeAnySideIsWorkedOut()
+        {
+            Assert.That(
+                PhysicsOwnerBuilder.TryFinalMassFrame(
+                    null, FinalParentMass, out quaternion _, out float3 _, out PhysicsOwnerBuildOutcome noProducts),
+                Is.False);
+            Assert.That(noProducts, Is.EqualTo(PhysicsOwnerBuildOutcome.InvalidInput), "no products at all");
+
+            using (CraftedProducts made = CraftProducts(AsymmetricResult(), float4x4.identity))
+            {
+                foreach (double bad in new[] { 0.0, -1.0, double.NaN, double.PositiveInfinity })
+                {
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalMassFrame(
+                            made.products, bad, out quaternion _, out float3 _,
+                            out PhysicsOwnerBuildOutcome outcome),
+                        Is.False,
+                        "a parent mass of " + bad + " is not a mass");
+                    Assert.That(outcome, Is.EqualTo(PhysicsOwnerBuildOutcome.InvalidInput), "parent mass " + bad);
+                }
+            }
+
+            using (CraftedProducts empty = CraftProducts(AsymmetricResult(), float4x4.identity, negativeParts: 0))
+            {
+                Assert.That(
+                    PhysicsOwnerBuilder.TryFinalMassFrame(
+                        empty.products, FinalParentMass, out quaternion _, out float3 _,
+                        out PhysicsOwnerBuildOutcome outcome),
+                    Is.False);
+                Assert.That(outcome, Is.EqualTo(PhysicsOwnerBuildOutcome.SideEmpty), "a side with no part");
+            }
+
+            // A frame with a scale is not rigid, and the refusal is the frame's, not a side's.
+            float4x4 scaled = float4x4.TRS(new float3(1f, 2f, 3f), quaternion.identity, new float3(2f, 1f, 1f));
+            using (CraftedProducts made = CraftProducts(AsymmetricResult(), scaled))
+            {
+                Assert.That(
+                    PhysicsOwnerBuilder.TryFinalMassFrame(
+                        made.products, FinalParentMass, out quaternion rotation, out float3 offset,
+                        out PhysicsOwnerBuildOutcome outcome),
+                    Is.False);
+                Assert.That(outcome, Is.EqualTo(PhysicsOwnerBuildOutcome.FrameNotRigid), "a scaled frame");
+                Assert.That(rotation, Is.EqualTo(quaternion.identity), "and nothing of a frame is handed back");
+                Assert.That(math.all(offset == float3.zero), Is.True);
+            }
+        }
+
+        /// <summary>
+        /// **One side can be refused while the other stands.** The negative side is given an inertia the solver
+        /// cannot be handed; the positive side of the same products is still worked out, and the negative one is
+        /// refused with <see cref="PhysicsOwnerBuildOutcome.MassNotUsable"/> -- the frame having been settled once
+        /// for both.
+        /// </summary>
+        [Test]
+        public void ASideThatCannotBeUsed_IsRefusedWhileTheOtherStands()
+        {
+            ConvexCutOwnerResult result = AsymmetricResult();
+            result.negativeInertia = default;
+            using (CraftedProducts made = CraftProducts(result, float4x4.identity))
+            {
+                Assert.That(
+                    PhysicsOwnerBuilder.TryFinalMassFrame(
+                        made.products, FinalParentMass, out quaternion rotation, out float3 offset,
+                        out PhysicsOwnerBuildOutcome frameOutcome),
+                    Is.True,
+                    "the shared questions are answered: this is not a frame fault");
+                Assert.That(frameOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok));
+
+                Assert.That(
+                    PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                        made.products, FinalParentMass, true, rotation, offset,
+                        out double mass, out float3 _, out float3 _, out quaternion _,
+                        out PhysicsOwnerBuildOutcome positiveOutcome),
+                    Is.True,
+                    "the positive side is worked out");
+                Assert.That(positiveOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok));
+                Assert.That(mass, Is.GreaterThan(0.0));
+
+                Assert.That(
+                    PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                        made.products, FinalParentMass, false, rotation, offset,
+                        out double refusedMass, out float3 refusedCentre, out float3 refusedInertia,
+                        out quaternion _, out PhysicsOwnerBuildOutcome negativeOutcome),
+                    Is.False,
+                    "and the negative side is refused on its own");
+                Assert.That(negativeOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.MassNotUsable));
+                Assert.That(refusedMass, Is.EqualTo(0.0), "a refused side hands back nothing");
+                Assert.That(math.all(refusedCentre == float3.zero), Is.True);
+                Assert.That(math.all(refusedInertia == float3.zero), Is.True);
+            }
+        }
+
+        /// <summary>Two principal-axis answers name the same tensor when R diag(I) R^T is the same matrix.</summary>
+        private static void AssertSameTensor(
+            float3 inertia, quaternion rotation, float3 wantInertia, quaternion wantRotation, string what)
+        {
+            float3x3 mine = TensorOf(inertia, rotation);
+            float3x3 theirs = TensorOf(wantInertia, wantRotation);
+            for (int c = 0; c < 3; c++)
+            {
+                for (int r = 0; r < 3; r++)
+                {
+                    Assert.That(
+                        mine[c][r], Is.EqualTo(theirs[c][r]).Within(1e-5f),
+                        what + ": the inertia tensor at " + c + "," + r);
+                }
+            }
+        }
+
+        private static float3x3 TensorOf(float3 inertia, quaternion rotation)
+        {
+            var basis = new float3x3(rotation);
+            return math.mul(math.mul(basis, float3x3.Scale(inertia)), math.transpose(basis));
+        }
+
+        /// <summary>
+        /// Products made here rather than cut: a result this case chooses, in a frame it chooses, with one part on
+        /// each side so that neither counts as empty. Nothing is cooked and no mesh is made -- what is under test
+        /// reads the result and the frame, and nothing else of them.
+        /// </summary>
+        private sealed class CraftedProducts : IDisposable
+        {
+            internal PhysicsCutProducts products;
+
+            public void Dispose()
+            {
+                products?.Dispose();
+            }
+        }
+
+        private static CraftedProducts CraftProducts(
+            ConvexCutOwnerResult result, float4x4 localToOwner, int positiveParts = 1, int negativeParts = 1)
+        {
+            var capacity = new ConvexCutOwnerCapacity { vertices = 1, faceOffsets = 1, faceIndices = 1, edges = 1, scratchBytes = 1 };
+            var arena = new PhysicsCutArena(in capacity, 1);
+            var products = new PhysicsCutProducts(
+                arena, new ConvexCutOutcome[1], in result, localToOwner, PhysicsCutCook.DefaultCooking);
+            for (int i = 0; i < positiveParts; i++)
+            {
+                products.Add(true, new PhysicsCutPart(0, false, default, null, default));
+            }
+
+            for (int i = 0; i < negativeParts; i++)
+            {
+                products.Add(false, new PhysicsCutPart(0, false, default, null, default));
+            }
+
+            return new CraftedProducts { products = products };
+        }
+
+        /// <summary>A result whose two sides are unlike each other in mass, centre and inertia, and add to the parent.</summary>
+        private static ConvexCutOwnerResult AsymmetricResult()
+        {
+            return new ConvexCutOwnerResult
+            {
+                status = ConvexCutOwnerStatus.Ok,
+                positiveMass = 0.25 * FinalParentMass,
+                negativeMass = 0.75 * FinalParentMass,
+                positiveCenterOfMass = new double3(0.5, 0.25, -0.125),
+                negativeCenterOfMass = new double3(-1.5, 0.75, 0.5),
+                positiveInertia = new SymmetricMatrix3 { xx = 2.0, yy = 3.0, zz = 4.0, xy = 0.1, xz = 0.0, yz = -0.2 },
+                negativeInertia = new SymmetricMatrix3 { xx = 9.0, yy = 5.0, zz = 7.0, xy = -0.3, xz = 0.4, yz = 0.0 },
+            };
+        }
+
+
         // ----- helpers ---------------------------------------------------------------------------------------------------
 
         private static float3x3 Diagonal(float3 d)

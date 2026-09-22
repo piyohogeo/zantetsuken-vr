@@ -845,6 +845,34 @@ namespace Zantetsu.PhysicsCut
             centerOfMass = default;
             inertia = default;
             inertiaRotation = quaternion.identity;
+            if (!TryFinalMassFrame(products, parentMass, out localRotation, out localOffset, out outcome))
+            {
+                return false;
+            }
+
+            return TryFinalSideMassInFrame(
+                products, parentMass, positive, localRotation, localOffset,
+                out mass, out centerOfMass, out inertia, out inertiaRotation, out outcome);
+        }
+
+        /// <summary>
+        /// What both sides of one handoff would ask the same questions about, asked **once**: that the products and
+        /// the parent mass are there at all, that neither side came out empty, and the rigid frame the products are
+        /// in. The answers are the frame's rotation and offset, which each side is then worked out in.
+        /// <para>
+        /// **It decides nothing about a side**, and it touches nothing: its refusals are the ones a side's own call
+        /// would have given -- <see cref="PhysicsOwnerBuildOutcome.InvalidInput"/>,
+        /// <see cref="PhysicsOwnerBuildOutcome.SideEmpty"/>, <see cref="PhysicsOwnerBuildOutcome.FrameNotRigid"/> --
+        /// and on a refusal no side has been prepared, so nothing has to be taken back.
+        /// </para>
+        /// </summary>
+        internal static bool TryFinalMassFrame(
+            PhysicsCutProducts products,
+            double parentMass,
+            out quaternion localRotation,
+            out float3 localOffset,
+            out PhysicsOwnerBuildOutcome outcome)
+        {
             localRotation = quaternion.identity;
             localOffset = default;
             if (products == null || !(parentMass > 0.0) || !math.isfinite(parentMass))
@@ -865,6 +893,32 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
+            outcome = PhysicsOwnerBuildOutcome.Ok;
+            return true;
+        }
+
+        /// <summary>
+        /// One side's own final mass properties, in a frame already settled by <see cref="TryFinalMassFrame"/>.
+        /// **This is the per-side work and all of it**: the side's mass against the parent's snapshot, its centre and
+        /// its inertia, carried into the owner's frame. It is the same computation as before -- what was taken out of
+        /// it is only what did not depend on the side.
+        /// </summary>
+        internal static bool TryFinalSideMassInFrame(
+            PhysicsCutProducts products,
+            double parentMass,
+            bool positive,
+            quaternion localRotation,
+            float3 localOffset,
+            out double mass,
+            out float3 centerOfMass,
+            out float3 inertia,
+            out quaternion inertiaRotation,
+            out PhysicsOwnerBuildOutcome outcome)
+        {
+            mass = 0.0;
+            centerOfMass = default;
+            inertia = default;
+            inertiaRotation = quaternion.identity;
             ConvexCutOwnerResult result = products.Result;
             if (!TryMass(in result, parentMass, positive, localRotation, localOffset, out SideMass side))
             {

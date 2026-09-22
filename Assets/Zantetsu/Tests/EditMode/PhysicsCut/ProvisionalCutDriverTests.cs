@@ -1611,6 +1611,236 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
+        /// **The handoff refused at the mass step comes back having touched nothing.** The products it is given have
+        /// a negative side whose inertia the solver cannot be handed, so the final mass preparation refuses there --
+        /// after the positive side's own preparation has succeeded, and **before** anything of the physics is done:
+        /// no hold on the products is taken, no collider is made, no shape is put on an actor, no switch happens.
+        /// <para>
+        /// The case says that it really was the mass step: the positive side's preparation of these same products
+        /// succeeds on its own, and the negative side's refuses with
+        /// <see cref="PhysicsOwnerBuildOutcome.MassNotUsable"/>. It is not an input fault and not a later failure.
+        /// </para>
+        /// <para>
+        /// **What is maintained is maintained as of the moment the publication returns.** What the driver does with a
+        /// refusal afterwards -- it aborts -- is its own contract and not this.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void AHandoffRefusedAtTheMassStep_ReturnsHavingTouchedNothing()
+        {
+            using (World w = NewWorld())
+            {
+                ProvisionalCutTransaction transaction = Publish(w);
+                PhysicsOwnerSide positive = transaction.Pair.Positive;
+                PhysicsOwnerSide negative = transaction.Pair.Negative;
+
+                var before = new[] { SideState.Of(positive), SideState.Of(negative) };
+                int fragmentsBefore = w.ledger.FragmentCount;
+                bool targetBefore = w.ledger.IsCurrentTarget(w.source);
+                int pairsBefore = w.registry.ProvisionalPairCount;
+
+                // Products of this test's own: a positive side that prepares and a negative side that cannot.
+                using (RefusingProducts made = ProductsWhoseNegativeSideHasNoUsableMass())
+                {
+                    PhysicsShapeSource productsSource = PhysicsShapeSource.For(made.products);
+                    int usersBefore = productsSource.Users;
+
+                    // It really is the mass step, and really is the negative side of it.
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalSideMass(
+                            made.products, ParentMass, true,
+                            out double _, out float3 _, out float3 _, out quaternion _, out quaternion _,
+                            out float3 _, out PhysicsOwnerBuildOutcome positiveOutcome),
+                        Is.True,
+                        "the positive side's mass preparation succeeds on these products");
+                    Assert.That(positiveOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.Ok));
+                    Assert.That(
+                        PhysicsOwnerBuilder.TryFinalSideMass(
+                            made.products, ParentMass, false,
+                            out double _, out float3 _, out float3 _, out quaternion _, out quaternion _,
+                            out float3 _, out PhysicsOwnerBuildOutcome negativeOutcome),
+                        Is.False,
+                        "and the negative side's refuses");
+                    Assert.That(
+                        negativeOutcome, Is.EqualTo(PhysicsOwnerBuildOutcome.MassNotUsable),
+                        "with the mass reason, not an input one");
+
+                    var handoff = new FinalHandoffInput
+                    {
+                        ledger = w.ledger,
+                        registry = w.registry,
+                        operation = transaction.Operation,
+                        products = made.products,
+                        cutFrom = w.shape,
+                        parentMass = ParentMass,
+                    };
+
+                    Assert.That(
+                        FinalHandoffPublication.TryHandOff(
+                            in handoff, out LogicalFragmentId publishedPositive,
+                            out LogicalFragmentId publishedNegative, out LogicalCutResultOutcome _),
+                        Is.EqualTo(PhysicsPublicationOutcome.PhysicsNotEstablished),
+                        "the handoff is refused");
+                    Assert.That(publishedPositive.IsSet, Is.False, "and names no child");
+                    Assert.That(publishedNegative.IsSet, Is.False);
+
+                    // Nothing of either side changed.
+                    before[0].AssertUnchanged(positive, "the positive side");
+                    before[1].AssertUnchanged(negative, "the negative side");
+
+                    // The pair is still the one in the scene, and nothing was published.
+                    Assert.That(transaction.Pair.IsEnded, Is.False, "the pair is not ended");
+                    Assert.That(
+                        w.registry.ProvisionalPairCount, Is.EqualTo(pairsBefore),
+                        "and the registry still holds it");
+                    Assert.That(
+                        w.registry.TryGetProvisional(transaction.Operation, out ProvisionalOwnerPair standing), Is.True,
+                        "under the same operation");
+                    Assert.That(ReferenceEquals(standing, transaction.Pair), Is.True, "and it is the same pair");
+                    Assert.That(w.ledger.FragmentCount, Is.EqualTo(fragmentsBefore), "no child was published");
+                    Assert.That(
+                        w.ledger.IsCurrentTarget(w.source), Is.EqualTo(targetBefore),
+                        "and the source is what the ledger still points at");
+
+                    // The products never became the publication's: the hold on them is where it was.
+                    Assert.That(
+                        productsSource.Users, Is.EqualTo(usersBefore),
+                        "no hold on the products was taken and kept");
+                    Assert.That(productsSource.IsReleased, Is.False, "and none was let go either");
+                }
+            }
+        }
+
+        /// <summary>What one side of a pair is, before something that must not change it.</summary>
+        private readonly struct SideState
+        {
+            private readonly GameObject _root;
+            private readonly GameObject _frame;
+            private readonly Rigidbody _body;
+            private readonly MeshCollider[] _colliders;
+            private readonly int _produced;
+            private readonly Vector3 _framePosition;
+            private readonly Quaternion _frameRotation;
+            private readonly Vector3 _rootPosition;
+            private readonly Quaternion _rootRotation;
+            private readonly float _mass;
+            private readonly Vector3 _centreOfMass;
+            private readonly Vector3 _inertiaTensor;
+            private readonly Quaternion _inertiaRotation;
+            private readonly Vector3 _linear;
+            private readonly Vector3 _angular;
+
+            private SideState(PhysicsOwnerSide side)
+            {
+                _root = side.Root;
+                _frame = side.ShapeFrame;
+                _body = side.Body;
+                _colliders = new MeshCollider[side.Colliders.Count];
+                for (int i = 0; i < _colliders.Length; i++)
+                {
+                    _colliders[i] = side.Colliders[i];
+                }
+
+                _produced = side.ProducedColliderCount;
+                _framePosition = side.ShapeFrame.transform.localPosition;
+                _frameRotation = side.ShapeFrame.transform.localRotation;
+                _rootPosition = side.Root.transform.position;
+                _rootRotation = side.Root.transform.rotation;
+                _mass = side.Body.mass;
+                _centreOfMass = side.Body.centerOfMass;
+                _inertiaTensor = side.Body.inertiaTensor;
+                _inertiaRotation = side.Body.inertiaTensorRotation;
+                _linear = side.Body.linearVelocity;
+                _angular = side.Body.angularVelocity;
+            }
+
+            internal static SideState Of(PhysicsOwnerSide side)
+            {
+                return new SideState(side);
+            }
+
+            internal void AssertUnchanged(PhysicsOwnerSide side, string what)
+            {
+                Assert.That(ReferenceEquals(side.Root, _root), Is.True, what + ": the same actor");
+                Assert.That(ReferenceEquals(side.ShapeFrame, _frame), Is.True, what + ": the same shape frame");
+                Assert.That(ReferenceEquals(side.Body, _body), Is.True, what + ": the same body");
+                Assert.That(side.Colliders.Count, Is.EqualTo(_colliders.Length), what + ": as many colliders");
+                for (int i = 0; i < _colliders.Length; i++)
+                {
+                    Assert.That(
+                        ReferenceEquals(side.Colliders[i], _colliders[i]), Is.True,
+                        what + ": the very same collider " + i);
+                    Assert.That(
+                        _colliders[i] != null && _colliders[i].enabled, Is.True,
+                        what + ": collider " + i + " still answering");
+                }
+
+                Assert.That(
+                    side.ShapeFrame.GetComponents<MeshCollider>().Length, Is.EqualTo(_colliders.Length),
+                    what + ": and nothing was put on the actor");
+                Assert.That(side.ProducedColliderCount, Is.EqualTo(_produced), what + ": the same produced count");
+                Assert.That(side.ShapeFrame.transform.localPosition, Is.EqualTo(_framePosition), what + ": the frame is where it was");
+                Assert.That(
+                    Quaternion.Angle(side.ShapeFrame.transform.localRotation, _frameRotation), Is.LessThan(1e-3f),
+                    what + ": and turned as it was");
+                Assert.That(side.Root.transform.position, Is.EqualTo(_rootPosition), what + ": the actor has not moved");
+                Assert.That(
+                    Quaternion.Angle(side.Root.transform.rotation, _rootRotation), Is.LessThan(1e-3f), what);
+                Assert.That(side.Body.mass, Is.EqualTo(_mass), what + ": the same mass");
+                Assert.That(side.Body.centerOfMass, Is.EqualTo(_centreOfMass), what + ": the same centre of mass");
+                Assert.That(side.Body.inertiaTensor, Is.EqualTo(_inertiaTensor), what + ": the same inertia");
+                Assert.That(
+                    Quaternion.Angle(side.Body.inertiaTensorRotation, _inertiaRotation), Is.LessThan(1e-3f), what);
+                Assert.That(side.Body.linearVelocity, Is.EqualTo(_linear), what + ": the same velocity");
+                Assert.That(side.Body.angularVelocity, Is.EqualTo(_angular), what + ": the same spin");
+            }
+        }
+
+        /// <summary>Products this test made, given back the ordinary way.</summary>
+        private sealed class RefusingProducts : IDisposable
+        {
+            internal PhysicsCutProducts products;
+
+            public void Dispose()
+            {
+                products?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Products whose two sides are unlike each other and whose **negative** side has an inertia the solver
+        /// cannot be handed, so that its mass preparation is the thing that refuses. The same shape of input the
+        /// builder's own case uses. Nothing is cooked and no mesh is made: the mass step reads the result and the
+        /// frame, and the call does not get past it.
+        /// </summary>
+        private static RefusingProducts ProductsWhoseNegativeSideHasNoUsableMass()
+        {
+            var result = new ConvexCutOwnerResult
+            {
+                status = ConvexCutOwnerStatus.Ok,
+                positiveMass = 0.25 * ParentMass,
+                negativeMass = 0.75 * ParentMass,
+                positiveCenterOfMass = new double3(0.5, 0.25, -0.125),
+                negativeCenterOfMass = new double3(-1.5, 0.75, 0.5),
+                positiveInertia = new SymmetricMatrix3 { xx = 2.0, yy = 3.0, zz = 4.0, xy = 0.1, xz = 0.0, yz = -0.2 },
+
+                // Nothing the solver can take: this is what the negative side is refused for.
+                negativeInertia = default,
+            };
+
+            var capacity = new ConvexCutOwnerCapacity
+            {
+                vertices = 1, faceOffsets = 1, faceIndices = 1, edges = 1, scratchBytes = 1,
+            };
+            var products = new PhysicsCutProducts(
+                new PhysicsCutArena(in capacity, 1), new ConvexCutOutcome[1], in result, float4x4.identity,
+                PhysicsCutCook.DefaultCooking);
+            products.Add(true, new PhysicsCutPart(0, false, default, null, default));
+            products.Add(false, new PhysicsCutPart(0, false, default, null, default));
+            return new RefusingProducts { products = products };
+        }
+
+        /// <summary>
         /// **One side is never changed for a handoff the other side cannot take.** With the negative side's
         /// preparation made to fail, the positive actor keeps the very colliders and the shape frame it had, nothing is
         /// published, and the pair is still the one in the scene.

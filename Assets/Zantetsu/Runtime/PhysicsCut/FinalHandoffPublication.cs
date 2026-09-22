@@ -181,17 +181,20 @@ namespace Zantetsu.PhysicsCut
                 return PhysicsPublicationOutcome.LedgerRefused;
             }
 
-            // The final mass properties, against the parent mass this cut was accepted with.
-            if (!PhysicsOwnerBuilder.TryFinalSideMass(
-                    input.products, input.parentMass, true,
+            // The final mass properties, against the parent mass this cut was accepted with. What both sides
+            // would ask the same -- the products, that neither side is empty, the rigid frame -- is asked once here,
+            // and each side's own mass, centre and inertia follow in that one frame.
+            if (!PhysicsOwnerBuilder.TryFinalMassFrame(
+                    input.products, input.parentMass,
+                    out quaternion localRotation, out float3 localOffset, out PhysicsOwnerBuildOutcome _)
+                || !PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                    input.products, input.parentMass, true, localRotation, localOffset,
                     out double positiveMass, out float3 positiveCentre, out float3 positiveInertia,
-                    out quaternion positiveInertiaRotation, out quaternion localRotation, out float3 localOffset,
-                    out PhysicsOwnerBuildOutcome _)
-                || !PhysicsOwnerBuilder.TryFinalSideMass(
-                    input.products, input.parentMass, false,
+                    out quaternion positiveInertiaRotation, out PhysicsOwnerBuildOutcome _)
+                || !PhysicsOwnerBuilder.TryFinalSideMassInFrame(
+                    input.products, input.parentMass, false, localRotation, localOffset,
                     out double negativeMass, out float3 negativeCentre, out float3 negativeInertia,
-                    out quaternion negativeInertiaRotation, out quaternion _, out float3 _,
-                    out PhysicsOwnerBuildOutcome _)
+                    out quaternion negativeInertiaRotation, out PhysicsOwnerBuildOutcome _)
                 || !PhysicsOwnerBuilder.FinalShapesArePresent(input.products, sourceOwner.Shape.Meshes))
             {
                 // The final set of this cut cannot be established. Nothing has been touched: the pair is still
