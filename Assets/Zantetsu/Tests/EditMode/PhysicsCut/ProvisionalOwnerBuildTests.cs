@@ -789,6 +789,216 @@ namespace Zantetsu.PhysicsCut.Tests
             }
         }
 
+        /// <summary>
+        /// A source whose convexes 2 and 3 are the same box in the same place and share one cooked collider mesh, so
+        /// that "which collider carries this mesh" cannot tell the two apart. The plane crosses convex 0 and leaves
+        /// convex 1 below it, so the positive side inherits 2 and 3 and has the cut's own convex besides.
+        /// </summary>
+        private Source NewSourceWhereTwoConvexesShareAMesh()
+        {
+            var polys = new List<ConvexPoly>
+            {
+                Translated(CaseGenerator.Box(), new double3(0.0, 0.0, 0.0)),
+                Translated(CaseGenerator.Box(), new double3(0.0, -3.0, 0.0)),
+                Translated(CaseGenerator.Box(), new double3(0.0, 3.0, 0.0)),
+                Translated(CaseGenerator.Box(), new double3(0.0, 3.0, 0.0)),
+            };
+
+            var s = new Source { harness = new OwnerCutHarness() };
+            s.harness.planeN = new float3(0f, 1f, 0f);
+            s.harness.planeW = 0f;
+            s.harness.eps = 1e-5f;
+            s.harness.parentMass = ParentMass;
+            foreach (ConvexPoly poly in polys)
+            {
+                s.harness.Add(poly);
+            }
+
+            s.harness.Build();
+
+            var ranges = new ConvexBrepRange[s.harness.input.convexCount];
+            for (int c = 0; c < ranges.Length; c++)
+            {
+                ranges[c] = s.harness.input.convexes[c];
+            }
+
+            // One mesh object for the last two convexes: they stand in the same place, so the same cooked shape
+            // covers both and the entry check admits it.
+            Mesh shared = CookedConvex(polys[2], "Source 2 and 3");
+            s.meshes = new List<Mesh>
+            {
+                CookedConvex(polys[0], "Source 0"),
+                CookedConvex(polys[1], "Source 1"),
+                shared,
+                shared,
+            };
+
+            s.source = PhysicsShapeSource.External();
+            s.shape = PhysicsOwnerShape.Authored(s.harness.input.bank, ranges, s.meshes, s.source, float4x4.identity);
+            _disposables.Add(s);
+            return s;
+        }
+
+        /// <summary>The cut and cook of one owner input, run here to the end, so that a real set of products exists.</summary>
+        private static PhysicsCutProducts CookProducts(in ConvexCutOwnerInput input, List<IDisposable> disposables)
+        {
+            var job = new UnityJobWorkExecutor(4);
+            WorkerPoolExecutor geometry = WorkerPoolExecutor.GeometryPool(2);
+            WorkerPoolExecutor background = WorkerPoolExecutor.BackgroundPool(2);
+            var dispatcher = new SharedWorkDispatcher(8, 2, 32, job, geometry, background);
+            var cook = new PhysicsCutCook(dispatcher, 1);
+            try
+            {
+                PhysicsCutRequest request = cook.Submit(in input, float4x4.identity);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                while (!request.IsOver && clock.ElapsedMilliseconds < 30000)
+                {
+                    dispatcher.BeginFrame((int)clock.ElapsedMilliseconds + 1);
+                    dispatcher.Dispatch();
+                    cook.Pump();
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the cut and cook succeeded");
+                PhysicsCutProducts products = request.Products;
+                disposables.Add(products);
+                return products;
+            }
+            finally
+            {
+                cook.Dispose();
+                dispatcher.Shutdown(30000);
+                geometry.Dispose();
+                background.Dispose();
+            }
+        }
+
+        [Test]
+        public void EachInheritedPart_KeepsTheColliderOfItsOwnConvex_WhenTwoConvexesShareAMesh()
+        {
+            Source s = NewSourceWhereTwoConvexesShareAMesh();
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            Assert.That(input.sides[0], Is.EqualTo(ConvexSide.Split), "the plane crosses the first box");
+            Assert.That(input.sides[1], Is.EqualTo(ConvexSide.Negative), "the second is below it");
+            Assert.That(input.sides[2], Is.EqualTo(ConvexSide.Positive), "and the last two above it");
+            Assert.That(input.sides[3], Is.EqualTo(ConvexSide.Positive));
+
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsOwnerSide side = candidate.Positive;
+            PhysicsOwnerShape sideShape = candidate.PositiveShape;
+            Assert.That(sideShape.ConvexCount, Is.EqualTo(3), "the crossed convex and the two above");
+            Assert.That(side.Colliders.Count, Is.EqualTo(3), "one collider per convex of the side");
+            Assert.That(
+                new[] { sideShape.InputConvexOf(0), sideShape.InputConvexOf(1), sideShape.InputConvexOf(2) },
+                Is.EqualTo(new[] { 0, 2, 3 }),
+                "the side knows which convex of the source each of its own is");
+            Assert.That(side.Colliders[1].sharedMesh, Is.SameAs(side.Colliders[2].sharedMesh), "and those two carry one mesh");
+
+            var before = new List<MeshCollider>(side.Colliders);
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+            var parts = new List<PhysicsCutPart>();
+            for (int i = 0; i < products.PartCount(true); i++)
+            {
+                parts.Add(products.Part(true, i));
+            }
+
+            Assert.That(parts.Count, Is.EqualTo(3), "the cut's own half of convex 0, and the two inherited ones");
+            Assert.That(parts.FindAll(p => p.borrowed).Count, Is.EqualTo(2), "two inherited parts");
+
+            PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                products, s.shape.Meshes, side, sideShape,
+                side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+            Assert.That(prepared.Count, Is.EqualTo(parts.Count), "one final collider per part");
+            Assert.That(prepared.KeptCount, Is.EqualTo(2), "both inherited parts kept a collider");
+            Assert.That(prepared.MadeCount, Is.EqualTo(1), "and only the produced part got a new one");
+
+            prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+
+            for (int i = 0; i < parts.Count; i++)
+            {
+                if (!parts[i].borrowed)
+                {
+                    Assert.That(
+                        before.Contains(side.Colliders[i]), Is.False,
+                        "the produced part has a collider of its own, none of the side's old ones");
+                    continue;
+                }
+
+                // **The correspondence, at the level of the instance.** The side's convex for this part's input
+                // convex is where its collider was, and that very object is what the final set holds -- not merely
+                // one that carries the same mesh.
+                int at = -1;
+                for (int j = 0; j < sideShape.ConvexCount; j++)
+                {
+                    if (sideShape.InputConvexOf(j) == parts[i].inputConvex)
+                    {
+                        at = j;
+                    }
+                }
+
+                Assert.That(at, Is.GreaterThanOrEqualTo(0), "the side has a convex for this part");
+                Assert.That(side.Colliders[i], Is.SameAs(before[at]), "part " + i + " kept the collider of its own convex");
+                Assert.That(side.Colliders[i].enabled, Is.True, "and it never stopped answering");
+            }
+
+            Assert.That(side.Colliders[1], Is.Not.SameAs(side.Colliders[2]), "no collider is kept twice");
+            Assert.That(before[0] == null, Is.True, "the crossed convex's collider is the one that was replaced and destroyed");
+            Assert.That(side.ProducedColliderCount, Is.EqualTo(1), "one convex of this side was produced by the cut");
+        }
+
+        [Test]
+        public void AColliderTheConditionsNoLongerAdmit_IsMadeAnew_AndTheOtherIsStillKept()
+        {
+            Source s = NewSourceWhereTwoConvexesShareAMesh();
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsOwnerSide side = candidate.Positive;
+            PhysicsOwnerShape sideShape = candidate.PositiveShape;
+            var before = new List<MeshCollider>(side.Colliders);
+
+            // The collider of the side's convex for source convex 2 stops answering: it is no longer a candidate,
+            // and the part that would have kept it must get one of its own.
+            before[1].enabled = false;
+
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+            PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                products, s.shape.Meshes, side, sideShape,
+                side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+            Assert.That(prepared.KeptCount, Is.EqualTo(1), "only the convex whose collider still answers is kept");
+            Assert.That(prepared.MadeCount, Is.EqualTo(2), "the produced part and the one that could not be kept");
+
+            prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
+            Assert.That(side.Colliders.Count, Is.EqualTo(3));
+            Assert.That(side.Colliders, Has.Member(before[2]), "the other inherited convex kept its own collider");
+            Assert.That(before[0] == null && before[1] == null, Is.True, "what was replaced was destroyed");
+        }
+
+        [Test]
+        public void AFrameThatTheSwitchWouldMove_KeepsNothing_AndEveryPartGetsANewCollider()
+        {
+            Source s = NewSourceWhereTwoConvexesShareAMesh();
+            var plane = new float4(0f, 1f, 0f, 0f);
+            ProvisionalOwnerBuildInput input = NewInput(s, plane, PhysicsOwnerPlacement.Identity, default, Anchors());
+            ProvisionalOwnerCandidate candidate = Build(in input);
+            PhysicsOwnerSide side = candidate.Positive;
+            var before = new List<MeshCollider>(side.Colliders);
+
+            PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
+            var movedTo = new float3(0f, 0.25f, 0f);
+            PreparedSideColliders prepared = PhysicsOwnerBuilder.PrepareFinalColliders(
+                products, s.shape.Meshes, side, candidate.PositiveShape,
+                side.ShapeFrame.transform.localRotation, movedTo);
+            Assert.That(prepared.KeptCount, Is.Zero, "a frame the switch would move keeps nothing");
+            Assert.That(prepared.MadeCount, Is.EqualTo(prepared.Count), "every part got a collider of its own");
+
+            prepared.Adopt(side.ShapeFrame.transform.localRotation, movedTo);
+            Assert.That(before[0] == null && before[1] == null && before[2] == null, Is.True, "and all three old ones went");
+            Vector3 at = side.ShapeFrame.transform.localPosition;
+            Assert.That(at.y, Is.EqualTo(movedTo.y).Within(1e-5f), "the frame moved as the switch said");
+        }
+
         /// <summary>A compound the plane really cuts, for the cook to have something to produce.</summary>
         private static OwnerCutHarness MixedCompoundForCook()
         {

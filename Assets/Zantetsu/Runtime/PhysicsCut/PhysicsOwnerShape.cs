@@ -169,6 +169,12 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private PhysicsOwnerShape[] _blockOwnerOf = Array.Empty<PhysicsOwnerShape>();
 
+        /// <summary>
+        /// For a shape made from a list of another shape's convexes, which convex of that shape each of its own is;
+        /// empty for any other shape. See <see cref="InputConvexOf"/>.
+        /// </summary>
+        private int[] _inputConvexOf = Array.Empty<int>();
+
         /// <summary>The block owners this one's convexes address, held until this shape is freed.</summary>
         private readonly List<PhysicsOwnerShape> _bankOwners = new List<PhysicsOwnerShape>(2);
 
@@ -213,6 +219,17 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Whether this shape's mesh holds have gone back already (its owner done, its work collected).</summary>
         public bool MeshHoldsReleased => _sourcesReleased;
+
+        /// <summary>
+        /// Which convex of the shape this one was made from convex <paramref name="index"/> is, or -1 when this shape
+        /// was not made that way (an authored shape, or a side made from a cut's products). It is written once, where
+        /// the side is made from a list of its source's convexes, and it is the correspondence the Final handoff reads
+        /// to find the Provisional collider of an inherited part without searching for one.
+        /// </summary>
+        public int InputConvexOf(int index)
+        {
+            return index >= 0 && index < _inputConvexOf.Length ? _inputConvexOf[index] : -1;
+        }
 
         public int ConvexCount => _convexes.Length;
 
@@ -432,6 +449,16 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 shape.Fill(parts, true);
+
+                // The correspondence, written where it is known and nowhere else: convex i of this side is convex
+                // convexes[i] of the source, which is also what the source's collider i and a part's inputConvex name.
+                var inputConvexOf = new int[convexes.Count];
+                for (int i = 0; i < convexes.Count; i++)
+                {
+                    inputConvexOf[i] = convexes[i];
+                }
+
+                shape._inputConvexOf = inputConvexOf;
             }
             catch
             {

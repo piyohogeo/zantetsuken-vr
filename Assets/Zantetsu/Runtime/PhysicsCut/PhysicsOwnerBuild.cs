@@ -363,13 +363,21 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The colliders this preparation made, disabled; the only ones it can take back.</summary>
         private readonly List<MeshCollider> _made;
 
+        /// <summary>
+        /// Which of the side's colliders, by the side's own order at preparation time, the final set keeps. The
+        /// preparation writes it while it decides, and the switch reads it: the two never work the correspondence out
+        /// twice, and neither asks a list whether it contains a collider.
+        /// </summary>
+        private readonly bool[] _keptFromSide;
         private readonly int _produced;
 
-        internal PreparedSideColliders(PhysicsOwnerSide side, List<MeshCollider> ordered, List<MeshCollider> made, int produced)
+        internal PreparedSideColliders(
+            PhysicsOwnerSide side, List<MeshCollider> ordered, List<MeshCollider> made, bool[] keptFromSide, int produced)
         {
             Side = side;
             _ordered = ordered;
             _made = made;
+            _keptFromSide = keptFromSide;
             _produced = produced;
         }
 
@@ -381,6 +389,12 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>How many of the final colliders were the Provisional side's already: the ordered ones not made here.</summary>
         public int KeptCount => _ordered.Count - _made.Count;
+
+        /// <summary>Whether the side's collider at <paramref name="index"/> (the side's order at preparation time) is kept.</summary>
+        internal bool KeepsSideCollider(int index)
+        {
+            return index >= 0 && index < _keptFromSide.Length && _keptFromSide[index];
+        }
 
         /// <summary>How many the preparation made new.</summary>
         public int MadeCount => _made.Count;
@@ -402,13 +416,13 @@ namespace Zantetsu.PhysicsCut
 
             IsAdopted = true;
 
-            // Replaced: what the side had that is not among the final colliders. A kept collider is never touched
-            // here: it carries the right mesh already and keeps answering through the switch. The side's own list
-            // is read for this, twice, rather than a list of the replaced being made.
+            // Replaced: what the side had that the preparation did not keep. A kept collider is never touched here:
+            // it carries the right mesh already and keeps answering through the switch. Which is which was settled by
+            // the preparation, so this is one pass over the side's own list and no search.
             for (int i = 0; i < Side.Colliders.Count; i++)
             {
                 MeshCollider had = Side.Colliders[i];
-                if (had != null && !_ordered.Contains(had))
+                if (had != null && !KeepsSideCollider(i))
                 {
                     had.enabled = false;
                 }
@@ -428,7 +442,7 @@ namespace Zantetsu.PhysicsCut
             for (int i = 0; i < Side.Colliders.Count; i++)
             {
                 MeshCollider had = Side.Colliders[i];
-                if (had != null && !_ordered.Contains(had))
+                if (had != null && !KeepsSideCollider(i))
                 {
                     PhysicsOwnerBuilder.DestroyComponent(had);
                 }
@@ -848,34 +862,56 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Makes the final colliders of one side on the actor it already has -- in the same order and with the same
-        /// cooking profile a build would give them (DESIGN 7.3) -- and leaves them **disabled**, so that the side goes
-        /// on being what it was until the switch adopts them (<see cref="PreparedSideColliders"/>). Nothing of the
-        /// side's own is touched here.
-        /// </summary>
-        internal static PreparedSideColliders PrepareFinalColliders(
-            PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side)
-        {
-            return PrepareFinalColliders(
-                products, inherited, side, side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
-        }
-
-        /// <summary>
-        /// The final colliders of one side, prepared beside the Provisional ones without changing the side: one per
-        /// part in the products' order. An inherited part whose mesh the side already carries on a collider cooked
-        /// with the products' profile, convex and enabled, keeps that collider as it is -- provided the frame's pose
-        /// the switch will set (<paramref name="localRotation"/>, <paramref name="localOffset"/>) is the pose the
-        /// frame has, so nothing kept moves. Every other part gets a collider made here, disabled, its mesh cooked
-        /// now. A failure part way takes back only what was made.
+        /// The final colliders of one side: one per part in the products' order, made on the actor it already has --
+        /// in the same order and with the same cooking profile a build would give them (DESIGN 7.3). **What is made
+        /// here is left disabled**, so that the side goes on being what it was until the switch adopts them
+        /// (<see cref="PreparedSideColliders"/>); a collider kept from the side is the side's own and stays enabled,
+        /// as it must be for the side to go on standing. Nothing of the side's own is touched here: the new ones are
+        /// prepared beside the Provisional ones without changing the side. An inherited part keeps the collider the
+        /// side already has **for that very input convex** -- found through the side shape's own correspondence
+        /// (<see cref="PhysicsOwnerShape.InputConvexOf"/>), never by searching for a collider that happens to carry
+        /// the same mesh -- provided that collider still carries the part's mesh with the products' profile, convex
+        /// and enabled, and provided the frame's pose the switch will set (<paramref name="localRotation"/>,
+        /// <paramref name="localOffset"/>) is the pose the frame has, so nothing kept moves. Every other part gets a
+        /// collider made here, disabled, its mesh cooked now. A failure part way takes back only what was made.
+        /// <para>
+        /// Each collider of the side and each part of the side is looked at a fixed number of times: the side's
+        /// convexes are walked once to put its collider index under its input convex, and each part then reads one
+        /// entry of that array and clears it, so no input convex can be kept twice and nothing is searched for.
+        /// </para>
         /// </summary>
         internal static PreparedSideColliders PrepareFinalColliders(
             PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side,
-            quaternion localRotation, float3 localOffset)
+            PhysicsOwnerShape sideShape, quaternion localRotation, float3 localOffset)
         {
             int count = products.PartCount(side.positive);
             var ordered = new List<MeshCollider>(count);
             var made = new List<MeshCollider>(count);
+            var keptFromSide = new bool[side.Colliders.Count];
             bool frameStays = FrameStays(side.ShapeFrame.transform, localRotation, localOffset);
+
+            // The side's collider for each input convex, by the correspondence the side shape carries. -1 where the
+            // side has no collider for that convex, and set back to -1 once a part has taken it.
+            int[] sideColliderOfInputConvex = null;
+            if (frameStays && sideShape != null)
+            {
+                sideColliderOfInputConvex = new int[products.InputConvexCount];
+                for (int c = 0; c < sideColliderOfInputConvex.Length; c++)
+                {
+                    sideColliderOfInputConvex[c] = -1;
+                }
+
+                int convexes = math.min(sideShape.ConvexCount, side.Colliders.Count);
+                for (int j = 0; j < convexes; j++)
+                {
+                    int c = sideShape.InputConvexOf(j);
+                    if (c >= 0 && c < sideColliderOfInputConvex.Length)
+                    {
+                        sideColliderOfInputConvex[c] = j;
+                    }
+                }
+            }
+
             int produced = 0;
             try
             {
@@ -883,9 +919,16 @@ namespace Zantetsu.PhysicsCut
                 {
                     PhysicsCutPart part = products.Part(side.positive, i);
                     Mesh mesh = part.borrowed ? inherited[part.inputConvex] : part.mesh;
-                    MeshCollider keptOne = part.borrowed && frameStays ? Reusable(side, mesh, products.Cooking, ordered) : null;
+                    int at = part.borrowed && sideColliderOfInputConvex != null
+                             && part.inputConvex >= 0 && part.inputConvex < sideColliderOfInputConvex.Length
+                        ? sideColliderOfInputConvex[part.inputConvex]
+                        : -1;
+                    MeshCollider keptOne = at >= 0 ? Reusable(side.Colliders[at], mesh, products.Cooking) : null;
                     if (keptOne != null)
                     {
+                        // Taken: the entry goes, so this convex cannot be kept a second time.
+                        sideColliderOfInputConvex[part.inputConvex] = -1;
+                        keptFromSide[at] = true;
                         ordered.Add(keptOne);
                         continue;
                     }
@@ -909,23 +952,15 @@ namespace Zantetsu.PhysicsCut
                 throw;
             }
 
-            return new PreparedSideColliders(side, ordered, made, produced);
+            return new PreparedSideColliders(side, ordered, made, keptFromSide, produced);
         }
 
-        /// <summary>The side's collider that carries this mesh with this profile, convex and enabled, not taken already.</summary>
-        private static MeshCollider Reusable(PhysicsOwnerSide side, Mesh mesh, MeshColliderCookingOptions cooking, List<MeshCollider> taken)
+        /// <summary>This collider itself, if it carries this mesh with this profile, convex and enabled; else null.</summary>
+        private static MeshCollider Reusable(MeshCollider had, Mesh mesh, MeshColliderCookingOptions cooking)
         {
-            for (int i = 0; i < side.Colliders.Count; i++)
-            {
-                MeshCollider had = side.Colliders[i];
-                if (had != null && had.enabled && had.convex && had.sharedMesh == mesh && had.cookingOptions == cooking
-                    && !taken.Contains(had))
-                {
-                    return had;
-                }
-            }
-
-            return null;
+            return had != null && had.enabled && had.convex && had.sharedMesh == mesh && had.cookingOptions == cooking
+                ? had
+                : null;
         }
 
         private static bool FrameStays(Transform frame, quaternion localRotation, float3 localOffset)
