@@ -116,6 +116,12 @@ namespace Zantetsu.MeshCut.Tests
             /// </summary>
             public bool refuseAcceptance;
 
+            /// <summary>How many times the dispatcher asked this destination whether anything had ended.</summary>
+            public int takeCalls;
+
+            /// <summary>How many times it asked whether this destination could take work.</summary>
+            public int acceptanceQuestions;
+
             public int stopCount;
             public int closeCount;
             public int acceptancesRefused;
@@ -127,7 +133,14 @@ namespace Zantetsu.MeshCut.Tests
 
             public int Held => _queued.Count + _begun.Count + _ended.Count;
 
-            public bool CanAccept => !_closed && Held < Capacity;
+            public bool CanAccept
+            {
+                get
+                {
+                    acceptanceQuestions++;
+                    return !_closed && Held < Capacity;
+                }
+            }
 
             public bool TryAccept(IDispatchWork work)
             {
@@ -154,6 +167,7 @@ namespace Zantetsu.MeshCut.Tests
 
             public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
             {
+                takeCalls++;
                 if (_ended.Count == 0)
                 {
                     work = null;
@@ -1175,6 +1189,168 @@ namespace Zantetsu.MeshCut.Tests
             {
                 work.Dispose();
             }
+        }
+
+        // ----- what an opportunity with nothing out there asks -----------------------------------------------------
+
+        /// <summary>
+        /// With nothing submitted and nothing waiting, an opportunity asks no destination anything: there is nothing
+        /// any of them could hand back, because everything they hold came from here and is recorded until collected.
+        /// </summary>
+        [Test]
+        public void AnOpportunityWithNothingOutThere_AsksNoDestinationAnything()
+        {
+            Fixture f = NewFixture();
+
+            DispatchProgress progress = f.dispatcher.Dispatch();
+
+            Assert.That(progress.MadeProgress, Is.False, "nothing moved");
+            Assert.That(f.job.takeCalls + f.geometry.takeCalls + f.background.takeCalls, Is.Zero,
+                "and none of the three was asked whether anything had ended");
+            Assert.That(f.job.acceptanceQuestions + f.geometry.acceptanceQuestions + f.background.acceptanceQuestions,
+                Is.Zero, "nor whether it could take work");
+        }
+
+        /// <summary>
+        /// While one work is out there and the budget allows, each opportunity asks the destinations again — the
+        /// one holding it and the ones that are empty — because a worker may have finished since the last time. What
+        /// ends a pass early is what always did: the last work collected, or the budget spent.
+        /// </summary>
+        [Test]
+        public void WhileWorkIsSubmitted_EveryOpportunityAsksEveryDestinationAgain()
+        {
+            Fixture f = NewFixture();
+            var running = new SyntheticWork("running");
+            EnqueueOrFail(f.dispatcher, WorkPurpose.AdmittedGeometry, running);
+            f.dispatcher.Dispatch();
+            Assert.That(f.dispatcher.SubmittedCount, Is.EqualTo(1), "it went to the geometry pool");
+
+            f.job.takeCalls = 0;
+            f.geometry.takeCalls = 0;
+            f.background.takeCalls = 0;
+
+            f.dispatcher.Dispatch();
+            f.dispatcher.Dispatch();
+            f.dispatcher.Dispatch();
+
+            Assert.That(f.geometry.takeCalls, Is.EqualTo(3), "the destination holding it was asked each time");
+            Assert.That(f.job.takeCalls, Is.EqualTo(3),
+                "and so were the others, the record being what the pass goes by, with budget to spare here");
+            Assert.That(f.background.takeCalls, Is.EqualTo(3));
+            Assert.That(running.collectCount, Is.Zero, "nothing was collected, since it has not ended");
+        }
+
+        /// <summary>
+        /// A work that ends **after** an opportunity found nothing is taken at the next ordinary opportunity: the
+        /// question is asked again, and not skipped because the last answer was empty.
+        /// </summary>
+        [Test]
+        public void WorkThatEndsAfterAnEmptyAnswer_IsTakenAtTheNextOpportunity()
+        {
+            Fixture f = NewFixture();
+            var work = new SyntheticWork("late");
+            EnqueueOrFail(f.dispatcher, WorkPurpose.AdmittedGeometry, work);
+            f.dispatcher.Dispatch();
+
+            f.dispatcher.Dispatch();
+            Assert.That(work.collectCount, Is.Zero, "it had not ended, so nothing came back");
+
+            f.geometry.End(work, WorkCompletion.Finished);
+
+            DispatchProgress progress = f.dispatcher.Dispatch();
+
+            Assert.That(progress.collected, Is.EqualTo(1), "the next opportunity took it");
+            Assert.That(work.collectCount, Is.EqualTo(1));
+            Assert.That(f.dispatcher.SubmittedCount, Is.Zero, "and the record is clear again");
+        }
+
+        /// <summary>
+        /// Work offered from inside a Collect callback is submitted in that same opportunity, as it always was: the
+        /// queue is read after the collection, not before it.
+        /// </summary>
+        [Test]
+        public void WorkOfferedFromACollectCallback_IsStillSubmittedInTheSameOpportunity()
+        {
+            Fixture f = NewFixture();
+            var first = new SyntheticWork("first");
+            var next = new SyntheticWork("next");
+            first.adopt = () =>
+            {
+                Assert.That(f.dispatcher.TryEnqueue(WorkPurpose.AdmittedGeometry, next, out WorkTicket _), Is.True,
+                    "the callback offers the work that became ready");
+                return true;
+            };
+
+            EnqueueOrFail(f.dispatcher, WorkPurpose.AdmittedGeometry, first);
+            f.dispatcher.Dispatch();
+            f.geometry.End(first, WorkCompletion.Finished);
+
+            DispatchProgress progress = f.dispatcher.Dispatch();
+
+            Assert.That(progress.collected, Is.EqualTo(1), "the first came back");
+            Assert.That(progress.submitted, Is.EqualTo(1), "and what its callback offered went out at once");
+            Assert.That(f.geometry.submitted, Is.EquivalentTo(new IDispatchWork[] { first, next }));
+            Assert.That(f.dispatcher.SubmittedCount, Is.EqualTo(1), "the record holds the new one");
+            Assert.That(f.dispatcher.WaitingCount, Is.Zero, "and nothing is left waiting");
+        }
+
+        /// <summary>
+        /// A refused acceptance leaves the work waiting and the record clear, and the opportunity after it asks
+        /// again: the guards read the queue and the record, so neither loses a place.
+        /// </summary>
+        [Test]
+        public void ARefusedAcceptance_LeavesTheWorkWaitingAndTheNextOpportunityOffersItAgain()
+        {
+            Fixture f = NewFixture();
+            var work = new SyntheticWork("refused");
+            EnqueueOrFail(f.dispatcher, WorkPurpose.AdmittedGeometry, work);
+            f.geometry.refuseAcceptance = true;
+
+            DispatchProgress refused = f.dispatcher.Dispatch();
+
+            Assert.That(refused.submitted, Is.Zero, "nothing went in");
+            Assert.That(f.dispatcher.SubmittedCount, Is.Zero, "nothing is recorded as out there");
+            Assert.That(f.dispatcher.WaitingCount, Is.EqualTo(1), "and the work is still waiting, unbegun");
+            Assert.That(work.beginCount, Is.Zero);
+
+            f.geometry.refuseAcceptance = false;
+            DispatchProgress taken = f.dispatcher.Dispatch();
+
+            Assert.That(taken.submitted, Is.EqualTo(1), "the next opportunity offered it again");
+            Assert.That(f.dispatcher.SubmittedCount, Is.EqualTo(1));
+        }
+
+        /// <summary>
+        /// A normal stop asks every destination whatever the record says, so work that ended between the last
+        /// opportunity and the stop still comes back exactly once, and nothing is collected twice.
+        /// </summary>
+        [Test]
+        public void AStop_AsksEveryDestinationEvenWithNothingRecorded_AndCollectsEachWorkOnce()
+        {
+            Fixture f = NewFixture();
+            var ended = new SyntheticWork("ended");
+            var waiting = new SyntheticWork("waiting");
+            EnqueueOrFail(f.dispatcher, WorkPurpose.AdmittedGeometry, ended);
+            f.dispatcher.Dispatch();
+            f.geometry.End(ended, WorkCompletion.Finished);
+            f.dispatcher.Dispatch();
+            Assert.That(ended.collectCount, Is.EqualTo(1), "it came back in the ordinary way");
+            Assert.That(f.dispatcher.SubmittedCount, Is.Zero, "and nothing is recorded as out there");
+
+            EnqueueOrFail(f.dispatcher, WorkPurpose.Speculative, waiting);
+            f.job.takeCalls = 0;
+            f.geometry.takeCalls = 0;
+            f.background.takeCalls = 0;
+
+            DispatchShutdownResult result = f.dispatcher.Shutdown(50);
+
+            Assert.That(f.job.takeCalls, Is.EqualTo(1), "the stop asked each destination regardless of the record");
+            Assert.That(f.geometry.takeCalls, Is.EqualTo(1));
+            Assert.That(f.background.takeCalls, Is.EqualTo(1));
+            Assert.That(result.cancelled, Is.EqualTo(1), "what never began was cancelled");
+            Assert.That(waiting.collectCount, Is.EqualTo(1));
+            Assert.That(waiting.lastCompletion.outcome, Is.EqualTo(WorkOutcome.Cancelled));
+            Assert.That(ended.collectCount, Is.EqualTo(1), "and what had already come back was not collected twice");
         }
 
         private static CutOperationId AdmitAndPrepare(LogicalCutLedger ledger, LogicalFragmentId source)

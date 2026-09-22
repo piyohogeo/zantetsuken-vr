@@ -763,8 +763,18 @@ namespace Zantetsu.MeshCut
             {
                 // Collection first, and on its own terms: whether anything could be submitted afterwards has no
                 // bearing on taking an ended work back. Urgent first, since that is where a choice exists.
+                //
+                // **Nothing submitted, nothing to take back.** Every work a destination can hand back was accepted
+                // here and recorded in _submitted in the same step, and stays recorded until it is collected, so an
+                // empty record means no destination holds anything of ours. This is not "nothing came back last
+                // time": while the record still holds work and the budget allows, each destination in turn is asked
+                // again, because a worker may have finished in the meantime. **The budget's end stops this pass as it
+                // always did; emptying the record is what is new here** -- the base had no such condition and went on
+                // asking the destinations after it while budget remained. The destination whose collection empties the
+                // record still finishes its own loop, asking once more and being told no; what is skipped is the
+                // destinations after it. The stop's own collection below asks regardless of the record.
                 int collected = 0;
-                for (int d = 0; d < Order.Length && RemainingBudget > 0; d++)
+                for (int d = 0; _submitted.Count > 0 && d < Order.Length && RemainingBudget > 0; d++)
                 {
                     IWorkExecutor executor = _executors[(int)Order[d]];
                     while (RemainingBudget > 0
@@ -782,8 +792,11 @@ namespace Zantetsu.MeshCut
 
                 // Then submission, urgent first. A destination with no room right now is passed over, never waited
                 // for, so work that cannot go in does not stop independent work bound elsewhere from going in.
+                //
+                // **Nothing waiting, nothing to offer.** The queue is read here, after the collection above, so work
+                // a Collect callback offered is submitted in this same opportunity, as it always was.
                 int submitted = 0;
-                for (int d = 0; d < Order.Length && RemainingBudget > 0; d++)
+                for (int d = 0; _waiting.Count > 0 && d < Order.Length && RemainingBudget > 0; d++)
                 {
                     WorkDestination destination = Order[d];
                     IWorkExecutor executor = _executors[(int)destination];
