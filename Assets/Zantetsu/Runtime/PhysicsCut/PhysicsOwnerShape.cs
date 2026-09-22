@@ -387,7 +387,7 @@ namespace Zantetsu.PhysicsCut
                     };
                 }
 
-                shape.Fill(parts, false);
+                shape.Fill(parts);
             }
             catch
             {
@@ -424,7 +424,10 @@ namespace Zantetsu.PhysicsCut
             var shape = new PhysicsOwnerShape(source.LocalToOwner);
             try
             {
-                var parts = new Part[convexes.Count];
+                // The correspondence and the convexes are written in the same pass, each into the array it is
+                // kept in. Nothing is laid out first and copied across.
+                shape.BeginBorrowing(convexes.Count);
+                var inputConvexOf = new int[convexes.Count];
                 for (int i = 0; i < convexes.Count; i++)
                 {
                     int c = convexes[i];
@@ -433,7 +436,7 @@ namespace Zantetsu.PhysicsCut
                         throw new ArgumentOutOfRangeException(nameof(convexes), c, "not a convex of the source");
                     }
 
-                    parts[i] = new Part
+                    shape.Borrow(i, new Part
                     {
                         bank = source._banks[c],
                         bankOwner = source._blockOwnerOf[c],
@@ -445,17 +448,11 @@ namespace Zantetsu.PhysicsCut
                         // frame, so the box comes across as it is.
                         lo = source._convexLo[c],
                         hi = source._convexHi[c],
-                    };
-                }
+                    });
 
-                shape.Fill(parts, true);
-
-                // The correspondence, written where it is known and nowhere else: convex i of this side is convex
-                // convexes[i] of the source, which is also what the source's collider i and a part's inputConvex name.
-                var inputConvexOf = new int[convexes.Count];
-                for (int i = 0; i < convexes.Count; i++)
-                {
-                    inputConvexOf[i] = convexes[i];
+                    // Convex i of this side is convex convexes[i] of the source, which is also what the source's
+                    // collider i and a part's inputConvex name.
+                    inputConvexOf[i] = c;
                 }
 
                 shape._inputConvexOf = inputConvexOf;
@@ -495,11 +492,11 @@ namespace Zantetsu.PhysicsCut
             var shape = new PhysicsOwnerShape(products.LocalToOwner);
             try
             {
-                var parts = new Part[count];
+                shape.BeginBorrowing(count);
                 for (int i = 0; i < count; i++)
                 {
                     PhysicsCutPart part = products.Part(positive, i);
-                    parts[i] = part.borrowed
+                    shape.Borrow(i, part.borrowed
                         ? new Part
                         {
                             bank = parent._banks[part.inputConvex],
@@ -523,10 +520,8 @@ namespace Zantetsu.PhysicsCut
                             // collider's own bounds where those are usable. Neither is read from a vertex here.
                             lo = ProducedLow(part),
                             hi = ProducedHigh(part),
-                        };
+                        });
                 }
-
-                shape.Fill(parts, true);
             }
             catch
             {
@@ -728,40 +723,52 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Takes the parts. Borrowing, each convex keeps its range in the bank it came from, and this shape holds
-        /// the bank's keeper -- the owning shape, or the products' source it already holds for the mesh -- until it
-        /// is freed. Copying, every convex is copied into one block this shape owns, as an authored shape's are.
+        /// Makes room for a borrowed side of <paramref name="count"/> convexes. **Nothing is held yet**; each convex
+        /// is taken by <see cref="Borrow"/>, which is where the holds are taken, one at a time.
+        /// <para>
+        /// A caller that fails part way gives the shape back, and what was already held goes back with it exactly
+        /// once -- the mesh sources through <see cref="FreeIfIdle"/>, the block owners through the same. A convex
+        /// that was never taken holds nothing, and a slot never written stays as it was made.
+        /// </para>
         /// </summary>
-        private void Fill(Part[] parts, bool borrow)
+        private void BeginBorrowing(int count)
         {
-            if (borrow)
+            _convexes = new ConvexBrepRange[count];
+            _banks = new ConvexBrepBank[count];
+            _blockOwnerOf = new PhysicsOwnerShape[count];
+            _convexLo = new float3[count];
+            _convexHi = new float3[count];
+        }
+
+        /// <summary>
+        /// Takes one borrowed convex into the place it is kept: its range in the bank it came from, its mesh, its
+        /// box, and the holds on whoever keeps the bank and the mesh. The same writes the array-at-a-time borrowing
+        /// made, in the same order, without the array.
+        /// </summary>
+        private void Borrow(int i, in Part part)
+        {
+            _convexes[i] = part.range;
+            _banks[i] = part.bank;
+            _blockOwnerOf[i] = part.bankOwner;
+            _meshes.Add(part.mesh);
+            _convexLo[i] = part.lo;
+            _convexHi[i] = part.hi;
+            AddToLocalBounds(part.lo, part.hi);
+            HoldSource(part.source);
+            if (part.bankOwner != null && !_bankOwners.Contains(part.bankOwner))
             {
-                _convexes = new ConvexBrepRange[parts.Length];
-                _banks = new ConvexBrepBank[parts.Length];
-                _blockOwnerOf = new PhysicsOwnerShape[parts.Length];
-                _convexLo = new float3[parts.Length];
-                _convexHi = new float3[parts.Length];
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    _convexes[i] = parts[i].range;
-                    _banks[i] = parts[i].bank;
-                    _blockOwnerOf[i] = parts[i].bankOwner;
-                    _meshes.Add(parts[i].mesh);
-                    _convexLo[i] = parts[i].lo;
-                    _convexHi[i] = parts[i].hi;
-                    AddToLocalBounds(parts[i].lo, parts[i].hi);
-                    HoldSource(parts[i].source);
-                    if (parts[i].bankOwner != null && !_bankOwners.Contains(parts[i].bankOwner))
-                    {
-                        // Held before it is recorded: a hold that was not taken must not be let go later.
-                        parts[i].bankOwner.AcquireAsBank();
-                        _bankOwners.Add(parts[i].bankOwner);
-                    }
-                }
-
-                return;
+                // Held before it is recorded: a hold that was not taken must not be let go later.
+                part.bankOwner.AcquireAsBank();
+                _bankOwners.Add(part.bankOwner);
             }
+        }
 
+        /// <summary>
+        /// Takes the parts of an authored shape: every convex is copied into one block this shape owns. A borrowed
+        /// side does not come through here -- it is taken convex by convex, by <see cref="Borrow"/>.
+        /// </summary>
+        private void Fill(Part[] parts)
+        {
             int vertices = 0, faceOffsets = 0, faceIndices = 0, edges = 0;
             for (int i = 0; i < parts.Length; i++)
             {

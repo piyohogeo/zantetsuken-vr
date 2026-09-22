@@ -77,6 +77,73 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(_meshSource.Users, Is.EqualTo(1), "and so is the side's mesh hold, once");
         }
 
+        /// <summary>
+        /// **A side refused part way gives back what it had already taken, once.** The convexes are taken one at a
+        /// time now, each with its holds, so a bad convex index part way through leaves a half-built shape holding
+        /// the earlier ones. That shape is given back where it was made, and afterwards the source's mesh source and
+        /// its block stand exactly as they did before the attempt -- not held on by a shape nobody has, and not
+        /// released a second time either, which would show as a count below where it started.
+        /// </summary>
+        [Test]
+        public void ASideRefusedPartWay_GivesBackWhatItHadTakenAndNoMore()
+        {
+            int usersBefore = _meshSource.Users;
+            int bankUsersBefore = _source.BankUsers;
+            Assert.That(usersBefore, Is.EqualTo(1), "the authored shape holds its mesh source");
+
+            // The first convex is good and the second is not: the refusal happens after one has been taken.
+            Assert.That(
+                () => PhysicsOwnerShape.ProvisionalSide(_source, new[] { 0, 7 }),
+                Throws.TypeOf<ArgumentOutOfRangeException>(),
+                "a convex the source does not have is refused");
+
+            Assert.That(
+                _meshSource.Users, Is.EqualTo(usersBefore),
+                "the mesh hold the half-built side took is back, and the source's own is untouched");
+            Assert.That(
+                _source.BankUsers, Is.EqualTo(bankUsersBefore),
+                "and so is the hold it took on the block it was addressing");
+            Assert.That(_meshSource.IsReleased, Is.False, "the source still has its own hold");
+
+            // The source is still whole: a side made of it now is made as if nothing had happened.
+            PhysicsOwnerShape side = PhysicsOwnerShape.ProvisionalSide(_source, new[] { 0, 1 });
+            try
+            {
+                Assert.That(side.ConvexCount, Is.EqualTo(2), "a good side is still made");
+                Assert.That(
+                    _source.BankUsers, Is.EqualTo(bankUsersBefore + 1),
+                    "and it holds the block once, as a side does");
+                Assert.That(
+                    _meshSource.Users, Is.EqualTo(usersBefore + 1),
+                    "and the mesh source once, however many convexes name it");
+            }
+            finally
+            {
+                side.Dispose();
+            }
+
+            Assert.That(_source.BankUsers, Is.EqualTo(bankUsersBefore), "and gives both back when it ends");
+            Assert.That(_meshSource.Users, Is.EqualTo(usersBefore));
+        }
+
+        /// <summary>
+        /// The same for the **last** convex of a side: everything before it was taken, and all of it goes back.
+        /// </summary>
+        [Test]
+        public void ASideRefusedOnItsLastConvex_GivesEverythingBack()
+        {
+            int usersBefore = _meshSource.Users;
+            int bankUsersBefore = _source.BankUsers;
+
+            Assert.That(
+                () => PhysicsOwnerShape.ProvisionalSide(_source, new[] { 0, 1, -1 }),
+                Throws.TypeOf<ArgumentOutOfRangeException>(),
+                "a negative convex index is refused");
+
+            Assert.That(_meshSource.Users, Is.EqualTo(usersBefore), "both mesh holds are back");
+            Assert.That(_source.BankUsers, Is.EqualTo(bankUsersBefore), "and the block hold with them");
+        }
+
         [Test]
         public void ARetiredSource_KeepsItsBlockForTheSidesAddressingIt_ButGivesItsMeshHoldsBackAtOnce()
         {
