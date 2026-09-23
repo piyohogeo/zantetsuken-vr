@@ -270,17 +270,25 @@ namespace Zantetsu.PhysicsCut
         /// <summary>
         /// Puts one side into the scene and gives its body the values the build decided.
         /// <para>
-        /// **The order here is the checked one**: the two automatic mass properties are turned off while the body is
-        /// still out of the scene -- both flags keep what they are given there, which was measured on this path --
-        /// and the mass, the centre of mass, the inertia and the motion are written **after** the activation, as
-        /// they were. Nothing is said here about any other property of a body that is out of the scene.
+        /// The two automatic mass properties are declared **before** the side enters the scene, and the mass, the
+        /// centre of mass, the inertia and the motion are written **after** it, as they were. Nothing is said here
+        /// about what a body out of the scene does with any property.
         /// </para>
         /// </summary>
         private static bool Establish(PhysicsOwnerSide side, bool carriesTheConstraint)
         {
             side.DeclareMassPropertiesExplicit();
             side.Root.SetActive(true);
-            side.ApplyToBody();
+
+            // The declaration above is this side's; what is left is the rest of what `ApplyToBody()` writes, in
+            // its order: the same check for a body, `isKinematic` from the anchors, then the mass, the centre of
+            // mass, the inertia and the motion.
+            if (side.Body != null)
+            {
+                side.Body.isKinematic = side.FixedByAnchors;
+            }
+
+            side.ApplyMassAndMotionToBody();
             establishedHook?.Invoke(carriesTheConstraint);
             return side.Root.activeInHierarchy;
         }
