@@ -1,0 +1,5 @@
+# Preserve raw Unity evidence byte-for-byte, including CRLF and log whitespace.
+baseline-editmode.log -text -diff -whitespace
+baseline-editmode.xml -text -diff -whitespace
+baseline-summary.json text eol=lf
+*.md text eol=lf
