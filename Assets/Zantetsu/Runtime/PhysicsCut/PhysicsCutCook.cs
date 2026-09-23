@@ -232,11 +232,8 @@ namespace Zantetsu.PhysicsCut
         internal Mesh.MeshDataArray meshData;
         internal bool meshDataHeld;
         internal Mesh[] meshes;
-        internal NativeArray<int> meshIds;
-        internal NativeArray<float3x2> meshBounds;
+        internal NativeArray<PhysicsCutMeshSlot> meshSlots;
         internal NativeArray<PhysicsCutJobReport> report;
-        internal NativeArray<int> meshVertexCounts;
-        internal NativeArray<byte> bakeDone;
         internal PhysicsCutJobReport cut;
         internal bool abandoning;
 
@@ -609,15 +606,11 @@ namespace Zantetsu.PhysicsCut
             {
                 request.arena = new PhysicsCutArena(in capacity, request.input.convexCount);
 
-                // The job writes a count and a box for every slot before it reports, and this thread writes an id for
-                // every slot before the bake reads one, so none of the three is read as it came.
-                request.meshIds = PhysicsCutBlocks.Take<int>(meshes);
-                request.meshBounds = PhysicsCutBlocks.Take<float3x2>(meshes);
-                request.meshVertexCounts = PhysicsCutBlocks.Take<int>(meshes);
-
-                // **These two keep their clearing.** A zero in them is read as a meaning, not as a value written: an
-                // element of the bake that never came back, and a report of a run that never reached its end.
-                request.bakeDone = new NativeArray<byte>(meshes, Allocator.Persistent);
+                // The per-mesh values have the same lifetime and their readers run in sequence: cut, main-thread
+                // application, then bake. One checked NativeArray owns them through those stages. Keep it cleared:
+                // bakeDone must stay zero until that element's bake returns, including a job that never ran.
+                request.meshSlots = new NativeArray<PhysicsCutMeshSlot>(meshes, Allocator.Persistent);
+                // A report of a run that never reached its end must likewise remain zero.
                 request.report = new NativeArray<PhysicsCutJobReport>(1, Allocator.Persistent);
 
                 // Worst case: every split convex gives two sides, each of which becomes one collider mesh. The meshes
@@ -710,18 +703,21 @@ namespace Zantetsu.PhysicsCut
 
             for (int m = 0; m < request.meshes.Length; m++)
             {
-                if (request.meshVertexCounts[m] <= 0)
+                PhysicsCutMeshSlot slot = request.meshSlots[m];
+                if (slot.vertexCount <= 0)
                 {
                     DestroyMesh(request.meshes[m]);
                     request.meshes[m] = null;
-                    request.meshIds[m] = 0;
+                    slot.id = 0;
+                    request.meshSlots[m] = slot;
                     continue;
                 }
 
-                float3x2 bounds = request.meshBounds[m];
+                float3x2 bounds = slot.bounds;
                 float3 centre = (bounds.c0 + bounds.c1) * 0.5f;
                 request.meshes[m].bounds = new Bounds(centre, bounds.c1 - bounds.c0);
-                request.meshIds[m] = request.meshes[m].GetEntityId();
+                slot.id = request.meshes[m].GetEntityId();
+                request.meshSlots[m] = slot;
             }
 
             if (report.meshesWritten == 0)
@@ -771,9 +767,9 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            for (int m = 0; m < request.bakeDone.Length; m++)
+            for (int m = 0; m < request.meshSlots.Length; m++)
             {
-                if (request.bakeDone[m] == 0)
+                if (request.meshSlots[m].bakeDone == 0)
                 {
                     // One element of the bake did not come back. What the cook made of the shape is not asked; that
                     // the call was made and returned for every mesh is, and it was not.
@@ -903,7 +899,7 @@ namespace Zantetsu.PhysicsCut
                 return null;
             }
 
-            bounds = request.meshBounds[mesh];
+            bounds = request.meshSlots[mesh].bounds;
             return request.meshes[mesh++];
         }
 
@@ -968,24 +964,9 @@ namespace Zantetsu.PhysicsCut
 
         private static void ReleaseWorkingSet(PhysicsCutRequest request)
         {
-            if (request.meshIds.IsCreated)
+            if (request.meshSlots.IsCreated)
             {
-                request.meshIds.Dispose();
-            }
-
-            if (request.meshBounds.IsCreated)
-            {
-                request.meshBounds.Dispose();
-            }
-
-            if (request.meshVertexCounts.IsCreated)
-            {
-                request.meshVertexCounts.Dispose();
-            }
-
-            if (request.bakeDone.IsCreated)
-            {
-                request.bakeDone.Dispose();
+                request.meshSlots.Dispose();
             }
 
             if (request.report.IsCreated)
@@ -1043,8 +1024,7 @@ namespace Zantetsu.PhysicsCut
                     input = _request.input,
                     output = _request.arena.Output,
                     meshData = _request.meshData,
-                    bounds = _request.meshBounds,
-                    vertexCounts = _request.meshVertexCounts,
+                    meshSlots = _request.meshSlots,
                     report = _request.report,
                 };
                 _handle = job.Schedule();
@@ -1106,8 +1086,8 @@ namespace Zantetsu.PhysicsCut
 
             public void Begin()
             {
-                var job = new BakeJob { ids = _request.meshIds, done = _request.bakeDone, cooking = _cooking };
-                _handle = job.Schedule(_request.meshIds.Length, 1);
+                var job = new BakeJob { meshSlots = _request.meshSlots, cooking = _cooking };
+                _handle = job.Schedule(_request.meshSlots.Length, 1);
                 _scheduled = true;
                 _request.scheduled++;
             }

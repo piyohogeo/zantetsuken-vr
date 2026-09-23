@@ -1386,10 +1386,7 @@ namespace Zantetsu.PhysicsCut.Tests
         private static void AssertHoldsNoResources(PhysicsCutRequest request, string what)
         {
             Assert.That(request.arena, Is.Null, what + ": the arena went back");
-            Assert.That(request.meshIds.IsCreated, Is.False, what + ": the mesh ids");
-            Assert.That(request.meshBounds.IsCreated, Is.False, what + ": the mesh bounds");
-            Assert.That(request.meshVertexCounts.IsCreated, Is.False, what + ": the vertex counts");
-            Assert.That(request.bakeDone.IsCreated, Is.False, what + ": the bake flags");
+            Assert.That(request.meshSlots.IsCreated, Is.False, what + ": the mesh working slots");
             Assert.That(request.report.IsCreated, Is.False, what + ": the report");
             Assert.That(request.meshDataHeld, Is.False, what + ": the writable mesh data");
             Assert.That(request.meshes, Is.Null, what + ": the meshes");

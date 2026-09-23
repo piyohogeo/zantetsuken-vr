@@ -10,6 +10,18 @@ using Zantetsu.ConvexCut;
 
 namespace Zantetsu.PhysicsCut
 {
+    /// <summary>
+    /// One mesh's working values, held until the cut and bake have both been collected. The cut writes its bounds
+    /// and vertex count, the main thread supplies its id, and the bake marks its return. These stages never overlap.
+    /// </summary>
+    internal struct PhysicsCutMeshSlot
+    {
+        public float3x2 bounds;
+        public int vertexCount;
+        public int id;
+        public byte bakeDone;
+    }
+
     /// <summary>What one run of <see cref="ConvexCutAndMeshJob"/> did, beyond the kernel's own result.</summary>
     internal struct PhysicsCutJobReport
     {
@@ -148,18 +160,16 @@ namespace Zantetsu.PhysicsCut
         [NativeDisableUnsafePtrRestriction] public ConvexCutOwnerInput input;
         [NativeDisableUnsafePtrRestriction] public ConvexCutOwnerOutput output;
         public Mesh.MeshDataArray meshData;
-        public NativeArray<float3x2> bounds;
-        public NativeArray<int> vertexCounts;
+        public NativeArray<PhysicsCutMeshSlot> meshSlots;
         public NativeArray<PhysicsCutJobReport> report;
 
         public void Execute()
         {
             var written = new PhysicsCutJobReport();
             ConvexCutOwnerKernel.Execute(in input, in output, ref written.kernel);
-            for (int m = 0; m < vertexCounts.Length; m++)
+            for (int m = 0; m < meshSlots.Length; m++)
             {
-                vertexCounts[m] = 0;
-                bounds[m] = default;
+                meshSlots[m] = default;
             }
 
             if (written.kernel.status != ConvexCutOwnerStatus.Ok)
@@ -241,8 +251,11 @@ namespace Zantetsu.PhysicsCut
                     vertexCount = n,
                 },
                 MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontNotifyMeshUsers);
-            bounds[slot] = new float3x2(lower, upper);
-            vertexCounts[slot] = n;
+            meshSlots[slot] = new PhysicsCutMeshSlot
+            {
+                bounds = new float3x2(lower, upper),
+                vertexCount = n,
+            };
             slot++;
             return true;
         }
@@ -286,28 +299,24 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     internal struct BakeJob : IJobParallelFor
     {
-        [ReadOnly] public NativeArray<int> ids;
-
         /// <summary>
-        /// 1 per element once that element has been dealt with: the bake call returned, or there was no mesh in that
-        /// slot. The caller requires every element before it hands anything over. This says the call was made and came
-        /// back, nothing more — <see cref="UnityEngine.Physics.BakeMesh"/> reports no success of its own.
+        /// Each parallel iteration reads and updates only its own checked element. bakeDone becomes 1 once the bake
+        /// returned or the slot had no mesh; it reports completion, not whether the cooked hull is correct.
         /// </summary>
-        [WriteOnly] public NativeArray<byte> done;
+        public NativeArray<PhysicsCutMeshSlot> meshSlots;
 
         public MeshColliderCookingOptions cooking;
 
         public void Execute(int index)
         {
-            int id = ids[index];
-            if (id == 0)
+            PhysicsCutMeshSlot slot = meshSlots[index];
+            if (slot.id != 0)
             {
-                done[index] = 1;
-                return;
+                UnityEngine.Physics.BakeMesh(slot.id, true, cooking);
             }
 
-            UnityEngine.Physics.BakeMesh(id, true, cooking);
-            done[index] = 1;
+            slot.bakeDone = 1;
+            meshSlots[index] = slot;
         }
     }
 }

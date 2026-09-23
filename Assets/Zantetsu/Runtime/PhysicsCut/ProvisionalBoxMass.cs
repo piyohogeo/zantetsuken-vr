@@ -87,8 +87,17 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            ClippedBox(lo, hi, planeOwner, out double volumePositive, out double3 momentPositive,
-                out double volumeNegative, out double3 momentNegative);
+            // Slab integration can round a ratio differently from the tetrahedra. Keep extreme parent masses on
+            // the original path: that last bit can change whether a child survives the later float conversion.
+            // With the slab-width guard below, this ordinary mass range keeps both children away from zero and
+            // infinity at that conversion; these are fast-path limits, not new limits on accepted input.
+            if (!(parentMass >= 1e-30 && parentMass <= float.MaxValue)
+                || !TryAxisClippedBox(lo, hi, planeOwner, parentMass, out double volumePositive, out double3 momentPositive,
+                    out double volumeNegative, out double3 momentNegative))
+            {
+                ClippedBox(lo, hi, planeOwner, out volumePositive, out momentPositive,
+                    out volumeNegative, out momentNegative);
+            }
 
             double total = volumePositive + volumeNegative;
             double massPositive;
@@ -232,6 +241,56 @@ namespace Zantetsu.PhysicsCut
 
             inertia = sourceInertia * (float)(mass / parentMass);
             inertiaRotation = math.normalize(sourceInertiaRotation);
+        }
+
+        /// <summary>Two rectangular slabs, only when the converted plane is exactly parallel to a box face.</summary>
+        private static bool TryAxisClippedBox(
+            float3 lo, float3 hi, float4 plane, double parentMass,
+            out double volumePositive, out double3 momentPositive,
+            out double volumeNegative, out double3 momentNegative)
+        {
+            volumePositive = volumeNegative = 0.0;
+            momentPositive = momentNegative = double3.zero;
+            int axis;
+            if (plane.x != 0f && plane.y == 0f && plane.z == 0f) axis = 0;
+            else if (plane.y != 0f && plane.x == 0f && plane.z == 0f) axis = 1;
+            else if (plane.z != 0f && plane.x == 0f && plane.y == 0f) axis = 2;
+            else return false;
+
+            // Bounds and plane are already finite. Promote before subtracting or multiplying: finite float bounds
+            // can overflow a float volume or underflow it to zero, while these products fit comfortably in double.
+            double3 extent = (double3)hi - (double3)lo;
+            if (!math.all(extent > 0.0)) return false;
+            double cut = -(double)plane.w / plane[axis];
+            double lowerWidth = cut - lo[axis], upperWidth = hi[axis] - cut;
+            // Keep faces, outside cuts, and slices within 64 double ulps of the full width on the original path.
+            // For those tiny slices the later parent-minus-positive mass can be sensitive to rounding order.
+            double margin = extent[axis] * (64.0 * 2.2204460492503131e-16);
+            if (!(lowerWidth > margin && upperWidth > margin)) return false;
+
+            // A different last bit in the volume ratio can also cross the float inertia overflow/zero boundary.
+            // Use the same float subtraction as SideInertia, then bound both children's inertia away from those
+            // boundaries. Each child's fraction exceeds about 2^-46 by the width guard above. Outside this
+            // ordinary range, preserve the tetrahedra's rounding and its existing fallback/refusal decisions.
+            float3 size = hi - lo;
+            double x = size.x, y = size.y, z = size.z;
+            double xy = x * x + y * y, xz = x * x + z * z, yz = y * y + z * z;
+            double least = parentMass * math.min(xy, math.min(xz, yz)) / 12.0;
+            double greatest = parentMass * math.max(xy, math.max(xz, yz)) / 12.0;
+            if (!(least >= 1e-15 && greatest <= 1e30)) return false;
+
+            double area = axis == 0 ? extent.y * extent.z : axis == 1 ? extent.x * extent.z : extent.x * extent.y;
+            double lowerVolume = area * lowerWidth, upperVolume = area * upperWidth;
+            double3 lowerCentre = ((double3)lo + (double3)hi) * 0.5;
+            double3 upperCentre = lowerCentre;
+            lowerCentre[axis] = (double)lo[axis] + lowerWidth * 0.5;
+            upperCentre[axis] = cut + upperWidth * 0.5;
+            bool upperPositive = plane[axis] > 0f;
+            volumePositive = upperPositive ? upperVolume : lowerVolume;
+            volumeNegative = upperPositive ? lowerVolume : upperVolume;
+            momentPositive = volumePositive * (upperPositive ? upperCentre : lowerCentre);
+            momentNegative = volumeNegative * (upperPositive ? lowerCentre : upperCentre);
+            return true;
         }
 
         /// <summary>
