@@ -1,0 +1,2507 @@
+{
+  "input_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\paired-mass1",
+  "notes": [
+    "Unity Editor MonoのMain上のStopwatch経過時間。CPU実行時間、IL2CPP Player性能、切断・公開全体の時間ではない。",
+    "箱・Characterごとにbaseline/candidate各1 batchのwarmup後、ABBAを8 round。各batchは1024回のTryDivide。setup、出力一致assert、teardown、保存は計測外。",
+    "各roundのbaseline値はorder 0/3の2 sample平均、candidate値はorder 1/2の2 sample平均。paired差はそのcandidate平均−baseline平均。負が短縮。",
+    "runの主指標は8個のround paired差の中央値。百分率はroundごとにpaired差/baseline平均を計算した8値の中央値で、中央値同士の比率ではない。",
+    "baseline/candidateのrun中央値はそれぞれ16 batch平均値の中央値。その2中央値の差は別指標であり、paired差の中央値とは同一視しない。",
+    "2 process代表値は各run集約値の中央値、rangeはrun集約値のmin–max。process間でsampleをpoolしない。2 processだけで有意差・実Player効果を確定しない。",
+    "全128 sampleを保持し、外れ値除外・失敗runの自動除外を行わない。GC測定・強制GCなし。反復中の割込みやGC等による経過時間変動を含み得る。",
+    "baselineは8bae0b1eの型名だけを置換した実装、candidateは現行ProvisionalBoxMass。同じshape入力で全出力のbit一致assertを測定前後に行うハーネスの局所比較。"
+  ],
+  "sources": [
+    {
+      "process_run": "run1-paired-mass",
+      "csv_run_label": "run1-paired-mass",
+      "csv": "run1-paired-mass/paired-mass.csv",
+      "sha256": "dd648b72c265e8f5b6ba5630fd0aaf8e675676a02b5d8a8138ec1653495c145c",
+      "environment_file": "run1-paired-mass/paired-mass-environment.txt",
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono; Main Stopwatch elapsed time, not CPU time or complete cut cost.\nThread=1\nBaseline=8bae0b1e; candidate=current ProvisionalBoxMass; same input per process.\nOrder=ABBA (A baseline, B candidate), 8 rounds, 1024 calls per batch.\nWarmup=one 1024-call batch per version and case; not saved in CSV.\nNo forced GC; setup/disposal/assertions/CSV writes outside timed batches.\nbox: lo=(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity\ncharacter: lo=(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity\n"
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "csv_run_label": "run2-paired-mass",
+      "csv": "run2-paired-mass/paired-mass.csv",
+      "sha256": "4707d6f0d34e3d7b902f049267a68b477b3c6cca1efba4bcb8f588c831b9c86d",
+      "environment_file": "run2-paired-mass/paired-mass-environment.txt",
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono; Main Stopwatch elapsed time, not CPU time or complete cut cost.\nThread=1\nBaseline=8bae0b1e; candidate=current ProvisionalBoxMass; same input per process.\nOrder=ABBA (A baseline, B candidate), 8 rounds, 1024 calls per batch.\nWarmup=one 1024-call batch per version and case; not saved in CSV.\nNo forced GC; setup/disposal/assertions/CSV writes outside timed batches.\nbox: lo=(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity\ncharacter: lo=(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity\n"
+    }
+  ],
+  "round_summaries": [
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 0,
+      "baseline_mean_us": 5.129345703125,
+      "candidate_mean_us": 4.790869140625,
+      "paired_delta_us": -0.33847656249999947,
+      "paired_delta_percent": -6.598825310093375
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 1,
+      "baseline_mean_us": 4.680078125,
+      "candidate_mean_us": 4.60009765625,
+      "paired_delta_us": -0.07998046874999964,
+      "paired_delta_percent": -1.7089558467573585
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 2,
+      "baseline_mean_us": 4.7138671875,
+      "candidate_mean_us": 4.57802734375,
+      "paired_delta_us": -0.13583984375000036,
+      "paired_delta_percent": -2.8817070644292597
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 3,
+      "baseline_mean_us": 4.759472656250001,
+      "candidate_mean_us": 4.530419921875,
+      "paired_delta_us": -0.22905273437500107,
+      "paired_delta_percent": -4.812565402055954
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 4,
+      "baseline_mean_us": 5.063037109374999,
+      "candidate_mean_us": 4.5767578125,
+      "paired_delta_us": -0.48627929687499893,
+      "paired_delta_percent": -9.604497979573907
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 5,
+      "baseline_mean_us": 6.94638671875,
+      "candidate_mean_us": 6.851904296875,
+      "paired_delta_us": -0.094482421875,
+      "paired_delta_percent": -1.360166453445052
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 6,
+      "baseline_mean_us": 5.792138671875,
+      "candidate_mean_us": 5.309277343750001,
+      "paired_delta_us": -0.48286132812499893,
+      "paired_delta_percent": -8.336494608971261
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round": 7,
+      "baseline_mean_us": 5.42197265625,
+      "candidate_mean_us": 5.50439453125,
+      "paired_delta_us": 0.08242187499999964,
+      "paired_delta_percent": 1.5201455305199767
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 0,
+      "baseline_mean_us": 4.4830078125,
+      "candidate_mean_us": 4.6650390625,
+      "paired_delta_us": 0.18203124999999964,
+      "paired_delta_percent": 4.060471398074317
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 1,
+      "baseline_mean_us": 4.686230468750001,
+      "candidate_mean_us": 4.708837890625,
+      "paired_delta_us": 0.022607421874999645,
+      "paired_delta_percent": 0.4824223227123936
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 2,
+      "baseline_mean_us": 4.5248046875,
+      "candidate_mean_us": 4.63486328125,
+      "paired_delta_us": 0.11005859375000071,
+      "paired_delta_percent": 2.4323391030345047
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 3,
+      "baseline_mean_us": 4.7212890625,
+      "candidate_mean_us": 4.540869140625,
+      "paired_delta_us": -0.180419921875,
+      "paired_delta_percent": -3.8214123195300544
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 4,
+      "baseline_mean_us": 4.797119140625,
+      "candidate_mean_us": 4.863232421875,
+      "paired_delta_us": 0.06611328124999982,
+      "paired_delta_percent": 1.3781871850984746
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 5,
+      "baseline_mean_us": 4.9755859375,
+      "candidate_mean_us": 4.889453124999999,
+      "paired_delta_us": -0.08613281250000071,
+      "paired_delta_percent": -1.7311089303238614
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 6,
+      "baseline_mean_us": 5.00517578125,
+      "candidate_mean_us": 4.919140625,
+      "paired_delta_us": -0.08603515625000036,
+      "paired_delta_percent": -1.7189237703158908
+    },
+    {
+      "level": "round",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round": 7,
+      "baseline_mean_us": 5.2802734375,
+      "candidate_mean_us": 5.070019531250001,
+      "paired_delta_us": -0.2102539062499993,
+      "paired_delta_percent": -3.9818753467726884
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 0,
+      "baseline_mean_us": 3.95263671875,
+      "candidate_mean_us": 3.95673828125,
+      "paired_delta_us": 0.004101562499999822,
+      "paired_delta_percent": 0.10376775787522713
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 1,
+      "baseline_mean_us": 3.975830078125,
+      "candidate_mean_us": 3.939208984375,
+      "paired_delta_us": -0.03662109375,
+      "paired_delta_percent": -0.9210930303960699
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 2,
+      "baseline_mean_us": 4.079150390625,
+      "candidate_mean_us": 3.97900390625,
+      "paired_delta_us": -0.10014648437500018,
+      "paired_delta_percent": -2.4550819358159512
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 3,
+      "baseline_mean_us": 3.953564453125,
+      "candidate_mean_us": 3.932470703125,
+      "paired_delta_us": -0.02109374999999991,
+      "paired_delta_percent": -0.5335375267077501
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 4,
+      "baseline_mean_us": 4.03017578125,
+      "candidate_mean_us": 3.9461425781250004,
+      "paired_delta_us": -0.08403320312499929,
+      "paired_delta_percent": -2.0851001962732143
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 5,
+      "baseline_mean_us": 3.9388183593750004,
+      "candidate_mean_us": 3.96318359375,
+      "paired_delta_us": 0.024365234374999822,
+      "paired_delta_percent": 0.6185924851550155
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 6,
+      "baseline_mean_us": 4.039501953125,
+      "candidate_mean_us": 3.9064453125,
+      "paired_delta_us": -0.133056640625,
+      "paired_delta_percent": -3.2938872704855613
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round": 7,
+      "baseline_mean_us": 3.919677734375,
+      "candidate_mean_us": 3.897900390625,
+      "paired_delta_us": -0.021777343750000178,
+      "paired_delta_percent": -0.5555901588290297
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 0,
+      "baseline_mean_us": 4.280224609375001,
+      "candidate_mean_us": 4.37880859375,
+      "paired_delta_us": 0.09858398437499893,
+      "paired_delta_percent": 2.303243249409619
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 1,
+      "baseline_mean_us": 4.179931640625,
+      "candidate_mean_us": 4.2326171875,
+      "paired_delta_us": 0.05268554687499982,
+      "paired_delta_percent": 1.260440394836746
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 2,
+      "baseline_mean_us": 4.046484375,
+      "candidate_mean_us": 4.045605468750001,
+      "paired_delta_us": -0.0008789062499996447,
+      "paired_delta_percent": -0.021720243266715806
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 3,
+      "baseline_mean_us": 4.011474609375,
+      "candidate_mean_us": 3.890380859375,
+      "paired_delta_us": -0.12109375,
+      "paired_delta_percent": -3.018684194510377
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 4,
+      "baseline_mean_us": 3.9288085937500004,
+      "candidate_mean_us": 3.9033203125,
+      "paired_delta_us": -0.025488281250000355,
+      "paired_delta_percent": -0.6487534488329985
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 5,
+      "baseline_mean_us": 4.044628906250001,
+      "candidate_mean_us": 3.97587890625,
+      "paired_delta_us": -0.06875000000000053,
+      "paired_delta_percent": -1.6997851123934746
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 6,
+      "baseline_mean_us": 3.9197265625,
+      "candidate_mean_us": 3.895263671875,
+      "paired_delta_us": -0.024462890625000178,
+      "paired_delta_percent": -0.6240968658129499
+    },
+    {
+      "level": "round",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round": 7,
+      "baseline_mean_us": 3.958642578125,
+      "candidate_mean_us": 3.871337890625,
+      "paired_delta_us": -0.08730468750000009,
+      "paired_delta_percent": -2.2054198068407507
+    }
+  ],
+  "run_summaries": [
+    {
+      "level": "run",
+      "run": "run1-paired-mass",
+      "case": "box",
+      "round_count": 8,
+      "samples_per_version": 16,
+      "baseline_batch_median_us": 5.129345703125,
+      "candidate_batch_median_us": 4.658447265625,
+      "difference_of_batch_medians_us": -0.4708984374999998,
+      "paired_delta_us_median": -0.1824462890625007,
+      "paired_delta_percent_median": -3.847136233242607
+    },
+    {
+      "level": "run",
+      "run": "run1-paired-mass",
+      "case": "character",
+      "round_count": 8,
+      "samples_per_version": 16,
+      "baseline_batch_median_us": 4.797119140625,
+      "candidate_batch_median_us": 4.856249999999999,
+      "difference_of_batch_medians_us": 0.05913085937499929,
+      "paired_delta_us_median": -0.031713867187500355,
+      "paired_delta_percent_median": -0.6182507238017486
+    },
+    {
+      "level": "run",
+      "run": "run2-paired-mass",
+      "case": "box",
+      "round_count": 8,
+      "samples_per_version": 16,
+      "baseline_batch_median_us": 3.969140625,
+      "candidate_batch_median_us": 3.9484375,
+      "difference_of_batch_medians_us": -0.020703125000000266,
+      "paired_delta_us_median": -0.02919921875000009,
+      "paired_delta_percent_median": -0.7383415946125498
+    },
+    {
+      "level": "run",
+      "run": "run2-paired-mass",
+      "case": "character",
+      "round_count": 8,
+      "samples_per_version": 16,
+      "baseline_batch_median_us": 4.016796875,
+      "candidate_batch_median_us": 3.91162109375,
+      "difference_of_batch_medians_us": -0.10517578124999982,
+      "paired_delta_us_median": -0.024975585937500266,
+      "paired_delta_percent_median": -0.6364251573229742
+    }
+  ],
+  "two_process_summaries": [
+    {
+      "level": "two_process",
+      "run": "",
+      "case": "box",
+      "process_count": 2,
+      "process_runs": [
+        "run1-paired-mass",
+        "run2-paired-mass"
+      ],
+      "baseline_batch_median_us": 4.5492431640625,
+      "baseline_batch_median_us_min_run": 3.969140625,
+      "baseline_batch_median_us_max_run": 5.129345703125,
+      "candidate_batch_median_us": 4.3034423828125,
+      "candidate_batch_median_us_min_run": 3.9484375,
+      "candidate_batch_median_us_max_run": 4.658447265625,
+      "difference_of_batch_medians_us": -0.24580078125000004,
+      "difference_of_batch_medians_us_min_run": -0.4708984374999998,
+      "difference_of_batch_medians_us_max_run": -0.020703125000000266,
+      "paired_delta_us_median": -0.1058227539062504,
+      "paired_delta_us_median_min_run": -0.1824462890625007,
+      "paired_delta_us_median_max_run": -0.02919921875000009,
+      "paired_delta_percent_median": -2.2927389139275784,
+      "paired_delta_percent_median_min_run": -3.847136233242607,
+      "paired_delta_percent_median_max_run": -0.7383415946125498,
+      "difference_of_two_process_version_representatives_us": -0.24580078124999982
+    },
+    {
+      "level": "two_process",
+      "run": "",
+      "case": "character",
+      "process_count": 2,
+      "process_runs": [
+        "run1-paired-mass",
+        "run2-paired-mass"
+      ],
+      "baseline_batch_median_us": 4.4069580078125,
+      "baseline_batch_median_us_min_run": 4.016796875,
+      "baseline_batch_median_us_max_run": 4.797119140625,
+      "candidate_batch_median_us": 4.383935546875,
+      "candidate_batch_median_us_min_run": 3.91162109375,
+      "candidate_batch_median_us_max_run": 4.856249999999999,
+      "difference_of_batch_medians_us": -0.023022460937500266,
+      "difference_of_batch_medians_us_min_run": -0.10517578124999982,
+      "difference_of_batch_medians_us_max_run": 0.05913085937499929,
+      "paired_delta_us_median": -0.02834472656250031,
+      "paired_delta_us_median_min_run": -0.031713867187500355,
+      "paired_delta_us_median_max_run": -0.024975585937500266,
+      "paired_delta_percent_median": -0.6273379405623614,
+      "paired_delta_percent_median_min_run": -0.6364251573229742,
+      "paired_delta_percent_median_max_run": -0.6182507238017486,
+      "difference_of_two_process_version_representatives_us": -0.02302246093750071
+    }
+  ],
+  "raw_rows": [
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 2,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "52442",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.1212890625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 3,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "48085",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.69580078125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 4,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "50032",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.8859375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 5,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "52607",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.13740234375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 6,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "47998",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.6873046875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 7,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "47320",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.62109375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 8,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "46890",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.5791015625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 9,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "47850",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.6728515625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 10,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "48476",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.733984375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 11,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "47012",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.591015625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 12,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "46746",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.5650390625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 13,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "48064",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.69375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 14,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "46416",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.5328125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 15,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "46100",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.501953125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 16,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "46683",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.55888671875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 17,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "51058",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.9861328125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 18,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "47632",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.6515625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 19,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "46553",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.54619140625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 20,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "47179",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.60732421875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 21,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "56059",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.47451171875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 22,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "71297",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 6.96259765625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 23,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "74622",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 7.2873046875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 24,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "65705",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 6.41650390625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 25,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "70965",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 6.93017578125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 26,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "57014",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.5677734375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 27,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "54433",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.31572265625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 28,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "54301",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.30283203125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 29,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "61609",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 6.01650390625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 30,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "56373",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.50517578125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 31,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "55237",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.39423828125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 32,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "57493",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.61455078125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 33,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "54669",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.33876953125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 34,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "46193",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.51103515625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 35,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "46343",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.52568359375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 36,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "49197",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.80439453125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 37,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "45619",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.45498046875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 38,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "44931",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.38779296875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 39,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "46479",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.53896484375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 40,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "49958",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.8787109375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 41,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "51043",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.98466796875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 42,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "45747",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.46748046875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 43,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "48623",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.74833984375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 44,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "46299",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.52138671875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 45,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "46921",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.58212890625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 46,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "48144",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.7015625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 47,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "46405",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.53173828125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 48,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "46592",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.55
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 49,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "48548",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.741015625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 50,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "49231",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.80771484375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 51,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "50047",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.88740234375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 52,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "49552",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.8390625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 53,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "49014",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.7865234375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 54,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "51657",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.04462890625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 55,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "49904",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.8734375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 56,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "50232",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.90546875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 57,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "50243",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.90654296875
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 58,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "50448",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.9265625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 59,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "50417",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.92353515625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 60,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "50327",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.91474609375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 61,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "52058",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.0837890625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 62,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "52212",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.098828125
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 63,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "51396",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.019140625
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 64,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "52438",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.1208984375
+    },
+    {
+      "process_run": "run1-paired-mass",
+      "file": "run1-paired-mass/paired-mass.csv",
+      "line": 65,
+      "values": {
+        "run": "run1-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "55928",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 5.46171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 2,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40664",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.97109375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 3,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40416",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.946875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 4,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40618",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9666015625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 5,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "0",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40286",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9341796875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 6,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40981",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.00205078125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 7,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40198",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9255859375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 8,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40477",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.95283203125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 9,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "1",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40444",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.949609375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 10,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "42870",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.1865234375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 11,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40654",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9701171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 12,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40836",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.987890625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 13,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "2",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40671",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.97177734375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 14,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40624",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9671875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 15,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40287",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.93427734375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 16,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40250",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9306640625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 17,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "3",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40345",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.93994140625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 18,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "41071",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.01083984375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 19,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40219",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.92763671875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 20,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40598",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9646484375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 21,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "4",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "41467",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.04951171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 22,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40614",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9662109375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 23,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40448",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.95
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 24,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40718",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9763671875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 25,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "5",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40053",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.91142578125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 26,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40797",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.98408203125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 27,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40526",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9576171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 28,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39478",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.8552734375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 29,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "6",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "41932",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.094921875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 30,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "39997",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.90595703125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 31,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40067",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.91279296875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 32,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39762",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.8830078125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 33,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "box",
+        "round": "7",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40278",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9333984375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 34,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "44223",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.31865234375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 35,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "44521",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.34775390625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 36,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "45157",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.40986328125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 37,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "0",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "43436",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.241796875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 38,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "43054",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.2044921875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 39,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "44127",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.30927734375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 40,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "42557",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.15595703125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 41,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "1",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "42551",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.15537109375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 42,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "41723",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.07451171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 43,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "42541",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.15439453125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 44,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40313",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.93681640625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 45,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "2",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "41149",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.01845703125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 46,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "42027",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.10419921875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 47,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "40053",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.91142578125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 48,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39622",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.8693359375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 49,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "3",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40128",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.91875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 50,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "40518",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9568359375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 51,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "39883",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.89482421875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 52,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "40057",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.91181640625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 53,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "4",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "39944",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.90078125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 54,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "42511",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.15146484375
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 55,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "41806",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.0826171875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 56,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39620",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.869140625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 57,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "5",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40323",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.93779296875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 58,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "39626",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.8697265625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 59,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "39857",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.89228515625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 60,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39918",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.8982421875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 61,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "6",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "40650",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9697265625
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 62,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "0",
+        "version": "baseline",
+        "ticks": "41115",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 4.01513671875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 63,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "1",
+        "version": "candidate",
+        "ticks": "39669",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.87392578125
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 64,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "2",
+        "version": "candidate",
+        "ticks": "39616",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.86875
+    },
+    {
+      "process_run": "run2-paired-mass",
+      "file": "run2-paired-mass/paired-mass.csv",
+      "line": 65,
+      "values": {
+        "run": "run2-paired-mass",
+        "case": "character",
+        "round": "7",
+        "order": "3",
+        "version": "baseline",
+        "ticks": "39958",
+        "freq": "10000000",
+        "iterations": "1024"
+      },
+      "us_per_call": 3.9021484375
+    }
+  ]
+}

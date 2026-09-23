@@ -1,0 +1,329 @@
+[
+  {
+    "run": "regression1/editmode",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "EditMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.Tests;Zantetsu.Rendering.Tests.VpGeometryReferenceTableTests;Zantetsu.Rendering.Tests.VpGeometryDescriptorRegistrationTests;Zantetsu.MeshCut.Tests.LogicalCutLedgerTests",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\regression1\\editmode\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\regression1\\editmode\\editor.log",
+        "-nographics"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 31.66643476486206,
+      "pid": 107960,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "288",
+      "result": "Passed",
+      "total": "288",
+      "passed": "288",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 21:55:19Z",
+      "end-time": "2026-09-23 21:55:34Z",
+      "duration": "14.2276036"
+    },
+    "results_xml_sha256": "b453a786b1e9bad8e3f307483f8a9b1c4fb882d37335f800398d9645cca6d78d",
+    "persistent_allocations_warning": []
+  },
+  {
+    "run": "regression1/playmode",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "PlayMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.PlayModeTests",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\regression1\\playmode\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\regression1\\playmode\\editor.log"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 2,
+      "seconds": 21.175339221954346,
+      "pid": 125528,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "41",
+      "result": "Passed",
+      "total": "41",
+      "passed": "34",
+      "failed": "0",
+      "inconclusive": "7",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 21:55:53Z",
+      "end-time": "2026-09-23 21:55:56Z",
+      "duration": "3.0757553"
+    },
+    "results_xml_sha256": "355af91fcf2f195cde0281e1a14c32b93ca216b4be2e583e9c5d138b24254bf8",
+    "persistent_allocations_warning": [
+      "23"
+    ]
+  },
+  {
+    "run": "playmode-split1/playmode-ordinary",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "PlayMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests;Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests;Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReusePlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.FinalHandoffPlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.ACaseThatNeverEndsItsWorld_IsEndedAndCollectedByTheTeardown;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AnAskTakenUpByTheUpdateLoop_IsPublishedAndDrawnInThatFrame;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.EndingTheWorldWithAWorkHeld_FreesNothingEarly_AndFinishesOnTheOrdinaryFrames;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.LettingOneThrough_KeepsWhatThatWorkEndedAs;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TheHoldGivesBackTheCompletionItWasGiven_AndEachWorkOnlyOnce;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TheUpdateLoopCarriesACutToItsCommit_AndAChildCanBeCutAgain;Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TwoOwnersCutAtOnce_BothReachTheirDestination_AndNeitherWaitsForTheOther",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-ordinary\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-ordinary\\editor.log"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 24.335959911346436,
+      "pid": 55428,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "39",
+      "result": "Passed",
+      "total": "39",
+      "passed": "39",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:01:47Z",
+      "end-time": "2026-09-23 22:01:50Z",
+      "duration": "2.737889"
+    },
+    "results_xml_sha256": "5317f3b1b8aa4ca005e15993bd6f46e6acfe2bba82d3975f86a499f813a50e1e",
+    "persistent_allocations_warning": []
+  },
+  {
+    "run": "playmode-split1/playmode-termination1",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "PlayMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AfterTheTerminationRequest_AFinishedCutIsNotPublished_EvenLaterInThatUpdate",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-termination1\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-termination1\\editor.log"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 17.44383931159973,
+      "pid": 74612,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "1",
+      "result": "Passed",
+      "total": "1",
+      "passed": "1",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:02:07Z",
+      "end-time": "2026-09-23 22:02:07Z",
+      "duration": "0.1663802"
+    },
+    "results_xml_sha256": "ce5b42acedfb71c1416341d9b86d65dd21061df428f6e91c4f1433940d9e6d1f",
+    "persistent_allocations_warning": [
+      "23"
+    ]
+  },
+  {
+    "run": "playmode-split1/playmode-termination2",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "PlayMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-termination2\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-split1\\playmode-termination2\\editor.log"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 19.22679376602173,
+      "pid": 108740,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "1",
+      "result": "Passed",
+      "total": "1",
+      "passed": "1",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:02:27Z",
+      "end-time": "2026-09-23 22:02:27Z",
+      "duration": "0.1758706"
+    },
+    "results_xml_sha256": "1fc18923853dc0c91c381d3af8895a2ccf7bf09911f16b48daa33fd939eab225",
+    "persistent_allocations_warning": [
+      "21"
+    ]
+  },
+  {
+    "run": "playmode-baseline1/playmode-baseline",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "PlayMode",
+        "-testFilter",
+        "Zantetsu.PhysicsCut.PlayModeTests",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-baseline1\\playmode-baseline\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\playmode-baseline1\\playmode-baseline\\editor.log"
+      ],
+      "variant": "baseline",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 2,
+      "seconds": 22.26957607269287,
+      "pid": 82792,
+      "normal_exit": true
+    },
+    "summary": {
+      "id": "2",
+      "testcasecount": "41",
+      "result": "Passed",
+      "total": "41",
+      "passed": "34",
+      "failed": "0",
+      "inconclusive": "7",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:03:00Z",
+      "end-time": "2026-09-23 22:03:02Z",
+      "duration": "2.2629493"
+    },
+    "results_xml_sha256": "d9d08966f002f5d0baa162688ba2616b0c7bf327d82f7629aad140da84e394c2",
+    "persistent_allocations_warning": [
+      "23"
+    ]
+  }
+]

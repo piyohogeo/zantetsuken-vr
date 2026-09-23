@@ -1,0 +1,693 @@
+{
+  "base": "8bae0b1e1c7f530a19a91f00603404d291170980",
+  "input_sha256": {
+    "m_8.hulls.json": "f442f5860ea09ddd53625002d433aea864478bcbb031e75e507e1d9016c4ea2a",
+    "m_8.render.json": "69273c3c552813a7986cda90df8e3f4bb784ce066516416b460fe83e79ccc104"
+  },
+  "runs": [
+    {
+      "run": "run01-baseline",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run01-baseline\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run01-baseline\\editor.log",
+          "-nographics"
+        ],
+        "variant": "baseline",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 15.652671337127686,
+        "pid": 119296,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:58:15Z",
+        "end-time": "2026-09-23 21:58:16Z",
+        "duration": "0.8704158"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "2e1b63b6f1822dd3c305e025fef585c92b3420b6a21291bf12898a4dad4f14ad",
+        "registration.csv": "4e103455418fd467bfe0312f7034e5eb8b8c7bd4d2775bdc6a026124c7945178"
+      }
+    },
+    {
+      "run": "run02-o1",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run02-o1\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run02-o1\\editor.log",
+          "-nographics"
+        ],
+        "variant": "o1",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 14.57231330871582,
+        "pid": 39544,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:58:30Z",
+        "end-time": "2026-09-23 21:58:31Z",
+        "duration": "0.6454995"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "da514708658fe226bda7eae3a297bf3ec093a39e9609d9d4e3b05cbf90547387",
+        "registration.csv": "596be79da7835815bc5a60b0d3c25136d9aa7bf86047265d5e45f4aee00bfadd"
+      }
+    },
+    {
+      "run": "run03-view",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run03-view\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run03-view\\editor.log",
+          "-nographics"
+        ],
+        "variant": "view",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.259029150009155,
+        "pid": 56496,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:58:46Z",
+        "end-time": "2026-09-23 21:58:47Z",
+        "duration": "0.8865089"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "11b638f05dde1ff6b7a0ae74be771e9d722d023a36f2ac88d9fd4ddc37746b67",
+        "registration.csv": "681d74bc73c99807e47d272595ebca0625e86efb2a3ceee332a3d71f2f899351"
+      }
+    },
+    {
+      "run": "run04-colliders",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run04-colliders\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run04-colliders\\editor.log",
+          "-nographics"
+        ],
+        "variant": "colliders",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.07633924484253,
+        "pid": 92948,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:59:02Z",
+        "end-time": "2026-09-23 21:59:03Z",
+        "duration": "0.8655886"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "b9d7d408e8559fe6b9d3d7c1fee6b0d2b32cb0ed389c4985faeb07dc803022f2",
+        "registration.csv": "f2a5708d0c11c8dcaa548998ceda95ae3d93b5106d9098d467a1baee343ca18c"
+      }
+    },
+    {
+      "run": "run05-mass",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run05-mass\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run05-mass\\editor.log",
+          "-nographics"
+        ],
+        "variant": "mass",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 15.540451765060425,
+        "pid": 115772,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:59:18Z",
+        "end-time": "2026-09-23 21:59:19Z",
+        "duration": "0.937099"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "c40136370c2f6424aa49746d3e01579679a71128cab52b5c6e5a7a3af8efc617",
+        "registration.csv": "68dba761bb9808896526a4fdf3b93003496e473a13ed8239063734cfc0e09088"
+      }
+    },
+    {
+      "run": "run06-all",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run06-all\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run06-all\\editor.log",
+          "-nographics"
+        ],
+        "variant": "all",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.519999504089355,
+        "pid": 24872,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:59:35Z",
+        "end-time": "2026-09-23 21:59:35Z",
+        "duration": "0.6559705"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "bad05b48c9a6d2634d1d2b81dc09381de8b61fdb87b5d7c328372e6bc7a47b09",
+        "registration.csv": "8bd6200271676c741505928e5f47424d7eb37b9af85484c586635f3878017b6a"
+      }
+    },
+    {
+      "run": "run07-all",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run07-all\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run07-all\\editor.log",
+          "-nographics"
+        ],
+        "variant": "all",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 14.758543491363525,
+        "pid": 9056,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 21:59:49Z",
+        "end-time": "2026-09-23 21:59:50Z",
+        "duration": "0.6741948"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "a94f71900639f41822b7a490f943a7fcc15d474b29346d907c74f85c51bd96b7",
+        "registration.csv": "f1d9311ff3f4f6abcbc042fcadd8025c606a3a5c9acfe3de528a01349d27ba0d"
+      }
+    },
+    {
+      "run": "run08-mass",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run08-mass\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run08-mass\\editor.log",
+          "-nographics"
+        ],
+        "variant": "mass",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.45223879814148,
+        "pid": 115328,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 22:00:06Z",
+        "end-time": "2026-09-23 22:00:06Z",
+        "duration": "0.9123819"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "8c5c91a0a0109d97ce65effe05a2579951430f91246b8c2f683ec96b71976c80",
+        "registration.csv": "de7d10f67954c5fe8d2f29e98a957d0124a320a741db097d55c5ca4506143749"
+      }
+    },
+    {
+      "run": "run09-colliders",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run09-colliders\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run09-colliders\\editor.log",
+          "-nographics"
+        ],
+        "variant": "colliders",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.070909023284912,
+        "pid": 2028,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 22:00:22Z",
+        "end-time": "2026-09-23 22:00:23Z",
+        "duration": "0.8882348"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "a686821a91ac2563dfdd0a35bd4d00933ea2b749a2b6347cad3815f1521e0490",
+        "registration.csv": "5ad1eb9486ba195019822334917753e00fcad19c0bb2a944ad6e1ef9aad2dc8c"
+      }
+    },
+    {
+      "run": "run10-view",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run10-view\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run10-view\\editor.log",
+          "-nographics"
+        ],
+        "variant": "view",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 16.450361967086792,
+        "pid": 50660,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 22:00:38Z",
+        "end-time": "2026-09-23 22:00:39Z",
+        "duration": "1.0592662"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "632f28fd2c028407520cb5fe5e47383809660ea1b8e45f77e898cdb03efcbaca",
+        "registration.csv": "df9ad1e40a4a2a3bfaf286bd384a10bbfb4ab8628eca743f364c543a95508665"
+      }
+    },
+    {
+      "run": "run11-o1",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run11-o1\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run11-o1\\editor.log",
+          "-nographics"
+        ],
+        "variant": "o1",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 17.88803744316101,
+        "pid": 60512,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 22:00:56Z",
+        "end-time": "2026-09-23 22:00:57Z",
+        "duration": "0.7436157"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "676134183d3763c1dab1f789667669cf840b00c1880b5a0474efee0a9751998c",
+        "registration.csv": "bc813ee43b91656826e1386038886f0c60ab4d0cec4afa9ebdbde2237925d30c"
+      }
+    },
+    {
+      "run": "run12-baseline",
+      "command": {
+        "argv": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-projectPath",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+          "-runTests",
+          "-testPlatform",
+          "EditMode",
+          "-testFilter",
+          "Zantetsu.MainThreadAudit.Tests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run12-baseline\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\comparison1\\run12-baseline\\editor.log",
+          "-nographics"
+        ],
+        "variant": "baseline",
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "236218fe6753bfcf8f78dc52774461a147d096da3e013771e3280adcf361516e",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "7916dcdc2b503e2ad53ccdd9a8e9048e507aa47c23434c9727f946cacb97460a",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "28275d9c3da6d8ba0957f3ab894d3c5d4c5d9b092f45593b13f5769f9eb9dfc4",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "eaca9c214f0028daf88fa2af21d1f627bd8524d73b992322745b283eb84c59c9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "d74880184e07084f2021df90692e01d475ae21e724449661982f72d5e5ee76ed"
+        },
+        "timeout_seconds": 900
+      },
+      "exit": {
+        "exit_code": 0,
+        "seconds": 15.758768796920776,
+        "pid": 69656,
+        "normal_exit": true
+      },
+      "test_summary": {
+        "id": "2",
+        "testcasecount": "2",
+        "result": "Passed",
+        "total": "2",
+        "passed": "2",
+        "failed": "0",
+        "inconclusive": "0",
+        "skipped": "0",
+        "asserts": "0",
+        "engine-version": "3.5.0.0",
+        "clr-version": "4.0.30319.42000",
+        "start-time": "2026-09-23 22:01:12Z",
+        "end-time": "2026-09-23 22:01:13Z",
+        "duration": "1.0030434"
+      },
+      "environment": "Unity=6000.3.22f1\nBackend=Editor Mono\nThread=1\nStopwatchFrequency=10000000\nAllocationProbeDelta=0\nInput=box(0.25,0.25,0.25), m_8 intake\nNo forced GC; no render loop in measured regions; actors inactive.\n",
+      "raw_sha256": {
+        "physics.csv": "56ef9d99a53436dabadd3a50516d374688ea6b66fbcc1298f231df9c12900c2b",
+        "registration.csv": "d0549b1b0b6b1d1162fdf83e9cd7e08fd532712ac38fb098822e3ed3aa54e0eb"
+      }
+    }
+  ]
+}

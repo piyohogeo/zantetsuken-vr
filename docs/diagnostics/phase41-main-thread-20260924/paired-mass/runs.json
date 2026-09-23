@@ -1,0 +1,106 @@
+[
+  {
+    "run": "run1-paired-mass",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "EditMode",
+        "-testFilter",
+        "Zantetsu.MainThreadAudit.Tests.PairedMassBenchmark",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\paired-mass1\\run1-paired-mass\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\paired-mass1\\run1-paired-mass\\editor.log",
+        "-nographics"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 18.311457633972168,
+      "pid": 79192,
+      "normal_exit": true
+    },
+    "test_summary": {
+      "id": "2",
+      "testcasecount": "1",
+      "result": "Passed",
+      "total": "1",
+      "passed": "1",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:04:59Z",
+      "end-time": "2026-09-23 22:04:59Z",
+      "duration": "0.7832221"
+    }
+  },
+  {
+    "run": "run2-paired-mass",
+    "command": {
+      "argv": [
+        "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.22f1\\Editor\\Unity.exe",
+        "-batchmode",
+        "-projectPath",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924",
+        "-runTests",
+        "-testPlatform",
+        "EditMode",
+        "-testFilter",
+        "Zantetsu.MainThreadAudit.Tests.PairedMassBenchmark",
+        "-testResults",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\paired-mass1\\run2-paired-mass\\results.xml",
+        "-logFile",
+        "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-20260924\\Logs\\MainThreadOptimization20260924\\paired-mass1\\run2-paired-mass\\editor.log",
+        "-nographics"
+      ],
+      "variant": "all",
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/Rendering/VpGeometryReferenceTable.cs": "672d64a3e36492db764ca2a5dd8d4fb0ae5f11de880180fb91788f52b5d1f615",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "fdb032f009efd1841357a952e3b462a44abd2ede89f6959e141ca293778aecd4"
+      },
+      "timeout_seconds": 900
+    },
+    "exit": {
+      "exit_code": 0,
+      "seconds": 14.299101829528809,
+      "pid": 67496,
+      "normal_exit": true
+    },
+    "test_summary": {
+      "id": "2",
+      "testcasecount": "1",
+      "result": "Passed",
+      "total": "1",
+      "passed": "1",
+      "failed": "0",
+      "inconclusive": "0",
+      "skipped": "0",
+      "asserts": "0",
+      "engine-version": "3.5.0.0",
+      "clr-version": "4.0.30319.42000",
+      "start-time": "2026-09-23 22:05:13Z",
+      "end-time": "2026-09-23 22:05:14Z",
+      "duration": "0.5729948"
+    }
+  }
+]
