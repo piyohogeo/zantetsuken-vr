@@ -319,8 +319,9 @@ namespace Zantetsu.PhysicsCut
                 root.SetActive(false);
 
                 var shapeFrame = new GameObject("Shape Frame");
-                shapeFrame.transform.SetParent(root.transform, false);
-                shapeFrame.transform.SetLocalPositionAndRotation(localOffset, localRotation);
+                Transform frame = shapeFrame.transform;
+                frame.SetParent(root.transform, false);
+                frame.SetLocalPositionAndRotation(localOffset, localRotation);
 
                 var body = root.AddComponent<Rigidbody>();
                 var side = new PhysicsOwnerSide(positive, root, shapeFrame, body);
