@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Collections;
@@ -40,47 +41,98 @@ namespace Zantetsu.PhysicsCut.Tests
         private const int VertexLimit = 128;
         private const int DeadlineMilliseconds = 30000;
 
-        private readonly List<IDisposable> _disposables = new List<IDisposable>();
-        private readonly List<GameObject> _objects = new List<GameObject>();
-        private readonly List<Mesh> _meshes = new List<Mesh>();
-        private readonly List<Material> _materials = new List<Material>();
+        // What one test makes. The lists are per test: a test whose ending was not confirmed keeps its lists, moved
+        // whole into _heldBack, and the next test starts with fresh ones.
+        private List<IDisposable> _disposables = new List<IDisposable>();
+        private List<World> _worlds = new List<World>();
+        private List<GameObject> _objects = new List<GameObject>();
+        private List<Mesh> _meshes = new List<Mesh>();
+        private List<Material> _materials = new List<Material>();
 
+        /// <summary>
+        /// What earlier tests of this fixture could not confirm the ending of, kept for the fixture's life and never
+        /// touched again: their worlds, with the state and reasons of each ending, and the objects they tracked.
+        /// </summary>
+        private readonly List<CutFixtureHeldBack> _heldBack = new List<CutFixtureHeldBack>();
+
+        [SetUp]
+        public void FreshLists()
+        {
+            _disposables = new List<IDisposable>();
+            _worlds = new List<World>();
+            _objects = new List<GameObject>();
+            _meshes = new List<Mesh>();
+            _materials = new List<Material>();
+        }
+
+        /// <summary>
+        /// Every world is ended (see <see cref="CutFixtureEnding"/>), then what the test tracked is destroyed -- but
+        /// only when every ending was confirmed. Otherwise nothing more is destroyed: the lists are moved whole into
+        /// <see cref="_heldBack"/>, so that what a worker could still read stays, and the test is failed with the
+        /// reasons, unless it had already failed, in which case the reasons are written beside that failure.
+        /// </summary>
         [TearDown]
         public void Cleanup()
         {
-            for (int i = _disposables.Count - 1; i >= 0; i--)
+            var report = new List<string>();
+            bool notConfirmed = false;
+            Exception teardownError = null;
+            try
             {
-                _disposables[i].Dispose();
-            }
-
-            _disposables.Clear();
-            foreach (GameObject go in _objects)
-            {
-                if (go != null)
+                for (int i = _disposables.Count - 1; i >= 0; i--)
                 {
-                    UnityEngine.Object.DestroyImmediate(go);
+                    try
+                    {
+                        _disposables[i].Dispose();
+                    }
+                    catch (Exception failure)
+                    {
+                        notConfirmed = true;
+                        report.Add("disposable " + i + " threw: " + failure);
+                    }
+                }
+
+                foreach (World w in _worlds)
+                {
+                    if (w.Ending.State != CutFixtureEndingState.ReleasedSafely || w.Ending.Failed)
+                    {
+                        notConfirmed = true;
+                        report.Add(w.Ending.Describe());
+                    }
+                }
+            }
+            catch (Exception failure)
+            {
+                teardownError = failure;
+                notConfirmed = true;
+                report.Add("teardown threw: " + failure);
+            }
+            finally
+            {
+                if (!notConfirmed)
+                {
+                    // In this order, and no list after the first failure: what it and the rest still hold is kept.
+                    notConfirmed = !CutFixtureTeardown.DestroyInOrder(
+                        report,
+                        new KeyValuePair<string, IList>("objects", _objects),
+                        new KeyValuePair<string, IList>("meshes", _meshes),
+                        new KeyValuePair<string, IList>("materials", _materials));
+                }
+
+                if (notConfirmed)
+                {
+                    _heldBack.Add(new CutFixtureHeldBack(
+                        TestContext.CurrentContext.Test.FullName, _worlds, _objects, _meshes, _materials, report));
+                    FreshLists();
+                }
+                else
+                {
+                    _disposables.Clear();
+                    _worlds.Clear();
                 }
             }
 
-            _objects.Clear();
-            foreach (Mesh mesh in _meshes)
-            {
-                if (mesh != null)
-                {
-                    UnityEngine.Object.DestroyImmediate(mesh);
-                }
-            }
-
-            _meshes.Clear();
-            foreach (Material material in _materials)
-            {
-                if (material != null)
-                {
-                    UnityEngine.Object.DestroyImmediate(material);
-                }
-            }
-
-            _materials.Clear();
+            CutFixtureTeardown.Report(report, notConfirmed, teardownError);
         }
 
         // ----- a destination whose collection the test controls --------------------------------------------------------
@@ -185,7 +237,7 @@ namespace Zantetsu.PhysicsCut.Tests
 
         // ----- one authored source, and the services the driver is bound to --------------------------------------------
 
-        private sealed class World : IDisposable
+        private sealed class World : IDisposable, ICutFixtureWorld
         {
             internal OwnerCutHarness harness;
             internal PhysicsShapeSource meshSource;
@@ -212,29 +264,58 @@ namespace Zantetsu.PhysicsCut.Tests
                 }
             }
 
+            /// <summary>This world's ending: run once, from whichever Dispose comes first.</summary>
+            internal readonly CutFixtureEnding Ending = new CutFixtureEnding();
+
+            ProvisionalCutDriver ICutFixtureWorld.Driver => driver;
+
+            CutDag ICutFixtureWorld.Dag => null;
+
+            PhysicsOwnerRegistry ICutFixtureWorld.Registry => registry;
+
+            PhysicsCutCook ICutFixtureWorld.Cook => cook;
+
+            SharedWorkFrame ICutFixtureWorld.Frame => frame;
+
+            SharedWorkDispatcher ICutFixtureWorld.Dispatcher => dispatcher;
+
+            void ICutFixtureWorld.ReleaseHeldWork()
+            {
+                job?.ReleaseEverything();
+            }
+
+            void ICutFixtureWorld.PumpDirectly()
+            {
+                cook?.Pump();
+            }
+
+            IReadOnlyList<KeyValuePair<string, Action>> ICutFixtureWorld.Tail
+            {
+                get
+                {
+                    var tail = new List<KeyValuePair<string, Action>>(3);
+                    if (geometry != null)
+                    {
+                        tail.Add(new KeyValuePair<string, Action>("geometry", () => geometry.Dispose()));
+                    }
+
+                    if (background != null)
+                    {
+                        tail.Add(new KeyValuePair<string, Action>("background", () => background.Dispose()));
+                    }
+
+                    if (harness != null)
+                    {
+                        tail.Add(new KeyValuePair<string, Action>("harness", () => harness.Dispose()));
+                    }
+
+                    return tail;
+                }
+            }
+
             public void Dispose()
             {
-                if (driver != null)
-                {
-                    UnityEngine.Object.DestroyImmediate(driver.gameObject);
-                }
-
-                registry?.Dispose();
-                cook?.Dispose();
-                var clock = System.Diagnostics.Stopwatch.StartNew();
-                while (cook != null && !cook.IsDrained && clock.ElapsedMilliseconds < DeadlineMilliseconds)
-                {
-                    job.ReleaseEverything();
-                    cook.Pump();
-                    dispatcher.BeginFrame(clock.ElapsedMilliseconds > 0 ? (int)clock.ElapsedMilliseconds : 1);
-                    dispatcher.Dispatch();
-                }
-
-                dispatcher?.Shutdown(DeadlineMilliseconds);
-                cook?.Pump();
-                geometry?.Dispose();
-                background?.Dispose();
-                harness?.Dispose();
+                Ending.Run(this, DeadlineMilliseconds);
             }
         }
 
@@ -259,6 +340,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 background = WorkerPoolExecutor.BackgroundPool(2),
             };
             _disposables.Add(w);
+            _worlds.Add(w);
 
             w.dispatcher = new SharedWorkDispatcher(8, 2, frameBudget, w.job, w.geometry, w.background);
 
@@ -325,8 +407,10 @@ namespace Zantetsu.PhysicsCut.Tests
             var driverObject = new GameObject("Provisional Cut Driver");
             _objects.Add(driverObject);
             w.driver = driverObject.AddComponent<ProvisionalCutDriver>();
+            w.Ending.BindAttempted();
             w.driver.Bind(
                 w.ledger, w.registry, w.cook, w.frame, null, supportEpsilon, AnchorEpsilon, VertexLimit, frameSource);
+            w.Ending.Bound(w.driver);
             return w;
         }
 
