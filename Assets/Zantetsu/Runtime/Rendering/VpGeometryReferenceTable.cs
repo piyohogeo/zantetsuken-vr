@@ -46,6 +46,7 @@ namespace Zantetsu.Rendering
         private readonly uint _lastGeneration;
         private readonly GeometrySlot[] _geometries;
         private readonly InstanceSlot[] _instances;
+        private int _geometryHighWater;
 
         /// <summary>
         /// Creates the storage's reference table. Throws InvalidOperationException when the storage already has one,
@@ -333,6 +334,7 @@ namespace Zantetsu.Rendering
             taken.geometry = geometry;
             taken.liveInstanceCount = 0;
             LiveGeometryCount++;
+            _geometryHighWater = Math.Max(_geometryHighWater, slot + 1);
             return new VpGeometryReference(_tableId, slot, taken.generation);
         }
 
@@ -349,7 +351,9 @@ namespace Zantetsu.Rendering
 
         private bool IsRegistered(VpIndexRangeHandle indexRange)
         {
-            for (int s = 0; s < _geometries.Length; s++)
+            // Slots beyond this prefix have never been used and cannot contain a registration. Keep the prefix
+            // when slots retire: a lower slot may be reused while a higher one is still live.
+            for (int s = 0; s < _geometryHighWater; s++)
             {
                 VpIndexRangeHandle registered = _geometries[s].geometry.indexRange;
                 if (_geometries[s].live

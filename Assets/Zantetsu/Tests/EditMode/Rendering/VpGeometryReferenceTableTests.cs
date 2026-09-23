@@ -275,6 +275,27 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
+        public void RegistrationRejectsAHigherSlotsDuplicateAfterALowerSlotIsReused()
+        {
+            using (var storage = new VpCpuGeometryStorage(32, 32, 8, 16, 16, Allocator.Persistent))
+            {
+                var table = new VpGeometryReferenceTable(storage, 128, 0);
+                VpGeometryReference first = Register(table, Append(storage, Quad()));
+                Register(table, Append(storage, Quad()));
+                VpStoredGeometry highestStored = Append(storage, Quad());
+                VpGeometryReference highest = Register(table, highestStored);
+                Assert.That(table.TryRegisterGeometry(highestStored, out _), Is.False, "highest used slot");
+
+                Assert.That(table.TryRetireGeometry(first), Is.True);
+                VpGeometryReference reused = Register(table, Append(storage, Quad()));
+                Assert.That(reused.slot, Is.EqualTo(first.slot), "the lower slot is reused");
+                Assert.That(table.TryRegisterGeometry(highestStored, out _), Is.False, "higher registration still exists");
+                AssertLive(table, highest, highestStored, 0, "higher registration unchanged");
+                AssertCounts(table, 3, 0, "duplicate rejected");
+            }
+        }
+
+        [Test]
         public void AnIndexRangeRetiredOutsideTheTable_LeavesTheGeometryLiveAndItsRetirementRefused()
         {
             using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, 16, Allocator.Persistent))
