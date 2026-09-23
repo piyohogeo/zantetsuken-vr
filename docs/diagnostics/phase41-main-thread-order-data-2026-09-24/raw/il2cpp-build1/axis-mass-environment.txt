@@ -1,0 +1,9 @@
+Unity=6000.3.22f1
+Backend=IL2CPP; Main Stopwatch elapsed time, not CPU time or complete cut cost.
+Thread=1
+Baseline=b19ce67a; candidate=current ProvisionalBoxMass; same input per process.
+Order=ABBA or BAAB by ORDER_REVERSE; 8 rounds, 1024 calls per batch.
+Warmup=one 1024-call batch per version and case; not saved in CSV.
+No forced GC; setup/disposal/assertions/CSV writes outside timed batches.
+box: lo=(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity
+character: lo=(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity

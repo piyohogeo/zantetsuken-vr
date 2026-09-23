@@ -1,0 +1,16 @@
+{
+  "id": "2",
+  "testcasecount": "4",
+  "result": "Passed",
+  "total": "4",
+  "passed": "4",
+  "failed": "0",
+  "inconclusive": "0",
+  "skipped": "0",
+  "asserts": "0",
+  "engine-version": "3.5.0.0",
+  "clr-version": "4.0.30319.42000",
+  "start-time": "2026-09-23 22:37:08Z",
+  "end-time": "2026-09-23 22:37:10Z",
+  "duration": "2.1178412"
+}

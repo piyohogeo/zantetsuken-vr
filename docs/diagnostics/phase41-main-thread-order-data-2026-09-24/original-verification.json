@@ -1,0 +1,13 @@
+{
+  "before_files": 1602,
+  "after_files": 1602,
+  "added": [],
+  "removed": [],
+  "changed": [],
+  "status_equal": true,
+  "head": "b19ce67a62ed08bd79df2178b0d8b73eb1f2607e",
+  "expected_head": "b19ce67a62ed08bd79df2178b0d8b73eb1f2607e",
+  "before_manifest_sha256": "a8490ed7ac5e29a8a8aa350a6ae76ce690b48240582726bb5f93bbf6ed2f64c4",
+  "scope": "tracked and nonignored untracked working files; shared git worktree/branch metadata excluded",
+  "unchanged": true
+}

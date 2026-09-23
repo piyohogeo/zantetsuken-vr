@@ -1,0 +1,2 @@
+# Preserve the exact diagnostic template bytes recorded in the Player source hashes.
+*.cs -text whitespace=trailing-space,space-before-tab,cr-at-eol

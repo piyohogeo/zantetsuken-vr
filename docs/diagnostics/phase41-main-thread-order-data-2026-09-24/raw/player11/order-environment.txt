@@ -1,0 +1,24 @@
+Unity=6000.3.22f1
+Backend=Player; runner records scripting backend
+MainManagedThread=1
+StopwatchFrequency=10000000
+EmptySpanMeanTicks=0.23
+EmptySpanMeanCycles=391.93
+Graphics=Direct3D11
+Screen=640x400 Windowed
+Quality=PC
+MSAA=4
+VSync=0
+TargetFrameRate=-1
+FixedDeltaTime=0.0199999921
+SimulationMode=FixedUpdate
+ORDER_REVERSE=True
+ORDER_CHARACTER_FIRST=True
+Rounds=8 plus one separate warmup per mode per case
+Mode0=build positive first,activate negative first; mode1=reverse build; mode2=reverse activation; mode3=both
+Local TryBuild/TryPublish only; no CutWorldRoot, worker, renderer, Final handoff or full Request.
+One source/pair at a time; each case reuses the same helper-owned authored meshes and bank.
+Source mass=12,inertia=(4,4,4),kinematic=true,useGravity=false; no anchors or separation impulse.
+Activation reversal keeps the joint on positive, so its connected negative body can still be inactive.
+Stopwatch spans include interruptions; thread_cycles are query-thread-cycle deltas, not nanoseconds.
+No forced GC, affinity/priority change, forced Physics.Simulate, or outlier removal.
