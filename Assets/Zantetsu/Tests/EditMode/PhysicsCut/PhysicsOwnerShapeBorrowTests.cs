@@ -49,6 +49,134 @@ namespace Zantetsu.PhysicsCut.Tests
             _storage.Dispose();
         }
 
+        /// <summary>
+        /// **A shape of no convexes is refused, as it always was** -- here for the two ways that take a list of
+        /// convexes: `Authored` and `ProvisionalSide`. (`OfSide` counts its side's parts instead, and has its own
+        /// test below.) The two per-convex lists now take the convex count, and neither path may turn a refusal
+        /// into an empty shape. The mesh source keeps the one hold the fixture's own shape has, so nothing was made
+        /// and given up either.
+        /// </summary>
+        [Test]
+        public void NoConvexAtAll_IsRefusedByAuthoredAndByAProvisionalSide()
+        {
+            int heldBefore = _meshSource.Users;
+
+            Assert.Throws<ArgumentException>(
+                () => PhysicsOwnerShape.Authored(
+                    _body.Shape.BankOf(0), new List<ConvexBrepRange>(), new List<Mesh>(), _meshSource,
+                    float4x4.identity),
+                "an authored shape of no convexes is refused");
+
+            Assert.Throws<ArgumentException>(
+                () => PhysicsOwnerShape.ProvisionalSide(_source, Array.Empty<int>()),
+                "a Provisional side of no convexes is refused");
+
+            Assert.That(
+                _meshSource.Users, Is.EqualTo(heldBefore),
+                "nothing was made, so nothing took a hold and nothing gave one back");
+        }
+
+        /// <summary>
+        /// **The third way of making a shape refuses an empty side too**: products that produced parts for the
+        /// positive side and none for the negative one. The side is asked for by name -- nothing is null, and no
+        /// input is missing -- and the refusal leaves the parent shape and the holds exactly as they were.
+        /// <para>
+        /// The one part here is a **borrowed** one, and a borrowed part carries no mesh of the products' own: what
+        /// it uses is the parent's, which the products neither own nor destroy. That is why the part is made
+        /// without a mesh -- `Add` takes every mesh it is handed into the list it destroys at the end -- and why
+        /// the parent's mesh is still the same object once the products have gone back.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void ASideWithNoPartAtAll_IsRefusedByOfSide()
+        {
+            var result = new ConvexCutOwnerResult
+            {
+                status = ConvexCutOwnerStatus.Ok,
+                positiveMass = 1.0,
+                negativeMass = 1.0,
+                positiveInertia = new SymmetricMatrix3 { xx = 1.0, yy = 1.0, zz = 1.0 },
+                negativeInertia = new SymmetricMatrix3 { xx = 1.0, yy = 1.0, zz = 1.0 },
+            };
+
+            var capacity = new ConvexCutOwnerCapacity
+            {
+                vertices = 1, faceOffsets = 1, faceIndices = 1, edges = 1, scratchBytes = 1,
+            };
+
+            // The parent's own mesh, taken before anything is made, so that "the same one" can be said by identity.
+            Mesh borrowedFromTheParent = _source.MeshOf(0);
+
+            var products = new PhysicsCutProducts(
+                new PhysicsCutArena(in capacity, 1), new ConvexCutOutcome[1], in result, float4x4.identity,
+                PhysicsCutCook.DefaultCooking);
+            try
+            {
+                // One part on the positive side, none on the negative: the negative side is the empty one. The part
+                // is borrowed, so it carries **no mesh of the products' own**: what it uses is the parent's, and
+                // handing that mesh over here would put it in the list the products destroy.
+                products.Add(true, new PhysicsCutPart(0, true, _source.Convex(0), null, default));
+                Assert.That(products.PartCount(true), Is.EqualTo(1), "the positive side has a part");
+                Assert.That(products.PartCount(false), Is.Zero, "and the negative side has none");
+
+                var productsSource = PhysicsShapeSource.For(products);
+                int heldByProducts = productsSource.Users;
+                int heldByMeshes = _meshSource.Users;
+                int convexesBefore = _source.ConvexCount;
+
+                Assert.Throws<ArgumentException>(
+                    () => PhysicsOwnerShape.OfSide(_source, products, productsSource, false),
+                    "a side of no parts is refused, and not turned into an empty shape");
+
+                Assert.That(
+                    productsSource.Users, Is.EqualTo(heldByProducts),
+                    "the products' own counter is where it was: nothing took a hold and nothing gave one back");
+                Assert.That(
+                    _meshSource.Users, Is.EqualTo(heldByMeshes), "and so is the source's mesh counter");
+                Assert.That(
+                    _source.ConvexCount, Is.EqualTo(convexesBefore), "the parent shape still has its convexes");
+                Assert.That(
+                    _source.MeshOf(0), Is.SameAs(borrowedFromTheParent),
+                    "and still names the very mesh it named before");
+            }
+            finally
+            {
+                products.Dispose();
+            }
+
+            // Given back, and the parent's mesh is still there and still the same object: the products borrowed it
+            // and never owned it.
+            Assert.That(
+                borrowedFromTheParent != null, Is.True,
+                "the mesh the part borrowed outlives the products, which never owned it");
+            Assert.That(
+                _source.MeshOf(0), Is.SameAs(borrowedFromTheParent),
+                "and the parent still names that same mesh");
+        }
+
+        /// <summary>
+        /// **One convex is a shape**, and the smallest one: the side names that convex's own mesh and holds the
+        /// source once. The two per-convex lists are made at this size, and this is the size a box has.
+        /// </summary>
+        [Test]
+        public void OneConvex_IsASideOfOne_WithThatConvexsOwnMesh()
+        {
+            PhysicsOwnerShape side = PhysicsOwnerShape.ProvisionalSide(_source, new[] { 1 });
+            try
+            {
+                Assert.That(side.ConvexCount, Is.EqualTo(1), "a side of one convex");
+                Assert.That(side.MeshOf(0), Is.SameAs(_source.MeshOf(1)), "and it names that convex's own mesh");
+                Assert.That(side.Meshes.Count, Is.EqualTo(1), "one mesh, in convex order");
+                Assert.That(_meshSource.Users, Is.EqualTo(2), "the side holds the mesh source once, beside the source");
+            }
+            finally
+            {
+                side.Dispose();
+            }
+
+            Assert.That(_meshSource.Users, Is.EqualTo(1), "and gives that hold back when it ends");
+        }
+
         [Test]
         public void AProvisionalSide_AddressesTheSourcesOwnBlock_AndCopiesNothing()
         {

@@ -150,7 +150,12 @@ namespace Zantetsu.PhysicsCut
     public sealed unsafe class PhysicsOwnerShape : IDisposable
     {
         private readonly List<PhysicsShapeSource> _sources = new List<PhysicsShapeSource>(2);
-        private readonly List<Mesh> _meshes = new List<Mesh>(4);
+        /// <summary>
+        /// One mesh per convex, in convex order. **Made with the convex count**: a list that starts at four and
+        /// doubles allocates and copies its way up for a shape of more convexes than that, and the count is known
+        /// before this object exists.
+        /// </summary>
+        private readonly List<Mesh> _meshes;
         private ConvexBrepRange[] _convexes = Array.Empty<ConvexBrepRange>();
         private ConvexBrepBank[] _banks = Array.Empty<ConvexBrepBank>();
         private float3[] _convexLo = Array.Empty<float3>();
@@ -190,9 +195,17 @@ namespace Zantetsu.PhysicsCut
         private bool _ownerDone;
         private bool _freed;
 
-        private PhysicsOwnerShape(float4x4 localToOwner)
+        /// <summary>
+        /// <paramref name="convexCount"/> is how many convexes this shape will hold, which every caller knows
+        /// before it builds one: the two per-convex lists are made at that size here and never grow. It is not a
+        /// promise that the convexes exist yet -- the arrays that hold them are still made by
+        /// <see cref="BeginBorrowing"/> or <see cref="Fill"/>, in their own order.
+        /// </summary>
+        private PhysicsOwnerShape(float4x4 localToOwner, int convexCount)
         {
             LocalToOwner = localToOwner;
+            _meshes = new List<Mesh>(convexCount);
+            _sourceOf = new List<int>(convexCount);
         }
 
         /// <summary>From the numerical local frame these convexes are in to the owner's frame.</summary>
@@ -371,7 +384,8 @@ namespace Zantetsu.PhysicsCut
                 throw new ArgumentException("one mesh per convex, and at least one convex", nameof(meshes));
             }
 
-            var shape = new PhysicsOwnerShape(localToOwner);
+            // After the checks above, so an input that is refused is still refused before anything is made.
+            var shape = new PhysicsOwnerShape(localToOwner, convexes.Count);
             try
             {
                 var parts = new Part[convexes.Count];
@@ -421,7 +435,7 @@ namespace Zantetsu.PhysicsCut
                 throw new ArgumentException("a side with no convex is not an owner", nameof(convexes));
             }
 
-            var shape = new PhysicsOwnerShape(source.LocalToOwner);
+            var shape = new PhysicsOwnerShape(source.LocalToOwner, convexes.Count);
             try
             {
                 // The correspondence and the convexes are written in the same pass, each into the array it is
@@ -489,7 +503,7 @@ namespace Zantetsu.PhysicsCut
                 throw new ArgumentException("a side with no convex is not an owner", nameof(positive));
             }
 
-            var shape = new PhysicsOwnerShape(products.LocalToOwner);
+            var shape = new PhysicsOwnerShape(products.LocalToOwner, count);
             try
             {
                 shape.BeginBorrowing(count);
@@ -597,7 +611,11 @@ namespace Zantetsu.PhysicsCut
             internal float3 hi;
         }
 
-        private readonly List<int> _sourceOf = new List<int>(4);
+        /// <summary>
+        /// Which of <see cref="_sources"/> each convex's mesh came from, in convex order. **Made with the convex
+        /// count**, for the same reason as <see cref="_meshes"/>.
+        /// </summary>
+        private readonly List<int> _sourceOf;
 
         private PhysicsShapeSource SourceOf(int convex)
         {
