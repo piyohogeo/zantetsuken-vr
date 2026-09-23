@@ -467,6 +467,47 @@ namespace Zantetsu.PhysicsCut.Tests
             }
         }
 
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void AxisCutsAndReversedPlanes_MatchSlabMassAndCentroidNearFaces(int axis)
+        {
+            Source source = NewSource(float4x4.identity, double3.zero);
+            Assert.That(ProvisionalBoxMass.TryBox(source.shape, out float3 lo, out float3 hi), Is.True);
+            var cuts = new[] { 0f, lo[axis] + 1e-5f, hi[axis] - 1e-5f };
+
+            foreach (float cut in cuts)
+            {
+                foreach (float sign in new[] { 1f, -1f })
+                {
+                    float3 normal = float3.zero;
+                    normal[axis] = sign;
+                    var plane = new float4(normal, -sign * cut);
+                    Assert.That(ProvisionalBoxMass.TryDivide(
+                        source.shape, plane, ParentMass, new float3(1f), quaternion.identity,
+                        out ProvisionalBoxMass.Side positive, out ProvisionalBoxMass.Side negative, out _), Is.True);
+
+                    // Each side is an axis-aligned slab. Its independent volume fraction is its width divided
+                    // by the box width, and its centroid lies halfway between its two faces.
+                    double lowerWidth = (double)cut - lo[axis];
+                    double upperWidth = (double)hi[axis] - cut;
+                    double boxWidth = (double)hi[axis] - lo[axis];
+                    double expectedPositive = ParentMass * (sign > 0f ? upperWidth : lowerWidth) / boxWidth;
+                    double expectedNegative = ParentMass * (sign > 0f ? lowerWidth : upperWidth) / boxWidth;
+                    Assert.That(positive.mass, Is.EqualTo(expectedPositive).Within(1e-9));
+                    Assert.That(negative.mass, Is.EqualTo(expectedNegative).Within(1e-9));
+
+                    float3 upperCentre = (lo + hi) * 0.5f;
+                    float3 lowerCentre = upperCentre;
+                    upperCentre[axis] = (hi[axis] + cut) * 0.5f;
+                    lowerCentre[axis] = (lo[axis] + cut) * 0.5f;
+                    float3 expectedPositiveCentre = sign > 0f ? upperCentre : lowerCentre;
+                    float3 expectedNegativeCentre = sign > 0f ? lowerCentre : upperCentre;
+                    Assert.That(math.length(positive.centerOfMass - expectedPositiveCentre), Is.LessThan(3e-5f));
+                    Assert.That(math.length(negative.centerOfMass - expectedNegativeCentre), Is.LessThan(3e-5f));
+                }
+            }
+        }
         // ----- the box itself: where it comes from, and when it is settled -----------------------------------------
 
         /// <summary>

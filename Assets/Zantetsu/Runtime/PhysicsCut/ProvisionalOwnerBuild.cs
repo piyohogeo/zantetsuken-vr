@@ -214,23 +214,23 @@ namespace Zantetsu.PhysicsCut
 
             // 7.6, as the caller settled it: a crossed convex is on both sides, uncut. The four dispositions 7.6
             // defines are named one by one; anything else is a disposition this call was not given, not a default.
-            var positiveConvexes = new List<int>(input.sides.Count);
-            var negativeConvexes = new List<int>(input.sides.Count);
+            int positiveCount = 0;
+            int negativeCount = 0;
             for (int c = 0; c < input.sides.Count; c++)
             {
                 switch (input.sides[c])
                 {
                     case ConvexSide.Split:
-                        positiveConvexes.Add(c);
-                        negativeConvexes.Add(c);
+                        positiveCount++;
+                        negativeCount++;
                         break;
                     case ConvexSide.Negative:
-                        negativeConvexes.Add(c);
+                        negativeCount++;
                         break;
                     case ConvexSide.Positive:
                     case ConvexSide.NearPlaneToPositive:
                         // Neither support goes to the positive side (DESIGN 7.6).
-                        positiveConvexes.Add(c);
+                        positiveCount++;
                         break;
                     default:
                         outcome = PhysicsOwnerBuildOutcome.InvalidInput;
@@ -238,11 +238,17 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            if (positiveConvexes.Count == 0 || negativeConvexes.Count == 0)
+            if (positiveCount == 0 || negativeCount == 0)
             {
                 outcome = PhysicsOwnerBuildOutcome.SideEmpty;
                 return false;
             }
+
+            // These become the shapes' index views: no temporary List or second index-array copy is needed.
+            var positiveConvexes = new int[positiveCount];
+            var negativeConvexes = new int[negativeCount];
+            int positiveAt = 0;
+            int negativeAt = 0;
 
             // Every convex a side names must still have the cooked mesh its collider will use. A destroyed or absent
             // one is found here, before any hold is taken, rather than becoming a collider with no shape.
@@ -252,6 +258,17 @@ namespace Zantetsu.PhysicsCut
                 {
                     outcome = PhysicsOwnerBuildOutcome.ShapeMissing;
                     return false;
+                }
+
+                ConvexSide side = input.sides[c];
+                if (side != ConvexSide.Negative)
+                {
+                    positiveConvexes[positiveAt++] = c;
+                }
+
+                if (side == ConvexSide.Split || side == ConvexSide.Negative)
+                {
+                    negativeConvexes[negativeAt++] = c;
                 }
             }
 
@@ -279,8 +296,8 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerSide negative = null;
             try
             {
-                positiveShape = PhysicsOwnerShape.ProvisionalSide(input.sourceShape, positiveConvexes);
-                negativeShape = PhysicsOwnerShape.ProvisionalSide(input.sourceShape, negativeConvexes);
+                positiveShape = PhysicsOwnerShape.ProvisionalSideFromOwnedIndices(input.sourceShape, positiveConvexes);
+                negativeShape = PhysicsOwnerShape.ProvisionalSideFromOwnedIndices(input.sourceShape, negativeConvexes);
                 positive = BuildSide(in input, true, positiveShape, in positiveMass, localRotation, localOffset);
                 negative = BuildSide(in input, false, negativeShape, in negativeMass, localRotation, localOffset);
 

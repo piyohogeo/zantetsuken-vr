@@ -180,6 +180,12 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private int[] _inputConvexOf = Array.Empty<int>();
 
+        // A Provisional side selects immutable descriptor entries from its source's tables. The tables are
+        // shared by reference; the native banks and meshes still have this side's own, direct holds below.
+        // Nested selections are flattened, so a disposed intermediate shape is never a read dependency.
+        private int[] _viewConvexOf;
+        private IReadOnlyList<Mesh> _meshView;
+
         /// <summary>The block owners this one's convexes address, held until this shape is freed.</summary>
         private readonly List<PhysicsOwnerShape> _bankOwners = new List<PhysicsOwnerShape>(2);
 
@@ -197,15 +203,23 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// <paramref name="convexCount"/> is how many convexes this shape will hold, which every caller knows
-        /// before it builds one: the two per-convex lists are made at that size here and never grow. It is not a
-        /// promise that the convexes exist yet -- the arrays that hold them are still made by
-        /// <see cref="BeginBorrowing"/> or <see cref="Fill"/>, in their own order.
+        /// before it builds one. Owned tables use that size for their per-convex lists. A Provisional view shares
+        /// its source's descriptor tables and mesh list instead; its source-hold mapping is still its own.
+        /// Owned descriptor arrays are made by <see cref="BeginBorrowing"/> or <see cref="Fill"/>.
         /// </summary>
-        private PhysicsOwnerShape(float4x4 localToOwner, int convexCount)
+        private PhysicsOwnerShape(float4x4 localToOwner, int convexCount, PhysicsOwnerShape viewOf = null)
         {
             LocalToOwner = localToOwner;
-            _meshes = new List<Mesh>(convexCount);
+            _meshes = viewOf == null ? new List<Mesh>(convexCount) : viewOf._meshes;
             _sourceOf = new List<int>(convexCount);
+            if (viewOf != null)
+            {
+                _convexes = viewOf._convexes;
+                _banks = viewOf._banks;
+                _blockOwnerOf = viewOf._blockOwnerOf;
+                _convexLo = viewOf._convexLo;
+                _convexHi = viewOf._convexHi;
+            }
         }
 
         /// <summary>From the numerical local frame these convexes are in to the owner's frame.</summary>
@@ -218,7 +232,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public ConvexBrepBank BankOf(int index)
         {
-            return _banks[index];
+            return _banks[TableIndex(index)];
         }
 
         /// <summary>How many shapes address this shape's block right now.</summary>
@@ -227,7 +241,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The shape that owns the block convex <paramref name="index"/> lives in, or null for a cut's products.</summary>
         public PhysicsOwnerShape BlockOwnerOf(int index)
         {
-            return _blockOwnerOf[index];
+            return _blockOwnerOf[TableIndex(index)];
         }
 
         /// <summary>Whether this shape's mesh holds have gone back already (its owner done, its work collected).</summary>
@@ -244,12 +258,14 @@ namespace Zantetsu.PhysicsCut
             return index >= 0 && index < _inputConvexOf.Length ? _inputConvexOf[index] : -1;
         }
 
-        public int ConvexCount => _convexes.Length;
+        public int ConvexCount => _viewConvexOf == null ? _convexes.Length : _viewConvexOf.Length;
+
+        private int TableIndex(int index) => _viewConvexOf == null ? index : _viewConvexOf[index];
 
         /// <summary>Where one convex is in <see cref="Bank"/>.</summary>
         public ConvexBrepRange Convex(int index)
         {
-            return _convexes[index];
+            return _convexes[TableIndex(index)];
         }
 
         /// <summary>
@@ -259,18 +275,21 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public void ConvexBounds(int index, out float3 lo, out float3 hi)
         {
-            lo = _convexLo[index];
-            hi = _convexHi[index];
+            int at = TableIndex(index);
+            lo = _convexLo[at];
+            hi = _convexHi[at];
         }
 
         /// <summary>The cooked collider mesh of one convex. It belongs to a <see cref="PhysicsShapeSource"/>, not here.</summary>
         public Mesh MeshOf(int index)
         {
-            return _meshes[index];
+            return _meshes[TableIndex(index)];
         }
 
         /// <summary>The meshes by convex index, which is what a cut of this owner inherits from.</summary>
-        public IReadOnlyList<Mesh> Meshes => _meshes;
+        public IReadOnlyList<Mesh> Meshes => _viewConvexOf == null
+            ? _meshes
+            : _meshView ?? (_meshView = new PhysicsShapeMeshView(this));
 
         /// <summary>
         /// The box every convex of this shape lies inside, in **this shape's own local frame** -- the frame
@@ -303,7 +322,7 @@ namespace Zantetsu.PhysicsCut
             lo = _localLo;
             hi = _localHi;
             return _localBoundsUsable
-                && _convexes.Length > 0
+                && ConvexCount > 0
                 && math.all(math.isfinite(_localLo))
                 && math.all(math.isfinite(_localHi))
                 && math.all(_localHi >= _localLo);
@@ -435,41 +454,40 @@ namespace Zantetsu.PhysicsCut
                 throw new ArgumentException("a side with no convex is not an owner", nameof(convexes));
             }
 
-            var shape = new PhysicsOwnerShape(source.LocalToOwner, convexes.Count);
+            var indices = new int[convexes.Count];
+            for (int i = 0; i < indices.Length; i++)
+            {
+                indices[i] = convexes[i];
+            }
+
+            return ProvisionalSideFromOwnedIndices(source, indices);
+        }
+
+        /// <summary>
+        /// The builder gives up its freshly allocated index array here. No caller may mutate it afterwards;
+        /// the general list entrance above retains its snapshot semantics by copying first.
+        /// </summary>
+        internal static PhysicsOwnerShape ProvisionalSideFromOwnedIndices(PhysicsOwnerShape source, int[] indices)
+        {
+            var shape = new PhysicsOwnerShape(source.LocalToOwner, indices.Length, source);
             try
             {
-                // The correspondence and the convexes are written in the same pass, each into the array it is
-                // kept in. Nothing is laid out first and copied across.
-                shape.BeginBorrowing(convexes.Count);
-                var inputConvexOf = new int[convexes.Count];
-                for (int i = 0; i < convexes.Count; i++)
+                shape._inputConvexOf = indices;
+                shape._viewConvexOf = source._viewConvexOf == null ? indices : new int[indices.Length];
+                for (int i = 0; i < indices.Length; i++)
                 {
-                    int c = convexes[i];
-                    if (c < 0 || c >= source._convexes.Length)
+                    int c = indices[i];
+                    if (c < 0 || c >= source.ConvexCount)
                     {
-                        throw new ArgumentOutOfRangeException(nameof(convexes), c, "not a convex of the source");
+                        throw new ArgumentOutOfRangeException("convexes", c, "not a convex of the source");
                     }
 
-                    shape.Borrow(i, new Part
-                    {
-                        bank = source._banks[c],
-                        bankOwner = source._blockOwnerOf[c],
-                        range = source._convexes[c],
-                        mesh = source._meshes[c],
-                        source = source.SourceOf(c),
-
-                        // The source already knows this convex's box; a side of it is the same convex in the same
-                        // frame, so the box comes across as it is.
-                        lo = source._convexLo[c],
-                        hi = source._convexHi[c],
-                    });
-
-                    // Convex i of this side is convex convexes[i] of the source, which is also what the source's
-                    // collider i and a part's inputConvex name.
-                    inputConvexOf[i] = c;
+                    int at = source.TableIndex(c);
+                    shape._viewConvexOf[i] = at;
+                    shape.AddToLocalBounds(source._convexLo[at], source._convexHi[at]);
+                    shape.HoldSource(source.SourceOf(c));
+                    shape.HoldBank(source._blockOwnerOf[at]);
                 }
-
-                shape._inputConvexOf = inputConvexOf;
             }
             catch
             {
@@ -512,17 +530,18 @@ namespace Zantetsu.PhysicsCut
                     PhysicsCutPart part = products.Part(positive, i);
                     if (part.borrowed)
                     {
+                        int at = parent.TableIndex(part.inputConvex);
                         shape.Borrow(i, new Part
                         {
-                            bank = parent._banks[part.inputConvex],
-                            bankOwner = parent._blockOwnerOf[part.inputConvex],
-                            range = parent._convexes[part.inputConvex],
-                            mesh = parent._meshes[part.inputConvex],
+                            bank = parent._banks[at],
+                            bankOwner = parent._blockOwnerOf[at],
+                            range = parent._convexes[at],
+                            mesh = parent._meshes[at],
                             source = parent.SourceOf(part.inputConvex),
 
                             // Inherited uncut: the parent's box for that very convex.
-                            lo = parent._convexLo[part.inputConvex],
-                            hi = parent._convexHi[part.inputConvex],
+                            lo = parent._convexLo[at],
+                            hi = parent._convexHi[at],
                         });
                         continue;
                     }
@@ -787,11 +806,16 @@ namespace Zantetsu.PhysicsCut
             _convexHi[i] = part.hi;
             AddToLocalBounds(part.lo, part.hi);
             HoldSource(part.source);
-            if (part.bankOwner != null && !_bankOwners.Contains(part.bankOwner))
+            HoldBank(part.bankOwner);
+        }
+
+        private void HoldBank(PhysicsOwnerShape owner)
+        {
+            if (owner != null && !_bankOwners.Contains(owner))
             {
                 // Held before it is recorded: a hold that was not taken must not be let go later.
-                part.bankOwner.AcquireAsBank();
-                _bankOwners.Add(part.bankOwner);
+                owner.AcquireAsBank();
+                _bankOwners.Add(owner);
             }
         }
 
@@ -900,5 +924,26 @@ namespace Zantetsu.PhysicsCut
 
             array = default;
         }
+    }
+
+    // Only made if a caller requests the Provisional shape's public mesh-list view. The build uses MeshOf
+    // directly, and a Final owner still exposes its original List. Enumeration is not part of the cut path.
+    internal sealed class PhysicsShapeMeshView : IReadOnlyList<Mesh>
+    {
+        private readonly PhysicsOwnerShape _shape;
+
+        internal PhysicsShapeMeshView(PhysicsOwnerShape shape) { _shape = shape; }
+        public int Count => _shape.ConvexCount;
+        public Mesh this[int index] => _shape.MeshOf(index);
+
+        public IEnumerator<Mesh> GetEnumerator()
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                yield return this[i];
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }

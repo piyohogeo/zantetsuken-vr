@@ -46,7 +46,8 @@ namespace Zantetsu.Rendering
         private readonly uint _lastGeneration;
         private readonly GeometrySlot[] _geometries;
         private readonly InstanceSlot[] _instances;
-        private int _geometryHighWater;
+        // Zero means unregistered; otherwise the current index descriptor's geometry slot plus one.
+        private readonly int[] _geometryOfIndexDescriptor;
 
         /// <summary>
         /// Creates the storage's reference table. Throws InvalidOperationException when the storage already has one,
@@ -86,6 +87,7 @@ namespace Zantetsu.Rendering
             _lastGeneration = lastGeneration;
             _geometries = new GeometrySlot[geometryCapacity];
             _instances = new InstanceSlot[displayInstanceCapacity];
+            _geometryOfIndexDescriptor = new int[storage.IndexDescriptorCapacity];
             _tableId = VpIndexRangeLifecycleTable.NextTableId(ref s_lastTableId);
 
             // Last, so that nothing after the claim can fail.
@@ -200,7 +202,9 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            _geometries[geometry.slot].live = false;
+            ref GeometrySlot retired = ref _geometries[geometry.slot];
+            _geometryOfIndexDescriptor[retired.geometry.indexRange.descriptor] = 0;
+            retired.live = false;
             LiveGeometryCount--;
             return true;
         }
@@ -334,7 +338,7 @@ namespace Zantetsu.Rendering
             taken.geometry = geometry;
             taken.liveInstanceCount = 0;
             LiveGeometryCount++;
-            _geometryHighWater = Math.Max(_geometryHighWater, slot + 1);
+            _geometryOfIndexDescriptor[geometry.indexRange.descriptor] = slot + 1;
             return new VpGeometryReference(_tableId, slot, taken.generation);
         }
 
@@ -351,21 +355,11 @@ namespace Zantetsu.Rendering
 
         private bool IsRegistered(VpIndexRangeHandle indexRange)
         {
-            // Slots beyond this prefix have never been used and cannot contain a registration. Keep the prefix
-            // when slots retire: a lower slot may be reused while a higher one is still live.
-            for (int s = 0; s < _geometryHighWater; s++)
-            {
-                VpIndexRangeHandle registered = _geometries[s].geometry.indexRange;
-                if (_geometries[s].live
-                    && registered.tableId == indexRange.tableId
-                    && registered.descriptor == indexRange.descriptor
-                    && registered.generation == indexRange.generation)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            // CanRegister already checked this storage's current Published handle, including the descriptor bound.
+            // External index retirement can leave an old geometry registration live while the descriptor is reused.
+            // Only its current generation can be registered again, so the direct entry may replace that old mapping.
+            int slot = _geometryOfIndexDescriptor[indexRange.descriptor] - 1;
+            return slot >= 0 && _geometries[slot].geometry.indexRange.generation == indexRange.generation;
         }
     }
 }

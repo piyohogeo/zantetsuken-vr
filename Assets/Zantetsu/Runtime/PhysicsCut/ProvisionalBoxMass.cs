@@ -255,12 +255,16 @@ namespace Zantetsu.PhysicsCut
 
             // The eight corners, then the standard six-tetrahedron split of a box around one main diagonal.
             var corner = stackalloc double3[8];
+            var signedDistance = stackalloc double[8];
+            var p = new double4(plane.x, plane.y, plane.z, plane.w);
             for (int i = 0; i < 8; i++)
             {
                 corner[i] = new double3(
                     (i & 1) == 0 ? lo.x : hi.x,
                     (i & 2) == 0 ? lo.y : hi.y,
                     (i & 4) == 0 ? lo.z : hi.z);
+                // Every tetrahedron and both sides use this same signed value at a shared corner.
+                signedDistance[i] = math.dot(p.xyz, corner[i]) + p.w;
             }
 
             int* tets = stackalloc int[24]
@@ -273,20 +277,22 @@ namespace Zantetsu.PhysicsCut
                 0, 6, 4, 7,
             };
 
-            var p = new double4(plane.x, plane.y, plane.z, plane.w);
             for (int t = 0; t < 6; t++)
             {
                 double3 a = corner[tets[t * 4 + 0]];
                 double3 b = corner[tets[t * 4 + 1]];
                 double3 c = corner[tets[t * 4 + 2]];
                 double3 d = corner[tets[t * 4 + 3]];
-                DivideTet(a, b, c, d, p, true, ref volumePositive, ref momentPositive);
-                DivideTet(a, b, c, d, p, false, ref volumeNegative, ref momentNegative);
+                var distances = new double4(
+                    signedDistance[tets[t * 4 + 0]], signedDistance[tets[t * 4 + 1]],
+                    signedDistance[tets[t * 4 + 2]], signedDistance[tets[t * 4 + 3]]);
+                DivideTet(a, b, c, d, distances, true, ref volumePositive, ref momentPositive);
+                DivideTet(a, b, c, d, distances, false, ref volumeNegative, ref momentNegative);
             }
         }
 
         private static void DivideTet(
-            double3 a, double3 b, double3 c, double3 d, double4 plane, bool keepPositive,
+            double3 a, double3 b, double3 c, double3 d, double4 signedDistances, bool keepPositive,
             ref double volume, ref double3 moment)
         {
             var v = stackalloc double3[4];
@@ -295,7 +301,7 @@ namespace Zantetsu.PhysicsCut
             int kept = 0;
             for (int i = 0; i < 4; i++)
             {
-                double signed = math.dot(plane.xyz, v[i]) + plane.w;
+                double signed = signedDistances[i];
                 s[i] = keepPositive ? signed : -signed;
                 if (s[i] > 0.0)
                 {

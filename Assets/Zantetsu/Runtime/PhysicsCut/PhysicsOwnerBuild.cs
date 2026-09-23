@@ -207,6 +207,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The colliders of this side, produced and inherited alike, all under <see cref="Body"/>.</summary>
         public IReadOnlyList<MeshCollider> Colliders => _colliders;
 
+        // The same storage for internal loops, without an interface dispatch for each count/index access.
+        internal List<MeshCollider> ColliderList => _colliders;
+
         /// <summary>How many of the colliders use a mesh this cut produced. The rest borrow the input's.</summary>
         public int ProducedColliderCount { get; internal set; }
 
@@ -434,13 +437,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsAdopted = true;
+            List<MeshCollider> colliders = Side.ColliderList;
 
             // Replaced: what the side had that the preparation did not keep. A kept collider is never touched here:
             // it carries the right mesh already and keeps answering through the switch. Which is which was settled by
             // the preparation, so this is one pass over the side's own list and no search.
-            for (int i = 0; i < Side.Colliders.Count; i++)
+            for (int i = 0; i < colliders.Count; i++)
             {
-                MeshCollider had = Side.Colliders[i];
+                MeshCollider had = colliders[i];
                 if (had != null && !KeepsSideCollider(i))
                 {
                     had.enabled = false;
@@ -458,9 +462,9 @@ namespace Zantetsu.PhysicsCut
 
             // The replaced ones are asked to go -- deferred, so they are still there for this frame's remainder --
             // and then the side's list is the final one.
-            for (int i = 0; i < Side.Colliders.Count; i++)
+            for (int i = 0; i < colliders.Count; i++)
             {
-                MeshCollider had = Side.Colliders[i];
+                MeshCollider had = colliders[i];
                 if (had != null && !KeepsSideCollider(i))
                 {
                     PhysicsOwnerBuilder.DestroyComponent(had);
@@ -960,7 +964,8 @@ namespace Zantetsu.PhysicsCut
             int count = products.PartCount(side.positive);
             var ordered = new List<MeshCollider>(count);
             var made = new List<MeshCollider>(count);
-            var keptFromSide = new bool[side.Colliders.Count];
+            List<MeshCollider> sideColliders = side.ColliderList;
+            var keptFromSide = new bool[sideColliders.Count];
 
             // The side's collider for each input convex, by the correspondence the side shape carries. -1 where the
             // side has no collider for that convex, and set back to -1 once a part has taken it.
@@ -996,7 +1001,7 @@ namespace Zantetsu.PhysicsCut
                                 sideColliderOfInputConvex[c] = -1;
                             }
 
-                            int convexes = math.min(sideShape.ConvexCount, side.Colliders.Count);
+                            int convexes = math.min(sideShape.ConvexCount, sideColliders.Count);
                             for (int j = 0; j < convexes; j++)
                             {
                                 int c = sideShape.InputConvexOf(j);
@@ -1012,7 +1017,7 @@ namespace Zantetsu.PhysicsCut
                              && part.inputConvex >= 0 && part.inputConvex < sideColliderOfInputConvex.Length
                         ? sideColliderOfInputConvex[part.inputConvex]
                         : -1;
-                    MeshCollider keptOne = at >= 0 ? Reusable(side.Colliders[at], mesh, products.Cooking) : null;
+                    MeshCollider keptOne = at >= 0 ? Reusable(sideColliders[at], mesh, products.Cooking) : null;
                     if (keptOne != null)
                     {
                         // Taken: the entry goes, so this convex cannot be kept a second time.
