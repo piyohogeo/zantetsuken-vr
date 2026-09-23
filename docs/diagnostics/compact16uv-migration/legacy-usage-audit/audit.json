@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "experiment": "Compact16uv-U4-LegacyShaderUsageAudit",
+  "sourceRepository": "C:\\Users\\junic\\src\\zantetsuken-vr-compact16uv",
+  "commit": "985fb3a4ddcfae2e9f020c16773c49f37d3ede3b",
+  "enabledScenes": [
+    "Assets/Scenes/Sandbox.unity",
+    "Assets/Scenes/CutWorldSandbox.unity"
+  ],
+  "directRuntimeDrawCallerCount": 3,
+  "oldIndirectRuntimeConstructionCount": 0,
+  "shaders": {
+    "direct": {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader",
+      "shaderName": "Zantetsu/VP Unlit",
+      "guid": "5d3f8a1c7b2e4f609a8d1c3e5b7f9a24",
+      "runtimeNameReferences": [],
+      "editorNameReferences": [],
+      "testNameReferences": [
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpDirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/SandboxVpMeshDisplayTests.cs"
+      ],
+      "serializedReferences": [
+        "Assets/Scenes/Sandbox.unity"
+      ],
+      "serializedReferenceOccurrenceCount": 7,
+      "enabledSceneReferences": [
+        "Assets/Scenes/Sandbox.unity"
+      ],
+      "enabledSceneReferenceOccurrenceCount": 7,
+      "runtimeDrawCallers": [
+        "Assets/Zantetsu/Runtime/Rendering/VpMeshDisplay.cs",
+        "Assets/Zantetsu/Runtime/Rendering/VpMultiMeshDisplay.cs",
+        "Assets/Zantetsu/Runtime/Rendering/VpSharedMeshDisplay.cs"
+      ],
+      "classification": "MIGRATE-OR-REMOVE-ENABLED-SCENE"
+    },
+    "indirectForward": {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+      "shaderName": "Zantetsu/VP Indirect Unlit",
+      "guid": "e6a1c8d3b9f24a7ea2d5c0f7b4e9a816",
+      "runtimeNameReferences": [],
+      "editorNameReferences": [],
+      "testNameReferences": [
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs"
+      ],
+      "serializedReferences": [],
+      "serializedReferenceOccurrenceCount": 0,
+      "enabledSceneReferences": [],
+      "enabledSceneReferenceOccurrenceCount": 0,
+      "runtimeBatchConstructionCount": 0,
+      "classification": "DELETE-CANDIDATE-NO-TRACKED-RUNTIME-CONSUMER"
+    },
+    "indirectShadow": {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+      "shaderName": "Zantetsu/VP Indirect Shadow Caster",
+      "guid": "f4b8d2a6c9e14735b0a3d7c5e1f9b862",
+      "runtimeNameReferences": [],
+      "editorNameReferences": [],
+      "testNameReferences": [
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs"
+      ],
+      "serializedReferences": [],
+      "serializedReferenceOccurrenceCount": 0,
+      "enabledSceneReferences": [],
+      "enabledSceneReferenceOccurrenceCount": 0,
+      "runtimeBatchConstructionCount": 0,
+      "classification": "DELETE-CANDIDATE-NO-TRACKED-RUNTIME-CONSUMER"
+    }
+  },
+  "decision": {
+    "VpUnlit": "Migrate to Compact16uv while Sandbox remains an enabled build scene, or remove the seven serialized direct-display components from that scene.",
+    "VpIndirectPair": "Prefer deletion with VpIndirectDrawBatch after source compile/test verification; the pinned tracked runtime has no construction site and no serialized shader GUID reference."
+  },
+  "limitations": [
+    "This proves references only inside the pinned tracked repository; external packages, reflection, and user-created scenes are outside scope.",
+    "Public API compatibility is not inferred from absence of an in-repository caller."
+  ]
+}

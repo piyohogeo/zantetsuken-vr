@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "experiment": "Compact16uv-U4-ProductShaderAudit",
+  "sourceRepository": "C:\\Users\\junic\\src\\zantetsuken-vr-compact16uv",
+  "commit": "985fb3a4ddcfae2e9f020c16773c49f37d3ede3b",
+  "previousCommit": "7a23a4977f27f08b8eebdc826a19cc5d74dfcc84",
+  "workingTreeDirty": true,
+  "classification": "PASS",
+  "trackedCount": 9,
+  "pinnedCount": 9,
+  "layoutReaderCount": 6,
+  "declared32ByteCount": 5,
+  "allTrackedUnchanged": true,
+  "tracked": [
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+      "status": "PINNED",
+      "blob": "7b5e701b6dc63f1aecb2b27da8633dfae8ea7581",
+      "bytes": 11955,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Indexed Indirect Unlit",
+      "passNames": [
+        "VpIndexedIndirectForward"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": true,
+      "references": [
+        "Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxSceneBuilder.cs",
+        "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpFragmentPlacementCommitTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpGeometryCommitTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayColoursTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayMultiCutTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayPreparationTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayShadowTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayStencilTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpMultiCutSnapshotTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/PhysicsCut/CutGeometryConnectionTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/PhysicsCut/FinalPhysicsPublicationTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpCutSurfaceColourTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedBufferRetirementProbeTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectClipTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedShadowTileSetTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpStoredGeometryDisplayTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/RenderingUrp/VpCascadeShadowPassTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/RenderingUrp/VpCulledCameraRouteTests.cs",
+        "Assets/Zantetsu/Tests/PlayMode/CutWorldRootPlayModeTests.cs"
+      ],
+      "migration": "16B layout + oct/UV decode + real-cap slot; product textured forward path"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+      "status": "PINNED",
+      "blob": "a0c2c955ace1c82a1497a762291867153c197c5b",
+      "bytes": 7360,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Indexed Indirect Shadow Caster",
+      "passNames": [
+        "ShadowCaster"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": true,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayColoursTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/MeshCut/VpLogicalCutDisplayShadowTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectClipTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedShadowTileSetTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpStoredGeometryDisplayTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/RenderingUrp/VpCascadeShadowPassTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/RenderingUrp/VpCulledCameraRouteTests.cs"
+      ],
+      "migration": "16B layout + oct decode for shadow bias"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+      "status": "PINNED",
+      "blob": "b016adc1f6410100e046dfbb1e6762eb73f16077",
+      "bytes": 6658,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Indirect Unlit",
+      "passNames": [
+        "VpIndirectForward"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": true,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs"
+      ],
+      "migration": "16B layout + oct decode; legacy non-index-buffer forward path"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+      "status": "PINNED",
+      "blob": "fedfd30f4d0fa24701bef3a3941a808479ace0fe",
+      "bytes": 4429,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Indirect Shadow Caster",
+      "passNames": [
+        "ShadowCaster"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": true,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs"
+      ],
+      "migration": "16B layout + oct decode; legacy non-index-buffer shadow path"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpStencilInit.shader",
+      "status": "PINNED",
+      "blob": "2029a229ca2105789cf60842929bf6532df198fa",
+      "bytes": 3883,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Stencil Init",
+      "passNames": [
+        "VpStencilInit"
+      ],
+      "usesVpRenderVertex": false,
+      "declares32ByteLayout": false,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilCapMaterials.cs",
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilInit.shader"
+      ],
+      "migration": "layout independent; no Compact16uv change"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader",
+      "status": "PINNED",
+      "blob": "49fdf160055f72b390b2cae2c577c840d588749f",
+      "bytes": 7697,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Stencil Volume",
+      "passNames": [
+        "VpStencilVolume"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": false,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilCapMaterials.cs",
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader"
+      ],
+      "migration": "16B layout; position-only consumer still changes structured stride"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpStencilCap.shader",
+      "status": "PINNED",
+      "blob": "2ed17c8d4fe9e00ba849f534fecd6b55cc1261e4",
+      "bytes": 6403,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Stencil Cap",
+      "passNames": [
+        "VpStencilCap"
+      ],
+      "usesVpRenderVertex": false,
+      "declares32ByteLayout": false,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilCap.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpStencilCapMaterials.cs"
+      ],
+      "migration": "separate cap buffers; add provisional atlas slot sampling/material contract"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader",
+      "status": "PINNED",
+      "blob": "2b8aa0e8b5ce37e9e5c41d56bf400730a5499562",
+      "bytes": 5578,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": "Zantetsu/VP Unlit",
+      "passNames": [
+        "VpForward",
+        "ShadowCaster"
+      ],
+      "usesVpRenderVertex": true,
+      "declares32ByteLayout": true,
+      "references": [
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+        "Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpDirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndirectDrawTests.cs",
+        "Assets/Zantetsu/Tests/EditMode/SandboxVpMeshDisplayTests.cs"
+      ],
+      "migration": "16B layout + oct decode in direct forward and ShadowCaster passes"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpCutSurfaceShading.hlsl",
+      "status": "PINNED",
+      "blob": "b5780d335750191d21be9ce8418ee4450796943d",
+      "bytes": 1492,
+      "unchangedFromPreviousAudit": true,
+      "shaderName": null,
+      "passNames": [],
+      "usesVpRenderVertex": false,
+      "declares32ByteLayout": false,
+      "references": [],
+      "migration": "layout independent shared lighting include"
+    }
+  ],
+  "culled": [
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader",
+      "status": "PINNED",
+      "blob": "37f272c079f73253a898ac9e8a7b56b16c680300",
+      "purpose": "culled textured forward path"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader",
+      "status": "PINNED",
+      "blob": "a3e366fac9ae07f9383d10ca7a7ceb65089f830c",
+      "purpose": "culled shadow path"
+    }
+  ]
+}
