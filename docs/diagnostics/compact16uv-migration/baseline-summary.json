@@ -1,0 +1,21 @@
+{
+    "schemaVersion":  1,
+    "sourceCommit":  "7a23a4977f27f08b8eebdc826a19cc5d74dfcc84",
+    "snapshotCommit":  "985fb3a4ddcfae2e9f020c16773c49f37d3ede3b",
+    "unity":  "6000.3.22f1",
+    "graphicsApi":  "D3D11",
+    "testPlatform":  "EditMode",
+    "testFilter":  "Zantetsu.Rendering",
+    "result":  "Passed",
+    "total":  379,
+    "passed":  379,
+    "failed":  0,
+    "skipped":  0,
+    "inconclusive":  0,
+    "sourceFilesVerifiedUnchanged":  1773,
+    "sourceHeadAndStatusUnchanged":  true,
+    "gpuVertexStride":  32,
+    "compact16uvMigrationComplete":  false,
+    "xmlSha256":  "bbf9d0897f2e8fb7adb3e73f142fedaa88d41fe42954d67bba4e9d7831fa0943",
+    "logSha256":  "1d36ae8e5dbddcf8f3b8ec492df8d46acd7786cfb730dfc986cf3c3f2101ac1b"
+}
