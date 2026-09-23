@@ -120,23 +120,40 @@ namespace Zantetsu.PhysicsCut
     {
         private readonly PhysicsCutArena _arena;
         private readonly ConvexCutOutcome[] _outcomes;
-        private readonly List<PhysicsCutPart> _positive = new List<PhysicsCutPart>(4);
-        private readonly List<PhysicsCutPart> _negative = new List<PhysicsCutPart>(4);
+        /// <summary>
+        /// The parts of each side, in the order the cut produced them. **Made at the size the caller counted**: a
+        /// list that starts at four and doubles allocates and copies its way up for an owner of more parts than
+        /// that, and what each side will hold is settled before this object exists.
+        /// </summary>
+        private readonly List<PhysicsCutPart> _positive;
+
+        private readonly List<PhysicsCutPart> _negative;
         private readonly List<Mesh> _meshes = new List<Mesh>(4);
         private bool _disposed;
 
+        /// <summary>
+        /// <paramref name="positiveParts"/> and <paramref name="negativeParts"/> are how many parts each side will
+        /// be given: a split convex gives one to each side and an uncut one gives a single part to the side it is
+        /// inherited by, which is settled by the outcomes before anything is added here. The two lists are made at
+        /// that size and never grow. **Nothing else is decided by them**: the parts still arrive through
+        /// <see cref="Add"/>, in the same order, and a count that is wrong would only cost a list its room.
+        /// </summary>
         internal PhysicsCutProducts(
             PhysicsCutArena arena,
             ConvexCutOutcome[] outcomes,
             in ConvexCutOwnerResult result,
             float4x4 localToOwner,
-            MeshColliderCookingOptions cooking)
+            MeshColliderCookingOptions cooking,
+            int positiveParts,
+            int negativeParts)
         {
             _arena = arena;
             _outcomes = outcomes;
             Result = result;
             LocalToOwner = localToOwner;
             Cooking = cooking;
+            _positive = new List<PhysicsCutPart>(positiveParts);
+            _negative = new List<PhysicsCutPart>(negativeParts);
         }
 
         /// <summary>The numerical result: mass, centre of mass and inertia of each side, and the kernel's own counts.</summary>
@@ -805,16 +822,37 @@ namespace Zantetsu.PhysicsCut
         private void Finish(PhysicsCutRequest request)
         {
             var outcomes = new ConvexCutOutcome[request.input.convexCount];
+
+            // Counted in the copy that was already being made, and by the same rule the loop below adds by: a split
+            // convex gives a part to each side, an uncut one gives a part to the side it is inherited by. No pass of
+            // its own is added, and nothing is kept beyond these two numbers.
+            int positiveParts = 0;
+            int negativeParts = 0;
             unsafe
             {
                 for (int c = 0; c < outcomes.Length; c++)
                 {
-                    outcomes[c] = request.arena.Output.outcomes[c];
+                    ConvexCutOutcome outcome = request.arena.Output.outcomes[c];
+                    outcomes[c] = outcome;
+                    if (outcome.IsSplit)
+                    {
+                        positiveParts++;
+                        negativeParts++;
+                    }
+                    else if (outcome.InheritsPositive)
+                    {
+                        positiveParts++;
+                    }
+                    else
+                    {
+                        negativeParts++;
+                    }
                 }
             }
 
             var products = new PhysicsCutProducts(
-                request.arena, outcomes, request.cut.kernel, request.localToOwner, _cooking);
+                request.arena, outcomes, request.cut.kernel, request.localToOwner, _cooking,
+                positiveParts, negativeParts);
             int mesh = 0;
             for (int c = 0; c < outcomes.Length; c++)
             {

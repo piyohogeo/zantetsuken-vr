@@ -109,7 +109,7 @@ namespace Zantetsu.PhysicsCut.Tests
 
             var products = new PhysicsCutProducts(
                 new PhysicsCutArena(in capacity, 1), new ConvexCutOutcome[1], in result, float4x4.identity,
-                PhysicsCutCook.DefaultCooking);
+                PhysicsCutCook.DefaultCooking, 1, 0);
             try
             {
                 // One part on the positive side, none on the negative: the negative side is the empty one. The part

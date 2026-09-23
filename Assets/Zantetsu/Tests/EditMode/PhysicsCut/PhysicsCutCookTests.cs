@@ -620,6 +620,93 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
+        /// **How many parts each side ends with**, against the rule the outcomes state: a split convex gives one part
+        /// to each side, and an uncut one gives a single part to the side that inherits it. The existing tests say
+        /// what each part is; this one says how many there are on each side, and that each one is on the side its
+        /// outcome puts it on.
+        /// <para>
+        /// **What it does not say.** It reads no capacity, and it cannot: a list whose initial capacity is wrong
+        /// still grows, and ends with the same `PartCount`. So this is **not** a check that the count the products
+        /// are made with is right, nor that no backing array was reallocated. It checks the parts themselves.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void EachSidesPartCount_IsTheSplitsPlusWhatThatSideInherits()
+        {
+            using (OwnerCutHarness h = MixedCompound())
+            using (Fixture f = NewFixture())
+            {
+                ConvexCutOwnerResult expected = Reference(h, out ConvexCutOutcome[] expectedOutcomes);
+                Assert.That(expected.status, Is.EqualTo(ConvexCutOwnerStatus.Ok), "the reference run");
+
+                int splits = 0;
+                int inheritedPositive = 0;
+                int inheritedNegative = 0;
+                for (int c = 0; c < expectedOutcomes.Length; c++)
+                {
+                    if (expectedOutcomes[c].IsSplit)
+                    {
+                        splits++;
+                    }
+                    else if (expectedOutcomes[c].InheritsPositive)
+                    {
+                        inheritedPositive++;
+                    }
+                    else
+                    {
+                        inheritedNegative++;
+                    }
+                }
+
+                // The input this is asked of really has all three, each asked for on its own.
+                Assert.That(splits, Is.GreaterThan(0), "this input has a convex the plane split");
+                Assert.That(
+                    inheritedPositive, Is.GreaterThan(0), "one it missed that lies above the plane");
+                Assert.That(
+                    inheritedNegative, Is.GreaterThan(0), "and one it missed that lies below it");
+
+                PhysicsCutRequest request = f.cook.Submit(in h.input, float4x4.identity);
+                f.RunUntil(() => request.IsOver, "the cut and cook end");
+
+                Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "it ended with products");
+                PhysicsCutProducts products = request.Products;
+                Assert.That(products, Is.Not.Null);
+                using (products)
+                {
+                    Assert.That(
+                        products.PartCount(true), Is.EqualTo(splits + inheritedPositive),
+                        "the positive side has one part per split and one per convex it inherits");
+                    Assert.That(
+                        products.PartCount(false), Is.EqualTo(splits + inheritedNegative),
+                        "and so does the negative side");
+                    Assert.That(
+                        products.PartCount(true) + products.PartCount(false),
+                        Is.EqualTo((2 * splits) + inheritedPositive + inheritedNegative),
+                        "and between them they hold every part the outcomes call for");
+
+                    // Each part is on the side the outcomes put it on: the counts above are of the right things.
+                    foreach (bool side in new[] { true, false })
+                    {
+                        for (int i = 0; i < products.PartCount(side); i++)
+                        {
+                            PhysicsCutPart part = products.Part(side, i);
+                            ConvexCutOutcome outcome = expectedOutcomes[part.inputConvex];
+                            if (part.borrowed)
+                            {
+                                Assert.That(
+                                    outcome.InheritsPositive, Is.EqualTo(side),
+                                    "a borrowed part is on the side that inherits its convex");
+                                continue;
+                            }
+
+                            Assert.That(outcome.IsSplit, Is.True, "and a produced part comes from a split convex");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// **An owner the reduction really runs on, through the product's arena.** The kernel's own tests reduce
         /// these two (<c>reduce-light</c>, and <c>reduce-heavy</c>, which needs the small-ring path as well); here
         /// they go through the cook, so the scratch the reduction lays out is **the arena's**, and what comes back is

@@ -1105,7 +1105,8 @@ namespace Zantetsu.PhysicsCut.Tests
             var capacity = new ConvexCutOwnerCapacity { vertices = 1, faceOffsets = 1, faceIndices = 1, edges = 1, scratchBytes = 1 };
             var arena = new PhysicsCutArena(in capacity, 1);
             var products = new PhysicsCutProducts(
-                arena, new ConvexCutOutcome[1], in result, localToOwner, PhysicsCutCook.DefaultCooking);
+                arena, new ConvexCutOutcome[1], in result, localToOwner, PhysicsCutCook.DefaultCooking,
+                positiveParts, negativeParts);
             for (int i = 0; i < positiveParts; i++)
             {
                 products.Add(true, new PhysicsCutPart(0, false, default, null, default));

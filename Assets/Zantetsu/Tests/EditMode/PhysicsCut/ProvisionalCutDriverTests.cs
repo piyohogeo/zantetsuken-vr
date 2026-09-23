@@ -1834,7 +1834,7 @@ namespace Zantetsu.PhysicsCut.Tests
             };
             var products = new PhysicsCutProducts(
                 new PhysicsCutArena(in capacity, 1), new ConvexCutOutcome[1], in result, float4x4.identity,
-                PhysicsCutCook.DefaultCooking);
+                PhysicsCutCook.DefaultCooking, 1, 1);
             products.Add(true, new PhysicsCutPart(0, false, default, null, default));
             products.Add(false, new PhysicsCutPart(0, false, default, null, default));
             return new RefusingProducts { products = products };
