@@ -1,0 +1,2698 @@
+{
+  "method": {
+    "script_sha256": "99b288b1323747a1a3a250dec1dee02423f52aa90fda3d1f1d48e96c8137971d",
+    "units": "elapsed microseconds per call",
+    "median": "median of all 16 batch means per version/case/process",
+    "median_saving_percent": "100 * (1 - candidate median / baseline median)",
+    "paired_round": "mean of two baseline batches minus mean of two candidate batches in the same round; 8 differences",
+    "p95": "linear interpolation at (n-1)*0.95",
+    "process_pooling": false,
+    "outlier_removal": false,
+    "empty_batch_subtraction": false,
+    "warmup": "not recorded by current harnesses; negative-round rows, if present, stored separately",
+    "scope": "local mass arithmetic or native allocation/release, not full cutting cost or CPU time",
+    "inference": "descriptive measurements only; no significance or causality claim"
+  },
+  "runs": [
+    {
+      "run": "player00-66233b83",
+      "input_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player00",
+      "backend": "IL2CPP",
+      "process": {
+        "pid": 74536,
+        "started": 1790203461.9429219
+      },
+      "command": {
+        "argv": [
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests.exe",
+          "-batchmode",
+          "-runTests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player00\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player00\\player.log",
+          "-screen-fullscreen",
+          "0",
+          "-screen-width",
+          "640",
+          "-screen-height",
+          "400"
+        ],
+        "base": "b19ce67a",
+        "reverse": 0,
+        "character_first": 0,
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+        }
+      },
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+      },
+      "source_fingerprint": "ac74cac748fd6e6ebd6d35c6cdd90d5b116a231b61a1104ebdec526eee938e26",
+      "archived_files": {
+        "axis-mass-environment.txt": {
+          "sha256": "9d8eedd19d47c7ab89f05f9fd1fbb648b0e09e356754bca8907ba0a9e5669a53",
+          "bytes": 725
+        },
+        "axis-mass.csv": {
+          "sha256": "e2f8de287f9cbde952fe6d53902ffb24372faa7372997318e9d0350213311231",
+          "bytes": 3283
+        },
+        "binary.json": {
+          "sha256": "02acaddd0b7f8d09ca18ae8d18e5bfad99c0c6bed8eb7880a42cea9d20b36ae3",
+          "bytes": 961
+        },
+        "command.json": {
+          "sha256": "e2a795e0b5dd0bafe0af8b0e880ca9a64f62e197fe324a14d21195b1aaf54739",
+          "bytes": 4697
+        },
+        "exit.json": {
+          "sha256": "b16dc7f7c6cb174b131da02d2c0d60ebc51ff9ba7cc9e5e0044dacdcb138b033",
+          "bytes": 54
+        },
+        "native-bookkeeping-environment.txt": {
+          "sha256": "4768ccb06555584a5e18c543dfe983a578edf2381b261fe624bac7bc17d06165",
+          "bytes": 1503
+        },
+        "native-bookkeeping.csv": {
+          "sha256": "e1abcf9fe8bb6e6aba6f537f31625e11a1d5b484fba8262dc31e6bf8aa083e3d",
+          "bytes": 6319
+        },
+        "order-complete.txt": {
+          "sha256": "2e9f7cf81f4250c3933ea5253aa12aaee8deefed73614403f86b301fd4432f48",
+          "bytes": 75
+        },
+        "order-environment.txt": {
+          "sha256": "d8cd01515937c8275d61d074a9beef9d817c15c144cce5d8ba3ac3f9377ccfe9",
+          "bytes": 1099
+        },
+        "process.json": {
+          "sha256": "f6281b5f51808d9f086c2422b2ab315deb02dfc0104f448604296dda3f9d263b",
+          "bytes": 52
+        },
+        "results.xml": {
+          "sha256": "e7876ad4a26605af61ff4c7b23c6f3cd6678d0c6ee0009fa0e62583a5abebe81",
+          "bytes": 6771
+        },
+        "summary.json": {
+          "sha256": "086d3c11d8ebb88cf2cb3028db54c026d4720304ad3fe6ca629e981a39ecb687",
+          "bytes": 388
+        }
+      },
+      "benchmarks": {
+        "axis-mass": {
+          "raw_csv_sha256": "e2f8de287f9cbde952fe6d53902ffb24372faa7372997318e9d0350213311231",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Backend": "IL2CPP; Main Stopwatch elapsed time, not CPU time or complete cut cost.",
+            "Thread": "1",
+            "Baseline": "b19ce67a; candidate=current ProvisionalBoxMass; same input per process.",
+            "Order": "ABBA or BAAB by ORDER_REVERSE; 8 rounds, 1024 calls per batch.",
+            "Warmup": "one 1024-call batch per version and case; not saved in CSV.",
+            "box: lo": "(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity",
+            "character: lo": "(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity"
+          },
+          "reverse": 0,
+          "character_first": 0,
+          "batch_order": "ABBA",
+          "case_order": [
+            "box",
+            "character"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one 1024-call batch per version and case; not saved in CSV."
+          },
+          "raw_row_count": 64,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.553759765625,
+                "mean": 0.563079833984375,
+                "p95": 0.5982177734375,
+                "min": 0.5498046875,
+                "max": 0.61279296875
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.23994140625,
+                "mean": 0.24403076171875,
+                "p95": 0.2580322265625,
+                "min": 0.23955078125,
+                "max": 0.30205078125
+              },
+              "median_saving_us": 0.31381835937499997,
+              "median_saving_percent": 56.670487611321754,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.581298828125,
+                  "candidate_mean_us": 0.23974609375,
+                  "saving_us": 0.341552734375,
+                  "saving_percent": 58.75682486350273
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.5746093750000001,
+                  "candidate_mean_us": 0.24169921875,
+                  "saving_us": 0.3329101562500001,
+                  "saving_percent": 57.93677770224338
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.552587890625,
+                  "candidate_mean_us": 0.239794921875,
+                  "saving_us": 0.31279296875,
+                  "saving_percent": 56.60510736060793
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.55048828125,
+                  "candidate_mean_us": 0.23974609375,
+                  "saving_us": 0.31074218750000004,
+                  "saving_percent": 56.448465495831115
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.564697265625,
+                  "candidate_mean_us": 0.271044921875,
+                  "saving_us": 0.29365234375,
+                  "saving_percent": 52.00172935581495
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.55341796875,
+                  "candidate_mean_us": 0.240478515625,
+                  "saving_us": 0.31293945312500004,
+                  "saving_percent": 56.546673725075
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.565625,
+                  "candidate_mean_us": 0.23994140625,
+                  "saving_us": 0.32568359375000006,
+                  "saving_percent": 57.57941988950277
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.5619140625,
+                  "candidate_mean_us": 0.239794921875,
+                  "saving_us": 0.32211914062499997,
+                  "saving_percent": 57.325338894681956
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.317529296875,
+                "mean": 0.319049072265625,
+                "p95": 0.33852783203125003,
+                "min": 0.29365234375,
+                "max": 0.341552734375
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 56.96522312764495,
+                "mean": 56.65004216090748,
+                "p95": 58.46980835706196,
+                "min": 52.00172935581495,
+                "max": 58.75682486350273
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.566064453125,
+                "mean": 0.58173828125,
+                "p95": 0.6494384765625,
+                "min": 0.56201171875,
+                "max": 0.67470703125
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.239794921875,
+                "mean": 0.2424560546875,
+                "p95": 0.251123046875,
+                "min": 0.23935546875,
+                "max": 0.26826171875
+              },
+              "median_saving_us": 0.32626953124999997,
+              "median_saving_percent": 57.63822996635901,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.56220703125,
+                  "candidate_mean_us": 0.239453125,
+                  "saving_us": 0.32275390625000006,
+                  "saving_percent": 57.40837241618899
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.590087890625,
+                  "candidate_mean_us": 0.23964843749999998,
+                  "saving_us": 0.350439453125,
+                  "saving_percent": 59.38767066611502
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.566845703125,
+                  "candidate_mean_us": 0.242626953125,
+                  "saving_us": 0.32421875000000006,
+                  "saving_percent": 57.19700232578173
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.56318359375,
+                  "candidate_mean_us": 0.241796875,
+                  "saving_us": 0.32138671875,
+                  "saving_percent": 57.0660655453442
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5809082031249999,
+                  "candidate_mean_us": 0.23964843749999998,
+                  "saving_us": 0.34125976562499993,
+                  "saving_percent": 58.74590232831807
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.567236328125,
+                  "candidate_mean_us": 0.240771484375,
+                  "saving_us": 0.32646484375,
+                  "saving_percent": 57.55358526297667
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.6046875,
+                  "candidate_mean_us": 0.241845703125,
+                  "saving_us": 0.36284179687500007,
+                  "saving_percent": 60.00484496124031
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.6187499999999999,
+                  "candidate_mean_us": 0.253857421875,
+                  "saving_us": 0.3648925781249999,
+                  "saving_percent": 58.97253787878787
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3338623046875,
+                "mean": 0.3392822265625,
+                "p95": 0.36417480468749996,
+                "min": 0.32138671875,
+                "max": 0.3648925781249999
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 58.14974379564737,
+                "mean": 58.29199767309411,
+                "p95": 59.78883395794646,
+                "min": 57.0660655453442,
+                "max": 60.00484496124031
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            }
+          }
+        },
+        "native-bookkeeping": {
+          "raw_csv_sha256": "e1abcf9fe8bb6e6aba6f537f31625e11a1d5b484fba8262dc31e6bf8aa083e3d",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Editor": "False; platform=WindowsPlayer",
+            "Thread": "1; pointerBytes=8",
+            "Metric": "Stopwatch elapsed ticks on the calling Main thread; not CPU time or complete cut performance.",
+            "Scope": "per-cut native bookkeeping allocation plus release only. No worker, bake, meshes, report, arena, or end-to-end cut.",
+            "Baseline": "b19ce67a PhysicsCutCook: ids/bounds/vertexCounts via real PhysicsCutBlocks.Take<T>; bakeDone via cleared NativeArray<byte>.",
+            "Candidate": "current PhysicsCutMeshSlot, one cleared NativeArray; all arrays Allocator.Persistent.",
+            "Release": "IsCreated then Dispose in finally; finally is inside each measured batch on both versions.",
+            "ORDER_REVERSE": "0; ORDER_CHARACTER_FIRST=0",
+            "Order": "ABBA (baseline,candidate,candidate,baseline); 8 rounds per case, 1024 cuts per batch.",
+            "CaseOrder": "box,character",
+            "Warmup": "one full batch per case/version and one empty batch; excluded from CSV.",
+            "Calibration": "one separate 1024-call empty no-inline batch per round; includes loop/call/Stopwatch overhead; not subtracted.",
+            "CSV": "64 measured allocation/release rows plus 16 empty rows; all retained, no outlier removal.",
+            "PhysicsCutBlocks.Fill": "-1",
+            "NativeLeakDetection": "Enabled",
+            "ENABLE_UNITY_COLLECTIONS_CHECKS": "false",
+            "SizeOf: int": "4; float3x2=24; byte=1; PhysicsCutMeshSlot=36; baselinePayloadPerSlot=33"
+          },
+          "reverse": 0,
+          "character_first": 0,
+          "batch_order": "ABBA",
+          "case_order": [
+            "box",
+            "character"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one full batch per case/version and one empty batch; excluded from CSV."
+          },
+          "raw_row_count": 80,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5580078125,
+                "mean": 0.558526611328125,
+                "p95": 0.5671630859375001,
+                "min": 0.5501953125,
+                "max": 0.5732421875
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.137890625,
+                "mean": 0.137969970703125,
+                "p95": 0.138916015625,
+                "min": 0.137109375,
+                "max": 0.13935546875
+              },
+              "median_saving_us": 0.4201171875,
+              "median_saving_percent": 75.28876443822192,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.5592285156250001,
+                  "candidate_mean_us": 0.13779296875,
+                  "saving_us": 0.42143554687500007,
+                  "saving_percent": 75.36016764166594
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.556201171875,
+                  "candidate_mean_us": 0.137939453125,
+                  "saving_us": 0.41826171874999996,
+                  "saving_percent": 75.19971907646388
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.5580078125,
+                  "candidate_mean_us": 0.138037109375,
+                  "saving_us": 0.41997070312499996,
+                  "saving_percent": 75.26251312565628
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.554443359375,
+                  "candidate_mean_us": 0.138134765625,
+                  "saving_us": 0.41630859375,
+                  "saving_percent": 75.08586525759577
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.559619140625,
+                  "candidate_mean_us": 0.137744140625,
+                  "saving_us": 0.42187499999999994,
+                  "saving_percent": 75.386091964052
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.55693359375,
+                  "candidate_mean_us": 0.1376953125,
+                  "saving_us": 0.41923828124999996,
+                  "saving_percent": 75.2761704366123
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5638671875,
+                  "candidate_mean_us": 0.138525390625,
+                  "saving_us": 0.42534179687499996,
+                  "saving_percent": 75.43297540699689
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.5599121093749999,
+                  "candidate_mean_us": 0.137890625,
+                  "saving_us": 0.4220214843749999,
+                  "saving_percent": 75.37280892997296
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.420703125,
+                "mean": 0.420556640625,
+                "p95": 0.42417968749999996,
+                "min": 0.41630859375,
+                "max": 0.42534179687499996
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 75.31816903913912,
+                "mean": 75.297038979877,
+                "p95": 75.41656620196618,
+                "min": 75.08586525759577,
+                "max": 75.43297540699689
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 0.0,
+                "p95": 0.0,
+                "min": 0.0,
+                "max": 0.0
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    66
+                  ],
+                  "cleared_payload_bytes": [
+                    2
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    72
+                  ],
+                  "cleared_payload_bytes": [
+                    72
+                  ]
+                }
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5546875,
+                "mean": 0.564385986328125,
+                "p95": 0.6054443359374999,
+                "min": 0.551171875,
+                "max": 0.66455078125
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.14243164062500002,
+                "mean": 0.143109130859375,
+                "p95": 0.146533203125,
+                "min": 0.1419921875,
+                "max": 0.15107421875
+              },
+              "median_saving_us": 0.412255859375,
+              "median_saving_percent": 74.32218309859154,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.609521484375,
+                  "candidate_mean_us": 0.146923828125,
+                  "saving_us": 0.46259765625,
+                  "saving_percent": 75.89521749579428
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.567919921875,
+                  "candidate_mean_us": 0.1427734375,
+                  "saving_us": 0.42514648437499997,
+                  "saving_percent": 74.86028716361449
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.554638671875,
+                  "candidate_mean_us": 0.1423828125,
+                  "saving_us": 0.41225585937500003,
+                  "saving_percent": 74.32872612025707
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.5533203125,
+                  "candidate_mean_us": 0.14218750000000002,
+                  "saving_us": 0.4111328125,
+                  "saving_percent": 74.30285915990116
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.55322265625,
+                  "candidate_mean_us": 0.14208984375,
+                  "saving_us": 0.4111328125,
+                  "saving_percent": 74.31597528684908
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5533203125,
+                  "candidate_mean_us": 0.1421875,
+                  "saving_us": 0.4111328125,
+                  "saving_percent": 74.30285915990117
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5689453124999999,
+                  "candidate_mean_us": 0.143701171875,
+                  "saving_us": 0.42524414062499993,
+                  "saving_percent": 74.74253347064881
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.55419921875,
+                  "candidate_mean_us": 0.142626953125,
+                  "saving_us": 0.411572265625,
+                  "saving_percent": 74.26431718061674
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.4119140625,
+                "mean": 0.42127685546875,
+                "p95": 0.44952392578124994,
+                "min": 0.4111328125,
+                "max": 0.46259765625
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 74.32235070355307,
+                "mean": 74.62659687969786,
+                "p95": 75.53299187953135,
+                "min": 74.26431718061674,
+                "max": 75.89521749579428
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 1.220703125e-05,
+                "p95": 6.347656249999995e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    330
+                  ],
+                  "cleared_payload_bytes": [
+                    10
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    360
+                  ],
+                  "cleared_payload_bytes": [
+                    360
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [],
+      "valid": true
+    },
+    {
+      "run": "player01-a923265f",
+      "input_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player01",
+      "backend": "IL2CPP",
+      "process": {
+        "pid": 7356,
+        "started": 1790203487.9707866
+      },
+      "command": {
+        "argv": [
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests.exe",
+          "-batchmode",
+          "-runTests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player01\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player01\\player.log",
+          "-screen-fullscreen",
+          "0",
+          "-screen-width",
+          "640",
+          "-screen-height",
+          "400"
+        ],
+        "base": "b19ce67a",
+        "reverse": 0,
+        "character_first": 1,
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+        }
+      },
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+      },
+      "source_fingerprint": "ac74cac748fd6e6ebd6d35c6cdd90d5b116a231b61a1104ebdec526eee938e26",
+      "archived_files": {
+        "axis-mass-environment.txt": {
+          "sha256": "b1637cb5fb0c5bcd6a75ba32fbf1ec04c7e68982eb5309184404788f4f3731ba",
+          "bytes": 725
+        },
+        "axis-mass.csv": {
+          "sha256": "b83e8759daeed9d52b58676fe4e61adbea941d1ce8bd2224b344ef81416f7ca1",
+          "bytes": 3283
+        },
+        "binary.json": {
+          "sha256": "02acaddd0b7f8d09ca18ae8d18e5bfad99c0c6bed8eb7880a42cea9d20b36ae3",
+          "bytes": 961
+        },
+        "command.json": {
+          "sha256": "a9b93590f5a268391cc073e6184e35c66768751be5d7ca8e9e14c4cb760b1daa",
+          "bytes": 4697
+        },
+        "exit.json": {
+          "sha256": "5be1922d6ce10702bfb926f7c07f4b37e38a567cde0df4af88104aebd64b128b",
+          "bytes": 53
+        },
+        "native-bookkeeping-environment.txt": {
+          "sha256": "e59a16b90120dfa527cdfe8cbbe99a4a2168eb082cf9af9d9da02d5e644327c5",
+          "bytes": 1503
+        },
+        "native-bookkeeping.csv": {
+          "sha256": "defd4113bbdf6c4b3058472c292b5bb28f17b047f14882b6f42cf1f7f9656f39",
+          "bytes": 6319
+        },
+        "order-complete.txt": {
+          "sha256": "2e9f7cf81f4250c3933ea5253aa12aaee8deefed73614403f86b301fd4432f48",
+          "bytes": 75
+        },
+        "order-environment.txt": {
+          "sha256": "4e94342f2d9d111629119d1a7497c8a9f8c851b9ebaeb346d2d5c7d652025bcc",
+          "bytes": 1098
+        },
+        "process.json": {
+          "sha256": "787c12675583b5cd499d7e12d9712b97a26d43b538545b360d88237579456c75",
+          "bytes": 51
+        },
+        "results.xml": {
+          "sha256": "684e01b860da8af18f85918160cfa17e5bf85b3cca234f1fda67ce708cf7d7a9",
+          "bytes": 6770
+        },
+        "summary.json": {
+          "sha256": "699dcefe77aad6469d9fe61ddea40a97f0e58e31774dcc7dc34b77d69f89317c",
+          "bytes": 388
+        }
+      },
+      "benchmarks": {
+        "axis-mass": {
+          "raw_csv_sha256": "b83e8759daeed9d52b58676fe4e61adbea941d1ce8bd2224b344ef81416f7ca1",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Backend": "IL2CPP; Main Stopwatch elapsed time, not CPU time or complete cut cost.",
+            "Thread": "1",
+            "Baseline": "b19ce67a; candidate=current ProvisionalBoxMass; same input per process.",
+            "Order": "ABBA or BAAB by ORDER_REVERSE; 8 rounds, 1024 calls per batch.",
+            "Warmup": "one 1024-call batch per version and case; not saved in CSV.",
+            "character: lo": "(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity",
+            "box: lo": "(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity"
+          },
+          "reverse": 0,
+          "character_first": 1,
+          "batch_order": "ABBA",
+          "case_order": [
+            "character",
+            "box"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one 1024-call batch per version and case; not saved in CSV."
+          },
+          "raw_row_count": 64,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.555517578125,
+                "mean": 0.558441162109375,
+                "p95": 0.57763671875,
+                "min": 0.5494140625,
+                "max": 0.5896484375
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.24204101562500002,
+                "mean": 0.243048095703125,
+                "p95": 0.2477783203125,
+                "min": 0.24111328125,
+                "max": 0.2501953125
+              },
+              "median_saving_us": 0.3134765625,
+              "median_saving_percent": 56.42963874483606,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.55517578125,
+                  "candidate_mean_us": 0.2412109375,
+                  "saving_us": 0.31396484375,
+                  "saving_percent": 56.552330694810905
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.55869140625,
+                  "candidate_mean_us": 0.24160156249999998,
+                  "saving_us": 0.31708984375000004,
+                  "saving_percent": 56.75581192099284
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.550048828125,
+                  "candidate_mean_us": 0.241943359375,
+                  "saving_us": 0.30810546875,
+                  "saving_percent": 56.01420328450955
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.564111328125,
+                  "candidate_mean_us": 0.248583984375,
+                  "saving_us": 0.31552734374999997,
+                  "saving_percent": 55.93352376006232
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5545898437500001,
+                  "candidate_mean_us": 0.242626953125,
+                  "saving_us": 0.3119628906250001,
+                  "saving_percent": 56.25110054587077
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.573388671875,
+                  "candidate_mean_us": 0.24228515625000002,
+                  "saving_us": 0.33110351562499996,
+                  "saving_percent": 57.74503959805841
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5552734375,
+                  "candidate_mean_us": 0.24365234375,
+                  "saving_us": 0.31162109375,
+                  "saving_percent": 56.12029546253957
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.55625,
+                  "candidate_mean_us": 0.24248046875,
+                  "saving_us": 0.31376953125,
+                  "saving_percent": 56.40800561797753
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3138671875,
+                "mean": 0.31539306640625003,
+                "p95": 0.32619873046875,
+                "min": 0.30810546875,
+                "max": 0.33110351562499996
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 56.329553081924146,
+                "mean": 56.47253886060274,
+                "p95": 57.398809911085465,
+                "min": 55.93352376006232,
+                "max": 57.74503959805841
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.567626953125,
+                "mean": 0.573028564453125,
+                "p95": 0.6013671875,
+                "min": 0.560546875,
+                "max": 0.62919921875
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.24189453125,
+                "mean": 0.2462890625,
+                "p95": 0.260498046875,
+                "min": 0.24130859375,
+                "max": 0.299609375
+              },
+              "median_saving_us": 0.325732421875,
+              "median_saving_percent": 57.384946236559145,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.566748046875,
+                  "candidate_mean_us": 0.245654296875,
+                  "saving_us": 0.32109375,
+                  "saving_percent": 56.655466528818806
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.5784667968749999,
+                  "candidate_mean_us": 0.24189453125,
+                  "saving_us": 0.3365722656249999,
+                  "saving_percent": 58.183506372921414
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.563232421875,
+                  "candidate_mean_us": 0.243994140625,
+                  "saving_us": 0.31923828125,
+                  "saving_percent": 56.67967056783703
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.566796875,
+                  "candidate_mean_us": 0.241552734375,
+                  "saving_us": 0.32524414062499996,
+                  "saving_percent": 57.3828394210889
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5978515625,
+                  "candidate_mean_us": 0.24160156249999998,
+                  "saving_us": 0.35625000000000007,
+                  "saving_percent": 59.58836981378634
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5775390625,
+                  "candidate_mean_us": 0.27177734375,
+                  "saving_us": 0.30576171874999997,
+                  "saving_percent": 52.94217111937775
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.56982421875,
+                  "candidate_mean_us": 0.241650390625,
+                  "saving_us": 0.328173828125,
+                  "saving_percent": 57.59211653813197
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.56376953125,
+                  "candidate_mean_us": 0.2421875,
+                  "saving_us": 0.32158203124999996,
+                  "saving_percent": 57.041399618915634
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.32341308593749996,
+                "mean": 0.32673950195312496,
+                "p95": 0.34936279296875,
+                "min": 0.30576171874999997,
+                "max": 0.35625000000000007
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 57.21211952000227,
+                "mean": 57.00819249760973,
+                "p95": 59.09666760948362,
+                "min": 52.94217111937775,
+                "max": 59.58836981378634
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            }
+          }
+        },
+        "native-bookkeeping": {
+          "raw_csv_sha256": "defd4113bbdf6c4b3058472c292b5bb28f17b047f14882b6f42cf1f7f9656f39",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Editor": "False; platform=WindowsPlayer",
+            "Thread": "1; pointerBytes=8",
+            "Metric": "Stopwatch elapsed ticks on the calling Main thread; not CPU time or complete cut performance.",
+            "Scope": "per-cut native bookkeeping allocation plus release only. No worker, bake, meshes, report, arena, or end-to-end cut.",
+            "Baseline": "b19ce67a PhysicsCutCook: ids/bounds/vertexCounts via real PhysicsCutBlocks.Take<T>; bakeDone via cleared NativeArray<byte>.",
+            "Candidate": "current PhysicsCutMeshSlot, one cleared NativeArray; all arrays Allocator.Persistent.",
+            "Release": "IsCreated then Dispose in finally; finally is inside each measured batch on both versions.",
+            "ORDER_REVERSE": "0; ORDER_CHARACTER_FIRST=1",
+            "Order": "ABBA (baseline,candidate,candidate,baseline); 8 rounds per case, 1024 cuts per batch.",
+            "CaseOrder": "character,box",
+            "Warmup": "one full batch per case/version and one empty batch; excluded from CSV.",
+            "Calibration": "one separate 1024-call empty no-inline batch per round; includes loop/call/Stopwatch overhead; not subtracted.",
+            "CSV": "64 measured allocation/release rows plus 16 empty rows; all retained, no outlier removal.",
+            "PhysicsCutBlocks.Fill": "-1",
+            "NativeLeakDetection": "Enabled",
+            "ENABLE_UNITY_COLLECTIONS_CHECKS": "false",
+            "SizeOf: int": "4; float3x2=24; byte=1; PhysicsCutMeshSlot=36; baselinePayloadPerSlot=33"
+          },
+          "reverse": 0,
+          "character_first": 1,
+          "batch_order": "ABBA",
+          "case_order": [
+            "character",
+            "box"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one full batch per case/version and one empty batch; excluded from CSV."
+          },
+          "raw_row_count": 80,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5556640625,
+                "mean": 0.5675048828125,
+                "p95": 0.6120361328125,
+                "min": 0.54990234375,
+                "max": 0.74306640625
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.135791015625,
+                "mean": 0.1360595703125,
+                "p95": 0.1375732421875,
+                "min": 0.1353515625,
+                "max": 0.13955078125
+              },
+              "median_saving_us": 0.419873046875,
+              "median_saving_percent": 75.56239015817224,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.553369140625,
+                  "candidate_mean_us": 0.135546875,
+                  "saving_us": 0.41782226562499997,
+                  "saving_percent": 75.50516191652696
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.552490234375,
+                  "candidate_mean_us": 0.13564453124999998,
+                  "saving_us": 0.416845703125,
+                  "saving_percent": 75.44851966416262
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.557763671875,
+                  "candidate_mean_us": 0.13564453124999998,
+                  "saving_us": 0.422119140625,
+                  "saving_percent": 75.68064431410313
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.5596679687499999,
+                  "candidate_mean_us": 0.1376953125,
+                  "saving_us": 0.4219726562499999,
+                  "saving_percent": 75.3969638806491
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.55390625,
+                  "candidate_mean_us": 0.13583984375000002,
+                  "saving_us": 0.41806640625,
+                  "saving_percent": 75.47602256699577
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.6478027343749999,
+                  "candidate_mean_us": 0.13603515625,
+                  "saving_us": 0.511767578125,
+                  "saving_percent": 79.00052762493404
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5542968749999999,
+                  "candidate_mean_us": 0.136279296875,
+                  "saving_us": 0.4180175781249999,
+                  "saving_percent": 75.41402396053559
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.5607421875,
+                  "candidate_mean_us": 0.135791015625,
+                  "saving_us": 0.42495117187500003,
+                  "saving_percent": 75.78369905956113
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.42001953124999997,
+                "mean": 0.43144531249999996,
+                "p95": 0.48138183593749995,
+                "min": 0.416845703125,
+                "max": 0.511767578125
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 75.49059224176136,
+                "mean": 75.96319537343354,
+                "p95": 77.87463762705352,
+                "min": 75.3969638806491,
+                "max": 79.00052762493404
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 2.44140625e-05,
+                "p95": 9.765625e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    66
+                  ],
+                  "cleared_payload_bytes": [
+                    2
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    72
+                  ],
+                  "cleared_payload_bytes": [
+                    72
+                  ]
+                }
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5582031249999999,
+                "mean": 0.559405517578125,
+                "p95": 0.57099609375,
+                "min": 0.5509765625,
+                "max": 0.5859375
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.141552734375,
+                "mean": 0.14232177734375,
+                "p95": 0.1467529296875,
+                "min": 0.14072265625,
+                "max": 0.14755859375
+              },
+              "median_saving_us": 0.4166503906249999,
+              "median_saving_percent": 74.64135759272217,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.5515625,
+                  "candidate_mean_us": 0.1408203125,
+                  "saving_us": 0.41074218749999997,
+                  "saving_percent": 74.46883852691218
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.553515625,
+                  "candidate_mean_us": 0.140966796875,
+                  "saving_us": 0.41254882812499993,
+                  "saving_percent": 74.53246294989414
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.570654296875,
+                  "candidate_mean_us": 0.14453125,
+                  "saving_us": 0.426123046875,
+                  "saving_percent": 74.67271327115598
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.5599121093749999,
+                  "candidate_mean_us": 0.143359375,
+                  "saving_us": 0.4165527343749999,
+                  "saving_percent": 74.39609313682742
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.56201171875,
+                  "candidate_mean_us": 0.14150390624999998,
+                  "saving_us": 0.4205078125,
+                  "saving_percent": 74.82189400521287
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5614257812500001,
+                  "candidate_mean_us": 0.142041015625,
+                  "saving_us": 0.4193847656250001,
+                  "saving_percent": 74.69994781701166
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.558642578125,
+                  "candidate_mean_us": 0.143701171875,
+                  "saving_us": 0.41494140625,
+                  "saving_percent": 74.27672406258195
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.55751953125,
+                  "candidate_mean_us": 0.141650390625,
+                  "saving_us": 0.41586914062499997,
+                  "saving_percent": 74.59274829217026
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.41621093749999993,
+                "mean": 0.417083740234375,
+                "p95": 0.42415771484375003,
+                "min": 0.41074218749999997,
+                "max": 0.426123046875
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 74.56260562103219,
+                "mean": 74.55767775772081,
+                "p95": 74.77921283934245,
+                "min": 74.27672406258195,
+                "max": 74.82189400521287
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 2.44140625e-05,
+                "p95": 9.765625e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    330
+                  ],
+                  "cleared_payload_bytes": [
+                    10
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    360
+                  ],
+                  "cleared_payload_bytes": [
+                    360
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [],
+      "valid": true
+    },
+    {
+      "run": "player10-f0ebe111",
+      "input_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player10",
+      "backend": "IL2CPP",
+      "process": {
+        "pid": 86112,
+        "started": 1790203481.0631993
+      },
+      "command": {
+        "argv": [
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests.exe",
+          "-batchmode",
+          "-runTests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player10\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player10\\player.log",
+          "-screen-fullscreen",
+          "0",
+          "-screen-width",
+          "640",
+          "-screen-height",
+          "400"
+        ],
+        "base": "b19ce67a",
+        "reverse": 1,
+        "character_first": 0,
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+        }
+      },
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+      },
+      "source_fingerprint": "ac74cac748fd6e6ebd6d35c6cdd90d5b116a231b61a1104ebdec526eee938e26",
+      "archived_files": {
+        "axis-mass-environment.txt": {
+          "sha256": "9d8eedd19d47c7ab89f05f9fd1fbb648b0e09e356754bca8907ba0a9e5669a53",
+          "bytes": 725
+        },
+        "axis-mass.csv": {
+          "sha256": "c5e9bbb357b5e9fbc85f3fa0e3a556feb223c7c058e76dc786fc461ab27980c7",
+          "bytes": 3283
+        },
+        "binary.json": {
+          "sha256": "02acaddd0b7f8d09ca18ae8d18e5bfad99c0c6bed8eb7880a42cea9d20b36ae3",
+          "bytes": 961
+        },
+        "command.json": {
+          "sha256": "34c4b95f208fb2757568b7eb56cfc8dbf1751a1a4e7a88a260d42a51b3e647a7",
+          "bytes": 4697
+        },
+        "exit.json": {
+          "sha256": "7e0c85860cc64a277bd6185ed779a73371ae31881bb1f61fee6164a1e70d0589",
+          "bytes": 53
+        },
+        "native-bookkeeping-environment.txt": {
+          "sha256": "e8f888b3d69ffd0bc71c674a4f9e2b77c511a229675d6b520a197f37bf8546ac",
+          "bytes": 1503
+        },
+        "native-bookkeeping.csv": {
+          "sha256": "f1d66f96163027117529974b4b8dcad27e68c7455cff08c85faaa798cd6933e6",
+          "bytes": 6319
+        },
+        "order-complete.txt": {
+          "sha256": "2e9f7cf81f4250c3933ea5253aa12aaee8deefed73614403f86b301fd4432f48",
+          "bytes": 75
+        },
+        "order-environment.txt": {
+          "sha256": "ea8cdaa4f9ec9c0512e9a1b7fc3b2399eda5de018b54db4be70b5c6e41cba44f",
+          "bytes": 1096
+        },
+        "process.json": {
+          "sha256": "4431e567943234124a00ef885c82efce85b15c9e38ce5a55e92b6327c7386c4b",
+          "bytes": 52
+        },
+        "results.xml": {
+          "sha256": "b133ab02cdb01382b199e1a36be7538f97f9ee7989c4723b32b07fd72627f6f9",
+          "bytes": 6769
+        },
+        "summary.json": {
+          "sha256": "5d65779e5571ac574668d2ec9b13b41c570edfda8faf2e797e3cb41516e0bc22",
+          "bytes": 388
+        }
+      },
+      "benchmarks": {
+        "axis-mass": {
+          "raw_csv_sha256": "c5e9bbb357b5e9fbc85f3fa0e3a556feb223c7c058e76dc786fc461ab27980c7",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Backend": "IL2CPP; Main Stopwatch elapsed time, not CPU time or complete cut cost.",
+            "Thread": "1",
+            "Baseline": "b19ce67a; candidate=current ProvisionalBoxMass; same input per process.",
+            "Order": "ABBA or BAAB by ORDER_REVERSE; 8 rounds, 1024 calls per batch.",
+            "Warmup": "one 1024-call batch per version and case; not saved in CSV.",
+            "box: lo": "(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity",
+            "character: lo": "(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity"
+          },
+          "reverse": 1,
+          "character_first": 0,
+          "batch_order": "BAAB",
+          "case_order": [
+            "box",
+            "character"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one 1024-call batch per version and case; not saved in CSV."
+          },
+          "raw_row_count": 64,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5515625,
+                "mean": 0.556231689453125,
+                "p95": 0.5776611328125,
+                "min": 0.54990234375,
+                "max": 0.58095703125
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.23984375,
+                "mean": 0.2426513671875,
+                "p95": 0.2542236328125,
+                "min": 0.2392578125,
+                "max": 0.27685546875
+              },
+              "median_saving_us": 0.31171874999999993,
+              "median_saving_percent": 56.5155807365439,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.563134765625,
+                  "candidate_mean_us": 0.239501953125,
+                  "saving_us": 0.3236328125,
+                  "saving_percent": 57.46986907136045
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.55126953125,
+                  "candidate_mean_us": 0.243017578125,
+                  "saving_us": 0.308251953125,
+                  "saving_percent": 55.916740478299374
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.55087890625,
+                  "candidate_mean_us": 0.239892578125,
+                  "saving_us": 0.31098632812500004,
+                  "saving_percent": 56.45275660343911
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.552978515625,
+                  "candidate_mean_us": 0.2400390625,
+                  "saving_us": 0.312939453125,
+                  "saving_percent": 56.59161147902869
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5654296875,
+                  "candidate_mean_us": 0.24033203125000002,
+                  "saving_us": 0.32509765625,
+                  "saving_percent": 57.49568221070811
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5501953125000001,
+                  "candidate_mean_us": 0.23964843749999998,
+                  "saving_us": 0.3105468750000001,
+                  "saving_percent": 56.44302449414271
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.551611328125,
+                  "candidate_mean_us": 0.239794921875,
+                  "saving_us": 0.31181640625,
+                  "saving_percent": 56.528281844737535
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.56435546875,
+                  "candidate_mean_us": 0.258984375,
+                  "saving_us": 0.30537109375,
+                  "saving_percent": 54.10970756186191
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3114013671875,
+                "mean": 0.313580322265625,
+                "p95": 0.3245849609375,
+                "min": 0.30537109375,
+                "max": 0.32509765625
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 56.490519224088324,
+                "mean": 56.37595921794724,
+                "p95": 57.48664761193643,
+                "min": 54.10970756186191,
+                "max": 57.49568221070811
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.56806640625,
+                "mean": 0.573016357421875,
+                "p95": 0.5935791015625,
+                "min": 0.56220703125,
+                "max": 0.5986328125
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.240234375,
+                "mean": 0.24342041015625,
+                "p95": 0.26044921875,
+                "min": 0.23935546875,
+                "max": 0.2630859375
+              },
+              "median_saving_us": 0.32783203125000004,
+              "median_saving_percent": 57.71015987622485,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.56796875,
+                  "candidate_mean_us": 0.23959960937500002,
+                  "saving_us": 0.328369140625,
+                  "saving_percent": 57.8146492434663
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.5748046875,
+                  "candidate_mean_us": 0.250390625,
+                  "saving_us": 0.32441406250000004,
+                  "saving_percent": 56.43900781515461
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.569287109375,
+                  "candidate_mean_us": 0.23974609375,
+                  "saving_us": 0.32954101562500004,
+                  "saving_percent": 57.8866112016468
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.5667480468749999,
+                  "candidate_mean_us": 0.239794921875,
+                  "saving_us": 0.3269531249999999,
+                  "saving_percent": 57.689325407081924
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.579052734375,
+                  "candidate_mean_us": 0.24482421875,
+                  "saving_us": 0.33422851562500006,
+                  "saving_percent": 57.71987520026984
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.586181640625,
+                  "candidate_mean_us": 0.241552734375,
+                  "saving_us": 0.34462890625,
+                  "saving_percent": 58.79216992919617
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.56259765625,
+                  "candidate_mean_us": 0.2400390625,
+                  "saving_us": 0.32255859375,
+                  "saving_percent": 57.333796215934726
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.577490234375,
+                  "candidate_mean_us": 0.251416015625,
+                  "saving_us": 0.32607421875000003,
+                  "saving_percent": 56.46402299822441
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3276611328125,
+                "mean": 0.329595947265625,
+                "p95": 0.34098876953125,
+                "min": 0.32255859375,
+                "max": 0.34462890625
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 57.70460030367588,
+                "mean": 57.517432251371844,
+                "p95": 58.47522437455389,
+                "min": 56.43900781515461,
+                "max": 58.79216992919617
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            }
+          }
+        },
+        "native-bookkeeping": {
+          "raw_csv_sha256": "f1d66f96163027117529974b4b8dcad27e68c7455cff08c85faaa798cd6933e6",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Editor": "False; platform=WindowsPlayer",
+            "Thread": "1; pointerBytes=8",
+            "Metric": "Stopwatch elapsed ticks on the calling Main thread; not CPU time or complete cut performance.",
+            "Scope": "per-cut native bookkeeping allocation plus release only. No worker, bake, meshes, report, arena, or end-to-end cut.",
+            "Baseline": "b19ce67a PhysicsCutCook: ids/bounds/vertexCounts via real PhysicsCutBlocks.Take<T>; bakeDone via cleared NativeArray<byte>.",
+            "Candidate": "current PhysicsCutMeshSlot, one cleared NativeArray; all arrays Allocator.Persistent.",
+            "Release": "IsCreated then Dispose in finally; finally is inside each measured batch on both versions.",
+            "ORDER_REVERSE": "1; ORDER_CHARACTER_FIRST=0",
+            "Order": "BAAB (candidate,baseline,baseline,candidate); 8 rounds per case, 1024 cuts per batch.",
+            "CaseOrder": "box,character",
+            "Warmup": "one full batch per case/version and one empty batch; excluded from CSV.",
+            "Calibration": "one separate 1024-call empty no-inline batch per round; includes loop/call/Stopwatch overhead; not subtracted.",
+            "CSV": "64 measured allocation/release rows plus 16 empty rows; all retained, no outlier removal.",
+            "PhysicsCutBlocks.Fill": "-1",
+            "NativeLeakDetection": "Enabled",
+            "ENABLE_UNITY_COLLECTIONS_CHECKS": "false",
+            "SizeOf: int": "4; float3x2=24; byte=1; PhysicsCutMeshSlot=36; baselinePayloadPerSlot=33"
+          },
+          "reverse": 1,
+          "character_first": 0,
+          "batch_order": "BAAB",
+          "case_order": [
+            "box",
+            "character"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one full batch per case/version and one empty batch; excluded from CSV."
+          },
+          "raw_row_count": 80,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.557373046875,
+                "mean": 0.559588623046875,
+                "p95": 0.5693115234375,
+                "min": 0.55341796875,
+                "max": 0.57744140625
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.137939453125,
+                "mean": 0.1384765625,
+                "p95": 0.141357421875,
+                "min": 0.1361328125,
+                "max": 0.141796875
+              },
+              "median_saving_us": 0.41943359375,
+              "median_saving_percent": 75.25186158563294,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.560546875,
+                  "candidate_mean_us": 0.137353515625,
+                  "saving_us": 0.423193359375,
+                  "saving_percent": 75.49651567944251
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.558251953125,
+                  "candidate_mean_us": 0.138671875,
+                  "saving_us": 0.419580078125,
+                  "saving_percent": 75.15962564506253
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.555615234375,
+                  "candidate_mean_us": 0.138037109375,
+                  "saving_us": 0.417578125,
+                  "saving_percent": 75.15598910273312
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.555224609375,
+                  "candidate_mean_us": 0.1373046875,
+                  "saving_us": 0.41791992187499993,
+                  "saving_percent": 75.27042476475245
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5575195312500001,
+                  "candidate_mean_us": 0.138671875,
+                  "saving_us": 0.4188476562500001,
+                  "saving_percent": 75.12699246803294
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.560205078125,
+                  "candidate_mean_us": 0.13881835937499998,
+                  "saving_us": 0.42138671875,
+                  "saving_percent": 75.22008193149134
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5691894531249999,
+                  "candidate_mean_us": 0.139306640625,
+                  "saving_us": 0.42988281249999993,
+                  "saving_percent": 75.52543536072746
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.56015625,
+                  "candidate_mean_us": 0.1396484375,
+                  "saving_us": 0.4205078125,
+                  "saving_percent": 75.0697350069735
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.4200439453125,
+                "mean": 0.421112060546875,
+                "p95": 0.42754150390624995,
+                "min": 0.417578125,
+                "max": 0.42988281249999993
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 75.18985378827693,
+                "mean": 75.25309999490199,
+                "p95": 75.51531347227773,
+                "min": 75.0697350069735,
+                "max": 75.52543536072746
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 2.44140625e-05,
+                "p95": 9.765625e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    66
+                  ],
+                  "cleared_payload_bytes": [
+                    2
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    72
+                  ],
+                  "cleared_payload_bytes": [
+                    72
+                  ]
+                }
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.55498046875,
+                "mean": 0.55712890625,
+                "p95": 0.56572265625,
+                "min": 0.55263671875,
+                "max": 0.57099609375
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.143505859375,
+                "mean": 0.143585205078125,
+                "p95": 0.145361328125,
+                "min": 0.14208984375,
+                "max": 0.1466796875
+              },
+              "median_saving_us": 0.41147460937499997,
+              "median_saving_percent": 74.14217842688721,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.5591796875,
+                  "candidate_mean_us": 0.143310546875,
+                  "saving_us": 0.415869140625,
+                  "saving_percent": 74.37128885784144
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.556103515625,
+                  "candidate_mean_us": 0.143798828125,
+                  "saving_us": 0.41230468750000004,
+                  "saving_percent": 74.14171569057864
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.55546875,
+                  "candidate_mean_us": 0.14453125,
+                  "saving_us": 0.41093749999999996,
+                  "saving_percent": 73.98030942334739
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.5548339843750001,
+                  "candidate_mean_us": 0.14365234375000002,
+                  "saving_us": 0.41118164062500007,
+                  "saving_percent": 74.10895010120566
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.553955078125,
+                  "candidate_mean_us": 0.1431640625,
+                  "saving_us": 0.410791015625,
+                  "saving_percent": 74.15601586602027
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.55341796875,
+                  "candidate_mean_us": 0.1431640625,
+                  "saving_us": 0.41025390625,
+                  "saving_percent": 74.1309334745015
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.556591796875,
+                  "candidate_mean_us": 0.142822265625,
+                  "saving_us": 0.41376953125000004,
+                  "saving_percent": 74.33985437319063
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.56748046875,
+                  "candidate_mean_us": 0.14423828125,
+                  "saving_us": 0.42324218750000003,
+                  "saving_percent": 74.58268800550681
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.41174316406250006,
+                "mean": 0.413543701171875,
+                "p95": 0.42066162109375005,
+                "min": 0.41025390625,
+                "max": 0.42324218750000003
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 74.14886577829945,
+                "mean": 74.22646947402404,
+                "p95": 74.50869830382393,
+                "min": 73.98030942334739,
+                "max": 74.58268800550681
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 1.220703125e-05,
+                "p95": 6.347656249999995e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    330
+                  ],
+                  "cleared_payload_bytes": [
+                    10
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    360
+                  ],
+                  "cleared_payload_bytes": [
+                    360
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [],
+      "valid": true
+    },
+    {
+      "run": "player11-6bad76e3",
+      "input_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player11",
+      "backend": "IL2CPP",
+      "process": {
+        "pid": 29024,
+        "started": 1790203474.1107974
+      },
+      "command": {
+        "argv": [
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests.exe",
+          "-batchmode",
+          "-runTests",
+          "-testResults",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player11\\results.xml",
+          "-logFile",
+          "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player11\\player.log",
+          "-screen-fullscreen",
+          "0",
+          "-screen-width",
+          "640",
+          "-screen-height",
+          "400"
+        ],
+        "base": "b19ce67a",
+        "reverse": 1,
+        "character_first": 1,
+        "source_sha256": {
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+          "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+          "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+          "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+          "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+          "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+        }
+      },
+      "source_sha256": {
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutOrderProbeTemporary.cs": "1e6ef4837cb66c6d29d60b03c5314b20a8db90fa8103d0c422285bd1a3323d10",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+        "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+        "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+        "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "d4766ecfbd253f699b76c00fb35992fdaef5f96e0a9c30bc61caa3124965c4b6",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "ed979429f8328e4cfb993f59c925855484ffe3cf9ba58fa3fd508183024e00ff",
+        "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/AxisMassBenchmark.cs": "f012af7173b4b7c580f81d54f60f653e95bd43bfb5935a85dc9713f909c034b0",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/BaselineProvisionalBoxMass.cs": "207a794202796e55326b31f58ecc334ba10b750555061865dc3421bf44d00173",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/NativeBookkeepingBenchmark.cs": "de251ec0d4bd9e584ba9e7e55152fd50fee81c20e12a7a653591366136de94d3",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/OrderBenchmark.cs": "948863e9f70121f8149f634415a59939ff76e45dd8a140566bcb8234547cfa4c",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/SandboxCharacterBody.cs": "164ed369b28d033e67ba173665284f678604cdb2315c09d8fb349b5d97a88241",
+        "Assets/Zantetsu/Tests/PlayMode/MainThreadOrderTemporary/StandaloneResults.cs": "455b2e545a98c6c167a85d93958ddfdac81c082e8fe7d8820546bb1c20ee5045"
+      },
+      "source_fingerprint": "ac74cac748fd6e6ebd6d35c6cdd90d5b116a231b61a1104ebdec526eee938e26",
+      "archived_files": {
+        "axis-mass-environment.txt": {
+          "sha256": "b1637cb5fb0c5bcd6a75ba32fbf1ec04c7e68982eb5309184404788f4f3731ba",
+          "bytes": 725
+        },
+        "axis-mass.csv": {
+          "sha256": "fdde81b5614f57e4ed352bf23b4407b175fcd5d41d1d7f3dc672997c08244158",
+          "bytes": 3283
+        },
+        "binary.json": {
+          "sha256": "02acaddd0b7f8d09ca18ae8d18e5bfad99c0c6bed8eb7880a42cea9d20b36ae3",
+          "bytes": 961
+        },
+        "command.json": {
+          "sha256": "df5c5b650edc525d29bbd840579f34a4348de9b8d3902d77a8e5261612d88a1e",
+          "bytes": 4697
+        },
+        "exit.json": {
+          "sha256": "70491fc14c385f6ea16d5a4eb10fc163339e67660abe84ebb140305b7c068332",
+          "bytes": 53
+        },
+        "native-bookkeeping-environment.txt": {
+          "sha256": "e665b273c6871bfd4f2f576c195992795ed1dea5306f256eaf40fc473a46aa22",
+          "bytes": 1503
+        },
+        "native-bookkeeping.csv": {
+          "sha256": "423afc1feff262fbfdfd830b66ec6b5468d0b849deff7dc120d5ebb905d693b2",
+          "bytes": 6319
+        },
+        "order-complete.txt": {
+          "sha256": "2e9f7cf81f4250c3933ea5253aa12aaee8deefed73614403f86b301fd4432f48",
+          "bytes": 75
+        },
+        "order-environment.txt": {
+          "sha256": "cda5430d865e1858f5b70baabc38f6616f35aaa5da5836103d3da65953c47c1c",
+          "bytes": 1095
+        },
+        "process.json": {
+          "sha256": "e4b97665fce06470d0822e307d74ae1ea0b9a150472d179b9cc075b717fa587e",
+          "bytes": 52
+        },
+        "results.xml": {
+          "sha256": "089e4c8ef53ab63bc16f4ad138b93274b800196fae2a6bcf9cfda57e39149025",
+          "bytes": 6770
+        },
+        "summary.json": {
+          "sha256": "7ab737d8bc39d7aba7e52671f1c9e2cded8f0700a0a73e6a19d32ba0fa3fd112",
+          "bytes": 388
+        }
+      },
+      "benchmarks": {
+        "axis-mass": {
+          "raw_csv_sha256": "fdde81b5614f57e4ed352bf23b4407b175fcd5d41d1d7f3dc672997c08244158",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Backend": "IL2CPP; Main Stopwatch elapsed time, not CPU time or complete cut cost.",
+            "Thread": "1",
+            "Baseline": "b19ce67a; candidate=current ProvisionalBoxMass; same input per process.",
+            "Order": "ABBA or BAAB by ORDER_REVERSE; 8 rounds, 1024 calls per batch.",
+            "Warmup": "one 1024-call batch per version and case; not saved in CSV.",
+            "character: lo": "(-0.4791821,-0.158407256,-0.007058629), hi=(0.479183316,0.353354365,1.84112918), plane=(0,0,1,-0.9), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity",
+            "box: lo": "(-0.25,-0.25,-0.25), hi=(0.25,0.25,0.25), plane=(0,1,0,0), parentMass=12, sourceInertia=(4,4,4), sourceInertiaRotation=identity"
+          },
+          "reverse": 1,
+          "character_first": 1,
+          "batch_order": "BAAB",
+          "case_order": [
+            "character",
+            "box"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one 1024-call batch per version and case; not saved in CSV."
+          },
+          "raw_row_count": 64,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.546875,
+                "mean": 0.550762939453125,
+                "p95": 0.5697265625,
+                "min": 0.544921875,
+                "max": 0.578515625
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.2408203125,
+                "mean": 0.2610595703125,
+                "p95": 0.36606445312499997,
+                "min": 0.23974609375,
+                "max": 0.46552734375
+              },
+              "median_saving_us": 0.3060546875,
+              "median_saving_percent": 55.96428571428571,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.552978515625,
+                  "candidate_mean_us": 0.240185546875,
+                  "saving_us": 0.31279296875,
+                  "saving_percent": 56.565121412803535
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.545166015625,
+                  "candidate_mean_us": 0.240283203125,
+                  "saving_us": 0.3048828125,
+                  "saving_percent": 55.924764890282134
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.546142578125,
+                  "candidate_mean_us": 0.244140625,
+                  "saving_us": 0.302001953125,
+                  "saving_percent": 55.29727313366115
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.562744140625,
+                  "candidate_mean_us": 0.241162109375,
+                  "saving_us": 0.32158203125,
+                  "saving_percent": 57.14533622559653
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.54755859375,
+                  "candidate_mean_us": 0.24111328124999998,
+                  "saving_us": 0.30644531250000007,
+                  "saving_percent": 55.96575708935261
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.549560546875,
+                  "candidate_mean_us": 0.241845703125,
+                  "saving_us": 0.30771484375,
+                  "saving_percent": 55.992892047978685
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.546044921875,
+                  "candidate_mean_us": 0.353271484375,
+                  "saving_us": 0.19277343749999998,
+                  "saving_percent": 35.3035857998748
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.555908203125,
+                  "candidate_mean_us": 0.286474609375,
+                  "saving_us": 0.26943359375,
+                  "saving_percent": 48.46728151075976
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3056640625,
+                "mean": 0.289703369140625,
+                "p95": 0.31850585937500003,
+                "min": 0.19277343749999998,
+                "max": 0.32158203125
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 55.94526098981737,
+                "mean": 52.58275151378865,
+                "p95": 56.94226104111898,
+                "min": 35.3035857998748,
+                "max": 57.14533622559653
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.5643066406249999,
+                "mean": 0.582989501953125,
+                "p95": 0.6689453125,
+                "min": 0.5556640625,
+                "max": 0.75537109375
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.2404296875,
+                "mean": 0.244293212890625,
+                "p95": 0.25839843749999997,
+                "min": 0.23974609375,
+                "max": 0.27216796875
+              },
+              "median_saving_us": 0.3238769531249999,
+              "median_saving_percent": 57.39378731504715,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.557373046875,
+                  "candidate_mean_us": 0.239794921875,
+                  "saving_us": 0.317578125,
+                  "saving_percent": 56.977660972404735
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.567333984375,
+                  "candidate_mean_us": 0.25625,
+                  "saving_us": 0.31108398437500007,
+                  "saving_percent": 54.8326017729581
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.600390625,
+                  "candidate_mean_us": 0.241064453125,
+                  "saving_us": 0.35932617187499993,
+                  "saving_percent": 59.84873129472999
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.568359375,
+                  "candidate_mean_us": 0.24326171875000002,
+                  "saving_us": 0.32509765625,
+                  "saving_percent": 57.19931271477663
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.570556640625,
+                  "candidate_mean_us": 0.240869140625,
+                  "saving_us": 0.3296875,
+                  "saving_percent": 57.78348309798888
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.66865234375,
+                  "candidate_mean_us": 0.247021484375,
+                  "saving_us": 0.42163085937500006,
+                  "saving_percent": 63.05681320286257
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5677246093749999,
+                  "candidate_mean_us": 0.245458984375,
+                  "saving_us": 0.3222656249999999,
+                  "saving_percent": 56.76442762535478
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.563525390625,
+                  "candidate_mean_us": 0.24062499999999998,
+                  "saving_us": 0.322900390625,
+                  "saving_percent": 57.30006065332294
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.3239990234375,
+                "mean": 0.3386962890625,
+                "p95": 0.39982421874999996,
+                "min": 0.31108398437500007,
+                "max": 0.42163085937500006
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 57.249686684049784,
+                "mean": 57.970386416799826,
+                "p95": 61.933984535016165,
+                "min": 54.8326017729581,
+                "max": 63.05681320286257
+              },
+              "empty_batch_us_per_call": {
+                "n": 0
+              }
+            }
+          }
+        },
+        "native-bookkeeping": {
+          "raw_csv_sha256": "423afc1feff262fbfdfd830b66ec6b5468d0b849deff7dc120d5ebb905d693b2",
+          "environment": {
+            "Unity": "6000.3.22f1",
+            "Editor": "False; platform=WindowsPlayer",
+            "Thread": "1; pointerBytes=8",
+            "Metric": "Stopwatch elapsed ticks on the calling Main thread; not CPU time or complete cut performance.",
+            "Scope": "per-cut native bookkeeping allocation plus release only. No worker, bake, meshes, report, arena, or end-to-end cut.",
+            "Baseline": "b19ce67a PhysicsCutCook: ids/bounds/vertexCounts via real PhysicsCutBlocks.Take<T>; bakeDone via cleared NativeArray<byte>.",
+            "Candidate": "current PhysicsCutMeshSlot, one cleared NativeArray; all arrays Allocator.Persistent.",
+            "Release": "IsCreated then Dispose in finally; finally is inside each measured batch on both versions.",
+            "ORDER_REVERSE": "1; ORDER_CHARACTER_FIRST=1",
+            "Order": "BAAB (candidate,baseline,baseline,candidate); 8 rounds per case, 1024 cuts per batch.",
+            "CaseOrder": "character,box",
+            "Warmup": "one full batch per case/version and one empty batch; excluded from CSV.",
+            "Calibration": "one separate 1024-call empty no-inline batch per round; includes loop/call/Stopwatch overhead; not subtracted.",
+            "CSV": "64 measured allocation/release rows plus 16 empty rows; all retained, no outlier removal.",
+            "PhysicsCutBlocks.Fill": "-1",
+            "NativeLeakDetection": "Enabled",
+            "ENABLE_UNITY_COLLECTIONS_CHECKS": "false",
+            "SizeOf: int": "4; float3x2=24; byte=1; PhysicsCutMeshSlot=36; baselinePayloadPerSlot=33"
+          },
+          "reverse": 1,
+          "character_first": 1,
+          "batch_order": "BAAB",
+          "case_order": [
+            "character",
+            "box"
+          ],
+          "warmup": {
+            "rows": [],
+            "recorded": false,
+            "description": "one full batch per case/version and one empty batch; excluded from CSV."
+          },
+          "raw_row_count": 80,
+          "cases": {
+            "box": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.554931640625,
+                "mean": 0.554583740234375,
+                "p95": 0.5631591796875,
+                "min": 0.54736328125,
+                "max": 0.56806640625
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.13662109375,
+                "mean": 0.1397705078125,
+                "p95": 0.15031738281249998,
+                "min": 0.13544921875,
+                "max": 0.17880859375
+              },
+              "median_saving_us": 0.418310546875,
+              "median_saving_percent": 75.38055433347999,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.5505859375,
+                  "candidate_mean_us": 0.157275390625,
+                  "saving_us": 0.39331054687499994,
+                  "saving_percent": 71.43490599503369
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.557861328125,
+                  "candidate_mean_us": 0.137890625,
+                  "saving_us": 0.419970703125,
+                  "saving_percent": 75.28227571115974
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.55185546875,
+                  "candidate_mean_us": 0.13681640625,
+                  "saving_us": 0.4150390625,
+                  "saving_percent": 75.20792780038931
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.55380859375,
+                  "candidate_mean_us": 0.137744140625,
+                  "saving_us": 0.416064453125,
+                  "saving_percent": 75.12784341385998
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.557470703125,
+                  "candidate_mean_us": 0.136181640625,
+                  "saving_us": 0.42128906250000003,
+                  "saving_percent": 75.57151616011211
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5603515625,
+                  "candidate_mean_us": 0.137890625,
+                  "saving_us": 0.42246093749999997,
+                  "saving_percent": 75.39212269083305
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.55322265625,
+                  "candidate_mean_us": 0.13833007812499998,
+                  "saving_us": 0.414892578125,
+                  "saving_percent": 74.99558693733451
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.551513671875,
+                  "candidate_mean_us": 0.13603515625,
+                  "saving_us": 0.415478515625,
+                  "saving_percent": 75.33421868083222
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.415771484375,
+                "mean": 0.414813232421875,
+                "p95": 0.42205078125,
+                "min": 0.39331054687499994,
+                "max": 0.42246093749999997
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 75.24510175577453,
+                "mean": 74.79329967369432,
+                "p95": 75.50872844586443,
+                "min": 71.43490599503369,
+                "max": 75.57151616011211
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 0.0,
+                "p95": 0.0,
+                "min": 0.0,
+                "max": 0.0
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    66
+                  ],
+                  "cleared_payload_bytes": [
+                    2
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    2
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    72
+                  ],
+                  "cleared_payload_bytes": [
+                    72
+                  ]
+                }
+              }
+            },
+            "character": {
+              "baseline_us_per_call": {
+                "n": 16,
+                "median": 0.55498046875,
+                "mean": 0.556427001953125,
+                "p95": 0.5652099609375,
+                "min": 0.54794921875,
+                "max": 0.57509765625
+              },
+              "candidate_us_per_call": {
+                "n": 16,
+                "median": 0.14228515625,
+                "mean": 0.144647216796875,
+                "p95": 0.1532470703125,
+                "min": 0.14052734375,
+                "max": 0.1650390625
+              },
+              "median_saving_us": 0.41269531249999997,
+              "median_saving_percent": 74.3621326764033,
+              "rounds": [
+                {
+                  "round": 0,
+                  "baseline_mean_us": 0.5583984375,
+                  "candidate_mean_us": 0.14145507812500002,
+                  "saving_us": 0.41694335937499993,
+                  "saving_percent": 74.66771598461
+                },
+                {
+                  "round": 1,
+                  "baseline_mean_us": 0.5672363281249999,
+                  "candidate_mean_us": 0.14560546875000002,
+                  "saving_us": 0.4216308593749999,
+                  "saving_percent": 74.33072221743996
+                },
+                {
+                  "round": 2,
+                  "baseline_mean_us": 0.554736328125,
+                  "candidate_mean_us": 0.14492187499999998,
+                  "saving_us": 0.409814453125,
+                  "saving_percent": 73.87553912507703
+                },
+                {
+                  "round": 3,
+                  "baseline_mean_us": 0.557861328125,
+                  "candidate_mean_us": 0.144873046875,
+                  "saving_us": 0.41298828125,
+                  "saving_percent": 74.03063457330417
+                },
+                {
+                  "round": 4,
+                  "baseline_mean_us": 0.5564453125,
+                  "candidate_mean_us": 0.1427734375,
+                  "saving_us": 0.41367187499999997,
+                  "saving_percent": 74.34187434187433
+                },
+                {
+                  "round": 5,
+                  "baseline_mean_us": 0.5517578125,
+                  "candidate_mean_us": 0.1416015625,
+                  "saving_us": 0.41015625,
+                  "saving_percent": 74.33628318584071
+                },
+                {
+                  "round": 6,
+                  "baseline_mean_us": 0.5505859375,
+                  "candidate_mean_us": 0.14296875,
+                  "saving_us": 0.4076171875,
+                  "saving_percent": 74.0333451578574
+                },
+                {
+                  "round": 7,
+                  "baseline_mean_us": 0.55439453125,
+                  "candidate_mean_us": 0.152978515625,
+                  "saving_us": 0.40141601562500007,
+                  "saving_percent": 72.40620045798838
+                }
+              ],
+              "paired_round_saving_us": {
+                "n": 8,
+                "median": 0.411572265625,
+                "mean": 0.41177978515624997,
+                "p95": 0.4199902343749999,
+                "min": 0.40141601562500007,
+                "max": 0.4216308593749999
+              },
+              "paired_round_saving_percent": {
+                "n": 8,
+                "median": 74.18203368764867,
+                "mean": 74.002789380499,
+                "p95": 74.55367140965251,
+                "min": 72.40620045798838,
+                "max": 74.66771598461
+              },
+              "empty_batch_us_per_call": {
+                "n": 8,
+                "median": 0.0,
+                "mean": 2.44140625e-05,
+                "p95": 9.765625e-05,
+                "min": 0.0,
+                "max": 9.765625e-05
+              },
+              "allocation_metadata": {
+                "baseline": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    4
+                  ],
+                  "payload_bytes": [
+                    330
+                  ],
+                  "cleared_payload_bytes": [
+                    10
+                  ]
+                },
+                "candidate": {
+                  "mesh_slots": [
+                    10
+                  ],
+                  "native_arrays": [
+                    1
+                  ],
+                  "payload_bytes": [
+                    360
+                  ],
+                  "cleared_payload_bytes": [
+                    360
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [],
+      "valid": true
+    }
+  ]
+}

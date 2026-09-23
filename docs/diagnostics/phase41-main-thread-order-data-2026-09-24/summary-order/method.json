@@ -1,0 +1,52 @@
+{
+  "script_sha256": "e9a48ecafdfa0d439793b096fdb4453d7fd8a0f73b308d199a23edf07211bf22",
+  "input_runs": [
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player00",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player01",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player10",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\player11"
+  ],
+  "process_pooling": false,
+  "warmup_separate": true,
+  "outlier_removal": false,
+  "p95": "linear interpolation at (n-1)*0.95",
+  "cycles_unit": "thread cycles, not nanoseconds",
+  "sample_sums": {
+    "objects_pair": [
+      1,
+      2
+    ],
+    "colliders_pair": [
+      3,
+      4
+    ],
+    "SetActive_pair": [
+      6,
+      7
+    ],
+    "BuildSide_pair": [
+      8,
+      9
+    ],
+    "BuildPublish": [
+      0,
+      5
+    ],
+    "newRoot_pair": [
+      10,
+      11
+    ]
+  },
+  "probe_schemas": "reserved: initial wiring smoke, no newRoot observations; newRoot: span10/11 measured inside objects",
+  "mode_comparison": "same-run same-case same-round difference from mode 0; execution times differ",
+  "order_tracking": "descriptive sign checks, not a significance or causality claim",
+  "scope": "local TryBuild/TryPublish; excludes setup, full Request, worker, rendering and Final handoff",
+  "limitations": [
+    "Character has 15 positive versus 9 negative colliders.",
+    "Warmup has one sample per mode/case/process.",
+    "Eight measured rounds per mode/case/process; no cross-process raw pooling.",
+    "Elapsed includes interruptions; cycles include kernel/user thread activity.",
+    "Mode activation reversal changes which connected joint body is active first.",
+    "Source hashes are runner snapshots; Player binary provenance needs build evidence."
+  ]
+}

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="3" result="Passed" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="2.1353299">
+  <test-suite type="TestSuite" id="1092" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="59" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="2.135330" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="PlayMode" />
+    </properties>
+    <test-suite type="Assembly" id="1086" name="Zantetsu.PhysicsCut.PlayModeTests.dll" fullname="C:/Users/junic/src/zantetsuken-vr-main-thread-order-20260924/Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll" runstate="Runnable" testcasecount="44" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="2.127407" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="46520" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="PlayMode" />
+        <property name="EditorOnly" value="False" />
+      </properties>
+      <test-suite type="TestSuite" id="1087" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="44" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="2.125897" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1088" name="MainThreadAudit" fullname="Zantetsu.MainThreadAudit" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:55Z" duration="0.443956" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="1089" name="Tests" fullname="Zantetsu.MainThreadAudit.Tests" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:55Z" duration="0.443563" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1030" name="AxisMassBenchmark" fullname="Zantetsu.MainThreadAudit.Tests.AxisMassBenchmark" classname="Zantetsu.MainThreadAudit.Tests.AxisMassBenchmark" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:55Z" duration="0.442387" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1031" name="Measure" fullname="Zantetsu.MainThreadAudit.Tests.AxisMassBenchmark.Measure" methodname="Measure" classname="Zantetsu.MainThreadAudit.Tests.AxisMassBenchmark" runstate="Runnable" seed="2126099256" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:55Z" duration="0.430651" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+        <test-suite type="TestSuite" id="1090" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="43" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="1.680855" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="1091" name="PlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests" runstate="Runnable" testcasecount="43" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:57Z" duration="1.679600" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1069" name="NativeBookkeepingBenchmark" fullname="Zantetsu.PhysicsCut.PlayModeTests.NativeBookkeepingBenchmark" classname="Zantetsu.PhysicsCut.PlayModeTests.NativeBookkeepingBenchmark" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:56Z" duration="0.059668" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1070" name="Measure" fullname="Zantetsu.PhysicsCut.PlayModeTests.NativeBookkeepingBenchmark.Measure" methodname="Measure" classname="Zantetsu.PhysicsCut.PlayModeTests.NativeBookkeepingBenchmark" runstate="Runnable" seed="2075090212" result="Passed" start-time="2026-09-23 22:29:55Z" end-time="2026-09-23 22:29:56Z" duration="0.058971" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1071" name="OrderBenchmark" fullname="Zantetsu.PhysicsCut.PlayModeTests.OrderBenchmark" classname="Zantetsu.PhysicsCut.PlayModeTests.OrderBenchmark" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:29:56Z" end-time="2026-09-23 22:29:57Z" duration="1.617545" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1072" name="MeasureBuildAndPublishOrder" fullname="Zantetsu.PhysicsCut.PlayModeTests.OrderBenchmark.MeasureBuildAndPublishOrder" methodname="MeasureBuildAndPublishOrder" classname="Zantetsu.PhysicsCut.PlayModeTests.OrderBenchmark" runstate="Runnable" seed="368761066" result="Passed" start-time="2026-09-23 22:29:56Z" end-time="2026-09-23 22:29:57Z" duration="1.615230" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[Saving results to: C:/Users/junic/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

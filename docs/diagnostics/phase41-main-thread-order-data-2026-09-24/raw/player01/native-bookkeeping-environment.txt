@@ -1,0 +1,20 @@
+Unity=6000.3.22f1
+Editor=False; platform=WindowsPlayer
+Thread=1; pointerBytes=8
+Metric=Stopwatch elapsed ticks on the calling Main thread; not CPU time or complete cut performance.
+Scope=per-cut native bookkeeping allocation plus release only. No worker, bake, meshes, report, arena, or end-to-end cut.
+Baseline=b19ce67a PhysicsCutCook: ids/bounds/vertexCounts via real PhysicsCutBlocks.Take<T>; bakeDone via cleared NativeArray<byte>.
+Candidate=current PhysicsCutMeshSlot, one cleared NativeArray; all arrays Allocator.Persistent.
+Release=IsCreated then Dispose in finally; finally is inside each measured batch on both versions.
+ORDER_REVERSE=0; ORDER_CHARACTER_FIRST=1
+Order=ABBA (baseline,candidate,candidate,baseline); 8 rounds per case, 1024 cuts per batch.
+CaseOrder=character,box
+Warmup=one full batch per case/version and one empty batch; excluded from CSV.
+Calibration=one separate 1024-call empty no-inline batch per round; includes loop/call/Stopwatch overhead; not subtracted.
+CSV=64 measured allocation/release rows plus 16 empty rows; all retained, no outlier removal.
+NativeArrays/payload_bytes/cleared_payload_bytes are per cut, not batch totals; allocator bookkeeping is not counted as payload.
+No forced GC or timing of validation/file I/O. No safety suppression, raw allocation, or pool.
+PhysicsCutBlocks.Fill=-1
+NativeLeakDetection=Enabled
+ENABLE_UNITY_COLLECTIONS_CHECKS=false
+SizeOf: int=4; float3x2=24; byte=1; PhysicsCutMeshSlot=36; baselinePayloadPerSlot=33

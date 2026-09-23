@@ -1,0 +1,372 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="39" result="Passed" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.2246841">
+  <test-suite type="TestSuite" id="1084" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="56" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.224684" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="PlayMode" />
+    </properties>
+    <test-suite type="Assembly" id="1080" name="Zantetsu.PhysicsCut.PlayModeTests.dll" fullname="C:/Users/junic/src/zantetsuken-vr-main-thread-order-20260924/Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.215593" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="57196" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="PlayMode" />
+        <property name="EditorOnly" value="False" />
+      </properties>
+      <test-suite type="TestSuite" id="1081" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.214804" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1082" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.214278" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="1083" name="PlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="2.213620" total="39" passed="39" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1030" name="CutWorldRootEndingGuardTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" testcasecount="10" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.042612" total="10" passed="10" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1031" name="ACaseThatMadeNoWorld_IsNotAFailure_AndItsOwnObjectsGoBack" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.ACaseThatMadeNoWorld_IsNotAFailure_AndItsOwnObjectsGoBack" methodname="ACaseThatMadeNoWorld_IsNotAFailure_AndItsOwnObjectsGoBack" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="1707242158" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.016955" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NoWorld collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1036" name="ADisposalThatThrows_KeepsTheRestOfItsListAndEveryListAfterIt" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.ADisposalThatThrows_KeepsTheRestOfItsListAndEveryListAfterIt" methodname="ADisposalThatThrows_KeepsTheRestOfItsListAndEveryListAfterIt" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="910486175" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.005611" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=HeldBack terminationExpected=False abandoned=False heldBack=1 kept=[objects 2, actors 0, shapes 2, holding 0, profile False] report=[collection: shapes: Dispose threw; it and 1 after it are kept, and no later list was touched: System.InvalidOperationException: guard: this shape refuses to be disposed
+  at Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests+WatchedShape.Dispose () [0x00024] in C:\Users\junic\src\zantetsuken-vr-main-thread-order-20260924\Assets\Zantetsu\Tests\PlayMode\CutWorldRootEndingGuardTests.cs:95 
+  at Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.DisposeEach (System.Collections.Generic.List`1[T] list, System.String what) [0x00003] in C:\Users\junic\src\zantetsuken-vr-main-thread-order-20260924\Assets\Zantetsu\Tests\PlayMode\CutWorldRootPlayModeTests.cs:453  | collection: giving the fixture's resources back stopped at the first failure; the rest were kept]
+fixture ending (beside the case's own failure): collection: shapes: Dispose threw; it and 1 after it are kept, and no later list was touched: System.InvalidOperationException: guard: this shape refuses to be disposed
+  at Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests+WatchedShape.Dispose () [0x00024] in C:\Users\junic\src\zantetsuken-vr-main-thread-order-20260924\Assets\Zantetsu\Tests\PlayMode\CutWorldRootEndingGuardTests.cs:95 
+  at Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.DisposeEach (System.Collections.Generic.List`1[T] list, System.String what) [0x00003] in C:\Users\junic\src\zantetsuken-vr-main-thread-order-20260924\Assets\Zantetsu\Tests\PlayMode\CutWorldRootPlayModeTests.cs:453 
+collection: giving the fixture's resources back stopped at the first failure; the rest were kept
+]]></output>
+              </test-case>
+              <test-case id="1039" name="AfterASuccessfulCollection_TheFixtureIsReadyForTheNextCase" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.AfterASuccessfulCollection_TheFixtureIsReadyForTheNextCase" methodname="AfterASuccessfulCollection_TheFixtureIsReadyForTheNextCase" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="1049681736" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001792" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1035" name="AnEndingWhoseDeadlineHasPassed_ReleasesNothing_AndRetriesNothing" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.AnEndingWhoseDeadlineHasPassed_ReleasesNothing_AndRetriesNothing" methodname="AnEndingWhoseDeadlineHasPassed_ReleasesNothing_AndRetriesNothing" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="1131503821" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001078" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NotConfirmed collection=HeldBack terminationExpected=False abandoned=False heldBack=1 kept=[objects 1, actors 0, shapes 1, holding 0, profile False] report=[ending: the world was not released within 0 s | collection: the world's ending was not confirmed, so nothing of this case was given back]
+fixture ending (beside the case's own failure): ending: the world was not released within 0 s
+collection: the world's ending was not confirmed, so nothing of this case was given back
+]]></output>
+              </test-case>
+              <test-case id="1034" name="ARegisteredActorStillAlive_IsNotDestroyedByForce_AndTheMeshesStay" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.ARegisteredActorStillAlive_IsNotDestroyedByForce_AndTheMeshesStay" methodname="ARegisteredActorStillAlive_IsNotDestroyedByForce_AndTheMeshesStay" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="1953930165" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.000893" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=HeldBack terminationExpected=False abandoned=False heldBack=1 kept=[objects 2, actors 1, shapes 1, holding 0, profile False] report=[collection: an actor is still alive after the ending (registered=True), so the meshes its colliders point at were kept]
+fixture ending (beside the case's own failure): collection: an actor is still alive after the ending (registered=True), so the meshes its colliders point at were kept
+]]></output>
+              </test-case>
+              <test-case id="1032" name="ARootThatWasMadeAndIsNowMissing_IsNotConfirmed_AndNothingIsGivenBack" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.ARootThatWasMadeAndIsNowMissing_IsNotConfirmed_AndNothingIsGivenBack" methodname="ARootThatWasMadeAndIsNowMissing_IsNotConfirmed_AndNothingIsGivenBack" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="228013853" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.000739" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NotConfirmed collection=HeldBack terminationExpected=False abandoned=False heldBack=1 kept=[objects 1, actors 0, shapes 1, holding 0, profile False] report=[ending: the root this case made is missing, so its ending cannot be confirmed | collection: the world's ending was not confirmed, so nothing of this case was given back]
+fixture ending (beside the case's own failure): ending: the root this case made is missing, so its ending cannot be confirmed
+collection: the world's ending was not confirmed, so nothing of this case was given back
+]]></output>
+              </test-case>
+              <test-case id="1040" name="ATerminationThatWasMeantButNeverCame_IsEndedTheOrdinaryWay" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.ATerminationThatWasMeantButNeverCame_IsEndedTheOrdinaryWay" methodname="ATerminationThatWasMeantButNeverCame_IsEndedTheOrdinaryWay" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="377327935" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.000753" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=True abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1038" name="TheChildLeftMidCollection_ChangesNothingWhenItResumes" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.TheChildLeftMidCollection_ChangesNothingWhenItResumes" methodname="TheChildLeftMidCollection_ChangesNothingWhenItResumes" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="949752409" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001320" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=HeldBack terminationExpected=False abandoned=True heldBack=1 kept=[objects 1, actors 1, shapes 1, holding 0, profile False] report=[teardown: left before the collection concluded; nothing of this case was given back]
+]]></output>
+              </test-case>
+              <test-case id="1033" name="TheCollection_DestroysAnUnregisteredActorBeforeTheShapesAndMeshesItPointsAt" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.TheCollection_DestroysAnUnregisteredActorBeforeTheShapesAndMeshesItPointsAt" methodname="TheCollection_DestroysAnUnregisteredActorBeforeTheShapesAndMeshesItPointsAt" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="707458259" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.000840" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1037" name="TheTeardownLeftBeforeItsChildEverRan_IsNotStartedAgainByAnotherCall" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests.TheTeardownLeftBeforeItsChildEverRan_IsNotStartedAgainByAnotherCall" methodname="TheTeardownLeftBeforeItsChildEverRan_IsNotStartedAgainByAnotherCall" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootEndingGuardTests" runstate="Runnable" seed="270126235" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001038" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NotConfirmed collection=HeldBack terminationExpected=False abandoned=True heldBack=1 kept=[objects 0, actors 0, shapes 1, holding 0, profile False] report=[teardown: the ending had not concluded when the teardown was left]
+]]></output>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1041" name="CutWorldRootPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.172937" total="7" passed="7" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1048" name="ACaseThatNeverEndsItsWorld_IsEndedAndCollectedByTheTeardown" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.ACaseThatNeverEndsItsWorld_IsEndedAndCollectedByTheTeardown" methodname="ACaseThatNeverEndsItsWorld_IsEndedAndCollectedByTheTeardown" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="805493541" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.114553" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1044" name="AnAskTakenUpByTheUpdateLoop_IsPublishedAndDrawnInThatFrame" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AnAskTakenUpByTheUpdateLoop_IsPublishedAndDrawnInThatFrame" methodname="AnAskTakenUpByTheUpdateLoop_IsPublishedAndDrawnInThatFrame" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="982893745" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.010799" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1047" name="EndingTheWorldWithAWorkHeld_FreesNothingEarly_AndFinishesOnTheOrdinaryFrames" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.EndingTheWorldWithAWorkHeld_FreesNothingEarly_AndFinishesOnTheOrdinaryFrames" methodname="EndingTheWorldWithAWorkHeld_FreesNothingEarly_AndFinishesOnTheOrdinaryFrames" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="1701283411" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.010105" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1043" name="LettingOneThrough_KeepsWhatThatWorkEndedAs" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.LettingOneThrough_KeepsWhatThatWorkEndedAs" methodname="LettingOneThrough_KeepsWhatThatWorkEndedAs" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="2123639786" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001439" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NoWorld collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1042" name="TheHoldGivesBackTheCompletionItWasGiven_AndEachWorkOnlyOnce" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TheHoldGivesBackTheCompletionItWasGiven_AndEachWorkOnlyOnce" methodname="TheHoldGivesBackTheCompletionItWasGiven_AndEachWorkOnlyOnce" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="480749855" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.001511" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=NoWorld collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1045" name="TheUpdateLoopCarriesACutToItsCommit_AndAChildCanBeCutAgain" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TheUpdateLoopCarriesACutToItsCommit_AndAChildCanBeCutAgain" methodname="TheUpdateLoopCarriesACutToItsCommit_AndAChildCanBeCutAgain" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="703203506" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.019086" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+              <test-case id="1046" name="TwoOwnersCutAtOnce_BothReachTheirDestination_AndNeitherWaitsForTheOther" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.TwoOwnersCutAtOnce_BothReachTheirDestination_AndNeitherWaitsForTheOther" methodname="TwoOwnersCutAtOnce_BothReachTheirDestination_AndNeitherWaitsForTheOther" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="1668751591" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:26Z" duration="0.008366" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[CutWorldRootFixture ending: world=Confirmed collection=Done terminationExpected=False abandoned=False heldBack=0 kept=[objects 0, actors 0, shapes 0, holding 0, profile False] report=[]
+]]></output>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1051" name="CutWorldSandboxScenePlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" testcasecount="7" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:28Z" duration="1.662772" total="7" passed="7" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1058" name="EndingTheWorldFromTheScene_StopsTheDrawing_AndGivesEverythingBack" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.EndingTheWorldFromTheScene_StopsTheDrawing_AndGivesEverythingBack" methodname="EndingTheWorldFromTheScene_StopsTheDrawing_AndGivesEverythingBack" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1081942994" result="Passed" start-time="2026-09-23 22:42:26Z" end-time="2026-09-23 22:42:27Z" duration="0.493491" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1056" name="HoldingTheFinal_KeepsTheProvisionalPair_AndShowsItsCutFace" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.HoldingTheFinal_KeepsTheProvisionalPair_AndShowsItsCutFace" methodname="HoldingTheFinal_KeepsTheProvisionalPair_AndShowsItsCutFace" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1214047672" result="Passed" start-time="2026-09-23 22:42:27Z" end-time="2026-09-23 22:42:27Z" duration="0.206024" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1055" name="LiftingOneChild_ShowsTheCutFaceOnBoth_AndNotOutsideThem" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.LiftingOneChild_ShowsTheCutFaceOnBoth_AndNotOutsideThem" methodname="LiftingOneChild_ShowsTheCutFaceOnBoth_AndNotOutsideThem" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1857878892" result="Passed" start-time="2026-09-23 22:42:27Z" end-time="2026-09-23 22:42:27Z" duration="0.193196" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1057" name="PressingTheChildKey_CutsAChild_AndTheResultIsDrawn" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.PressingTheChildKey_CutsAChild_AndTheResultIsDrawn" methodname="PressingTheChildKey_CutsAChild_AndTheResultIsDrawn" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1142271163" result="Passed" start-time="2026-09-23 22:42:27Z" end-time="2026-09-23 22:42:28Z" duration="0.191576" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1053" name="PressingTheCutKey_PublishesAndDrawsTwoSides_BeforeTheFinalIsDone" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.PressingTheCutKey_PublishesAndDrawsTwoSides_BeforeTheFinalIsDone" methodname="PressingTheCutKey_PublishesAndDrawsTwoSides_BeforeTheFinalIsDone" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1367081326" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.187796" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1054" name="TheHandoffAndTheCommit_KeepThePictureOnTheSameActors" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.TheHandoffAndTheCommit_KeepThePictureOnTheSameActors" methodname="TheHandoffAndTheCommit_KeepThePictureOnTheSameActors" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="143405387" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.196837" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1052" name="TheScenePlayed_DrawsTheBodyInItsOwnColours_WhereItsOwnerStands" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests.TheScenePlayed_DrawsTheBodyInItsOwnColours_WhereItsOwnerStands" methodname="TheScenePlayed_DrawsTheBodyInItsOwnColours_WhereItsOwnerStands" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldSandboxScenePlayModeTests" runstate="Runnable" seed="1302524833" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.191787" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1059" name="FinalColliderReuseEndingGuardTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.005706" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1060" name="A_TheEndingsWait_LeftBeforeItConcluded_IsNotConfirmed" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests.A_TheEndingsWait_LeftBeforeItConcluded_IsNotConfirmed" methodname="A_TheEndingsWait_LeftBeforeItConcluded_IsNotConfirmed" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests" runstate="Runnable" seed="277546693" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001568" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1061" name="B_TheCollectionsWait_LeftBeforeItConcluded_IsNotBegunAgain" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests.B_TheCollectionsWait_LeftBeforeItConcluded_IsNotBegunAgain" methodname="B_TheCollectionsWait_LeftBeforeItConcluded_IsNotBegunAgain" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests" runstate="Runnable" seed="511102720" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.000781" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1062" name="C_TheTeardown_LeftWhileItsChildWaits_HoldsBackAndRestores" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests.C_TheTeardown_LeftWhileItsChildWaits_HoldsBackAndRestores" methodname="C_TheTeardown_LeftWhileItsChildWaits_HoldsBackAndRestores" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReuseEndingGuardTests" runstate="Runnable" seed="1352856878" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.002107" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[FinalColliderReuse ending: world=NotConfirmed actorRegistered=False actorDestroyed=False madeDisposeCalls=0 collection=HeldBack report=[cleanup: the ending had not concluded when the teardown was left | cleanup: the teardown was left before the collection concluded; nothing of the body was destroyed]
+]]></output>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1063" name="FinalColliderReusePlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReusePlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReusePlayModeTests" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.197082" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1064" name="InheritedConvexes_KeepTheirProvisionalColliders_ThroughTheHandoff" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReusePlayModeTests.InheritedConvexes_KeepTheirProvisionalColliders_ThroughTheHandoff" methodname="InheritedConvexes_KeepTheirProvisionalColliders_ThroughTheHandoff" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalColliderReusePlayModeTests" runstate="Runnable" seed="1033007914" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.196268" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[FinalColliderReuse ending: world=Confirmed actorRegistered=True actorDestroyed=True madeDisposeCalls=1 collection=Done report=[]
+]]></output>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1065" name="FinalHandoffPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalHandoffPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalHandoffPlayModeTests" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.012167" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1066" name="TheHandoffInPlayMode_StopsTheOldShapeAtOnce_AndLeavesTheActorsStanding" fullname="Zantetsu.PhysicsCut.PlayModeTests.FinalHandoffPlayModeTests.TheHandoffInPlayMode_StopsTheOldShapeAtOnce_AndLeavesTheActorsStanding" methodname="TheHandoffInPlayMode_StopsTheOldShapeAtOnce_AndLeavesTheActorsStanding" classname="Zantetsu.PhysicsCut.PlayModeTests.FinalHandoffPlayModeTests" runstate="Runnable" seed="356569816" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.011383" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1067" name="ProvisionalMassFlagActivationPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.009098" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1068" name="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree" methodname="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" runstate="Runnable" seed="1208421934" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.003954" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1070" name="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree_ThreeColliders" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree_ThreeColliders" methodname="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_BothSidesFree_ThreeColliders" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" runstate="Runnable" seed="406518409" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001033" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1069" name="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed" methodname="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" runstate="Runnable" seed="56361991" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001067" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1071" name="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed_ThreeColliders" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed_ThreeColliders" methodname="MassFlagsSetWhileInactive_AreStillSetStraightAfterActivation_OneSideFixed_ThreeColliders" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests" runstate="Runnable" seed="1934036114" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.000911" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1072" name="ProvisionalPairPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.090679" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1073" name="APublishedPair_KeepsTheBuildsMassProperties_AcrossOrdinaryPhysicsSteps" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests.APublishedPair_KeepsTheBuildsMassProperties_AcrossOrdinaryPhysicsSteps" methodname="APublishedPair_KeepsTheBuildsMassProperties_AcrossOrdinaryPhysicsSteps" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests" runstate="Runnable" seed="1689968424" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.086332" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1074" name="EndingAPublishedPairInPlayMode_LeavesNothingBehind" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests.EndingAPublishedPairInPlayMode_LeavesNothingBehind" methodname="EndingAPublishedPairInPlayMode_LeavesNothingBehind" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPairPlayModeTests" runstate="Runnable" seed="1020121405" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.002953" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+            </test-suite>
+            <test-suite type="TestFixture" id="1075" name="ProvisionalPublishedContractPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.016362" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1076" name="PublishedPair_HoldsTheBuildsContract_BothSidesFree" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests.PublishedPair_HoldsTheBuildsContract_BothSidesFree" methodname="PublishedPair_HoldsTheBuildsContract_BothSidesFree" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" runstate="Runnable" seed="849383254" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.008106" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[[input] the negative side: convexes=1 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 3.4f, 1.48f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(0f, -0.25f, 0f) fixed=False
+[input] the positive side: convexes=1 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 3.4f, 1.48f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(0f, 0.25f, 0f) fixed=False
+]]></output>
+              </test-case>
+              <test-case id="1078" name="PublishedPair_HoldsTheBuildsContract_BothSidesFree_ThreeColliders" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests.PublishedPair_HoldsTheBuildsContract_BothSidesFree_ThreeColliders" methodname="PublishedPair_HoldsTheBuildsContract_BothSidesFree_ThreeColliders" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" runstate="Runnable" seed="1259067696" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001893" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[[input] the negative side: convexes=3 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 29.8f, 27.88f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(3f, -0.25f, 0f) fixed=False
+[input] the positive side: convexes=3 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 29.8f, 27.88f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(3f, 0.25f, 0f) fixed=False
+]]></output>
+              </test-case>
+              <test-case id="1077" name="PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests.PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors" methodname="PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" runstate="Runnable" seed="2058121013" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001671" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[[input] the negative side: convexes=1 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 3.4f, 1.48f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(0f, -0.25f, 0f) fixed=True
+[input] the positive side: convexes=1 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 3.4f, 1.48f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(0f, 0.25f, 0f) fixed=False
+]]></output>
+              </test-case>
+              <test-case id="1079" name="PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors_ThreeColliders" fullname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests.PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors_ThreeColliders" methodname="PublishedPair_HoldsTheBuildsContract_OneSideFixedByAnchors_ThreeColliders" classname="Zantetsu.PhysicsCut.PlayModeTests.ProvisionalPublishedContractPlayModeTests" runstate="Runnable" seed="1395676124" result="Passed" start-time="2026-09-23 22:42:28Z" end-time="2026-09-23 22:42:28Z" duration="0.001889" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[[input] the negative side: convexes=3 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 29.8f, 27.88f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(3f, -0.25f, 0f) fixed=True
+[input] the positive side: convexes=3 box half-extents=float3(0.7f, 0.5f, 1.1f) spacing=3 mass=6 inertia=float3(2.92f, 29.8f, 27.88f) inertiaRotation=float4(0f, 0f, 0f, 1f) centreOfMass=float3(3f, 0.25f, 0f) fixed=False
+Saving results to: C:/Users/junic/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

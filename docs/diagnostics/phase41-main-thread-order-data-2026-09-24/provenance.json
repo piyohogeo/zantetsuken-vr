@@ -1,0 +1,61 @@
+{
+  "base": "b19ce67a62ed08bd79df2178b0d8b73eb1f2607e",
+  "branch": "phase41-main-thread-order-20260924",
+  "product_sha256": {
+    "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs": "ae1ed92731e704f28eef0ce1740dc2a8701a207b1a73eb9b0901c68240fb1122",
+    "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldProfile.cs": "4bbdd21eb915bd6fd9dff7a991952743b8ff186a343bdfa71b8d72408b3796ac",
+    "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs": "8904eb872a5492765d343bedade0d5f43ca96869431e2ab8fb4b30a4bf689941",
+    "Assets/Zantetsu/Runtime/PhysicsCut/FinalHandoffPublication.cs": "f39c84adee02473c053f13e1e12867f555b2d448a0867e47ecbc9b3dfdeb6f29",
+    "Assets/Zantetsu/Runtime/PhysicsCut/FinalPhysicsPublication.cs": "882e74f12ed521431b4dc19f79e719766934e6470ba68d06bee6cffe65d27f2d",
+    "Assets/Zantetsu/Runtime/PhysicsCut/InternalsVisibleTo.cs": "605fbb0a5d276b6296b9a4cce3299c510922e90a4064068040b63fd39cebe129",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutBlocks.cs": "b69b057fcb487c22ef41e3256430fed55087cac9a653fe8ebf269fc7e4adb186",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutClassification.cs": "3c78f5dfd40e49269bb4f2433686650de11ae4fc6fb5d7ee781f3d80dd5fa4f1",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutCook.cs": "3c687aa0251428504cee1eb3e0b2c0052baffefda2c7c5f3c5748dbd7b3cddd9",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsCutJobs.cs": "f2c2d2470d5efe5e339ed5a79de4da61ff833b8267c7d4fee748e72e02dc809d",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerPlacementLookup.cs": "93429cb34793cbc2d3b02462a22ac655bce7cc587705a6bd19b63ce4cd06b59b",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs": "e0908cabd96db39452e47c1013e71c9eee9decb8167e3183f2de9a42e80b95e6",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerShape.cs": "15ac290e8a56f6dc8a110785cf1f3e93fb807f3baf4138d444f261e0b5b2fc2d",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PrincipalInertia.cs": "2d5fe794424de430939f14c40abbf6b178028c3357beb7c753a03e6f30eeba6b",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalBoxMass.cs": "9c4df1a2e1b900d979c396257ffe52076f3263f82b0d2e32cfac1f96da0e812c",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs": "55ecba67709e5e36d68e777566b46f84ba4b79de967996775e2f7ccb665ce463",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutTransaction.cs": "410226a454c6e2d70b1919acb5d974eb89f86d95554cabec56cc5c28048f33d1",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerBuild.cs": "74c3a486f913fd14b18da1b8aad7ddf2c05ebc3bc135f4aba3fbbb98915b0525",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalOwnerPair.cs": "1f37597fb57a405ef97481769ea927717c0210d92773a787cc1b7fcbcb9653ef",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalPhysicsPublication.cs": "651764daf06d7930a2bb7dd12cb4a4a6240cff6ffb0102b8e55e44a2c6c35fed",
+    "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs": "6c0a138705e50f898ca50f678502d04776d092b9e3efd96c3aeae3dc23881232",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/PhysicsCutCookTests.cs": "e36ebbae0542783715fb99fc14a177abda85114d7e955aaec51ba9c266932a54",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/PhysicsCutCookTests.cs.meta": "3a373e700b4183e65e1c562570f645eb8691bd2ec4bb57f89615185adfadfdf4",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/PhysicsCutMeshSlotTests.cs": "6e0cf75a299fa555da0a89969cc7fb4c024ffe3b3a2ca3b6f7d71ad095582545",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/PhysicsCutMeshSlotTests.cs.meta": "f6b5d9395ab9a1b148633f77d10223667b3adac308ebce0f6ba0d99955a91af5",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/ProvisionalAxisBoxMassTests.cs": "40bccb4b16e03975caad33adcc5ef2e8199d29e6ccf0bff116e6b769149fc179",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/ProvisionalAxisBoxMassTests.cs.meta": "c4028f4a09ee85fcdcfcdf5ef16fda885b592164a2a10c1f2417b0f0bca99f90"
+  },
+  "runtime_matches_regression2": true,
+  "four_players_match_build2_sources_and_binaries": true,
+  "binary_sha256": {
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests.exe": "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\GameAssembly.dll": "33f35b6e49f95a0924abe488bb1754ad4ff883cd01e61bc229ebdbc4bd20216a",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\UnityPlayer.dll": "38700f47713287d925440d9a05e727f76785d7c2cff72eccd39691002d82760f",
+    "C:\\Users\\junic\\src\\zantetsuken-vr-main-thread-order-20260924\\Logs\\MainThreadOrder20260924\\il2cpp-build2\\player\\PlayerWithTests\\PlayerWithTests_Data\\il2cpp_data\\Metadata\\global-metadata.dat": "2e2fa008d5667342c10be08113168adce8a46a450aefb61bbe621f5485a18648"
+  },
+  "input_sha256": {
+    "m_8.hulls.json": "f442f5860ea09ddd53625002d433aea864478bcbb031e75e507e1d9016c4ea2a",
+    "m_8.render.json": "69273c3c552813a7986cda90df8e3f4bb784ce066516416b460fe83e79ccc104"
+  },
+  "final_measurement_launch_order": [
+    "player00",
+    "player11",
+    "player10",
+    "player01"
+  ],
+  "early_runs": {
+    "editor-smoke1": "initial probe, no newRoot data, before numerical edge guards",
+    "editor-smoke2": "newRoot probe, before inertia guard",
+    "il2cpp-build1": "initial build before inertia guard",
+    "il2cpp-build2": "final code, build auto-launch; independent measurements are playerXX"
+  },
+  "regression1": "before inertia boundary guard; 311 EditMode + 41 PlayMode",
+  "regression2": "final product code; 314 EditMode + 41 PlayMode",
+  "excluded_from_git": "Player binaries, Library, full logs remain under the dedicated worktree Logs"
+}

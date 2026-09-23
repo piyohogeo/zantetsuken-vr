@@ -1,0 +1,106 @@
+{
+  "editor-smoke1\\editor.log": {
+    "sha256": "c0c1fdede9da5aee8eefd6fdf44eb5decd12dc3447a660e7e86b8b0ecf39e602",
+    "bytes": 1160346,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "editor-smoke2\\editor.log": {
+    "sha256": "0ac6dfa81ae50d9895572eee775e2c69c61ac546e2672bf08908a2e580864888",
+    "bytes": 59513,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "il2cpp-build1\\editor.log": {
+    "sha256": "10fb961aa6c8accf91eee2adc03955ecd6a46553db05332050a03cc0f7938c0a",
+    "bytes": 763283,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "il2cpp-build2\\editor.log": {
+    "sha256": "67eed5568132de364bad757c6fe7abc27527e19c3996e02553a4b55fda9fddd9",
+    "bytes": 667036,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "player00\\player.log": {
+    "sha256": "5218d04c166e82e45d1d21f440e255fb3953e7f0e8837c679daf149a5c5889cc",
+    "bytes": 11638,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "player11\\player.log": {
+    "sha256": "40a5235776b188a9632aea157244270a589b595f71c15b2dea72b754fdeabacd",
+    "bytes": 11741,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "player10\\player.log": {
+    "sha256": "4c92b1e5e868cad229cde1689ae7f094001d48cfbd1ca1bb3053efafbd204c01",
+    "bytes": 11633,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "player01\\player.log": {
+    "sha256": "37a79c8b067cd081cba950154baa00fb7d90b99eee983d8cd34a3ad5a99a00c7",
+    "bytes": 11740,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "regression1\\editmode\\editor.log": {
+    "sha256": "faa88e132663a27add872dcb601f19ef18bc555e6933b9c74143435fcf7c5730",
+    "bytes": 582915,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "regression1\\playmode\\editor.log": {
+    "sha256": "150887ccaee9c46700bcae3c0117aabe8790340807a4833a4222268d2fee0ec2",
+    "bytes": 233733,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "regression1\\termination1\\editor.log": {
+    "sha256": "744979121f950dfb55c58a3aa7299f6a5b993f4e03c3af3619cfa929a3639027",
+    "bytes": 57601,
+    "native_leak_messages": [
+      "Leak Detected : Persistent allocates 20 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again."
+    ],
+    "compilation_errors": []
+  },
+  "regression1\\termination2\\editor.log": {
+    "sha256": "a9b0460379e8b09d4a9898132b24321b3e06dc504407b6f6da9442d623a40419",
+    "bytes": 57417,
+    "native_leak_messages": [
+      "Leak Detected : Persistent allocates 18 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again."
+    ],
+    "compilation_errors": []
+  },
+  "regression2\\editmode\\editor.log": {
+    "sha256": "be1d4a5165bfcc6919a276fafdac353ad4f9805bcb755cc963604bc333b4a4b2",
+    "bytes": 582979,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "regression2\\playmode\\editor.log": {
+    "sha256": "8299510a34b6307fd9d8f3f89b90890eec3dd18ba93c7cd0c1378273c7030dbb",
+    "bytes": 233720,
+    "native_leak_messages": [],
+    "compilation_errors": []
+  },
+  "regression2\\termination1\\editor.log": {
+    "sha256": "b28ea801540d4f8c964702110b1bc20928adcb99db633078df84617c232d760c",
+    "bytes": 57509,
+    "native_leak_messages": [
+      "Leak Detected : Persistent allocates 20 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again."
+    ],
+    "compilation_errors": []
+  },
+  "regression2\\termination2\\editor.log": {
+    "sha256": "9847ca6aca55f7e8e1ddf7e969a65b884a2c31fd0ee845d44f55d9aba3cd7198",
+    "bytes": 57473,
+    "native_leak_messages": [
+      "Leak Detected : Persistent allocates 18 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again."
+    ],
+    "compilation_errors": []
+  }
+}

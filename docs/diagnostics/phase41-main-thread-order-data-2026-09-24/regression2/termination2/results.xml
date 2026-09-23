@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="1" result="Passed" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.1331495">
+  <test-suite type="TestSuite" id="1084" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="56" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.133150" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="PlayMode" />
+    </properties>
+    <test-suite type="Assembly" id="1080" name="Zantetsu.PhysicsCut.PlayModeTests.dll" fullname="C:/Users/junic/src/zantetsuken-vr-main-thread-order-20260924/Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.126570" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="13984" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="PlayMode" />
+        <property name="EditorOnly" value="False" />
+      </properties>
+      <test-suite type="TestSuite" id="1081" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.125781" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1082" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.125282" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="1083" name="PlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests" runstate="Runnable" testcasecount="41" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.124784" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1041" name="CutWorldRootPlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.123398" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1049" name="AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once" methodname="AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests" runstate="Runnable" seed="2037741597" result="Passed" start-time="2026-09-23 22:42:59Z" end-time="2026-09-23 22:42:59Z" duration="0.113171" asserts="0">
+                <properties>
+                  <property name="_JOINTYPE" value="UnityCombinatorial" />
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[Cut World: the Player is being ended -- the display geometry of a cut failed: operation 1 geometry ended as InvalidInput. New cuts are not accepted and no unpublished product is committed.
+CutWorldRootFixture ending: world=TerminatedByContract collection=HeldBack terminationExpected=True abandoned=False heldBack=1 kept=[objects 4, actors 1, shapes 1, holding 0, profile True] report=[collection: the Player's termination was requested as this case meant, and DESIGN 4 promises no collection: everything this case made is kept, its use never having been confirmed over]
+Saving results to: C:/Users/junic/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>
