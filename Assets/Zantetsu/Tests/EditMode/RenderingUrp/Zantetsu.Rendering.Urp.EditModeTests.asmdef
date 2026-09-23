@@ -1,0 +1,17 @@
+{
+    "name": "Zantetsu.Rendering.Urp.EditModeTests",
+    "rootNamespace": "Zantetsu.Rendering.Urp.Tests",
+    "references": [
+        "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Urp",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

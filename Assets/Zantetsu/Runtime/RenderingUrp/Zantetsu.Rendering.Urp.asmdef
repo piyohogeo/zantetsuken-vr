@@ -1,0 +1,25 @@
+{
+    "name": "Zantetsu.Rendering.Urp",
+    "rootNamespace": "Zantetsu.Rendering.Urp",
+    "references": [
+        "Zantetsu.Rendering",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "[17.3.0]",
+            "define": "ZANTETSU_URP_17_3_0"
+        }
+    ],
+    "noEngineReferences": false
+}
