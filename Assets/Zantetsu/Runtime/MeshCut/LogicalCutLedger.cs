@@ -825,7 +825,7 @@ namespace Zantetsu.MeshCut
             int needed = checked(_fragments.Count + count);
             if (_fragments.Capacity < needed)
             {
-                _fragments.Capacity = needed;
+                _fragments.Capacity = GrownCapacity(_fragments.Capacity, needed);
             }
         }
 
@@ -834,8 +834,18 @@ namespace Zantetsu.MeshCut
             int needed = checked(_operations.Count + count);
             if (_operations.Capacity < needed)
             {
-                _operations.Capacity = needed;
+                _operations.Capacity = GrownCapacity(_operations.Capacity, needed);
             }
+        }
+
+        // Reserve before publication as before, but keep spare room: setting Capacity to exactly needed
+        // reallocates and copies the complete history on every accepted cut and every publication.
+        private static int GrownCapacity(int capacity, int needed)
+        {
+            // Use long for doubling, and saturate before the cast: reservation must never wrap to a
+            // smaller or negative capacity. The caller has already checked Count + count for overflow.
+            int doubled = (int)Math.Min(int.MaxValue, Math.Max(4L, (long)capacity * 2));
+            return Math.Max(needed, doubled);
         }
 
         // Only after ReserveFragments: the addition goes into reserved room and does not grow the list. The anchor

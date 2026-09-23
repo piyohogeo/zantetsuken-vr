@@ -72,6 +72,76 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
+        public void LongLineage_KeepsIdsAnchorsAndStaleAuthorityAcrossHistoryGrowth()
+        {
+            const int generations = 48;
+            LogicalCutLedger ledger = NewLedger(1);
+            LogicalFragmentId root = ledger.AddFragment(new[] { k_high, k_onPlane, k_low });
+            LogicalFragmentId current = root;
+            var published = new List<CutOperationId>();
+            var negativeChildren = new List<LogicalFragmentId>();
+            var stale = new List<CutOperationId>();
+
+            for (int generation = 0; generation < generations; generation++)
+            {
+                if (generation % 8 == 7)
+                {
+                    CutOperationId invalidated = AdmitOrFail(ledger, current, k_plane);
+                    Assert.That(ledger.PrepareAnchorDistribution(invalidated, k_epsilon, out _),
+                        Is.EqualTo(AnchorPreparationOutcome.Prepared));
+                    ledger.NoteOwnershipChanged(current);
+                    int fragmentCount = ledger.FragmentCount;
+                    Assert.That(ledger.PreparePublication(invalidated), Is.EqualTo(LogicalCutResultOutcome.Stale));
+                    Assert.That(ledger.FragmentCount, Is.EqualTo(fragmentCount));
+                    Assert.That(ledger.IsCurrentTarget(current), Is.True);
+                    Assert.That(AnchorsOf(ledger, current), Is.EqualTo(new[] { k_high, k_onPlane }));
+                    Assert.That(ledger.Budget.IncompleteCutOperationCount, Is.Zero);
+                    stale.Add(invalidated);
+                }
+
+                LogicalFragmentId parent = current;
+                CutOperationId cut = AdmitOrFail(ledger, parent, k_plane);
+                Assert.That(ledger.PrepareAnchorDistribution(cut, k_epsilon, out _),
+                    Is.EqualTo(AnchorPreparationOutcome.Prepared));
+                Assert.That(ledger.PreparePublication(cut), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                Assert.That(ledger.Publish(cut, out current, out LogicalFragmentId negative),
+                    Is.EqualTo(LogicalCutResultOutcome.Applied));
+                Assert.That(current.value, Is.EqualTo(2 + generation * 2));
+                Assert.That(negative.value, Is.EqualTo(3 + generation * 2));
+                Assert.That(StateOf(ledger, parent), Is.EqualTo(LogicalFragmentState.Replaced));
+                Assert.That(AnchorsOf(ledger, current), Is.EqualTo(new[] { k_high, k_onPlane }));
+                Assert.That(AnchorsOf(ledger, negative),
+                    Is.EqualTo(generation == 0 ? new[] { k_onPlane, k_low } : new[] { k_onPlane }));
+                Assert.That(ledger.CompleteGeometry(cut), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                Assert.That(ledger.Budget.IncompleteCutOperationCount, Is.Zero);
+                published.Add(cut);
+                negativeChildren.Add(negative);
+            }
+
+            Assert.That(ledger.FragmentCount, Is.EqualTo(1 + generations * 2));
+            Assert.That(ledger.OperationCount, Is.EqualTo(generations + stale.Count));
+            Assert.That(ledger.TryGetOrigin(root, out _, out _), Is.False);
+            for (int i = 0; i < published.Count; i++)
+            {
+                Assert.That(OperationOf(ledger, published[i]).state, Is.EqualTo(LogicalCutOperationState.Completed));
+                Assert.That(ledger.TryGetOrigin(negativeChildren[i], out CutOperationId origin, out float side), Is.True);
+                Assert.That(origin, Is.EqualTo(published[i]));
+                Assert.That(side, Is.EqualTo(-1f));
+                Assert.That(ledger.IsCurrentTarget(negativeChildren[i]), Is.True);
+                Assert.That(AnchorsOf(ledger, negativeChildren[i]),
+                    Is.EqualTo(i == 0 ? new[] { k_onPlane, k_low } : new[] { k_onPlane }));
+            }
+
+            foreach (CutOperationId invalidated in stale)
+            {
+                Assert.That(OperationOf(ledger, invalidated).state, Is.EqualTo(LogicalCutOperationState.Stale));
+                Assert.That(ledger.Publish(invalidated, out _, out _), Is.EqualTo(LogicalCutResultOutcome.NotActive));
+            }
+
+            Assert.That(ledger.Budget.IncompleteCutOperationCount, Is.Zero);
+            Assert.That(ledger.IsCurrentTarget(current), Is.True);
+        }
+        [Test]
         public void ASuccessfulFinal_PublishesBothChildrenAndTheOperationTogether_AndTheParentStopsBeingATarget()
         {
             LogicalCutLedger ledger = NewLedger(4);
