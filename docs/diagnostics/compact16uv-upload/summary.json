@@ -1,4 +1,6 @@
 {
+    "allocationCounterSupported": false,
+    "allocationCorrection": "IL2CPP GC.GetAllocatedBytesForCurrentThread is not implemented in Unity 6000.3.22f1; historical managed byte zeros are unavailable, not proof of zero allocation. Original source/raw hashes retained; README was corrected afterwards.",
     "baselineCommit":  "481d8045",
     "sourceIdentity":  "baseline plus recorded diagnostic source hashes; no product layout or cutting-kernel change",
     "passed":  true,

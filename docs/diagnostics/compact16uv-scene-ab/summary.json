@@ -1,0 +1,1260 @@
+{
+    "baselineCommit":  "30c63733",
+    "passed":  true,
+    "geometrySignature":  {
+                              "value":  [
+                                            {
+                                                "name":  "before",
+                                                "positionHash":  "ce10832b7c120b35",
+                                                "indexHash":  "c212dfa9594d1dc5",
+                                                "vertices":  25350,
+                                                "indices":  147456
+                                            },
+                                            {
+                                                "name":  "first-cut",
+                                                "positionHash":  "5970dd1e656ad0dd",
+                                                "indexHash":  "762c86c65813ac53",
+                                                "vertices":  26890,
+                                                "indices":  153588
+                                            },
+                                            {
+                                                "name":  "recut",
+                                                "positionHash":  "92d0ad1c66a86709",
+                                                "indexHash":  "3cae6ebeb750ae6b",
+                                                "vertices":  28235,
+                                                "indices":  158940
+                                            }
+                                        ],
+                              "Count":  3
+                          },
+    "rows":  [
+                 {
+                     "name":  "accepted16-1",
+                     "stride":  16,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  17.600000000000001,
+                     "beforeProductP95Us":  25.8,
+                     "afterProductMedianUs":  21.1000000000000031,
+                     "afterProductP95Us":  36.5000000000000034,
+                     "beforeMainMedianMs":  0.45149999999999998,
+                     "afterMainMedianMs":  0.39089999999999999,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  3205.6000000000008,
+                     "cutProductPeakUs":  2151.4,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  689.2,
+                     "recutProductPeakUs":  284.9,
+                     "beforeUnityAllocatedBytes":  138010690,
+                     "afterUnityAllocatedBytes":  139128147,
+                     "observedUnityAllocatedPeakBytes":  141958979,
+                     "observedUnityReservedPeakBytes":  278814720,
+                     "beforeWorkingSetBytes":  355999744,
+                     "afterWorkingSetBytes":  365355008,
+                     "lifetimeWorkingSetPeakBytes":  366891008,
+                     "wholeFrameGcBytes":  93668,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  8388608,
+                     "logicalGpuVertexCapacityBytes":  8388608
+                 },
+                 {
+                     "name":  "accepted16-2",
+                     "stride":  16,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  16.500000000000001,
+                     "beforeProductP95Us":  42.400000000000004,
+                     "afterProductMedianUs":  22.9,
+                     "afterProductP95Us":  63.0,
+                     "beforeMainMedianMs":  0.38739999999999999,
+                     "afterMainMedianMs":  0.4713,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  3555.0000000000005,
+                     "cutProductPeakUs":  2494,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  598.7,
+                     "recutProductPeakUs":  306.3,
+                     "beforeUnityAllocatedBytes":  137740578,
+                     "afterUnityAllocatedBytes":  138860599,
+                     "observedUnityAllocatedPeakBytes":  141691279,
+                     "observedUnityReservedPeakBytes":  278814720,
+                     "beforeWorkingSetBytes":  369881088,
+                     "afterWorkingSetBytes":  374525952,
+                     "lifetimeWorkingSetPeakBytes":  374980608,
+                     "wholeFrameGcBytes":  93188,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  8388608,
+                     "logicalGpuVertexCapacityBytes":  8388608
+                 },
+                 {
+                     "name":  "accepted16-3",
+                     "stride":  16,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  15.2000000000000001,
+                     "beforeProductP95Us":  27.0000000000000032,
+                     "afterProductMedianUs":  19.500000000000001,
+                     "afterProductP95Us":  32.5000000000000002,
+                     "beforeMainMedianMs":  0.3529,
+                     "afterMainMedianMs":  0.36929999999999998,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  2772.3000000000006,
+                     "cutProductPeakUs":  1936.4,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  471,
+                     "recutProductPeakUs":  248.4,
+                     "beforeUnityAllocatedBytes":  136502226,
+                     "afterUnityAllocatedBytes":  137681019,
+                     "observedUnityAllocatedPeakBytes":  140469792,
+                     "observedUnityReservedPeakBytes":  278814720,
+                     "beforeWorkingSetBytes":  369864704,
+                     "afterWorkingSetBytes":  375394304,
+                     "lifetimeWorkingSetPeakBytes":  375844864,
+                     "wholeFrameGcBytes":  93668,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  8388608,
+                     "logicalGpuVertexCapacityBytes":  8388608
+                 },
+                 {
+                     "name":  "accepted32-1",
+                     "stride":  32,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  16.3000000000000030,
+                     "beforeProductP95Us":  39.3,
+                     "afterProductMedianUs":  21.2,
+                     "afterProductP95Us":  54.9,
+                     "beforeMainMedianMs":  0.3618,
+                     "afterMainMedianMs":  0.3908,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  6762.3999999999987,
+                     "cutProductPeakUs":  3971.2,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  683.7,
+                     "recutProductPeakUs":  337.40000000000009,
+                     "beforeUnityAllocatedBytes":  145223416,
+                     "afterUnityAllocatedBytes":  147102208,
+                     "observedUnityAllocatedPeakBytes":  149191196,
+                     "observedUnityReservedPeakBytes":  287203328,
+                     "beforeWorkingSetBytes":  365027328,
+                     "afterWorkingSetBytes":  374886400,
+                     "lifetimeWorkingSetPeakBytes":  376430592,
+                     "wholeFrameGcBytes":  93196,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  16777216,
+                     "logicalGpuVertexCapacityBytes":  16777216
+                 },
+                 {
+                     "name":  "accepted32-2",
+                     "stride":  32,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  16.5000000000000011,
+                     "beforeProductP95Us":  29.300000000000003,
+                     "afterProductMedianUs":  22.4,
+                     "afterProductP95Us":  33.8000000000000002,
+                     "beforeMainMedianMs":  0.37489999999999998,
+                     "afterMainMedianMs":  0.4905,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  2973.5,
+                     "cutProductPeakUs":  1912.9,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  576.59999999999991,
+                     "recutProductPeakUs":  263.7,
+                     "beforeUnityAllocatedBytes":  148347341,
+                     "afterUnityAllocatedBytes":  149489488,
+                     "observedUnityAllocatedPeakBytes":  152317557,
+                     "observedUnityReservedPeakBytes":  285106176,
+                     "beforeWorkingSetBytes":  383488000,
+                     "afterWorkingSetBytes":  389935104,
+                     "lifetimeWorkingSetPeakBytes":  390127616,
+                     "wholeFrameGcBytes":  93676,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  16777216,
+                     "logicalGpuVertexCapacityBytes":  16777216
+                 },
+                 {
+                     "name":  "accepted32-3",
+                     "stride":  32,
+                     "frames":  614,
+                     "frameGcRecorderValid":  true,
+                     "beforeProductMedianUs":  16.7,
+                     "beforeProductP95Us":  33.7,
+                     "afterProductMedianUs":  19.9000000000000030,
+                     "afterProductP95Us":  29.700000000000003,
+                     "beforeMainMedianMs":  0.41859999999999999,
+                     "afterMainMedianMs":  0.37729999999999999,
+                     "cutFrames":  9,
+                     "cutProductSumUs":  4698.9,
+                     "cutProductPeakUs":  2147,
+                     "recutFrames":  4,
+                     "recutProductSumUs":  525.3,
+                     "recutProductPeakUs":  268.4,
+                     "beforeUnityAllocatedBytes":  145047654,
+                     "afterUnityAllocatedBytes":  146481256,
+                     "observedUnityAllocatedPeakBytes":  149015360,
+                     "observedUnityReservedPeakBytes":  287203328,
+                     "beforeWorkingSetBytes":  376438784,
+                     "afterWorkingSetBytes":  381980672,
+                     "lifetimeWorkingSetPeakBytes":  382169088,
+                     "wholeFrameGcBytes":  93676,
+                     "scopedManagedAllocation":  "unavailable (-1), not zero",
+                     "cpuVertexCapacityBytes":  16777216,
+                     "logicalGpuVertexCapacityBytes":  16777216
+                 }
+             ],
+    "pictures":  [
+                     {
+                         "pair":  1,
+                         "comparison":  {
+                                            "width":  960,
+                                            "height":  540,
+                                            "changedPixels":  0,
+                                            "maxRgb":  0,
+                                            "meanAbsoluteRgb":  0.0
+                                        }
+                     },
+                     {
+                         "pair":  2,
+                         "comparison":  {
+                                            "width":  960,
+                                            "height":  540,
+                                            "changedPixels":  0,
+                                            "maxRgb":  0,
+                                            "meanAbsoluteRgb":  0.0
+                                        }
+                     },
+                     {
+                         "pair":  3,
+                         "comparison":  {
+                                            "width":  960,
+                                            "height":  540,
+                                            "changedPixels":  0,
+                                            "maxRgb":  0,
+                                            "meanAbsoluteRgb":  0.0
+                                        }
+                     }
+                 ],
+    "regressionTests":  [
+                            {
+                                "name":  "editmode",
+                                "passed":  3613,
+                                "failed":  0,
+                                "skipped":  0
+                            },
+                            {
+                                "name":  "rendering",
+                                "passed":  20,
+                                "failed":  0,
+                                "skipped":  0
+                            }
+                        ],
+    "hashes":  [
+                   {
+                       "path":  "installed-il2cpp/icalls/mscorlib/System/GC.cpp",
+                       "bytes":  2386,
+                       "sha256":  "c447f73b23e33b379474b3a468d5bbd48110ce0baee1a0adc822f13bcd0faa46"
+                   },
+                   {
+                       "path":  "player16/CutWorldSandbox.exe",
+                       "bytes":  667136,
+                       "sha256":  "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+                   },
+                   {
+                       "path":  "player16/GameAssembly.dll",
+                       "bytes":  46474752,
+                       "sha256":  "060bb05b4ab49b2de9c1670722722f7b7a3a6b488ce706954df45238f48a62bc"
+                   },
+                   {
+                       "path":  "player16/CutWorldSandbox_Data/globalgamemanagers",
+                       "bytes":  241796,
+                       "sha256":  "bf5e0cc528aa8fc4b5269d3a7c327cb5c1f8400d0d6420823d3e4b2819117864"
+                   },
+                   {
+                       "path":  "player32/CutWorldSandbox.exe",
+                       "bytes":  667136,
+                       "sha256":  "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+                   },
+                   {
+                       "path":  "player32/GameAssembly.dll",
+                       "bytes":  46475264,
+                       "sha256":  "be5ec99609134e69864f90e1adc6dbb2cf49762abf0b760686d034870f66ec9a"
+                   },
+                   {
+                       "path":  "player32/CutWorldSandbox_Data/globalgamemanagers",
+                       "bytes":  241876,
+                       "sha256":  "77901f2a90244f6a36c738fe3e597afe9547f82746e3a3b7d94acf1b6d81beb1"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs",
+                       "bytes":  5630,
+                       "sha256":  "2eee0d214d0808b6814f9510ee7c2f940708db744f8fed1a98f91d41e943a9a0"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs",
+                       "bytes":  6492,
+                       "sha256":  "f9d15e3e6dc6af3a94335729a71476cb8c0d0e9934e69ab314c05c8a4ad2e353"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldCameraDrawing.cs",
+                       "bytes":  7750,
+                       "sha256":  "84f5ed5a5cadc2f4ef9f5498f9b7dd68cf3ac4f0cc7405695bf75703cb41a314"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs",
+                       "bytes":  46644,
+                       "sha256":  "eddd2819ad9c5ac546d96004cfb2cd9be2e6b3a934f3b4f1983a323da3ad9d74"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/PhysicsCut/SceneAbCounters.cs",
+                       "bytes":  1212,
+                       "sha256":  "3ab525aadc22bfc4f93ad1bf14ed99859e70ffc55fc32636b9d91520e3fd3d9d"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/PhysicsCut/SceneAbCounters.cs.meta",
+                       "bytes":  59,
+                       "sha256":  "bde1a2590237b46c32af346543f0d3296923699cc0433c2d08c619275204cad6"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpCompactVertex.hlsl",
+                       "bytes":  1155,
+                       "sha256":  "48dbc3ba189da6b724f9175f3eff5bdcea0122609d9197e4fa241dcdb0774c5a"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader",
+                       "bytes":  5830,
+                       "sha256":  "d71dabc18ee0e2b4c099f4fbf644f98bb9d1d94639bd8585103580a476ff0f74"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader",
+                       "bytes":  4140,
+                       "sha256":  "e5d7ff1879931f8674fe2a6866bd644e0094e149c98018d17e14f0a08363363b"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+                       "bytes":  7317,
+                       "sha256":  "d88f97b31b23320c1e84d67cb75fcb15f0d30117826d4809696f91a474144f33"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+                       "bytes":  12305,
+                       "sha256":  "25c962d7b96149eeb7a8f2164ce68527f34d93c5778040c637b0e35be91d803a"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+                       "bytes":  4386,
+                       "sha256":  "573e980adf47a3a8eb4666052576dface578b99bdbeda168b57fd9731b88ab88"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+                       "bytes":  7216,
+                       "sha256":  "b652d9b6e43d2ae5e45187b90116920b49f79e698d868678139445db2b914516"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpRenderVertex.cs",
+                       "bytes":  4900,
+                       "sha256":  "9a07407b5e2f89e76f8fd03820169ed6e9c0b6548ad61a00efb081c303be535f"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpStatic16File.cs",
+                       "bytes":  4313,
+                       "sha256":  "aae9dc9c983ab480d5aeb38cf691a670187f3bf3d0e7ee1cf0f41d52ded2bc1a"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader",
+                       "bytes":  7645,
+                       "sha256":  "5f454e902b00e0e263ea09e2566dee92aca55063a0a1e825ad4ed526a20b9989"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader",
+                       "bytes":  6212,
+                       "sha256":  "3d8ca9952ebca885da0b684a993b0f972b18cfd599f76f27f48b46ef6dcded12"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/CompactVertexUploadComparison.cs",
+                       "bytes":  10692,
+                       "sha256":  "9d44a8c1495e2c3f3bffa92c62c2b808d7cc30d9cd914f0b2028bae421811f7b"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SandboxCutWorldProbe.cs",
+                       "bytes":  19553,
+                       "sha256":  "9d1bb38043d7146c3024965556699248c0ba987a38f0ca17098d2873a0e2f1a9"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SandboxPlayerCheck.cs",
+                       "bytes":  24875,
+                       "sha256":  "1ad13eae3d65a002913c3e5b3ebbf9cea6332d777c6dd663c2dd45a93b67398b"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SceneAbRecorder.cs",
+                       "bytes":  7530,
+                       "sha256":  "9ec3d5729358aaef5feb7d9aabcf0e3c8489253a8a75d7659fe8b2687e9b4fcb"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SceneAbRecorder.cs.meta",
+                       "bytes":  59,
+                       "sha256":  "c4fc5d7457b0a07c93e28753797dbf2eca5f43a69f5c2edd06ca1f18c89b030a"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvAppearancePlayerTests.cs",
+                       "bytes":  13481,
+                       "sha256":  "1ed68b4a1151ff8724356cbd5586d3a2375756218291b1acfec675121665cb4f"
+                   },
+                   {
+                       "path":  "Tools/Summarize-SceneAb.ps1",
+                       "bytes":  7335,
+                       "sha256":  "91af4d7723a8abece2b60d5b9aaea898fb32f514fa25a639dfb34de117f0584e"
+                   },
+                   {
+                       "path":  "Tools/Compare-SceneAb-Pixels.py",
+                       "bytes":  611,
+                       "sha256":  "55c5210e782b9fadb235b73b147cabb976d9761e4e969a209fba15be17211a5e"
+                   },
+                   {
+                       "path":  "DESIGN.md",
+                       "bytes":  635342,
+                       "sha256":  "5ea11de801387917f1c040caef121c5dfa41f5c65d8da1a5bf6ceeeb96f186b2"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-scene-ab/README.md",
+                       "bytes":  11844,
+                       "sha256":  "4843dd28145c6e1ce7acd0591bc102bf47e446a4bf629f49a6513ea2bd0a3b90"
+                   },
+                   {
+                       "path":  "accepted16-1.log",
+                       "bytes":  13739,
+                       "sha256":  "4ea6c4d3180ffd5c3331b46516146ec3d543dc18b5701f4707b5fcc8e0b1f052"
+                   },
+                   {
+                       "path":  "accepted16-2.log",
+                       "bytes":  13740,
+                       "sha256":  "84b3b7f84b971265b11030803a250791015f1f4b1fbf74ab0da6c2eb840b34b2"
+                   },
+                   {
+                       "path":  "accepted16-3.log",
+                       "bytes":  13740,
+                       "sha256":  "6486384e6cc947e3f6ee4322cc10d3e6bc248c14a912d62d38269456b5141d43"
+                   },
+                   {
+                       "path":  "accepted32-1.log",
+                       "bytes":  13741,
+                       "sha256":  "26c648dc29a9c43238f76879191899bdb563bf18c0fabf0b63271ba36e97b83f"
+                   },
+                   {
+                       "path":  "accepted32-2.log",
+                       "bytes":  13741,
+                       "sha256":  "9b0f03099baf071e299323e91d890b94974bcc099e58950599f38514494ca017"
+                   },
+                   {
+                       "path":  "accepted32-3.log",
+                       "bytes":  13748,
+                       "sha256":  "2907eb69874d997eb79b8ea1c2adaafd4d20b5563f2d71ec9fa4253e86324d66"
+                   },
+                   {
+                       "path":  "build16.log",
+                       "bytes":  688322,
+                       "sha256":  "71fe944e9e5a6f8e949c6ae953e84c4a48f0afe2190d3903b89153932fe0faf2"
+                   },
+                   {
+                       "path":  "build16fixed.log",
+                       "bytes":  800366,
+                       "sha256":  "998b764901953f55f58fcb71c857b1800f2c90d805d7ccbf1b3c8b5eed80bb54"
+                   },
+                   {
+                       "path":  "build16pinned.log",
+                       "bytes":  626026,
+                       "sha256":  "bc920874a40b478b446a3b285a9b3e5488897dde5e129f7d2b03e949502072a5"
+                   },
+                   {
+                       "path":  "build32.log",
+                       "bytes":  120328,
+                       "sha256":  "4abcba1dd6cbcdd3972d28969afd8c0cef8e225f4bd9c5a6aa8eb5448d1f0305"
+                   },
+                   {
+                       "path":  "build32fixed.log",
+                       "bytes":  776787,
+                       "sha256":  "c1c9ee8427308f1fe7d86721e42cb8c6ee93e282cad7cfe51f1d996805839f5c"
+                   },
+                   {
+                       "path":  "build32pinned.log",
+                       "bytes":  791490,
+                       "sha256":  "687237ba97cc845c44c613d393e3823c559eda967e70de31047d88e28dfef569"
+                   },
+                   {
+                       "path":  "editmode.log",
+                       "bytes":  840015,
+                       "sha256":  "763fffb8a98564f459ca42a8d0f344de3062d0858dc629f60d1b3d1ec7e5c29d"
+                   },
+                   {
+                       "path":  "editmode.xml",
+                       "bytes":  2343822,
+                       "sha256":  "b63207b59fd715267b8b32c6f373a5a76565460f4f9dfaa818439045d9b21722"
+                   },
+                   {
+                       "path":  "rendering-build.log",
+                       "bytes":  740348,
+                       "sha256":  "3bf996b611f0e6136ba31176b6a26dea605ba842b8bdab2563fa0a07c570af46"
+                   },
+                   {
+                       "path":  "rendering.xml",
+                       "bytes":  196261,
+                       "sha256":  "d45f27afeafded620c71fe5cde0e3570de5e5fc9ad61f4bfefb62df6070745d3"
+                   },
+                   {
+                       "path":  "run32-1.log",
+                       "bytes":  13716,
+                       "sha256":  "0d4c044aad4b3c310335e199dc2d6c0afe99184e0eb6ccfcdb18e3251bbbfeef"
+                   },
+                   {
+                       "path":  "smoke16.log",
+                       "bytes":  13699,
+                       "sha256":  "7ee511bd629e2f69459129a3d8a87736e77211bd4c6226b5da243e6fef2b209a"
+                   },
+                   {
+                       "path":  "accepted16-1/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted16-1/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted16-1/scene-ab.json",
+                       "bytes":  342961,
+                       "sha256":  "bd29352221c819db62d0448c3606fc9347870e0b54d886251d3d2848417e2297"
+                   },
+                   {
+                       "path":  "accepted16-2/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted16-2/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted16-2/scene-ab.json",
+                       "bytes":  341626,
+                       "sha256":  "b354b63ba3b6ab59956f2f7ab8a95659d797cb66b53f15d39d17646ec0e2f967"
+                   },
+                   {
+                       "path":  "accepted16-3/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted16-3/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted16-3/scene-ab.json",
+                       "bytes":  343313,
+                       "sha256":  "ea4831a134449e3f9b4e6e7ad9a68423ca75c7397ecf2081e90de5772d715db2"
+                   },
+                   {
+                       "path":  "accepted32-1/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted32-1/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted32-1/scene-ab.json",
+                       "bytes":  344066,
+                       "sha256":  "62fbc96b1ceb77cb1142cc609d3e2f4eff16a6e3b8fc531e963c06c28aa8874f"
+                   },
+                   {
+                       "path":  "accepted32-2/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted32-2/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted32-2/scene-ab.json",
+                       "bytes":  341926,
+                       "sha256":  "441f5a523d6dcce1b9e019fd4fb5001c8aaba3a3d1d1471167d3ebd4c3205806"
+                   },
+                   {
+                       "path":  "accepted32-3/04-after-the-child-cut.png",
+                       "bytes":  53123,
+                       "sha256":  "6ab64f774d31737f7a6b91d751a991a7ec7ffca55b160b21964779299b7ef202"
+                   },
+                   {
+                       "path":  "accepted32-3/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "accepted32-3/scene-ab.json",
+                       "bytes":  344829,
+                       "sha256":  "51a7d7a0924dd0f86c27ad06494af9f66409a65aa5bbed416c7cdb43c4febc24"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view0-debug-mesh.png",
+                       "bytes":  12302,
+                       "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view0-debug-packed.png",
+                       "bytes":  12344,
+                       "sha256":  "5ef75207eb8cb32b6d43f14a975be0785cd4bcf0cf70c81fb037ead75def115e"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view0-mesh.png",
+                       "bytes":  12302,
+                       "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view0-packed.png",
+                       "bytes":  12344,
+                       "sha256":  "5ef75207eb8cb32b6d43f14a975be0785cd4bcf0cf70c81fb037ead75def115e"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view0-source-palette.png",
+                       "bytes":  12302,
+                       "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view1-debug-mesh.png",
+                       "bytes":  5787,
+                       "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view1-debug-packed.png",
+                       "bytes":  5786,
+                       "sha256":  "0e0ab1e29bc30a66e517fe4eb5e0f28598b5db4a14065a6b575e3f60b30d46a6"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view1-mesh.png",
+                       "bytes":  5787,
+                       "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view1-packed.png",
+                       "bytes":  5786,
+                       "sha256":  "0e0ab1e29bc30a66e517fe4eb5e0f28598b5db4a14065a6b575e3f60b30d46a6"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view1-source-palette.png",
+                       "bytes":  5787,
+                       "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view2-debug-mesh.png",
+                       "bytes":  17947,
+                       "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view2-debug-packed.png",
+                       "bytes":  17984,
+                       "sha256":  "8ccd736ec235134748da8e36bdebd3a898ffd9443442a2d44a62f9871e54f9a5"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view2-mesh.png",
+                       "bytes":  17947,
+                       "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view2-packed.png",
+                       "bytes":  17984,
+                       "sha256":  "8ccd736ec235134748da8e36bdebd3a898ffd9443442a2d44a62f9871e54f9a5"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage0-view2-source-palette.png",
+                       "bytes":  17947,
+                       "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view0-debug-mesh.png",
+                       "bytes":  11355,
+                       "sha256":  "b574a8bb00b67049ac2f6631f0f4532d0dd70391ee41f520978bb8e75e29a4e7"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view0-debug-packed.png",
+                       "bytes":  11355,
+                       "sha256":  "b574a8bb00b67049ac2f6631f0f4532d0dd70391ee41f520978bb8e75e29a4e7"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view0-mesh.png",
+                       "bytes":  11353,
+                       "sha256":  "201366251f0ebab8636f2d5c27a9691ffc2081e8e318021a80b66de8ee6ea079"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view0-packed.png",
+                       "bytes":  11353,
+                       "sha256":  "201366251f0ebab8636f2d5c27a9691ffc2081e8e318021a80b66de8ee6ea079"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view1-debug-mesh.png",
+                       "bytes":  4046,
+                       "sha256":  "27ff42c86cc5460fd9e2353e3b41eac2aeeafa93661be4644bf9d921b47ff04f"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view1-debug-packed.png",
+                       "bytes":  4046,
+                       "sha256":  "27ff42c86cc5460fd9e2353e3b41eac2aeeafa93661be4644bf9d921b47ff04f"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view1-mesh.png",
+                       "bytes":  3994,
+                       "sha256":  "bd23f0274f812cf53a86757138c46d2dbc1e9c7c800969b1258a30ef8f04fd4a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view1-packed.png",
+                       "bytes":  3994,
+                       "sha256":  "bd23f0274f812cf53a86757138c46d2dbc1e9c7c800969b1258a30ef8f04fd4a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view2-debug-mesh.png",
+                       "bytes":  10316,
+                       "sha256":  "4256de9c68167a5c8fce70b03f171d8ad7721ef43a3f9322a2c6b77c2e968b4e"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view2-debug-packed.png",
+                       "bytes":  10316,
+                       "sha256":  "4256de9c68167a5c8fce70b03f171d8ad7721ef43a3f9322a2c6b77c2e968b4e"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view2-mesh.png",
+                       "bytes":  10400,
+                       "sha256":  "72426e3e91a3bb6114ccdf293d9a39f28f14f68a75325d06bf2415a94bccba68"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage1-view2-packed.png",
+                       "bytes":  10400,
+                       "sha256":  "72426e3e91a3bb6114ccdf293d9a39f28f14f68a75325d06bf2415a94bccba68"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view0-debug-mesh.png",
+                       "bytes":  10013,
+                       "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view0-debug-packed.png",
+                       "bytes":  10013,
+                       "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view0-mesh.png",
+                       "bytes":  10013,
+                       "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view0-packed.png",
+                       "bytes":  10013,
+                       "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view1-debug-mesh.png",
+                       "bytes":  3968,
+                       "sha256":  "d4e62988f83d83c8862c727601c3c9ca806c26988e6c50da9e7666087dd51872"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view1-debug-packed.png",
+                       "bytes":  3968,
+                       "sha256":  "d4e62988f83d83c8862c727601c3c9ca806c26988e6c50da9e7666087dd51872"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view1-mesh.png",
+                       "bytes":  3958,
+                       "sha256":  "aa469831c144b9cc2e00030767745ed1e4826cf46f7720eddc463e0f979c9587"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view1-packed.png",
+                       "bytes":  3958,
+                       "sha256":  "aa469831c144b9cc2e00030767745ed1e4826cf46f7720eddc463e0f979c9587"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view2-debug-mesh.png",
+                       "bytes":  5415,
+                       "sha256":  "feee92e0d15b50f5c7b0b7852417a72bb4d5323f7b20ca4c950b885e7ef2cc72"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view2-debug-packed.png",
+                       "bytes":  5415,
+                       "sha256":  "feee92e0d15b50f5c7b0b7852417a72bb4d5323f7b20ca4c950b885e7ef2cc72"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view2-mesh.png",
+                       "bytes":  5354,
+                       "sha256":  "7b64c47780b3c80df6495e01d2e2eef230ac3a07c4df0ec224331197218a2a92"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage2-view2-packed.png",
+                       "bytes":  5354,
+                       "sha256":  "7b64c47780b3c80df6495e01d2e2eef230ac3a07c4df0ec224331197218a2a92"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view0-debug-mesh.png",
+                       "bytes":  6106,
+                       "sha256":  "c3782b7f08be0e96b1a248e890bb84b54a671e93527ab5acb172b9a5fdb62a66"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view0-debug-packed.png",
+                       "bytes":  6106,
+                       "sha256":  "c3782b7f08be0e96b1a248e890bb84b54a671e93527ab5acb172b9a5fdb62a66"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view0-mesh.png",
+                       "bytes":  6156,
+                       "sha256":  "f29b7e67ea8749637bd40696bfa4a99e37a46ccaf8dad2e439b67a46956d24b6"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view0-packed.png",
+                       "bytes":  6156,
+                       "sha256":  "f29b7e67ea8749637bd40696bfa4a99e37a46ccaf8dad2e439b67a46956d24b6"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view1-debug-mesh.png",
+                       "bytes":  3472,
+                       "sha256":  "c2448a6666720cc1630d2343baf330b0a364399ab2c5042c6b615eecdae6f319"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view1-debug-packed.png",
+                       "bytes":  3472,
+                       "sha256":  "c2448a6666720cc1630d2343baf330b0a364399ab2c5042c6b615eecdae6f319"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view1-mesh.png",
+                       "bytes":  3487,
+                       "sha256":  "32cfb2f3f0f1c4b658697d0a27d43d6cadfb801a23ce25152791fd5dbe46d13d"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view1-packed.png",
+                       "bytes":  3487,
+                       "sha256":  "32cfb2f3f0f1c4b658697d0a27d43d6cadfb801a23ce25152791fd5dbe46d13d"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view2-debug-mesh.png",
+                       "bytes":  5106,
+                       "sha256":  "9ee50095736a890aa4527490f2a15a5b6e0be190f9bb85c405bd3e229ed0a767"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view2-debug-packed.png",
+                       "bytes":  5106,
+                       "sha256":  "9ee50095736a890aa4527490f2a15a5b6e0be190f9bb85c405bd3e229ed0a767"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view2-mesh.png",
+                       "bytes":  5120,
+                       "sha256":  "58a2bc60fcdc1fd448902e28ccbe1020100f2f2ee901670e77443f9370c1f0a1"
+                   },
+                   {
+                       "path":  "rendering-appearance/stage3-view2-packed.png",
+                       "bytes":  5120,
+                       "sha256":  "58a2bc60fcdc1fd448902e28ccbe1020100f2f2ee901670e77443f9370c1f0a1"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view0-debug-st-tint.png",
+                       "bytes":  3466,
+                       "sha256":  "fddf267e596b22bfc06fab37ca9a13f2b4cab4d8c85739a4000d43673a39f4ad"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view0-debug.png",
+                       "bytes":  5082,
+                       "sha256":  "f274145a7fdc8996866ef0afb2113b19a49919219d39abbc7a8808d9e92107be"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view0-normal.png",
+                       "bytes":  5080,
+                       "sha256":  "763a7b42d8bb2457499d7d6c5278703bb9bc33b7e6f17e88d676f864ed6bd31e"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view1-debug-st-tint.png",
+                       "bytes":  1808,
+                       "sha256":  "aa13b890e422d3c1d148788383cc048a6ff98c2eedc935cd508a3231932e1a87"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view1-debug.png",
+                       "bytes":  2265,
+                       "sha256":  "5d76cf610effe43aca8ae9c6e00397391bf82d79ab52d8c8730a56ce9f108f29"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view1-normal.png",
+                       "bytes":  2265,
+                       "sha256":  "be26e0df5f7dd65b43fb1a42b01fcdfd1878e1eb96d69632619cb32aabd420cf"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view2-debug-st-tint.png",
+                       "bytes":  3359,
+                       "sha256":  "6f718ced7bc77d6e41be838cb48d2ed1e6095d6297ed6f47e9fd7ce52ebc63b1"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view2-debug.png",
+                       "bytes":  4930,
+                       "sha256":  "ff54ebc71560183654c16f037f25833426773852a5075d362c53d787dbeebc5c"
+                   },
+                   {
+                       "path":  "rendering-atlas/path0-view2-normal.png",
+                       "bytes":  4928,
+                       "sha256":  "3fa8955924fb36af472b50b57f79a6d8860a1a70ca2408a53cec5175ddf71758"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view0-debug-st-tint.png",
+                       "bytes":  3466,
+                       "sha256":  "fddf267e596b22bfc06fab37ca9a13f2b4cab4d8c85739a4000d43673a39f4ad"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view0-debug.png",
+                       "bytes":  5082,
+                       "sha256":  "f274145a7fdc8996866ef0afb2113b19a49919219d39abbc7a8808d9e92107be"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view0-normal.png",
+                       "bytes":  5080,
+                       "sha256":  "763a7b42d8bb2457499d7d6c5278703bb9bc33b7e6f17e88d676f864ed6bd31e"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view1-debug-st-tint.png",
+                       "bytes":  1808,
+                       "sha256":  "aa13b890e422d3c1d148788383cc048a6ff98c2eedc935cd508a3231932e1a87"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view1-debug.png",
+                       "bytes":  2265,
+                       "sha256":  "5d76cf610effe43aca8ae9c6e00397391bf82d79ab52d8c8730a56ce9f108f29"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view1-normal.png",
+                       "bytes":  2265,
+                       "sha256":  "be26e0df5f7dd65b43fb1a42b01fcdfd1878e1eb96d69632619cb32aabd420cf"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view2-debug-st-tint.png",
+                       "bytes":  3359,
+                       "sha256":  "6f718ced7bc77d6e41be838cb48d2ed1e6095d6297ed6f47e9fd7ce52ebc63b1"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view2-debug.png",
+                       "bytes":  4930,
+                       "sha256":  "ff54ebc71560183654c16f037f25833426773852a5075d362c53d787dbeebc5c"
+                   },
+                   {
+                       "path":  "rendering-atlas/path1-view2-normal.png",
+                       "bytes":  4928,
+                       "sha256":  "3fa8955924fb36af472b50b57f79a6d8860a1a70ca2408a53cec5175ddf71758"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view0-debug-st-tint.png",
+                       "bytes":  3466,
+                       "sha256":  "fddf267e596b22bfc06fab37ca9a13f2b4cab4d8c85739a4000d43673a39f4ad"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view0-debug.png",
+                       "bytes":  5082,
+                       "sha256":  "f274145a7fdc8996866ef0afb2113b19a49919219d39abbc7a8808d9e92107be"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view0-normal.png",
+                       "bytes":  5080,
+                       "sha256":  "763a7b42d8bb2457499d7d6c5278703bb9bc33b7e6f17e88d676f864ed6bd31e"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view1-debug-st-tint.png",
+                       "bytes":  1808,
+                       "sha256":  "aa13b890e422d3c1d148788383cc048a6ff98c2eedc935cd508a3231932e1a87"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view1-debug.png",
+                       "bytes":  2265,
+                       "sha256":  "5d76cf610effe43aca8ae9c6e00397391bf82d79ab52d8c8730a56ce9f108f29"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view1-normal.png",
+                       "bytes":  2265,
+                       "sha256":  "be26e0df5f7dd65b43fb1a42b01fcdfd1878e1eb96d69632619cb32aabd420cf"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view2-debug-st-tint.png",
+                       "bytes":  3359,
+                       "sha256":  "6f718ced7bc77d6e41be838cb48d2ed1e6095d6297ed6f47e9fd7ce52ebc63b1"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view2-debug.png",
+                       "bytes":  4930,
+                       "sha256":  "ff54ebc71560183654c16f037f25833426773852a5075d362c53d787dbeebc5c"
+                   },
+                   {
+                       "path":  "rendering-atlas/path2-view2-normal.png",
+                       "bytes":  4928,
+                       "sha256":  "3fa8955924fb36af472b50b57f79a6d8860a1a70ca2408a53cec5175ddf71758"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view0-debug-st-tint.png",
+                       "bytes":  3466,
+                       "sha256":  "fddf267e596b22bfc06fab37ca9a13f2b4cab4d8c85739a4000d43673a39f4ad"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view0-debug.png",
+                       "bytes":  5082,
+                       "sha256":  "f274145a7fdc8996866ef0afb2113b19a49919219d39abbc7a8808d9e92107be"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view0-normal.png",
+                       "bytes":  5080,
+                       "sha256":  "763a7b42d8bb2457499d7d6c5278703bb9bc33b7e6f17e88d676f864ed6bd31e"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view1-debug-st-tint.png",
+                       "bytes":  1808,
+                       "sha256":  "aa13b890e422d3c1d148788383cc048a6ff98c2eedc935cd508a3231932e1a87"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view1-debug.png",
+                       "bytes":  2265,
+                       "sha256":  "5d76cf610effe43aca8ae9c6e00397391bf82d79ab52d8c8730a56ce9f108f29"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view1-normal.png",
+                       "bytes":  2265,
+                       "sha256":  "be26e0df5f7dd65b43fb1a42b01fcdfd1878e1eb96d69632619cb32aabd420cf"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view2-debug-st-tint.png",
+                       "bytes":  3359,
+                       "sha256":  "6f718ced7bc77d6e41be838cb48d2ed1e6095d6297ed6f47e9fd7ce52ebc63b1"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view2-debug.png",
+                       "bytes":  4930,
+                       "sha256":  "ff54ebc71560183654c16f037f25833426773852a5075d362c53d787dbeebc5c"
+                   },
+                   {
+                       "path":  "rendering-atlas/path3-view2-normal.png",
+                       "bytes":  4928,
+                       "sha256":  "3fa8955924fb36af472b50b57f79a6d8860a1a70ca2408a53cec5175ddf71758"
+                   },
+                   {
+                       "path":  "rendering-atlas/stencil-debug.png",
+                       "bytes":  720,
+                       "sha256":  "2373d79a0de06ea68553641fa1aa6b1efaeab475c6742c3d046aea7e6a0bf78e"
+                   },
+                   {
+                       "path":  "rendering-atlas/stencil-no-volume.png",
+                       "bytes":  530,
+                       "sha256":  "543b3969b999c5d272ea461a2426c0aac35ad4862340da8e669e6a96657b037e"
+                   },
+                   {
+                       "path":  "rendering-atlas/stencil-normal.png",
+                       "bytes":  738,
+                       "sha256":  "7725dcc4cf5c66eaafc6d2bdebe39fca447ebdd76fbd2927ddf05d761bb1dd58"
+                   },
+                   {
+                       "path":  "rendering-shadow/01-default-vp-forward.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/01-default-vp-forward.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/01-default-vp-forward.png",
+                       "bytes":  723,
+                       "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                   },
+                   {
+                       "path":  "rendering-shadow/02-default-vp-both.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/02-default-vp-both.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/02-default-vp-both.png",
+                       "bytes":  723,
+                       "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                   },
+                   {
+                       "path":  "rendering-shadow/03-default-mesh-off.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/03-default-mesh-off.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/03-default-mesh-off.png",
+                       "bytes":  713,
+                       "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                   },
+                   {
+                       "path":  "rendering-shadow/04-default-mesh-on.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/04-default-mesh-on.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/04-default-mesh-on.png",
+                       "bytes":  713,
+                       "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                   },
+                   {
+                       "path":  "rendering-shadow/05-lit-mesh-off.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/05-lit-mesh-off.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/05-lit-mesh-off.png",
+                       "bytes":  717,
+                       "sha256":  "b1719cd40dc68a916a044307cb404d5fbd2bd105561ed0ab133b04f21ddccd9b"
+                   },
+                   {
+                       "path":  "rendering-shadow/06-lit-mesh-on.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/06-lit-mesh-on.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/06-lit-mesh-on.png",
+                       "bytes":  811,
+                       "sha256":  "5c90515af16963305dff58a69b016a3273e0c35692b3b21577646da9f583107b"
+                   },
+                   {
+                       "path":  "rendering-shadow/07-lit-vp-forward.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/07-lit-vp-forward.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/07-lit-vp-forward.png",
+                       "bytes":  616,
+                       "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                   },
+                   {
+                       "path":  "rendering-shadow/08-lit-vp-both.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/08-lit-vp-both.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/08-lit-vp-both.png",
+                       "bytes":  722,
+                       "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                   },
+                   {
+                       "path":  "rendering-shadow/09-lit-vp-forward-repeat.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/09-lit-vp-forward-repeat.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/09-lit-vp-forward-repeat.png",
+                       "bytes":  616,
+                       "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                   },
+                   {
+                       "path":  "rendering-shadow/10-lit-request-forward.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/10-lit-request-forward.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/10-lit-request-forward.png",
+                       "bytes":  616,
+                       "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                   },
+                   {
+                       "path":  "rendering-shadow/11-lit-request-both.atlas-occupancy.png",
+                       "bytes":  79,
+                       "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                   },
+                   {
+                       "path":  "rendering-shadow/11-lit-request-both.atlas.rfloat",
+                       "bytes":  64,
+                       "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                   },
+                   {
+                       "path":  "rendering-shadow/11-lit-request-both.png",
+                       "bytes":  722,
+                       "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                   },
+                   {
+                       "path":  "rendering-shadow/measurements.txt",
+                       "bytes":  15838,
+                       "sha256":  "937524d8830ef886950ff7c40c538814aac6b20074ef830ec41da26fcfed7ebd"
+                   },
+                   {
+                       "path":  "run32-1/04-after-the-child-cut.png",
+                       "bytes":  53167,
+                       "sha256":  "93ddb41a87948fef4c6f6c211e36784df2eb70f83f7e1daa93a21d5597d19f19"
+                   },
+                   {
+                       "path":  "run32-1/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "run32-1/scene-ab.json",
+                       "bytes":  344019,
+                       "sha256":  "f9ad886ee3b92e94ff3d37d5edfebfdfbeef801890e732b4a935e7d42061940f"
+                   },
+                   {
+                       "path":  "smoke16/04-after-the-child-cut.png",
+                       "bytes":  53084,
+                       "sha256":  "ed4867d72e41488292dc281b9be9c941db98319e48ba1a463aeb5c2b022a5bb3"
+                   },
+                   {
+                       "path":  "smoke16/05-after-the-ending.png",
+                       "bytes":  49938,
+                       "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                   },
+                   {
+                       "path":  "smoke16/scene-ab.json",
+                       "bytes":  314174,
+                       "sha256":  "12de9ca8bdd8110b68dcee568b0e7766a990a34e953faf8cb0826127a229be99"
+                   }
+               ],
+    "exclusions":  [
+                       "smoke16: initial counter API unsupported; unfixed grandchild pose",
+                       "run32-1: geometry matched, but post-recut pose not pinned",
+                       "build32.log: Player-only ABI symbol failed Unity type-layout check"
+                   ],
+    "interpretation":  "Dense synthetic product path; scoped Main wall time, previous-frame inclusive Main and GC; sampled Unity peaks and OS lifetime working-set high-water; no GPU residency or pool growth claim"
+}

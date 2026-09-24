@@ -158,9 +158,9 @@ namespace Zantetsu.Rendering.StandaloneTests
             bool Upload()=>VpStoredGeometryTransfer.TryUploadCommittedVertices(storage,gpu.VertexBuffer,0,storage.VertexCount,out _)
                 &&VpStoredGeometryTransfer.TryUploadPublishedIndices(storage,gpu.IndexBuffer,geometry.indexRange,out _);
             for(int i=0;i<10;i++)Assert.That(Upload(),Is.True);
-            var samples=new double[101];long allocated=GC.GetAllocatedBytesForCurrentThread();bool success=true;
+            var samples=new double[101];long allocated=-1;bool success=true; // IL2CPP per-thread GC API is unimplemented.
             for(int i=0;i<samples.Length;i++){long start=Stopwatch.GetTimestamp();success&=Upload();samples[i]=(Stopwatch.GetTimestamp()-start)*1000.0/Stopwatch.Frequency;}
-            allocated=GC.GetAllocatedBytesForCurrentThread()-allocated;Assert.That(success,Is.True);Array.Sort(samples);
+            Assert.That(success,Is.True);Array.Sort(samples);
             storage.TryGetIndexState(geometry.indexRange,out _,out _,out int indices);
             Debug.Log($"Appearance isolated upload: samples=101, medianMs={samples[50]:F6}, p95Ms={samples[95]:F6}, managedBytes={allocated}, vertices={storage.VertexCount}, vertexBytes={storage.VertexCount*16}, indexBytes={indices*4}, capacityVertexBytes={storage.VertexCapacity*16}; not total Main, GPU time, residency or 32B speed comparison");
         }

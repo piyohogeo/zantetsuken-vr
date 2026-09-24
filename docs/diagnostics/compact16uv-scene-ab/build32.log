@@ -1,0 +1,1443 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.22f1 (1c726e1fb402) revision 1864302'; Using compiler version '194234433'; Build Type 'Release'
+OS: 'Windows 11  (10.0.22631) Professional' Language: 'ja' Physical Memory: 130885 MB
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic" at "2026-09-24T05:16:36.1341575Z"
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-09-24T05:16:36Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe
+-batchmode
+-projectPath
+[USERPROFILE]/src/zantetsuken-vr-compact16uv
+-executeMethod
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild.BuildPlayer
+-logFile
+[USERPROFILE]/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene-ab/build32.log
+Successfully changed project path to: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+[USERPROFILE]/src/zantetsuken-vr-compact16uv
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+Player connection [71656]  Target information:
+
+Player connection [71656]  * "[IP] 192.168.133.1 [Port] 55505 [Flags] 2 [Guid] 3075989823 [EditorId] 3075989823 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [71656]  * "[IP] 192.168.10.200 [Port] 55505 [Flags] 2 [Guid] 3075989823 [EditorId] 3075989823 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [71656]  * "[IP] 192.168.211.100 [Port] 55505 [Flags] 2 [Guid] 3075989823 [EditorId] 3075989823 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [71656]  * "[IP] 192.168.118.1 [Port] 55505 [Flags] 2 [Guid] 3075989823 [EditorId] 3075989823 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [71656]  * "[IP] 172.30.96.1 [Port] 55505 [Flags] 2 [Guid] 3075989823 [EditorId] 3075989823 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [71656] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [71656] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Package Manager] Connected to IPC stream "Upm-82272" after 0.2 seconds.
+[Licensing::Module] Licensing is not yet initialized.
+[Licensing::Client] Error: HandshakeResponse reported an error:
+	ResponseCode: 505
+	ResponseStatus: Unsupported protocol version '1.18.1'.
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-junic"
+[Licensing::IpcConnector] LicenseClient-junic channel disconnected successfully.
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22" at "2026-09-24T05:16:37.4029754Z"
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 94940, path: "C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client.exe")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.1+9fbee8e
+  Session Id:              53110c7b0e8a452593a1554f22e85a47
+  Correlation Id:          93d5d8fbbf2f5ed93323a85a15f1d8e1
+  External correlation Id: 2467070310760200963
+  Machine Id:              OBjPOVyKQsIZ/hoJA1BaU9Z6VPQ=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-junic-6000.3.22" (connect: 0.00s, validation: 0.00s, handshake: 0.01s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22-notifications" at "2026-09-24T05:16:37.4098241Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: 15669749089512-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully updated license, isAsync: True, time: 0.00
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] Licensing Background thread has ended after 1.28s
+[Licensing::Module] Licensing is initialized (took 1.02s).
+[Licensing::Client] Successfully resolved entitlement details
+Library Redirect Path: Library/
+[Physics::Module] Selected backend.
+[Physics::Module] Name: PhysX
+[Physics::Module] Id: 0xf2b8ea05
+[Physics::Module] SDK Version: 4.1.2
+[Physics::Module] Integration Version: 1.0.0
+[Physics::Module] Threading Mode: Multi-Threaded
+Artifact Garbage Collection - Removed 12 unused hashed content files
+Refreshing native plugins compatible for Editor in 1.31 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.3.22f1 (1c726e1fb402)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path [USERPROFILE]/src/zantetsuken-vr-compact16uv/Assets
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 3090 (ID=0x2204)
+    Vendor:   NVIDIA
+    VRAM:     24322 MB
+    Driver:   32.0.15.9186
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56272
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Registered in 0.001303 seconds.
+- Loaded All Assemblies, in  0.329 seconds
+Native extension for WindowsStandalone target not found
+Package Manager log level set to [2]
+ScheduleIndexationOnStartup MainProcess:False IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.280 seconds
+Domain Reload Profiling: 607ms
+	BeginReloadAssembly (140ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (38ms)
+	RebuildCommonClasses (25ms)
+	RebuildNativeTypeToScriptingClass (9ms)
+	initialDomainReloadingComplete (34ms)
+	LoadAllAssembliesAndSetupDomain (118ms)
+		LoadAssemblies (100ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (116ms)
+			TypeCache.Refresh (114ms)
+				TypeCache.ScanAssembly (104ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (0ms)
+	FinalizeReload (280ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (250ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (31ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (57ms)
+			ProcessInitializeOnLoadAttributes (99ms)
+			ProcessInitializeOnLoadMethodAttributes (59ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 61 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ai.navigation@2.0.14 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ai.navigation@134dd6a3b97b)
+    com.unity.burst@1.8.30 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.burst@2f3d916873ea)
+    com.unity.collab-proxy@2.12.4 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collab-proxy@0b1559bcd34e)
+    com.unity.collections@2.6.8 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collections@84e8eb3fc12e)
+    com.unity.ide.rider@3.0.40 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.rider@e4950c6d131b)
+    com.unity.ide.visualstudio@2.0.26 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.visualstudio@a99d56dec63f)
+    com.unity.inputsystem@1.20.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.inputsystem@7a4e1a2a8194)
+    com.unity.mathematics@1.3.3 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.mathematics@19a9377c4ffa)
+    com.unity.timeline@1.8.12 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.timeline@8cd8509afae5)
+    com.unity.visualscripting@1.9.12 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.visualscripting@4edfcc09512f)
+    com.unity.xr.management@4.6.1 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.management@df145a5bc89e)
+    com.unity.xr.openxr@1.18.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be)
+    com.unity.xr.core-utils@2.6.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.core-utils@a8b900321199)
+    com.unity.xr.legacyinputhelpers@2.1.13 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.legacyinputhelpers@9535ff2c27ac)
+    com.unity.nuget.mono-cecil@1.11.6 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.nuget.mono-cecil@ecb9724e46ff)
+    com.unity.test-framework.performance@3.5.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework.performance@8b56083ec0f0)
+    com.unity.searcher@4.9.5 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.searcher@a463122f2c00)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.1 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.multiplayer.center@f01f4ba8d00a)
+    com.unity.render-pipelines.universal@17.3.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal@de1a320b3ed3)
+    com.unity.test-framework@1.6.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework@bd7f943e9647)
+    com.unity.ugui@2.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ugui@20629863fcab)
+    com.unity.modules.accessibility@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.accessibility)
+    com.unity.modules.adaptiveperformance@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.adaptiveperformance)
+    com.unity.modules.ai@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vectorgraphics@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vectorgraphics)
+    com.unity.modules.vehicles@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ext.nunit@d8c07649098d)
+    com.unity.render-pipelines.core@17.3.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.core@202510c2d2a2)
+    com.unity.shadergraph@17.3.0 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.shadergraph@aa8306cf39d6)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal-config@8dc1aab4af1d)
+[Subsystems] Looking for new subsystems at path [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path [USERPROFILE]/src/zantetsuken-vr-compact16uv/Assets
+[Subsystems] Discovering subsystems at path [USERPROFILE]\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.02 seconds
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+DisplayProgressbar: Compiling Scripts
+ExitCode: 0 Duration: 0s312ms
+[ 683/1288  0s] WriteResponseFile Library/Bee/artifacts/rsp/4747638433968585886.rsp
+[ 984/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+*** Tundra build success (0.28 seconds), 2 items updated, 1288 evaluated
+AssetDatabase: script compilation time: 0.682837s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.803 seconds
+Refreshing native plugins compatible for Editor in 4.18 ms, found 10 plugins.
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 5.63 ms, found 10 plugins.
+ScheduleIndexationOnStartup MainProcess:True IndexOnStartup:True
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  3.241 seconds
+Domain Reload Profiling: 4038ms
+	BeginReloadAssembly (293ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (54ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (141ms)
+	RebuildCommonClasses (27ms)
+	RebuildNativeTypeToScriptingClass (10ms)
+	initialDomainReloadingComplete (25ms)
+	LoadAllAssembliesAndSetupDomain (442ms)
+		LoadAssemblies (295ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (223ms)
+			TypeCache.Refresh (150ms)
+				TypeCache.ScanAssembly (138ms)
+			BuildScriptInfoCaches (62ms)
+			ResolveRequiredComponents (8ms)
+	FinalizeReload (3242ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2903ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (19ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (239ms)
+			ProcessInitializeOnLoadAttributes (2508ms)
+			ProcessInitializeOnLoadMethodAttributes (126ms)
+			AfterProcessingInitializeOnLoad (7ms)
+			EditorAssembliesLoaded (1ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (22ms)
+Asset Pipeline Refresh (id=6f9ca8a8018913d469e7776b10a4cc70): Total: 5.274 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=3690 ms
+		Asset DB Callback time: managed=30 ms, native=17 ms
+		Scripting: domain reloads=1, domain reload time=803 ms, compile time=684 ms, other=49 ms
+		Project Asset Count: scripts=1552, non-scripts=2416
+		Asset File Changes: new=0, changed=0, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 19.256ms
+	ApplyChangesToAssetFolders: 0.792ms
+	Scan: 129.758ms
+	OnSourceAssetsModified: 0.003ms
+	CategorizeAssetsWithTransientArtifact: 47.798ms
+	ProcessAssetsWithTransientArtifactChanges: 73.726ms
+	CategorizeAssets: 49.888ms
+	ImportOutOfDateAssets: 3260.786ms (2574.250ms without children)
+		CompileScripts: 684.273ms
+		ReloadNativeAssets: 0.032ms
+		UnloadImportedAssets: 1.014ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 0.596ms
+		InitializingProgressBar: 0.001ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.001ms
+		OnDemandSchedulerStart: 0.621ms
+	PostProcessAllAssets: 30.128ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.002ms
+	UnloadStreamsBegin: 2.473ms
+	PersistCurrentRevisions: 0.150ms
+	UnloadStreamsEnd: 0.001ms
+	GenerateScriptTypeHashes: 2.293ms
+	Untracked: 1659.425ms
+
+Application.AssetDatabase Initial Refresh End
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Scanning for USB devices : 7.541ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-zantetsuken-vr
+Unloading 19 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 7713 unused Assets / (4.5 MB). Loaded Objects now: 8583.
+Memory consumption went from 219.2 MB to 214.7 MB.
+Total: 10.491300 ms (FindLiveObjects: 0.629200 ms CreateObjectMapping: 0.410400 ms MarkObjects: 7.076700 ms  DeleteObjects: 2.373400 ms)
+
+Opening scene 'Assets/Scenes/CutWorldSandbox.unity'
+Unloading 7 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Assets/Scenes/CutWorldSandbox.unity'
+	Deserialize:            3.000 ms
+	Integration:            280.472 ms
+	Integration of assets:  0.024 ms
+	Thread Wait Time:       0.015 ms
+	Total Operation Time:   283.510 ms
+Unloading 4 unused Assets / (2.2 KB). Loaded Objects now: 8605.
+Memory consumption went from 202.0 MB to 202.0 MB.
+Total: 8.938000 ms (FindLiveObjects: 0.601700 ms CreateObjectMapping: 0.232300 ms MarkObjects: 7.981200 ms  DeleteObjects: 0.121100 ms)
+
+Start importing Assets/Licensed/Compact16uvIntake/SceneIntegration/SharedForward0.mat using Guid(b33e7a97e6162f34e805db97cb57a43f) (NativeFormatImporter)Main Object Name 'CutWorldSandboxSide' does not match filename 'SharedForward0'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildScene () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:54)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:62)
+
+[Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs line 54]
+
+ -> (artifact id: '2fef3b71324531ead1ba09d6b6d8b747') in 0.0089887 seconds
+Start importing Assets/Licensed/Compact16uvIntake/SceneIntegration/SharedForward1.mat using Guid(67878e1c4bab78247b54355cf891eb91) (NativeFormatImporter)Main Object Name 'CutWorldSandboxEnd' does not match filename 'SharedForward1'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildScene () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:54)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:62)
+
+[Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs line 54]
+
+ -> (artifact id: '9e2f862eae7b266a8b4bba29ca25c063') in 0.0020754 seconds
+Start importing Assets/Licensed/Compact16uvIntake/SceneIntegration/SceneAbProfile.asset using Guid(57d471f5ec9ef9f4f8f2be453c1ef7ed) (NativeFormatImporter)Main Object Name 'CutWorldSandboxProfile' does not match filename 'SceneAbProfile'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildScene () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:54)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:62)
+
+[Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs line 54]
+
+ -> (artifact id: '3262a37067fe089322aa67b27da914cb') in 0.0026468 seconds
+Refreshing native plugins compatible for Editor in 7.85 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=1076090f2a766d7488385313fa87a3e3): Total: 0.277 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Start importing Assets/Licensed/Compact16uvIntake/SceneIntegration/Compact16uvSandbox.unity using Guid(1a6427f2b202bc147acfefc533664f28) (DefaultImporter) -> (artifact id: '5a73ff9ba6d23f510c953e16685d4017') in 0.0010722 seconds
+Refreshing native plugins compatible for Editor in 4.75 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=f05c5ea7cba3b1e4c8bb33d51951ea39): Total: 0.024 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Compact16uv scene: existing synthetic body, product root/driver/cameras/profile unchanged; private atlas/material opt-in; original scene not overwritten.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildScene () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:56)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:62)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs Line: 56)
+
+Start importing Assets/XR/XRGeneralSettings.asset using Guid(b4aad9e154f24ef4c8abd2180e90e5a7) (NativeFormatImporter) -> (artifact id: 'c18c02bce03a353d2d811f5b2f1cf11b') in 0.0029939 seconds
+Refreshing native plugins compatible for Editor in 6.47 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=35fc78aefad55e74c984e8502d3a335d): Total: 0.046 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Compact16uv mono diagnostic build: XR initialize-on-start disabled for this build only.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:70)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs Line: 70)
+
+SCENE AB BUILD: enabled=True legacy32=True
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:75)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs Line: 75)
+
+PLAYER BUILD SETTINGS: scene=Assets/Licensed/Compact16uvIntake/SceneIntegration/Compact16uvSandbox.unity target=StandaloneWindows64 backend=IL2CPP il2cppConfiguration=Release il2cppCodeGeneration=OptimizeSpeed stripping=Minimal apiCompatibility=NET_Standard_2_0 graphicsApis=Direct3D11 autoGraphicsApi=False
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:91)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 91)
+
+Start importing Assets/Settings/PC_RPAsset.asset using Guid(4b83569d67af61e458304325a23e5dfd) (NativeFormatImporter) -> (artifact id: '97888789d89585ad03ead83531a03c06') in 0.0018202 seconds
+Refreshing native plugins compatible for Editor in 4.27 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=1ae56d5c18af92d43ada0afcfbed2c11): Total: 0.019 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+1 URP assets included in build
+- PC_RPAsset - Assets/Settings/PC_RPAsset.asset
+	 - PC_Renderer - Assets/Settings/PC_Renderer.asset - UnityEngine.Rendering.Universal.UniversalRendererData
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.Rendering.Universal.URPPreprocessBuild:LogIncludedAssets (System.Collections.Generic.List`1<UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset>) (at ./Library/PackageCache/com.unity.render-pipelines.universal@de1a320b3ed3/Editor/BuildProcessors/URPPreprocessBuild.cs:73)
+UnityEditor.Rendering.Universal.URPPreprocessBuild:OnPreprocessBuild (UnityEditor.Build.Reporting.BuildReport) (at ./Library/PackageCache/com.unity.render-pipelines.universal@de1a320b3ed3/Editor/BuildProcessors/URPPreprocessBuild.cs:32)
+UnityEditor.Build.BuildPipelineInterfaces/<>c__DisplayClass17_0:<OnBuildPreProcess>b__1 (UnityEditor.Build.IPreprocessBuildWithReport)
+UnityEditor.Build.BuildPipelineInterfaces:InvokeCallbackInterfacesPair<UnityEditor.Build.IPreprocessBuild, UnityEditor.Build.IPreprocessBuildWithReport> (System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuild>,System.Action`1<UnityEditor.Build.IPreprocessBuild>,System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuildWithReport>,System.Action`1<UnityEditor.Build.IPreprocessBuildWithReport>,bool)
+UnityEditor.Build.BuildPipelineInterfaces:OnBuildPreProcess (UnityEditor.Build.Reporting.BuildReport)
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: ./Library/PackageCache/com.unity.render-pipelines.universal@de1a320b3ed3/Editor/BuildProcessors/URPPreprocessBuild.cs Line: 73)
+
+Start importing Assets/Resources using Guid(07ec43dd2461f8e499ad877b29bf9f12) (DefaultImporter) -> (artifact id: 'e8a076d5bc26ebf52e1514ecf2844801') in 0.0033622 seconds
+Refreshing native plugins compatible for Editor in 4.24 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=60d4fe88c1b2a084789074a86cb1d354): Total: 0.047 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[TestRunBuilder] Creating new file 'Assets/Resources/PerformanceTestRunInfo.json' (3012 bytes)
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Unity.PerformanceTesting.Editor.TestRunBuilder:SaveToStorage (object,string) (at ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs:242)
+Unity.PerformanceTesting.Editor.TestRunBuilder:OnPreprocessBuild (UnityEditor.Build.Reporting.BuildReport) (at ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs:35)
+UnityEditor.Build.BuildPipelineInterfaces/<>c__DisplayClass17_0:<OnBuildPreProcess>b__1 (UnityEditor.Build.IPreprocessBuildWithReport)
+UnityEditor.Build.BuildPipelineInterfaces:InvokeCallbackInterfacesPair<UnityEditor.Build.IPreprocessBuild, UnityEditor.Build.IPreprocessBuildWithReport> (System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuild>,System.Action`1<UnityEditor.Build.IPreprocessBuild>,System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuildWithReport>,System.Action`1<UnityEditor.Build.IPreprocessBuildWithReport>,bool)
+UnityEditor.Build.BuildPipelineInterfaces:OnBuildPreProcess (UnityEditor.Build.Reporting.BuildReport)
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs Line: 242)
+
+[TestRunBuilder] Creating new file 'Assets/Resources/PerformanceTestRunSettings.json' (23 bytes)
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Unity.PerformanceTesting.Editor.TestRunBuilder:SaveToStorage (object,string) (at ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs:242)
+Unity.PerformanceTesting.Editor.TestRunBuilder:OnPreprocessBuild (UnityEditor.Build.Reporting.BuildReport) (at ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs:38)
+UnityEditor.Build.BuildPipelineInterfaces/<>c__DisplayClass17_0:<OnBuildPreProcess>b__1 (UnityEditor.Build.IPreprocessBuildWithReport)
+UnityEditor.Build.BuildPipelineInterfaces:InvokeCallbackInterfacesPair<UnityEditor.Build.IPreprocessBuild, UnityEditor.Build.IPreprocessBuildWithReport> (System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuild>,System.Action`1<UnityEditor.Build.IPreprocessBuild>,System.Collections.Generic.List`1<UnityEditor.Build.IPreprocessBuildWithReport>,System.Action`1<UnityEditor.Build.IPreprocessBuildWithReport>,bool)
+UnityEditor.Build.BuildPipelineInterfaces:OnBuildPreProcess (UnityEditor.Build.Reporting.BuildReport)
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: ./Library/PackageCache/com.unity.test-framework.performance@8b56083ec0f0/Editor/TestRunBuilder.cs Line: 242)
+
+Start importing Assets/Settings/PC_RPAsset.asset using Guid(4b83569d67af61e458304325a23e5dfd) (NativeFormatImporter) -> (artifact id: '97888789d89585ad03ead83531a03c06') in 0.0023593 seconds
+Refreshing native plugins compatible for Editor in 4.62 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=bae37a3517776274eaad1f5984b2997d): Total: 0.030 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Start importing ProjectSettings/ProjectSettings.asset using Guid(00000000000000004000000000000000) (LibraryAssetImporter) -> (artifact id: '973e3f3cd126eceaaf5d1cfe766e395b') in 0.002827 seconds
+Start importing ProjectSettings/GraphicsSettings.asset using Guid(00000000000000006100000000000000) (LibraryAssetImporter) -> (artifact id: 'c2820fe1224fae43ebb1acdeeaf3cc9c') in 0.0014929 seconds
+Start importing Assets/Settings/UniversalRenderPipelineGlobalSettings.asset using Guid(18dc0cd2c080841dea60987a38ce93fa) (NativeFormatImporter) -> (artifact id: 'c3b6a27ceade72b542f15570169ba742') in 0.0018802 seconds
+Refreshing native plugins compatible for Editor in 4.40 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=2bb64ae53c4d8cb49841cf1503d0ff9d): Total: 0.041 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aESkipCompile.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssembliesAndTypeDB
+WorkingDir: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+ExitCode: 0 Duration: 0s89ms
+*** Tundra build success (0.07 seconds), 0 items updated, 4 evaluated
+Start importing Assets/Resources/PerformanceTestRunSettings.json using Guid(aceac808fc83840489f3c7b2a92e4e94) (TextScriptImporter) -> (artifact id: '2956f4dee12a93bef8eb96aa0b6d3bbc') in 0.0031165 seconds
+Start importing Assets/Resources/PerformanceTestRunInfo.json using Guid(2f5a2f5a8fa640f43ab8db380f949fd8) (TextScriptImporter) -> (artifact id: '41e636dce4d5836eb173fc040b093e08') in 0.002221 seconds
+Refreshing native plugins compatible for Editor in 3.98 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=bdd8b5031b90e4746bf7db62da74cdd4): Total: 0.040 seconds - Initiated by RefreshV2(NoUpdateAssetOptions)
+[ScriptCompilation] Requested script compilation because: Recompiling scripts for player build.
+BuildPlayer: start building target 19
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aPDevDbg.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssembliesAndTypeDB
+WorkingDir: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+Total cache size 209479904
+Total cache size after purge 209479904, took 00:00:00.2021090
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\netcorerun\netcorerun.exe "C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\ScriptCompilationBuildProgram.exe" "Library/Bee/1900b0aPDevDbg.dag.json" "Library/Bee/1900b0aPDevDbg-inputdata.json" "Library\Bee\buildprogram0.traceevents"
+WorkingDir: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+ExitCode: 4 Duration: 0s407ms
+[512/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/4747638433968585886.rsp
+Rebuilding DAG because FileSignature timestamp changed: Library/Bee/1900b0aPDevDbg-inputdata.json
+[665/812    0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+*** Tundra requires additional run (0.38 seconds), 2 items updated, 664 evaluated
+ExitCode: 0 Duration: 0s414ms
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aPDevDbg.dag" --continue-on-failure --dagfilejson="Library\Bee\1900b0aPDevDbg.dag.json" --profile="Library/Bee/backend2.traceevents" ScriptAssembliesAndTypeDB
+WorkingDir: [USERPROFILE]/src/zantetsuken-vr-compact16uv
+ExitCode: 0 Duration: 6s375ms
+Finished compiling graph: 813 nodes, 9981 flattened edges (7951 ToBuild, 114 ToUse), maximum node priority 501
+[377/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Mathematics.rsp
+[378/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Flow.rsp
+[395/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Runtime.rsp
+[396/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.GPUDriven.Runtime.rsp
+[399/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Core.rsp
+[400/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.UI.rsp
+[401/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.SpatialTracking.rsp
+[402/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Burst.rsp
+[403/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.UnifiedRayTracing.Runtime.rsp
+[404/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.rsp
+[405/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.rsp
+[406/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.ConvexCut.rsp
+[407/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.Shared.rsp
+[408/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.rsp
+[409/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InternalAPIEngineBridge.004.rsp
+[410/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Collections.rsp
+[411/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Core.rsp
+[414/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.Management.rsp
+[415/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.CoreUtils.rsp
+[419/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.AI.Navigation.rsp
+[425/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Config.Runtime.rsp
+[436/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaHandMeshData.rsp
+[437/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.TextMeshPro.rsp
+[439/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.State.rsp
+[440/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.rsp
+[441/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipeline.Universal.ShaderLibrary.rsp
+[442/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Multiplayer.Center.Common.rsp
+[443/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.rsp
+[444/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.ConformanceAutomation.rsp
+[445/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.MeshCut.rsp
+[446/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/3881443324071988251.rsp
+[447/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Trace.rsp
+[448/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/14115687286999739361.rsp
+[449/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9963711772964531990.rsp
+[452/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.OculusQuestSupport.rsp
+[453/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/14099406899361113893.rsp
+[454/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/13230317614175286208.rsp
+[455/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.XR.LegacyInputHelpers.rsp
+[456/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MockRuntime.rsp
+[457/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.ShaderLibrary.rsp
+[458/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/1821363354217647761.rsp
+[459/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/10666211080910121324.rsp
+[460/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/10952743942962727196.rsp
+[461/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/2856826378517427572.rsp
+[462/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.2D.Runtime.rsp
+[463/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/11084597018155319476.rsp
+[464/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaQuestSupport.rsp
+[465/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Sandbox.rsp
+[466/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/8250381671344662563.rsp
+[467/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/3649284427502986582.rsp
+[468/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9920769957622856225.rsp
+[469/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Observability.rsp
+[470/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Shaders.rsp
+[471/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.RuntimeDebugger.rsp
+[472/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/13278098103686014225.rsp
+[473/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.ForUI.rsp
+[474/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/11588333568574941322.rsp
+[475/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.TestTooling.rsp
+[476/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Timeline.rsp
+[477/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/17469957861331563274.rsp
+[481/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/12185260863345820726.rsp
+[482/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.DocCodeExamples.rsp
+[483/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Assembly-CSharp.rsp
+[484/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.PhysicsCut.rsp
+[485/812    0s] WriteText Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.Urp.rsp
+[486/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9525127237388467580.rsp
+[487/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/7766528141584726488.rsp
+[488/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/1420487171000465590.rsp
+[489/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/18114677694396812134.rsp
+[490/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/12864003785176907774.rsp
+[491/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/3610131143132767927.rsp
+[492/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9441191966682508378.rsp
+[494/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/7409260880282546974.rsp
+[495/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/2829812714015856590.rsp
+[496/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/17323391626056955614.rsp
+[497/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/1543280537992297144.rsp
+[498/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/16294445869466507954.rsp
+[499/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/15659879259086661728.rsp
+[500/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/7397684900032618935.rsp
+[501/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/18187632690156208033.rsp
+[502/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/17032674319840309819.rsp
+[503/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/18083937285194689248.rsp
+[504/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/2006743445958493253.rsp
+[505/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9530133896483249728.rsp
+[506/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/5630040302072602394.rsp
+[507/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9792402315821486800.rsp
+[508/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/12535873883140926435.rsp
+[509/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/13573053924263859490.rsp
+[510/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/7981338491086912446.rsp
+[511/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/10254506619015229014.rsp
+[512/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/7425599491420647687.rsp
+[513/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/11031098654432272994.rsp
+[514/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/5347474942543970747.rsp
+[515/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/15924771404987530805.rsp
+[516/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/9278106104231214703.rsp
+[517/812    0s] WriteResponseFile Library/Bee/artifacts/rsp/5794642820636785936.rsp
+[536/812    0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+[537/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Trace.dll (+2 others)
+[538/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Trace.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Trace.dll, with 137 defines and 125 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[539/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Trace.dll
+[540/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Trace.pdb
+[541/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.UI.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.UI.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[556/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/UnityEngine.UI.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.UI.dll, with 143 defines and 204 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[557/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.UI.pdb
+[558/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.UI.dll
+[559/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.ShaderLibrary.dll (+2 others)
+[560/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Core.dll (+2 others)
+[561/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Shaders.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.ShaderLibrary.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Shaders.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[563/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InternalAPIEngineBridge.004.dll (+2 others)
+[565/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.SpatialTracking.dll (+2 others)
+[566/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.AI.Navigation.dll (+2 others)
+[567/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Multiplayer.Center.Common.dll (+2 others)
+[568/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.Management.dll (+2 others)
+[569/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.SpatialTracking.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InternalAPIEngineBridge.004.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.AI.Navigation.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[570/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Timeline.dll (+2 others)
+[571/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Core.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Core.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Multiplayer.Center.Common.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.Management.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Timeline.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[581/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Core.dll
+[582/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Core.pdb
+[583/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Core.ShaderLibrary.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.ShaderLibrary.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[584/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Universal.Shaders.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Shaders.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[585/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.AI.Navigation.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.AI.Navigation.dll, with 138 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[586/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.ShaderLibrary.dll
+[587/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.ShaderLibrary.pdb
+[588/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.InternalAPIEngineBridge.004.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InternalAPIEngineBridge.004.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[589/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/UnityEngine.SpatialTracking.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.SpatialTracking.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[590/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Shaders.dll
+[591/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Shaders.pdb
+[592/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.Multiplayer.Center.Common.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Multiplayer.Center.Common.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[593/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[594/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.Timeline.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Timeline.dll, with 138 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[595/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.Management.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.Management.dll, with 138 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[596/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.AI.Navigation.dll
+[597/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.AI.Navigation.pdb
+[598/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InternalAPIEngineBridge.004.dll
+[599/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InternalAPIEngineBridge.004.pdb
+[600/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.SpatialTracking.dll
+[601/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.SpatialTracking.pdb
+[602/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Multiplayer.Center.Common.pdb
+[603/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Multiplayer.Center.Common.dll
+[604/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll
+[605/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.pdb
+[606/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Timeline.pdb
+[607/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Timeline.dll
+[608/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.Management.dll
+[609/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.Management.pdb
+[610/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Burst.dll (+2 others)
+[611/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.XR.LegacyInputHelpers.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Burst.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.XR.LegacyInputHelpers.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[614/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/UnityEngine.XR.LegacyInputHelpers.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/UnityEngine.XR.LegacyInputHelpers.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[615/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.XR.LegacyInputHelpers.pdb
+[616/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/UnityEngine.XR.LegacyInputHelpers.dll
+[617/812    1s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.dll (+2 others)
+[618/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.TextMeshPro.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.TextMeshPro.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[624/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.TextMeshPro.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.TextMeshPro.dll, with 138 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[625/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.InputSystem.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.dll, with 148 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[626/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.TextMeshPro.pdb
+[627/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.TextMeshPro.dll
+[628/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InputSystem.dll
+[629/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InputSystem.pdb
+[630/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.ForUI.dll (+2 others)
+[631/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.CoreUtils.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.ForUI.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.CoreUtils.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[634/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.Burst.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Burst.dll, with 137 defines and 203 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[635/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.InputSystem.ForUI.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.InputSystem.ForUI.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[636/812    1s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Mathematics.dll (+2 others)
+[637/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.CoreUtils.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.CoreUtils.dll, with 143 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[638/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Burst.pdb
+[639/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Burst.dll
+[640/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InputSystem.ForUI.dll
+[641/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.InputSystem.ForUI.pdb
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Mathematics.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[642/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.CoreUtils.pdb
+[643/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.CoreUtils.dll
+[648/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Core.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Core.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[649/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.Mathematics.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Mathematics.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[652/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Mathematics.pdb
+[653/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Mathematics.dll
+[654/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.ConvexCut.dll (+2 others)
+[655/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.VisualScripting.Core.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Core.dll, with 142 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[656/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.dll (+2 others)
+[657/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.Core.dll
+[658/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.Core.pdb
+[659/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.ConvexCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.ConvexCut.dll, with 137 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[660/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Rendering.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[661/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Rendering.dll
+[662/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Rendering.pdb
+[663/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.ConvexCut.pdb
+[664/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.ConvexCut.dll
+[665/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Flow.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Flow.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[669/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Collections.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Collections.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[670/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.VisualScripting.Flow.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.Flow.dll, with 145 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[678/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.Flow.dll
+[679/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.Flow.pdb
+[680/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.DocCodeExamples.dll (+2 others)
+[681/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.State.dll (+2 others)
+Failure while invoking caching client: Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.DocCodeExamples.dll (+2 others)
+mkpath failed: No error
+
+CreateDirectoryW failed to create [USERPROFILE]\AppData\Local\Unity\Caches\bee\tmp_
+
+
+
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.DocCodeExamples.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.State.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[683/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.VisualScripting.State.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.State.dll, with 137 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[684/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.VisualScripting.DocCodeExamples.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.VisualScripting.DocCodeExamples.dll, with 137 defines and 204 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[685/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.UnifiedRayTracing.Runtime.dll (+2 others)
+[686/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.MeshCut.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.UnifiedRayTracing.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[687/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.State.dll
+[688/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.State.pdb
+[689/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.DocCodeExamples.dll
+[690/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.VisualScripting.DocCodeExamples.pdb
+[691/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Observability.dll (+2 others)
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(317,34): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(316,31): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitProcessor.cs(249,34): warning CS0168: The variable 'ex' is declared but never used
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(381,41): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitWorkerService.cs(341,41): warning CS0420: 'NvencOrderedSubmitWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitWorkerService.cs(451,35): warning CS0420: 'NvencOrderedSubmitWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(531,77): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(531,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(547,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownInvoked': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(560,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownInvoked': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(595,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(616,35): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(621,32): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(651,35): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(664,38): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+[693/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.PhysicsCut.dll (+2 others)
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+[694/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Observability.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Observability.dll, with 137 defines and 208 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[695/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Observability.dll
+[696/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Observability.pdb
+[697/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.MeshCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.MeshCut.dll, with 137 defines and 209 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[698/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.MeshCut.pdb
+[699/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.MeshCut.dll
+[700/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.dll (+2 others)
+[701/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Sandbox.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[707/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.PhysicsCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.PhysicsCut.dll, with 137 defines and 211 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[708/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.UnifiedRayTracing.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.UnifiedRayTracing.Runtime.dll, with 138 defines and 208 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[709/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Sandbox.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Sandbox.dll, with 137 defines and 214 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[710/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.UnifiedRayTracing.Runtime.dll
+[711/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.PhysicsCut.dll
+[712/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.PhysicsCut.pdb
+[713/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.UnifiedRayTracing.Runtime.pdb
+[714/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Sandbox.dll
+[715/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Sandbox.pdb
+[716/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Config.Runtime.dll (+2 others)
+[717/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipeline.Universal.ShaderLibrary.dll (+2 others)
+[718/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.Shared.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipeline.Universal.ShaderLibrary.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Config.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.Shared.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[722/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.GPUDriven.Runtime.dll (+2 others)
+[723/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipeline.Universal.ShaderLibrary.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipeline.Universal.ShaderLibrary.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[724/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Universal.Config.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Config.Runtime.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[725/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Core.Runtime.Shared.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.Shared.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.GPUDriven.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[728/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Core.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Core.Runtime.dll, with 140 defines and 209 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[729/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipeline.Universal.ShaderLibrary.dll
+[730/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Config.Runtime.dll
+[731/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipeline.Universal.ShaderLibrary.pdb
+[732/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Config.Runtime.pdb
+[733/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.Runtime.Shared.pdb
+[734/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.Runtime.Shared.dll
+[735/812    1s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.Collections.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.Collections.dll, with 139 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[736/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.Runtime.pdb
+[737/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Core.Runtime.dll
+[738/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Collections.pdb
+[739/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.Collections.dll
+[740/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.GPUDriven.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.GPUDriven.Runtime.dll, with 137 defines and 209 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[741/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.GPUDriven.Runtime.dll
+[742/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.GPUDriven.Runtime.pdb
+[743/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Runtime.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[748/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Universal.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.Runtime.dll, with 144 defines and 213 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[749/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.Urp.dll (+2 others)
+[750/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Runtime.pdb
+[751/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.Runtime.dll
+[752/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.dll (+2 others)
+[753/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.2D.Runtime.dll (+2 others)
+[754/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Zantetsu.Rendering.Urp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Zantetsu.Rendering.Urp.dll, with 138 defines and 209 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.2D.Runtime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[762/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Rendering.Urp.pdb
+[763/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Zantetsu.Rendering.Urp.dll
+[764/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.dll, with 143 defines and 208 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[765/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.pdb
+[766/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.dll
+[767/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.RenderPipelines.Universal.2D.Runtime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.RenderPipelines.Universal.2D.Runtime.dll, with 140 defines and 210 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[768/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.2D.Runtime.dll
+[769/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.RenderPipelines.Universal.2D.Runtime.pdb
+[770/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaHandMeshData.dll (+2 others)
+[771/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.RuntimeDebugger.dll (+2 others)
+[772/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaQuestSupport.dll (+2 others)
+[773/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.ConformanceAutomation.dll (+2 others)
+[774/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MockRuntime.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaHandMeshData.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.RuntimeDebugger.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaQuestSupport.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.ConformanceAutomation.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MockRuntime.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[781/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.MetaHandMeshData.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaHandMeshData.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[782/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.MockRuntime.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MockRuntime.dll, with 137 defines and 204 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[783/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.MetaQuestSupport.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.MetaQuestSupport.dll, with 138 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[784/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.ConformanceAutomation.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.ConformanceAutomation.dll, with 137 defines and 206 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[785/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.RuntimeDebugger.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.RuntimeDebugger.dll, with 137 defines and 203 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[786/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MetaHandMeshData.dll
+[787/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MetaHandMeshData.pdb
+[788/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.ConformanceAutomation.pdb
+[789/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.ConformanceAutomation.dll
+[790/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MetaQuestSupport.dll
+[791/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.RuntimeDebugger.dll
+[792/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.RuntimeDebugger.pdb
+[793/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MockRuntime.dll
+[794/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MetaQuestSupport.pdb
+[795/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.MockRuntime.pdb
+[796/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.OculusQuestSupport.dll (+2 others)
+[797/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.TestTooling.dll (+2 others)
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.OculusQuestSupport.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[           0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.TestTooling.dll (+2 others) [CacheWrite 00000000000000000000000000000005]
+[800/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.Features.OculusQuestSupport.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.Features.OculusQuestSupport.dll, with 137 defines and 207 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[801/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Unity.XR.OpenXR.TestTooling.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Unity.XR.OpenXR.TestTooling.dll, with 137 defines and 205 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[802/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.OculusQuestSupport.pdb
+[803/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.Features.OculusQuestSupport.dll
+[804/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.TestTooling.dll
+[805/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Unity.XR.OpenXR.TestTooling.pdb
+[806/812    0s] Csc Library/Bee/artifacts/1900b0aPDevDbg.dag/Assembly-CSharp.dll (+2 others)
+[807/812    0s] ILPostProcess Library/Bee/artifacts/1900b0aPDevDbg.dag/post-processed/Assembly-CSharp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aPDevDbg.dag/Assembly-CSharp.dll, with 137 defines and 247 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[808/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Assembly-CSharp.pdb
+[809/812    0s] CopyFiles Library/Bee/PlayerScriptAssemblies/Assembly-CSharp.dll
+[811/812    0s] BuildPlayerDataGenerator Library/BuildPlayerData/Player/RuntimeInitializeOnLoads.json (+1 other)
+*** Tundra build success (6.36 seconds), 290 items updated, 812 evaluated
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(317,34): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(316,31): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitProcessor.cs(249,34): warning CS0168: The variable 'ex' is declared but never used
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(381,41): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitWorkerService.cs(341,41): warning CS0420: 'NvencOrderedSubmitWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedSubmitWorkerService.cs(451,35): warning CS0420: 'NvencOrderedSubmitWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(531,77): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(531,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(547,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownInvoked': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(560,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownInvoked': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(595,36): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(616,35): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(621,32): warning CS0420: 'NvencOrderedOutputWorkerService._teardownRequested': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(651,35): warning CS0420: 'NvencOrderedOutputWorkerService._fatalFailure': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\Observability\NvencOrderedOutputWorkerService.cs(664,38): warning CS0420: 'NvencOrderedOutputWorkerService._teardownCompleted': a reference to a volatile field will not be treated as volatile
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+Type '[Zantetsu.Rendering]Zantetsu.Rendering.VpRenderVertex' has an extra field 'normal' of type 'UnityEngine.Vector3' in the player and thus can't be serialized 
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+[Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs line 118]
+
+Type '[Zantetsu.Rendering]Zantetsu.Rendering.VpRenderVertex' has an extra field 'uv0' of type 'UnityEngine.Vector2' in the player and thus can't be serialized 
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+[Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs line 118]
+
+Fields serialized in Editor, class 'Zantetsu.Rendering.VpRenderVertex'
+    'position' of type 'UnityEngine.Vector3'
+    'normalX' of type 'System.SByte'
+    'normalY' of type 'System.SByte'
+    'u' of type 'System.Byte'
+    'v' of type 'System.Byte'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+[Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs line 118]
+
+Fields serialized in target platform, class 'Zantetsu.Rendering.VpRenderVertex'
+    'position' of type 'UnityEngine.Vector3'
+    'normal' of type 'UnityEngine.Vector3'
+    'uv0' of type 'UnityEngine.Vector2'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEditor.BuildPipeline:BuildPlayerInternalNoCheck (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[],bool)
+UnityEditor.BuildPipeline:BuildPlayerInternal (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (string[],string,string,UnityEditor.BuildTargetGroup,UnityEditor.BuildTarget,int,UnityEditor.BuildOptions,string[])
+UnityEditor.BuildPipeline:BuildPlayer (UnityEditor.BuildPlayerOptions)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:118)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+[Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs line 118]
+
+DisplayProgressNotification: Build Failed
+Error building player because script class layout is incompatible between the editor and the player.
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 199 unused Assets / (43.2 KB). Loaded Objects now: 8626.
+Memory consumption went from 216.6 MB to 216.5 MB.
+Total: 7.600000 ms (FindLiveObjects: 0.420700 ms CreateObjectMapping: 0.161900 ms MarkObjects: 6.709400 ms  DeleteObjects: 0.307000 ms)
+
+Build Finished, Result: Failure.
+##utp:{"type":"PlayerBuildInfo","version":2,"phase":"Immediate","time":1790227013720,"processId":82272,"steps":[{"description":"Preprocess Player","duration":298},{"description":"Prepare For Build","duration":5},{"description":"ProducePlayerScriptAssemblies","duration":7632}],"duration":7935}
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Temp/__Backupscenes/0.backup'
+	Deserialize:            1.072 ms
+	Integration:            183.132 ms
+	Integration of assets:  0.002 ms
+	Thread Wait Time:       0.059 ms
+	Total Operation Time:   184.265 ms
+Unloading 0 unused Assets / (29.0 KB). Loaded Objects now: 8626.
+Memory consumption went from 215.8 MB to 215.8 MB.
+Total: 7.234200 ms (FindLiveObjects: 0.478100 ms CreateObjectMapping: 0.166600 ms MarkObjects: 6.565900 ms  DeleteObjects: 0.021800 ms)
+
+PLAYER BUILD RESULT: result=Failed output=[USERPROFILE]/AppData/Local/Zantetsu/TestPlayers/SceneAb32_20260924/CutWorldSandbox.exe size=0 bytes errors=5 warnings=16 time=00:00:08.3403974
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:120)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 120)
+
+PLAYER BUILD ERROR: [Generate and validate platform script types] Type '[Zantetsu.Rendering]Zantetsu.Rendering.VpRenderVertex' has an extra field 'normal' of type 'UnityEngine.Vector3' in the player and thus can't be serialized 
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:131)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 131)
+
+PLAYER BUILD ERROR: [Generate and validate platform script types] Type '[Zantetsu.Rendering]Zantetsu.Rendering.VpRenderVertex' has an extra field 'uv0' of type 'UnityEngine.Vector2' in the player and thus can't be serialized 
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:131)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 131)
+
+PLAYER BUILD ERROR: [Generate and validate platform script types] Fields serialized in Editor, class 'Zantetsu.Rendering.VpRenderVertex'
+    'position' of type 'UnityEngine.Vector3'
+    'normalX' of type 'System.SByte'
+    'normalY' of type 'System.SByte'
+    'u' of type 'System.Byte'
+    'v' of type 'System.Byte'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:131)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 131)
+
+PLAYER BUILD ERROR: [Generate and validate platform script types] Fields serialized in target platform, class 'Zantetsu.Rendering.VpRenderVertex'
+    'position' of type 'UnityEngine.Vector3'
+    'normal' of type 'UnityEngine.Vector3'
+    'uv0' of type 'UnityEngine.Vector2'
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:131)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 131)
+
+PLAYER BUILD ERROR: [Generate and validate platform script types] Error building player because script class layout is incompatible between the editor and the player.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild:Build (string,string,string[]) (at Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs:131)
+Zantetsu.EditorTools.Sandbox.Compact16uvSandboxSceneBuild:BuildPlayer () (at Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs:76)
+
+(Filename: Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs Line: 131)
+
+Start importing Assets/XR/XRGeneralSettings.asset using Guid(b4aad9e154f24ef4c8abd2180e90e5a7) (NativeFormatImporter) -> (artifact id: 'af9d78ebdc9b18f4eeb3a14697cffdbb') in 0.0023249 seconds
+Refreshing native plugins compatible for Editor in 6.05 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=79d25334adac21e4d98d5440eba59606): Total: 0.048 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Total cache size 224761292
+Total cache size after purge 224761292, took 00:00:00.4568987
+[Physics::Module] Cleanup current backend.
+[Physics::Module] Id: 0xf2b8ea05
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22-notifications channel disconnected successfully.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22 channel disconnected successfully.
+AcceleratorClientConnectionCallback - disconnected - :0
+Cleanup mono
+Checking for leaked weakptr:
+  Found no leaked weakptrs.
+[Package Manager] Server process was shutdown
+##utp:{"type":"MemoryLeaks","version":2,"phase":"Immediate","time":1790227015011,"processId":82272,"allocatedMemory":14600164,"memoryLabels":[{"Default":29313},{"Permanent":15236},{"NewDelete":68003},{"Thread":4230384},{"Manager":39069},{"VertexData":8},{"Geometry":816},{"Texture":160},{"Shader":81685},{"Material":24},{"GfxDevice":55872},{"Animation":392},{"Audio":3040},{"FreeType":8},{"FontEngine":736},{"Physics":2146},{"Physics2D":16},{"Serialization":656},{"Input":14984},{"JobScheduler":33024},{"TextLib":280},{"Mono":32},{"MonoCode":64},{"ScriptingNativeRuntime":155060},{"BaseObject":1620208},{"Resource":1336},{"Renderer":3000},{"Transform":4685},{"File":12708},{"WebCam":616},{"Culling":32},{"Terrain":11394},{"Wind":24},{"STL":40},{"String":31799},{"DynamicArray":112589},{"HashMap":77259},{"Utility":2662454},{"Curl":2478},{"PoolAlloc":2152},{"AI":80},{"TypeTree":5341},{"ScriptManager":512},{"RuntimeInitializeOnLoadManager":64},{"SpriteAtlas":112},{"GI":7792},{"Director":8240},{"CloudService":10480},{"WebRequest":21116},{"VR":48138},{"SceneManager":504},{"Video":64},{"LazyScriptCache":32},{"Camera":17},{"Secure":2377},{"SerializationCache":1576},{"APIUpdating":10320},{"Subsystems":192},{"VirtualTexturing":57888},{"StaticSafetyDebugInfo":278528},{"Analytics":464},{"Hierarchy":608},{"CoreStats":13112},{"Identifiers":6480},{"Gui":96},{"EditorUtility":108896},{"VersionControl":4},{"Undo":947},{"AssetDatabase":4696755},{"EditorGi":328},{"UnityConnect":29208},{"Upm":1896},{"AssetCompliance":64},{"DrivenProperties":72},{"LocalIPC":211},{"ProfilerEditor":9746},{"CoreBusinessMetrics":3498},{"Licensing":664},{"AssetReference":32},{"IPCStream":32}]}

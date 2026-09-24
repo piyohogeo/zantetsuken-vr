@@ -83,6 +83,9 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
         {
+#if VP_DIAGNOSTIC_SCENE_AB
+            using var measured = SceneAbCounters.Measure(2);
+#endif
             if (!IsOneOfOurs(camera) || !TryRegister())
             {
                 return;
