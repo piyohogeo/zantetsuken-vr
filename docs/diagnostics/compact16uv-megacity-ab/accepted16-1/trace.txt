@@ -1,0 +1,28 @@
+AUTHORED MEGACITY: source=d014869e992fc4d80b7c898e4acc173d1038e5c6fa10f26e4bccb392716b4f87 static16=4542dbe96f3938fff0f0fa58fc753cac70dc8cfc6b93883fbf0d0591f77ccb78 hullVertices=24 hullFaces=44 displayVertices=5326 stride=16 mesh-local/owner-local identity; actorEuler=(-90.00, 0.00, 0.00) anchors=disabled
+SANDBOX PLAYER: started. directory=[USERPROFILE]/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-megacity-ab/accepted16-1 graphics=Direct3D11 device=NVIDIA GeForce RTX 3090 screen=960x540 batchMode=False
+SANDBOX PLAYER: waited for the scene's world and body: True
+SANDBOX PLAYER: the body is registered: frame=2 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=1 drawCommands=3 settledCollections=1 broken=False halted=False
+SANDBOX PLAYER: authored storage vertices=5326
+SANDBOX PLAYER: atlas bound=True vertexStride=16
+SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=240 mainThreadMedianMs=0.402500 mainThreadP95Ms=33.441200 unityAllocatedBytes=123403988 unityReservedBytes=251547648 processWorkingSetBytes=330108928 storageVertices=5326 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison
+SANDBOX PLAYER: asked for a cut of the body: True
+SANDBOX PLAYER: frames in which a provisional pair stood: 2
+SANDBOX PLAYER: the cut committed. operation=operation 1 positive=fragment 2 negative=fragment 3 stage=Committed
+SANDBOX PLAYER: after the commit: frame=307 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=2 drawCommands=3 settledCollections=306 broken=False halted=False
+SANDBOX PLAYER: authored storage vertices=6078
+SANDBOX PLAYER: carried the positive child from (0.00, 0.15, 0.00) to (0.00, 3.15, 0.00); the negative child is at (0.00, 0.15, 0.00)
+SANDBOX PLAYER: asked for a cut of the published child fragment 2: True
+SANDBOX PLAYER: the child's cut committed. operation=operation 2 positive=fragment 4 negative=fragment 5
+SANDBOX PLAYER: after the child's commit: frame=316 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=3 drawCommands=6 settledCollections=315 broken=False halted=False
+SANDBOX PLAYER: authored storage vertices=6974
+SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=240 mainThreadMedianMs=0.404000 mainThreadP95Ms=5.503900 unityAllocatedBytes=124607757 unityReservedBytes=270422016 processWorkingSetBytes=337637376 storageVertices=6974 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison
+SCENE AB: PASS stride=16 frames=614; measurement stopped before screenshots
+SANDBOX PLAYER: picture 04-after-the-child-cut -> [USERPROFILE]/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-megacity-ab/accepted16-1\04-after-the-child-cut.png
+SANDBOX PLAYER: picture 04b-after-recut-debug -> [USERPROFILE]/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-megacity-ab/accepted16-1\04b-after-recut-debug.png
+SANDBOX PLAYER: asking the world to end
+SANDBOX PLAYER: accepted after Shutdown: IsReady=False
+SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0
+SANDBOX PLAYER: two frames after the ending: frame=621 ready=False released=True provisionalPairs=0 geometryFaults=0 displayDisposed=True renderFragments=-1 drawCommands=-1 settledCollections=-1 broken=False halted=False
+SANDBOX PLAYER: atlas bound after shutdown=False
+SANDBOX PLAYER: picture 05-after-the-ending -> [USERPROFILE]/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-megacity-ab/accepted16-1\05-after-the-ending.png
+SANDBOX PLAYER: finished with code 0
