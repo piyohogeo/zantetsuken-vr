@@ -1,0 +1,7 @@
+*.log -text -diff -whitespace
+*.xml -text -diff -whitespace
+*.json text eol=lf
+*.md text eol=lf
+*.png binary
+*.rfloat binary
+player-images/*.txt -text -whitespace

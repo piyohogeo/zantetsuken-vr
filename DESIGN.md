@@ -260,6 +260,8 @@ Compact16uv移行ではCPU永続VP頂点・切断予約出力・GPU頂点を同�
 
 #### 4.5.2 準備と表示採用
 
+Compact16uvのStatic入力はEditor/offlineで一度だけ16Bへ変換し、`VpStatic16File`からCPU storageへ登録できる。ファイル内indexはmesh-local UInt32とし、配置先のglobal offsetへ登録時に一度だけrebasingする。topology IDとmaterial対応はauthoring由来で保持し、位置weldで生成しない。登録時の16B一時配列・入力gate・storage copyは残るが、定常frameでoct/UV encodeやfloat32 Mesh展開を行わず、source配列を永続cacheとして保持しない。skin／blend shapeをStaticとして固定姿勢化する代替経路にはしない。現段階は代表Megacityの取り込み境界であり、既存Sceneの自動置換ではない（`docs/diagnostics/compact16uv-intake/`）。
+
 通常命中で即切断開始に必要なSkinned入力は、現在の実Bone Poseを使う同期`SkinnedMeshRenderer.BakeMesh(mesh, useScale: false)`→CPUデータ取得・VP変換を基本経路とする。未来予測用に限り、Phase 4.65で`ResolvedAnimationPoseInput`→19.3の不変Rig Pose→4.3のBurst数値処理による線形ブレンドスキニング→共通CPU側VP入力を限定実装し、同期経路との比較から導入の採否を決める。目的は複数候補の頂点処理と同期待ちをMain Threadへ集中させないことであり、ベイク総時間の短縮や負荷ゼロを要求しない。非スキニング対象はベイクを省き、必要な形状・姿勢で準備済みなら再利用する。
 
 Skinned対象の切断前の共通VP入力は、元SkinnedMeshRendererのTransformを基準とするlocal空間とし、Root Bone localやWorld空間を混在させない。同期経路と比較基準のSkinnedMeshRenderer.BakeMeshはともに`useScale: false`へ固定する。非同期経路はRoot Boneを含む骨Poseと対応するbindposeをRenderer基準へ変換したskinning変換で骨由来のscaleを反映し、bindposeやRoot Boneのscaleを別途重ね掛けしない。Rendererおよび祖先のobject scaleは、VPからWorldへの既存Transform／frame写像で一度だけ適用し、VP頂点へ追加で焼き込まない。切断面も同じ入力空間へ写し、切断後の物理frameへの配置・表示追従は4.5.6に従う。
