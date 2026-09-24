@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "44576a19",
+  "independentProcesses": 3,
+  "strictGatePassed": false,
+  "strictComparisonsPassedPerProcess": 23,
+  "strictComparisonsPerProcess": 24,
+  "vpComparisonsPassedPerProcess": 20,
+  "skinBakeComparisonsPassedPerProcess": 3,
+  "classification": "F-SKIN-RASTER: repeatable 1-pixel skin/Bake silhouette mismatch; strict gate retained",
+  "exactImageReproducibility": true,
+  "imageCountPerProcess": 48,
+  "runIds": [
+    4,
+    5,
+    6
+  ],
+  "imageHashes": {
+    "character-casual-pose0-bake.png": "697aae59b4ddfb866961629d1629f82d6e55067b3a267155f98d6f5cda385aea",
+    "character-casual-pose0-skin.png": "1f2feb79d9362b058cc7b55cffe779f12ab210f437626aeb8b19e2c0ebd5d0a4",
+    "character-casual-pose0-stage0-debug0-mesh.png": "697aae59b4ddfb866961629d1629f82d6e55067b3a267155f98d6f5cda385aea",
+    "character-casual-pose0-stage0-debug0-vp.png": "1e26fb97300d899488ee8d56eca95bb364381ca57336918d6cc4788de2e74032",
+    "character-casual-pose0-stage1-debug0-mesh.png": "0ddc0732197a6c58027fbdcb31c16be327f8de70863bf766a97b71f99dc3a620",
+    "character-casual-pose0-stage1-debug0-vp.png": "0ddc0732197a6c58027fbdcb31c16be327f8de70863bf766a97b71f99dc3a620",
+    "character-casual-pose0-stage1-debug1-mesh.png": "0e7f0a26843e75829a05ded229950604d21d21b3a4c8aa8e16970a9d1af17ab6",
+    "character-casual-pose0-stage1-debug1-vp.png": "0e7f0a26843e75829a05ded229950604d21d21b3a4c8aa8e16970a9d1af17ab6",
+    "character-casual-pose0-stage2-debug0-mesh.png": "0a553cfc31e2aa54b57fc2943c6b0f6422b5ac1d001a94ac1a962629348971ab",
+    "character-casual-pose0-stage2-debug0-vp.png": "0a553cfc31e2aa54b57fc2943c6b0f6422b5ac1d001a94ac1a962629348971ab",
+    "character-casual-pose0-stage2-debug1-mesh.png": "ea8db31734523748a9c8b393cc44387f7e1ea42a0d186bc82f0523c7be44c077",
+    "character-casual-pose0-stage2-debug1-vp.png": "ea8db31734523748a9c8b393cc44387f7e1ea42a0d186bc82f0523c7be44c077",
+    "character-casual-pose1-bake.png": "b221e3b43cbdf398d808a799641e26b97273d5e81fe7efb2c2257613669ae0b8",
+    "character-casual-pose1-skin.png": "ba024e9ba65c14366ac52475737f69348eefc7fc092f0089ba46f3d9cb3c20c9",
+    "character-casual-pose1-stage0-debug0-mesh.png": "b221e3b43cbdf398d808a799641e26b97273d5e81fe7efb2c2257613669ae0b8",
+    "character-casual-pose1-stage0-debug0-vp.png": "ed487990dadc1946451dc1bfd5ccc6981b1ce6be2c94d6ff5619db84b2477a7b",
+    "character-casual-pose1-stage1-debug0-mesh.png": "3e70da436685c4abafa57851560b8cbd2baa1d6f53f43b2dcd3df52f09938d6f",
+    "character-casual-pose1-stage1-debug0-vp.png": "3e70da436685c4abafa57851560b8cbd2baa1d6f53f43b2dcd3df52f09938d6f",
+    "character-casual-pose1-stage1-debug1-mesh.png": "1066879deb917865b4905b2d2b7d01c51ad98d7a8c6201412b19e365fe5c5914",
+    "character-casual-pose1-stage1-debug1-vp.png": "1066879deb917865b4905b2d2b7d01c51ad98d7a8c6201412b19e365fe5c5914",
+    "character-casual-pose1-stage2-debug0-mesh.png": "008f27ad7bcf1bc7e02a99938cb3e058d771d12ef30f6aed20c08fe53c4dd97b",
+    "character-casual-pose1-stage2-debug0-vp.png": "008f27ad7bcf1bc7e02a99938cb3e058d771d12ef30f6aed20c08fe53c4dd97b",
+    "character-casual-pose1-stage2-debug1-mesh.png": "96f0155fc22c303c17ccc51be9fe4bc0a86df7d306cfeed2db2c668ae1c84c7b",
+    "character-casual-pose1-stage2-debug1-vp.png": "96f0155fc22c303c17ccc51be9fe4bc0a86df7d306cfeed2db2c668ae1c84c7b",
+    "character-professional-pose0-bake.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-skin.png": "922c4d0f6eae404ea1a4969397b25bade820ee6a77f1d54410e3420eae749b40",
+    "character-professional-pose0-stage0-debug0-mesh.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-stage0-debug0-vp.png": "451c761f592b062d361ade20dfce6bb3475c4e238ea54da5aa59751f49eaa13c",
+    "character-professional-pose0-stage1-debug0-mesh.png": "91e6ba81255bbbdc4298fc68d6e12e8d5c835880502a72c1d179a0695f4fd2fb",
+    "character-professional-pose0-stage1-debug0-vp.png": "91e6ba81255bbbdc4298fc68d6e12e8d5c835880502a72c1d179a0695f4fd2fb",
+    "character-professional-pose0-stage1-debug1-mesh.png": "bc86482d128bbb094701972d6db427507f2706756a2db85ef9c47c9a41a9a321",
+    "character-professional-pose0-stage1-debug1-vp.png": "bc86482d128bbb094701972d6db427507f2706756a2db85ef9c47c9a41a9a321",
+    "character-professional-pose0-stage2-debug0-mesh.png": "9183525b5e60b59448d7e7e116d3e1561f47e31c28e361ec65b8e2c43f35de2f",
+    "character-professional-pose0-stage2-debug0-vp.png": "9183525b5e60b59448d7e7e116d3e1561f47e31c28e361ec65b8e2c43f35de2f",
+    "character-professional-pose0-stage2-debug1-mesh.png": "d803e1b24e3669ce722d6b824fbe1da9eda6966e210097989218f1c1074a57a8",
+    "character-professional-pose0-stage2-debug1-vp.png": "d803e1b24e3669ce722d6b824fbe1da9eda6966e210097989218f1c1074a57a8",
+    "character-professional-pose1-bake.png": "c67f2fae8fa6ece6e6c56f2b5a0b1030d2eeb1c64ac07b7f7b4644d1da2e3256",
+    "character-professional-pose1-skin.png": "1fabe566d331abdd17845bc3f87653dbb0af8bdd5f940c44206972394c435239",
+    "character-professional-pose1-stage0-debug0-mesh.png": "c67f2fae8fa6ece6e6c56f2b5a0b1030d2eeb1c64ac07b7f7b4644d1da2e3256",
+    "character-professional-pose1-stage0-debug0-vp.png": "dcfa958d49f8249ed49e7880c6c25cdc8953dbcfc1293ac24b6c0b7a6bf37159",
+    "character-professional-pose1-stage1-debug0-mesh.png": "49a0171856f5228994a0e5d775dcc3f49a1b7a18a6ff2fb6cefbf99ef0cafc86",
+    "character-professional-pose1-stage1-debug0-vp.png": "49a0171856f5228994a0e5d775dcc3f49a1b7a18a6ff2fb6cefbf99ef0cafc86",
+    "character-professional-pose1-stage1-debug1-mesh.png": "2f44c0346d47abcdb1fbcd58f93d90e333a7864305724eb9a6193eae491508b0",
+    "character-professional-pose1-stage1-debug1-vp.png": "2f44c0346d47abcdb1fbcd58f93d90e333a7864305724eb9a6193eae491508b0",
+    "character-professional-pose1-stage2-debug0-mesh.png": "d0fb3194f3a503c86b56c92f6cfb6a5135bf4ea177e3c2a3a2ddce043ce28ec4",
+    "character-professional-pose1-stage2-debug0-vp.png": "d0fb3194f3a503c86b56c92f6cfb6a5135bf4ea177e3c2a3a2ddce043ce28ec4",
+    "character-professional-pose1-stage2-debug1-mesh.png": "29282180eb2fe86b929fd1e8e7a4814ce79b37667921bb063dc59fdbbf70d216",
+    "character-professional-pose1-stage2-debug1-vp.png": "29282180eb2fe86b929fd1e8e7a4814ce79b37667921bb063dc59fdbbf70d216"
+  },
+  "maximumRgbOnCommonCoveredPixels": 1,
+  "boundaryMismatch": [
+    {
+      "x": 195,
+      "y": 177,
+      "skin": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "bake": [
+        188,
+        151,
+        137,
+        255
+      ],
+      "skin3x3": [
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            191,
+            154,
+            139,
+            255
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            195,
+            157,
+            142,
+            255
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            189,
+            152,
+            138,
+            255
+          ],
+          [
+            198,
+            159,
+            144,
+            255
+          ]
+        ]
+      ],
+      "bake3x3": [
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            191,
+            154,
+            139,
+            255
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            188,
+            151,
+            137,
+            255
+          ],
+          [
+            195,
+            157,
+            142,
+            255
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            189,
+            152,
+            138,
+            255
+          ],
+          [
+            198,
+            159,
+            144,
+            255
+          ]
+        ]
+      ]
+    }
+  ],
+  "capChanges": [
+    {
+      "family": "casual",
+      "pose": 0,
+      "changedPixelsByStage": [
+        23782,
+        1935
+      ]
+    },
+    {
+      "family": "casual",
+      "pose": 1,
+      "changedPixelsByStage": [
+        28402,
+        5535
+      ]
+    },
+    {
+      "family": "professional",
+      "pose": 0,
+      "changedPixelsByStage": [
+        3368,
+        2627
+      ]
+    },
+    {
+      "family": "professional",
+      "pose": 1,
+      "changedPixelsByStage": [
+        4436,
+        2487
+      ]
+    }
+  ],
+  "unity": "6000.3.22f1",
+  "graphics": "Direct3D11",
+  "development": true,
+  "intakeSha256": "9620c63d7c8f11279c0ed7c9a85818f197d152e8ba2844ea72f7ea4cfa66ffe1",
+  "binarySha256": "97294e15e38bb4d9d327b26697590785394c742c00c6b67225943ccc45787072",
+  "probeSourceSha256": "0d3d06c3d7a15e7395dd033c406a84033b0217d2546e2bec498402f7cfccb92b",
+  "editMode": {
+    "passed": 3622,
+    "failed": 0,
+    "skipped": 0
+  }
+}
