@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="8" result="Failed(Child)" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.3258638">
+  <test-suite type="TestSuite" id="1000" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="3630" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.325864" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <failure>
+      <message><![CDATA[One or more child tests had errors]]></message>
+    </failure>
+    <test-suite type="Assembly" id="4891" name="Zantetsu.Core.EditModeTests.dll" fullname="[REDACTED]/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll" runstate="Runnable" testcasecount="3616" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.293951" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="110448" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <failure>
+        <message><![CDATA[One or more child tests had errors]]></message>
+      </failure>
+      <test-suite type="TestSuite" id="4892" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="3616" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.267065" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <failure>
+          <message><![CDATA[One or more child tests had errors]]></message>
+        </failure>
+        <test-suite type="TestSuite" id="4895" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="283" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.249464" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <failure>
+            <message><![CDATA[One or more child tests had errors]]></message>
+          </failure>
+          <test-suite type="TestSuite" id="4896" name="Tests" fullname="Zantetsu.PhysicsCut.Tests" runstate="Runnable" testcasecount="283" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.248062" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <failure>
+              <message><![CDATA[One or more child tests had errors]]></message>
+            </failure>
+            <test-suite type="TestFixture" id="1453" name="Compact16uvCharacterPhysicsTests" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" testcasecount="8" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.245659" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <failure>
+                <message><![CDATA[One or more child tests had errors]]></message>
+              </failure>
+              <test-suite type="ParameterizedMethod" id="1462" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" testcasecount="8" result="Failed" site="Child" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.242583" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <failure>
+                  <message><![CDATA[One or more child tests had errors]]></message>
+                </failure>
+                <test-case id="1454" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,0)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="3336675" result="Failed" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:08Z" duration="0.053561" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (-0.10, -0.02, 0.07)
+  But was:  (-0.10, -0.02, 0.07)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+]]></output>
+                </test-case>
+                <test-case id="1455" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,1)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1848971384" result="Failed" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:08Z" duration="0.023576" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (-0.10, -0.02, 0.07)
+  But was:  (-0.10, -0.02, 0.07)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+]]></output>
+                </test-case>
+                <test-case id="1456" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,2)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1291630362" result="Failed" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:08Z" duration="0.020971" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (-0.10, -0.02, 0.07)
+  But was:  (-0.10, -0.02, 0.07)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+]]></output>
+                </test-case>
+                <test-case id="1457" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,3)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="135510020" result="Failed" start-time="2026-09-24 06:43:08Z" end-time="2026-09-24 06:43:09Z" duration="0.022136" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (-0.10, -0.02, 0.07)
+  But was:  (-0.10, -0.02, 0.07)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+]]></output>
+                </test-case>
+                <test-case id="1458" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,0)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1819528455" result="Failed" start-time="2026-09-24 06:43:09Z" end-time="2026-09-24 06:43:09Z" duration="0.043655" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (35.19, 99.42, -4.46)
+  But was:  (35.19, 99.42, -4.46)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+]]></output>
+                </test-case>
+                <test-case id="1459" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,1)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="235184230" result="Failed" start-time="2026-09-24 06:43:09Z" end-time="2026-09-24 06:43:09Z" duration="0.032961" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (35.19, 99.42, -4.46)
+  But was:  (35.19, 99.42, -4.46)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+]]></output>
+                </test-case>
+                <test-case id="1460" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,2)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="145048504" result="Failed" start-time="2026-09-24 06:43:09Z" end-time="2026-09-24 06:43:09Z" duration="0.018656" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (35.19, 99.42, -4.46)
+  But was:  (35.19, 99.42, -4.46)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+]]></output>
+                </test-case>
+                <test-case id="1461" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,3)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="467761949" result="Failed" start-time="2026-09-24 06:43:09Z" end-time="2026-09-24 06:43:09Z" duration="0.017961" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <failure>
+                    <message><![CDATA[  Explicit owner-local basis must reproduce every display point.
+  Expected: (35.19, 99.42, -4.46)
+  But was:  (35.19, 99.42, -4.46)
+]]></message>
+                    <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy (System.String family, System.Int32 pose) [0x00238] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\Compact16uvCharacterPhysicsTests.cs:45
+]]></stack-trace>
+                  </failure>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+Saving results to: [REDACTED]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+                </test-case>
+              </test-suite>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>
