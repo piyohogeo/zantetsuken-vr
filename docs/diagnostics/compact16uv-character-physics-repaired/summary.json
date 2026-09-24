@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "baseProductCommit": "fe45914a",
+  "upstreamRepairCommit": "5233b74",
+  "unity": "6000.3.22f1",
+  "platform": "Windows Editor EditMode",
+  "repairedHullCount": 38,
+  "repairedRejectedCount": 0,
+  "repairedCasesPassed": 8,
+  "originalControlCasesPassed": 8,
+  "repairedCutSteps": 304,
+  "originalControlCutSteps": 280,
+  "repairedCookCalls": 760,
+  "fullEditMode": {
+    "passed": 3638,
+    "failed": 0,
+    "skipped": 0
+  },
+  "maximumRepairedWorldError": 1.12461817e-06,
+  "originalInputsPreserved": true,
+  "unityDisplayImportExactlyUnchanged": true,
+  "importedUcxOrientedTrianglesMatched": true,
+  "productionReferencesSwitched": false,
+  "productionOwnerSceneAcceptance": false,
+  "exportSha256": "5a583b9ad090db5d2a957a3e7dd89aca3a6bbdd85959cf4db746046ec86e568a",
+  "testSourceSha256": "9d52cb625a0940133ec7050cb09795d7b254cf663e8720f9d79ced9e99f7508d",
+  "cases": [
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "repaired": false,
+      "maxWorldError": 4.22520856e-07,
+      "maxRendererLocalError": 4.21797125e-07,
+      "wrongBoneError": 0.5303564,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "repaired": false,
+      "maxWorldError": 4.549127e-07,
+      "maxRendererLocalError": 4.55659517e-07,
+      "wrongBoneError": 0.554851949,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "repaired": false,
+      "maxWorldError": 1.01852459e-06,
+      "maxRendererLocalError": 8.08654e-07,
+      "wrongBoneError": 0.5441538,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "repaired": false,
+      "maxWorldError": 1.12461817e-06,
+      "maxRendererLocalError": 9.48052048e-07,
+      "wrongBoneError": 0.5786225,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "repaired": false,
+      "maxWorldError": 8.40992e-07,
+      "maxRendererLocalError": 7.72902858e-05,
+      "wrongBoneError": 0.487160772,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "repaired": false,
+      "maxWorldError": 8.49888863e-07,
+      "maxRendererLocalError": 7.834654e-05,
+      "wrongBoneError": 0.5105441,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "repaired": false,
+      "maxWorldError": 8.92080664e-07,
+      "maxRendererLocalError": 0.00010697425,
+      "wrongBoneError": 0.488673627,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "repaired": false,
+      "maxWorldError": 9.61096e-07,
+      "maxRendererLocalError": 0.000116332631,
+      "wrongBoneError": 0.510337234,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "repaired": true,
+      "maxWorldError": 4.22520856e-07,
+      "maxRendererLocalError": 4.21797125e-07,
+      "wrongBoneError": 0.5303564,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "repaired": true,
+      "maxWorldError": 4.549127e-07,
+      "maxRendererLocalError": 4.55659517e-07,
+      "wrongBoneError": 0.554851949,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "repaired": true,
+      "maxWorldError": 1.01852459e-06,
+      "maxRendererLocalError": 8.08654e-07,
+      "wrongBoneError": 0.5441538,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "repaired": true,
+      "maxWorldError": 1.12461817e-06,
+      "maxRendererLocalError": 9.48052048e-07,
+      "wrongBoneError": 0.5786225,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "repaired": true,
+      "maxWorldError": 8.40992e-07,
+      "maxRendererLocalError": 7.72902858e-05,
+      "wrongBoneError": 0.487160772,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "repaired": true,
+      "maxWorldError": 8.49888863e-07,
+      "maxRendererLocalError": 7.834654e-05,
+      "wrongBoneError": 0.5105441,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "repaired": true,
+      "maxWorldError": 8.92080664e-07,
+      "maxRendererLocalError": 0.00010697425,
+      "wrongBoneError": 0.488673627,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "repaired": true,
+      "maxWorldError": 9.61096e-07,
+      "maxRendererLocalError": 0.000116332631,
+      "wrongBoneError": 0.510337234,
+      "accepted": 19,
+      "rejected": 0,
+      "cuts": 38
+    }
+  ],
+  "limitations": [
+    "Per-hull component cuts, not a compound 19-hull owner/common-plane scene test",
+    "Cook calls without errors, not PhysX cooked-topology readback or Rigidbody simulation",
+    "No IL2CPP/performance/visual acceptance; prior Casual one-pixel difference remains independent"
+  ]
+}
