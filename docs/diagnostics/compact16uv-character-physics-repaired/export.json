@@ -1,0 +1,806 @@
+{
+  "schemaVersion": 1,
+  "blender": "4.5.13 LTS",
+  "scriptSha256": "e62822fbf3fa778bf6d7b05be55e7d34bc5eeb0fd9e8009d8f6976ee4ce60c6e",
+  "upstreamRepairReportSha256": "fc2ffe8c61610a107229a4d7f4556dcab564df391740b39442296b08ba8a7815",
+  "originalManifestSha256": "9620c63d7c8f11279c0ed7c9a85818f197d152e8ba2844ea72f7ea4cfa66ffe1",
+  "manifestSha256": "4c2cd543def7c72123e33c29756b4d098e3f91af2fcd26917f23ee48617719fb",
+  "assets": [
+    {
+      "family": "character-casual",
+      "sourceSha256": "d31ae878ec44862b5e55ef06ac4ef530ae8ab294b000505291bfe2b817c10ab2",
+      "originalSourceSha256": "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+      "fixtureSha256": "bbe481867248beef03e88446279e9246861a3ff95641e8e554b6b85a785451ed",
+      "originalFixtureSha256": "73ba893fdf0be1001b7dd19cddb9453ce09f7d111e2c1cca9acaa0b9b3bc8695",
+      "importer": {
+        "originalSha256": "8bf0f96d344110493e55953d203dd4649622670adf39f66f4316eecb63133c28",
+        "copiedSha256": "5d11705754ad01ae51cc2f197b8bb98331f26ffc464a25d27eb96f822f778526",
+        "settingsUnchangedExceptGuid": true,
+        "newGuid": "45f51086fffb5bb0bff4f2a688fdc69c"
+      },
+      "textureImporter": {
+        "originalSha256": "e80c40f5c6835036f46c8ae23328ecbccaf326a014262e8fb5008563d22e9ba6",
+        "copiedSha256": "f56a2f692ddc2a75f2c17f5fd4b89e9b455a1b4a09dfd8e8452bb77df71fdd8a",
+        "settingsUnchangedExceptGuid": true,
+        "newGuid": "23d3a09367ff53b9b0aba3ce59159f4a"
+      },
+      "textureSha256": "88fdb7640dcadbef46db9bb52a533180ae0ef2d5bec5bea599d024c3614ebcc5",
+      "displayAndHullPositionsExactlyUnchanged": true,
+      "changedFaces": [
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+          "faceIndex": 34
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+          "faceIndex": 35
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+          "faceIndex": 52
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+          "faceIndex": 53
+        }
+      ],
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.002242943538845455,
+            "maximumConvexityError": 9.578195122087257e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0022429453164210145,
+            "maximumConvexityError": 5.495014760261299e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0022452381459355498,
+            "maximumConvexityError": 1.0317424142202826e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.002245240056805782,
+            "maximumConvexityError": 1.0250755545257454e-17,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0015037665001533538,
+            "maximumConvexityError": 3.3259271438636027e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.001503765905053715,
+            "maximumConvexityError": 2.0884379923202613e-17,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0013075499485864109,
+            "maximumConvexityError": 7.558518904100013e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0013075496263636078,
+            "maximumConvexityError": 2.7690769487918912e-08,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0004043985904119128,
+            "maximumConvexityError": 6.456419012294158e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0004043985558662615,
+            "maximumConvexityError": 9.813387536405877e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.000407420773550259,
+            "maximumConvexityError": 5.302761520612019e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0004074206815978467,
+            "maximumConvexityError": 5.900057643617545e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0032070513244257795,
+            "maximumConvexityError": 4.719554214773148e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0032070549137942273,
+            "maximumConvexityError": 4.991675664248803e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0032071647756967765,
+            "maximumConvexityError": 4.253058178439027e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0032071684333583135,
+            "maximumConvexityError": 5.610438764019457e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0009950064398363007,
+            "maximumConvexityError": 9.52290330927338e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.000995006553376577,
+            "maximumConvexityError": 1.2153902010331985e-08,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0029645853476915375,
+            "maximumConvexityError": 9.402206902650227e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.002964584995077686,
+            "maximumConvexityError": 3.1552063251818124e-17,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.001",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.015357332883958281,
+            "maximumConvexityError": 1.05664432810672e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.01535733320338905,
+            "maximumConvexityError": 9.392396041956746e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.002",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.011619004344073109,
+            "maximumConvexityError": 6.12745501469107e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.01161900606653666,
+            "maximumConvexityError": 7.50589166867899e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.003",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.002163742741616078,
+            "maximumConvexityError": 6.9190974106921025e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.002163742335679411,
+            "maximumConvexityError": 8.287995573907236e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.004",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.00208077998094775,
+            "maximumConvexityError": 5.131475897850488e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0020807807087531048,
+            "maximumConvexityError": 6.009652453937185e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.006",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.016180385984730677,
+            "maximumConvexityError": 1.0200734281442038e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.016180386110755212,
+            "maximumConvexityError": 7.854449132064672e-18,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.011942085401447759,
+            "maximumConvexityError": 4.0275909371782597e-08,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.01194209737917515,
+            "maximumConvexityError": 6.97792626008431e-08,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.011778362804458981,
+            "maximumConvexityError": 3.688277578265743e-08,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.011778374764638316,
+            "maximumConvexityError": 5.767747541731098e-08,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.003428753769789279,
+            "maximumConvexityError": 1.104443182248825e-07,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.00342875356263777,
+            "maximumConvexityError": 4.6067175290859267e-08,
+            "tolerance": 1e-06
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0037915646980620802,
+            "maximumConvexityError": 9.352628214272498e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.003791562500242207,
+            "maximumConvexityError": 1.6372540807613833e-17,
+            "tolerance": 1e-06
+          }
+        }
+      ]
+    },
+    {
+      "family": "character-professional",
+      "sourceSha256": "5a0d35c40cf0a8cba49b91c35037b06459b8850835e14620ba40a7f07fa09071",
+      "originalSourceSha256": "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+      "fixtureSha256": "452c746ef4801493a7c78a127291810064cdad218b4f6e78d3c1fcc911c61c4d",
+      "originalFixtureSha256": "e20f8f25caec423cac6edea771195aaee068e63416c7dc1007a7f1535d30991b",
+      "importer": {
+        "originalSha256": "e650276b0e1f62cd1a7c4618519892736d476df42095f8f22258c2cb8abcbaf8",
+        "copiedSha256": "8a0b8872c4a29d8ea0ce655fa907ff2e7c7902b9fdcac5682f1a65a917918186",
+        "settingsUnchangedExceptGuid": true,
+        "newGuid": "dce95a3345775a0ca92a3d723ef52cf9"
+      },
+      "textureImporter": {
+        "originalSha256": "7bc65a5f2884a72264aebd7907c53495cc2e85fbe69ef5c7e2f1e514e6e3dcdf",
+        "copiedSha256": "b042d4ad7ef3cb799ba14d5d13ee62498bd557759cf5cb318fd86bac1660f57b",
+        "settingsUnchangedExceptGuid": true,
+        "newGuid": "27e4244ed0c4501d850c5cf04e7afbd3"
+      },
+      "textureSha256": "88fdb7640dcadbef46db9bb52a533180ae0ef2d5bec5bea599d024c3614ebcc5",
+      "displayAndHullPositionsExactlyUnchanged": true,
+      "changedFaces": [
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "faceIndex": 45
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "faceIndex": 46
+        }
+      ],
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0019503419086321528,
+            "maximumConvexityError": 8.41218600921781e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 1950.3434103201914,
+            "maximumConvexityError": 3.5412447431563536e-16,
+            "tolerance": 2.6510265350341796e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0019560947751686105,
+            "maximumConvexityError": 3.699829341856575e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 1956.0962899848398,
+            "maximumConvexityError": 7.046059591431783e-16,
+            "tolerance": 2.6471062660217284e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0023949842103475425,
+            "maximumConvexityError": 4.986616287892828e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 2394.984458579684,
+            "maximumConvexityError": 8.853075649955647e-16,
+            "tolerance": 2.793952178955078e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0024690057349226525,
+            "maximumConvexityError": 2.980726316175653e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 2469.0069327303104,
+            "maximumConvexityError": 8.104778664531528e-16,
+            "tolerance": 2.8310302734374998e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0004043171039009947,
+            "maximumConvexityError": 5.3033093359029396e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 404.3170921128044,
+            "maximumConvexityError": 6.430693357117739e-16,
+            "tolerance": 1.666987609863281e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.00040733807612807035,
+            "maximumConvexityError": 5.44032377374715e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 407.33815702322266,
+            "maximumConvexityError": 5.560914270578123e-16,
+            "tolerance": 1.6669853210449218e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.005852271392897797,
+            "maximumConvexityError": 6.996297178927006e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 5852.277615236765,
+            "maximumConvexityError": 4.194157244418642e-16,
+            "tolerance": 4.793209457397461e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.005854104275902941,
+            "maximumConvexityError": 3.25990176208534e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 5854.110844996778,
+            "maximumConvexityError": 3.4733674963565156e-16,
+            "tolerance": 4.79337158203125e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0018006704622716833,
+            "maximumConvexityError": 1.1429726441839395e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 1800.6710833209088,
+            "maximumConvexityError": 7.777660782323161e-16,
+            "tolerance": 2.0791057229042053e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.001750254792947396,
+            "maximumConvexityError": 1.649154060077343e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 1750.255191737169,
+            "maximumConvexityError": 1.1668000081441593e-15,
+            "tolerance": 2.1136504650115965e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.001",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.021975721482982845,
+            "maximumConvexityError": 1.4903763344888204e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 21975.71980282812,
+            "maximumConvexityError": 1.041757200432525e-15,
+            "tolerance": 3.930712890625e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.002",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.015196768423143712,
+            "maximumConvexityError": 9.59029284168897e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 15196.77462509762,
+            "maximumConvexityError": 4.553740183381697e-16,
+            "tolerance": 3.1998491287231445e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.003",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.001326912847424642,
+            "maximumConvexityError": 6.117509873197486e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 1326.912732435876,
+            "maximumConvexityError": 8.99038269100605e-16,
+            "tolerance": 2.5442092895507812e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.004",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.0008865190196167229,
+            "maximumConvexityError": 5.5806268959070865e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 886.5195653454015,
+            "maximumConvexityError": 3.58923710580128e-16,
+            "tolerance": 1.740397834777832e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.006",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.00941349315506588,
+            "maximumConvexityError": 6.6327008589959246e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 9413.492981927018,
+            "maximumConvexityError": 7.112282872759851e-16,
+            "tolerance": 3.16656494140625e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.015511764723468631,
+            "maximumConvexityError": 2.5540660866820195e-17,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 15511.780999625913,
+            "maximumConvexityError": 1.4336374547842032e-15,
+            "tolerance": 5.5195186614990234e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.015937448802775103,
+            "maximumConvexityError": 7.916273802222598e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 15937.464391226713,
+            "maximumConvexityError": 1.4349446321656397e-15,
+            "tolerance": 5.5224601745605464e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.004610725250456335,
+            "maximumConvexityError": 6.7428147786774006e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 4610.724676338549,
+            "maximumConvexityError": 1.5232514410689692e-15,
+            "tolerance": 2.8076469421386718e-05
+          }
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.R",
+          "source": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 0.004647996718237202,
+            "maximumConvexityError": 9.279693019457808e-18,
+            "tolerance": 1e-06
+          },
+          "rendererBind": {
+            "vertices": 32,
+            "faces": 60,
+            "edges": 90,
+            "signedVolume": 4647.996894621167,
+            "maximumConvexityError": 9.540527632151449e-16,
+            "tolerance": 2.8013328552246093e-05
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="16" result="Passed" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.2567427">
+  <test-suite type="TestSuite" id="1000" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="3638" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.256743" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <test-suite type="Assembly" id="4900" name="Zantetsu.Core.EditModeTests.dll" fullname="[REDACTED]/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll" runstate="Runnable" testcasecount="3624" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.216817" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="118432" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <test-suite type="TestSuite" id="4901" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="3624" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.173462" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="4904" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="291" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.107901" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="4905" name="Tests" fullname="Zantetsu.PhysicsCut.Tests" runstate="Runnable" testcasecount="291" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.106428" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1453" name="Compact16uvCharacterPhysicsTests" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" testcasecount="16" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:16Z" duration="11.103498" total="16" passed="16" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-suite type="ParameterizedMethod" id="1462" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" testcasecount="8" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:10Z" duration="5.039325" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-case id="1454" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,0)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="911391147" result="Passed" start-time="2026-09-24 07:04:05Z" end-time="2026-09-24 07:04:06Z" duration="0.661204" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.L outside=5.5981400477947874E-05 tolerance=1E-06; no cook/cut/owner registration
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.R outside=5.3326777016977911E-05 tolerance=1E-06; no cook/cut/owner registration
+family=character-casual pose=0 hulls=19 mappedVertices=608 maxWorldError=4.22520856E-07 maxRendererLocalError=4.21797125E-07 wrongBoneError=0.5303564 accepted=17 rejected=2 cuts=34 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1455" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,1)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1253686983" result="Passed" start-time="2026-09-24 07:04:06Z" end-time="2026-09-24 07:04:06Z" duration="0.577701" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.L outside=5.5981400477947874E-05 tolerance=1E-06; no cook/cut/owner registration
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.R outside=5.3326777016977911E-05 tolerance=1E-06; no cook/cut/owner registration
+family=character-casual pose=1 hulls=19 mappedVertices=608 maxWorldError=4.549127E-07 maxRendererLocalError=4.55659517E-07 wrongBoneError=0.554851949 accepted=17 rejected=2 cuts=34 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1456" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,2)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="84251086" result="Passed" start-time="2026-09-24 07:04:06Z" end-time="2026-09-24 07:04:07Z" duration="0.611166" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.L outside=5.5981400477947874E-05 tolerance=1E-06; no cook/cut/owner registration
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.R outside=5.3326777016977911E-05 tolerance=1E-06; no cook/cut/owner registration
+family=character-casual pose=2 hulls=19 mappedVertices=608 maxWorldError=1.01852459E-06 maxRendererLocalError=8.08654E-07 wrongBoneError=0.5441538 accepted=17 rejected=2 cuts=34 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1457" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-casual&quot;,3)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1442425380" result="Passed" start-time="2026-09-24 07:04:07Z" end-time="2026-09-24 07:04:07Z" duration="0.670174" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=4.16433465E-07
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.L outside=5.5981400477947874E-05 tolerance=1E-06; no cook/cut/owner registration
+REJECT UCX_PHYS_CONVEX_f_1__DEF-thigh.R outside=5.3326777016977911E-05 tolerance=1E-06; no cook/cut/owner registration
+family=character-casual pose=3 hulls=19 mappedVertices=608 maxWorldError=1.12461817E-06 maxRendererLocalError=9.48052048E-07 wrongBoneError=0.5786225 accepted=17 rejected=2 cuts=34 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1458" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,0)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1368929750" result="Passed" start-time="2026-09-24 07:04:07Z" end-time="2026-09-24 07:04:08Z" duration="0.612495" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+REJECT UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L outside=0.0048317589921769155 tolerance=2.8076469421386718E-05; no cook/cut/owner registration
+family=character-professional pose=0 hulls=19 mappedVertices=608 maxWorldError=8.40992E-07 maxRendererLocalError=7.72902858E-05 wrongBoneError=0.487160772 accepted=18 rejected=1 cuts=36 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1459" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,1)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="177103982" result="Passed" start-time="2026-09-24 07:04:08Z" end-time="2026-09-24 07:04:09Z" duration="0.617099" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+REJECT UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L outside=0.0048317589921769155 tolerance=2.8076469421386718E-05; no cook/cut/owner registration
+family=character-professional pose=1 hulls=19 mappedVertices=608 maxWorldError=8.49888863E-07 maxRendererLocalError=7.834654E-05 wrongBoneError=0.5105441 accepted=18 rejected=1 cuts=36 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1460" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,2)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1304422712" result="Passed" start-time="2026-09-24 07:04:09Z" end-time="2026-09-24 07:04:09Z" duration="0.648100" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+REJECT UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L outside=0.0048317589921769155 tolerance=2.8076469421386718E-05; no cook/cut/owner registration
+family=character-professional pose=2 hulls=19 mappedVertices=608 maxWorldError=8.92080664E-07 maxRendererLocalError=0.00010697425 wrongBoneError=0.488673627 accepted=18 rejected=1 cuts=36 repaired=False
+]]></output>
+                </test-case>
+                <test-case id="1461" name="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(&quot;character-professional&quot;,3)" methodname="AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="797007011" result="Passed" start-time="2026-09-24 07:04:09Z" end-time="2026-09-24 07:04:10Z" duration="0.632002" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayBasisMax=3.842683E-05
+REJECT UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L outside=0.0048317589921769155 tolerance=2.8076469421386718E-05; no cook/cut/owner registration
+family=character-professional pose=3 hulls=19 mappedVertices=608 maxWorldError=9.61096E-07 maxRendererLocalError=0.000116332631 wrongBoneError=0.510337234 accepted=18 rejected=1 cuts=36 repaired=False
+]]></output>
+                </test-case>
+              </test-suite>
+              <test-suite type="ParameterizedMethod" id="1471" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" testcasecount="8" result="Passed" start-time="2026-09-24 07:04:10Z" end-time="2026-09-24 07:04:16Z" duration="6.060849" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-case id="1463" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,0)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1358993072" result="Passed" start-time="2026-09-24 07:04:10Z" end-time="2026-09-24 07:04:11Z" duration="0.756622" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=4728 submeshes=1
+displayBasisMax=4.16433465E-07
+family=character-casual pose=0 hulls=19 mappedVertices=608 maxWorldError=4.22520856E-07 maxRendererLocalError=4.21797125E-07 wrongBoneError=0.5303564 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1464" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,1)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1708904735" result="Passed" start-time="2026-09-24 07:04:11Z" end-time="2026-09-24 07:04:11Z" duration="0.775305" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=4728 submeshes=1
+displayBasisMax=4.16433465E-07
+family=character-casual pose=1 hulls=19 mappedVertices=608 maxWorldError=4.549127E-07 maxRendererLocalError=4.55659517E-07 wrongBoneError=0.554851949 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1465" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,2)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="109374242" result="Passed" start-time="2026-09-24 07:04:11Z" end-time="2026-09-24 07:04:12Z" duration="0.751387" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=4728 submeshes=1
+displayBasisMax=4.16433465E-07
+family=character-casual pose=2 hulls=19 mappedVertices=608 maxWorldError=1.01852459E-06 maxRendererLocalError=8.08654E-07 wrongBoneError=0.5441538 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1466" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-casual&quot;,3)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1239519747" result="Passed" start-time="2026-09-24 07:04:12Z" end-time="2026-09-24 07:04:13Z" duration="0.768777" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=4728 submeshes=1
+displayBasisMax=4.16433465E-07
+family=character-casual pose=3 hulls=19 mappedVertices=608 maxWorldError=1.12461817E-06 maxRendererLocalError=9.48052048E-07 wrongBoneError=0.5786225 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1467" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,0)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="346181849" result="Passed" start-time="2026-09-24 07:04:13Z" end-time="2026-09-24 07:04:14Z" duration="0.766334" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=3834 submeshes=1
+displayBasisMax=3.842683E-05
+family=character-professional pose=0 hulls=19 mappedVertices=608 maxWorldError=8.40992E-07 maxRendererLocalError=7.72902858E-05 wrongBoneError=0.487160772 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1468" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,1)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1027786827" result="Passed" start-time="2026-09-24 07:04:14Z" end-time="2026-09-24 07:04:14Z" duration="0.745654" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=3834 submeshes=1
+displayBasisMax=3.842683E-05
+family=character-professional pose=1 hulls=19 mappedVertices=608 maxWorldError=8.49888863E-07 maxRendererLocalError=7.834654E-05 wrongBoneError=0.5105441 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1469" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,2)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="1057774368" result="Passed" start-time="2026-09-24 07:04:14Z" end-time="2026-09-24 07:04:15Z" duration="0.765381" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=3834 submeshes=1
+displayBasisMax=3.842683E-05
+family=character-professional pose=2 hulls=19 mappedVertices=608 maxWorldError=8.92080664E-07 maxRendererLocalError=0.00010697425 wrongBoneError=0.488673627 accepted=19 rejected=0 cuts=38 repaired=True
+]]></output>
+                </test-case>
+                <test-case id="1470" name="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(&quot;character-professional&quot;,3)" methodname="RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls" classname="Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests" runstate="Runnable" seed="796052145" result="Passed" start-time="2026-09-24 07:04:15Z" end-time="2026-09-24 07:04:16Z" duration="0.728685" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[displayImportExactlyUnchanged=True vertices=3834 submeshes=1
+displayBasisMax=3.842683E-05
+family=character-professional pose=3 hulls=19 mappedVertices=608 maxWorldError=9.61096E-07 maxRendererLocalError=0.000116332631 wrongBoneError=0.510337234 accepted=19 rejected=0 cuts=38 repaired=True
+Saving results to: [REDACTED]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+                </test-case>
+              </test-suite>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>
