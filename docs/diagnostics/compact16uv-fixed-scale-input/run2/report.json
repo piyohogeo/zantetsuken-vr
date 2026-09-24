@@ -1,0 +1,317 @@
+{
+    "unity": "6000.3.22f1",
+    "graphics": "Direct3D11",
+    "failure": "",
+    "passed": true,
+    "development": true,
+    "fixedScalePrepared": true,
+    "vertexStride": 16,
+    "preparedMeshBuilds": 1,
+    "cachedMeshes": 2,
+    "comparisons": [
+        {
+            "name": "character-casual-pose0-original-vs-prepared",
+            "passed": true,
+            "covered": 27946,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-skin-vs-bake",
+            "passed": true,
+            "covered": 27946,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 4,
+            "meanRgb": 0.000047711061809680574
+        },
+        {
+            "name": "character-casual-pose0-stage0-debug0",
+            "passed": true,
+            "covered": 27946,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 5349,
+            "meanRgb": 0.07914072377680766
+        },
+        {
+            "name": "character-casual-pose0-stage1-debug0",
+            "passed": true,
+            "covered": 26004,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage1-debug1",
+            "passed": true,
+            "covered": 26004,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage2-debug0",
+            "passed": true,
+            "covered": 2312,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage2-debug1",
+            "passed": true,
+            "covered": 2312,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-original-vs-prepared",
+            "passed": true,
+            "covered": 24527,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-skin-vs-bake",
+            "passed": true,
+            "covered": 24527,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 30,
+            "meanRgb": 0.0004213044128239627
+        },
+        {
+            "name": "character-casual-pose1-stage0-debug0",
+            "passed": true,
+            "covered": 24527,
+            "silhouette": 0,
+            "maxRgb": 2,
+            "changed": 5565,
+            "meanRgb": 0.09766108098558052
+        },
+        {
+            "name": "character-casual-pose1-stage1-debug0",
+            "passed": true,
+            "covered": 25309,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage1-debug1",
+            "passed": true,
+            "covered": 25309,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage2-debug0",
+            "passed": true,
+            "covered": 5602,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage2-debug1",
+            "passed": true,
+            "covered": 5602,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-original-vs-prepared",
+            "passed": true,
+            "covered": 28240,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-skin-vs-bake",
+            "passed": true,
+            "covered": 28240,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage0-debug0",
+            "passed": true,
+            "covered": 28240,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 2092,
+            "meanRgb": 0.027160056657223796
+        },
+        {
+            "name": "character-professional-pose0-stage1-debug0",
+            "passed": true,
+            "covered": 8048,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage1-debug1",
+            "passed": true,
+            "covered": 8048,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage2-debug0",
+            "passed": true,
+            "covered": 3307,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage2-debug1",
+            "passed": true,
+            "covered": 3307,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-original-vs-prepared",
+            "passed": true,
+            "covered": 24632,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-skin-vs-bake",
+            "passed": true,
+            "covered": 24632,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 6,
+            "meanRgb": 0.00008119519324455992
+        },
+        {
+            "name": "character-professional-pose1-stage0-debug0",
+            "passed": true,
+            "covered": 24632,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 2214,
+            "meanRgb": 0.03391252571181119
+        },
+        {
+            "name": "character-professional-pose1-stage1-debug0",
+            "passed": true,
+            "covered": 7267,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage1-debug1",
+            "passed": true,
+            "covered": 7267,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage2-debug0",
+            "passed": true,
+            "covered": 3057,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage2-debug1",
+            "passed": true,
+            "covered": 3057,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        }
+    ],
+    "poses": [
+        {
+            "family": "character-casual",
+            "clip": "CanonicalSource",
+            "pose": 0,
+            "sampledTime": 2.3862500190734865,
+            "scale": 1.0
+        },
+        {
+            "family": "character-casual",
+            "clip": "CanonicalSource",
+            "pose": 1,
+            "sampledTime": 6.951250076293945,
+            "scale": 1.0
+        },
+        {
+            "family": "character-professional",
+            "clip": "CanonicalSource",
+            "pose": 0,
+            "sampledTime": 2.3862500190734865,
+            "scale": 0.009999999776482582
+        },
+        {
+            "family": "character-professional",
+            "clip": "CanonicalSource",
+            "pose": 1,
+            "sampledTime": 6.951250076293945,
+            "scale": 0.009999999776482582
+        }
+    ],
+    "preparation": [
+        {
+            "family": "character-casual",
+            "sourceMeshBytes": 985192,
+            "additionalPreparedMeshBytes": 0,
+            "preparedMeshBuilds": 0,
+            "coldPrepareUs": 180.8,
+            "cachedPrepareMedianUs": 142.3,
+            "originalBakeMedianUs": 113.8,
+            "preparedBakeMedianUs": 114.3
+        },
+        {
+            "family": "character-professional",
+            "sourceMeshBytes": 749112,
+            "additionalPreparedMeshBytes": 749112,
+            "preparedMeshBuilds": 1,
+            "coldPrepareUs": 418.7,
+            "cachedPrepareMedianUs": 135.9,
+            "originalBakeMedianUs": 118.4,
+            "preparedBakeMedianUs": 99.7
+        }
+    ]
+}
