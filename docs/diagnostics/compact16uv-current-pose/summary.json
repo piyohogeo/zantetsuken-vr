@@ -1,0 +1,86 @@
+{
+    "schemaVersion":  1,
+    "unity":  "6000.3.22f1",
+    "baseCommit":  "a163b0c4",
+    "platform":  "Windows Editor EditMode",
+    "disposition":  "Renderer-local BakeMesh(true) component gate; no scene, physics rig, performance or IL2CPP acceptance",
+    "originalFalseObservation":  {
+                                     "passed":  2,
+                                     "failed":  4,
+                                     "rawXmlRetained":  false,
+                                     "total":  6,
+                                     "reproducedBy":  "Final component negative controls",
+                                     "classification":  "F-SKIN-FRAME"
+                                 },
+    "componentSubset":  {
+                            "skipped":  0,
+                            "total":  8,
+                            "passed":  8
+                        },
+    "fullEditMode":  {
+                         "skipped":  0,
+                         "total":  3622,
+                         "passed":  3622
+                     },
+    "assets":  [
+                   {
+                       "family":  "character-casual",
+                       "source":  "Assets/Licensed/Compact16uvIntake/character-casual/ITHappy_CasualCharacters--f_1.blend",
+                       "latestSource":  "Generated/BottomHalfUV/ITHappyCharacterMeshRepair/CasualCharacters/1.23.0-convex-remap_palette/Working/ITHappy_CasualCharacters--f_1.blend",
+                       "sourceSha256":  "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+                       "latestSourceSha256":  "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+                       "topologyCount":  3454
+                   },
+                   {
+                       "family":  "character-professional",
+                       "source":  "Assets/Licensed/Compact16uvIntake/character-professional/ITHappy_ProfessionalCharacters--c_1.blend",
+                       "latestSource":  "Generated/BottomHalfUV/ITHappyCharacterMeshRepair/ProfessionalCharacters/1.23.0-convex-remap_palette/Working/ITHappy_ProfessionalCharacters--c_1.blend",
+                       "sourceSha256":  "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+                       "latestSourceSha256":  "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+                       "topologyCount":  3005
+                   }
+               ],
+    "cases":  [
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",0)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-casual pose=0 rendererScale=(1.00, 1.00, 1.00) rootBoneScale=(1.00, 1.00, 1.00) maxPositionError=4.77069932E-07\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=4.77069932E-07 bakeFalseScaledOracleError=4.77069932E-07\nworldPositionError=4.92415154E-07\ncut axis=1 offset=-0.0411547646 committedVertices=7220\ncut axis=0 offset=-0.06406753 committedVertices=8455\nfamily=character-casual pose=0 vertices=4728 indices=20304 maxPositionError=4.77069932E-07 maxNormalAngle=0.881378055 deformation=0 payloadBytes=75648 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",1)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-casual pose=1 rendererScale=(1.00, 1.00, 1.00) rootBoneScale=(1.00, 1.00, 1.00) maxPositionError=4.769681E-07\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=4.769681E-07 bakeFalseScaledOracleError=4.769681E-07\nworldPositionError=4.95113341E-07\ncut axis=1 offset=-0.03669106 committedVertices=7168\ncut axis=0 offset=-0.08599062 committedVertices=7593\nfamily=character-casual pose=1 vertices=4728 indices=20304 maxPositionError=4.769681E-07 maxNormalAngle=0.9333511 deformation=0.126718581 payloadBytes=75648 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",2)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-casual pose=2 rendererScale=(1.30, 1.10, 0.80) rootBoneScale=(1.30, 1.10, 0.80) maxPositionError=6.60133651E-07\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=0.3685242 bakeFalseScaledOracleError=1.54979239E-06\nworldPositionError=9.61096E-07\ncut axis=1 offset=-0.0366915464 committedVertices=7168\ncut axis=0 offset=-0.08599022 committedVertices=7590\nfamily=character-casual pose=2 vertices=4728 indices=20304 maxPositionError=6.60133651E-07 maxNormalAngle=0.933560848 deformation=0.126718357 payloadBytes=75648 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",3)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-casual pose=3 rendererScale=(1.30, 1.10, 0.80) rootBoneScale=(1.36, 1.05, 0.88) maxPositionError=6.50892559E-07\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=0.405393064 bakeFalseScaledOracleError=1.52147436E-06\nworldPositionError=1.01152432E-06\ncut axis=1 offset=-0.03451296 committedVertices=7075\ncut axis=0 offset=-0.0335603021 committedVertices=7891\nfamily=character-casual pose=3 vertices=4728 indices=20304 maxPositionError=6.50892559E-07 maxNormalAngle=0.940660357 deformation=0.220166042 payloadBytes=75648 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",0)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-professional pose=0 rendererScale=(0.01, 0.01, 0.01) rootBoneScale=(1.00, 1.00, 1.00) maxPositionError=4.60240481E-05\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=182.41095 bakeFalseScaledOracleError=5.96075552E-07\nworldPositionError=4.7892803E-07\ncut axis=1 offset=-104.372589 committedVertices=4088\ncut axis=0 offset=-5.645854 committedVertices=4999\nfamily=character-professional pose=0 vertices=3834 indices=17742 maxPositionError=4.60240481E-05 maxNormalAngle=0.897656739 deformation=0 payloadBytes=61344 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",1)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-professional pose=1 rendererScale=(0.01, 0.01, 0.01) rootBoneScale=(1.00, 1.00, 1.00) maxPositionError=4.64175937E-05\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=182.595551 bakeFalseScaledOracleError=5.96837538E-07\nworldPositionError=4.826803E-07\ncut axis=1 offset=-103.836678 committedVertices=4146\ncut axis=0 offset=-7.41957951 committedVertices=4393\nfamily=character-professional pose=1 vertices=3834 indices=17742 maxPositionError=4.64175937E-05 maxNormalAngle=0.9104272 deformation=12.6718721 payloadBytes=61344 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",2)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-professional pose=2 rendererScale=(0.01, 0.01, 0.01) rootBoneScale=(1.30, 1.10, 0.80) maxPositionError=6.547097E-05\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=182.955292 bakeFalseScaledOracleError=8.207996E-07\nworldPositionError=1.07288361E-06\ncut axis=1 offset=-103.836693 committedVertices=4146\ncut axis=0 offset=-7.419558 committedVertices=4393\nfamily=character-professional pose=2 vertices=3834 indices=17742 maxPositionError=6.547097E-05 maxNormalAngle=0.9104272 deformation=12.6718674 payloadBytes=61344 quality=Auto globalSkinWeights=FourBones\n"
+                  },
+                  {
+                      "name":  "CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",3)",
+                      "result":  "Passed",
+                      "output":  "frame family=character-professional pose=3 rendererScale=(0.01, 0.01, 0.01) rootBoneScale=(1.36, 1.05, 0.88) maxPositionError=7.83033538E-05\nmaxInfluences=4\nscaleProbe bakeFalseLocalError=201.236526 bakeFalseScaledOracleError=7.93976369E-07\nworldPositionError=1.01152432E-06\ncut axis=1 offset=-114.237015 committedVertices=4149\ncut axis=0 offset=-7.295538 committedVertices=4393\nfamily=character-professional pose=3 vertices=3834 indices=17742 maxPositionError=7.83033538E-05 maxNormalAngle=0.8924097 deformation=22.3267422 payloadBytes=61344 quality=Auto globalSkinWeights=FourBones\n"
+                  }
+              ],
+    "testSourceSha256":  "df550a8135fb0dade056ebaeb32d58f175df357159a3d992b063e0f33632708a"
+}
