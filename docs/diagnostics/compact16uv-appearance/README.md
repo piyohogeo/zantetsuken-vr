@@ -45,7 +45,7 @@ Isolated upload of **11884 committed vertices (190144 bytes)** plus **3240 index
 
 Product scene selection/bootstrap and material opt-in; full licensed asset coverage; character current-pose/self-skin integration; actual product-scene Main/residency/growth peaks with a comparable baseline; XR. Do not treat this representative image gate or isolated SetData timing as completion of those tasks.
 
-Follow-up: [product Sandbox scene integration](../compact16uv-scene/README.md) adds explicit composition-root atlas ownership. Its hidden-window rendering/performance attempts are recorded as failures, not as completion of the performance gate.
+Follow-up: [product Sandbox scene integration](../compact16uv-scene/README.md) adds explicit composition-root atlas ownership. Hidden-window attempts remain excluded; three visible-host offscreen mono runs verify the synthetic product scene and record settled Main/working-set samples. This is not a Legacy32 comparison or licensed-asset physics integration.
 
 ## Failure history
 

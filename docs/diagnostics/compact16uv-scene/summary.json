@@ -150,6 +150,78 @@
                                {
                                    "run":  "run6.log",
                                    "line":  "SANDBOX PLAYER: finished with code 8"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=240 mainThreadMedianMs=0.385100 mainThreadP95Ms=0.942500 unityAllocatedBytes=119860447 unityReservedBytes=251547648 processWorkingSetBytes=333160448 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=240 mainThreadMedianMs=0.377200 mainThreadP95Ms=0.773700 unityAllocatedBytes=121392495 unityReservedBytes=270422016 processWorkingSetBytes=354095104 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run7-visible.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 0"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=240 mainThreadMedianMs=0.342200 mainThreadP95Ms=0.818900 unityAllocatedBytes=120459465 unityReservedBytes=251547648 processWorkingSetBytes=338886656 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=240 mainThreadMedianMs=0.314400 mainThreadP95Ms=0.752300 unityAllocatedBytes=121990485 unityReservedBytes=270422016 processWorkingSetBytes=355971072 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run8-visible.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 0"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=240 mainThreadMedianMs=0.329900 mainThreadP95Ms=0.870000 unityAllocatedBytes=119980695 unityReservedBytes=251547648 processWorkingSetBytes=337416192 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=240 mainThreadMedianMs=0.332900 mainThreadP95Ms=0.650600 unityAllocatedBytes=121510899 unityReservedBytes=270422016 processWorkingSetBytes=355577856 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run9-visible.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 0"
                                }
                            ],
     "evidence":  [
@@ -229,8 +301,23 @@
                          "beforeAnonymizationSha256":  "85199dbc220fee61adbe47ad1201bea11293c7000bad5a09f853ee97b94379c6"
                      },
                      {
+                         "file":  "run7-visible.log",
+                         "sha256":  "ac46445f0df9a647766f42c4fe814911a016eec14ef5a0673fb45910ddbd8d66",
+                         "beforeAnonymizationSha256":  "4962904bc29e46985fdc27e73e35b96822fa524a2607fa5e09642181dfea091a"
+                     },
+                     {
+                         "file":  "run8-visible.log",
+                         "sha256":  "7a766ac25419319b571a7a2fe570b03e09f8e7689c24d39daadf950918742dd4",
+                         "beforeAnonymizationSha256":  "bc50c6b8f248a33a9752b1ff2969d9d7127a80448b13c9e448fbf2052411b98f"
+                     },
+                     {
+                         "file":  "run9-visible.log",
+                         "sha256":  "d9371eceac8da580577e3f633001c1b4196755c11632b9a95c6f56a49edfd6ef",
+                         "beforeAnonymizationSha256":  "0091caa35eeb5e738f19325c023bf8075464f2e6088a3a3ebf559a4b8a30b392"
+                     },
+                     {
                          "file":  "README.md",
-                         "sha256":  "edf8d28994b22f3329adf9ffd15b7739c7fbc46b8171d10beee8e9a0d7746628"
+                         "sha256":  "aa560a0353be5feb68b008ec3b25e2efe8291da7a4b8e698a6539eb77ff3fae2"
                      },
                      {
                          "file":  "run2-images/01-before-the-cut.png",
@@ -351,6 +438,78 @@
                      {
                          "file":  "run6-images/05-after-the-ending.png",
                          "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run7-visible-images/01-before-the-cut.png",
+                         "sha256":  "82ecdef1b86c508daab81fd62b81263dc2059bcab89ee5aa026450ee5d109873"
+                     },
+                     {
+                         "file":  "run7-visible-images/02-after-the-cut.png",
+                         "sha256":  "96a5ad00a3ed4aae3f3a2ae37adfc8f1ab4a451f40fbd7286ca44e71d4228cb9"
+                     },
+                     {
+                         "file":  "run7-visible-images/03-children-apart.png",
+                         "sha256":  "ab995d12d3a32ea5dd2b99eb10472d352d6db9419fd7352523647d07da0eb0b2"
+                     },
+                     {
+                         "file":  "run7-visible-images/03b-children-apart-debug.png",
+                         "sha256":  "89912957f167f31eb491eb5bdb8f24aa0ae926c041ce4cb46dbb3d0c6eb9cc2f"
+                     },
+                     {
+                         "file":  "run7-visible-images/04-after-the-child-cut.png",
+                         "sha256":  "de717a9c2d169b8b3cd51c1d9227db6efc577e29eee9d64bfe486ae7b429eca7"
+                     },
+                     {
+                         "file":  "run7-visible-images/05-after-the-ending.png",
+                         "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                     },
+                     {
+                         "file":  "run8-visible-images/01-before-the-cut.png",
+                         "sha256":  "82ecdef1b86c508daab81fd62b81263dc2059bcab89ee5aa026450ee5d109873"
+                     },
+                     {
+                         "file":  "run8-visible-images/02-after-the-cut.png",
+                         "sha256":  "0ecb62cc4d83e2025e3dff5de324c550e423132860a02e056d5976014389a714"
+                     },
+                     {
+                         "file":  "run8-visible-images/03-children-apart.png",
+                         "sha256":  "ab995d12d3a32ea5dd2b99eb10472d352d6db9419fd7352523647d07da0eb0b2"
+                     },
+                     {
+                         "file":  "run8-visible-images/03b-children-apart-debug.png",
+                         "sha256":  "89912957f167f31eb491eb5bdb8f24aa0ae926c041ce4cb46dbb3d0c6eb9cc2f"
+                     },
+                     {
+                         "file":  "run8-visible-images/04-after-the-child-cut.png",
+                         "sha256":  "8db5796c494912f1f189669f9708d8138a8da1d21d1a716cf934e1166d342b87"
+                     },
+                     {
+                         "file":  "run8-visible-images/05-after-the-ending.png",
+                         "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
+                     },
+                     {
+                         "file":  "run9-visible-images/01-before-the-cut.png",
+                         "sha256":  "82ecdef1b86c508daab81fd62b81263dc2059bcab89ee5aa026450ee5d109873"
+                     },
+                     {
+                         "file":  "run9-visible-images/02-after-the-cut.png",
+                         "sha256":  "0ecb62cc4d83e2025e3dff5de324c550e423132860a02e056d5976014389a714"
+                     },
+                     {
+                         "file":  "run9-visible-images/03-children-apart.png",
+                         "sha256":  "ab995d12d3a32ea5dd2b99eb10472d352d6db9419fd7352523647d07da0eb0b2"
+                     },
+                     {
+                         "file":  "run9-visible-images/03b-children-apart-debug.png",
+                         "sha256":  "89912957f167f31eb491eb5bdb8f24aa0ae926c041ce4cb46dbb3d0c6eb9cc2f"
+                     },
+                     {
+                         "file":  "run9-visible-images/04-after-the-child-cut.png",
+                         "sha256":  "377f759290d532bc27a183b9fce92d661ce2538fb4caad751224ef888224eea7"
+                     },
+                     {
+                         "file":  "run9-visible-images/05-after-the-ending.png",
+                         "sha256":  "af7fb5f014ed17241761b24ee7bce2eef1456de0a5447b62e14bd935dd40a2e7"
                      }
                  ],
     "sources":  [
@@ -388,11 +547,11 @@
                     },
                     {
                         "path":  "DESIGN.md",
-                        "sha256":  "b6a02026c6843e1157f0d0f7513ffc2bc89e4107a77e4cf084541a30dcb8e897"
+                        "sha256":  "0fb1ded0ed91d01ad00a97e92e2eee3c87104215ff40af9bd988c08201ebc510"
                     },
                     {
                         "path":  "Tools/Summarize-Compact16uv-Scene.ps1",
-                        "sha256":  "772f52eece89dcea97dbdeac047d7210bce720d96785706ae91055ec1c046888"
+                        "sha256":  "6d83795bf9468c1150153532ac37e15a830ec238efb351f5a07482fca446545c"
                     }
                 ],
     "privateSceneHashes":  [
@@ -429,7 +588,27 @@
                                "run1.log":  "IL2CPP unsupported Process API; coroutine aborted, task process stopped.",
                                "run5.log":  "Graphics-enabled batchmode also had zero draws and blank captures; exit 8."
                            },
-    "renderingAndPerformanceAcceptance":  "NOT ESTABLISHED: all six Player runs excluded. Visible-window diagnostic awaits approval.",
+    "acceptedVisiblePlayerRuns":  [
+                                      "run7-visible.log",
+                                      "run8-visible.log",
+                                      "run9-visible.log"
+                                  ],
+    "validatedBinarySourceCommit":  "2dd216fc",
+    "diagnosticBinaryHashes":  [
+                                   {
+                                       "file":  "CutWorldSandbox.exe",
+                                       "sha256":  "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+                                   },
+                                   {
+                                       "file":  "GameAssembly.dll",
+                                       "sha256":  "8d6d02bbfa6cdf235619793a58cf0c84d999a6464e8f3ad94c689432e1491715"
+                                   },
+                                   {
+                                       "file":  "CutWorldSandbox_Data/globalgamemanagers",
+                                       "sha256":  "a45f0c84e8280e52fdc21f5a8468914689bf64eed55d70eb5a7cc759368447b7"
+                                   }
+                               ],
+    "renderingAndPerformanceAcceptance":  "Representative synthetic product scene: three visible-host offscreen mono runs accepted, captures visually reviewed. No Legacy32 comparison or shipping/XR performance claim.",
     "limitations":  [
                         "Original synthetic product sandbox, not Megacity physics or character integration.",
                         "Inclusive Main Thread contains waits; working set is a process snapshot, not GPU residency or peak.",
