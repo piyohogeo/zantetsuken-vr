@@ -3,6 +3,7 @@ using System.Collections;
 using NUnit.Framework;
 using Unity.Collections;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.TestTools;
 
 namespace Zantetsu.Rendering.Tests
@@ -300,6 +301,21 @@ namespace Zantetsu.Rendering.Tests
                 AssertBuffersMatch(buffers, pool);
                 Assert.That(buffers.TryGrow(pool, GrownVertices * 2, GrownIndices * 2), Is.True, "growth is possible again");
             }
+        }
+
+        [UnityTest]
+        public IEnumerator CompletedReadbacks_RemainSuccessfulWhenRetirementPollingIsDelayed()
+        {
+            using var pool = new VpCpuGeometryPool(100, 200, Allocator.Persistent);
+            using var buffers = QuadBuffersWithCubeAppended(pool);
+            var oldVertices = buffers.VertexBuffer;
+            var oldIndices = buffers.IndexBuffer;
+            Assert.That(buffers.TryGrow(pool, GrownVertices, GrownIndices), Is.True);
+            AsyncGPUReadback.WaitAllRequests(); // test only: guarantee completion before delaying collection
+            for (int i = 0; i < 5; i++) yield return null;
+            Assert.That(buffers.TryReleaseRetired(), Is.True, "successful completion must outlive the request data frame");
+            Assert.That(oldVertices.IsValid() || oldIndices.IsValid(), Is.False);
+            Assert.That(buffers.TryReleaseRetired(), Is.False);
         }
 
         [Test]

@@ -78,7 +78,7 @@ namespace Zantetsu.MeshCut.Tests
                         {
                             position = k_controlPoints[c[k]],
                             normal = n,
-                            uv0 = uv[k] + new float2(f * 0.013f, f * 0.021f),
+                            uv0 = uv[k] * .8f + new float2(f * 0.013f, f * 0.021f),
                         });
                         topology.Add(c[k]);
                     }

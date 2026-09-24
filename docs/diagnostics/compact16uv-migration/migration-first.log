@@ -1,0 +1,1112 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.22f1 (1c726e1fb402) revision 1864302'; Using compiler version '194234433'; Build Type 'Release'
+OS: 'Windows 11  (10.0.22631) Professional' Language: 'ja' Physical Memory: 130885 MB
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic" at "2026-09-23T23:38:28.4142775Z"
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-09-23T23:38:28Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe
+-batchmode
+-projectPath
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+-runTests
+-testPlatform
+EditMode
+-testFilter
+Zantetsu.Rendering;Zantetsu.MeshCut
+-testResults
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-first.xml
+-logFile
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-first.log
+-force-d3d11
+Successfully changed project path to: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+Player connection [103656]  Target information:
+
+Player connection [103656]  * "[IP] 192.168.133.1 [Port] 55505 [Flags] 2 [Guid] 1933086685 [EditorId] 1933086685 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [103656]  * "[IP] 192.168.10.200 [Port] 55505 [Flags] 2 [Guid] 1933086685 [EditorId] 1933086685 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [103656]  * "[IP] 192.168.211.100 [Port] 55505 [Flags] 2 [Guid] 1933086685 [EditorId] 1933086685 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [103656]  * "[IP] 192.168.118.1 [Port] 55505 [Flags] 2 [Guid] 1933086685 [EditorId] 1933086685 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [103656]  * "[IP] 172.30.96.1 [Port] 55505 [Flags] 2 [Guid] 1933086685 [EditorId] 1933086685 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [103656] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [103656] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Package Manager] Connected to IPC stream "Upm-56224" after 0.2 seconds.
+[Licensing::Module] Licensing is not yet initialized.
+[Licensing::Client] Error: HandshakeResponse reported an error:
+	ResponseCode: 505
+	ResponseStatus: Unsupported protocol version '1.18.1'.
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-junic"
+[Licensing::IpcConnector] LicenseClient-junic channel disconnected successfully.
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22" at "2026-09-23T23:38:29.6070149Z"
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 94940, path: "C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client.exe")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.1+9fbee8e
+  Session Id:              22e4f5ac66104bae975db7e15464eb58
+  Correlation Id:          93d5d8fbbf2f5ed93323a85a15f1d8e1
+  External correlation Id: 8021597750962208491
+  Machine Id:              OBjPOVyKQsIZ/hoJA1BaU9Z6VPQ=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-junic-6000.3.22" (connect: 0.00s, validation: 0.00s, handshake: 0.01s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22-notifications" at "2026-09-23T23:38:29.6137887Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: 15669749089512-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully updated license, isAsync: True, time: 0.00
+[Licensing::Module] Licensing Background thread has ended after 1.20s
+[Licensing::Module] Licensing is initialized (took 0.94s).
+[Licensing::Client] Successfully resolved entitlement details
+Library Redirect Path: Library/
+[Physics::Module] Selected backend.
+[Physics::Module] Name: PhysX
+[Physics::Module] Id: 0xf2b8ea05
+[Physics::Module] SDK Version: 4.1.2
+[Physics::Module] Integration Version: 1.0.0
+[Physics::Module] Threading Mode: Multi-Threaded
+Refreshing native plugins compatible for Editor in 1.00 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.3.22f1 (1c726e1fb402)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+Forcing GfxDevice: Direct3D 11
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 3090 (ID=0x2204)
+    Vendor:   NVIDIA
+    VRAM:     24322 MB
+    Driver:   32.0.15.9186
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56224
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Registered in 0.002319 seconds.
+- Loaded All Assemblies, in  0.298 seconds
+Native extension for WindowsStandalone target not found
+Package Manager log level set to [2]
+ScheduleIndexationOnStartup MainProcess:False IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.271 seconds
+Domain Reload Profiling: 568ms
+	BeginReloadAssembly (107ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (5ms)
+	RebuildCommonClasses (25ms)
+	RebuildNativeTypeToScriptingClass (8ms)
+	initialDomainReloadingComplete (35ms)
+	LoadAllAssembliesAndSetupDomain (121ms)
+		LoadAssemblies (100ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (119ms)
+			TypeCache.Refresh (117ms)
+				TypeCache.ScanAssembly (108ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (0ms)
+	FinalizeReload (272ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (238ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (32ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (54ms)
+			ProcessInitializeOnLoadAttributes (95ms)
+			ProcessInitializeOnLoadMethodAttributes (53ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 61 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ai.navigation@2.0.14 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ai.navigation@134dd6a3b97b)
+    com.unity.burst@1.8.30 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.burst@2f3d916873ea)
+    com.unity.collab-proxy@2.12.4 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collab-proxy@0b1559bcd34e)
+    com.unity.collections@2.6.8 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collections@84e8eb3fc12e)
+    com.unity.ide.rider@3.0.40 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.rider@e4950c6d131b)
+    com.unity.ide.visualstudio@2.0.26 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.visualstudio@a99d56dec63f)
+    com.unity.inputsystem@1.20.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.inputsystem@7a4e1a2a8194)
+    com.unity.mathematics@1.3.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.mathematics@19a9377c4ffa)
+    com.unity.timeline@1.8.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.timeline@8cd8509afae5)
+    com.unity.visualscripting@1.9.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.visualscripting@4edfcc09512f)
+    com.unity.xr.management@4.6.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.management@df145a5bc89e)
+    com.unity.xr.openxr@1.18.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be)
+    com.unity.xr.core-utils@2.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.core-utils@a8b900321199)
+    com.unity.xr.legacyinputhelpers@2.1.13 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.legacyinputhelpers@9535ff2c27ac)
+    com.unity.nuget.mono-cecil@1.11.6 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.nuget.mono-cecil@ecb9724e46ff)
+    com.unity.test-framework.performance@3.5.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework.performance@8b56083ec0f0)
+    com.unity.searcher@4.9.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.searcher@a463122f2c00)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.multiplayer.center@f01f4ba8d00a)
+    com.unity.render-pipelines.universal@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal@de1a320b3ed3)
+    com.unity.test-framework@1.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework@bd7f943e9647)
+    com.unity.ugui@2.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ugui@20629863fcab)
+    com.unity.modules.accessibility@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.accessibility)
+    com.unity.modules.adaptiveperformance@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.adaptiveperformance)
+    com.unity.modules.ai@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vectorgraphics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vectorgraphics)
+    com.unity.modules.vehicles@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ext.nunit@d8c07649098d)
+    com.unity.render-pipelines.core@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.core@202510c2d2a2)
+    com.unity.shadergraph@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.shadergraph@aa8306cf39d6)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal-config@8dc1aab4af1d)
+[Subsystems] Looking for new subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+[Subsystems] Discovering subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.01 seconds
+[ScriptCompilation] Requested script compilation because: Assembly Definition File(s) changed
+[ScriptCompilation] Requested script compilation because: Assetdatabase observed changes in script compilation related files
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+DisplayProgressbar: Compiling Scripts
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\netcorerun\netcorerun.exe "C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\ScriptCompilationBuildProgram.exe" "Library/Bee/1900b0aE.dag.json" "Library/Bee/1900b0aE-inputdata.json" "Library\Bee\buildprogram0.traceevents"
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+ExitCode: 4 Duration: 1s52ms
+Rebuilding DAG because FileSignature timestamp changed: Library/Bee/1900b0aE-inputdata.json
+[ 969/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+*** Tundra requires additional run (1.02 seconds), 2 items updated, 968 evaluated
+ExitCode: 0 Duration: 0s712ms
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --dagfilejson="Library\Bee\1900b0aE.dag.json" --profile="Library/Bee/backend2.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+ExitCode: 0 Duration: 4s348ms
+Finished compiling graph: 1292 nodes, 25821 flattened edges (20895 ToBuild, 214 ToUse), maximum node priority 1503
+[ 448/1288  0s] WriteText Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll.mvfrm.rsp
+[ 593/1288  0s] WriteText Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.rsp
+[ 684/1288  0s] WriteResponseFile Library/Bee/artifacts/rsp/14865213617825129140.rsp
+[ 968/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+[1227/1288  0s] MovedFromExtractor-Combine Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll.mvfrm
+[1228/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll (+2 others)
+[1229/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll, with 139 defines and 274 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1230/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.pdb
+[1231/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.dll
+[1232/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.dll (+2 others)
+[1233/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.StandaloneTests.dll (+2 others)
+[1234/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.dll (+2 others)
+[1235/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.EditModeTests.dll (+2 others)
+[1236/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.StandaloneTests.dll (+2 others)
+[1237/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.dll (+2 others)
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+[1238/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.Verification.dll (+2 others)
+[1239/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.ReferenceIntake.dll (+2 others)
+[1240/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.dll (+2 others)
+[1241/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.Editor.dll (+2 others)
+[1242/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.PlayModeTests.dll (+2 others)
+[1243/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Sandbox.Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.Editor.dll, with 137 defines and 288 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1244/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.Editor.pdb
+[1245/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.Editor.dll
+[1246/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.Urp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.dll, with 140 defines and 277 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1247/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.StandaloneTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.StandaloneTests.dll, with 139 defines and 262 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1248/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.Urp.EditModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.EditModeTests.dll, with 137 defines and 273 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1249/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp.dll (+2 others)
+[1250/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.dll
+[1251/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.pdb
+[1252/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.StandaloneTests.dll
+[1253/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.StandaloneTests.pdb
+[1254/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.EditModeTests.dll
+[1255/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.EditModeTests.pdb
+[1256/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp-Editor.dll (+2 others)
+[1257/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.Verification.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.Verification.dll, with 137 defines and 287 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1258/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Assembly-CSharp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp.dll, with 139 defines and 343 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1259/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.PhysicsCut.PlayModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.PlayModeTests.dll, with 139 defines and 268 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1260/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.ReferenceIntake.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.ReferenceIntake.dll, with 137 defines and 288 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1261/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.PhysicsCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.dll, with 139 defines and 279 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1262/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Sandbox.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.dll, with 139 defines and 282 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1263/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Assembly-CSharp-Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp-Editor.dll, with 137 defines and 365 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1264/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp.pdb
+[1265/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp.dll
+[1266/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.Verification.pdb
+[1267/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.Verification.dll
+[1268/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.ReferenceIntake.pdb
+[1269/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll
+[1270/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.pdb
+[1271/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.ReferenceIntake.dll
+[1272/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.pdb
+[1273/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.dll
+[1274/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.pdb
+[1275/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.dll
+[1276/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.pdb
+[1277/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.dll
+[1278/1288  2s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.dll, with 139 defines and 277 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1279/1288  1s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.StandaloneTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.StandaloneTests.dll, with 139 defines and 265 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1280/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.StandaloneTests.dll
+[1281/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.StandaloneTests.pdb
+[1282/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.pdb
+[1283/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.dll
+[1284/1288  1s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Core.EditModeTests.dll (+2 others)
+Assets\Zantetsu\Tests\EditMode\MeshCut\VpLogicalCutDisplayLastColourTests.cs(579,21): warning CS0219: The variable 'offset' is assigned but its value is never used
+[1285/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Core.EditModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Core.EditModeTests.dll, with 137 defines and 285 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1286/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.pdb
+[1287/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll
+*** Tundra build success (4.33 seconds), 65 items updated, 1288 evaluated
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+Assets\Zantetsu\Tests\EditMode\MeshCut\VpLogicalCutDisplayLastColourTests.cs(579,21): warning CS0219: The variable 'offset' is assigned but its value is never used
+AssetDatabase: script compilation time: 6.468369s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.789 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/Zantetsu.Rendering.asmdef using Guid(4b0a5fd8fda17c043abef631c908b2c0) (AssemblyDefinitionImporter) -> (artifact id: 'a9bdb24ba15d5f92b66f790119a74d19') in 0.014369 seconds
+Refreshing native plugins compatible for Editor in 4.58 ms, found 10 plugins.
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 3.98 ms, found 10 plugins.
+ScheduleIndexationOnStartup MainProcess:True IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  2.761 seconds
+Domain Reload Profiling: 3546ms
+	BeginReloadAssembly (282ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (15ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (145ms)
+	RebuildCommonClasses (28ms)
+	RebuildNativeTypeToScriptingClass (10ms)
+	initialDomainReloadingComplete (24ms)
+	LoadAllAssembliesAndSetupDomain (440ms)
+		LoadAssemblies (299ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (221ms)
+			TypeCache.Refresh (151ms)
+				TypeCache.ScanAssembly (138ms)
+			BuildScriptInfoCaches (59ms)
+			ResolveRequiredComponents (7ms)
+	FinalizeReload (2761ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2568ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (15ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (142ms)
+			ProcessInitializeOnLoadAttributes (2273ms)
+			ProcessInitializeOnLoadMethodAttributes (129ms)
+			AfterProcessingInitializeOnLoad (5ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (16ms)
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCompactVertex.hlsl using Guid(8e43b894b38b1a549b8b9e6eb6d858d6) (ShaderIncludeImporter) -> (artifact id: '2fe348a1f24fc6ba4f32d9795d0c214a') in 0.0128592 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader using Guid(41df497a02107cd4688e1ef52e3e3ae2) (ShaderImporter)Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+ -> (artifact id: '8067e3d7e50ad886baa6e58b0d5d558d') in 0.0422324 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader using Guid(b17e4ebb18671c5499d43ac62c41b5ae) (ShaderImporter) -> (artifact id: 'da66aa7021d48d7d6254a117f5dcafb9') in 0.0079457 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader using Guid(24ef73cd87a05a24caa1c5bc51e4d80f) (ShaderImporter) -> (artifact id: '325eefbba85ee8dfbe9f6771cc95ae51') in 0.0091678 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader using Guid(f4b8d2a6c9e14735b0a3d7c5e1f9b862) (ShaderImporter) -> (artifact id: '5daba41c9792a85980535ee104282565') in 0.007272 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader using Guid(950f072e1bd8bc04695f0a6aafccc29d) (ShaderImporter) -> (artifact id: '49037f508a422b1b2ee79d3fab5fc222') in 0.0082999 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader using Guid(e6a1c8d3b9f24a7ea2d5c0f7b4e9a816) (ShaderImporter) -> (artifact id: '7196f134ee3a63763116594a2ad6f634') in 0.007138 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader using Guid(27472b472ba2f8d42925ea60b1485e4b) (ShaderImporter) -> (artifact id: '7bfb60cf1f5b3c4432bc07a347288126') in 0.0073544 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader using Guid(5d3f8a1c7b2e4f609a8d1c3e5b7f9a24) (ShaderImporter) -> (artifact id: '72b8c1fa4be971f14ff8fb1fa34be0bc') in 0.0140312 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.02 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.02 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.02 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.02 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Refreshing native plugins compatible for Editor in 5.31 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=b29f80c56ea7aa344835acfb6b525be7): Total: 11.364 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=10 (actual=10, local cache=0, cache server=0)
+		Asset DB Process Time: managed=4 ms, native=3342 ms
+		Asset DB Callback time: managed=558 ms, native=152 ms
+		Scripting: domain reloads=1, domain reload time=790 ms, compile time=6470 ms, other=46 ms
+		Project Asset Count: scripts=1539, non-scripts=2389
+		Asset File Changes: new=1, changed=15, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 15.186ms
+	ApplyChangesToAssetFolders: 0.601ms
+	Scan: 159.431ms
+	OnSourceAssetsModified: 1.640ms
+	CategorizeAssetsWithTransientArtifact: 39.049ms
+	ProcessAssetsWithTransientArtifactChanges: 71.615ms
+	CategorizeAssets: 41.199ms
+	ImportOutOfDateAssets: 2922.143ms (-3697.007ms without children)
+		ImportManagerImport: 143.077ms (8.885ms without children)
+			ImportInProcess: 133.752ms
+			UpdateCategorizedAssets: 0.440ms
+		CompileScripts: 6469.558ms
+		ReloadNativeAssets: 0.029ms
+		UnloadImportedAssets: 0.759ms
+		ReloadImportedAssets: 4.693ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 0.545ms
+		InitializingProgressBar: 0.007ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.000ms
+		OnDemandSchedulerStart: 0.481ms
+	PostProcessAllAssets: 687.788ms
+	Hotreload: 7.381ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.002ms
+	UnloadStreamsBegin: 1.708ms
+	PersistCurrentRevisions: 0.270ms
+	UnloadStreamsEnd: 0.001ms
+	GenerateScriptTypeHashes: 1.877ms
+	Untracked: 7415.729ms
+
+Application.AssetDatabase Initial Refresh End
+Scanning for USB devices : 5.983ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-zantetsuken-vr
+Unloading 21 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 7696 unused Assets / (5.1 MB). Loaded Objects now: 8571.
+Memory consumption went from 216.8 MB to 211.8 MB.
+Total: 9.176100 ms (FindLiveObjects: 0.627000 ms CreateObjectMapping: 0.386700 ms MarkObjects: 6.097000 ms  DeleteObjects: 2.064800 ms)
+
+[Project] Loading completed in 15.743 seconds
+	Project init time: 				14.069 seconds
+		Template init time: 		0.000 seconds
+		Package Manager init time: 		1.152 seconds
+		Asset Database init time: 		0.247 seconds
+		Global illumination init time: 	0.002 seconds
+		Assemblies load time: 			0.585 seconds
+		Unity extensions init time: 	0.008 seconds
+		Asset Database refresh time: 	11.364 seconds
+	Scene opening time: 			0.275 seconds
+##utp:{"type":"ProjectInfo","version":2,"phase":"Immediate","time":1790206722844,"processId":56224,"projectLoad":15.7433293,"projectInit":14.0685319,"templateInit":0.0,"packageManagerInit":1.1522081,"assetDatabaseInit":0.2469137,"globalIlluminationInit":0.0024935,"assembliesLoad":0.5849246,"unityExtensionsInit":0.0084452,"assetDatabaseRefresh":11.3638732,"sceneOpening":0.2745874}
+##utp:{"type":"EditorInfo","version":2,"phase":"Immediate","time":1790206722844,"processId":56224,"editorVersion":"6000.3.22f1 (1c726e1fb402)","branch":"6000.3/staging","buildType":"Release","platform":"Windows"}
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Client] Successfully resolved entitlement details
+Running tests for ExecutionSettings with details:
+targetPlatform = 
+playerHeartbeatTimeout = 600
+filters[0] = 
+   Filter with settings:
+   testMode = EditMode
+   targetPlatform = 
+   testNames = null
+   groupNames = Zantetsu.Rendering, Zantetsu.MeshCut
+   categoryNames = null
+   assemblyNames = null
+ignoreTests = {}
+featureFlags = null
+
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:InitializeAndExecuteRun (string[]) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:53)
+UnityEditor.TestTools.TestRunner.CommandLineTest.TestStarter:InitializeAndExecuteRun () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/TestStarter.cs:64)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs Line: 53)
+
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Client] Successfully resolved entitlement details
+[UnityConnectServicesConfig] config is NOT valid, switching to default
+Created GICache directory at C:/Users/%USERNAME%/AppData/LocalLow/Unity/Caches/GiCache. Took: 0.014s, timestamps: [15.753 - 15.768]
+Unloading 6 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 4 unused Assets / (46.0 KB). Loaded Objects now: 8598.
+Memory consumption went from 200.6 MB to 200.6 MB.
+Total: 19.763500 ms (FindLiveObjects: 0.541600 ms CreateObjectMapping: 0.197700 ms MarkObjects: 18.866300 ms  DeleteObjects: 0.155600 ms)
+
+Executing IPrebuildSetup for: Unity.PerformanceTesting.Editor.TestRunBuilder.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<ExecuteMethods>d__8<UnityEngine.TestTools.IPrebuildSetup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<Execute>d__7<UnityEngine.TestTools.IPrebuildSetup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:34)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs Line: 48)
+
+DisplayProgressbar: Burst
+Releasing render texture that is set to be RenderTexture.active!
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.Object:DestroyImmediate (UnityEngine.Object,bool)
+UnityEngine.Object:DestroyImmediate (UnityEngine.Object)
+Zantetsu.MeshCut.Tests.VpGeometryCommitTests:DestroyObjects () (at Assets/Zantetsu/Tests/EditMode/MeshCut/VpGeometryCommitTests.cs:46)
+System.Reflection.RuntimeMethodInfo:Invoke (object,System.Reflection.BindingFlags,System.Reflection.Binder,object[],System.Globalization.CultureInfo)
+System.Reflection.MethodBase:Invoke (object,object[])
+NUnit.Framework.Internal.Reflect:InvokeMethod (System.Reflection.MethodInfo,object,object[])
+NUnit.Framework.Internal.Reflect:InvokeMethod (System.Reflection.MethodInfo,object)
+UnityEngine.TestTools.SetUpTearDownCommand/<InvokeAfter>d__5:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/SetUpTearDownCommand.cs:84)
+UnityEngine.TestTools.EnumeratorHelper/<ProgressOnEnumerator>d__5:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Attributes/EnumeratorHelper.cs:35)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<System.Reflection.MethodInfo>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:248)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<System.Reflection.MethodInfo>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:212)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<UnityEngine.TestTools.IOuterUnityTestAction>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:212)
+UnityEngine.TestTools.RetryCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RetryCommand.cs:37)
+UnityEngine.TestTools.RepeatCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RepeatCommand.cs:36)
+UnityEngine.TestTools.IgnoreTestCommand/<ExecuteEnumerable>d__3:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/IgnoreTestCommand.cs:42)
+UnityEngine.TestTools.StrictCheckCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/StrictCheckCommand.cs:29)
+UnityEngine.TestRunner.NUnitExtensions.Runner.DefaultTestWorkItem/<PerformWork>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/DefaultTestWorkItem.cs:50)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEditor.TestTools.TestRunner.EditModeRunner:MoveNextAndUpdateYieldObject () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs:167)
+UnityEditor.TestTools.TestRunner.EditModeRunner:TestConsumer (UnityEditor.TestTools.TestRunner.TestRunnerStateSerializer) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs:200)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.EditModeRunTask/<Execute>d__1:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/EditModeRunTask.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+[./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs line 167]
+
+Releasing render texture that is set to be RenderTexture.active!
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.Object:DestroyImmediate (UnityEngine.Object,bool)
+UnityEngine.Object:DestroyImmediate (UnityEngine.Object)
+Zantetsu.MeshCut.Tests.VpGeometryCommitTests:DestroyObjects () (at Assets/Zantetsu/Tests/EditMode/MeshCut/VpGeometryCommitTests.cs:46)
+System.Reflection.RuntimeMethodInfo:Invoke (object,System.Reflection.BindingFlags,System.Reflection.Binder,object[],System.Globalization.CultureInfo)
+System.Reflection.MethodBase:Invoke (object,object[])
+NUnit.Framework.Internal.Reflect:InvokeMethod (System.Reflection.MethodInfo,object,object[])
+NUnit.Framework.Internal.Reflect:InvokeMethod (System.Reflection.MethodInfo,object)
+UnityEngine.TestTools.SetUpTearDownCommand/<InvokeAfter>d__5:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/SetUpTearDownCommand.cs:84)
+UnityEngine.TestTools.EnumeratorHelper/<ProgressOnEnumerator>d__5:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Attributes/EnumeratorHelper.cs:35)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<System.Reflection.MethodInfo>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:248)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<System.Reflection.MethodInfo>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:212)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<UnityEngine.TestTools.IOuterUnityTestAction>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:212)
+UnityEngine.TestTools.RetryCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RetryCommand.cs:37)
+UnityEngine.TestTools.RepeatCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RepeatCommand.cs:36)
+UnityEngine.TestTools.IgnoreTestCommand/<ExecuteEnumerable>d__3:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/IgnoreTestCommand.cs:42)
+UnityEngine.TestTools.StrictCheckCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/StrictCheckCommand.cs:29)
+UnityEngine.TestRunner.NUnitExtensions.Runner.DefaultTestWorkItem/<PerformWork>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/DefaultTestWorkItem.cs:50)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<RunChildren>d__17:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:207)
+UnityEngine.TestRunner.NUnitExtensions.Runner.CompositeWorkItem/<PerformWork>d__13:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Runner/CompositeWorkItem.cs:82)
+UnityEditor.TestTools.TestRunner.EditModeRunner:MoveNextAndUpdateYieldObject () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs:167)
+UnityEditor.TestTools.TestRunner.EditModeRunner:TestConsumer (UnityEditor.TestTools.TestRunner.TestRunnerStateSerializer) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs:200)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.EditModeRunTask/<Execute>d__1:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/EditModeRunTask.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+[./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRunner/EditModeRunner.cs line 167]
+
+Unloading 3 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 1 unused Assets / (2.2 KB). Loaded Objects now: 8695.
+Memory consumption went from 206.4 MB to 206.4 MB.
+Total: 9.654800 ms (FindLiveObjects: 0.294900 ms CreateObjectMapping: 0.117100 ms MarkObjects: 9.215000 ms  DeleteObjects: 0.026700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8703.
+Memory consumption went from 206.0 MB to 206.0 MB.
+Total: 9.905200 ms (FindLiveObjects: 0.286000 ms CreateObjectMapping: 0.116100 ms MarkObjects: 9.488900 ms  DeleteObjects: 0.013300 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8696.
+Memory consumption went from 206.0 MB to 206.0 MB.
+Total: 9.955700 ms (FindLiveObjects: 0.281200 ms CreateObjectMapping: 0.098100 ms MarkObjects: 9.558200 ms  DeleteObjects: 0.016800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8703.
+Memory consumption went from 206.0 MB to 206.0 MB.
+Total: 10.921400 ms (FindLiveObjects: 0.314900 ms CreateObjectMapping: 0.115000 ms MarkObjects: 10.474700 ms  DeleteObjects: 0.015800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8671.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 9.521300 ms (FindLiveObjects: 0.324800 ms CreateObjectMapping: 0.118200 ms MarkObjects: 9.066400 ms  DeleteObjects: 0.011200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8671.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 9.242500 ms (FindLiveObjects: 0.344900 ms CreateObjectMapping: 0.130100 ms MarkObjects: 8.755200 ms  DeleteObjects: 0.011600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8671.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 9.480100 ms (FindLiveObjects: 0.319000 ms CreateObjectMapping: 0.122800 ms MarkObjects: 9.022400 ms  DeleteObjects: 0.014700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8671.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 9.471800 ms (FindLiveObjects: 0.293300 ms CreateObjectMapping: 0.113600 ms MarkObjects: 9.050300 ms  DeleteObjects: 0.013600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8671.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 9.273000 ms (FindLiveObjects: 0.357100 ms CreateObjectMapping: 0.125500 ms MarkObjects: 8.777800 ms  DeleteObjects: 0.011700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 10.027200 ms (FindLiveObjects: 0.357600 ms CreateObjectMapping: 0.126700 ms MarkObjects: 9.527300 ms  DeleteObjects: 0.015000 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.8 MB to 205.8 MB.
+Total: 10.722200 ms (FindLiveObjects: 0.386200 ms CreateObjectMapping: 0.145600 ms MarkObjects: 10.170100 ms  DeleteObjects: 0.018900 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.6 MB to 205.6 MB.
+Total: 10.939000 ms (FindLiveObjects: 0.311300 ms CreateObjectMapping: 0.120000 ms MarkObjects: 10.484100 ms  DeleteObjects: 0.022600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 12.148700 ms (FindLiveObjects: 0.369400 ms CreateObjectMapping: 0.130800 ms MarkObjects: 11.626700 ms  DeleteObjects: 0.020300 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 11.672700 ms (FindLiveObjects: 0.413300 ms CreateObjectMapping: 0.126800 ms MarkObjects: 11.110700 ms  DeleteObjects: 0.020500 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 10.163200 ms (FindLiveObjects: 0.399000 ms CreateObjectMapping: 0.125600 ms MarkObjects: 9.625800 ms  DeleteObjects: 0.012000 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 11.464800 ms (FindLiveObjects: 0.324000 ms CreateObjectMapping: 0.118000 ms MarkObjects: 11.001000 ms  DeleteObjects: 0.020700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 11.351600 ms (FindLiveObjects: 0.398600 ms CreateObjectMapping: 0.117500 ms MarkObjects: 10.813900 ms  DeleteObjects: 0.019900 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 11.844700 ms (FindLiveObjects: 0.444800 ms CreateObjectMapping: 0.164300 ms MarkObjects: 11.217500 ms  DeleteObjects: 0.017100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 10.657200 ms (FindLiveObjects: 0.341000 ms CreateObjectMapping: 0.143900 ms MarkObjects: 10.156600 ms  DeleteObjects: 0.014400 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 9.783800 ms (FindLiveObjects: 0.314500 ms CreateObjectMapping: 0.132300 ms MarkObjects: 9.323000 ms  DeleteObjects: 0.012700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 10.287000 ms (FindLiveObjects: 0.349000 ms CreateObjectMapping: 0.128000 ms MarkObjects: 9.793400 ms  DeleteObjects: 0.015600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 10.248700 ms (FindLiveObjects: 0.370200 ms CreateObjectMapping: 0.124700 ms MarkObjects: 9.737500 ms  DeleteObjects: 0.014900 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 205.7 MB to 205.7 MB.
+Total: 9.344800 ms (FindLiveObjects: 0.295300 ms CreateObjectMapping: 0.141100 ms MarkObjects: 8.896100 ms  DeleteObjects: 0.011400 ms)
+
+Unloading 1 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (2.2 KB). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.385700 ms (FindLiveObjects: 0.331900 ms CreateObjectMapping: 0.150900 ms MarkObjects: 8.888700 ms  DeleteObjects: 0.013000 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 8.831500 ms (FindLiveObjects: 0.282200 ms CreateObjectMapping: 0.098500 ms MarkObjects: 8.437800 ms  DeleteObjects: 0.012200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.245400 ms (FindLiveObjects: 0.292000 ms CreateObjectMapping: 0.109400 ms MarkObjects: 8.829000 ms  DeleteObjects: 0.014300 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8680.
+Memory consumption went from 206.0 MB to 206.0 MB.
+Total: 9.566900 ms (FindLiveObjects: 0.285300 ms CreateObjectMapping: 0.116200 ms MarkObjects: 9.149900 ms  DeleteObjects: 0.014700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8687.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.717800 ms (FindLiveObjects: 0.318800 ms CreateObjectMapping: 0.116400 ms MarkObjects: 9.266200 ms  DeleteObjects: 0.015500 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.977600 ms (FindLiveObjects: 0.296200 ms CreateObjectMapping: 0.103600 ms MarkObjects: 9.560900 ms  DeleteObjects: 0.015700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.655700 ms (FindLiveObjects: 0.297800 ms CreateObjectMapping: 0.107500 ms MarkObjects: 9.235900 ms  DeleteObjects: 0.013600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.323500 ms (FindLiveObjects: 0.429000 ms CreateObjectMapping: 0.136100 ms MarkObjects: 8.744000 ms  DeleteObjects: 0.013700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.619700 ms (FindLiveObjects: 0.323700 ms CreateObjectMapping: 0.123000 ms MarkObjects: 10.156300 ms  DeleteObjects: 0.015100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.435700 ms (FindLiveObjects: 0.350500 ms CreateObjectMapping: 0.165800 ms MarkObjects: 9.906000 ms  DeleteObjects: 0.012700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.392500 ms (FindLiveObjects: 0.350500 ms CreateObjectMapping: 0.149900 ms MarkObjects: 9.876600 ms  DeleteObjects: 0.014400 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.806700 ms (FindLiveObjects: 0.295500 ms CreateObjectMapping: 0.110400 ms MarkObjects: 9.388000 ms  DeleteObjects: 0.012100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.989200 ms (FindLiveObjects: 0.331200 ms CreateObjectMapping: 0.114300 ms MarkObjects: 10.527800 ms  DeleteObjects: 0.015100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 12.047200 ms (FindLiveObjects: 0.319700 ms CreateObjectMapping: 0.117200 ms MarkObjects: 11.585000 ms  DeleteObjects: 0.024200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.304700 ms (FindLiveObjects: 0.296400 ms CreateObjectMapping: 0.112200 ms MarkObjects: 9.880100 ms  DeleteObjects: 0.014700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8681.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 9.708900 ms (FindLiveObjects: 0.282600 ms CreateObjectMapping: 0.114000 ms MarkObjects: 9.297400 ms  DeleteObjects: 0.014100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8688.
+Memory consumption went from 206.1 MB to 206.1 MB.
+Total: 10.011600 ms (FindLiveObjects: 0.285600 ms CreateObjectMapping: 0.114400 ms MarkObjects: 9.597400 ms  DeleteObjects: 0.012800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8686.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 9.567700 ms (FindLiveObjects: 0.332900 ms CreateObjectMapping: 0.119600 ms MarkObjects: 9.104300 ms  DeleteObjects: 0.010200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8685.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 11.502400 ms (FindLiveObjects: 0.365300 ms CreateObjectMapping: 0.091700 ms MarkObjects: 11.026900 ms  DeleteObjects: 0.017800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 11.363200 ms (FindLiveObjects: 0.329600 ms CreateObjectMapping: 0.123200 ms MarkObjects: 10.889300 ms  DeleteObjects: 0.020100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 9.920200 ms (FindLiveObjects: 0.338100 ms CreateObjectMapping: 0.142000 ms MarkObjects: 9.415300 ms  DeleteObjects: 0.023900 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 9.881700 ms (FindLiveObjects: 0.360600 ms CreateObjectMapping: 0.165200 ms MarkObjects: 9.340900 ms  DeleteObjects: 0.014300 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 10.490800 ms (FindLiveObjects: 0.381300 ms CreateObjectMapping: 0.105000 ms MarkObjects: 9.990800 ms  DeleteObjects: 0.013000 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 208.6 MB to 208.6 MB.
+Total: 10.628000 ms (FindLiveObjects: 0.337900 ms CreateObjectMapping: 0.111700 ms MarkObjects: 10.140900 ms  DeleteObjects: 0.036100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.728700 ms (FindLiveObjects: 0.310000 ms CreateObjectMapping: 0.110900 ms MarkObjects: 10.287500 ms  DeleteObjects: 0.018700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.235400 ms (FindLiveObjects: 0.360600 ms CreateObjectMapping: 0.188600 ms MarkObjects: 9.667800 ms  DeleteObjects: 0.016800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.352300 ms (FindLiveObjects: 0.346100 ms CreateObjectMapping: 0.124200 ms MarkObjects: 9.859400 ms  DeleteObjects: 0.021100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 11.911500 ms (FindLiveObjects: 0.329400 ms CreateObjectMapping: 0.116000 ms MarkObjects: 11.448400 ms  DeleteObjects: 0.016500 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.356300 ms (FindLiveObjects: 0.312200 ms CreateObjectMapping: 0.106900 ms MarkObjects: 9.916600 ms  DeleteObjects: 0.018800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 11.074700 ms (FindLiveObjects: 0.340400 ms CreateObjectMapping: 0.124500 ms MarkObjects: 10.584700 ms  DeleteObjects: 0.023500 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.827600 ms (FindLiveObjects: 0.377100 ms CreateObjectMapping: 0.131300 ms MarkObjects: 10.302000 ms  DeleteObjects: 0.014600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.000200 ms (FindLiveObjects: 0.395400 ms CreateObjectMapping: 0.123500 ms MarkObjects: 9.468700 ms  DeleteObjects: 0.011800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.789100 ms (FindLiveObjects: 0.276100 ms CreateObjectMapping: 0.114200 ms MarkObjects: 9.385000 ms  DeleteObjects: 0.013100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.410000 ms (FindLiveObjects: 0.287300 ms CreateObjectMapping: 0.132500 ms MarkObjects: 8.975800 ms  DeleteObjects: 0.013400 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.561800 ms (FindLiveObjects: 0.270500 ms CreateObjectMapping: 0.099100 ms MarkObjects: 9.175500 ms  DeleteObjects: 0.015600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.504600 ms (FindLiveObjects: 0.323900 ms CreateObjectMapping: 0.111700 ms MarkObjects: 9.055000 ms  DeleteObjects: 0.012600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.611300 ms (FindLiveObjects: 0.269400 ms CreateObjectMapping: 0.112100 ms MarkObjects: 9.214400 ms  DeleteObjects: 0.014400 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.129900 ms (FindLiveObjects: 0.342700 ms CreateObjectMapping: 0.112800 ms MarkObjects: 9.658600 ms  DeleteObjects: 0.014700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.701300 ms (FindLiveObjects: 0.362900 ms CreateObjectMapping: 0.110200 ms MarkObjects: 10.211800 ms  DeleteObjects: 0.015200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 11.220800 ms (FindLiveObjects: 0.405100 ms CreateObjectMapping: 0.146500 ms MarkObjects: 10.651500 ms  DeleteObjects: 0.016800 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.885100 ms (FindLiveObjects: 0.302900 ms CreateObjectMapping: 0.105000 ms MarkObjects: 10.458500 ms  DeleteObjects: 0.017700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.895000 ms (FindLiveObjects: 0.307500 ms CreateObjectMapping: 0.111500 ms MarkObjects: 9.459400 ms  DeleteObjects: 0.015600 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.828600 ms (FindLiveObjects: 0.308700 ms CreateObjectMapping: 0.098200 ms MarkObjects: 9.408700 ms  DeleteObjects: 0.012200 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.575500 ms (FindLiveObjects: 0.338700 ms CreateObjectMapping: 0.113300 ms MarkObjects: 10.108600 ms  DeleteObjects: 0.013700 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8684.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 10.394100 ms (FindLiveObjects: 0.319200 ms CreateObjectMapping: 0.116400 ms MarkObjects: 9.939500 ms  DeleteObjects: 0.018100 ms)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8691.
+Memory consumption went from 206.3 MB to 206.3 MB.
+Total: 9.856000 ms (FindLiveObjects: 0.320500 ms CreateObjectMapping: 0.112600 ms MarkObjects: 9.405900 ms  DeleteObjects: 0.016200 ms)
+
+Saving results to: C:/Users/%USERNAME%/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+Saving results to: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-first.xml
+Executing IPostBuildCleanup for: Unity.PerformanceTesting.Editor.TestRunBuilder.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<ExecuteMethods>d__8<UnityEngine.TestTools.IPostBuildCleanup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<Execute>d__7<UnityEngine.TestTools.IPostBuildCleanup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:34)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs Line: 48)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8690.
+Memory consumption went from 206.2 MB to 206.2 MB.
+Total: 13.639800 ms (FindLiveObjects: 0.316600 ms CreateObjectMapping: 0.135200 ms MarkObjects: 13.171900 ms  DeleteObjects: 0.014800 ms)
+
+DisplayProgressbar: Undo
+Test run completed. Exiting with code 2 (Failed). One or more tests failed.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:ExitApplication (UnityEditor.TestTools.TestRunner.CommandLineTest.Executer/ReturnCodes,string) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:81)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:ExitIfRunIsCompleted () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:74)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs Line: 81)
+
+[Physics::Module] Cleanup current backend.
+[Physics::Module] Id: 0xf2b8ea05
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22-notifications channel disconnected successfully.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22 channel disconnected successfully.
+AcceleratorClientConnectionCallback - disconnected - :0
+Cleanup mono
+Leak Detected : Persistent allocates 6 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again.
+Checking for leaked weakptr:
+  Found no leaked weakptrs.
+[Package Manager] Server process was shutdown
+##utp:{"type":"MemoryLeaks","version":2,"phase":"Immediate","time":1790206743260,"processId":56224,"allocatedMemory":15403175,"memoryLabels":[{"Default":14409},{"Permanent":15236},{"NewDelete":68035},{"Thread":4230344},{"Manager":824861},{"VertexData":728},{"Geometry":816},{"Texture":296},{"Shader":83093},{"Material":24},{"GfxDevice":56304},{"Animation":392},{"Audio":3040},{"FreeType":8},{"FontEngine":736},{"Physics":2146},{"Physics2D":16},{"Serialization":656},{"Input":14984},{"JobScheduler":33024},{"TextLib":280},{"Mono":32},{"MonoCode":64},{"ScriptingNativeRuntime":155060},{"BaseObject":1617648},{"Resource":1336},{"Renderer":3000},{"Transform":4685},{"File":1016},{"WebCam":616},{"Culling":32},{"Terrain":11394},{"Wind":24},{"STL":40},{"String":14306},{"DynamicArray":115722},{"HashMap":77292},{"Utility":2662454},{"Curl":2478},{"PoolAlloc":2248},{"AI":80},{"TypeTree":11341},{"ScriptManager":512},{"RuntimeInitializeOnLoadManager":64},{"SpriteAtlas":112},{"GI":7792},{"Director":8240},{"CloudService":576},{"WebRequest":552},{"VR":48138},{"SceneManager":504},{"Video":208},{"LazyScriptCache":32},{"NativeArray":79360},{"Camera":17},{"Secure":2377},{"SerializationCache":1576},{"APIUpdating":10320},{"Subsystems":192},{"VirtualTexturing":57888},{"StaticSafetyDebugInfo":278528},{"Analytics":336},{"Hierarchy":608},{"CoreStats":13112},{"Identifiers":6480},{"Gui":96},{"EditorUtility":112234},{"VersionControl":4},{"Undo":947},{"AssetDatabase":4696679},{"EditorGi":328},{"UnityConnect":29232},{"Upm":1896},{"AssetCompliance":64},{"DrivenProperties":72},{"LocalIPC":211},{"ProfilerEditor":9746},{"CoreBusinessMetrics":3222},{"Licensing":664},{"AssetReference":32},{"IPCStream":32}]}

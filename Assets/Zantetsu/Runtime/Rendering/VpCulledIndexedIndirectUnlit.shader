@@ -40,13 +40,8 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
             #include "UnityIndirect.cginc"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
-            // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
-            struct VpRenderVertex
-            {
-                float3 position;
-                float3 normal;
-                float2 uv0;
-            };
+            // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
+            #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -120,7 +115,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[_VpVisibleInstances[visibleIndex]];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
-                output.normalWS = mul((float3x3)objectToWorld, vertex.normal);
+                output.normalWS = mul((float3x3)objectToWorld, VpDecodeNormal(vertex));
                 output.positionWS = positionWS;
                 return output;
             }

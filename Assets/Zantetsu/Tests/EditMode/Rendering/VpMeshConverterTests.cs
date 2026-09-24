@@ -37,6 +37,13 @@ namespace Zantetsu.Rendering.Tests
 
         private readonly List<Mesh> _meshes = new List<Mesh>();
 
+        [Test]
+        public void BuiltInSphere_SourceDomainDiagnostic()
+        {
+            Mesh mesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
+            Debug.Log($"Compact16uv sphere source: u={mesh.uv.Min(x=>x.x):R}..{mesh.uv.Max(x=>x.x):R}, v={mesh.uv.Min(x=>x.y):R}..{mesh.uv.Max(x=>x.y):R}, zeroNormals={mesh.normals.Count(x=>x.sqrMagnitude<=0)}");
+        }
+
         [TearDown]
         public void DestroyMeshes()
         {
@@ -124,8 +131,12 @@ namespace Zantetsu.Rendering.Tests
         private static void AssertAttributes(VpRenderVertex[] vertices, Vector3[] positions, Vector3[] normals, Vector2[] uvs)
         {
             Assert.That(vertices.Select(v => v.position), Is.EqualTo(positions));
-            Assert.That(vertices.Select(v => v.normal), Is.EqualTo(normals));
-            Assert.That(vertices.Select(v => v.uv0), Is.EqualTo(uvs));
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                Assert.That(Vector3.Angle(vertices[i].normal, normals[i]), Is.LessThan(1f));
+                Assert.That(Mathf.Abs(vertices[i].uv0.x - uvs[i].x), Is.LessThanOrEqualTo(1f / 512f + VpRenderVertex.UvEndpointTolerance));
+                Assert.That(Mathf.Abs(vertices[i].uv0.y - uvs[i].y), Is.LessThanOrEqualTo(1f / 512f + VpRenderVertex.UvEndpointTolerance));
+            }
         }
 
         [TestCase("Quad.fbx")]
@@ -217,7 +228,7 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
-        public void MissingUv0_IsWrittenAsZero()
+        public void MissingUv0_IsWrittenAsTheFirstByteCentre()
         {
             Mesh mesh = TwoSubMeshMesh(uvs: false);
             Assert.That(mesh.HasVertexAttribute(VertexAttribute.TexCoord0), Is.False);
@@ -235,6 +246,25 @@ namespace Zantetsu.Rendering.Tests
             AssertRejectedWithoutWriting(mesh, Positions.Length, 9, 6, 9);
 
             Assert.That(mesh.HasVertexAttribute(VertexAttribute.Normal), Is.False);
+        }
+
+        [TestCase(-0.001f)]
+        [TestCase(1.001f)]
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        public void UnsupportedUv_IsRejectedBeforeAnyDestinationWrite(float component)
+        {
+            Mesh mesh = TwoSubMeshMesh();
+            Vector2[] uv = mesh.uv; uv[uv.Length - 1] = new Vector2(component, .5f); mesh.uv = uv;
+            AssertRejectedWithoutWriting(mesh, Positions.Length, 9, 6, 9);
+        }
+
+        [Test]
+        public void ZeroNormal_IsRejectedBeforeAnyDestinationWrite()
+        {
+            Mesh mesh = TwoSubMeshMesh();
+            Vector3[] normals = mesh.normals; normals[normals.Length - 1] = Vector3.zero; mesh.normals = normals;
+            AssertRejectedWithoutWriting(mesh, Positions.Length, 9, 6, 9);
         }
 
         [Test]

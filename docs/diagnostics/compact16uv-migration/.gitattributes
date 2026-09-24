@@ -3,3 +3,10 @@ baseline-editmode.log -text -diff -whitespace
 baseline-editmode.xml -text -diff -whitespace
 baseline-summary.json text eol=lf
 *.md text eol=lf
+migration-*.log -text -diff -whitespace
+migration-*.xml -text -diff -whitespace
+migration-summary.json text eol=lf
+*.png binary
+*.rfloat binary
+player-images/*.txt -text -whitespace
+player-images-verified/*.txt -text -whitespace

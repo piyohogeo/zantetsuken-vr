@@ -3,14 +3,12 @@ using Unity.Mathematics;
 namespace Zantetsu.MeshCut
 {
     /// <summary>
-    /// The fixed cap marker (DESIGN 5.3): every render vertex of a generated cap carries uv0 = (-0.5, 0). The render
-    /// vertex itself is the one common type <see cref="Zantetsu.Rendering.VpRenderVertex"/> (position, normal, uv0,
-    /// 32 bytes), so the negative marker survives in uv0 without a dedicated field or a second UV channel.
+    /// Compact16uv real-cap slot (247,247), shared by CPU pool and GPU. No negative UV or extra field.
     /// </summary>
     public static class RenderCutMarker
     {
-        public const float CapUvX = -0.5f;
-        public const float CapUvY = 0f;
+        public const float CapUvX = Zantetsu.Rendering.VpRenderVertex.CapUvCentre;
+        public const float CapUvY = Zantetsu.Rendering.VpRenderVertex.CapUvCentre;
         public static float2 CapUv => new float2(CapUvX, CapUvY);
     }
 }

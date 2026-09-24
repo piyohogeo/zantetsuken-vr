@@ -200,8 +200,8 @@ namespace Zantetsu.MeshCut.Tests
 
             Input closed = From("closed", Cube(float3.zero), Smooth);
             yield return (Damaged(closed, "a NaN position", i => i.Vertices[i.Indices[0]].position.x = float.NaN), VpCutInputRejection.NonFinite);
-            yield return (Damaged(closed, "an infinite normal", i => i.Vertices[i.Indices[0]].normal.y = float.PositiveInfinity), VpCutInputRejection.NonFinite);
-            yield return (Damaged(closed, "a NaN uv", i => i.Vertices[i.Indices[0]].uv0.x = float.NaN), VpCutInputRejection.NonFinite);
+            yield return (Damaged(closed, "an infinite normal", i => i.Vertices[i.Indices[0]].normal = new Vector3(0, float.PositiveInfinity, 0)), VpCutInputRejection.NonFinite);
+            yield return (Damaged(closed, "a NaN uv", i => i.Vertices[i.Indices[0]].uv0 = new Vector2(float.NaN, 0)), VpCutInputRejection.NonFinite);
             yield return (Damaged(closed, "an index past the vertices", i => i.Indices[4] = (uint)i.Vertices.Length), VpCutInputRejection.InvalidReference);
             yield return (Damaged(closed, "a topology id past the count", i => i.TopologyOfVertex[0] = i.TopologyVertexCount), VpCutInputRejection.InvalidReference);
             yield return (Damaged(closed, "a topology map of the wrong length", i => Array.Resize(ref i.TopologyOfVertex, i.TopologyOfVertex.Length - 1)), VpCutInputRejection.InvalidReference);
