@@ -84,6 +84,8 @@ namespace Zantetsu.Sandbox
             private bool _measurementFailed;
             private Camera _captureCamera;
             private RenderTexture _captureTarget;
+            private Vector3 _authoredPosition, _authoredChildPosition;
+            private Quaternion _authoredRotation;
 #if VP_DIAGNOSTIC_SCENE_AB
             private SceneAbRecorder _ab;
             private Vector3 _abOriginalPosition, _abChildPosition;
@@ -133,6 +135,11 @@ namespace Zantetsu.Sandbox
                 }
 
                 LogState("the body is registered");
+                if (_probe.IsAuthoredMegacity)
+                {
+                    _authoredPosition = _probe.Actor.transform.position;
+                    _authoredRotation = _probe.Actor.transform.rotation;
+                }
 #if VP_DIAGNOSTIC_SCENE_AB
                 _ab = gameObject.AddComponent<SceneAbRecorder>(); _ab.Initialize(_world);
                 _abOriginalPosition = _probe.Actor.transform.position;
@@ -163,7 +170,7 @@ namespace Zantetsu.Sandbox
                 _ab.Phase = 1;
                 bool asked = _probe.AskCut(body, new Vector4(0f, 1f, 0f, -.137f));
 #else
-                bool asked = _probe.AskCut(body, new Vector4(0f, 1f, 0f, 0f));
+                bool asked = _probe.AskCut(body, _probe.IsAuthoredMegacity ? _probe.FirstPlane : new Vector4(0f, 1f, 0f, 0f));
 #endif
                 Log("asked for a cut of the body: " + asked);
                 if (!asked)
@@ -209,6 +216,10 @@ namespace Zantetsu.Sandbox
                     + " positive=" + record.positive + " negative=" + record.negative
                     + " stage=" + _world.Geometry.StageOf(operation));
                 LogState("after the commit");
+                if (_probe.IsAuthoredMegacity)
+                    foreach (var id in new[] { record.positive, record.negative })
+                        if (_world.Owners.TryGet(id, out var owner))
+                        { Hold(owner.Root); owner.Root.transform.SetPositionAndRotation(_authoredPosition, _authoredRotation); }
 #if VP_DIAGNOSTIC_SCENE_AB
                 _ab.Phase = 2; _ab.Mark("first-cut", record.positive, record.negative);
 #endif
@@ -226,7 +237,8 @@ namespace Zantetsu.Sandbox
                     negative.Root.transform.SetPositionAndRotation(_abOriginalPosition, _abOriginalRotation);
 #endif
                     Vector3 before = positive.Root.transform.position;
-                    positive.Root.transform.position += new Vector3(0f, 1.1f, 0f);
+                    positive.Root.transform.position += new Vector3(0f, _probe.IsAuthoredMegacity ? 3f : 1.1f, 0f);
+                    if (_probe.IsAuthoredMegacity) _authoredChildPosition = positive.Root.transform.position;
 #if VP_DIAGNOSTIC_SCENE_AB
                     _abChildPosition = positive.Root.transform.position;
 #endif
@@ -281,6 +293,14 @@ namespace Zantetsu.Sandbox
                 }
 
                 _world.Ledger.TryGetOperation(second, out LogicalCutOperation secondRecord);
+                if (_probe.IsAuthoredMegacity)
+                    foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
+                        if (_world.Owners.TryGet(id, out var owner))
+                        {
+                            Hold(owner.Root);
+                            var shift = id.Equals(secondRecord.positive) ? new Vector3(3, 0, 0) : Vector3.zero;
+                            owner.Root.transform.SetPositionAndRotation(_authoredChildPosition + shift, _authoredRotation);
+                        }
 #if VP_DIAGNOSTIC_SCENE_AB
                 foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
                     if (_world.Owners.TryGet(id, out PhysicsFragmentOwner grandchild))
@@ -301,6 +321,13 @@ namespace Zantetsu.Sandbox
 #endif
                 yield return null;
                 yield return Capture("04-after-the-child-cut");
+                if (_probe.IsAuthoredMegacity && _measure && VpCutSurfaceAtlas.IsBound)
+                {
+                    var colours = VpCutSurfaceColour.Capture();
+                    VpCutSurfaceColour.SetDebugEnabled(true);
+                    yield return Capture("04b-after-recut-debug");
+                    VpCutSurfaceColour.Restore(colours);
+                }
 
                 // ----- the ordinary ending -------------------------------------------------------------------------
                 Log("asking the world to end");
@@ -344,6 +371,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 VpLogicalCutDisplay display = _world.Display;
+                if (_world.GeometryFaults != 0) _measurementFailed = true;
                 bool live = display != null && !display.IsDisposed;
                 Log(what + ": frame=" + Time.frameCount
                     + " ready=" + _world.IsReady
@@ -356,6 +384,8 @@ namespace Zantetsu.Sandbox
                     + " settledCollections=" + (live ? display.SettledCollections : -1)
                     + " broken=" + (live && display.IsBroken)
                     + " halted=" + (live && display.IsHalted));
+                if (_probe != null && _probe.IsAuthoredMegacity && live)
+                    Log("authored storage vertices=" + _world.Storage.VertexCount);
             }
 
             /// <summary>

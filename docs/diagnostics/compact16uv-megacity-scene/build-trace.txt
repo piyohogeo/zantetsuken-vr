@@ -1,0 +1,5 @@
+Compact16uv scene: authoredMegacity=True private variant; original scene not overwritten.
+Compact16uv mono diagnostic build: XR initialize-on-start disabled for this build only.
+SCENE AB BUILD: enabled=False legacy32=False
+PLAYER BUILD SETTINGS: scene=Assets/Licensed/Compact16uvIntake/SceneIntegration/Compact16uvMegacity.unity target=StandaloneWindows64 backend=IL2CPP il2cppConfiguration=Release il2cppCodeGeneration=OptimizeSpeed stripping=Minimal apiCompatibility=NET_Standard_2_0 graphicsApis=Direct3D11 autoGraphicsApi=False
+PLAYER BUILD RESULT: result=Succeeded output=[USERPROFILE]/src/Compact16uvMegacityBuildingScene_20260924/CutWorldSandbox.exe size=1464960776 bytes errors=0 warnings=5 time=00:00:27.2510886
