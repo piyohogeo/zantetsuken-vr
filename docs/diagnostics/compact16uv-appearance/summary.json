@@ -1,0 +1,673 @@
+{
+    "schemaVersion":  1,
+    "baselineCommit":  "da7e35ee",
+    "profile":  "Compact16uv-ActualMegacityAppearance",
+    "runs":  [
+                 {
+                     "name":  "player-first",
+                     "total":  20,
+                     "passed":  16,
+                     "failed":  4,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                                      "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                                      "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                                      "Zantetsu.Rendering.StandaloneTests.VpIndexedDrawSubmissionOrderProbeTests.ShadowReceiverAndCasterControls_RecordFinalImagesAndAtlasSeparately"
+                                  ]
+                 },
+                 {
+                     "name":  "player-second",
+                     "total":  20,
+                     "passed":  20,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 }
+             ],
+    "measurements":  [
+                         {
+                             "run":  "player-first",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Failed",
+                             "measurement":  "Appearance stage=0 view=0: covered=16607, silhouetteDiff=23, maxRgb=238, meanRgb=3.570402, changed=1139"
+                         },
+                         {
+                             "run":  "player-first",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Failed",
+                             "measurement":  "Appearance stage=0 view=1: covered=3561, silhouetteDiff=7, maxRgb=187, meanRgb=5.114387, changed=465"
+                         },
+                         {
+                             "run":  "player-first",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Failed",
+                             "measurement":  "Appearance stage=0 view=2: covered=16118, silhouetteDiff=56, maxRgb=212, meanRgb=9.543492, changed=2193"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=0 view=0: covered=16607, silhouetteDiff=0, maxRgb=1, meanRgb=0.011200, changed=513"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Palette appearance view=0: silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0; DXT1 source vs DXT5 modified atlas, recorded separately"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=0 view=0: maxRgb=1, capChanged=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=1 view=0: covered=14907, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=1 view=0: maxRgb=0, capChanged=1"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=2 view=0: covered=20247, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=2 view=0: maxRgb=0, capChanged=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=3 view=0: covered=22178, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=3 view=0: maxRgb=0, capChanged=12260"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(0)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance isolated upload: samples=101, medianMs=0.092300, p95Ms=0.116300, managedBytes=0, vertices=11884, vertexBytes=190144, indexBytes=3240, capacityVertexBytes=1048576; not total Main, GPU time, residency or 32B speed comparison"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=0 view=1: covered=3561, silhouetteDiff=0, maxRgb=1, meanRgb=0.003183, changed=22"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Palette appearance view=1: silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0; DXT1 source vs DXT5 modified atlas, recorded separately"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=0 view=1: maxRgb=1, capChanged=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=1 view=1: covered=3123, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=1 view=1: maxRgb=0, capChanged=1339"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=2 view=1: covered=4192, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=2 view=1: maxRgb=0, capChanged=1588"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=3 view=1: covered=4457, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(1)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=3 view=1: maxRgb=0, capChanged=657"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=0 view=2: covered=16118, silhouetteDiff=0, maxRgb=1, meanRgb=0.008024, changed=321"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Palette appearance view=2: silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0; DXT1 source vs DXT5 modified atlas, recorded separately"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=0 view=2: maxRgb=1, capChanged=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=1 view=2: covered=10818, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=1 view=2: maxRgb=0, capChanged=3166"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=2 view=2: covered=18816, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=2 view=2: maxRgb=0, capChanged=12626"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance stage=3 view=2: covered=16182, silhouetteDiff=0, maxRgb=0, meanRgb=0.000000, changed=0"
+                         },
+                         {
+                             "run":  "player-second",
+                             "test":  "Zantetsu.Rendering.StandaloneTests.Compact16uvAppearancePlayerTests.LicensedMegacity_SourceMeshAndThreeRecuts_MatchIndexed16(2)",
+                             "result":  "Passed",
+                             "measurement":  "Appearance debug stage=3 view=2: maxRgb=0, capChanged=12858"
+                         }
+                     ],
+    "evidence":  [
+                     {
+                         "file":  "build-first.log",
+                         "sha256":  "005d3c2188c6d3a8a62969f1a956ec82038ddc5215d6e0bac1611bd586920dd3",
+                         "beforeAnonymizationSha256":  "5ac1dc3b6a519e4071a788bd922f00907988cc82a2d2d43bb21fd95239390db1"
+                     },
+                     {
+                         "file":  "player-first.log",
+                         "sha256":  "2c05538001857e24c8866989024bab697066c3c9bdc8b5bebeba2e22208a957b",
+                         "beforeAnonymizationSha256":  "3f01cbabbf339c9e2fcfa159783df03b36d99a95bd1db7b33edeaa7df66d1eee"
+                     },
+                     {
+                         "file":  "player-first.xml",
+                         "sha256":  "dde0847c1f9dc29961b33b8c1a7f580fde9a226f2d60fb1e48ee7074e052f1e8",
+                         "beforeAnonymizationSha256":  "31ef136f370fd6941f250162291ae0ca2c37c40ae2d4cfe483177a24b95c9b1b"
+                     },
+                     {
+                         "file":  "player-second.log",
+                         "sha256":  "f410af5f1be40c6f2edaa4e7c717f317c7c5c6b647643dbc48f841a6658943f0",
+                         "beforeAnonymizationSha256":  "566ad534ce5939c21f2c9d410fa7efac83659698968602942874b2a8c1415b40"
+                     },
+                     {
+                         "file":  "player-second.xml",
+                         "sha256":  "98b5a3ef0a246c4b85982ae2a8802f60fbb502ecb63b3965d535d321828cb192",
+                         "beforeAnonymizationSha256":  "49356668453456a8ddc48078b08b4bdc37fe535e9c53aaae73aba5e823865ceb"
+                     },
+                     {
+                         "file":  "README.md",
+                         "sha256":  "4c2dfd9971f45026e8cc6c2d4ce3bac8043d99f8e207ea03909f24aed2624872"
+                     },
+                     {
+                         "file":  "images/stage0-view0-mesh.png",
+                         "sha256":  "36cdada52ed21b9f503cb4c6795f525eda2b2cc75a5604d7759a18f745cc1d1c"
+                     },
+                     {
+                         "file":  "images/stage0-view0-packed.png",
+                         "sha256":  "5ef75207eb8cb32b6d43f14a975be0785cd4bcf0cf70c81fb037ead75def115e"
+                     },
+                     {
+                         "file":  "images/stage0-view1-mesh.png",
+                         "sha256":  "f773e67127236801103a76c9305e07579f3567c04c6181490264f0c62a769d21"
+                     },
+                     {
+                         "file":  "images/stage0-view1-packed.png",
+                         "sha256":  "0e0ab1e29bc30a66e517fe4eb5e0f28598b5db4a14065a6b575e3f60b30d46a6"
+                     },
+                     {
+                         "file":  "images/stage0-view2-mesh.png",
+                         "sha256":  "d7439490a0ed954b4da1f6fa6ca61c86835ce877d286b20ae6aa0b313791b046"
+                     },
+                     {
+                         "file":  "images/stage0-view2-packed.png",
+                         "sha256":  "8ccd736ec235134748da8e36bdebd3a898ffd9443442a2d44a62f9871e54f9a5"
+                     },
+                     {
+                         "file":  "images-second/stage0-view0-debug-mesh.png",
+                         "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                     },
+                     {
+                         "file":  "images-second/stage0-view0-debug-packed.png",
+                         "sha256":  "5ef75207eb8cb32b6d43f14a975be0785cd4bcf0cf70c81fb037ead75def115e"
+                     },
+                     {
+                         "file":  "images-second/stage0-view0-mesh.png",
+                         "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                     },
+                     {
+                         "file":  "images-second/stage0-view0-packed.png",
+                         "sha256":  "5ef75207eb8cb32b6d43f14a975be0785cd4bcf0cf70c81fb037ead75def115e"
+                     },
+                     {
+                         "file":  "images-second/stage0-view0-source-palette.png",
+                         "sha256":  "6e9b0c02bdec2455a2c8e36691f0ba29a44cc947be215ff5535d2e9fdce9ffc2"
+                     },
+                     {
+                         "file":  "images-second/stage0-view1-debug-mesh.png",
+                         "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                     },
+                     {
+                         "file":  "images-second/stage0-view1-debug-packed.png",
+                         "sha256":  "0e0ab1e29bc30a66e517fe4eb5e0f28598b5db4a14065a6b575e3f60b30d46a6"
+                     },
+                     {
+                         "file":  "images-second/stage0-view1-mesh.png",
+                         "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                     },
+                     {
+                         "file":  "images-second/stage0-view1-packed.png",
+                         "sha256":  "0e0ab1e29bc30a66e517fe4eb5e0f28598b5db4a14065a6b575e3f60b30d46a6"
+                     },
+                     {
+                         "file":  "images-second/stage0-view1-source-palette.png",
+                         "sha256":  "da355466f97c13724c364c396a78b3b8c60bda363266bf7505fe7ab355a4a2f0"
+                     },
+                     {
+                         "file":  "images-second/stage0-view2-debug-mesh.png",
+                         "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                     },
+                     {
+                         "file":  "images-second/stage0-view2-debug-packed.png",
+                         "sha256":  "8ccd736ec235134748da8e36bdebd3a898ffd9443442a2d44a62f9871e54f9a5"
+                     },
+                     {
+                         "file":  "images-second/stage0-view2-mesh.png",
+                         "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                     },
+                     {
+                         "file":  "images-second/stage0-view2-packed.png",
+                         "sha256":  "8ccd736ec235134748da8e36bdebd3a898ffd9443442a2d44a62f9871e54f9a5"
+                     },
+                     {
+                         "file":  "images-second/stage0-view2-source-palette.png",
+                         "sha256":  "811de609a3a5973ef0f6b4f29ac9c467c3d991089d2daba45d859465cf092809"
+                     },
+                     {
+                         "file":  "images-second/stage1-view0-debug-mesh.png",
+                         "sha256":  "b574a8bb00b67049ac2f6631f0f4532d0dd70391ee41f520978bb8e75e29a4e7"
+                     },
+                     {
+                         "file":  "images-second/stage1-view0-debug-packed.png",
+                         "sha256":  "b574a8bb00b67049ac2f6631f0f4532d0dd70391ee41f520978bb8e75e29a4e7"
+                     },
+                     {
+                         "file":  "images-second/stage1-view0-mesh.png",
+                         "sha256":  "201366251f0ebab8636f2d5c27a9691ffc2081e8e318021a80b66de8ee6ea079"
+                     },
+                     {
+                         "file":  "images-second/stage1-view0-packed.png",
+                         "sha256":  "201366251f0ebab8636f2d5c27a9691ffc2081e8e318021a80b66de8ee6ea079"
+                     },
+                     {
+                         "file":  "images-second/stage1-view1-debug-mesh.png",
+                         "sha256":  "27ff42c86cc5460fd9e2353e3b41eac2aeeafa93661be4644bf9d921b47ff04f"
+                     },
+                     {
+                         "file":  "images-second/stage1-view1-debug-packed.png",
+                         "sha256":  "27ff42c86cc5460fd9e2353e3b41eac2aeeafa93661be4644bf9d921b47ff04f"
+                     },
+                     {
+                         "file":  "images-second/stage1-view1-mesh.png",
+                         "sha256":  "bd23f0274f812cf53a86757138c46d2dbc1e9c7c800969b1258a30ef8f04fd4a"
+                     },
+                     {
+                         "file":  "images-second/stage1-view1-packed.png",
+                         "sha256":  "bd23f0274f812cf53a86757138c46d2dbc1e9c7c800969b1258a30ef8f04fd4a"
+                     },
+                     {
+                         "file":  "images-second/stage1-view2-debug-mesh.png",
+                         "sha256":  "4256de9c68167a5c8fce70b03f171d8ad7721ef43a3f9322a2c6b77c2e968b4e"
+                     },
+                     {
+                         "file":  "images-second/stage1-view2-debug-packed.png",
+                         "sha256":  "4256de9c68167a5c8fce70b03f171d8ad7721ef43a3f9322a2c6b77c2e968b4e"
+                     },
+                     {
+                         "file":  "images-second/stage1-view2-mesh.png",
+                         "sha256":  "72426e3e91a3bb6114ccdf293d9a39f28f14f68a75325d06bf2415a94bccba68"
+                     },
+                     {
+                         "file":  "images-second/stage1-view2-packed.png",
+                         "sha256":  "72426e3e91a3bb6114ccdf293d9a39f28f14f68a75325d06bf2415a94bccba68"
+                     },
+                     {
+                         "file":  "images-second/stage2-view0-debug-mesh.png",
+                         "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                     },
+                     {
+                         "file":  "images-second/stage2-view0-debug-packed.png",
+                         "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                     },
+                     {
+                         "file":  "images-second/stage2-view0-mesh.png",
+                         "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                     },
+                     {
+                         "file":  "images-second/stage2-view0-packed.png",
+                         "sha256":  "0adeedf635c220d733c4addf1862ed74dc4299c0c10ef44be1c8f25997ebd86a"
+                     },
+                     {
+                         "file":  "images-second/stage2-view1-debug-mesh.png",
+                         "sha256":  "d4e62988f83d83c8862c727601c3c9ca806c26988e6c50da9e7666087dd51872"
+                     },
+                     {
+                         "file":  "images-second/stage2-view1-debug-packed.png",
+                         "sha256":  "d4e62988f83d83c8862c727601c3c9ca806c26988e6c50da9e7666087dd51872"
+                     },
+                     {
+                         "file":  "images-second/stage2-view1-mesh.png",
+                         "sha256":  "aa469831c144b9cc2e00030767745ed1e4826cf46f7720eddc463e0f979c9587"
+                     },
+                     {
+                         "file":  "images-second/stage2-view1-packed.png",
+                         "sha256":  "aa469831c144b9cc2e00030767745ed1e4826cf46f7720eddc463e0f979c9587"
+                     },
+                     {
+                         "file":  "images-second/stage2-view2-debug-mesh.png",
+                         "sha256":  "feee92e0d15b50f5c7b0b7852417a72bb4d5323f7b20ca4c950b885e7ef2cc72"
+                     },
+                     {
+                         "file":  "images-second/stage2-view2-debug-packed.png",
+                         "sha256":  "feee92e0d15b50f5c7b0b7852417a72bb4d5323f7b20ca4c950b885e7ef2cc72"
+                     },
+                     {
+                         "file":  "images-second/stage2-view2-mesh.png",
+                         "sha256":  "7b64c47780b3c80df6495e01d2e2eef230ac3a07c4df0ec224331197218a2a92"
+                     },
+                     {
+                         "file":  "images-second/stage2-view2-packed.png",
+                         "sha256":  "7b64c47780b3c80df6495e01d2e2eef230ac3a07c4df0ec224331197218a2a92"
+                     },
+                     {
+                         "file":  "images-second/stage3-view0-debug-mesh.png",
+                         "sha256":  "c3782b7f08be0e96b1a248e890bb84b54a671e93527ab5acb172b9a5fdb62a66"
+                     },
+                     {
+                         "file":  "images-second/stage3-view0-debug-packed.png",
+                         "sha256":  "c3782b7f08be0e96b1a248e890bb84b54a671e93527ab5acb172b9a5fdb62a66"
+                     },
+                     {
+                         "file":  "images-second/stage3-view0-mesh.png",
+                         "sha256":  "f29b7e67ea8749637bd40696bfa4a99e37a46ccaf8dad2e439b67a46956d24b6"
+                     },
+                     {
+                         "file":  "images-second/stage3-view0-packed.png",
+                         "sha256":  "f29b7e67ea8749637bd40696bfa4a99e37a46ccaf8dad2e439b67a46956d24b6"
+                     },
+                     {
+                         "file":  "images-second/stage3-view1-debug-mesh.png",
+                         "sha256":  "c2448a6666720cc1630d2343baf330b0a364399ab2c5042c6b615eecdae6f319"
+                     },
+                     {
+                         "file":  "images-second/stage3-view1-debug-packed.png",
+                         "sha256":  "c2448a6666720cc1630d2343baf330b0a364399ab2c5042c6b615eecdae6f319"
+                     },
+                     {
+                         "file":  "images-second/stage3-view1-mesh.png",
+                         "sha256":  "32cfb2f3f0f1c4b658697d0a27d43d6cadfb801a23ce25152791fd5dbe46d13d"
+                     },
+                     {
+                         "file":  "images-second/stage3-view1-packed.png",
+                         "sha256":  "32cfb2f3f0f1c4b658697d0a27d43d6cadfb801a23ce25152791fd5dbe46d13d"
+                     },
+                     {
+                         "file":  "images-second/stage3-view2-debug-mesh.png",
+                         "sha256":  "9ee50095736a890aa4527490f2a15a5b6e0be190f9bb85c405bd3e229ed0a767"
+                     },
+                     {
+                         "file":  "images-second/stage3-view2-debug-packed.png",
+                         "sha256":  "9ee50095736a890aa4527490f2a15a5b6e0be190f9bb85c405bd3e229ed0a767"
+                     },
+                     {
+                         "file":  "images-second/stage3-view2-mesh.png",
+                         "sha256":  "58a2bc60fcdc1fd448902e28ccbe1020100f2f2ee901670e77443f9370c1f0a1"
+                     },
+                     {
+                         "file":  "images-second/stage3-view2-packed.png",
+                         "sha256":  "58a2bc60fcdc1fd448902e28ccbe1020100f2f2ee901670e77443f9370c1f0a1"
+                     },
+                     {
+                         "file":  "shadow-images/01-default-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/01-default-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/01-default-vp-forward.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "shadow-images/02-default-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/02-default-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/02-default-vp-both.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "shadow-images/03-default-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/03-default-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/03-default-mesh-off.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "shadow-images/04-default-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/04-default-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/04-default-mesh-on.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "shadow-images/05-lit-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/05-lit-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/05-lit-mesh-off.png",
+                         "sha256":  "b1719cd40dc68a916a044307cb404d5fbd2bd105561ed0ab133b04f21ddccd9b"
+                     },
+                     {
+                         "file":  "shadow-images/06-lit-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/06-lit-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/06-lit-mesh-on.png",
+                         "sha256":  "5c90515af16963305dff58a69b016a3273e0c35692b3b21577646da9f583107b"
+                     },
+                     {
+                         "file":  "shadow-images/07-lit-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/07-lit-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/07-lit-vp-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "shadow-images/08-lit-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/08-lit-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/08-lit-vp-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "shadow-images/09-lit-vp-forward-repeat.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/09-lit-vp-forward-repeat.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/09-lit-vp-forward-repeat.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "shadow-images/10-lit-request-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/10-lit-request-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/10-lit-request-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "shadow-images/11-lit-request-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "shadow-images/11-lit-request-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "shadow-images/11-lit-request-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "shadow-images/measurements.txt",
+                         "sha256":  "a88b075c2c4df7722ee5bfcf21fbbccb00496aaa39c774bd15e479fc11b3e125"
+                     }
+                 ],
+    "sources":  [
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvAppearanceBuild.cs",
+                        "sha256":  "d570a0c72b59d5392e11b80d43ee3099ca98f8f3e188fb442f5a4ee397cd20bd"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvAppearanceBuild.cs.meta",
+                        "sha256":  "18279364d0a15bff361e161d4578435f8eb378a5913bf7bcbbab896ff0a84714"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvAppearancePlayerTests.cs",
+                        "sha256":  "b7c15bba451891ff96b4617290c0f215be28710f40041b39b3d74061e87f2469"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvAppearancePlayerTests.cs.meta",
+                        "sha256":  "e75958c94ec1dfb6ebfd9c73580579ffa23d0ca6de9b972b97eb96d7366159af"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvMeshOracle.shader",
+                        "sha256":  "7dd9a6e53f53c4d450ad061a1f72183b6a914b8d6b1f6b1c266e95bab154b53d"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvMeshOracle.shader.meta",
+                        "sha256":  "8dd7fe986cfad9c2eccf4a0c398edd78985f3b5282f5842ec4334a5740bd9385"
+                    },
+                    {
+                        "path":  "DESIGN.md",
+                        "sha256":  "e28a398dc0dd189c6b9eeb07b3e5979d5202721acf1de7137ac57f1d7f63f2a9"
+                    },
+                    {
+                        "path":  "Tools/Summarize-Compact16uv-Appearance.ps1",
+                        "sha256":  "d30e174b0d7611725bc9f3f3fd08e812bc2aff4cfaa54138e3e93899799d702e"
+                    }
+                ],
+    "privateReferenceHashes":  [
+                                   {
+                                       "file":  "MegacitySource.asset",
+                                       "sha256":  "3a77ba7f8882e4aa4891f1027127133177f87377e6774792126a60b93684a844"
+                                   },
+                                   {
+                                       "file":  "MegacitySource.asset.meta",
+                                       "sha256":  "236bb7ba9fd2a2c6aff3aa503f211aad50fa228f86185ba6ab267686f0bc7455"
+                                   },
+                                   {
+                                       "file":  "SourcePalette.mat",
+                                       "sha256":  "395012a00f4ce1a62b1017890b3a971289b2b58f013d6ec214ce393610da538b"
+                                   },
+                                   {
+                                       "file":  "SourcePalette.mat.meta",
+                                       "sha256":  "e9f44dc94875ce27fd7e491a98fb38887d2338d694a2faf9eb0398a2aad41016"
+                                   }
+                               ],
+    "limitations":  [
+                        "One pinned static Megacity asset, not all assets or characters.",
+                        "Cut Mesh oracle uses the same published CPU16 cut output, not independent Legacy32 cutting.",
+                        "Isolated upload CPU timing is not total Main, GPU execution, residency or a 32B comparison.",
+                        "No product scene replacement, XR acceptance or main merge."
+                    ]
+}

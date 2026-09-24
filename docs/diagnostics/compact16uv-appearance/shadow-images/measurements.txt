@@ -1,0 +1,120 @@
+device=Direct3D11, gpu=NVIDIA GeForce RTX 3090, quality=PC, colorSpace=Linear, reversedZ=True, pipeline=PC_RPAsset (UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset)
+pipeline data={"k_AssetVersion":13,"k_AssetPreviousVersion":13,"m_RendererType":1,"m_RendererData":{"instanceID":0},"m_RendererDataList":[{"instanceID":10248}],"m_DefaultRendererIndex":0,"m_RequireDepthTexture":true,"m_RequireOpaqueTexture":true,"m_OpaqueDownsampling":1,"m_SupportsTerrainHoles":true,"m_SupportsHDR":true,"m_HDRColorBufferPrecision":0,"m_MSAA":4,"m_RenderScale":1.0,"m_UpscalingFilter":0,"m_FsrOverrideSharpness":false,"m_FsrSharpness":0.9200000166893005,"m_EnableLODCrossFade":true,"m_LODCrossFadeDitheringType":1,"m_ShEvalMode":0,"m_LightProbeSystem":0,"m_ProbeVolumeMemoryBudget":1024,"m_ProbeVolumeBlendingMemoryBudget":256,"m_SupportProbeVolumeGPUStreaming":false,"m_SupportProbeVolumeDiskStreaming":false,"m_SupportProbeVolumeScenarios":false,"m_SupportProbeVolumeScenarioBlending":false,"m_ProbeVolumeSHBands":1,"m_MainLightRenderingMode":1,"m_MainLightShadowsSupported":true,"m_MainLightShadowmapResolution":2048,"m_AdditionalLightsRenderingMode":1,"m_AdditionalLightsPerObjectLimit":4,"m_AdditionalLightShadowsSupported":true,"m_AdditionalLightsShadowmapResolution":2048,"m_AdditionalLightsShadowResolutionTierLow":256,"m_AdditionalLightsShadowResolutionTierMedium":512,"m_AdditionalLightsShadowResolutionTierHigh":1024,"m_ReflectionProbeBlending":true,"m_ReflectionProbeBoxProjection":true,"m_ReflectionProbeAtlas":true,"m_ShadowDistance":50.0,"m_ShadowCascadeCount":4,"m_Cascade2Split":0.25,"m_Cascade3Split":{"x":0.10000000149011612,"y":0.30000001192092898},"m_Cascade4Split":{"x":0.12299998849630356,"y":0.29260000586509707,"z":0.5359999537467957},"m_CascadeBorder":0.10775860399007797,"m_ShadowDepthBias":0.10000000149011612,"m_ShadowNormalBias":0.5,"m_SoftShadowsSupported":true,"m_ConservativeEnclosingSphere":true,"m_NumIterationsEnclosingSphere":64,"m_SoftShadowQuality":3,"m_AdditionalLightsCookieResolution":2048,"m_AdditionalLightsCookieFormat":3,"m_UseSRPBatcher":true,"m_SupportsDynamicBatching":false,"m_MixedLightingSupported":true,"m_SupportsLightCookies":true,"m_SupportsLightLayers":true,"m_DebugLevel":0,"m_StoreActionsOptimization":0,"m_UseAdaptivePerformance":true,"m_ColorGradingMode":0,"m_ColorGradingLutSize":32,"m_AllowPostProcessAlphaOutput":false,"m_UseFastSRGBLinearConversion":false,"m_SupportDataDrivenLensFlare":true,"m_SupportScreenSpaceLensFlare":true,"m_GPUResidentDrawerMode":0,"m_SmallMeshScreenPercentage":0.0,"m_GPUResidentDrawerEnableOcclusionCullingInCameras":false,"m_ShadowType":1,"m_LocalShadowsSupported":false,"m_LocalShadowsAtlasResolution":256,"m_MaxPixelLights":0,"m_ShadowAtlasResolution":256,"m_VolumeFrameworkUpdateMode":0,"m_VolumeProfile":{"instanceID":10250},"apvScenesData":{"obsoleteSceneBounds":{"m_Keys":[],"m_Values":[]},"obsoleteHasProbeVolumes":{"m_Keys":[],"m_Values":[]}},"m_ShaderVariantLogLevel":0,"m_ShadowCascades":0,"m_Textures":{"blueNoise64LTex":{"instanceID":10172},"bayerMatrixTex":{"instanceID":10182}}}
+RenderSettings.sun=, ambient=Skybox, ambientIntensity=1
+primitive ground: material=Hidden/InternalErrorShader, shader=Hidden/InternalErrorShader, supported=False, pipeline=<none>, keywords=[], passes= <Unnamed Pass 0> DepthNormalsOnly DepthOnly, _ReceiveShadows=absent, _RECEIVE_SHADOWS_OFF=False, color=absent
+explicit Lit ground: material=VpShadowDiagnosticLit, shader=Universal Render Pipeline/Lit, supported=True, pipeline=UniversalPipeline, keywords=[], passes= ForwardLit ShadowCaster DepthOnly DepthNormals MotionVectors XRMotionVectors, _ReceiveShadows=1, _RECEIVE_SHADOWS_OFF=False, color=RGBA(0.500, 0.500, 0.500, 1.000)
+VP shadow: material=VpIndexedIndirectShadowProbe, shader=Zantetsu/VP Indexed Indirect Shadow Caster, supported=True, pipeline=UniversalPipeline, keywords=[], passes= ShadowCaster, _ReceiveShadows=absent, _RECEIVE_SHADOWS_OFF=False, color=absent
+sun=VP Probe Sun, direction=(0.00, -0.57, 0.82), shadows=Hard, strength=1, bias=0.05, normalBias=0.4, cullingMask=-1; camera position=(0.00, 10.00, 0.00), rotation=(90.00, 0.00, 0.00), ortho=4, near/far=0.1/20, mask=-1, groundBounds=Center: (0.00, 0.00, 0.00), Extents: (5.00, 0.00, 5.00)
+geometric ground shadow: x=[-2,-1] or [1,2], z=[0.4997,2.9279]; view x,z=[-4,4]; theoretical area~1243 pixels
+VP worldBounds=Center: (0.00, 1.20, 0.00), Extents: (2.00, 0.50, 0.50), commands=1, vertices=24, indices=36, range=4/6
+01-default-vp-forward: submit frame=19
+01-default-vp-forward: rendered frame=19, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+01-default-vp-forward: cascadeSphere0=(0.00, 0.00, 0.00, 0.00)
+01-default-vp-forward: cascadeSphere1=(0.00, 0.00, 0.00, 0.00)
+01-default-vp-forward: cascadeSphere2=(0.00, 0.00, 0.00, 0.00)
+01-default-vp-forward: cascadeSphere3=(0.00, 0.00, 0.00, 0.00)
+01-default-vp-forward: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+01-default-vp-forward: final image readback requested frame=19
+01-default-vp-forward: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+02-default-vp-both: submit frame=25
+02-default-vp-both: rendered frame=25, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.01, -3.90), mapSize=(0.00, 0.00, 2048.00, 2048.00), keywords(main,cascade,screen)=False,True,False
+02-default-vp-both: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+02-default-vp-both: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+02-default-vp-both: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+02-default-vp-both: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+02-default-vp-both: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+02-default-vp-both: final image readback requested frame=25
+02-default-vp-both: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+DEFAULT VP: sameGround=15872, changedRGB>2=0, darker>2/5/10=0/0/0, maxDrop=0, meanDrop=0, dark5Bounds=128,128..-1,-1, magentaBefore/After=15872/15872, oldMean=164.7057, oldShadowed=0, marker=510
+03-default-mesh-off: submit frame=31
+03-default-mesh-off: rendered frame=31, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+03-default-mesh-off: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+03-default-mesh-off: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+03-default-mesh-off: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+03-default-mesh-off: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+03-default-mesh-off: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+03-default-mesh-off: final image readback requested frame=31
+03-default-mesh-off: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+04-default-mesh-on: submit frame=37
+04-default-mesh-on: rendered frame=37, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.01, -3.90), mapSize=(0.00, 0.00, 2048.00, 2048.00), keywords(main,cascade,screen)=False,True,False
+04-default-mesh-on: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+04-default-mesh-on: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+04-default-mesh-on: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+04-default-mesh-on: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+04-default-mesh-on: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+04-default-mesh-on: final image readback requested frame=37
+04-default-mesh-on: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+DEFAULT MESH: sameGround=15872, changedRGB>2=0, darker>2/5/10=0/0/0, maxDrop=0, meanDrop=0, dark5Bounds=128,128..-1,-1, magentaBefore/After=15872/15872, oldMean=164.6875, oldShadowed=0, marker=512
+explicit Lit ground: receiver check shader=Universal Render Pipeline/Lit, supported=True, renderer.receiveShadows=True, _RECEIVE_SHADOWS_OFF=False, _ReceiveShadows=1
+05-lit-mesh-off: submit frame=44
+05-lit-mesh-off: rendered frame=44, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+05-lit-mesh-off: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+05-lit-mesh-off: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+05-lit-mesh-off: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+05-lit-mesh-off: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+05-lit-mesh-off: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+05-lit-mesh-off: final image readback requested frame=44
+05-lit-mesh-off: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+06-lit-mesh-on: submit frame=50
+06-lit-mesh-on: rendered frame=50, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.01, -3.90), mapSize=(0.00, 0.00, 2048.00, 2048.00), keywords(main,cascade,screen)=False,True,False
+06-lit-mesh-on: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+06-lit-mesh-on: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+06-lit-mesh-on: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+06-lit-mesh-on: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+06-lit-mesh-on: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+06-lit-mesh-on: final image readback requested frame=50
+06-lit-mesh-on: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+LIT MESH: sameGround=15872, changedRGB>2=1248, darker>2/5/10=1248/1248/1248, maxDrop=53.33333, meanDrop=4.193511, dark5Bounds=32,72..95,110, magentaBefore/After=0/0, oldMean=114.9449, oldShadowed=1248, marker=512
+07-lit-vp-forward: submit frame=56
+07-lit-vp-forward: rendered frame=56, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+07-lit-vp-forward: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+07-lit-vp-forward: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+07-lit-vp-forward: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+07-lit-vp-forward: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+07-lit-vp-forward: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+07-lit-vp-forward: final image readback requested frame=56
+07-lit-vp-forward: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+08-lit-vp-both: submit frame=62
+08-lit-vp-both: rendered frame=62, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.01, -3.90), mapSize=(0.00, 0.00, 2048.00, 2048.00), keywords(main,cascade,screen)=False,True,False
+08-lit-vp-both: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+08-lit-vp-both: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+08-lit-vp-both: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+08-lit-vp-both: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+08-lit-vp-both: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+08-lit-vp-both: final image readback requested frame=62
+08-lit-vp-both: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+LIT VP: sameGround=15872, changedRGB>2=1248, darker>2/5/10=1248/1248/1248, maxDrop=53.33333, meanDrop=4.193511, dark5Bounds=32,72..95,110, magentaBefore/After=0/0, oldMean=114.9632, oldShadowed=1248, marker=510
+09-lit-vp-forward-repeat: submit frame=68
+09-lit-vp-forward-repeat: rendered frame=68, enabled=True, stereoEnabled=False, explicitRequest=False, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+09-lit-vp-forward-repeat: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+09-lit-vp-forward-repeat: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+09-lit-vp-forward-repeat: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+09-lit-vp-forward-repeat: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+09-lit-vp-forward-repeat: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+09-lit-vp-forward-repeat: final image readback requested frame=68
+09-lit-vp-forward-repeat: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+LIT VP BASELINE REPEAT: sameGround=15872, changedRGB>2=0, darker>2/5/10=0/0/0, maxDrop=0, meanDrop=0, dark5Bounds=128,128..-1,-1, magentaBefore/After=0/0, oldMean=114.9632, oldShadowed=0, marker=510
+10-lit-request-forward: submit frame=73
+10-lit-request-forward: rendered frame=73, enabled=False, stereoEnabled=False, explicitRequest=True, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.25, -3.90), mapSize=(1.00, 1.00, 1.00, 1.00), keywords(main,cascade,screen)=True,False,False
+10-lit-request-forward: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+10-lit-request-forward: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+10-lit-request-forward: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+10-lit-request-forward: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+10-lit-request-forward: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+10-lit-request-forward: final image readback requested frame=73
+10-lit-request-forward: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+11-lit-request-both: submit frame=80
+11-lit-request-both: rendered frame=80, enabled=False, stereoEnabled=False, explicitRequest=True, mainLightPosition=(0.00, 0.57, -0.82, 0.00), mainLightColor=(1.00, 1.00, 1.00, 1.00), shadowParams=(1.00, 0.00, 0.01, -3.90), mapSize=(0.00, 0.00, 2048.00, 2048.00), keywords(main,cascade,screen)=False,True,False
+11-lit-request-both: cascadeSphere0=(0.00, 8.68, 0.00, 5.79)
+11-lit-request-both: cascadeSphere1=(0.00, 5.76, 0.00, 5.90)
+11-lit-request-both: cascadeSphere2=(0.00, 1.66, 0.00, 6.15)
+11-lit-request-both: cascadeSphere3=(0.00, -5.38, 0.00, 7.30)
+11-lit-request-both: atlas source=UnityBlack 4x4, id=-22, format=R8G8B8A8_SRGB
+11-lit-request-both: final image readback requested frame=80
+11-lit-request-both: atlas raw min=0, max=0, nonClear=0/16; occupancy preview is binary; raw values saved separately
+LIT VP EXPLICIT REQUEST: sameGround=15872, changedRGB>2=1248, darker>2/5/10=1248/1248/1248, maxDrop=53.33333, meanDrop=4.193511, dark5Bounds=32,72..95,110, magentaBefore/After=0/0, oldMean=114.9632, oldShadowed=1248, marker=510
+classification=native and VP shadows verified with explicit Lit receiver
+explicit Lit ground: receiver check shader=Universal Render Pipeline/Lit, supported=True, renderer.receiveShadows=True, _RECEIVE_SHADOWS_OFF=False, _ReceiveShadows=1
+--- image result (original probe) ---
+  lit brightness (forward only) = 114.9632, marker (VP forward) pixels = 510
+ORIGINAL PROBE VP FORWARD vs BOTH: sameGround=15872, changedRGB>2=1248, darker>2/5/10=1248/1248/1248, maxDrop=53.33333, meanDrop=4.193511, dark5Bounds=32,72..95,110, magentaBefore/After=0/0, oldMean=114.9632, oldShadowed=1248, marker=510
