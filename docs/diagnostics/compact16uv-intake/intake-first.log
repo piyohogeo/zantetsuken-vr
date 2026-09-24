@@ -1,0 +1,825 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.22f1 (1c726e1fb402) revision 1864302'; Using compiler version '194234433'; Build Type 'Release'
+OS: 'Windows 11  (10.0.22631) Professional' Language: 'ja' Physical Memory: 130885 MB
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic" at "2026-09-24T00:12:40.4371127Z"
+System  architecture: x64
+Process architecture: x64
+Date: 2026-09-24T00:12:40Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe
+-batchmode
+-projectPath
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+-executeMethod
+Zantetsu.MeshCut.ReferenceIntake.Compact16uvProductIntake.Run
+-quit
+-logFile
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-intake/intake-first.log
+-force-d3d11
+Successfully changed project path to: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+Player connection [15204]  Target information:
+
+Player connection [15204]  * "[IP] 192.168.133.1 [Port] 55505 [Flags] 2 [Guid] 4082414256 [EditorId] 4082414256 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [15204]  * "[IP] 192.168.10.200 [Port] 55505 [Flags] 2 [Guid] 4082414256 [EditorId] 4082414256 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [15204]  * "[IP] 192.168.211.100 [Port] 55505 [Flags] 2 [Guid] 4082414256 [EditorId] 4082414256 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [15204]  * "[IP] 192.168.118.1 [Port] 55505 [Flags] 2 [Guid] 4082414256 [EditorId] 4082414256 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [15204]  * "[IP] 172.30.96.1 [Port] 55505 [Flags] 2 [Guid] 4082414256 [EditorId] 4082414256 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [15204] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [15204] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Package Manager] Connected to IPC stream "Upm-111524" after 0.3 seconds.
+[Licensing::Module] Licensing is not yet initialized.
+[Licensing::Client] Error: HandshakeResponse reported an error:
+	ResponseCode: 505
+	ResponseStatus: Unsupported protocol version '1.18.1'.
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-junic"
+[Licensing::IpcConnector] LicenseClient-junic channel disconnected successfully.
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22" at "2026-09-24T00:12:42.1304855Z"
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 94940, path: "C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client.exe")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.1+9fbee8e
+  Session Id:              0f94007c1e234684b1ba281320d48dff
+  Correlation Id:          93d5d8fbbf2f5ed93323a85a15f1d8e1
+  External correlation Id: 939712069193210086
+  Machine Id:              OBjPOVyKQsIZ/hoJA1BaU9Z6VPQ=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-junic-6000.3.22" (connect: 0.00s, validation: 0.00s, handshake: 0.01s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22-notifications" at "2026-09-24T00:12:42.1399113Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: 15669749089512-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully updated license, isAsync: True, time: 0.00
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] Licensing Background thread has ended after 1.71s
+[Licensing::Module] Licensing is initialized (took 1.37s).
+[Licensing::Client] Successfully resolved entitlement details
+Library Redirect Path: Library/
+[Physics::Module] Selected backend.
+[Physics::Module] Name: PhysX
+[Physics::Module] Id: 0xf2b8ea05
+[Physics::Module] SDK Version: 4.1.2
+[Physics::Module] Integration Version: 1.0.0
+[Physics::Module] Threading Mode: Multi-Threaded
+Artifact Garbage Collection - Removed 2 unused hashed content files
+Refreshing native plugins compatible for Editor in 1.40 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.3.22f1 (1c726e1fb402)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+Forcing GfxDevice: Direct3D 11
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 3090 (ID=0x2204)
+    Vendor:   NVIDIA
+    VRAM:     24322 MB
+    Driver:   32.0.15.9186
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56524
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Registered in 0.001716 seconds.
+- Loaded All Assemblies, in  0.410 seconds
+Native extension for WindowsStandalone target not found
+Package Manager log level set to [2]
+ScheduleIndexationOnStartup MainProcess:False IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.358 seconds
+Domain Reload Profiling: 766ms
+	BeginReloadAssembly (160ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (38ms)
+	RebuildCommonClasses (32ms)
+	RebuildNativeTypeToScriptingClass (11ms)
+	initialDomainReloadingComplete (44ms)
+	LoadAllAssembliesAndSetupDomain (161ms)
+		LoadAssemblies (121ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (158ms)
+			TypeCache.Refresh (156ms)
+				TypeCache.ScanAssembly (143ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (1ms)
+	FinalizeReload (358ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (323ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (41ms)
+			SetLoadedEditorAssemblies (4ms)
+			BeforeProcessingInitializeOnLoad (73ms)
+			ProcessInitializeOnLoadAttributes (131ms)
+			ProcessInitializeOnLoadMethodAttributes (73ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 61 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ai.navigation@2.0.14 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ai.navigation@134dd6a3b97b)
+    com.unity.burst@1.8.30 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.burst@2f3d916873ea)
+    com.unity.collab-proxy@2.12.4 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collab-proxy@0b1559bcd34e)
+    com.unity.collections@2.6.8 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collections@84e8eb3fc12e)
+    com.unity.ide.rider@3.0.40 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.rider@e4950c6d131b)
+    com.unity.ide.visualstudio@2.0.26 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.visualstudio@a99d56dec63f)
+    com.unity.inputsystem@1.20.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.inputsystem@7a4e1a2a8194)
+    com.unity.mathematics@1.3.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.mathematics@19a9377c4ffa)
+    com.unity.timeline@1.8.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.timeline@8cd8509afae5)
+    com.unity.visualscripting@1.9.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.visualscripting@4edfcc09512f)
+    com.unity.xr.management@4.6.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.management@df145a5bc89e)
+    com.unity.xr.openxr@1.18.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be)
+    com.unity.xr.core-utils@2.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.core-utils@a8b900321199)
+    com.unity.xr.legacyinputhelpers@2.1.13 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.legacyinputhelpers@9535ff2c27ac)
+    com.unity.nuget.mono-cecil@1.11.6 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.nuget.mono-cecil@ecb9724e46ff)
+    com.unity.test-framework.performance@3.5.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework.performance@8b56083ec0f0)
+    com.unity.searcher@4.9.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.searcher@a463122f2c00)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.multiplayer.center@f01f4ba8d00a)
+    com.unity.render-pipelines.universal@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal@de1a320b3ed3)
+    com.unity.test-framework@1.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework@bd7f943e9647)
+    com.unity.ugui@2.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ugui@20629863fcab)
+    com.unity.modules.accessibility@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.accessibility)
+    com.unity.modules.adaptiveperformance@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.adaptiveperformance)
+    com.unity.modules.ai@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vectorgraphics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vectorgraphics)
+    com.unity.modules.vehicles@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ext.nunit@d8c07649098d)
+    com.unity.render-pipelines.core@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.core@202510c2d2a2)
+    com.unity.shadergraph@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.shadergraph@aa8306cf39d6)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal-config@8dc1aab4af1d)
+[Subsystems] Looking for new subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+[Subsystems] Discovering subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.02 seconds
+[ScriptCompilation] Requested script compilation because: Assetdatabase observed changes in script compilation related files
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+DisplayProgressbar: Compiling Scripts
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\netcorerun\netcorerun.exe "C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\ScriptCompilationBuildProgram.exe" "Library/Bee/1900b0aE.dag.json" "Library/Bee/1900b0aE-inputdata.json" "Library\Bee\buildprogram0.traceevents"
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+ExitCode: 4 Duration: 0s348ms
+[ 530/1288  0s] WriteResponseFile Library/Bee/artifacts/rsp/4747638433968585886.rsp
+Rebuilding DAG because FileSignature timestamp changed: Library/Bee/1900b0aE-inputdata.json
+[ 984/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+*** Tundra requires additional run (0.31 seconds), 2 items updated, 983 evaluated
+ExitCode: 0 Duration: 1s152ms
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --dagfilejson="Library\Bee\1900b0aE.dag.json" --profile="Library/Bee/backend2.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+ExitCode: 0 Duration: 6s245ms
+Finished compiling graph: 1292 nodes, 25831 flattened edges (20899 ToBuild, 214 ToUse), maximum node priority 1505
+[ 662/1288  0s] WriteText Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.ReferenceIntake.rsp
+[ 682/1288  0s] WriteText Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.rsp
+[ 684/1288  0s] WriteText Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Core.EditModeTests.rsp
+[ 969/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+[1228/1288  1s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll (+2 others)
+[1229/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.dll, with 139 defines and 274 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1230/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.dll
+[1231/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.pdb
+[1232/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.dll (+2 others)
+[1233/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.dll (+2 others)
+[1235/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.EditModeTests.dll (+2 others)
+[1236/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.Urp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.dll, with 140 defines and 277 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1237/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.Urp.EditModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.Urp.EditModeTests.dll, with 137 defines and 273 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1238/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.dll
+[1239/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.pdb
+[1240/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.EditModeTests.dll
+[1241/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.Urp.EditModeTests.pdb
+[1242/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.StandaloneTests.dll (+2 others)
+[1243/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.dll (+2 others)
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+[1244/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.Verification.dll (+2 others)
+[1245/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Rendering.StandaloneTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Rendering.StandaloneTests.dll, with 139 defines and 264 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1246/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.StandaloneTests.dll
+[1247/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Rendering.StandaloneTests.pdb
+[1248/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.PhysicsCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.dll, with 139 defines and 279 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1249/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.Verification.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.Verification.dll, with 137 defines and 287 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1250/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.Verification.dll
+[1251/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.Verification.pdb
+[1252/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.pdb
+[1253/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.dll
+[1254/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.ReferenceIntake.dll (+2 others)
+[1255/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.dll (+2 others)
+[1256/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.ReferenceIntake.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.ReferenceIntake.dll, with 137 defines and 288 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1257/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.StandaloneTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.StandaloneTests.dll, with 139 defines and 265 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1258/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.MeshCut.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.MeshCut.dll, with 139 defines and 277 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1259/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.ReferenceIntake.pdb
+[1260/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.ReferenceIntake.dll
+[1263/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.dll
+[1264/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.MeshCut.pdb
+[1265/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Sandbox.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.dll, with 139 defines and 282 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1266/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.dll
+[1267/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.pdb
+[1268/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.Editor.dll (+2 others)
+[1269/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Sandbox.Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Sandbox.Editor.dll, with 137 defines and 288 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1270/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.PlayModeTests.dll (+2 others)
+[1271/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.Editor.dll
+[1272/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Sandbox.Editor.pdb
+[1273/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.PhysicsCut.PlayModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.PhysicsCut.PlayModeTests.dll, with 139 defines and 268 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1274/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.pdb
+[1275/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll
+[1276/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp.dll (+2 others)
+[1277/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Assembly-CSharp.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp.dll, with 139 defines and 343 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1278/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp.dll
+[1279/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp.pdb
+[1280/1288  0s] Csc Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp-Editor.dll (+2 others)
+[1281/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Assembly-CSharp-Editor.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Assembly-CSharp-Editor.dll, with 137 defines and 365 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1282/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.pdb
+[1283/1288  0s] CopyFiles Library/ScriptAssemblies/Assembly-CSharp-Editor.dll
+[1284/1288  1s] Csc Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Core.EditModeTests.dll (+2 others)
+Assets\Zantetsu\Tests\EditMode\MeshCut\VpLogicalCutDisplayLastColourTests.cs(579,21): warning CS0219: The variable 'offset' is assigned but its value is never used
+[1285/1288  0s] ILPostProcess Library/Bee/artifacts/1900b0aE.dag/post-processed/Zantetsu.Core.EditModeTests.dll (+pdb)
+Processing assembly Library/Bee/artifacts/1900b0aE.dag/Zantetsu.Core.EditModeTests.dll, with 137 defines and 285 references
+
+processors: Unity.Jobs.CodeGen.JobsILPostProcessor, zzzUnity.Burst.CodeGen.BurstILPostProcessor
+
+running Unity.Jobs.CodeGen.JobsILPostProcessor
+
+running zzzUnity.Burst.CodeGen.BurstILPostProcessor
+[1286/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.pdb
+[1287/1288  0s] CopyFiles Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll
+*** Tundra build success (6.22 seconds), 61 items updated, 1288 evaluated
+Assets\Zantetsu\Runtime\PhysicsCut\PhysicsCutJobs.cs(315,17): warning CS0618: 'Physics.BakeMesh(int, bool, MeshColliderCookingOptions)' is obsolete: 'BakeMesh(int, bool, MeshColliderCookingOptions) is obsolete. Use BakeMesh(EntityId, bool, MeshColliderCookingOptions) instead.'
+Assets\Zantetsu\Tests\EditMode\MeshCut\VpLogicalCutDisplayLastColourTests.cs(579,21): warning CS0219: The variable 'offset' is assigned but its value is never used
+AssetDatabase: script compilation time: 8.198987s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  1.138 seconds
+Start importing ProjectSettings/ProjectSettings.asset using Guid(00000000000000004000000000000000) (LibraryAssetImporter) -> (artifact id: '6cc0775985184a1bcc8251ca0958e3fb') in 0.0269504 seconds
+Start importing Assets/Licensed using Guid(ca005a073ea374f438d77e386b10c2bd) (DefaultImporter) -> (artifact id: '30fd60db54fca8cc0275cca2ba0927e4') in 0.0036708 seconds
+Start importing Assets/Licensed/Compact16uvIntake using Guid(9d459ac1917192844b2e231ed59262f9) (DefaultImporter) -> (artifact id: '7f678d52b54ef21d6c6eb1f27a0c108a') in 0.0021402 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-casual using Guid(8107e4323410cd546810837386e0d5ac) (DefaultImporter) -> (artifact id: '3e06900ee3947f3344eab921f25d1635') in 0.001727 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-professional using Guid(b42216ec3774f9640b1c1b255d64b343) (DefaultImporter) -> (artifact id: 'fee1903ac9ac34e1374481ab37a68ea0') in 0.0018678 seconds
+Start importing Assets/Licensed/Compact16uvIntake/static-megacity using Guid(6b7c11d7908f4744e8847678531d2ae3) (DefaultImporter) -> (artifact id: '684c87712d78c5893814e240f7296f7e') in 0.0022031 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-casual/textures using Guid(2110a7aee8e2a2b4485bb85f1cb37040) (DefaultImporter) -> (artifact id: '304e0af4b77252f92677cbb8d5a2dadd') in 0.0019714 seconds
+Start importing Assets/Licensed/Compact16uvIntake/static-megacity/textures using Guid(54261743c624aae468feaf7d33da7d83) (DefaultImporter) -> (artifact id: '7bbac45f1d37e84d21d368ca57bee878') in 0.0027952 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-professional/textures using Guid(4e1b58fb32cd76540965af96ecf82a21) (DefaultImporter) -> (artifact id: '67389a16b125b081ca793c05f0eafbf9') in 0.0023116 seconds
+Refreshing native plugins compatible for Editor in 9.14 ms, found 10 plugins.
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 6.67 ms, found 10 plugins.
+ScheduleIndexationOnStartup MainProcess:True IndexOnStartup:True
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  3.656 seconds
+Domain Reload Profiling: 4788ms
+	BeginReloadAssembly (318ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (20ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (148ms)
+	RebuildCommonClasses (52ms)
+	RebuildNativeTypeToScriptingClass (21ms)
+	initialDomainReloadingComplete (37ms)
+	LoadAllAssembliesAndSetupDomain (702ms)
+		LoadAssemblies (415ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (393ms)
+			TypeCache.Refresh (256ms)
+				TypeCache.ScanAssembly (238ms)
+			BuildScriptInfoCaches (120ms)
+			ResolveRequiredComponents (12ms)
+	FinalizeReload (3657ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (3350ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (24ms)
+			SetLoadedEditorAssemblies (4ms)
+			BeforeProcessingInitializeOnLoad (195ms)
+			ProcessInitializeOnLoadAttributes (2981ms)
+			ProcessInitializeOnLoadMethodAttributes (138ms)
+			AfterProcessingInitializeOnLoad (7ms)
+			EditorAssembliesLoaded (1ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (24ms)
+Start importing Assets/Licensed/Compact16uvIntake/static-megacity/textures/Textures1_bottom_256.png using Guid(f0c31eb5d5326234396ca71896cac68e) (TextureImporter) -> (artifact id: 'd73dc16fffb48e240fcf91c1a06d23a4') in 0.0107815 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-professional/textures/Textures1_bottom_256.png using Guid(f784f620954e5894c83e8e8cc5e7cced) (TextureImporter) -> (artifact id: '3a48e7021ff1cf5c2c4d4a56d262d0e7') in 0.0047198 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-casual/textures/Textures1_bottom_256.png using Guid(79cbf7ec8dbcc114ba992251547b3f54) (TextureImporter) -> (artifact id: '7e64803f206fc2d299696910c83ed47e') in 0.0047616 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCompactVertex.hlsl using Guid(8e43b894b38b1a549b8b9e6eb6d858d6) (ShaderIncludeImporter) -> (artifact id: 'f5305bda2dcefece7b9258a118944864') in 0.001894 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader using Guid(41df497a02107cd4688e1ef52e3e3ae2) (ShaderImporter)Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+ -> (artifact id: '78e81e2cb21e69b8841dd85961623ad8') in 0.0495293 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader using Guid(b17e4ebb18671c5499d43ac62c41b5ae) (ShaderImporter) -> (artifact id: '3635b6f2f5cfd81e331dda4a23bb74e8') in 0.0080138 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader using Guid(24ef73cd87a05a24caa1c5bc51e4d80f) (ShaderImporter) -> (artifact id: '44f3ace22447dbf214668a1165e60cf5') in 0.0082391 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader using Guid(f4b8d2a6c9e14735b0a3d7c5e1f9b862) (ShaderImporter) -> (artifact id: '9cac66f1b8ff676a03664e902c5c2877') in 0.0089918 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader using Guid(950f072e1bd8bc04695f0a6aafccc29d) (ShaderImporter) -> (artifact id: '62a7d7fc6d9bae8e8646afeb9c1f3af8') in 0.0090977 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader using Guid(e6a1c8d3b9f24a7ea2d5c0f7b4e9a816) (ShaderImporter) -> (artifact id: '88bb327c2246ce7c4223a03c95124f17') in 0.008241 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader using Guid(27472b472ba2f8d42925ea60b1485e4b) (ShaderImporter) -> (artifact id: 'a3d0af7a5ee44fe400ddad8312204b3e') in 0.0083285 seconds
+Start importing Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader using Guid(5d3f8a1c7b2e4f609a8d1c3e5b7f9a24) (ShaderImporter) -> (artifact id: '16afeedff78472b407bb451e802b82ac') in 0.0103927 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-casual/ITHappy_CasualCharacters--f_1.blend using Guid(50c718b559e7a654ea56c491ac906623) (FBXImporter)Keyframe reduction: Ratio: 0.800000%;
+Can't calculate tangents, because mesh 'WGT-rig_torso_pivot' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGTS_rig' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_thigh_ik_pole.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_thigh_ik_pole.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_upper_arm_ik_pole.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_upper_arm_ik_pole.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_breast.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_breast.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_chest' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_heel_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_heel_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_spin_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_spin_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_head' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hips' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_neck' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_palm.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_palm.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_root' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shoulder.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shoulder.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.002' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.003' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik_target.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik_target.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_parent.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_parent.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_toe.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_toe.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_torso' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.002' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.003' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.004' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.005' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik_target.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik_target.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_parent.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_parent.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.R.001' doesn't contain normals.
+ -> (artifact id: '88389724d6b0c998d79a0f3a98cd3559') in 9.0263247 seconds
+Start importing Assets/Licensed/Compact16uvIntake/static-megacity/ITHappy_Megacity_Buildings--bar_001.blend using Guid(abe64e7e2291e5740be4784fa2fca7a4) (FBXImporter) -> (artifact id: '583e047f750de294f899dfbcee6785e4') in 1.1914941 seconds
+Start importing Assets/Licensed/Compact16uvIntake/character-professional/ITHappy_ProfessionalCharacters--c_1.blend using Guid(be1af4d5301a52b4c9a17b672698cfa1) (FBXImporter)Keyframe reduction: Ratio: 0.800000%;
+Can't calculate tangents, because mesh 'WGT-rig_torso_pivot' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGTS_rig' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_thigh_ik_pole.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_thigh_ik_pole.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_upper_arm_ik_pole.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_VIS_upper_arm_ik_pole.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_breast.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_breast.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_chest' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_index.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_middle.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_pinky.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_f_ring.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_heel_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_heel_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_spin_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_spin_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_foot_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_forearm_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hand_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_head' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_hips' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_neck' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_palm.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_palm.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_root' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shin_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shoulder.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_shoulder.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.002' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_spine_fk.003' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik_target.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_ik_target.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_parent.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_parent.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thigh_tweak.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01.R.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01_master.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.01_master.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.02.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_thumb.02.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_toe.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_toe.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_torso' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.002' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.003' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.004' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_tweak_spine.005' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_fk.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_fk.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik_target.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_ik_target.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_parent.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_parent.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.L' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.L.001' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.R' doesn't contain normals.
+Can't calculate tangents, because mesh 'WGT-rig_upper_arm_tweak.R.001' doesn't contain normals.
+ -> (artifact id: '732e9df7dd1e600ff6d1a5f35438937b') in 4.6845816 seconds
+Start importing Assets/Settings/PC_RPAsset.asset using Guid(4b83569d67af61e458304325a23e5dfd) (NativeFormatImporter) -> (artifact id: '52adb523ba73c8548fee2d044e2a5704') in 0.0020107 seconds
+Start importing Assets/Licensed/Compact16uvIntake/intake.json using Guid(f3bd282f0e0409e4aa889a274e912b44) (TextScriptImporter) -> (artifact id: '0fbaeba6c29bf7f83d8b3f5eb5590a95') in 0.0138669 seconds
+Refreshing native plugins compatible for Editor in 6.12 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=495f17dd8142f104482b6909adfc1b3f): Total: 29.764 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=26 (actual=26, local cache=0, cache server=0)
+		Asset DB Process Time: managed=45 ms, native=19471 ms
+		Asset DB Callback time: managed=546 ms, native=300 ms
+		Scripting: domain reloads=1, domain reload time=1139 ms, compile time=8201 ms, other=60 ms
+		Project Asset Count: scripts=1547, non-scripts=2396
+		Asset File Changes: new=19, changed=22, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.003ms
+	InvokePackagesCallback: 27.290ms
+	ApplyChangesToAssetFolders: 1.184ms
+	Scan: 255.445ms
+	OnSourceAssetsModified: 1.224ms
+	CategorizeAssetsWithTransientArtifact: 57.523ms
+	ProcessAssetsWithTransientArtifactChanges: 131.459ms
+	CategorizeAssets: 97.461ms
+	ImportOutOfDateAssets: 18807.038ms (-4521.682ms without children)
+		ImportManagerImport: 15118.162ms (11.889ms without children)
+			ImportInProcess: 15105.634ms
+			UpdateCategorizedAssets: 0.638ms
+		CompileScripts: 8200.517ms
+		ReloadNativeAssets: 2.879ms
+		UnloadImportedAssets: 0.994ms
+		ReloadImportedAssets: 4.091ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 1.094ms
+		InitializingProgressBar: 0.010ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.001ms
+		OnDemandSchedulerStart: 0.973ms
+	PostProcessAllAssets: 868.101ms
+	Hotreload: 8.498ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.210ms
+	UnloadStreamsBegin: 2.983ms
+	PersistCurrentRevisions: 0.486ms
+	UnloadStreamsEnd: 0.003ms
+	GenerateScriptTypeHashes: 3.438ms
+	Untracked: 9505.176ms
+
+Application.AssetDatabase Initial Refresh End
+Scanning for USB devices : 7.923ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-zantetsuken-vr
+Unloading 21 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 7705 unused Assets / (4.5 MB). Loaded Objects now: 8577.
+Memory consumption went from 280.5 MB to 276.1 MB.
+Total: 9.918600 ms (FindLiveObjects: 0.624300 ms CreateObjectMapping: 0.428900 ms MarkObjects: 6.892700 ms  DeleteObjects: 1.970800 ms)
+
+static-megacity: ordered import hash mismatch; topology map must not be reused
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:LogWarning (object)
+Zantetsu.MeshCut.ReferenceIntake.Compact16uvProductIntake:Run () (at Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvProductIntake.cs:27)
+
+(Filename: Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvProductIntake.cs Line: 27)
+
+Asset Pipeline Refresh (id=41fa00efc08ca004c9684593042a2f61): Total: 0.045 seconds - Initiated by RefreshV2(NoUpdateAssetOptions)
+InvalidOperationException: Representative intake failed; see docs/diagnostics/compact16uv-intake/intake.json
+  at Zantetsu.MeshCut.ReferenceIntake.Compact16uvProductIntake.Run () [0x00155] in C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Editor\MeshCut\ReferenceIntake\Compact16uvProductIntake.cs:35 
+
+(Filename: Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvProductIntake.cs Line: 35)
+
+executeMethod method Zantetsu.MeshCut.ReferenceIntake.Compact16uvProductIntake.Run threw exception.
+Exiting without the bug reporter. Application will terminate with return code 1

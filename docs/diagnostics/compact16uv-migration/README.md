@@ -14,6 +14,8 @@ The snapshot commit fixes source provenance; it does not assert test success or 
 
 CPU16 migration is now implemented on this worktree; see [CPU16-MIGRATION.md](CPU16-MIGRATION.md) for the changed contracts, verification and remaining integration gates. The baseline below is historical, not the current vertex ABI.
 
+The next checkpoint adds [offline Static16 intake](../compact16uv-intake/README.md): three representative import contracts and packed static registration, without replacing product scenes or freezing Character poses.
+
 ## Validated starting point
 
 Unity 6000.3.22f1, D3D11, EditMode, filter `Zantetsu.Rendering`: **379/379 passed**, failed/skipped/inconclusive all 0. This includes the copied RenderingUrp tests. The baseline uses the original 32-byte GPU layout; no 16-byte rendering result is claimed. See `baseline-editmode.xml`, `baseline-editmode.log` and `baseline-summary.json`.

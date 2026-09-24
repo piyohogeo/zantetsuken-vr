@@ -1,0 +1,296 @@
+{
+    "schemaVersion":  1,
+    "baselineCommit":  "c083815b",
+    "profile":  "Compact16uv-Static16-Intake",
+    "runs":  [
+                 {
+                     "name":  "editmode-first",
+                     "total":  3611,
+                     "passed":  3611,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "player-first",
+                     "total":  4,
+                     "passed":  4,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 }
+             ],
+    "evidence":  [
+                     {
+                         "file":  "editmode-first.log",
+                         "sha256":  "574a0963abcdb1beb025014edf50a73a54ab226171efdaf55ac07120ea11d246",
+                         "beforeAnonymizationSha256":  "e14670842b07fc142ea35f071155abb59dcb6cd4dc4040c9562988b9b5be4b1d"
+                     },
+                     {
+                         "file":  "editmode-first.xml",
+                         "sha256":  "b1561dc64634e2f705528d591dcc4afd6eddd1b9fc8e7c9249a06136c943777f",
+                         "beforeAnonymizationSha256":  "8d152676bf18ab870a1083f3f519f89c96a9e29903ee85ee27ed33f0f802a2bb"
+                     },
+                     {
+                         "file":  "intake-first.log",
+                         "sha256":  "168168958e47bac7a6b54ee1f531de8328e6937cb719956cefbb8af69fb4d4a5",
+                         "beforeAnonymizationSha256":  "23a6c088ae9f6ec48ceb426b4c93ec91875e7b241fcd7fded150070f5cc5ac7d"
+                     },
+                     {
+                         "file":  "intake-second.log",
+                         "sha256":  "26c1dc52eaa40d12ef62035b55e42b3d6051ea9160285fac37d6754ca69c3750",
+                         "beforeAnonymizationSha256":  "faecba495856b7fbed46d0eb62f94941dfb43af60e6de2622f9aca94fcdab0a0"
+                     },
+                     {
+                         "file":  "player-first.log",
+                         "sha256":  "b936c0d321f34bd91eabce2c64f0ff1f397fe5473ec8643aa3ef5761dad527fe",
+                         "beforeAnonymizationSha256":  "ec3ed3ce41aef532bb27b8bde5666b7e6df6fe737ea9684cc475844df74d33b1"
+                     },
+                     {
+                         "file":  "player-first.xml",
+                         "sha256":  "7a86f374e8c27df97b8a0ee788c819b4a5140edf5ce4f8c0736af17e1ed404f5",
+                         "beforeAnonymizationSha256":  "3dd3594930c845bf8d2a2a64e488ccb307f6820e23105c0b89c4ce0ce75495d0"
+                     },
+                     {
+                         "file":  "intake-first.json",
+                         "sha256":  "3a19be40c5560f7364966c69921da4d324f974f17339a2b812c795537077a523"
+                     },
+                     {
+                         "file":  "intake.json",
+                         "sha256":  "b7660a0ccb1a9879ec016ec7ca8260c6a9aa7ca1b81910695d5bb13d5d4d9541"
+                     },
+                     {
+                         "file":  "README.md",
+                         "sha256":  "f6758235087ce0ee7033c60658ecd5f900e78feb0cc5df201e7154c7b1c8ff3f"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.png",
+                         "sha256":  "b1719cd40dc68a916a044307cb404d5fbd2bd105561ed0ab133b04f21ddccd9b"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.png",
+                         "sha256":  "5c90515af16963305dff58a69b016a3273e0c35692b3b21577646da9f583107b"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images/measurements.txt",
+                         "sha256":  "4cacfc03d9ec1120a46f232157c7d639632c64f027958a0186f3f31f13b24665"
+                     }
+                 ],
+    "sources":  [
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvProductIntake.cs",
+                        "sha256":  "d2674222f13cb94b94f98afb178bb2c4ab3446d15c53453689dd843b15e0e162"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/Compact16uvProductIntake.cs.meta",
+                        "sha256":  "8d9f60d682ec7fa0cc4a4ae7bfbc5bb6e7d63dcb0841449cbc79b97512f32113"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/VpStatic16Writer.cs",
+                        "sha256":  "d5ad189179fe68a79eca3fdeedff6c3b2d57ac78ed7e57660462102e26ab164f"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/VpStatic16Writer.cs.meta",
+                        "sha256":  "99731688e067cad002867101a414065c2f05ba1dd01a949271ca1722a657a045"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpStatic16File.cs",
+                        "sha256":  "91061144fc6f40cb663fb5c30d8ed21edb498d37cc743cb62350cb9beae969c7"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpStatic16File.cs.meta",
+                        "sha256":  "fb775d65b939f73d20098ba2eea26bdcd9313b0f5494495e3681c56f1b303bd2"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpStatic16FileTests.cs",
+                        "sha256":  "61967d0ddd47c8b164d78eb27a1e998a46c5b85e8e30d084df531aafdf27eb7e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpStatic16FileTests.cs.meta",
+                        "sha256":  "b0e0712d87f1c82b9c55020a8d531911fab9b3f3bd7d2b44178bc7a2f51506ff"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Static16IntakePlayerTests.cs",
+                        "sha256":  "98c84235767b0d83f6e840c58e1ce38d1a9a7068352714f3924e95e288b031af"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Static16IntakePlayerTests.cs.meta",
+                        "sha256":  "e3ecc8850647a25e4e2d8bcdce3d4865b32527cc3fd45ae23d85b7668c0e2496"
+                    },
+                    {
+                        "path":  "DESIGN.md",
+                        "sha256":  "094f1281386ae277b0bb93854b90ff332e4499841175e9a8189f055a7e02c4f1"
+                    },
+                    {
+                        "path":  "Tools/Prepare-Compact16uv-Intake.ps1",
+                        "sha256":  "178069f33094c505154b197dfe30ee7829612d9e424e50b292a67e6fff096a05"
+                    },
+                    {
+                        "path":  "Tools/Summarize-Compact16uv-Intake.ps1",
+                        "sha256":  "5c21b5db632cf4400aea6ffe5eac18aa5c403d57b0e6e0d9466ee59beb2eec19"
+                    }
+                ],
+    "inputProvenance":  {
+                            "topologyEvidenceSha256":  "f41f2a3d7442e96211bec4bc908ad8303acac13b71b42b65096d21c774fbd4a1",
+                            "snapshotEvidenceSha256":  "ace742653a39fae3ad8caf701d58f7c5d52c4f4c7f6f26cc51da54cf8b1ae318",
+                            "privateManifestSha256":  "9620c63d7c8f11279c0ed7c9a85818f197d152e8ba2844ea72f7ea4cfa66ffe1",
+                            "assets":  [
+                                           {
+                                               "family":  "character-casual",
+                                               "asset":  "ITHappy_CasualCharacters--f_1.blend",
+                                               "sourceSha256":  "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+                                               "importerSha256":  "8bf0f96d344110493e55953d203dd4649622670adf39f66f4316eecb63133c28",
+                                               "textureSha256":  "88fdb7640dcadbef46db9bb52a533180ae0ef2d5bec5bea599d024c3614ebcc5"
+                                           },
+                                           {
+                                               "family":  "character-professional",
+                                               "asset":  "ITHappy_ProfessionalCharacters--c_1.blend",
+                                               "sourceSha256":  "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+                                               "importerSha256":  "e650276b0e1f62cd1a7c4618519892736d476df42095f8f22258c2cb8abcbaf8",
+                                               "textureSha256":  "88fdb7640dcadbef46db9bb52a533180ae0ef2d5bec5bea599d024c3614ebcc5"
+                                           },
+                                           {
+                                               "family":  "static-megacity",
+                                               "asset":  "ITHappy_Megacity_Buildings--bar_001.blend",
+                                               "sourceSha256":  "d014869e992fc4d80b7c898e4acc173d1038e5c6fa10f26e4bccb392716b4f87",
+                                               "importerSha256":  "2d8253d52e9ca160ec9d40879e130c7e0e9127c1257486d97715a64e1bbf8f46",
+                                               "textureSha256":  "88fdb7640dcadbef46db9bb52a533180ae0ef2d5bec5bea599d024c3614ebcc5"
+                                           }
+                                       ]
+                        },
+    "limitations":  [
+                        "Representative static intake only, not all assets or automatic scene migration.",
+                        "Player correctness is not performance or resident memory evidence.",
+                        "Atlas, current-pose skinning, full asset topology export and XR remain separate."
+                    ]
+}
