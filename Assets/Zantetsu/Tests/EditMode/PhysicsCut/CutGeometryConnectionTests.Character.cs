@@ -32,8 +32,16 @@ namespace Zantetsu.PhysicsCut.Tests
 
         [TestCase("character-casual", 0)] [TestCase("character-casual", 1)]
         public void RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(string family, int pose)
+            => CharacterCompoundCommit(family,pose,false);
+
+        [TestCase("character-casual",0)] [TestCase("character-casual",1)] [TestCase("character-casual",4)]
+        [TestCase("character-professional",0)] [TestCase("character-professional",1)] [TestCase("character-professional",4)]
+        public void FixedScale_Compound19_CommonPlane_CommitsAndRecuts(string family,int pose)
+            => CharacterCompoundCommit(family,pose,true);
+
+        void CharacterCompoundCommit(string family,int pose,bool normalizeFixedScale)
         {
-            CharacterCompoundData data = LoadCharacterCompound(family, pose);
+            CharacterCompoundData data = LoadCharacterCompound(family, pose,normalizeFixedScale);
             using (World w = NewWorld(character: data))
             {
                 Assert.That(w.shape.ConvexCount, Is.EqualTo(19));
@@ -107,7 +115,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     Assert.That(w.harness.InputHash(), Is.EqualTo(originalInput));
                     Assert.That(w.harness.CheckGuards(), Is.Empty);
                     for (int i = 0; i < data.vertices.Length; i++) Assert.That(w.storage.Vertices[i], Is.EqualTo(data.vertices[i]), "original 16B payload immutable");
-                    TestContext.WriteLine($"compound family={family} pose={pose} fill={_fill} stage={stage} input={before.Length} split={splits} inheritedPositive={inheritedPositive} inheritedNegative={inheritedNegative} positive={expectedPositive} negative={expectedNegative} geometryFirst={geometryFirst} volumeBefore={beforeVolume:R} volumeAfter={afterVolume:R} commits={w.commit.Commits}");
+                    TestContext.WriteLine($"compound family={family} pose={pose} fill={_fill} stage={stage} input={before.Length} split={splits} inheritedPositive={inheritedPositive} inheritedNegative={inheritedNegative} positive={expectedPositive} negative={expectedNegative} geometryFirst={geometryFirst} volumeBefore={beforeVolume:R} volumeAfter={afterVolume:R} commits={w.commit.Commits} fixedScalePrepared={normalizeFixedScale}");
                     source = published.positive;
                 }
                 // Check actual display placement after moving/turning the final actor, without a simulation step.
@@ -122,8 +130,16 @@ namespace Zantetsu.PhysicsCut.Tests
         [TestCase("character-professional", 0)] [TestCase("character-professional", 1)]
         [TestCase("character-professional", 2)] [TestCase("character-professional", 3)]
         public void RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(string family, int pose)
+            => CharacterScaledRejection(family,pose,false);
+
+        [TestCase("character-casual",2)] [TestCase("character-casual",3)]
+        [TestCase("character-professional",2)] [TestCase("character-professional",3)]
+        public void FixedScale_RuntimeParentScale_RemainsRejected(string family,int pose)
+            => CharacterScaledRejection(family,pose,true);
+
+        void CharacterScaledRejection(string family,int pose,bool normalizeFixedScale)
         {
-            CharacterCompoundData data = LoadCharacterCompound(family,pose);
+            CharacterCompoundData data = LoadCharacterCompound(family,pose,normalizeFixedScale);
             var bounds = new Bounds(data.vertices[0].position, Vector3.zero);
             foreach (var vertex in data.vertices) bounds.Encapsulate(vertex.position);
             Matrix4x4 placement = Matrix4x4.TRS(data.position,data.rotation,Vector3.one)*data.geometryToOwner;
@@ -139,11 +155,11 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(w.commit.Commits, Is.Zero);
                 Assert.That(w.ledger.Budget.IncompleteCutOperationCount, Is.Zero);
                 Assert.That(w.display.RenderFragmentCount, Is.Zero);
-                TestContext.WriteLine($"FRAME_REJECT family={family} pose={pose} fill={_fill} hulls=19 mappingDeterminant={data.geometryToOwner.inverse.determinant:R} cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE");
+                TestContext.WriteLine($"FRAME_REJECT family={family} pose={pose} fill={_fill} hulls=19 mappingDeterminant={data.geometryToOwner.inverse.determinant:R} cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE fixedScalePrepared={normalizeFixedScale}");
             }
         }
 
-        CharacterCompoundData LoadCharacterCompound(string family, int pose)
+        CharacterCompoundData LoadCharacterCompound(string family, int pose,bool normalizeFixedScale=false)
         {
             const string root = "Assets/Licensed/Compact16uvConvexRepair/";
             string fixturePath = root + "Resources/CharacterPhysicsMigration/" + family + ".json";
@@ -159,15 +175,29 @@ namespace Zantetsu.PhysicsCut.Tests
             var instance = UnityEngine.Object.Instantiate(AssetDatabase.LoadAssetAtPath<GameObject>(entry.assetPath), ancestor.transform);
             foreach (var animator in instance.GetComponentsInChildren<Animator>(true)) animator.enabled = false;
             var skin = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Single(s => s.sharedMesh != null && s.sharedMesh.name == entry.objectName);
+            var originalSkin=skin;
+            float preparedScale=1;
+            if (normalizeFixedScale)
+            {
+                skin=CharacterFixedScalePreparation.Create(skin,ancestor.transform,out preparedScale);
+                _meshes.Add(skin.sharedMesh);
+            }
             if (pose > 0) for (int i = 0; i < skin.bones.Length; i++) skin.bones[i].localRotation *= Quaternion.Euler(0,(i%3-1)*4f,(i%5-2)*3f);
-            if (pose >= 2)
+            if (pose == 2 || pose == 3)
             {
                 ancestor.transform.SetPositionAndRotation(new Vector3(3,-2,5), Quaternion.Euler(17,31,-12));
                 ancestor.transform.localScale = new Vector3(1.3f,.8f,1.1f);
             }
-            if (pose == 3) skin.rootBone.localScale = Vector3.Scale(skin.rootBone.localScale,new Vector3(1.05f,.95f,1.1f));
+            if (pose == 3 || pose == 4) skin.rootBone.localScale = Vector3.Scale(skin.rootBone.localScale,new Vector3(1.05f,.95f,1.1f));
             var baked = new Mesh(); _meshes.Add(baked);
             skin.BakeMesh(baked, true);
+            if (normalizeFixedScale)
+            {
+                var originalBake=new Mesh(); _meshes.Add(originalBake); originalSkin.BakeMesh(originalBake,true);
+                float error=originalBake.vertices.Zip(baked.vertices,(a,b)=>Vector3.Distance(originalSkin.transform.TransformPoint(a),skin.transform.TransformPoint(b))).Max();
+                Assert.That(error,Is.LessThan(2e-5f),"normalization preserves visible world geometry");
+                TestContext.WriteLine($"prepared family={family} pose={pose} fixedScale={preparedScale:R} maxWorldError={error:R}");
+            }
             Matrix4x4 ownerWorld = Matrix4x4.TRS(skin.transform.position, skin.transform.rotation, Vector3.one);
             Matrix4x4 geometryToOwner = ownerWorld.inverse * skin.transform.localToWorldMatrix;
             var polys = fixture.hulls.Select(h =>
@@ -178,7 +208,13 @@ namespace Zantetsu.PhysicsCut.Tests
                 Matrix4x4 transform = geometryToOwner * skin.transform.worldToLocalMatrix * skin.bones[bone].localToWorldMatrix * skin.sharedMesh.bindposes[bone];
                 var vertices = Enumerable.Range(0,h.rendererBindVertices.Length/3).Select(i =>
                 {
-                    Vector3 p = transform.MultiplyPoint3x4(new Vector3((float)h.rendererBindVertices[i*3],(float)h.rendererBindVertices[i*3+1],(float)h.rendererBindVertices[i*3+2]));
+                    Vector3 bindPoint=new Vector3((float)h.rendererBindVertices[i*3],(float)h.rendererBindVertices[i*3+1],(float)h.rendererBindVertices[i*3+2]);
+                    Vector3 p = transform.MultiplyPoint3x4(bindPoint*preparedScale);
+                    if (normalizeFixedScale)
+                    {
+                        Vector3 reference=(ownerWorld.inverse*originalSkin.bones[bone].localToWorldMatrix*originalSkin.sharedMesh.bindposes[bone]).MultiplyPoint3x4(bindPoint);
+                        Assert.That(Vector3.Distance(p,reference),Is.LessThan(2e-5f),"all UCX points preserve original posed world positions");
+                    }
                     return new double3(p.x,p.y,p.z);
                 }).ToArray();
                 return new ConvexPoly(vertices, Enumerable.Range(0,h.faceOffsets.Length-1).Select(i => h.faceIndices.Skip(h.faceOffsets[i]).Take(h.faceOffsets[i+1]-h.faceOffsets[i]).ToArray()).ToArray());
