@@ -61,3 +61,5 @@ After the Editors exited, build-generated shader-prefilter changes were restored
 ## Remaining gates
 
 Full Megacity intake needs authoritative topology for every selected mesh, not the three representative maps. Character self-skin/current-pose integration, finished normal/debug cap atlas, product scene wiring, residency/peak/Main measurements, and XR are still separate. No all-assets migration, atlas integration, scene performance gain or main merge is claimed here. Source palette and Static16 local offline preparation are now ready for the next atlas/material integration step; generation of distribution artifacts by the upstream Blender project has not been changed.
+
+The following checkpoint implements the opt-in [shared palette atlas](../compact16uv-atlas/README.md); its verification and remaining scene/material gates are recorded separately.

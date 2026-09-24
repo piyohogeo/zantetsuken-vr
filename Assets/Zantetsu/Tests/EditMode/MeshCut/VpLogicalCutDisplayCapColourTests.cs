@@ -20,6 +20,35 @@ namespace Zantetsu.MeshCut.Tests
         private static readonly Color OrdinaryUnderTest = new Color(0.1f, 0.2f, 0.85f, 1f);
         private static readonly Color RealCapDebugUnderTest = new Color(0.1f, 0.8f, 0.2f, 1f);
 
+        [Test]
+        public void ExplicitAtlasOptIn_ReachesTheDisplaysOwnedProvisionalMaterials()
+        {
+            var oldNormal=VpCutSurfaceAtlas.Normal;var oldDebug=VpCutSurfaceAtlas.Debug;
+            var normal=new Texture2D(256,256,TextureFormat.RGBA32,false);var debug=new Texture2D(256,256,TextureFormat.RGBA32,false);
+            try
+            {
+                var blue=new Color[256*256];var red=new Color[256*256];for(int i=0;i<blue.Length;i++){blue[i]=Color.blue;red[i]=Color.red;}
+                normal.SetPixels(blue);normal.Apply();debug.SetPixels(red);debug.Apply();
+                using(Scene scene=OneCapScene(out Camera camera))
+                {
+                    VpCutSurfaceAtlas.Bind(normal,debug);scene.display.SetCapPaletteAtlasEnabled(true);
+                    VpCutSurfaceColour.SetDebugEnabled(false);
+                    Color32 ordinary=CapPixel(scene,camera,"atlas normal");
+                    Assert.That(ordinary.b,Is.GreaterThan(ordinary.r+30));
+                    int uploads=scene.display.CommandUploads;
+                    VpCutSurfaceColour.SetDebugEnabled(true);
+                    Assert.That(scene.display.CommandUploads,Is.EqualTo(uploads),"switch alone uploads nothing");
+                    Assert.That(IsRed(CapPixel(scene,camera,"atlas debug")),Is.True);
+                    scene.display.SetCapPaletteAtlasEnabled(false);
+                }
+            }
+            finally
+            {
+                VpCutSurfaceAtlas.Clear();if(oldNormal!=null&&oldDebug!=null)VpCutSurfaceAtlas.Bind(oldNormal,oldDebug);
+                UnityEngine.Object.DestroyImmediate(normal);UnityEngine.Object.DestroyImmediate(debug);
+            }
+        }
+
         /// <summary>
         /// One cut, one cap, one camera. With the switch off the cap is drawn in the ordinary cut surface colour -- set
         /// here to a blue of its own, so the pixel says which colour definition was read -- and never red. With the
