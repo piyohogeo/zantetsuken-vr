@@ -84,10 +84,18 @@ namespace Zantetsu.Sandbox
             private bool _measurementFailed;
             private Camera _captureCamera;
             private RenderTexture _captureTarget;
+#if VP_DIAGNOSTIC_SCENE_AB
+            private SceneAbRecorder _ab;
+            private Vector3 _abOriginalPosition, _abChildPosition;
+            private Quaternion _abOriginalRotation;
+#endif
 
             private IEnumerator Start()
             {
                 _measure = Environment.GetEnvironmentVariable("VP_COMPACT16UV_SCENE_MEASURE") == "1";
+#if VP_DIAGNOSTIC_SCENE_AB
+                _measure = true;
+#endif
                 if (_measure)
                 {
                     Application.runInBackground = true; // Diagnostic Player only; project settings stay unchanged.
@@ -125,6 +133,12 @@ namespace Zantetsu.Sandbox
                 }
 
                 LogState("the body is registered");
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab = gameObject.AddComponent<SceneAbRecorder>(); _ab.Initialize(_world);
+                _abOriginalPosition = _probe.Actor.transform.position;
+                _abOriginalRotation = _probe.Actor.transform.rotation;
+                _ab.Mark("before", _probe.Body);
+#endif
                 if (Environment.GetEnvironmentVariable("VP_VERTEX_UPLOAD_COMPARE") == "1")
                 {
                     // Separate transfer diagnostic, no scene-frame or physics-performance claim.
@@ -145,7 +159,12 @@ namespace Zantetsu.Sandbox
 
                 // ----- the cut, and the two children it publishes -------------------------------------------------
                 LogicalFragmentId body = _probe.Body;
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab.Phase = 1;
+                bool asked = _probe.AskCut(body, new Vector4(0f, 1f, 0f, -.137f));
+#else
                 bool asked = _probe.AskCut(body, new Vector4(0f, 1f, 0f, 0f));
+#endif
                 Log("asked for a cut of the body: " + asked);
                 if (!asked)
                 {
@@ -190,6 +209,9 @@ namespace Zantetsu.Sandbox
                     + " positive=" + record.positive + " negative=" + record.negative
                     + " stage=" + _world.Geometry.StageOf(operation));
                 LogState("after the commit");
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab.Phase = 2; _ab.Mark("first-cut", record.positive, record.negative);
+#endif
                 yield return null;
                 yield return Capture("02-after-the-cut");
 
@@ -199,8 +221,15 @@ namespace Zantetsu.Sandbox
                 {
                     Hold(positive.Root);
                     Hold(negative.Root);
+#if VP_DIAGNOSTIC_SCENE_AB
+                    positive.Root.transform.SetPositionAndRotation(_abOriginalPosition, _abOriginalRotation);
+                    negative.Root.transform.SetPositionAndRotation(_abOriginalPosition, _abOriginalRotation);
+#endif
                     Vector3 before = positive.Root.transform.position;
                     positive.Root.transform.position += new Vector3(0f, 1.1f, 0f);
+#if VP_DIAGNOSTIC_SCENE_AB
+                    _abChildPosition = positive.Root.transform.position;
+#endif
                     Log("carried the positive child from " + before + " to " + positive.Root.transform.position
                         + "; the negative child is at " + negative.Root.transform.position);
                     yield return null;
@@ -217,6 +246,9 @@ namespace Zantetsu.Sandbox
 
                 // ----- cutting one of the published children ------------------------------------------------------
                 LogicalFragmentId child = record.positive;
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab.Phase = 3;
+#endif
                 bool askedChild = _probe.AskChildCut();
                 Log("asked for a cut of the published child " + child + ": " + askedChild);
                 if (!askedChild)
@@ -249,10 +281,24 @@ namespace Zantetsu.Sandbox
                 }
 
                 _world.Ledger.TryGetOperation(second, out LogicalCutOperation secondRecord);
+#if VP_DIAGNOSTIC_SCENE_AB
+                foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
+                    if (_world.Owners.TryGet(id, out PhysicsFragmentOwner grandchild))
+                    {
+                        Hold(grandchild.Root);
+                        grandchild.Root.transform.SetPositionAndRotation(_abChildPosition, _abOriginalRotation);
+                    }
+#endif
                 Log("the child's cut committed. operation=" + second
                     + " positive=" + secondRecord.positive + " negative=" + secondRecord.negative);
                 LogState("after the child's commit");
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab.Phase = 4; _ab.Mark("recut", secondRecord.positive, secondRecord.negative, record.negative);
+#endif
                 if (_measure) yield return MeasureSettledScene("after-recut");
+#if VP_DIAGNOSTIC_SCENE_AB
+                _ab.StopAndSave(directory);
+#endif
                 yield return null;
                 yield return Capture("04-after-the-child-cut");
 
@@ -325,6 +371,9 @@ namespace Zantetsu.Sandbox
             /// </summary>
             private IEnumerator Capture(string name)
             {
+#if VP_DIAGNOSTIC_SCENE_AB
+                if (_ab != null && !_ab.CapturesEnabled) { yield return null; yield break; }
+#endif
                 string file = Path.Combine(directory, name + ".png");
                 yield return new WaitForEndOfFrame();
                 var picture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);

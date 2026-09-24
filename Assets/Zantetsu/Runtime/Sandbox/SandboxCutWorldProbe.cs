@@ -203,6 +203,10 @@ namespace Zantetsu.Sandbox
         /// <summary>The one box: its convex, its collider mesh, its display geometry, and the registration of all three.</summary>
         private bool TryAddBody()
         {
+#if VP_DIAGNOSTIC_SCENE_AB
+            lookImpulse = 0f;
+            childPlane = new Vector4(1f, 0f, 0f, -.137f);
+#endif
             float3 extents = bodyExtents;
             float3[] corners =
             {
@@ -323,6 +327,9 @@ namespace Zantetsu.Sandbox
         private static bool TryAppendGeometry(
             VpCpuGeometryStorage storage, float3[] corners, out VpStoredGeometry geometry)
         {
+#if VP_DIAGNOSTIC_SCENE_AB
+            return TryAppendDenseBox(storage, corners, out geometry);
+#else
             var vertices = new List<VpRenderVertex>();
             var topology = new List<int>();
             var indices = new List<uint>();
@@ -369,7 +376,46 @@ namespace Zantetsu.Sandbox
             return storage.TryAppendCuttable(
                 vertices.ToArray(), indices.ToArray(), topology.ToArray(), corners.Length, submeshes.ToArray(),
                 out geometry, out _);
+#endif
         }
+
+#if VP_DIAGNOSTIC_SCENE_AB
+        private static bool TryAppendDenseBox(VpCpuGeometryStorage storage, float3[] corners, out VpStoredGeometry geometry)
+        {
+            const int divisions = 64;
+            var vertices = new List<VpRenderVertex>(); var indices = new List<uint>();
+            var topology = new List<int>(); var ids = new Dictionary<Vector3, int>();
+            var submeshes = new List<VpGeometrySubmesh>();
+            for (int material = 0; material < 2; material++)
+            {
+                int from = indices.Count;
+                foreach (var face in Faces)
+                {
+                    if (face.submesh != material) continue;
+                    var c = face.cycle;
+                    float3 origin = corners[c[0]], x = corners[c[1]] - origin, y = corners[c[3]] - origin;
+                    float3 normal = math.normalize(math.cross(x, y));
+                    uint first = (uint)vertices.Count;
+                    for (int j = 0; j <= divisions; j++) for (int i = 0; i <= divisions; i++)
+                    {
+                        Vector3 position = origin + x * (i / (float)divisions) + y * (j / (float)divisions);
+                        if (!ids.TryGetValue(position, out int id)) { id = ids.Count; ids.Add(position, id); }
+                        topology.Add(id);
+                        vertices.Add(new VpRenderVertex { position = position, normal = normal, uv0 = new Vector2(32.5f / 256f, 32.5f / 256f) });
+                    }
+                    for (uint j = 0; j < divisions; j++) for (uint i = 0; i < divisions; i++)
+                    {
+                        uint a = first + j * (divisions + 1) + i, b = a + 1, d = a + divisions + 1, c2 = d + 1;
+                        indices.Add(a); indices.Add(b); indices.Add(c2); indices.Add(a); indices.Add(c2); indices.Add(d);
+                    }
+                }
+                submeshes.Add(new VpGeometrySubmesh(from, indices.Count - from, material));
+            }
+            bool accepted = storage.TryAppendCuttable(vertices.ToArray(), indices.ToArray(), topology.ToArray(), ids.Count, submeshes.ToArray(), out geometry, out var verdict);
+            Debug.Log($"SCENE AB FIXTURE: subdivisions={divisions} vertices={vertices.Count} indices={indices.Count} topology={ids.Count} accepted={accepted} verdict={verdict}");
+            return accepted;
+        }
+#endif
 
         private static void BuildEdges(int[] faceOffsets, int[] faceIndices, out int[] faceEdges, out BrepEdge[] edges)
         {

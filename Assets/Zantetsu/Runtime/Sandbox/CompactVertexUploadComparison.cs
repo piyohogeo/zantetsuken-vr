@@ -25,6 +25,7 @@ namespace Zantetsu.Sandbox
             public string unity, graphics, device;
             public int samples = 61, warmup = 10, orderSeed;
             public bool passed;
+            public bool allocationCounterSupported = false; // IL2CPP per-thread GC API is unimplemented.
             public List<Row> rows = new List<Row>();
         }
         [Serializable] private sealed class Row
@@ -132,15 +133,13 @@ namespace Zantetsu.Sandbox
                     for (int order = 0; order < 2; order++)
                     {
                         bool use16 = ((sample + result.warmup + order + result.orderSeed) & 1) == 0;
-                        long allocated = GC.GetAllocatedBytesForCurrentThread();
                         long ticks = Stopwatch.GetTimestamp();
                         if (use16) gpu16.SetData(packed, 0, 8, count); else gpu32.SetData(legacy, 0, 8, count);
                         double elapsed = (Stopwatch.GetTimestamp() - ticks) * 1000000.0 / Stopwatch.Frequency;
-                        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
                         if (sample >= 0)
                         {
-                            if (use16) { row.samples16Us[sample] = elapsed; row.managed16 += allocated; }
-                            else { row.samples32Us[sample] = elapsed; row.managed32 += allocated; }
+                            if (use16) { row.samples16Us[sample] = elapsed; row.managed16 = -1; }
+                            else { row.samples32Us[sample] = elapsed; row.managed32 = -1; }
                         }
                     }
                     yield return null;
@@ -153,7 +152,9 @@ namespace Zantetsu.Sandbox
                     bool inside = i >= 8 && i < count + 8;
                     var a = inside ? packed[i - 8] : default;
                     var b = inside ? legacy[i - 8] : default;
+#if !VP_DIAGNOSTIC_LEGACY32
                     Require(actual16[i].position.Equals(a.position) && actual16[i].normalX == a.normalX && actual16[i].normalY == a.normalY && actual16[i].u == a.u && actual16[i].v == a.v, "16B readback/guard");
+#endif
                     Require(actual32[i].position.Equals(b.position) && actual32[i].normal.Equals(b.normal) && actual32[i].uv.Equals(b.uv), "32B readback/guard");
                 }
                 row.readbackPassed = true;

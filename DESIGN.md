@@ -262,6 +262,10 @@ Compact16uv移行ではCPU永続VP頂点・切断予約出力・GPU頂点を同�
 
 #### 4.5.2 準備と表示採用
 
+製品sceneの同条件比較は`docs/diagnostics/compact16uv-scene-ab/`に記録する。診断専用32B／通常16Bの2 Playerで、同じ64×64分割box、物理convex、容量、切断列、commit後固定poseを使い、driver Update／LateUpdateとcamera準備・描画登録のMain wall時間を取得する。6独立processで位置・index hashと3組の最終画像が一致し、定常Mainはほぼ同等（再切断後32B 21.2／16B 21.1 µs）。Unity割当のframe末観測peak中央値は142.280→135.127 MiBとなった。切断時の時間はrun間変動が大きく一般的な高速化とはしない。これはdense合成sceneの製品経路検証であり、実asset物理／skin、GPU residency、grow／retirement最悪peak、XRの証拠へ流用しない。診断用32B compiler定義は通常worktreeから撤去し、製品release前に追加shader比較variantのstrip／撤去を確認する。
+
+計測上、Unity 6000.3.22f1のIL2CPP実装では`GC.GetAllocatedBytesForCurrentThread`が未実装で0を返すため、これをmanaged allocationなしの証拠にしない。過去upload／appearanceの0は未測定へ訂正し、scene追試ではUnityのframe全体GC counterを別項目にする。frame全体のGC量を製品scopeだけへ帰属させない。
+
 Compact16uvのStatic入力はEditor/offlineで一度だけ16Bへ変換し、`VpStatic16File`からCPU storageへ登録できる。ファイル内indexはmesh-local UInt32とし、配置先のglobal offsetへ登録時に一度だけrebasingする。topology IDとmaterial対応はauthoring由来で保持し、位置weldで生成しない。登録時の16B一時配列・入力gate・storage copyは残るが、定常frameでoct/UV encodeやfloat32 Mesh展開を行わず、source配列を永続cacheとして保持しない。skin／blend shapeをStaticとして固定姿勢化する代替経路にはしない。現段階は代表Megacityの取り込み境界であり、既存Sceneの自動置換ではない（`docs/diagnostics/compact16uv-intake/`）。
 
 通常命中で即切断開始に必要なSkinned入力は、現在の実Bone Poseを使う同期`SkinnedMeshRenderer.BakeMesh(mesh, useScale: false)`→CPUデータ取得・VP変換を基本経路とする。未来予測用に限り、Phase 4.65で`ResolvedAnimationPoseInput`→19.3の不変Rig Pose→4.3のBurst数値処理による線形ブレンドスキニング→共通CPU側VP入力を限定実装し、同期経路との比較から導入の採否を決める。目的は複数候補の頂点処理と同期待ちをMain Threadへ集中させないことであり、ベイク総時間の短縮や負荷ゼロを要求しない。非スキニング対象はベイクを省き、必要な形状・姿勢で準備済みなら再利用する。

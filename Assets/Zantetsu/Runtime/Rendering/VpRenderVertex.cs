@@ -9,6 +9,35 @@ namespace Zantetsu.Rendering
     /// implementation point: float3 position, oct8x2 normal, uint8x2 UV, 16 bytes. Adding an attribute means updating this struct, the mesh
     /// conversion and the vertex-pulling shader together.
     /// </summary>
+#if VP_DIAGNOSTIC_LEGACY32
+    // Explicit comparison Player only. Not a supported product storage option.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VpRenderVertex
+    {
+        public Vector3 position, normal;
+        public Vector2 uv0;
+        public const int Stride = 32;
+        public const float CapUvCentre = 247.5f / 256f;
+        public const float UvEndpointTolerance = 2.3841858e-7f;
+        // Read-only authoring/test compatibility while the comparison Editor compiles as Legacy32.
+        // These are computed properties, not packed storage or an upload conversion.
+        private int2 OctBytes
+        {
+            get
+            {
+                float3 n = normal; float2 e = n.xy / math.csum(math.abs(n));
+                if (n.z < 0f) e = (1f - math.abs(e.yx)) * math.select(new float2(-1f), new float2(1f), e >= 0f);
+                return (int2)math.round(math.clamp(e, -1f, 1f) * 127f);
+            }
+        }
+        public sbyte normalX => (sbyte)OctBytes.x;
+        public sbyte normalY => (sbyte)OctBytes.y;
+        public byte u => (byte)(int)math.clamp(math.round(uv0.x * 256f - .5f), 0f, 255f);
+        public byte v => (byte)(int)math.clamp(math.round(uv0.y * 256f - .5f), 0f, 255f);
+        public bool HasValidAttributes => math.all(math.isfinite((float3)normal)) && math.lengthsq((float3)normal) > 0 && IsSupportedUv(uv0);
+        public static bool IsSupportedUv(Vector2 value) => math.all(math.isfinite((float2)value)) && value.x >= -UvEndpointTolerance && value.x <= 1f + UvEndpointTolerance && value.y >= -UvEndpointTolerance && value.y <= 1f + UvEndpointTolerance;
+    }
+#else
     [StructLayout(LayoutKind.Sequential)]
     public struct VpRenderVertex
     {
@@ -63,4 +92,5 @@ namespace Zantetsu.Rendering
 
         public static bool IsSupportedUv(Vector2 value) => math.all(math.isfinite((float2)value)) && value.x >= -UvEndpointTolerance && value.x <= 1f + UvEndpointTolerance && value.y >= -UvEndpointTolerance && value.y <= 1f + UvEndpointTolerance;
     }
+#endif
 }

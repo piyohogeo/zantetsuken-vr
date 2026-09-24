@@ -31,6 +31,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
 
             HLSLPROGRAM
             #pragma target 4.5
+            #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing

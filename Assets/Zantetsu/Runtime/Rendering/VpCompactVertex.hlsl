@@ -1,5 +1,10 @@
 #ifndef ZANTETSU_VP_COMPACT_VERTEX_INCLUDED
 #define ZANTETSU_VP_COMPACT_VERTEX_INCLUDED
+#ifdef VP_DIAGNOSTIC_LEGACY32
+struct VpRenderVertex { float3 position; float3 normal; float2 uv; };
+float3 VpDecodeNormal(VpRenderVertex vertex) { return vertex.normal; }
+float2 VpDecodeUv(VpRenderVertex vertex) { return vertex.uv; }
+#else
 // One CPU/GPU ABI: float3 position + signed oct8x2 + uint8x2 UV, 16 bytes.
 struct VpRenderVertex
 {
@@ -21,6 +26,7 @@ float2 VpDecodeUv(VpRenderVertex vertex)
 {
     return (float2((vertex.packedAttributes >> 16) & 255u, vertex.packedAttributes >> 24) + 0.5) / 256.0;
 }
+#endif
 bool VpIsRealCap(float2 rawUv)
 {
     return all(abs(rawUv - (247.5 / 256.0)) < (0.25 / 256.0));
