@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="1" result="Passed" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.2758373">
+  <test-suite type="TestSuite" id="1000" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="3614" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.275837" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <test-suite type="Assembly" id="4871" name="Zantetsu.Core.EditModeTests.dll" fullname="[USERPROFILE]/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll" runstate="Runnable" testcasecount="3600" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.241541" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="48964" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <test-suite type="TestSuite" id="4872" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="3600" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.213019" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="4875" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="267" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.194974" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="4876" name="Tests" fullname="Zantetsu.PhysicsCut.Tests" runstate="Runnable" testcasecount="267" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.193703" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1451" name="Compact16uvAuthoredPhysicsTests" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvAuthoredPhysicsTests" classname="Zantetsu.PhysicsCut.Tests.Compact16uvAuthoredPhysicsTests" runstate="Runnable" testcasecount="1" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.191151" total="1" passed="1" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1452" name="AuthoredConvex_AndStatic16_ThreeCommonPlanes_CutAndRecut" fullname="Zantetsu.PhysicsCut.Tests.Compact16uvAuthoredPhysicsTests.AuthoredConvex_AndStatic16_ThreeCommonPlanes_CutAndRecut" methodname="AuthoredConvex_AndStatic16_ThreeCommonPlanes_CutAndRecut" classname="Zantetsu.PhysicsCut.Tests.Compact16uvAuthoredPhysicsTests" runstate="Runnable" seed="2007991384" result="Passed" start-time="2026-09-24 05:45:44Z" end-time="2026-09-24 05:45:45Z" duration="0.180766" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[axis=2 offset=-7.608755 physicsVolumes=309.78085230067194,1124.4165393968387 displayCommittedVertices=5518
+axis=0 offset=0.01360642 physicsVolumes=116.31674679703852,193.46409761449871 displayCommittedVertices=5887
+axis=1 offset=1.72333145 physicsVolumes=58.695569163368923,57.621177339978395 displayCommittedVertices=6130
+Saving results to: [USERPROFILE]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>
