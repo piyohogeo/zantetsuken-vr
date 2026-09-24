@@ -1,0 +1,479 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="24" result="Failed(Child)" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.9179588">
+  <test-suite type="TestSuite" id="1000" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="3662" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.917959" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <failure>
+      <message><![CDATA[One or more child tests had errors]]></message>
+    </failure>
+    <test-suite type="Assembly" id="4927" name="Zantetsu.Core.EditModeTests.dll" fullname="[REDACTED]/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll" runstate="Runnable" testcasecount="3648" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.877922" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="77544" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <failure>
+        <message><![CDATA[One or more child tests had errors]]></message>
+      </failure>
+      <test-suite type="TestSuite" id="4928" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="3648" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.811496" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <failure>
+          <message><![CDATA[One or more child tests had errors]]></message>
+        </failure>
+        <test-suite type="TestSuite" id="4931" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="315" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.794292" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <failure>
+            <message><![CDATA[One or more child tests had errors]]></message>
+          </failure>
+          <test-suite type="TestSuite" id="4932" name="Tests" fullname="Zantetsu.PhysicsCut.Tests" runstate="Runnable" testcasecount="315" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.792818" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <failure>
+              <message><![CDATA[One or more child tests had errors]]></message>
+            </failure>
+            <test-suite type="ParameterizedFixture" id="1536" name="CutGeometryConnectionTests" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="45" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:04Z" duration="2.790757" total="24" passed="0" failed="24" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <failure>
+                <message><![CDATA[One or more child tests had errors]]></message>
+              </failure>
+              <test-suite type="TestFixture" id="1502" name="CutGeometryConnectionTests(0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:03Z" duration="1.039494" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <failure>
+                  <message><![CDATA[One or more child tests had errors]]></message>
+                </failure>
+                <test-suite type="ParameterizedMethod" id="1511" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="8" result="Failed" site="Child" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:03Z" duration="1.035671" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <failure>
+                    <message><![CDATA[One or more child tests had errors]]></message>
+                  </failure>
+                  <test-case id="1503" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1214612768" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.282981" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1504" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1321385884" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.117182" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1505" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1649052477" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.103919" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1506" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1733350382" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.102850" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1507" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1913867755" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.100129" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1508" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="959101931" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:02Z" duration="0.103157" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1509" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="907998379" result="Failed" start-time="2026-09-24 07:12:02Z" end-time="2026-09-24 07:12:03Z" duration="0.109380" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1510" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1738539853" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.105836" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+              <test-suite type="TestFixture" id="1485" name="CutGeometryConnectionTests(-1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Failed" site="Child" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:04Z" duration="0.900977" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <failure>
+                  <message><![CDATA[One or more child tests had errors]]></message>
+                </failure>
+                <test-suite type="ParameterizedMethod" id="1494" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="8" result="Failed" site="Child" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:04Z" duration="0.898808" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <failure>
+                    <message><![CDATA[One or more child tests had errors]]></message>
+                  </failure>
+                  <test-case id="1486" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="851322969" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.135277" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1487" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="795168034" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.148734" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1488" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1402193620" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.104527" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1489" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1437545733" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.101761" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1490" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="2082268769" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.087451" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1491" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1086133100" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.098048" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1492" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="334077252" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:03Z" duration="0.093244" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1493" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="986659661" result="Failed" start-time="2026-09-24 07:12:03Z" end-time="2026-09-24 07:12:04Z" duration="0.128048" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+              <test-suite type="TestFixture" id="1519" name="CutGeometryConnectionTests(205)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Failed" site="Child" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.849088" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <failure>
+                  <message><![CDATA[One or more child tests had errors]]></message>
+                </failure>
+                <test-suite type="ParameterizedMethod" id="1528" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="8" result="Failed" site="Child" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.847208" total="8" passed="0" failed="8" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <failure>
+                    <message><![CDATA[One or more child tests had errors]]></message>
+                  </failure>
+                  <test-case id="1520" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1813920964" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.119867" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1521" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1051293645" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.134405" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x006d6] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:100
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1522" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1859327065" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.104478" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1523" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1304160212" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.106998" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1524" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="66317567" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.094107" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1525" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1069465472" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.093005" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1526" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="9167311" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.095450" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1527" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="50625477" result="Failed" start-time="2026-09-24 07:12:04Z" end-time="2026-09-24 07:12:04Z" duration="0.097385" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <failure>
+                      <message><![CDATA[  the body is shown
+  Expected: True
+  But was:  False
+]]></message>
+                      <stack-trace><![CDATA[at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.NewWorld (System.Int32 frameBudget, System.Int32 concurrentReservations, Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests+CharacterCompoundData character) [0x004c8] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.cs:484
+at Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts (System.String family, System.Int32 pose) [0x0000f] in [REDACTED]\src\zantetsuken-vr-compact16uv\Assets\Zantetsu\Tests\EditMode\PhysicsCut\CutGeometryConnectionTests.Character.cs:40
+]]></stack-trace>
+                    </failure>
+                    <output><![CDATA[CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+Saving results to: [REDACTED]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>
