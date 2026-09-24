@@ -24,6 +24,19 @@ namespace Zantetsu.EditorTools.Sandbox
             var serialized=new SerializedObject(world);
             serialized.FindProperty("normalPaletteAtlas").objectReferenceValue=normal;
             serialized.FindProperty("debugPaletteAtlas").objectReferenceValue=debug;
+            if (Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1")
+            {
+                string profilePath = Root + "/SceneAbProfile.asset";
+                var originalProfile = serialized.FindProperty("profile").objectReferenceValue;
+                var profile = AssetDatabase.LoadAssetAtPath<CutWorldProfile>(profilePath);
+                if (profile == null) { profile = ScriptableObject.CreateInstance<CutWorldProfile>(); AssetDatabase.CreateAsset(profile, profilePath); }
+                EditorUtility.CopySerialized(originalProfile, profile);
+                var settings = new SerializedObject(profile);
+                settings.FindProperty("vertexCapacity").intValue = 524288;
+                settings.FindProperty("indexCapacity").intValue = 2097152;
+                settings.ApplyModifiedPropertiesWithoutUndo(); EditorUtility.SetDirty(profile);
+                serialized.FindProperty("profile").objectReferenceValue = profile;
+            }
             var bindings=serialized.FindProperty("materials");
             for(int i=0;i<bindings.arraySize;i++)
             {
@@ -55,7 +68,12 @@ namespace Zantetsu.EditorTools.Sandbox
             {
                 xr.InitManagerOnStart=false;EditorUtility.SetDirty(xr);AssetDatabase.SaveAssets();
                 Debug.Log("Compact16uv mono diagnostic build: XR initialize-on-start disabled for this build only.");
-                success=CutWorldSandboxPlayerBuild.Build(output,ScenePath);
+                bool ab = Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1";
+                bool legacy = Environment.GetEnvironmentVariable("VP_SCENE_AB_LEGACY32") == "1";
+                if (legacy && !ab) throw new InvalidOperationException("Legacy32 requires the explicit scene AB diagnostic build");
+                var defines = !ab ? Array.Empty<string>() : legacy ? new[] { "VP_DIAGNOSTIC_SCENE_AB", "VP_DIAGNOSTIC_LEGACY32" } : new[] { "VP_DIAGNOSTIC_SCENE_AB" };
+                Debug.Log("SCENE AB BUILD: enabled=" + ab + " legacy32=" + legacy);
+                success=CutWorldSandboxPlayerBuild.Build(output,ScenePath,defines);
             }
             finally
             {

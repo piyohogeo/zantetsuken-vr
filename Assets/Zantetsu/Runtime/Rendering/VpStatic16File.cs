@@ -27,7 +27,7 @@ namespace Zantetsu.Rendering
                 failure = "invalid header/layout";
                 if (remaining < HeaderBytes) return false;
                 using var reader = new BinaryReader(source, Encoding.UTF8, true);
-                if (reader.ReadUInt32() != Magic || reader.ReadInt32() != Version || reader.ReadInt32() != VpRenderVertex.Stride) return false;
+                if (reader.ReadUInt32() != Magic || reader.ReadInt32() != Version || reader.ReadInt32() != 16) return false;
                 int vc = reader.ReadInt32(), ic = reader.ReadInt32(), tc = reader.ReadInt32(), sc = reader.ReadInt32();
                 if (vc <= 0 || ic <= 0 || ic % 3 != 0 || tc <= 0 || sc <= 0
                     || vc > storage.VertexCapacity || ic > storage.IndexCapacity || sc > storage.SubmeshCapacity) return false;
@@ -36,10 +36,23 @@ namespace Zantetsu.Rendering
                 if (remaining != expected) return false; // Reject truncation/trailing data before allocating arrays.
                 var vertices = new VpRenderVertex[vc];
                 for (int i = 0; i < vc; i++)
+#if VP_DIAGNOSTIC_LEGACY32
+                {
+                    Vector3 position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    sbyte x = reader.ReadSByte(), y = reader.ReadSByte();
+                    byte u = reader.ReadByte(), v = reader.ReadByte();
+                    if (x == -128 || y == -128) return false;
+                    var e = new Unity.Mathematics.float2(x, y) / 127f;
+                    var n = new Unity.Mathematics.float3(e, 1f - Unity.Mathematics.math.abs(e.x) - Unity.Mathematics.math.abs(e.y));
+                    if (n.z < 0) n.xy = (1f - Unity.Mathematics.math.abs(n.yx)) * Unity.Mathematics.math.select(new Unity.Mathematics.float2(-1f), new Unity.Mathematics.float2(1f), e >= 0f);
+                    vertices[i] = new VpRenderVertex { position = position, normal = Unity.Mathematics.math.normalize(n), uv0 = new Vector2((u + .5f) / 256f, (v + .5f) / 256f) };
+                }
+#else
                     vertices[i] = new VpRenderVertex {
                         position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
                         normalX = reader.ReadSByte(), normalY = reader.ReadSByte(), u = reader.ReadByte(), v = reader.ReadByte()
                     };
+#endif
                 var indices = new uint[ic];
                 for (int i = 0; i < ic; i++) indices[i] = reader.ReadUInt32();
                 var topology = new int[vc];

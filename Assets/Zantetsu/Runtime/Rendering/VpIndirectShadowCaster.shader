@@ -26,6 +26,7 @@ Shader "Zantetsu/VP Indirect Shadow Caster"
 
             HLSLPROGRAM
             #pragma target 4.5
+            #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_instancing

@@ -79,6 +79,7 @@ Shader "Zantetsu/VP Culled Indexed Shadow Caster"
 
             HLSLPROGRAM
             #pragma target 4.5
+            #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
@@ -98,6 +99,7 @@ Shader "Zantetsu/VP Culled Indexed Shadow Caster"
 
             HLSLPROGRAM
             #pragma target 4.5
+            #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW

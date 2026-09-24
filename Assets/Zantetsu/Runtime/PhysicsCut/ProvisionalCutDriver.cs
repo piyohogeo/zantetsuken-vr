@@ -499,6 +499,9 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public void DriveUpdate()
         {
+#if VP_DIAGNOSTIC_SCENE_AB
+            using var measured = SceneAbCounters.Measure(0);
+#endif
             _taken.Clear();
             for (int i = 0; i < _asked.Count; i++)
             {
@@ -530,6 +533,9 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool DriveLateUpdate()
         {
+#if VP_DIAGNOSTIC_SCENE_AB
+            using var measured = SceneAbCounters.Measure(1);
+#endif
             Advance(CurrentFrame);
             if (_display == null)
             {

@@ -1,5 +1,7 @@
 # Same-binary Legacy32 / Compact16uv upload control
 
+**Correction (2026-09-24, scene-AB follow-up): the reported managed-allocation zeros are NOT valid evidence.** This Unity installation's `Editor/Data/il2cpp/libil2cpp/icalls/mscorlib/System/GC.cpp`, `GC::GetAllocatedBytesForCurrentThread`, invokes `IL2CPP_NOT_IMPLEMENTED_ICALL` and returns 0. Raw results and original source/binary hashes are retained as historical evidence; interpret their `managed16/32` fields as unavailable, not allocation-free. SetData timing and GPU content/guard checks are independent and remain valid. The later scene diagnostic uses Unity's frame-level profiler counter separately, without attributing whole-frame GC allocation to a product scope.
+
 This diagnostic compares the CPU duration of `GraphicsBuffer.SetData` for identical decoded vertex attributes in 32-byte and 16-byte layouts. It is **not** a two-layout product scene, a Legacy32 cutting kernel comparison, GPU time, or a process-memory comparison.
 
 Input: the verified private Static16 Megacity resource. Run the current product storage/cutting implementation through the same X/Y/Z positive-child recuts as the preceding appearance gate (plane through bounds centre + 0.137 axis extent). Require Burst execution, closed contours and nonempty append. At each stage measure all committed vertices, including inherited/unreferenced history; for cuts also measure only newly appended vertices. Duplicate each payload 1/16/64 times for transfer-size scaling, not as 64 independently placed physical objects. Legacy32 is an expanded copy of the same quantized attributes, not the original unquantized source.
@@ -14,7 +16,7 @@ Build via `Compact16uvSandboxSceneBuild.BuildPlayer` with `VP_COMPACT16UV_PLAYER
 
 ## Result (2026-09-24)
 
-Windows x64 Development IL2CPP / Unity 6000.3.22f1 / D3D11. Three fresh visible Player processes using one binary, starting-order seeds 0/0/1 (order also alternates within every cell). All **63 cells** passed full readback/guard checks and each Player exited 0. Each layout has **3,843 measured calls**, all reporting zero per-thread managed allocated bytes in the timed interval. Product kernels produced the same 5,326 -> 6,255 -> 6,478 -> 6,558 committed-vertex sequence in all runs; new tails were 929, 223 and 80 vertices. Cuts are executed synchronously in fixture preparation, not measured or claimed as Worker offload here.
+Windows x64 Development IL2CPP / Unity 6000.3.22f1 / D3D11. Three fresh visible Player processes using one binary, starting-order seeds 0/0/1 (order also alternates within every cell). All **63 cells** passed full readback/guard checks and each Player exited 0. Each layout has **3,843 measured calls**; per-thread managed allocation is unavailable (see correction above). Product kernels produced the same 5,326 -> 6,255 -> 6,478 -> 6,558 committed-vertex sequence in all runs; new tails were 929, 223 and 80 vertices. Cuts are executed synchronously in fixture preparation, not measured or claimed as Worker offload here.
 
 Values below are the median of three process medians, in microseconds. All 21 cells, raw samples, per-cell p95 and run-median min/max are in `summary.json` and `run*/upload-comparison.json`.
 

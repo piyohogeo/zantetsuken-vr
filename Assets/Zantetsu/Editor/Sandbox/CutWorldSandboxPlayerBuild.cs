@@ -59,7 +59,7 @@ namespace Zantetsu.EditorTools.Sandbox
         /// Builds the Player into <paramref name="directory"/>, after saying what it is building with. Returns
         /// whether the build succeeded; everything it found is in the log either way.
         /// </summary>
-        public static bool Build(string directory, string scene = null)
+        public static bool Build(string directory, string scene = null, string[] diagnosticDefines = null)
         {
             scene ??= CutWorldSandboxSceneBuilder.ScenePathInProject;
             if (!File.Exists(scene))
@@ -108,6 +108,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 locationPathName = executable,
                 target = target,
                 targetGroup = targetGroup,
+                extraScriptingDefines = diagnosticDefines ?? Array.Empty<string>(),
 
                 // Development, so that the Player writes its own log and its stack traces are readable. Nothing
                 // here asks for a profiler connection or script debugging.

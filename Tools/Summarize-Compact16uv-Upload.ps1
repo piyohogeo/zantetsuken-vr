@@ -51,6 +51,8 @@ Get-ChildItem -LiteralPath $evidence -Recurse -File | Where-Object { $_.Extensio
 $testRun = $tests.'test-run'
 if ($testRun.result -ne 'Passed' -or [int]$testRun.failed -ne 0 -or [int]$testRun.skipped -ne 0) { throw 'EditMode regression did not pass completely' }
 $summary = [ordered]@{
+    allocationCounterSupported=$false
+    allocationCorrection='IL2CPP per-thread GC API is not implemented; ignore historical zero managed byte fields'
     baselineCommit='481d8045'; sourceIdentity='baseline plus recorded diagnostic source hashes; no product layout or cutting-kernel change'
     passed=$true; independentProcesses=3; cellsPerProcess=21; measuredCallsPerLayout=3843
     orderSeeds=@($runs.orderSeed); editModePassed=[int]$testRun.passed
