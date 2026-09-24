@@ -21,13 +21,8 @@ Shader "Zantetsu/VP Unlit"
         HLSLINCLUDE
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-        // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
-        struct VpRenderVertex
-        {
-            float3 position;
-            float3 normal;
-            float2 uv0;
-        };
+        // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
+        #include "VpCompactVertex.hlsl"
 
         StructuredBuffer<VpRenderVertex> _VpVertices;
         StructuredBuffer<uint> _VpIndices;
@@ -87,7 +82,7 @@ Shader "Zantetsu/VP Unlit"
                 VpRenderVertex vertex = FetchVertex(input.vertexID);
                 float3 positionWS = mul(_VpObjectToWorld, float4(vertex.position, 1.0)).xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
-                output.normalWS = mul((float3x3)_VpObjectToWorld, vertex.normal);
+                output.normalWS = mul((float3x3)_VpObjectToWorld, VpDecodeNormal(vertex));
                 output.positionWS = positionWS;
                 return output;
             }
@@ -138,7 +133,7 @@ Shader "Zantetsu/VP Unlit"
 
                 VpRenderVertex vertex = FetchVertex(input.vertexID);
                 float3 positionWS = mul(_VpObjectToWorld, float4(vertex.position, 1.0)).xyz;
-                float3 normalWS = normalize(mul((float3x3)_VpObjectToWorld, vertex.normal));
+                float3 normalWS = normalize(mul((float3x3)_VpObjectToWorld, VpDecodeNormal(vertex)));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
                 float3 lightDirectionWS = normalize(_LightPosition - positionWS);
             #else

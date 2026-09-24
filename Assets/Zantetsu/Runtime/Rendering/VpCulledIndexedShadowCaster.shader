@@ -21,13 +21,8 @@ Shader "Zantetsu/VP Culled Indexed Shadow Caster"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
-        // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
-        struct VpRenderVertex
-        {
-            float3 position;
-            float3 normal;
-            float2 uv0;
-        };
+        // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
+        #include "VpCompactVertex.hlsl"
 
         StructuredBuffer<VpRenderVertex> _VpVertices;
         StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -55,7 +50,7 @@ Shader "Zantetsu/VP Culled Indexed Shadow Caster"
             VpRenderVertex vertex = _VpVertices[input.vertexID];
             float4x4 objectToWorld = _VpInstanceObjectToWorld[_VpVisibleInstances[_VpVisibleOffset + input.instanceID]];
             float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
-            float3 normalWS = normalize(mul((float3x3)objectToWorld, vertex.normal));
+            float3 normalWS = normalize(mul((float3x3)objectToWorld, VpDecodeNormal(vertex)));
         #if _CASTING_PUNCTUAL_LIGHT_SHADOW
             float3 lightDirectionWS = normalize(_LightPosition - positionWS);
         #else

@@ -1,0 +1,747 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+Built from '6000.3/staging' branch; Version is '6000.3.22f1 (1c726e1fb402) revision 1864302'; Using compiler version '194234433'; Build Type 'Release'
+OS: 'Windows 11  (10.0.22631) Professional' Language: 'ja' Physical Memory: 130885 MB
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic" at "2026-09-24T00:00:33.2867405Z"
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-09-24T00:00:33Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe
+-batchmode
+-projectPath
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+-runTests
+-testPlatform
+PlayMode
+-testFilter
+Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once
+-testResults
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-playmode-termination.xml
+-logFile
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-playmode-termination.log
+-force-d3d11
+Successfully changed project path to: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+[UnityMemory] Configuration Parameters - Can be set up in boot.config
+    "memorysetup-temp-allocator-size-nav-mesh-worker=65536"
+    "memorysetup-temp-allocator-size-audio-worker=65536"
+    "memorysetup-temp-allocator-size-gfx=262144"
+    "memorysetup-allocator-temp-initial-block-size-main=262144"
+    "memorysetup-allocator-temp-initial-block-size-worker=262144"
+    "memorysetup-temp-allocator-size-background-worker=32768"
+    "memorysetup-temp-allocator-size-job-worker=262144"
+    "memorysetup-temp-allocator-size-preload-manager=33554432"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-temp-allocator-size-gi-baking-worker=262144"
+    "memorysetup-bucket-allocator-granularity=16"
+    "memorysetup-bucket-allocator-bucket-count=8"
+    "memorysetup-bucket-allocator-block-size=33554432"
+    "memorysetup-bucket-allocator-block-count=8"
+    "memorysetup-main-allocator-block-size=16777216"
+    "memorysetup-thread-allocator-block-size=16777216"
+    "memorysetup-gfx-main-allocator-block-size=16777216"
+    "memorysetup-gfx-thread-allocator-block-size=16777216"
+    "memorysetup-cache-allocator-block-size=4194304"
+    "memorysetup-typetree-allocator-block-size=2097152"
+    "memorysetup-profiler-bucket-allocator-granularity=16"
+    "memorysetup-profiler-bucket-allocator-bucket-count=8"
+    "memorysetup-profiler-bucket-allocator-block-size=33554432"
+    "memorysetup-profiler-bucket-allocator-block-count=8"
+    "memorysetup-profiler-allocator-block-size=16777216"
+    "memorysetup-profiler-editor-allocator-block-size=1048576"
+    "memorysetup-temp-allocator-size-main=16777216"
+    "memorysetup-job-temp-allocator-block-size=2097152"
+    "memorysetup-job-temp-allocator-block-size-background=1048576"
+    "memorysetup-job-temp-allocator-reduction-small-platforms=262144"
+    "memorysetup-temp-allocator-size-cloud-worker=32768"
+Player connection [67000]  Target information:
+
+Player connection [67000]  * "[IP] 192.168.133.1 [Port] 55505 [Flags] 2 [Guid] 3746532594 [EditorId] 3746532594 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [67000]  * "[IP] 192.168.10.200 [Port] 55505 [Flags] 2 [Guid] 3746532594 [EditorId] 3746532594 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [67000]  * "[IP] 192.168.211.100 [Port] 55505 [Flags] 2 [Guid] 3746532594 [EditorId] 3746532594 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [67000]  * "[IP] 192.168.118.1 [Port] 55505 [Flags] 2 [Guid] 3746532594 [EditorId] 3746532594 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [67000]  * "[IP] 172.30.96.1 [Port] 55505 [Flags] 2 [Guid] 3746532594 [EditorId] 3746532594 [Version] 1048832 [Id] WindowsEditor(7,DESKTOP-8GNVAER) [Debug] 1 [PackageName] WindowsEditor [ProjectName] Editor" 
+
+Player connection [67000] Host joined multi-casting on [225.0.0.222:54997]...
+Player connection [67000] Host joined alternative multi-casting on [225.0.0.222:34997]...
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+[Package Manager] Connected to IPC stream "Upm-116680" after 0.3 seconds.
+[Licensing::Module] Licensing is not yet initialized.
+[Licensing::Client] Error: HandshakeResponse reported an error:
+	ResponseCode: 505
+	ResponseStatus: Unsupported protocol version '1.18.1'.
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-junic"
+[Licensing::IpcConnector] LicenseClient-junic channel disconnected successfully.
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22" at "2026-09-24T00:00:34.8566758Z"
+[Licensing::Client] Code 10 while verifying Licensing Client signature (process Id: 94940, path: "C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client.exe")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.18.1+9fbee8e
+  Session Id:              1165cd23a561407d9d3da6176148242b
+  Correlation Id:          93d5d8fbbf2f5ed93323a85a15f1d8e1
+  External correlation Id: 8740835923348926141
+  Machine Id:              OBjPOVyKQsIZ/hoJA1BaU9Z6VPQ=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-junic-6000.3.22" (connect: 0.00s, validation: 0.00s, handshake: 0.01s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-junic-6000.3.22-notifications" at "2026-09-24T00:00:34.8653375Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] License group:
+  Id: 15669749089512-UnityPersXXXX
+  Product: Unity Personal
+  Type: Assigned
+  Expiration: Unlimited
+[Licensing::Client] Successfully updated license, isAsync: True, time: 0.00
+[Licensing::Module] Licensing Background thread has ended after 1.58s
+[Licensing::Module] Licensing is initialized (took 1.27s).
+[Licensing::Client] Successfully resolved entitlement details
+Library Redirect Path: Library/
+[Physics::Module] Selected backend.
+[Physics::Module] Name: PhysX
+[Physics::Module] Id: 0xf2b8ea05
+[Physics::Module] SDK Version: 4.1.2
+[Physics::Module] Integration Version: 1.0.0
+[Physics::Module] Threading Mode: Multi-Threaded
+Refreshing native plugins compatible for Editor in 1.34 ms, found 0 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 6000.3.22f1 (1c726e1fb402)
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+Forcing GfxDevice: Direct3D 11
+GfxDevice: creating device client; kGfxThreadingModeNonThreaded
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 3090 (ID=0x2204)
+    Vendor:   NVIDIA
+    VRAM:     24322 MB
+    Driver:   32.0.15.9186
+Initialize mono
+Mono path[0] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Managed'
+Mono path[1] = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/lib/mono/unityjit-win32'
+Mono config path = 'C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56680
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+Using cacheserver namespaces - metadata:defaultmetadata, artifacts:defaultartifacts
+ImportWorker Server TCP listen port: 0
+AcceleratorClientConnectionCallback - disconnected - :0
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
+Registered in 0.001589 seconds.
+- Loaded All Assemblies, in  0.413 seconds
+Native extension for WindowsStandalone target not found
+Package Manager log level set to [2]
+ScheduleIndexationOnStartup MainProcess:False IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.349 seconds
+Domain Reload Profiling: 759ms
+	BeginReloadAssembly (142ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (0ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (24ms)
+	RebuildCommonClasses (36ms)
+	RebuildNativeTypeToScriptingClass (13ms)
+	initialDomainReloadingComplete (49ms)
+	LoadAllAssembliesAndSetupDomain (171ms)
+		LoadAssemblies (116ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (168ms)
+			TypeCache.Refresh (166ms)
+				TypeCache.ScanAssembly (152ms)
+			BuildScriptInfoCaches (0ms)
+			ResolveRequiredComponents (1ms)
+	FinalizeReload (349ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (313ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (40ms)
+			SetLoadedEditorAssemblies (3ms)
+			BeforeProcessingInitializeOnLoad (69ms)
+			ProcessInitializeOnLoadAttributes (129ms)
+			ProcessInitializeOnLoadMethodAttributes (70ms)
+			AfterProcessingInitializeOnLoad (0ms)
+			EditorAssembliesLoaded (0ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (0ms)
+[Licensing::Client] Successfully resolved entitlement details
+Application.AssetDatabase Initial Refresh Start
+[Package Manager] Restoring resolved packages state from cache
+[Licensing::Client] Successfully resolved entitlement details
+[Package Manager] Registered 61 packages:
+  Packages from [https://packages.unity.com]:
+    com.unity.ai.navigation@2.0.14 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ai.navigation@134dd6a3b97b)
+    com.unity.burst@1.8.30 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.burst@2f3d916873ea)
+    com.unity.collab-proxy@2.12.4 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collab-proxy@0b1559bcd34e)
+    com.unity.collections@2.6.8 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.collections@84e8eb3fc12e)
+    com.unity.ide.rider@3.0.40 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.rider@e4950c6d131b)
+    com.unity.ide.visualstudio@2.0.26 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ide.visualstudio@a99d56dec63f)
+    com.unity.inputsystem@1.20.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.inputsystem@7a4e1a2a8194)
+    com.unity.mathematics@1.3.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.mathematics@19a9377c4ffa)
+    com.unity.timeline@1.8.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.timeline@8cd8509afae5)
+    com.unity.visualscripting@1.9.12 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.visualscripting@4edfcc09512f)
+    com.unity.xr.management@4.6.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.management@df145a5bc89e)
+    com.unity.xr.openxr@1.18.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be)
+    com.unity.xr.core-utils@2.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.core-utils@a8b900321199)
+    com.unity.xr.legacyinputhelpers@2.1.13 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.legacyinputhelpers@9535ff2c27ac)
+    com.unity.nuget.mono-cecil@1.11.6 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.nuget.mono-cecil@ecb9724e46ff)
+    com.unity.test-framework.performance@3.5.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework.performance@8b56083ec0f0)
+    com.unity.searcher@4.9.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.searcher@a463122f2c00)
+  Built-in packages:
+    com.unity.multiplayer.center@1.0.1 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.multiplayer.center@f01f4ba8d00a)
+    com.unity.render-pipelines.universal@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal@de1a320b3ed3)
+    com.unity.test-framework@1.6.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.test-framework@bd7f943e9647)
+    com.unity.ugui@2.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ugui@20629863fcab)
+    com.unity.modules.accessibility@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.accessibility)
+    com.unity.modules.adaptiveperformance@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.adaptiveperformance)
+    com.unity.modules.ai@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ai)
+    com.unity.modules.androidjni@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.androidjni)
+    com.unity.modules.animation@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.animation)
+    com.unity.modules.assetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.assetbundle)
+    com.unity.modules.audio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.audio)
+    com.unity.modules.cloth@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.cloth)
+    com.unity.modules.director@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.director)
+    com.unity.modules.imageconversion@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imageconversion)
+    com.unity.modules.imgui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.imgui)
+    com.unity.modules.jsonserialize@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.jsonserialize)
+    com.unity.modules.particlesystem@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.particlesystem)
+    com.unity.modules.physics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics)
+    com.unity.modules.physics2d@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.physics2d)
+    com.unity.modules.screencapture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.screencapture)
+    com.unity.modules.terrain@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrain)
+    com.unity.modules.terrainphysics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.terrainphysics)
+    com.unity.modules.tilemap@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.tilemap)
+    com.unity.modules.ui@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.ui)
+    com.unity.modules.uielements@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.uielements)
+    com.unity.modules.umbra@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.umbra)
+    com.unity.modules.unityanalytics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unityanalytics)
+    com.unity.modules.unitywebrequest@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequest)
+    com.unity.modules.unitywebrequestassetbundle@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestassetbundle)
+    com.unity.modules.unitywebrequestaudio@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestaudio)
+    com.unity.modules.unitywebrequesttexture@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequesttexture)
+    com.unity.modules.unitywebrequestwww@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.unitywebrequestwww)
+    com.unity.modules.vectorgraphics@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vectorgraphics)
+    com.unity.modules.vehicles@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vehicles)
+    com.unity.modules.video@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.video)
+    com.unity.modules.vr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.vr)
+    com.unity.modules.wind@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.wind)
+    com.unity.modules.xr@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.xr)
+    com.unity.modules.subsystems@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.subsystems)
+    com.unity.modules.hierarchycore@1.0.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.modules.hierarchycore)
+    com.unity.ext.nunit@2.0.5 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.ext.nunit@d8c07649098d)
+    com.unity.render-pipelines.core@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.core@202510c2d2a2)
+    com.unity.shadergraph@17.3.0 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.shadergraph@aa8306cf39d6)
+    com.unity.render-pipelines.universal-config@17.0.3 (location: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.render-pipelines.universal-config@8dc1aab4af1d)
+[Subsystems] Looking for new subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] Novel subsystem found at Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] Discovering subsystems at path C:/Program Files/Unity/Hub/Editor/6000.3.22f1/Editor/Data/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Assets
+[Subsystems] Discovering subsystems at path C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be
+[Subsystems] No descriptors matched for  examples in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/UnitySubsystemsManifest.json.
+[Package Manager] Done registering packages in 0.02 seconds
+Starting: C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\Tools\BuildPipeline\bee_backend.exe --ipc --defer-dag-verification --dagfile="Library/Bee/1900b0aE.dag" --continue-on-failure --profile="Library/Bee/backend1.traceevents" ScriptAssemblies
+WorkingDir: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv
+DisplayProgressbar: Compiling Scripts
+ExitCode: 0 Duration: 0s300ms
+[ 984/1288  0s] ILPP-Configuration Library/ilpp-configuration.nevergeneratedoutput
+*** Tundra build success (0.27 seconds), 1 items updated, 1288 evaluated
+AssetDatabase: script compilation time: 0.740738s
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  0.890 seconds
+Refreshing native plugins compatible for Editor in 3.71 ms, found 10 plugins.
+Native extension for WindowsStandalone target not found
+Refreshing native plugins compatible for Editor in 5.01 ms, found 10 plugins.
+ScheduleIndexationOnStartup MainProcess:True IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  3.029 seconds
+Domain Reload Profiling: 3914ms
+	BeginReloadAssembly (313ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (53ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (135ms)
+	RebuildCommonClasses (31ms)
+	RebuildNativeTypeToScriptingClass (11ms)
+	initialDomainReloadingComplete (30ms)
+	LoadAllAssembliesAndSetupDomain (499ms)
+		LoadAssemblies (332ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (263ms)
+			TypeCache.Refresh (181ms)
+				TypeCache.ScanAssembly (168ms)
+			BuildScriptInfoCaches (70ms)
+			ResolveRequiredComponents (8ms)
+	FinalizeReload (3030ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (2732ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (19ms)
+			SetLoadedEditorAssemblies (4ms)
+			BeforeProcessingInitializeOnLoad (175ms)
+			ProcessInitializeOnLoadAttributes (2414ms)
+			ProcessInitializeOnLoadMethodAttributes (114ms)
+			AfterProcessingInitializeOnLoad (6ms)
+			EditorAssembliesLoaded (1ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (21ms)
+Asset Pipeline Refresh (id=bdfff2da6c416e9478c69b8f330d5578): Total: 5.313 seconds - Initiated by InitialRefreshV2(ForceSynchronousImport)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=3573 ms
+		Asset DB Callback time: managed=28 ms, native=21 ms
+		Scripting: domain reloads=1, domain reload time=890 ms, compile time=742 ms, other=57 ms
+		Project Asset Count: scripts=1539, non-scripts=2389
+		Asset File Changes: new=0, changed=0, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 22.823ms
+	ApplyChangesToAssetFolders: 0.844ms
+	Scan: 189.731ms
+	OnSourceAssetsModified: 0.002ms
+	CategorizeAssetsWithTransientArtifact: 61.485ms
+	ProcessAssetsWithTransientArtifactChanges: 77.311ms
+	CategorizeAssets: 49.781ms
+	ImportOutOfDateAssets: 3046.652ms (2302.803ms without children)
+		CompileScripts: 742.213ms
+		ReloadNativeAssets: 0.029ms
+		UnloadImportedAssets: 0.620ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 0.531ms
+		InitializingProgressBar: 0.001ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.000ms
+		OnDemandSchedulerStart: 0.456ms
+	PostProcessAllAssets: 28.264ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.003ms
+	UnloadStreamsBegin: 2.189ms
+	PersistCurrentRevisions: 0.136ms
+	UnloadStreamsEnd: 0.001ms
+	GenerateScriptTypeHashes: 2.560ms
+	Untracked: 1834.239ms
+
+Application.AssetDatabase Initial Refresh End
+Launched and connected shader compiler UnityShaderCompiler.exe after 0.01 seconds
+Scanning for USB devices : 7.104ms
+Initializing Unity extensions:
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[MODES] Loading mode Default (0) for mode-current-id-zantetsuken-vr
+Unloading 19 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 7697 unused Assets / (3.3 MB). Loaded Objects now: 8566.
+Memory consumption went from 204.3 MB to 201.1 MB.
+Total: 9.593800 ms (FindLiveObjects: 0.591800 ms CreateObjectMapping: 0.435000 ms MarkObjects: 6.364700 ms  DeleteObjects: 2.201300 ms)
+
+[Project] Loading completed in 10.647 seconds
+	Project init time: 				8.932 seconds
+		Template init time: 		0.000 seconds
+		Package Manager init time: 		1.524 seconds
+		Asset Database init time: 		0.237 seconds
+		Global illumination init time: 	0.003 seconds
+		Assemblies load time: 			0.781 seconds
+		Unity extensions init time: 	0.074 seconds
+		Asset Database refresh time: 	5.314 seconds
+	Scene opening time: 			0.205 seconds
+##utp:{"type":"ProjectInfo","version":2,"phase":"Immediate","time":1790208042498,"processId":116680,"projectLoad":10.6468174,"projectInit":8.9322093,"templateInit":0.0,"packageManagerInit":1.5235702,"assetDatabaseInit":0.236812,"globalIlluminationInit":0.0028868,"assembliesLoad":0.7814098,"unityExtensionsInit":0.0743309,"assetDatabaseRefresh":5.3136039,"sceneOpening":0.2045818}
+##utp:{"type":"EditorInfo","version":2,"phase":"Immediate","time":1790208042498,"processId":116680,"editorVersion":"6000.3.22f1 (1c726e1fb402)","branch":"6000.3/staging","buildType":"Release","platform":"Windows"}
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Client] Successfully resolved entitlement details
+Running tests for ExecutionSettings with details:
+targetPlatform = 
+playerHeartbeatTimeout = 600
+filters[0] = 
+   Filter with settings:
+   testMode = PlayMode
+   targetPlatform = 
+   testNames = null
+   groupNames = Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests.AGeometryThatCannotBeCut_RequestsThePlayersTermination_Once
+   categoryNames = null
+   assemblyNames = null
+ignoreTests = {}
+featureFlags = null
+
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:InitializeAndExecuteRun (string[]) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:53)
+UnityEditor.TestTools.TestRunner.CommandLineTest.TestStarter:InitializeAndExecuteRun () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/TestStarter.cs:64)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs Line: 53)
+
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Client] Successfully resolved entitlement details
+[UnityConnectServicesConfig] config is NOT valid, switching to default
+Created GICache directory at C:/Users/%USERNAME%/AppData/LocalLow/Unity/Caches/GiCache. Took: 0.018s, timestamps: [10.657 - 10.675]
+Unloading 8 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 4 unused Assets / (46.0 KB). Loaded Objects now: 8592.
+Memory consumption went from 200.5 MB to 200.4 MB.
+Total: 8.405700 ms (FindLiveObjects: 0.375600 ms CreateObjectMapping: 0.143800 ms MarkObjects: 7.780300 ms  DeleteObjects: 0.105200 ms)
+
+Start importing Assets/InitTestScenee8eeb078-d616-4608-963a-aba9cc73792c.unity using Guid(77920450e5ffe1247b81c9b7cb41eeaa) (DefaultImporter) -> (artifact id: '3ff3650dc50efecbb3f4baaaec1e1909') in 0.0053781 seconds
+Refreshing native plugins compatible for Editor in 3.77 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=d1b7d85a8ed990d48a16c2dfb8d8014d): Total: 0.161 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+Executing IPrebuildSetup for: Unity.PerformanceTesting.Editor.TestRunBuilder.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<ExecuteMethods>d__8<UnityEngine.TestTools.IPrebuildSetup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<Execute>d__7<UnityEngine.TestTools.IPrebuildSetup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:34)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs Line: 48)
+
+Reloading assemblies for play mode.
+Reloading assemblies after forced synchronous recompile.
+Begin MonoManager ReloadAssembly
+- Loaded All Assemblies, in  1.049 seconds
+Refreshing native plugins compatible for Editor in 4.80 ms, found 10 plugins.
+Native extension for WindowsStandalone target not found
+ScheduleIndexationOnStartup MainProcess:True IndexOnStartup:False
+Mono: successfully reloaded assembly
+- Finished resetting the current domain, in  0.981 seconds
+Domain Reload Profiling: 2023ms
+	BeginReloadAssembly (560ms)
+		ExecutionOrderSort (0ms)
+		DisableScriptedObjects (53ms)
+		BackupInstance (0ms)
+		ReleaseScriptingObjects (0ms)
+		CreateAndSetChildDomain (345ms)
+	RebuildCommonClasses (51ms)
+	RebuildNativeTypeToScriptingClass (20ms)
+	initialDomainReloadingComplete (48ms)
+	LoadAllAssembliesAndSetupDomain (364ms)
+		LoadAssemblies (211ms)
+		RebuildTransferFunctionScriptingTraits (0ms)
+		AnalyzeDomain (273ms)
+			TypeCache.Refresh (13ms)
+				TypeCache.ScanAssembly (0ms)
+			BuildScriptInfoCaches (233ms)
+			ResolveRequiredComponents (24ms)
+	FinalizeReload (981ms)
+		ReleaseScriptCaches (0ms)
+		RebuildScriptCaches (0ms)
+		SetupLoadedEditorAssemblies (702ms)
+			LogAssemblyErrors (0ms)
+			InitializePlatformSupportModulesInManaged (16ms)
+			SetLoadedEditorAssemblies (4ms)
+			BeforeProcessingInitializeOnLoad (153ms)
+			ProcessInitializeOnLoadAttributes (321ms)
+			ProcessInitializeOnLoadMethodAttributes (202ms)
+			AfterProcessingInitializeOnLoad (6ms)
+			EditorAssembliesLoaded (1ms)
+		ExecutionOrderSort2 (0ms)
+		AwakeInstancesAfterBackupRestoration (33ms)
+Asset Pipeline Refresh (id=c53b4b119020c7e40825644e1623edcb): Total: 2.160 seconds - Initiated by StopAssetImportingV2(ForceSynchronousImport | ForceDomainReload)
+	Summary:
+		Imports: total=0 (actual=0, local cache=0, cache server=0)
+		Asset DB Process Time: managed=0 ms, native=1071 ms
+		Asset DB Callback time: managed=24 ms, native=0 ms
+		Scripting: domain reloads=1, domain reload time=1063 ms, compile time=1 ms, other=0 ms
+		Project Asset Count: scripts=1539, non-scripts=2390
+		Asset File Changes: new=0, changed=0, moved=0, deleted=0
+		Scan Filter Count: 0
+	InvokeCustomDependenciesCallbacks: 0.001ms
+	InvokePackagesCallback: 1.653ms
+	ApplyChangesToAssetFolders: 0.298ms
+	Scan: 0.001ms
+	OnSourceAssetsModified: 0.002ms
+	CategorizeAssetsWithTransientArtifact: 0.004ms
+	ProcessAssetsWithTransientArtifactChanges: 4.627ms
+	CategorizeAssets: 45.725ms
+	ImportOutOfDateAssets: 992.678ms (988.191ms without children)
+		CompileScripts: 1.196ms
+		CollectScriptTypesHashes: 1.320ms
+		ReloadNativeAssets: 0.994ms
+		UnloadImportedAssets: 0.079ms
+		EnsureUptoDateAssetsAreRegisteredWithGuidPM: 0.603ms
+		InitializingProgressBar: 0.001ms
+		PostProcessAllAssetNotificationsAddChangedAssets: 0.000ms
+		OnDemandSchedulerStart: 0.294ms
+	PostProcessAllAssets: 24.092ms
+	GatherAllCurrentPrimaryArtifactRevisions: 0.262ms
+	UnloadStreamsBegin: 0.133ms
+	PersistCurrentRevisions: 0.127ms
+	UnloadStreamsEnd: 0.001ms
+	GenerateScriptTypeHashes: 3.801ms
+	Untracked: 1090.767ms
+
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Display
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Input
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Display
+Loading OpenXR loader library at path: C:\Users\%USERNAME%\src\zantetsuken-vr-compact16uv\Library\PackageCache\com.unity.xr.openxr@b5b77b4027be\RuntimeLoaders\windows\x64\openxr_loader.dll
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:LoadOpenXRSymbols () (at ./Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/OpenXRLoader.cs:572)
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:InitializeInternal () (at ./Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/OpenXRLoader.cs:254)
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:Initialize () (at ./Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/OpenXRLoader.cs:224)
+UnityEngine.XR.Management.XRManagerSettings:InitializeLoaderSync () (at ./Library/PackageCache/com.unity.xr.management@df145a5bc89e/Runtime/XRManagerSettings.cs:177)
+UnityEngine.XR.Management.XRGeneralSettings:InitXRSDK () (at ./Library/PackageCache/com.unity.xr.management@df145a5bc89e/Runtime/XRGeneralSettings.cs:133)
+UnityEngine.XR.Management.XRGeneralSettings:AttemptInitializeXRSDKOnLoad () (at ./Library/PackageCache/com.unity.xr.management@df145a5bc89e/Runtime/XRGeneralSettings.cs:99)
+
+(Filename: ./Library/PackageCache/com.unity.xr.openxr@b5b77b4027be/Runtime/OpenXRLoader.cs Line: 572)
+
+[Subsystems] Loading plugin UnityOpenXR for subsystem OpenXR Display...
+[XR] [67000] [09:00:47.545][Info   ] Available Layers: (0)
+[Subsystems] Loading plugin UnityOpenXR for subsystem OpenXR Input...
+Loaded scene 'Temp/__Backupscenes/0.backup'
+	Deserialize:            0.755 ms
+	Integration:            1614.088 ms
+	Integration of assets:  0.002 ms
+	Thread Wait Time:       0.016 ms
+	Total Operation Time:   1614.860 ms
+[MODES] ModeService[none].Initialize
+[MODES] ModeService[none].LoadModes
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Client] Successfully resolved entitlement details
+Cut World: the Player is being ended -- the display geometry of a cut failed: operation 1 geometry ended as InvalidInput. New cuts are not accepted and no unpublished product is committed.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object,UnityEngine.Object)
+UnityEngine.Debug:LogError (object,UnityEngine.Object)
+Zantetsu.PhysicsCut.CutWorldRoot:RequestTermination (string) (at Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs:539)
+Zantetsu.PhysicsCut.CutWorldRoot/TerminatingGeometryFault:GeometryFailed (Zantetsu.MeshCut.CutGeometryFault&) (at Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs:582)
+Zantetsu.PhysicsCut.CutWorldRoot/TerminatingGeometryFault:Zantetsu.MeshCut.ICutGeometryFault.GeometryFailed (Zantetsu.MeshCut.CutGeometryFault modreq(System.Runtime.InteropServices.InAttribute)&)
+Zantetsu.MeshCut.CutDag:Fail (Zantetsu.MeshCut.CutDag/Node,Zantetsu.MeshCut.VpStorageCutStatus,System.Exception) (at Assets/Zantetsu/Runtime/MeshCut/CutDag.cs:792)
+Zantetsu.MeshCut.CutDag:TryStart (Zantetsu.MeshCut.CutDag/Node) (at Assets/Zantetsu/Runtime/MeshCut/CutDag.cs:617)
+Zantetsu.MeshCut.CutDag:Advance (Zantetsu.MeshCut.CutDag/Node) (at Assets/Zantetsu/Runtime/MeshCut/CutDag.cs:552)
+Zantetsu.MeshCut.CutDag:Pump () (at Assets/Zantetsu/Runtime/MeshCut/CutDag.cs:381)
+Zantetsu.MeshCut.SharedWorkFrame:Update (int) (at Assets/Zantetsu/Runtime/MeshCut/SharedWorkFrame.cs:186)
+Zantetsu.PhysicsCut.ProvisionalCutDriver:Advance (int) (at Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs:426)
+Zantetsu.PhysicsCut.ProvisionalCutDriver:DriveUpdate () (at Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs:513)
+Zantetsu.PhysicsCut.ProvisionalCutDriver:Update () (at Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalCutDriver.cs:544)
+
+(Filename: Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs Line: 539)
+
+CutWorldRootFixture ending: world=TerminatedByContract collection=HeldBack terminationExpected=True abandoned=False heldBack=1 kept=[objects 4, actors 1, shapes 1, holding 0, profile True] report=[collection: the Player's termination was requested as this case meant, and DESIGN 4 promises no collection: everything this case made is kept, its use never having been confirmed over]
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests:WriteClosingLine () (at Assets/Zantetsu/Tests/PlayMode/CutWorldRootPlayModeTests.cs:568)
+Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests/<Cleanup>d__41:<>m__Finally1 () (at Assets/Zantetsu/Tests/PlayMode/CutWorldRootPlayModeTests.cs:544)
+Zantetsu.PhysicsCut.PlayModeTests.CutWorldRootPlayModeTests/<Cleanup>d__41:MoveNext () (at Assets/Zantetsu/Tests/PlayMode/CutWorldRootPlayModeTests.cs:532)
+UnityEngine.TestTools.EnumeratorHelper/<ProgressOnEnumerator>d__5:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Attributes/EnumeratorHelper.cs:35)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<System.Reflection.MethodInfo>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:248)
+UnityEngine.TestTools.BeforeAfterTestCommandBase`1/<ExecuteEnumerable>d__16<UnityEngine.TestTools.IOuterUnityTestAction>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/BeforeAfterTestCommandBase.cs:212)
+UnityEngine.TestTools.RetryCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RetryCommand.cs:37)
+UnityEngine.TestTools.RepeatCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/RepeatCommand.cs:36)
+UnityEngine.TestTools.IgnoreTestCommand/<ExecuteEnumerable>d__3:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/IgnoreTestCommand.cs:42)
+UnityEngine.TestTools.StrictCheckCommand/<ExecuteEnumerable>d__2:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/NUnitExtensions/Commands/StrictCheckCommand.cs:29)
+UnityEngine.TestTools.Utils.CoroutineRunner/<WrapEnumeratorForChecks>d__8:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEngine.TestRunner/Utils/CoroutineRunner.cs:58)
+UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr)
+
+(Filename: Assets/Zantetsu/Tests/PlayMode/CutWorldRootPlayModeTests.cs Line: 568)
+
+Saving results to: C:/Users/%USERNAME%/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+Saving results to: C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-migration/migration-playmode-termination.xml
+[XR] [67000] [09:00:48.561][Info   ] OpenXRSession::HandleSessionStateChangedEvent: state XR_SESSION_STATE_UNKNOWN->XR_SESSION_STATE_IDLE session=2 time=2046003145978900
+[XR] [67000] [09:00:48.562][Info   ] 
+
+==== Start Unity OpenXR Diagnostic Report ====
+
+
+[XR] [67000] [09:00:48.562][Info   ] ==== Report Reason: System Shutdown ====
+
+
+[XR] [67000] [09:00:48.562][Info   ] ==== OpenXR Settings ====
+[XR] [67000] [09:00:48.562][Info   ] 
+[XR] [67000] [09:00:48.562][Info   ] Symmetric Projection: False
+[XR] [67000] [09:00:48.562][Info   ] Stereo Rendering Mode: SinglePassInstanced
+[XR] [67000] [09:00:48.562][Info   ] Latency Optimization: PrioritizeRendering
+[XR] [67000] [09:00:48.562][Info   ] Color Submission Modes: kRenderTextureFormatGroup8888
+[XR] [67000] [09:00:48.562][Info   ] Depth Submission Mode: None
+[XR] [67000] [09:00:48.562][Info   ] Space Warp Motion Vector Texture Format: RGBA16f
+[XR] [67000] [09:00:48.562][Info   ] Optimize Buffer Discards: False
+[XR] [67000] [09:00:48.562][Info   ] Multiview Render Regions Optimization Mode: None
+[XR] [67000] [09:00:48.562][Info   ] Use OpenXR Predicted Time: True
+[XR] [67000] [09:00:48.562][Info   ] Foveated Rendering API: SRPFoveation
+[XR] [67000] [09:00:48.562][Info   ] 
+[XR] [67000] [09:00:48.562][Info   ] ==== OpenXR Provider Info ====
+[XR] [67000] [09:00:48.562][Info   ] 
+[XR] [67000] [09:00:48.562][Info   ] Provider Version: ecb5f4e-dirty
+[XR] [67000] [09:00:48.562][Info   ] App: zantetsuken-vr #1521753221
+[XR] [67000] [09:00:48.562][Info   ] Engine: 6000.3.22f1 #87122945
+[XR] [67000] [09:00:48.562][Info   ] 
+[XR] [67000] [09:00:48.562][Info   ] ==== OpenXR Runtime Info ====
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Available Runtime Extensions: (44)
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_D3D11_enable: Version=11
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_D3D12_enable: Version=11
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_opengl_enable: Version=12
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_vulkan_enable: Version=10
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_vulkan_enable2: Version=4
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_depth: Version=6
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_win32_convert_performance_counter_time: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_convert_timespec_time: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_cube: Version=8
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_cylinder: Version=4
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_equirect: Version=3
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_visibility_mask: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_color_scale_bias: Version=5
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_maintenance1: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_win32_appcontainer_compatible: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_debug_utils: Version=5
+[XR] [67000] [09:00:48.563][Info   ]   XR_OCULUS_recenter_event: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_OCULUS_audio_device_guid: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_color_space: Version=3
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_display_refresh_rate: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_performance_metrics: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_headset_id: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_OCULUS_ovrsession_handle: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_hand_interaction: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_hand_tracking: Version=4
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_hand_tracking_mesh: Version=3
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_simultaneous_hands_and_controllers: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_hand_tracking_aim: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_hand_tracking_capsules: Version=3
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_hand_tracking_data_source: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_hand_tracking_microgestures: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_local_floor: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_active_action_set_priority: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_future: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_palm_pose: Version=3
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_haptic_parametric: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_haptic_amplitude_envelope: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_haptic_pcm: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_touch_controller_pro: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_touch_controller_plus: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_FB_touch_controller_proximity: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_OCULUS_external_camera: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_detached_controllers: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_LOGITECH_mx_ink_stylus_interaction: Version=1
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Available Layers: (0)
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Runtime Name: Oculus
+[XR] [67000] [09:00:48.563][Info   ] Runtime Version: 1.207.0
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Form factor: XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Runtime extensions enabled: (6)
+[XR] [67000] [09:00:48.563][Info   ]   XR_EXT_local_floor: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_D3D11_enable: Version=11
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_composition_layer_depth: Version=6
+[XR] [67000] [09:00:48.563][Info   ]   XR_KHR_visibility_mask: Version=2
+[XR] [67000] [09:00:48.563][Info   ]   XR_OCULUS_audio_device_guid: Version=1
+[XR] [67000] [09:00:48.563][Info   ]   XR_META_performance_metrics: Version=2
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Available Reference Spaces: (4)
+[XR] [67000] [09:00:48.563][Info   ]   XR_REFERENCE_SPACE_TYPE_VIEW
+[XR] [67000] [09:00:48.563][Info   ]   XR_REFERENCE_SPACE_TYPE_LOCAL
+[XR] [67000] [09:00:48.563][Info   ]   XR_REFERENCE_SPACE_TYPE_STAGE
+[XR] [67000] [09:00:48.563][Info   ]   XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] Instance Id  : 0x1
+[XR] [67000] [09:00:48.563][Info   ] System Id    : 0x18
+[XR] [67000] [09:00:48.563][Info   ] Session Id   : 0x2
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] ==== OpenXR API Spec Version ====
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] XrInstance Created with OpenXR API Version: 1.1.54
+[XR] [67000] [09:00:48.563][Info   ] 
+[XR] [67000] [09:00:48.563][Info   ] ==== Last 20 Events ====
+[XR] [67000] [09:00:48.563][Info   ] XrEventDataSessionStateChanged: XR_SESSION_STATE_UNKNOWN->XR_SESSION_STATE_IDLE
+[XR] [67000] [09:00:48.563][Info   ] 
+
+==== End Unity OpenXR Diagnostic Report ====
+
+
+[XR] XR_META_performance_metrics: Attempted to stop before session ready
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Loaded scene 'Temp/__Backupscenes/0.backup'
+	Deserialize:            0.517 ms
+	Integration:            188.737 ms
+	Integration of assets:  0.001 ms
+	Thread Wait Time:       0.016 ms
+	Total Operation Time:   189.272 ms
+Unloading 205 unused Assets / (24.9 MB). Loaded Objects now: 8604.
+Memory consumption went from 233.7 MB to 208.8 MB.
+Total: 25.780900 ms (FindLiveObjects: 0.479500 ms CreateObjectMapping: 0.186000 ms MarkObjects: 24.203100 ms  DeleteObjects: 0.910900 ms)
+
+Executing IPostBuildCleanup for: Unity.PerformanceTesting.Editor.TestRunBuilder.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<ExecuteMethods>d__8<UnityEngine.TestTools.IPostBuildCleanup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:48)
+UnityEditor.TestTools.TestRunner.TestRun.Tasks.BuildActionTaskBase`1/<Execute>d__7<UnityEngine.TestTools.IPostBuildCleanup>:MoveNext () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs:34)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteStep () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:173)
+UnityEditor.TestTools.TestRunner.TestRun.TestJobRunner:ExecuteCallback () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/TestJobRunner.cs:108)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/TestRun/Tasks/BuildActionTaskBase.cs Line: 48)
+
+Unloading 0 Unused Serialized files (Serialized files now loaded: 0)
+Unloading 0 unused Assets / (0 B). Loaded Objects now: 8609.
+Memory consumption went from 220.5 MB to 220.5 MB.
+Total: 24.664700 ms (FindLiveObjects: 0.332700 ms CreateObjectMapping: 0.122600 ms MarkObjects: 24.192700 ms  DeleteObjects: 0.015500 ms)
+
+Refreshing native plugins compatible for Editor in 5.14 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=914f7c137a2e7f3419a17b03cf93e799): Total: 0.116 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+DisplayProgressbar: Undo
+Test run completed. Exiting with code 0 (Ok). Run completed.
+UnityEngine.Debug:ExtractStackTraceNoAlloc (byte*,int,string)
+UnityEngine.StackTraceUtility:ExtractStackTrace ()
+UnityEngine.DebugLogHandler:Internal_Log (UnityEngine.LogType,UnityEngine.LogOption,string,UnityEngine.Object)
+UnityEngine.DebugLogHandler:LogFormat (UnityEngine.LogType,UnityEngine.Object,string,object[])
+UnityEngine.Logger:Log (UnityEngine.LogType,object)
+UnityEngine.Debug:Log (object)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:ExitApplication (UnityEditor.TestTools.TestRunner.CommandLineTest.Executer/ReturnCodes,string) (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:81)
+UnityEditor.TestTools.TestRunner.CommandLineTest.Executer:ExitIfRunIsCompleted () (at ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs:74)
+UnityEditor.EditorApplication:Internal_CallUpdateFunctions ()
+
+(Filename: ./Library/PackageCache/com.unity.test-framework@bd7f943e9647/UnityEditor.TestRunner/CommandLineTest/Executer.cs Line: 81)
+
+Start importing ProjectSettings/ProjectSettings.asset using Guid(00000000000000004000000000000000) (LibraryAssetImporter) -> (artifact id: '6cc0775985184a1bcc8251ca0958e3fb') in 0.0065748 seconds
+Refreshing native plugins compatible for Editor in 4.86 ms, found 10 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Asset Pipeline Refresh (id=66dfeac109f94ff43b14a649c5b0facf): Total: 0.027 seconds - Initiated by StopAssetImportingV2(NoUpdateAssetOptions)
+[Physics::Module] Cleanup current backend.
+[Physics::Module] Id: 0xf2b8ea05
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22-notifications channel disconnected successfully.
+[Licensing::IpcConnector] LicenseClient-junic-6000.3.22 channel disconnected successfully.
+AcceleratorClientConnectionCallback - disconnected - :0
+Cleanup mono
+Leak Detected : Persistent allocates 18 individual allocations. To find out more please enable 'Preferences > Jobs > Leak Detection Level > Enabled With Stack Trace' and reproduce the leak again.
+Checking for leaked weakptr:
+  Found no leaked weakptrs.
+[Package Manager] Server process was shutdown
+##utp:{"type":"MemoryLeaks","version":2,"phase":"Immediate","time":1790208050008,"processId":116680,"allocatedMemory":17010476,"memoryLabels":[{"Default":14409},{"Permanent":15236},{"NewDelete":68883},{"Thread":4230344},{"Manager":39101},{"VertexData":1336},{"Geometry":816},{"Texture":296},{"Shader":80533},{"Material":24},{"GfxDevice":57384},{"GfxThread":168},{"Animation":392},{"Audio":2664},{"FreeType":8},{"FontEngine":736},{"Physics":2146},{"Physics2D":16},{"Serialization":656},{"Input":14984},{"JobScheduler":33024},{"TextLib":280},{"Mono":32},{"MonoCode":64},{"ScriptingNativeRuntime":155060},{"BaseObject":1620208},{"Resource":1336},{"Renderer":3000},{"Transform":4685},{"File":9779},{"WebCam":616},{"Culling":32},{"Terrain":11394},{"Wind":24},{"STL":40},{"String":14401},{"DynamicArray":113058},{"HashMap":83403},{"Utility":2662454},{"Curl":2478},{"PoolAlloc":2152},{"AI":80},{"TypeTree":5341},{"ScriptManager":512},{"RuntimeInitializeOnLoadManager":64},{"SpriteAtlas":112},{"GI":7792},{"Director":8240},{"CloudService":720},{"WebRequest":552},{"VR":53562},{"SceneManager":504},{"Video":208},{"LazyScriptCache":32},{"NativeArray":2464928},{"Camera":17},{"Secure":2377},{"SerializationCache":1576},{"APIUpdating":10320},{"VirtualTexturing":57888},{"StaticSafetyDebugInfo":278528},{"Analytics":336},{"Hierarchy":608},{"CoreStats":13112},{"Identifiers":6480},{"Gui":96},{"EditorUtility":111050},{"VersionControl":4},{"Undo":947},{"AssetDatabase":4696675},{"EditorGi":328},{"UnityConnect":29232},{"Upm":1896},{"AssetCompliance":64},{"DrivenProperties":72},{"LocalIPC":211},{"ProfilerEditor":9746},{"CoreBusinessMetrics":3222},{"Licensing":664},{"AssetReference":32},{"IPCStream":32}]}

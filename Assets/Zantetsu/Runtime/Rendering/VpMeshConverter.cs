@@ -78,6 +78,17 @@ namespace Zantetsu.Rendering
                     data.GetUVs(0, uvs);
                 }
 
+                // Validate the whole source before writing the caller's destination. Compact attributes cannot
+                // retain NaN, zero normals or signed/tiled UV; never convert them into plausible valid bytes.
+                for (int v = 0; v < vertexCount; v++)
+                {
+                    Vector3 p = positions[v], n = normals[v];
+                    if (!Unity.Mathematics.math.all(Unity.Mathematics.math.isfinite((Unity.Mathematics.float3)p))
+                        || !Unity.Mathematics.math.all(Unity.Mathematics.math.isfinite((Unity.Mathematics.float3)n))
+                        || !Unity.Mathematics.math.isfinite(Unity.Mathematics.math.csum(Unity.Mathematics.math.abs((Unity.Mathematics.float3)n)))
+                        || n.sqrMagnitude <= 0f || !VpRenderVertex.IsSupportedUv(uvs[v])) return false;
+                }
+
                 for (int v = 0; v < vertexCount; v++)
                 {
                     vertices[v] = new VpRenderVertex { position = positions[v], normal = normals[v], uv0 = uvs[v] };

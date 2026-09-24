@@ -59,12 +59,7 @@ Shader "Zantetsu/VP Stencil Volume"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
 
-            struct VpRenderVertex
-            {
-                float3 position;
-                float3 normal;
-                float2 uv0;
-            };
+            #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;

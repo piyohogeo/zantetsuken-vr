@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・観測／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-09-21 |
+| 最終更新 | 2026-09-24 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -254,6 +254,10 @@ Geometry参照、正負集合を表すLogicalFragment、物理所有単位、描
 
 AoSの属性集合・strideは各実装時点で固定し、属性追加時に変換・切断属性処理・shaderを更新できる境界を残す。永久固定のlayout、実行中schema変更、複数layout共存、旧Bufferの無停止移行を要求しない。
 
+Compact16uv移行ではCPU永続VP頂点・切断予約出力・GPU頂点を同じ16Bにする。layoutは`position float3`（offset 0）、`normal oct8x2/sbyte`（offset 12）、`UV uint8x2`（offset 14）。UVは`(index+0.5)/256`へ復号する。CPU32Bの並行常駐やMain上のupload前再packを置かず、切断Workerは必要属性だけ局所floatへ復号して補間し、新規頂点を予約済み16Bへ直接書く。位置とtopologyの精度・識別は変更しない。Worker計算増よりMain費用と頂点memory削減を優先する（benchmark U7）。GPU転送・schedule・回収はMainに残り、全体Main費用0や全memory半減を意味しない。
+
+入力UVの対応域は有限な`[0,1]`とし、両端を含め最近傍のbyte centreへ量子化する。import端点の丸め余白だけは`2.3841858e-7`（1における2 ULP）まで許容する。Unity標準Sphereの`1.00000012`をこれで扱う。BottomHalfUVアセットの中心値は正確に保持する。余白を超える域外／非有限UV、非有限位置、非有限／zero normalは入力準備で拒否し、wrapや制限のないclampを行わない。normalは単位方向としてoct量子化し、長さは保持しない。再切断の累積属性誤差は許容するが、位置・index・topology差の許容へ流用しない。移植状況・テスト証拠は`docs/diagnostics/compact16uv-migration/`を参照する。
+
 #### 4.5.2 準備と表示採用
 
 通常命中で即切断開始に必要なSkinned入力は、現在の実Bone Poseを使う同期`SkinnedMeshRenderer.BakeMesh(mesh, useScale: false)`→CPUデータ取得・VP変換を基本経路とする。未来予測用に限り、Phase 4.65で`ResolvedAnimationPoseInput`→19.3の不変Rig Pose→4.3のBurst数値処理による線形ブレンドスキニング→共通CPU側VP入力を限定実装し、同期経路との比較から導入の採否を決める。目的は複数候補の頂点処理と同期待ちをMain Threadへ集中させないことであり、ベイク総時間の短縮や負荷ゼロを要求しない。非スキニング対象はベイクを省き、必要な形状・姿勢で準備済みなら再利用する。
@@ -457,9 +461,9 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 通常表示では、即時仮断面とGeometry Commit済みの実Capを、共通トゥーンシェーダーの固定`CutSurfaceColor`（低彩度グレー）で描画する。陰影段数、輪郭、ライト応答を揃え、断面専用Texture、Texture atlas領域、Texture Mapping用UV展開、特殊陰影、色選択用Material／submeshを追加しない。
 
-実Capの新規Render Vertexには生成時に`uv0 = (-0.5, 0)`を設定する。ShaderはMaterialのUV Transformと通常Texture Sampleより前にraw `uv0.x < 0`を判定し、負の場合は通常Textureを使わず断面色をBase Colorとして共通トゥーン陰影へ渡す。marker成分の格納形式は負値を保持できるものとする。専用Vertex field、Vertex Color、別UV channel、複数の負UV帯域を断面識別へ追加しない。
+Compact16uvの実Cap新規頂点はUV byte slot `(247,247)`、復号値`(247.5/256,247.5/256)`を保持する。負UV markerは廃止する。移行第一段階ではShaderがMaterial UV Transform前の予約slotを判定し、既存の断面色・デバッグ色を共通トゥーン陰影へ渡す。専用Vertex field、Vertex Color、別UV channelは追加しない。完成atlasの通常／debug texture切替と仮cap slot `(239,247)`による色選択は別工程であり、この段階でatlas導入完了とはしない。
 
-元Assetの負UVによって元surfaceが断面色と誤認され、通常表示ではTextureが出ずグレー、デバッグ表示では緑になることを許容する。Triangle内でUVの符号が混在する場合の部分的な誤表示も許容する。このためのUV検査・修正・登録拒否・代替markerを要求しない。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。
+元Assetの負UVは4.5.1の入力契約に従って拒否する。予約slotを通常surfaceへ割り当てないことはasset pipeline契約とする。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。これはD-171の旧負UV許容方針をCompact16uv移行範囲で置き換える。
 
 デバッグ表示は全対象共通の有効／無効だけとし、描画する断面ごとに次を適用する。
 
@@ -718,7 +722,7 @@ C(入力Geometry)
 
 これは切断アルゴリズムの構成契約であり、出力全走査・変更部検査・finite走査・Topology Validator・Validation Jobを製品Runtimeへ置かない。交差判定、分類、補間、退化時の固定値選択、出力予約範囲を越えないための容量分岐は切断処理またはメモリ安全境界として維持する。出力契約はT-083のオフラインHarnessで確認する。Topology Vertex単位のsigned distanceを一度だけ確定し、OnPlaneはPositive側へ所有させて同じ分類を全incident Triangleで共有する。全頂点OnPlaneのTriangleはPositive側へ1回だけ保持し、そのTriangleからCap segmentを生成しない。平面がvertex／edge／faceを通る場合、同一点に複数のcut portが生じる場合、極小／面積0 Triangle、契約内Self-intersectionを通常ケースとして扱い、別Topology由来のportを位置近傍だけで接続しない。
 
-各出力の元surfaceが持つ切断境界Half-edgeに対し、Capは逆方向の境界Half-edgeを持つ。切断Boundary EdgeにはCap側の面をちょうど1枚接続し、Cap内部Edgeには互いに逆方向の2面を接続して、頂点周囲も閉じた単一fanにする。非退化CapのNormal／Tangentはこのwindingと一致させる。切断平面は位置、signed distance、射影等へ使用できるが、実Capの表裏は元surfaceの有向境界から決め、全体反転した入力の向きを作り直さない。生成Cap Triangleの全Render Vertexには5.3の固定負UV markerを設定し、元surfaceとの属性seamは既存のRender Vertex分裂で扱う。既存実Capの再切断では通常の属性補間で負markerを継承する。Texture Mapping用のCap UV生成は行わず、幾何処理とNormal／Tangent生成は維持する。
+各出力の元surfaceが持つ切断境界Half-edgeに対し、Capは逆方向の境界Half-edgeを持つ。切断Boundary EdgeにはCap側の面をちょうど1枚接続し、Cap内部Edgeには互いに逆方向の2面を接続して、頂点周囲も閉じた単一fanにする。非退化CapのNormal／Tangentはこのwindingと一致させる。切断平面は位置、signed distance、射影等へ使用できるが、実Capの表裏は元surfaceの有向境界から決め、全体反転した入力の向きを作り直さない。生成Cap Triangleの全Render Vertexには5.3の固定UV slotを設定し、元surfaceとの属性seamは既存のRender Vertex分裂で扱う。既存実Capの再切断では通常の属性補間で固定slotを継承する。Texture Mapping用のCap UV生成は行わず、幾何処理とNormal／Tangent生成は維持する。
 
 Half-edge、edge hash、圧縮adjacency、Contour表現、三角形化、局所交差処理は、共通契約を満たす範囲で実装と実測から選ぶ。単純なContourへfan等を使うことは禁止しないが、不正入力や不正出力を重複Cap、逆向き重複面、Open Chain封鎖、Non-manifold lane分解で救済する段階列は要求しない。異なる閉ComponentやTrackをBoolean Unionせず、契約内の自己交差処理に必要なら局所Arrangementを共通Kernel内で使用できる。
 
@@ -1585,7 +1589,7 @@ Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10�
 | T-003 | 複数Pending | 2〜4切断で画質と性能が許容範囲 | 切断数別にCPU/GPU、Draw、overdrawを比較 |
 | T-004 | Stencil断面 | 正常な正向きの共用Geometryで、5.2の明示的品質例外を除き穴・はみ出し・片眼ずれがない | 箱、凹形、人形の共用Geometryを通常の外部視点で両眼確認する。符号・Color・Plane overflowの扱いはT-066／T-067／T-089に従い、この試験へ重複展開しない。Camera内部／Near Plane近傍は5.2／D-131の品質例外に従う |
 | T-005 | Convex切断 | 7.2の上限内の有効な閉凸出力と内接性を確認する | 小さいオフラインFixtureでL境界、超過出力の内接削減、削減後B-repの再切断可能性を確認する。削減不能は既存失敗終端へ接続し、成功例をAbortだけで代替しない。頂点由来・削除順別のmatrixは要求しない |
-| T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表Fixtureを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
+| T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定UV slotと再切断時の継承を維持する | 代表Fixtureを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
 | T-007 | 受付制限と対象authority | 4.2／8章のSource単位の受付・失効と4.5.6の祖先順Geometryを確認する | AがActive中の同じSourceへの要求を見送り、保存・再実行しない。他のLogicalFragmentは同じObject内でも並行でき、他枝のObjectGeneration更新でAをRejectしない。AのFinal Physics／Logical公開後はGeometry未完了でも子のBを受付・公開できるが、B KernelはA Geometry Commitを待つ。同じTransactionのProvisional置換・pose／速度／Sleep変化は自己失効せず、外部authority変更はStale回収して現在Sourceを退役させない |
 | T-008 | Skinned切断 | Tableで動作するNPCの実Pose Snapshotから同期ベイク・静的破片への移行が成立する | Phase 4.52で限定再生中の各部位を切断する。移動計画・未来評価全体・非同期ベイクの完成を要求しない |
 | T-010 | 破片予算 | 代表的な連続プレイでCPU／メモリ予算を満たす。任意GCによる常時の容量収束や無制限の切断寿命は保証しない | 10分間の代表的な連続切断ストレス試験。新GCの未実装・無効・省略自体を不合格にせず、採用構成の費用・使用量を確認する。Phase 7.1固有の完了確認を本試験の新規実施へ依存させない |
@@ -1799,7 +1803,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - FacingによるStencil処理の省略は、両眼ともFacing epsilonを越えて明確に裏向きのCap仕事に限る。片眼だけ可視、またはepsilon帯内のCapをFacingで省略しない。
 
-- 5.3に従い、デバッグ有効時は仮断面が赤、公開済み実断面が緑となり、無効時は両者が通常グレーとなる。元Assetの負UVによる通常表示を含む誤表示は許容する。
+- 5.3に従い、デバッグ有効時は仮断面が赤、公開済み実断面が緑となり、無効時は両者が通常グレーとなる。元AssetのUV対応域は4.5.1とし、対応域外を拒否する。
 
 - Geometryは4.5.6の祖先順にCommitし、実体化したTemporaryだけを回収する。Final Physics／Logical Publicationを先に成立させ、Geometry CommitはDraw List構築・GPU完了・実表示を待たない。一つの描画Snapshot内の全Passで同じGeometryとTemporary集合（Selected面集合）を参照し（実際に適用するclip面は、本体・Depth・Shadowが全Selected面、Stencil Volumeが通常Colorでは自身のCap面だけ、最後のColorではRenderFragmentの全Selected面）、GPU更新が対応Drawに先行する順序はRenderer側で保つ。
 

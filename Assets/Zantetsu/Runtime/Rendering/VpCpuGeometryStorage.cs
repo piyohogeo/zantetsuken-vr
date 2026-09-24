@@ -295,7 +295,7 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// Appends a prepared geometry whose arrays the caller owns: its vertices in the one common 32 byte layout, its
+        /// Appends a prepared geometry whose arrays the caller owns: its vertices in the common 16 byte layout, its
         /// indices in mesh-local vertex numbers, the topology vertex each render vertex belongs to, and its submesh
         /// descriptors. Everything is copied into the storage, which keeps no reference to the arrays and changes none
         /// of them. Indices are rebased onto the global vertex numbers; topology ids stay geometry-local. The result is
@@ -384,6 +384,14 @@ namespace Zantetsu.Rendering
                 || !DoSubmeshesCover(submeshes, 0, submeshes.Length, indexCount))
             {
                 return false;
+            }
+
+            // Prepared input is already compact: invalid encodings must not reach GPU readers, even for display-only
+            // geometry. Validate before taking any spans; no full float vertex copy is needed.
+            for (int v = 0; v < vertexCount; v++)
+            {
+                if (!vertices[v].HasValidAttributes
+                    || !Unity.Mathematics.math.all(Unity.Mathematics.math.isfinite((Unity.Mathematics.float3)vertices[v].position))) return false;
             }
 
             // Where the vertices go is the allocator's answer now, and the indices are checked against it, so the room

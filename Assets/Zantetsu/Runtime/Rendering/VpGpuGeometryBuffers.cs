@@ -24,8 +24,20 @@ namespace Zantetsu.Rendering
         private GraphicsBuffer _retiredIndexBuffer;
         private AsyncGPUReadbackRequest _retiredVertexReadback;
         private AsyncGPUReadbackRequest _retiredIndexReadback;
+        private RetiredCompletion _retiredCompletion;
         private bool _retiredReadbackErrorLogged;
         private bool _disposed;
+
+        // A completed request is disposed by Unity on a later frame, when hasError becomes true even after success.
+        // Latch each outcome while the callback's request is valid. This object belongs to one retired generation;
+        // a late callback cannot change a later generation, and callback completion publishes its preceding outcome.
+        private sealed class RetiredCompletion
+        {
+            public bool vertexError, indexError;
+            public volatile bool vertexDone, indexDone;
+            public void VertexCompleted(AsyncGPUReadbackRequest request) { vertexError = request.hasError; vertexDone = true; }
+            public void IndexCompleted(AsyncGPUReadbackRequest request) { indexError = request.hasError; indexDone = true; }
+        }
 
         public VpGpuGeometryBuffers(int vertexCapacity, int indexCapacity)
         {
@@ -116,6 +128,7 @@ namespace Zantetsu.Rendering
             GraphicsBuffer grownIndexBuffer = null;
             AsyncGPUReadbackRequest vertexReadback;
             AsyncGPUReadbackRequest indexReadback;
+            var completion = new RetiredCompletion();
             try
             {
                 (grownVertexBuffer, grownIndexBuffer) = CreateBuffers(vertexCapacity, indexCapacity);
@@ -123,8 +136,8 @@ namespace Zantetsu.Rendering
 
                 // A readback completes only after the GPU has processed the commands submitted before it, including
                 // the last draws that used the buffer it reads.
-                vertexReadback = AsyncGPUReadback.Request(_vertexBuffer, VpRenderVertex.Stride, 0);
-                indexReadback = AsyncGPUReadback.Request(_indexBuffer, IndexStride, 0);
+                vertexReadback = AsyncGPUReadback.Request(_vertexBuffer, VpRenderVertex.Stride, 0, completion.VertexCompleted);
+                indexReadback = AsyncGPUReadback.Request(_indexBuffer, IndexStride, 0, completion.IndexCompleted);
             }
             catch
             {
@@ -137,6 +150,7 @@ namespace Zantetsu.Rendering
             _retiredIndexBuffer = _indexBuffer;
             _retiredVertexReadback = vertexReadback;
             _retiredIndexReadback = indexReadback;
+            _retiredCompletion = completion;
             _retiredReadbackErrorLogged = false;
             _vertexBuffer = grownVertexBuffer;
             _indexBuffer = grownIndexBuffer;
@@ -155,12 +169,12 @@ namespace Zantetsu.Rendering
         public bool TryReleaseRetired()
         {
             ThrowIfDisposed();
-            if (_retiredVertexBuffer == null || !_retiredVertexReadback.done || !_retiredIndexReadback.done)
+            if (_retiredVertexBuffer == null || !_retiredCompletion.vertexDone || !_retiredCompletion.indexDone)
             {
                 return false;
             }
 
-            if (_retiredVertexReadback.hasError || _retiredIndexReadback.hasError)
+            if (_retiredCompletion.vertexError || _retiredCompletion.indexError)
             {
                 if (!_retiredReadbackErrorLogged)
                 {
@@ -189,8 +203,8 @@ namespace Zantetsu.Rendering
             _disposed = true;
             if (_retiredVertexBuffer != null)
             {
-                _retiredVertexReadback.WaitForCompletion();
-                _retiredIndexReadback.WaitForCompletion();
+                if (!_retiredCompletion.vertexDone) _retiredVertexReadback.WaitForCompletion();
+                if (!_retiredCompletion.indexDone) _retiredIndexReadback.WaitForCompletion();
             }
 
             _vertexBuffer.Dispose();
@@ -244,6 +258,7 @@ namespace Zantetsu.Rendering
             _retiredIndexBuffer = null;
             _retiredVertexReadback = default;
             _retiredIndexReadback = default;
+            _retiredCompletion = null;
         }
 
         private void ThrowIfDisposed()

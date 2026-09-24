@@ -5,7 +5,9 @@
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "Zantetsu.Rendering",
-        "Unity.Collections"
+        "Unity.Collections",
+        "Unity.Mathematics",
+        "Zantetsu.MeshCut"
     ],
     "includePlatforms": [
         "Editor",

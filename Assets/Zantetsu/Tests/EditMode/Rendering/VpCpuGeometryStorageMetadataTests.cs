@@ -44,6 +44,17 @@ namespace Zantetsu.Rendering.Tests
             return new VpRenderVertex { position = new Vector3(x, y, z), normal = Vector3.back, uv0 = new Vector2(u, v) };
         }
 
+        [Test]
+        public void InvalidCompactAttributes_AreRejectedWithoutTakingStorageRoom()
+        {
+            using var storage = NewStorage();
+            var vertices = PreparedVertices();
+            vertices[vertices.Length - 1].uv0 = new Vector2(-.5f, 0);
+            Assert.That(storage.TryAppendPrepared(vertices, PreparedIndices(), PreparedTopology(), TopologyVertices, PreparedSubmeshes(), out _), Is.False);
+            Assert.That(storage.Vertices.Length, Is.Zero);
+            AppendPrepared(storage); // refusal did not consume spans or descriptors
+        }
+
         private static uint[] PreparedIndices()
         {
             return new uint[] { 0, 1, 2, 0, 2, 3, 4, 5, 0 };
