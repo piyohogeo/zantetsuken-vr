@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "941844ee",
+  "unity": "6000.3.22f1",
+  "platform": "Windows Editor EditMode",
+  "physicsRegistrationReady": false,
+  "classification": "F-PHYS-CONVEX: 3 authored UCX fail existing convexity audit; do not omit them from product owner",
+  "coordinateCasesPassed": 8,
+  "distinctHullsMapped": 38,
+  "uniqueHullVertices": 1216,
+  "convexAccepted": 35,
+  "convexRejected": 3,
+  "acceptedHullCutSteps": 280,
+  "fullEditMode": {
+    "passed": 3630,
+    "failed": 0,
+    "skipped": 0
+  },
+  "maximumWorldPositionError": 1.12461817e-06,
+  "cases": [
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "maxWorldError": 4.22520856e-07,
+      "maxRendererLocalError": 4.21797125e-07,
+      "wrongBoneError": 0.5303564,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "maxWorldError": 4.549127e-07,
+      "maxRendererLocalError": 4.55659517e-07,
+      "wrongBoneError": 0.554851949,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "maxWorldError": 1.01852459e-06,
+      "maxRendererLocalError": 8.08654e-07,
+      "wrongBoneError": 0.5441538,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "maxWorldError": 1.12461817e-06,
+      "maxRendererLocalError": 9.48052048e-07,
+      "wrongBoneError": 0.5786225,
+      "accepted": 17,
+      "rejected": 2,
+      "cuts": 34
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "maxWorldError": 8.40992e-07,
+      "maxRendererLocalError": 7.72902858e-05,
+      "wrongBoneError": 0.487160772,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "maxWorldError": 8.49888863e-07,
+      "maxRendererLocalError": 7.834654e-05,
+      "wrongBoneError": 0.5105441,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "maxWorldError": 8.92080664e-07,
+      "maxRendererLocalError": 0.00010697425,
+      "wrongBoneError": 0.488673627,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "maxWorldError": 9.61096e-07,
+      "maxRendererLocalError": 0.000116332631,
+      "wrongBoneError": 0.510337234,
+      "accepted": 18,
+      "rejected": 1,
+      "cuts": 36
+    }
+  ],
+  "rejected": [
+    {
+      "family": "character-casual",
+      "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+      "bone": "DEF-thigh.L",
+      "poseVsRestMax": 1.7136335372924805e-07,
+      "vertices": 32,
+      "faces": 60,
+      "convexAccepted": false,
+      "failure": "nonconvex or inward face",
+      "diagnostics": [
+        {
+          "frame": "source",
+          "extent": 0.6016479581594467,
+          "worstOutside": 5.597962236338035e-05,
+          "tolerance": 1e-06
+        },
+        {
+          "frame": "transformed",
+          "extent": 0.5931001305580139,
+          "worstOutside": 5.59814004779479e-05,
+          "tolerance": 1e-06
+        }
+      ]
+    },
+    {
+      "family": "character-casual",
+      "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+      "bone": "DEF-thigh.R",
+      "poseVsRestMax": 1.7136335372924805e-07,
+      "vertices": 32,
+      "faces": 60,
+      "convexAccepted": false,
+      "failure": "nonconvex or inward face",
+      "diagnostics": [
+        {
+          "frame": "source",
+          "extent": 0.6004104018211365,
+          "worstOutside": 5.337257535770638e-05,
+          "tolerance": 1e-06
+        },
+        {
+          "frame": "transformed",
+          "extent": 0.5918153822422028,
+          "worstOutside": 5.332677701697812e-05,
+          "tolerance": 1e-06
+        }
+      ]
+    },
+    {
+      "family": "character-professional",
+      "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+      "bone": "DEF-upper_arm.L",
+      "poseVsRestMax": 2.5303839037745665e-05,
+      "vertices": 32,
+      "faces": 60,
+      "convexAccepted": false,
+      "failure": "nonconvex or inward face",
+      "diagnostics": [
+        {
+          "frame": "source",
+          "extent": 0.32136138156056404,
+          "worstOutside": 4.823942445574256e-05,
+          "tolerance": 1e-06
+        },
+        {
+          "frame": "transformed",
+          "extent": 28.07646942138672,
+          "worstOutside": 0.004831758992177128,
+          "tolerance": 2.8076469421386718e-05
+        }
+      ]
+    }
+  ],
+  "testSourceSha256": "d79c5f4ed24cc2f409ae1b4fe4bee5454f0f457de4bbb2a60e8387fa2f48f6fd",
+  "exportSha256": "5383eb1c198df4739a00e50fb22aab2fd8fbef16334e3bd1b74f8c0abab11612",
+  "failureLocalizationSha256": "94430632204e0b2a45aaf9e73b6886d32bf8e0d91a7853f7294c32f0283c70d2",
+  "alternateDiagonalHypothesesPassed": 3,
+  "alternateDiagonalAppliedToSource": false,
+  "limitations": [
+    "No owner/scene registration",
+    "Rejected hulls not cooked or cut",
+    "No source repair or tolerance relaxation for convexity",
+    "No IL2CPP or performance measurement"
+  ]
+}
