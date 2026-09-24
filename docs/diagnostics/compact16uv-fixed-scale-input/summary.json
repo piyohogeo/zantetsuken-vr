@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "71b04d9a",
+  "unity": "6000.3.22f1",
+  "platform": "Windows x64 IL2CPP Development D3D11 mono",
+  "runtimeInputImplemented": true,
+  "defaultGameplaySceneSwitched": false,
+  "independentProcesses": 3,
+  "dynamicClipValidated": false,
+  "focused": {
+    "passed": 40,
+    "failed": 0,
+    "skipped": 0
+  },
+  "fullEditMode": {
+    "passed": 3704,
+    "failed": 0,
+    "skipped": 0
+  },
+  "integratedCases": 18,
+  "committedCuts": 36,
+  "expectedRuntimeScaleRejections": 12,
+  "strictPlayerPassed": true,
+  "comparisonsPerProcess": 28,
+  "passedPerProcess": 28,
+  "failures": [],
+  "exactImageReproducibility": true,
+  "imageCountPerProcess": 56,
+  "imageHashes": {
+    "character-casual-pose0-bake.png": "697aae59b4ddfb866961629d1629f82d6e55067b3a267155f98d6f5cda385aea",
+    "character-casual-pose0-original-skin.png": "1f2feb79d9362b058cc7b55cffe779f12ab210f437626aeb8b19e2c0ebd5d0a4",
+    "character-casual-pose0-prepared-skin.png": "1f2feb79d9362b058cc7b55cffe779f12ab210f437626aeb8b19e2c0ebd5d0a4",
+    "character-casual-pose0-skin.png": "1f2feb79d9362b058cc7b55cffe779f12ab210f437626aeb8b19e2c0ebd5d0a4",
+    "character-casual-pose0-stage0-debug0-mesh.png": "697aae59b4ddfb866961629d1629f82d6e55067b3a267155f98d6f5cda385aea",
+    "character-casual-pose0-stage0-debug0-vp.png": "1e26fb97300d899488ee8d56eca95bb364381ca57336918d6cc4788de2e74032",
+    "character-casual-pose0-stage1-debug0-mesh.png": "0ddc0732197a6c58027fbdcb31c16be327f8de70863bf766a97b71f99dc3a620",
+    "character-casual-pose0-stage1-debug0-vp.png": "0ddc0732197a6c58027fbdcb31c16be327f8de70863bf766a97b71f99dc3a620",
+    "character-casual-pose0-stage1-debug1-mesh.png": "0e7f0a26843e75829a05ded229950604d21d21b3a4c8aa8e16970a9d1af17ab6",
+    "character-casual-pose0-stage1-debug1-vp.png": "0e7f0a26843e75829a05ded229950604d21d21b3a4c8aa8e16970a9d1af17ab6",
+    "character-casual-pose0-stage2-debug0-mesh.png": "0a553cfc31e2aa54b57fc2943c6b0f6422b5ac1d001a94ac1a962629348971ab",
+    "character-casual-pose0-stage2-debug0-vp.png": "0a553cfc31e2aa54b57fc2943c6b0f6422b5ac1d001a94ac1a962629348971ab",
+    "character-casual-pose0-stage2-debug1-mesh.png": "ea8db31734523748a9c8b393cc44387f7e1ea42a0d186bc82f0523c7be44c077",
+    "character-casual-pose0-stage2-debug1-vp.png": "ea8db31734523748a9c8b393cc44387f7e1ea42a0d186bc82f0523c7be44c077",
+    "character-casual-pose1-bake.png": "a19554cc389812302a5660a35c1ebb0a585300fc47b890db1c253693af6c8a83",
+    "character-casual-pose1-original-skin.png": "6b49a9a0948dfa9e485971e3de8c66ba17a5c50aa81a76887829552ba4c132c9",
+    "character-casual-pose1-prepared-skin.png": "6b49a9a0948dfa9e485971e3de8c66ba17a5c50aa81a76887829552ba4c132c9",
+    "character-casual-pose1-skin.png": "6b49a9a0948dfa9e485971e3de8c66ba17a5c50aa81a76887829552ba4c132c9",
+    "character-casual-pose1-stage0-debug0-mesh.png": "a19554cc389812302a5660a35c1ebb0a585300fc47b890db1c253693af6c8a83",
+    "character-casual-pose1-stage0-debug0-vp.png": "5b418612db35b27b904983ade33055ee51e0c1a13d5c02464ec312e887cda0ca",
+    "character-casual-pose1-stage1-debug0-mesh.png": "5eb1d39a63eeb86f226dfecc55e5d0c95701fc1b39b2bbb4cd9c0e0532ae15eb",
+    "character-casual-pose1-stage1-debug0-vp.png": "5eb1d39a63eeb86f226dfecc55e5d0c95701fc1b39b2bbb4cd9c0e0532ae15eb",
+    "character-casual-pose1-stage1-debug1-mesh.png": "ce577dce755a71adaf5081f947afbb9b665d6916e0c22df25ca3873a897be469",
+    "character-casual-pose1-stage1-debug1-vp.png": "ce577dce755a71adaf5081f947afbb9b665d6916e0c22df25ca3873a897be469",
+    "character-casual-pose1-stage2-debug0-mesh.png": "f77ee96433bae82f9b685be09c0e08409ea3ea88922cb44c0d3833f05f15992a",
+    "character-casual-pose1-stage2-debug0-vp.png": "f77ee96433bae82f9b685be09c0e08409ea3ea88922cb44c0d3833f05f15992a",
+    "character-casual-pose1-stage2-debug1-mesh.png": "536065256ce81b39ecef1aa7a536ca76bbf0a3c4bc5c3d7685d25ebfed53afa2",
+    "character-casual-pose1-stage2-debug1-vp.png": "536065256ce81b39ecef1aa7a536ca76bbf0a3c4bc5c3d7685d25ebfed53afa2",
+    "character-professional-pose0-bake.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-original-skin.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-prepared-skin.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-skin.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-stage0-debug0-mesh.png": "891e8d2a661bf699788737b8466d3b9234d11c1aabc4b5c10384f619ed29672c",
+    "character-professional-pose0-stage0-debug0-vp.png": "e60064218b3c0a986543f16767324532935a9599867f75366a224251b5e46d18",
+    "character-professional-pose0-stage1-debug0-mesh.png": "91e6ba81255bbbdc4298fc68d6e12e8d5c835880502a72c1d179a0695f4fd2fb",
+    "character-professional-pose0-stage1-debug0-vp.png": "91e6ba81255bbbdc4298fc68d6e12e8d5c835880502a72c1d179a0695f4fd2fb",
+    "character-professional-pose0-stage1-debug1-mesh.png": "bc86482d128bbb094701972d6db427507f2706756a2db85ef9c47c9a41a9a321",
+    "character-professional-pose0-stage1-debug1-vp.png": "bc86482d128bbb094701972d6db427507f2706756a2db85ef9c47c9a41a9a321",
+    "character-professional-pose0-stage2-debug0-mesh.png": "9183525b5e60b59448d7e7e116d3e1561f47e31c28e361ec65b8e2c43f35de2f",
+    "character-professional-pose0-stage2-debug0-vp.png": "9183525b5e60b59448d7e7e116d3e1561f47e31c28e361ec65b8e2c43f35de2f",
+    "character-professional-pose0-stage2-debug1-mesh.png": "d803e1b24e3669ce722d6b824fbe1da9eda6966e210097989218f1c1074a57a8",
+    "character-professional-pose0-stage2-debug1-vp.png": "d803e1b24e3669ce722d6b824fbe1da9eda6966e210097989218f1c1074a57a8",
+    "character-professional-pose1-bake.png": "2613d622bbdf7265bf2a83bf803590f560b61bf770e81c388b24bb7478ae706a",
+    "character-professional-pose1-original-skin.png": "ea6f30796ecc9fc04643a160982c3cfce664c62ef0d5e124e3aa4b40c152802f",
+    "character-professional-pose1-prepared-skin.png": "ea6f30796ecc9fc04643a160982c3cfce664c62ef0d5e124e3aa4b40c152802f",
+    "character-professional-pose1-skin.png": "ea6f30796ecc9fc04643a160982c3cfce664c62ef0d5e124e3aa4b40c152802f",
+    "character-professional-pose1-stage0-debug0-mesh.png": "2613d622bbdf7265bf2a83bf803590f560b61bf770e81c388b24bb7478ae706a",
+    "character-professional-pose1-stage0-debug0-vp.png": "30fa353146c9f8be5574cce9030af53febc5c84afc9f9a85d4433ae90c681df8",
+    "character-professional-pose1-stage1-debug0-mesh.png": "4ff5f99ca09d9efb2326dc713b9b67c78ce48341ac04a8332d7fa3e01c63bfa8",
+    "character-professional-pose1-stage1-debug0-vp.png": "4ff5f99ca09d9efb2326dc713b9b67c78ce48341ac04a8332d7fa3e01c63bfa8",
+    "character-professional-pose1-stage1-debug1-mesh.png": "e23203ae68ca3f8c370f77e28caf560ce3b88e158bb31f5ce0e064781dbb8157",
+    "character-professional-pose1-stage1-debug1-vp.png": "e23203ae68ca3f8c370f77e28caf560ce3b88e158bb31f5ce0e064781dbb8157",
+    "character-professional-pose1-stage2-debug0-mesh.png": "afd9a3a41a177ef5e93a6fc612332aa06311267e447cc95bfd8622f68cfbfd31",
+    "character-professional-pose1-stage2-debug0-vp.png": "afd9a3a41a177ef5e93a6fc612332aa06311267e447cc95bfd8622f68cfbfd31",
+    "character-professional-pose1-stage2-debug1-mesh.png": "000b49b027dcd800f14c49de735716826c103f223c723ea97dabf66b6c0b97ae",
+    "character-professional-pose1-stage2-debug1-vp.png": "000b49b027dcd800f14c49de735716826c103f223c723ea97dabf66b6c0b97ae"
+  },
+  "importedClipInventory": [
+    {
+      "family": "character-casual",
+      "count": 1
+    },
+    {
+      "family": "character-professional",
+      "count": 1
+    }
+  ],
+  "sampledClips": [
+    {
+      "family": "character-casual",
+      "clip": "CanonicalSource",
+      "pose": 0,
+      "sampledTime": 2.3862500190734863,
+      "scale": 1.0
+    },
+    {
+      "family": "character-casual",
+      "clip": "CanonicalSource",
+      "pose": 1,
+      "sampledTime": 6.951250076293945,
+      "scale": 1.0
+    },
+    {
+      "family": "character-professional",
+      "clip": "CanonicalSource",
+      "pose": 0,
+      "sampledTime": 2.3862500190734863,
+      "scale": 0.009999999776482582
+    },
+    {
+      "family": "character-professional",
+      "clip": "CanonicalSource",
+      "pose": 1,
+      "sampledTime": 6.951250076293945,
+      "scale": 0.009999999776482582
+    }
+  ],
+  "clipGeometryComparison": [
+    {
+      "family": "character-casual",
+      "clip": "CanonicalSource",
+      "length": 10.375,
+      "curves": 3580,
+      "varyingCurves": 0,
+      "samples": 120,
+      "maxWorldPositionError": 0.0,
+      "maxWorldNormalError": 0.0,
+      "maxWorldMotion": 0.0
+    },
+    {
+      "family": "character-professional",
+      "clip": "CanonicalSource",
+      "length": 10.375,
+      "curves": 3580,
+      "varyingCurves": 0,
+      "samples": 120,
+      "maxWorldPositionError": 4.77069932e-07,
+      "maxWorldNormalError": 2.16964182e-07,
+      "maxWorldMotion": 0.0
+    }
+  ],
+  "costs": [
+    {
+      "family": "character-casual",
+      "processMedians": {
+        "coldPrepareUs": {
+          "median": 180.8,
+          "minimum": 152.0,
+          "maximum": 194.0
+        },
+        "cachedPrepareMedianUs": {
+          "median": 142.3,
+          "minimum": 122.4,
+          "maximum": 146.25
+        },
+        "originalBakeMedianUs": {
+          "median": 113.8,
+          "minimum": 101.0,
+          "maximum": 114.1
+        },
+        "preparedBakeMedianUs": {
+          "median": 114.3,
+          "minimum": 101.3,
+          "maximum": 114.7
+        },
+        "additionalPreparedMeshBytes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0
+        }
+      }
+    },
+    {
+      "family": "character-professional",
+      "processMedians": {
+        "coldPrepareUs": {
+          "median": 418.7,
+          "minimum": 376.2,
+          "maximum": 464.0
+        },
+        "cachedPrepareMedianUs": {
+          "median": 130.2,
+          "minimum": 122.8,
+          "maximum": 135.9
+        },
+        "originalBakeMedianUs": {
+          "median": 114.3,
+          "minimum": 110.1,
+          "maximum": 118.4
+        },
+        "preparedBakeMedianUs": {
+          "median": 96.5,
+          "minimum": 92.7,
+          "maximum": 99.7
+        },
+        "additionalPreparedMeshBytes": {
+          "median": 749112,
+          "minimum": 749112,
+          "maximum": 749112
+        }
+      }
+    }
+  ],
+  "capChanges": [
+    {
+      "family": "casual",
+      "pose": 0,
+      "changedPixels": [
+        23782,
+        1935
+      ]
+    },
+    {
+      "family": "casual",
+      "pose": 1,
+      "changedPixels": [
+        23178,
+        5208
+      ]
+    },
+    {
+      "family": "professional",
+      "pose": 0,
+      "changedPixels": [
+        3368,
+        2627
+      ]
+    },
+    {
+      "family": "professional",
+      "pose": 1,
+      "changedPixels": [
+        2886,
+        2372
+      ]
+    }
+  ],
+  "intakeSha256": "4c2cd543def7c72123e33c29756b4d098e3f91af2fcd26917f23ee48617719fb",
+  "binarySha256": "a6b277e332049b992c23f8934498f6272421ac1db246419803ad5917d6db406e",
+  "sourceSha256": {
+    "Assets/Zantetsu/Runtime/Rendering/VpFixedScaleSkinInput.cs": "13359e338cfda340b90d287a17746eecd532605a8e695087d8e30c4f6a2ba2fe",
+    "Assets/Zantetsu/Runtime/Sandbox/Compact16uvCharacterSceneProbe.cs": "2804ed9595cfb36dc1bb171ee4e70e50c9e2ab0331d30ff7215e7f2428a75b2e",
+    "Assets/Zantetsu/Editor/Sandbox/Compact16uvCharacterSceneBuild.cs": "4c1b906c4dcaa9cdbc9d5d31c84a173ec91d7270d3b3461f6e2890820640527a",
+    "Assets/Zantetsu/Tests/EditMode/Rendering/VpFixedScaleSkinInputTests.cs": "0fee0a21dc4674836b64633f17babbbb49988f566326fa8e6d65ae484bfe0eac",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/Compact16uvScaleNormalizationTests.cs": "4614130c36cb4c574cfd8847318464bb58a2922f3b4ca08e35cc66f27ed9f155",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/CutGeometryConnectionTests.Character.cs": "a40cb2924b6bb76d53e5c079bbe08ef1fa327e5b143da24c3725158f84224a24"
+  },
+  "limitations": [
+    "Player scene uses storage cuts, not physics/owner commits; those are EditMode evidence",
+    "Imported CanonicalSource clips are static; animated production clip and Animator playback remain unvalidated",
+    "API microtimings are not total main-thread cut cost, frame budget or worst-case preparation",
+    "Mesh bytes exclude renderer/rig/temporary/driver/GPU residency and whole-scene peak",
+    "No custom Burst skinning, XR, shadow, provisional Stencil, negative scale, shear or blendshape acceptance"
+  ]
+}

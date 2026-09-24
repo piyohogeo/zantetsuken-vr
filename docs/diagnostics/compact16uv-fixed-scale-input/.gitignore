@@ -1,0 +1,4 @@
+*.log
+*-raw.xml
+run2/*.png
+run3/*.png

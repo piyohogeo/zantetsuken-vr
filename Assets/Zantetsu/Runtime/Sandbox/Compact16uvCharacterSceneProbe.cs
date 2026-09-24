@@ -19,6 +19,8 @@ namespace Zantetsu.Sandbox
         public TextAsset intake;
         public Material meshMaterial, vpMaterial;
         public Texture2D normalAtlas, debugAtlas;
+        public bool normalizeFixedScale;
+        public AnimationClip[] animationClips;
         const int Size = 512;
         readonly List<UnityEngine.Object> owned = new List<UnityEngine.Object>();
         readonly Report report = new Report();
@@ -45,7 +47,8 @@ namespace Zantetsu.Sandbox
             (routine as IDisposable)?.Dispose();
             VpCutSurfaceAtlas.Clear(); VpCutSurfaceColour.SetDebugEnabled(false);
             foreach (var item in owned) if (item != null) Destroy(item);
-            report.passed = report.failure == null && report.comparisons.Count == 24 && report.comparisons.All(x => x.passed);
+            report.passed = report.failure == null && report.comparisons.Count == (normalizeFixedScale ? 28 : 24) && report.comparisons.All(x => x.passed);
+            report.fixedScalePrepared=normalizeFixedScale;
             report.unity = Application.unityVersion; report.graphics = SystemInfo.graphicsDeviceType.ToString();
             report.vertexStride = VpRenderVertex.Stride; report.development = Debug.isDebugBuild;
             File.WriteAllText(Path.Combine(output, "report.json"), JsonUtility.ToJson(report, true));
@@ -57,6 +60,7 @@ namespace Zantetsu.Sandbox
             Require(VpRenderVertex.Stride == 16, "Expected normal 16B build");
             VpCutSurfaceAtlas.Bind(normalAtlas, debugAtlas);
             var manifest = JsonUtility.FromJson<Input>(intake.text);
+            using var scaleCache=new VpFixedScaleSkinCache();
             target = Own(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32)); target.antiAliasing = 1; target.Create();
             camera = Own(new GameObject("Current pose diagnostic camera")).AddComponent<Camera>();
             camera.enabled = false; camera.orthographic = true; camera.targetTexture = target;
@@ -76,15 +80,27 @@ namespace Zantetsu.Sandbox
                 skin.enabled = true; skin.updateWhenOffscreen = true;
                 skin.shadowCastingMode = ShadowCastingMode.Off; skin.receiveShadows = false;
                 skin.sharedMaterials = Enumerable.Repeat(meshMaterial, skin.sharedMesh.subMeshCount).ToArray();
+                var originalSkin=skin;
+                using var preparedInput=normalizeFixedScale ? scaleCache.Prepare(skin,parent.transform) : null;
+                if (preparedInput!=null) skin=preparedInput.Renderer;
                 for (int b = 0; b < skin.bones.Length; b++) skin.bones[b].localRotation *= Quaternion.Euler(0, (b % 3 - 1) * 4f, (b % 5 - 2) * 3f);
                 if (pose == 1)
                 {
                     parent.transform.SetPositionAndRotation(new Vector3(3, -2, 5), Quaternion.Euler(17, 31, -12));
-                    parent.transform.localScale = new Vector3(1.3f, .8f, 1.1f);
+                    if (!normalizeFixedScale) parent.transform.localScale = new Vector3(1.3f, .8f, 1.1f);
                     skin.rootBone.localScale = Vector3.Scale(skin.rootBone.localScale, new Vector3(1.05f, .95f, 1.1f));
                 }
+                if (normalizeFixedScale)
+                {
+                    var clip=animationClips!=null && family<animationClips.Length ? animationClips[family] : null;
+                    if (clip!=null) clip.SampleAnimation(instance,clip.length*(pose==0 ? .23f : .67f));
+                    report.poses.Add(new PoseInfo { family=familyName,pose=pose,clip=clip!=null ? clip.name : null,
+                        sampledTime=clip!=null ? clip.length*(pose==0 ? .23f : .67f) : 0,scale=preparedInput.FixedScale });
+                    if (pose==0) MeasureInput(familyName,originalSkin,preparedInput,parent.transform);
+                }
                 yield return null; yield return null;
-                var baked = Own(new Mesh()); skin.BakeMesh(baked, true);
+                var baked = Own(new Mesh());
+                if (preparedInput!=null) preparedInput.BakeCurrentPose(baked); else skin.BakeMesh(baked,true);
                 var source = skin.sharedMesh;
                 Require(baked.vertexCount == entry.topologyMap.Length, "Pinned topology length");
                 Require(source.uv.SequenceEqual(baked.uv) && source.triangles.SequenceEqual(baked.triangles), "Bake topology/UV changed");
@@ -124,6 +140,16 @@ namespace Zantetsu.Sandbox
                 camera.transform.LookAt(centre); camera.orthographicSize = radius * 1.05f;
                 camera.nearClipPlane = radius * .01f; camera.farClipPlane = radius * 10;
                 VpCutSurfaceColour.SetDebugEnabled(false);
+                if (preparedInput!=null)
+                {
+                    skin.enabled=false; originalSkin.enabled=true;
+                    yield return null;
+                    var originalImage=Capture(label+"-original-skin");
+                    originalSkin.enabled=false; skin.enabled=true;
+                    yield return null;
+                    var preparedImage=Capture(label+"-prepared-skin");
+                    Compare(label+"-original-vs-prepared",originalImage,preparedImage);
+                }
                 var skinImage = Capture(label + "-skin");
                 skin.enabled = false; meshRenderer.enabled = true;
                 yield return null;
@@ -175,7 +201,63 @@ namespace Zantetsu.Sandbox
                 parent.SetActive(false);
                 yield return null;
             }
+            Require(scaleCache.ActiveInputCount==0,"Prepared inputs released");
+            report.preparedMeshBuilds=scaleCache.PreparedMeshBuildCount;
+            report.cachedMeshes=scaleCache.CachedMeshCount;
         }
+
+        void MeasureInput(string family,SkinnedMeshRenderer original,VpFixedScaleSkinInput input,Transform parent)
+        {
+            // Diagnostic only: isolated CPU API costs, not frame time or the physics/commit pipeline.
+            var row=new PreparationCost { family=family,sourceMeshBytes=UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(original.sharedMesh),
+                additionalPreparedMeshBytes=input.Renderer.sharedMesh==original.sharedMesh ? 0 : UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(input.Renderer.sharedMesh) };
+            var bake=new Mesh();
+            var clone=Instantiate(original.gameObject,parent);
+            var source=clone.GetComponent<SkinnedMeshRenderer>(); source.sharedMesh=original.sharedMesh;
+            source.bones=original.bones; source.rootBone=original.rootBone; source.enabled=false;
+            // A detached diagnostic copy retains the original world frame explicitly.
+            clone.transform.SetPositionAndRotation(original.transform.position,original.transform.rotation);
+            clone.transform.localScale=Vector3.one*input.FixedScale;
+            using var cache=new VpFixedScaleSkinCache();
+            try
+            {
+                long start=System.Diagnostics.Stopwatch.GetTimestamp();
+                var first=cache.Prepare(source,parent);
+                row.coldPrepareUs=ElapsedUs(start);
+                first.Dispose();
+                var warm=new double[32];
+                for (int i=0;i<warm.Length;i++)
+                {
+                    start=System.Diagnostics.Stopwatch.GetTimestamp();
+                    using var next=cache.Prepare(source,parent);
+                    warm[i]=ElapsedUs(start);
+                }
+                row.cachedPrepareMedianUs=Median(warm);
+                for (int i=0;i<32;i++) { original.BakeMesh(bake,true); input.BakeCurrentPose(bake); }
+                var baseline=new double[256]; var prepared=new double[256];
+                for (int i=0;i<baseline.Length;i++)
+                {
+                    // Alternate order to reduce a fixed-order cache advantage.
+                    if ((i&1)==0)
+                    {
+                        start=System.Diagnostics.Stopwatch.GetTimestamp(); original.BakeMesh(bake,true); baseline[i]=ElapsedUs(start);
+                        start=System.Diagnostics.Stopwatch.GetTimestamp(); input.BakeCurrentPose(bake); prepared[i]=ElapsedUs(start);
+                    }
+                    else
+                    {
+                        start=System.Diagnostics.Stopwatch.GetTimestamp(); input.BakeCurrentPose(bake); prepared[i]=ElapsedUs(start);
+                        start=System.Diagnostics.Stopwatch.GetTimestamp(); original.BakeMesh(bake,true); baseline[i]=ElapsedUs(start);
+                    }
+                }
+                row.originalBakeMedianUs=Median(baseline); row.preparedBakeMedianUs=Median(prepared);
+                Require(cache.PreparedMeshBuildCount==(input.FixedScale==1 ? 0 : 1),"Cached preparations must not rebuild mesh");
+                row.preparedMeshBuilds=cache.PreparedMeshBuildCount;
+                report.preparation.Add(row);
+            }
+            finally { Destroy(bake); Destroy(clone); }
+        }
+        static double ElapsedUs(long start) => (System.Diagnostics.Stopwatch.GetTimestamp()-start)*1000000.0/System.Diagnostics.Stopwatch.Frequency;
+        static double Median(double[] samples) { Array.Sort(samples); return (samples[samples.Length/2-1]+samples[samples.Length/2])*.5; }
         Color32[] Capture(string name)
         {
             var request = new RenderPipeline.StandardRequest { destination = target };
@@ -222,7 +304,9 @@ namespace Zantetsu.Sandbox
         void OnDestroy() { if (!finished) VpCutSurfaceAtlas.Clear(); }
         [Serializable] sealed class Input { public Entry[] assets; }
         [Serializable] sealed class Entry { public string family, objectName; public int topologyCount; public int[] topologyMap; }
-        [Serializable] sealed class Report { public string unity, graphics, failure; public bool passed, development; public int vertexStride; public List<Comparison> comparisons = new List<Comparison>(); }
+        [Serializable] sealed class Report { public string unity, graphics, failure; public bool passed, development,fixedScalePrepared; public int vertexStride,preparedMeshBuilds,cachedMeshes; public List<Comparison> comparisons = new List<Comparison>(); public List<PoseInfo> poses=new List<PoseInfo>(); public List<PreparationCost> preparation=new List<PreparationCost>(); }
+        [Serializable] sealed class PoseInfo { public string family,clip; public int pose; public float sampledTime,scale; }
+        [Serializable] sealed class PreparationCost { public string family; public long sourceMeshBytes,additionalPreparedMeshBytes; public int preparedMeshBuilds; public double coldPrepareUs,cachedPrepareMedianUs,originalBakeMedianUs,preparedBakeMedianUs; }
         [Serializable] sealed class Comparison { public string name; public bool passed; public int covered, silhouette, maxRgb, changed; public double meanRgb; }
     }
 }

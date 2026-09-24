@@ -1,0 +1,41 @@
+CHARACTER COMPARE {"name":"character-casual-pose0-original-vs-prepared","passed":true,"covered":27946,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose0-skin-vs-bake","passed":true,"covered":27946,"silhouette":0,"maxRgb":1,"changed":4,"meanRgb":0.000047711061809680574}
+CHARACTER COMPARE {"name":"character-casual-pose0-stage0-debug0","passed":true,"covered":27946,"silhouette":0,"maxRgb":1,"changed":5349,"meanRgb":0.07914072377680766}
+CHARACTER GEOMETRY character-casual-pose0 stage=0 committedVertices=4728 liveIndices=20304
+CHARACTER COMPARE {"name":"character-casual-pose0-stage1-debug0","passed":true,"covered":26004,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose0-stage1-debug1","passed":true,"covered":26004,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-casual-pose0 stage=1 committedVertices=7168 liveIndices=11304
+CHARACTER COMPARE {"name":"character-casual-pose0-stage2-debug0","passed":true,"covered":2312,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose0-stage2-debug1","passed":true,"covered":2312,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-casual-pose0 stage=2 committedVertices=7590 liveIndices=1938
+CHARACTER COMPARE {"name":"character-casual-pose1-original-vs-prepared","passed":true,"covered":24527,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose1-skin-vs-bake","passed":true,"covered":24527,"silhouette":0,"maxRgb":1,"changed":30,"meanRgb":0.0004213044128239627}
+CHARACTER COMPARE {"name":"character-casual-pose1-stage0-debug0","passed":true,"covered":24527,"silhouette":0,"maxRgb":2,"changed":5565,"meanRgb":0.09766108098558052}
+CHARACTER GEOMETRY character-casual-pose1 stage=0 committedVertices=4728 liveIndices=20304
+CHARACTER COMPARE {"name":"character-casual-pose1-stage1-debug0","passed":true,"covered":25309,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose1-stage1-debug1","passed":true,"covered":25309,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-casual-pose1 stage=1 committedVertices=7075 liveIndices=11226
+CHARACTER COMPARE {"name":"character-casual-pose1-stage2-debug0","passed":true,"covered":5602,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-casual-pose1-stage2-debug1","passed":true,"covered":5602,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-casual-pose1 stage=2 committedVertices=7891 liveIndices=3402
+CHARACTER COMPARE {"name":"character-professional-pose0-original-vs-prepared","passed":true,"covered":28240,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose0-skin-vs-bake","passed":true,"covered":28240,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose0-stage0-debug0","passed":true,"covered":28240,"silhouette":0,"maxRgb":1,"changed":2092,"meanRgb":0.027160056657223796}
+CHARACTER GEOMETRY character-professional-pose0 stage=0 committedVertices=3834 liveIndices=17742
+CHARACTER COMPARE {"name":"character-professional-pose0-stage1-debug0","passed":true,"covered":8048,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose0-stage1-debug1","passed":true,"covered":8048,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-professional-pose0 stage=1 committedVertices=4146 liveIndices=9756
+CHARACTER COMPARE {"name":"character-professional-pose0-stage2-debug0","passed":true,"covered":3307,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose0-stage2-debug1","passed":true,"covered":3307,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-professional-pose0 stage=2 committedVertices=4393 liveIndices=1440
+CHARACTER COMPARE {"name":"character-professional-pose1-original-vs-prepared","passed":true,"covered":24632,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose1-skin-vs-bake","passed":true,"covered":24632,"silhouette":0,"maxRgb":1,"changed":6,"meanRgb":0.00008119519324455992}
+CHARACTER COMPARE {"name":"character-professional-pose1-stage0-debug0","passed":true,"covered":24632,"silhouette":0,"maxRgb":1,"changed":2214,"meanRgb":0.03391252571181119}
+CHARACTER GEOMETRY character-professional-pose1 stage=0 committedVertices=3834 liveIndices=17742
+CHARACTER COMPARE {"name":"character-professional-pose1-stage1-debug0","passed":true,"covered":7267,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose1-stage1-debug1","passed":true,"covered":7267,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-professional-pose1 stage=1 committedVertices=4149 liveIndices=9756
+CHARACTER COMPARE {"name":"character-professional-pose1-stage2-debug0","passed":true,"covered":3057,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER COMPARE {"name":"character-professional-pose1-stage2-debug1","passed":true,"covered":3057,"silhouette":0,"maxRgb":0,"changed":0,"meanRgb":0.0}
+CHARACTER GEOMETRY character-professional-pose1 stage=2 committedVertices=4393 liveIndices=1440
+CHARACTER SCENE END passed=True comparisons=28
