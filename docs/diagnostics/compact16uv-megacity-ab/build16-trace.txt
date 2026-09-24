@@ -1,0 +1,4 @@
+Compact16uv scene: authoredMegacity=True private variant; original scene not overwritten.
+SCENE AB BUILD: enabled=True legacy32=False
+PLAYER BUILD SETTINGS: scene=Assets/Licensed/Compact16uvIntake/SceneIntegration/Compact16uvMegacityAb.unity target=StandaloneWindows64 backend=IL2CPP il2cppConfiguration=Release il2cppCodeGeneration=OptimizeSpeed stripping=Minimal apiCompatibility=NET_Standard_2_0 graphicsApis=Direct3D11 autoGraphicsApi=False
+PLAYER BUILD RESULT: result=Succeeded output=[USERPROFILE]/src/MegacityAb16_20260924/CutWorldSandbox.exe size=1465703946 bytes errors=0 warnings=21 time=00:01:04.2911316
