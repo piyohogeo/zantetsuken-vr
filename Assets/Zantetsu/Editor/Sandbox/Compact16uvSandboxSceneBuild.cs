@@ -16,8 +16,6 @@ namespace Zantetsu.EditorTools.Sandbox
         public static void BuildScene()
         {
             bool authored = Environment.GetEnvironmentVariable("VP_AUTHORED_MEGACITY_SCENE") == "1";
-            if (authored && Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1")
-                throw new InvalidOperationException("Keep authored integration separate from dense synthetic AB");
             var normal=AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Licensed/Compact16uvIntake/Resources/PaletteAtlas/Normal.png");
             var debug=AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Licensed/Compact16uvIntake/Resources/PaletteAtlas/Debug.png");
             if(normal==null||debug==null)throw new InvalidOperationException("Prepare the verified private atlas pair first.");
@@ -28,7 +26,9 @@ namespace Zantetsu.EditorTools.Sandbox
             var serialized=new SerializedObject(world);
             serialized.FindProperty("normalPaletteAtlas").objectReferenceValue=normal;
             serialized.FindProperty("debugPaletteAtlas").objectReferenceValue=debug;
-            if (Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1")
+            // Actual-asset AB keeps the ordinary scene's capacities. Only the
+            // older dense synthetic fixture needs the enlarged profile.
+            if (!authored && Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1")
             {
                 string profilePath = Root + "/SceneAbProfile.asset";
                 var originalProfile = serialized.FindProperty("profile").objectReferenceValue;
@@ -85,10 +85,12 @@ namespace Zantetsu.EditorTools.Sandbox
                 GameObject.Find("Floor").transform.localScale = new Vector3(40, .5f, 40);
             }
             AssetDatabase.SaveAssets();
-            string target = authored ? Root+"/Compact16uvMegacity.unity" : ScenePath;
+            string target = TargetScene();
             if(!EditorSceneManager.SaveScene(scene,target))throw new InvalidOperationException("Private scene save failed");
             Debug.Log("Compact16uv scene: authoredMegacity="+authored+" private variant; original scene not overwritten.");
         }
+        private static string TargetScene() => Environment.GetEnvironmentVariable("VP_AUTHORED_MEGACITY_SCENE") != "1" ? ScenePath
+            : Root + (Environment.GetEnvironmentVariable("VP_SCENE_AB_BUILD") == "1" ? "/Compact16uvMegacityAb.unity" : "/Compact16uvMegacity.unity");
         public static void BuildPlayer()
         {
             string output=Environment.GetEnvironmentVariable("VP_COMPACT16UV_PLAYER_OUT");
@@ -107,7 +109,7 @@ namespace Zantetsu.EditorTools.Sandbox
                 if (legacy && !ab) throw new InvalidOperationException("Legacy32 requires the explicit scene AB diagnostic build");
                 var defines = !ab ? Array.Empty<string>() : legacy ? new[] { "VP_DIAGNOSTIC_SCENE_AB", "VP_DIAGNOSTIC_LEGACY32" } : new[] { "VP_DIAGNOSTIC_SCENE_AB" };
                 Debug.Log("SCENE AB BUILD: enabled=" + ab + " legacy32=" + legacy);
-                string scene = Environment.GetEnvironmentVariable("VP_AUTHORED_MEGACITY_SCENE") == "1" ? Root+"/Compact16uvMegacity.unity" : ScenePath;
+                string scene = TargetScene();
                 success=CutWorldSandboxPlayerBuild.Build(output,scene,defines);
             }
             finally

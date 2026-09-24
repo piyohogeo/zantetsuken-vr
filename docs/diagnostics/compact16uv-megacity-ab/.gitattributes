@@ -1,0 +1,4 @@
+*.json -text
+*.xml -text
+*.txt -text
+*.png binary

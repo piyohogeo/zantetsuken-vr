@@ -22,14 +22,14 @@ namespace Zantetsu.Sandbox
         }
         [Serializable] private sealed class Checkpoint
         {
-            public string name, positionHash, indexHash;
+            public string name, positionHash, indexHash, decodedAttributeHash;
             public int vertices, indices;
         }
         [Serializable] private sealed class Result
         {
             public int stride, vertexCapacity, indexCapacity;
             public bool shaderLegacy, passed, frameGcRecorderValid;
-            public string unity, device;
+            public string unity, device, fixture;
             public List<Checkpoint> checkpoints = new List<Checkpoint>();
             public Sample[] samples;
         }
@@ -54,7 +54,7 @@ namespace Zantetsu.Sandbox
 #endif
             Application.runInBackground = true;
         }
-        public void Initialize(CutWorldRoot value)
+        public void Initialize(CutWorldRoot value, bool authoredMegacity)
         {
             world = value; drawing = FindFirstObjectByType<CutWorldCameraDrawing>();
             main = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "Main Thread", 1);
@@ -64,6 +64,7 @@ namespace Zantetsu.Sandbox
             result.stride = VpRenderVertex.Stride; result.vertexCapacity = world.Storage.VertexCapacity; result.indexCapacity = world.Storage.IndexCapacity;
             result.shaderLegacy = Shader.IsKeywordEnabled("VP_DIAGNOSTIC_LEGACY32");
             result.unity = Application.unityVersion; result.device = SystemInfo.graphicsDeviceName;
+            result.fixture = authoredMegacity ? "authored-megacity-static16-source" : "dense-synthetic-box";
             if (result.shaderLegacy != (result.stride == 32)) throw new InvalidOperationException("Scene AB CPU/shader ABI mismatch");
         }
         private IEnumerator Start()
@@ -88,12 +89,15 @@ namespace Zantetsu.Sandbox
         }
         public void Mark(string name, params LogicalFragmentId[] fragments)
         {
-            ulong positions = 14695981039346656037UL, indices = positions;
+            ulong positions = 14695981039346656037UL, indices = positions, attributes = positions;
             void Mix(ref ulong hash, uint word) { unchecked { for (int k = 0; k < 4; k++) { hash ^= (byte)(word >> (k * 8)); hash *= 1099511628211UL; } } }
             for (int i = 0; i < world.Storage.VertexCount; i++)
             {
                 var p = world.Storage.Vertices[i].position;
                 Mix(ref positions, Unity.Mathematics.math.asuint(p.x)); Mix(ref positions, Unity.Mathematics.math.asuint(p.y)); Mix(ref positions, Unity.Mathematics.math.asuint(p.z));
+                var v = world.Storage.Vertices[i]; var n = v.normal; var uv = v.uv0;
+                Mix(ref attributes, Unity.Mathematics.math.asuint(n.x)); Mix(ref attributes, Unity.Mathematics.math.asuint(n.y)); Mix(ref attributes, Unity.Mathematics.math.asuint(n.z));
+                Mix(ref attributes, Unity.Mathematics.math.asuint(uv.x)); Mix(ref attributes, Unity.Mathematics.math.asuint(uv.y));
             }
             int indexCount = 0;
             foreach (var fragment in fragments)
@@ -102,7 +106,7 @@ namespace Zantetsu.Sandbox
                 try { Mix(ref indices, (uint)span.Length); for (int i = 0; i < span.Length; i++) Mix(ref indices, span[i]); indexCount += span.Length; }
                 finally { world.Storage.TryReleaseIndexReadLease(lease); }
             }
-            result.checkpoints.Add(new Checkpoint { name = name, vertices = world.Storage.VertexCount, indices = indexCount, positionHash = positions.ToString("x16"), indexHash = indices.ToString("x16") });
+            result.checkpoints.Add(new Checkpoint { name = name, vertices = world.Storage.VertexCount, indices = indexCount, positionHash = positions.ToString("x16"), indexHash = indices.ToString("x16"), decodedAttributeHash = attributes.ToString("x16") });
         }
         public void StopAndSave(string directory)
         {

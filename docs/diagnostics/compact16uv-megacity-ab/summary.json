@@ -1,0 +1,636 @@
+{
+  "baselineCommit": "47e8442c",
+  "passed": true,
+  "rows": [
+    {
+      "name": "accepted16-1",
+      "stride": 16,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 17.250000000000004,
+        "productP95Us": 61.60000000000001,
+        "productSumUs": 5583.799999999997,
+        "productPeakUs": 106.6,
+        "inclusiveMainMedianMs": 0.40385,
+        "unityAllocatedMedianBytes": 122776660.0,
+        "workingSetMedianBytes": 328288256.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 22.65,
+        "productP95Us": 52.900000000000006,
+        "productSumUs": 6414.099999999999,
+        "productPeakUs": 125.20000000000002,
+        "inclusiveMainMedianMs": 0.40304999999999996,
+        "unityAllocatedMedianBytes": 124610971.0,
+        "workingSetMedianBytes": 336017408.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 24.0,
+        "productP95Us": 2335.6,
+        "productSumUs": 3182.5,
+        "productPeakUs": 2335.6,
+        "inclusiveMainMedianMs": 0.8119999999999999,
+        "unityAllocatedMedianBytes": 124487428,
+        "workingSetMedianBytes": 332992512
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 97.55000000000001,
+        "productP95Us": 228.20000000000002,
+        "productSumUs": 441.1,
+        "productPeakUs": 228.20000000000002,
+        "inclusiveMainMedianMs": 0.4375,
+        "unityAllocatedMedianBytes": 124606865.5,
+        "workingSetMedianBytes": 333359104.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "b5aca7e3da77175b",
+        "8ccf95df4d5356c2"
+      ],
+      "observedUnityAllocatedPeakBytes": 125474205,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 337637376,
+      "wholeFrameGcBytes": 108720,
+      "cpuVertexCapacityBytes": 1048576,
+      "logicalGpuVertexCapacityBytes": 1048576
+    },
+    {
+      "name": "accepted16-2",
+      "stride": 16,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 14.2,
+        "productP95Us": 21.700000000000003,
+        "productSumUs": 3785.899999999999,
+        "productPeakUs": 94.20000000000002,
+        "inclusiveMainMedianMs": 0.3126,
+        "unityAllocatedMedianBytes": 120231671.0,
+        "workingSetMedianBytes": 332873728.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 18.15,
+        "productP95Us": 28.200000000000003,
+        "productSumUs": 4719.3,
+        "productPeakUs": 49.00000000000001,
+        "inclusiveMainMedianMs": 0.31675,
+        "unityAllocatedMedianBytes": 121458517.0,
+        "workingSetMedianBytes": 337797120.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 18.8,
+        "productP95Us": 2096.1000000000004,
+        "productSumUs": 2761.9000000000005,
+        "productPeakUs": 2096.1000000000004,
+        "inclusiveMainMedianMs": 0.5074,
+        "unityAllocatedMedianBytes": 121310412,
+        "workingSetMedianBytes": 337022976
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 76.15,
+        "productP95Us": 189.20000000000002,
+        "productSumUs": 359.1,
+        "productPeakUs": 189.20000000000002,
+        "inclusiveMainMedianMs": 0.38954999999999995,
+        "unityAllocatedMedianBytes": 121388357.0,
+        "workingSetMedianBytes": 337346560.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "b5aca7e3da77175b",
+        "8ccf95df4d5356c2"
+      ],
+      "observedUnityAllocatedPeakBytes": 122321277,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 337989632,
+      "wholeFrameGcBytes": 108712,
+      "cpuVertexCapacityBytes": 1048576,
+      "logicalGpuVertexCapacityBytes": 1048576
+    },
+    {
+      "name": "accepted16-3",
+      "stride": 16,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 17.650000000000002,
+        "productP95Us": 42.1,
+        "productSumUs": 5057.7,
+        "productPeakUs": 104.60000000000001,
+        "inclusiveMainMedianMs": 0.46649999999999997,
+        "unityAllocatedMedianBytes": 123920250.0,
+        "workingSetMedianBytes": 331438080.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 24.300000000000004,
+        "productP95Us": 51.5,
+        "productSumUs": 6903.800000000001,
+        "productPeakUs": 116.60000000000001,
+        "inclusiveMainMedianMs": 0.4962,
+        "unityAllocatedMedianBytes": 125356085.0,
+        "workingSetMedianBytes": 335892480.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 39.0,
+        "productP95Us": 2074.5000000000005,
+        "productSumUs": 3069.000000000001,
+        "productPeakUs": 2074.5000000000005,
+        "inclusiveMainMedianMs": 0.9098999999999999,
+        "unityAllocatedMedianBytes": 125198910,
+        "workingSetMedianBytes": 335130624
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 100.4,
+        "productP95Us": 262.9,
+        "productSumUs": 486.19999999999993,
+        "productPeakUs": 262.9,
+        "inclusiveMainMedianMs": 0.58575,
+        "unityAllocatedMedianBytes": 125323599.5,
+        "workingSetMedianBytes": 335460352.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "b5aca7e3da77175b",
+        "8ccf95df4d5356c2"
+      ],
+      "observedUnityAllocatedPeakBytes": 126363748,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 336101376,
+      "wholeFrameGcBytes": 108712,
+      "cpuVertexCapacityBytes": 1048576,
+      "logicalGpuVertexCapacityBytes": 1048576
+    },
+    {
+      "name": "accepted32-1",
+      "stride": 32,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 16.2,
+        "productP95Us": 66.4,
+        "productSumUs": 5762.600000000003,
+        "productPeakUs": 314.3,
+        "inclusiveMainMedianMs": 0.3597,
+        "unityAllocatedMedianBytes": 122243211.5,
+        "workingSetMedianBytes": 321800192.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 20.9,
+        "productP95Us": 60.2,
+        "productSumUs": 6281.899999999999,
+        "productPeakUs": 200.9,
+        "inclusiveMainMedianMs": 0.35424999999999995,
+        "unityAllocatedMedianBytes": 123537993.0,
+        "workingSetMedianBytes": 330444800.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 19.2,
+        "productP95Us": 2041.7,
+        "productSumUs": 2822.8999999999996,
+        "productPeakUs": 2041.7,
+        "inclusiveMainMedianMs": 0.4561,
+        "unityAllocatedMedianBytes": 123470474,
+        "workingSetMedianBytes": 327327744
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 147.95,
+        "productP95Us": 242.60000000000002,
+        "productSumUs": 558.0,
+        "productPeakUs": 242.60000000000002,
+        "inclusiveMainMedianMs": 1.15115,
+        "unityAllocatedMedianBytes": 123537987.0,
+        "workingSetMedianBytes": 327753728.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "09cbb49155946008",
+        "42a76f3bb9b00be9"
+      ],
+      "observedUnityAllocatedPeakBytes": 124416978,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 332066816,
+      "wholeFrameGcBytes": 108720,
+      "cpuVertexCapacityBytes": 2097152,
+      "logicalGpuVertexCapacityBytes": 2097152
+    },
+    {
+      "name": "accepted32-2",
+      "stride": 32,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 15.55,
+        "productP95Us": 27.4,
+        "productSumUs": 4171.2,
+        "productPeakUs": 84.80000000000001,
+        "inclusiveMainMedianMs": 0.3685,
+        "unityAllocatedMedianBytes": 121742293.5,
+        "workingSetMedianBytes": 332603392.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 18.7,
+        "productP95Us": 30.900000000000002,
+        "productSumUs": 5058.900000000001,
+        "productPeakUs": 92.00000000000001,
+        "inclusiveMainMedianMs": 0.3412,
+        "unityAllocatedMedianBytes": 122970198.0,
+        "workingSetMedianBytes": 337838080.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 19.3,
+        "productP95Us": 1772.3000000000002,
+        "productSumUs": 2438.6000000000004,
+        "productPeakUs": 1772.3000000000002,
+        "inclusiveMainMedianMs": 0.5115,
+        "unityAllocatedMedianBytes": 122837368,
+        "workingSetMedianBytes": 336936960
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 104.7,
+        "productP95Us": 1246.4,
+        "productSumUs": 1482.5000000000002,
+        "productPeakUs": 1246.4,
+        "inclusiveMainMedianMs": 0.6613499999999999,
+        "unityAllocatedMedianBytes": 123064059.5,
+        "workingSetMedianBytes": 337330176.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "09cbb49155946008",
+        "42a76f3bb9b00be9"
+      ],
+      "observedUnityAllocatedPeakBytes": 123853352,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 338042880,
+      "wholeFrameGcBytes": 108232,
+      "cpuVertexCapacityBytes": 2097152,
+      "logicalGpuVertexCapacityBytes": 2097152
+    },
+    {
+      "name": "accepted32-3",
+      "stride": 32,
+      "frames": 614,
+      "before": {
+        "frames": 240,
+        "productMedianUs": 17.700000000000003,
+        "productP95Us": 47.300000000000004,
+        "productSumUs": 4977.7,
+        "productPeakUs": 92.5,
+        "inclusiveMainMedianMs": 0.4115,
+        "unityAllocatedMedianBytes": 121953526.0,
+        "workingSetMedianBytes": 333500416.0
+      },
+      "after": {
+        "frames": 240,
+        "productMedianUs": 23.300000000000004,
+        "productP95Us": 52.7,
+        "productSumUs": 6523.700000000003,
+        "productPeakUs": 150.3,
+        "inclusiveMainMedianMs": 0.43294999999999995,
+        "unityAllocatedMedianBytes": 123211622.0,
+        "workingSetMedianBytes": 337555456.0
+      },
+      "cut": {
+        "frames": 9,
+        "productMedianUs": 30.5,
+        "productP95Us": 2029.3000000000002,
+        "productSumUs": 2883.5000000000005,
+        "productPeakUs": 2029.3000000000002,
+        "inclusiveMainMedianMs": 0.9845999999999999,
+        "unityAllocatedMedianBytes": 123078021,
+        "workingSetMedianBytes": 336797696
+      },
+      "recut": {
+        "frames": 4,
+        "productMedianUs": 109.80000000000001,
+        "productP95Us": 268.6,
+        "productSumUs": 510.00000000000006,
+        "productPeakUs": 268.6,
+        "inclusiveMainMedianMs": 0.5283499999999999,
+        "unityAllocatedMedianBytes": 123209995.0,
+        "workingSetMedianBytes": 337149952.0
+      },
+      "decodedAttributeHashes": [
+        "f5937f3c3c69d543",
+        "09cbb49155946008",
+        "42a76f3bb9b00be9"
+      ],
+      "observedUnityAllocatedPeakBytes": 124091281,
+      "observedUnityReservedPeakBytes": 270422016,
+      "lifetimeWorkingSetPeakBytes": 337743872,
+      "wholeFrameGcBytes": 108712,
+      "cpuVertexCapacityBytes": 2097152,
+      "logicalGpuVertexCapacityBytes": 2097152
+    }
+  ],
+  "images": [
+    {
+      "pair": 1,
+      "shot": "04-after-the-child-cut",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392
+    },
+    {
+      "pair": 1,
+      "shot": "04b-after-recut-debug",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392,
+      "greenCapPixels16": 6984,
+      "greenCapPixels32": 6984,
+      "greenCapMaskChangedPixels": 0
+    },
+    {
+      "pair": 1,
+      "shot": "05-after-the-ending",
+      "changedPixels": 0,
+      "maxRgb": 0,
+      "meanAbsoluteRgb": 0.0
+    },
+    {
+      "pair": 2,
+      "shot": "04-after-the-child-cut",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392
+    },
+    {
+      "pair": 2,
+      "shot": "04b-after-recut-debug",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392,
+      "greenCapPixels16": 6984,
+      "greenCapPixels32": 6984,
+      "greenCapMaskChangedPixels": 0
+    },
+    {
+      "pair": 2,
+      "shot": "05-after-the-ending",
+      "changedPixels": 0,
+      "maxRgb": 0,
+      "meanAbsoluteRgb": 0.0
+    },
+    {
+      "pair": 3,
+      "shot": "04-after-the-child-cut",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392
+    },
+    {
+      "pair": 3,
+      "shot": "04b-after-recut-debug",
+      "changedPixels": 1168,
+      "maxRgb": 5,
+      "meanAbsoluteRgb": 0.0017856224279835392,
+      "greenCapPixels16": 6984,
+      "greenCapPixels32": 6984,
+      "greenCapMaskChangedPixels": 0
+    },
+    {
+      "pair": 3,
+      "shot": "05-after-the-ending",
+      "changedPixels": 0,
+      "maxRgb": 0,
+      "meanAbsoluteRgb": 0.0
+    }
+  ],
+  "geometrySignature": [
+    [
+      "before",
+      5326,
+      13164,
+      "0739f291867e5418",
+      "10ea7340924b6515"
+    ],
+    [
+      "first-cut",
+      6078,
+      15456,
+      "c051c8778b401909",
+      "e9105ff6d430e80f"
+    ],
+    [
+      "recut",
+      6974,
+      18648,
+      "1c0ef94a66066def",
+      "d458cf93a2ae07de"
+    ]
+  ],
+  "initialDecodedAttributeHash": "f5937f3c3c69d543",
+  "editmodePassed": 3614,
+  "hashes": [
+    {
+      "path": "player16/CutWorldSandbox.exe",
+      "sha256": "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+    },
+    {
+      "path": "player16/GameAssembly.dll",
+      "sha256": "bea4a5dae1c0d3cabab244f66d58f781af44701e655eb0550c2701f641fb05d1"
+    },
+    {
+      "path": "player16/CutWorldSandbox_Data/globalgamemanagers",
+      "sha256": "034ab6a383f827864b57bc00c0dbf7d6430f4643e208000a6af25582bc81486c"
+    },
+    {
+      "path": "player32/CutWorldSandbox.exe",
+      "sha256": "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+    },
+    {
+      "path": "player32/GameAssembly.dll",
+      "sha256": "8cdbe1592b5be516a69592368628a62008521cdbaac3fcf72f8d0c2f0d4c4e32"
+    },
+    {
+      "path": "player32/CutWorldSandbox_Data/globalgamemanagers",
+      "sha256": "78540f293f1b43957c23a60157deb02d093d807f47426a388ddcb2f9697f8611"
+    },
+    {
+      "path": "Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs",
+      "sha256": "c900612a3ef4bff09a99ebc4ea0af4f8ac0c1f7efce9f93c9ae926faf6a82490"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Sandbox/SandboxPlayerCheck.cs",
+      "sha256": "3fcec72e92aeb7bbf392f5269de5ba5b3dd7c280c74876b17a3c0a62c2f7f289"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Sandbox/SceneAbRecorder.cs",
+      "sha256": "e419ec8186b4932bb18addd97d8e9c557822251882408b8566dcd2b2e212e48a"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpStatic16File.cs",
+      "sha256": "aae9dc9c983ab480d5aeb38cf691a670187f3bf3d0e7ee1cf0f41d52ded2bc1a"
+    },
+    {
+      "path": "Assets/Zantetsu/Runtime/Rendering/VpRenderVertex.cs",
+      "sha256": "9a07407b5e2f89e76f8fd03820169ed6e9c0b6548ad61a00efb081c303be535f"
+    },
+    {
+      "path": "Assets/Zantetsu/Settings/CutWorldSandboxProfile.asset",
+      "sha256": "5c92f73cf4aeb89214f6e5837e3e8d422a9e92f056c206d3d0d18b06b2f024a5"
+    },
+    {
+      "path": "Tools/Summarize-Megacity-Ab.py",
+      "sha256": "70c4194df9a19448392104587018ed90684a13b41552524faa9f8022eb3a2cd9"
+    },
+    {
+      "path": "DESIGN.md",
+      "sha256": "759b24e72ce214d1522de2f50ce045ec297fdc79eb90372bf0594c762a431608"
+    },
+    {
+      "path": "docs/diagnostics/compact16uv-megacity-ab/README.md",
+      "sha256": "db4fc7c01d2c9d2d7769aef7a5c5edf9379f42b5c27fe99e00aeda7509b7fb6d"
+    },
+    {
+      "path": "accepted16-1/04-after-the-child-cut.png",
+      "sha256": "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+    },
+    {
+      "path": "accepted16-1/04b-after-recut-debug.png",
+      "sha256": "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+    },
+    {
+      "path": "accepted16-1/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted16-1/scene-ab.json",
+      "sha256": "df6348f2f86ed4a7ffe5a80815af7a4f0110db5fbe7de8ce4754701a6db59555"
+    },
+    {
+      "path": "accepted16-1/trace.txt",
+      "sha256": "b656a3ec15b9bae21874614992b03d35def38d531bee1b1e4d7769456298067b"
+    },
+    {
+      "path": "accepted16-2/04-after-the-child-cut.png",
+      "sha256": "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+    },
+    {
+      "path": "accepted16-2/04b-after-recut-debug.png",
+      "sha256": "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+    },
+    {
+      "path": "accepted16-2/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted16-2/scene-ab.json",
+      "sha256": "4c6d6361f5d54091e347619be2e674ca77138c43be6d55e6be3813ddf1bb0291"
+    },
+    {
+      "path": "accepted16-2/trace.txt",
+      "sha256": "18ec06a67573f6fefd48d9d9e192c78c6271919c51e20f2dbf33503d6370c2c4"
+    },
+    {
+      "path": "accepted16-3/04-after-the-child-cut.png",
+      "sha256": "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+    },
+    {
+      "path": "accepted16-3/04b-after-recut-debug.png",
+      "sha256": "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+    },
+    {
+      "path": "accepted16-3/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted16-3/scene-ab.json",
+      "sha256": "2725c7054e0c92fef18e57cde7a884efc7eb0080001adbe17f2ecbddc44805c0"
+    },
+    {
+      "path": "accepted16-3/trace.txt",
+      "sha256": "8addbdec2b61425508d4a16e89d6d75ef7af9882357a337afc1b6dfd24107d52"
+    },
+    {
+      "path": "accepted32-1/04-after-the-child-cut.png",
+      "sha256": "f7741284c1e2743e9d5bfdfbd9f12f48fc32f86c177fe080da91b02e4414f1eb"
+    },
+    {
+      "path": "accepted32-1/04b-after-recut-debug.png",
+      "sha256": "4c5a79f9332c4ce09be224578c985c6638533d92ac4f84d7691792c2051178e8"
+    },
+    {
+      "path": "accepted32-1/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted32-1/scene-ab.json",
+      "sha256": "660fd3f2ec404b736651635905f6339db0097f092a6e2a6b9b6411cb36830491"
+    },
+    {
+      "path": "accepted32-1/trace.txt",
+      "sha256": "9864cc99437daa935ffecf105ab241258af398b619ba6982b3ffc7ccd81f6acc"
+    },
+    {
+      "path": "accepted32-2/04-after-the-child-cut.png",
+      "sha256": "f7741284c1e2743e9d5bfdfbd9f12f48fc32f86c177fe080da91b02e4414f1eb"
+    },
+    {
+      "path": "accepted32-2/04b-after-recut-debug.png",
+      "sha256": "4c5a79f9332c4ce09be224578c985c6638533d92ac4f84d7691792c2051178e8"
+    },
+    {
+      "path": "accepted32-2/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted32-2/scene-ab.json",
+      "sha256": "596d671adc37f28def3732a44a3119554488710c691ba7cab9ca58f5735d93c8"
+    },
+    {
+      "path": "accepted32-2/trace.txt",
+      "sha256": "683e54a027c64069f6c08d87cf02e46c780b5e0dca56938f874b43b9bb68728c"
+    },
+    {
+      "path": "accepted32-3/04-after-the-child-cut.png",
+      "sha256": "f7741284c1e2743e9d5bfdfbd9f12f48fc32f86c177fe080da91b02e4414f1eb"
+    },
+    {
+      "path": "accepted32-3/04b-after-recut-debug.png",
+      "sha256": "4c5a79f9332c4ce09be224578c985c6638533d92ac4f84d7691792c2051178e8"
+    },
+    {
+      "path": "accepted32-3/05-after-the-ending.png",
+      "sha256": "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+    },
+    {
+      "path": "accepted32-3/scene-ab.json",
+      "sha256": "bfbac1f7443e13ceb98514717d165efc952c11f1b9b8d8575862f1d49d5b25d2"
+    },
+    {
+      "path": "accepted32-3/trace.txt",
+      "sha256": "f41bb6dae34e1f9e40027006ed96c79332772627a359382d43cede6e74f84918"
+    },
+    {
+      "path": "build16-trace.txt",
+      "sha256": "0a1b425f96a00fc9e8eca372ae7190e7c7a9d301c7ce0d66bb40970a287702ab"
+    },
+    {
+      "path": "build32-trace.txt",
+      "sha256": "844d7d0979c989f67c7376e30210b807b5ddb4d19824d866c33867f407ebc2a9"
+    },
+    {
+      "path": "editmode.xml",
+      "sha256": "3325c1dfb182ccde61bf468f681a07beb4cebfc1411145e86258208435a095bc"
+    }
+  ],
+  "scope": "Same Static16-decoded initial attributes, actual Megacity at ordinary scene capacities. No original-float source comparison, growth/retirement peak, GPU residency, XR, free-fall or character skin claim."
+}

@@ -141,7 +141,7 @@ namespace Zantetsu.Sandbox
                     _authoredRotation = _probe.Actor.transform.rotation;
                 }
 #if VP_DIAGNOSTIC_SCENE_AB
-                _ab = gameObject.AddComponent<SceneAbRecorder>(); _ab.Initialize(_world);
+                _ab = gameObject.AddComponent<SceneAbRecorder>(); _ab.Initialize(_world, _probe.IsAuthoredMegacity);
                 _abOriginalPosition = _probe.Actor.transform.position;
                 _abOriginalRotation = _probe.Actor.transform.rotation;
                 _ab.Mark("before", _probe.Body);
@@ -168,7 +168,7 @@ namespace Zantetsu.Sandbox
                 LogicalFragmentId body = _probe.Body;
 #if VP_DIAGNOSTIC_SCENE_AB
                 _ab.Phase = 1;
-                bool asked = _probe.AskCut(body, new Vector4(0f, 1f, 0f, -.137f));
+                bool asked = _probe.AskCut(body, _probe.IsAuthoredMegacity ? _probe.FirstPlane : new Vector4(0f, 1f, 0f, -.137f));
 #else
                 bool asked = _probe.AskCut(body, _probe.IsAuthoredMegacity ? _probe.FirstPlane : new Vector4(0f, 1f, 0f, 0f));
 #endif
@@ -302,7 +302,7 @@ namespace Zantetsu.Sandbox
                             owner.Root.transform.SetPositionAndRotation(_authoredChildPosition + shift, _authoredRotation);
                         }
 #if VP_DIAGNOSTIC_SCENE_AB
-                foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
+                if (!_probe.IsAuthoredMegacity) foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
                     if (_world.Owners.TryGet(id, out PhysicsFragmentOwner grandchild))
                     {
                         Hold(grandchild.Root);
