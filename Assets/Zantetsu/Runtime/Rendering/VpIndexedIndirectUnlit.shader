@@ -18,6 +18,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
     Properties
     {
         [MainTexture] _BaseMap("Base Map", 2D) = "white" {}
+        [Toggle] _VpUsePaletteAtlas("Use shared Compact16uv palette atlas", Float) = 0
         [MainColor] _BaseColor("Color", Color) = (1, 1, 1, 1)
     }
 
@@ -55,6 +56,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
             #include "VpCompactVertex.hlsl"
+            #include "VpPaletteAtlas.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -113,6 +115,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
                 half4 _BaseColor;
+                float _VpUsePaletteAtlas;
             CBUFFER_END
 
             // A clip-space position outside the view volume: triangles whose vertices all take it cover no pixel.
@@ -216,7 +219,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 // sampling. A cap takes the cut surface colour and neither the texture nor the material's own colour;
                 // everything else is unchanged. The chosen colour then goes through the same shading as before.
                 half3 base;
-                if (VpIsRealCap(input.rawUv))
+                if (_VpUsePaletteAtlas > 0.0 && _VpPaletteAtlasEnabled > 0.0)
+                {
+                    base = VpPaletteBase(input.rawUv, input.uv, _BaseColor.rgb);
+                }
+                else if (VpIsRealCap(input.rawUv))
                 {
                     base = _VpCutSurfaceDebug > 0.0 ? _VpCutSurfaceDebugColor.rgb : _VpCutSurfaceColor.rgb;
                 }

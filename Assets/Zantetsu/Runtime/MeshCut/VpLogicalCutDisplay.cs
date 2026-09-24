@@ -843,6 +843,16 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public bool SinglePassInstanced { get; set; }
 
+        /// <summary>Opt this display's owned provisional-cap materials into the shared atlas. Set once at setup;
+        /// forward materials opt in separately via _VpUsePaletteAtlas. Does not collect/upload geometry or clone a
+        /// material. The caller owns the bound texture pair and changes debug through VpCutSurfaceColour.</summary>
+        public void SetCapPaletteAtlasEnabled(bool enabled)
+        {
+            ThrowIfDisposed();
+            for (int c = 0; c < _stencilMaterials.ColorCount; c++)
+                _stencilMaterials.Cap(c).SetFloat("_VpUsePaletteAtlas", enabled ? 1f : 0f);
+        }
+
         /// <summary>How many bodies this display holds.</summary>
         public int ShownCount => _shown.Count;
 

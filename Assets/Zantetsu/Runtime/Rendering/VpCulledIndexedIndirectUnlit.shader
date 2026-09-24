@@ -7,6 +7,8 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
     Properties
     {
         [MainColor] _BaseColor("Color", Color) = (1, 1, 1, 1)
+        [MainTexture] _BaseMap("Palette UV transform", 2D) = "white" {}
+        [Toggle] _VpUsePaletteAtlas("Use shared Compact16uv palette atlas", Float) = 0
     }
 
     SubShader
@@ -42,6 +44,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
 
             // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
             #include "VpCompactVertex.hlsl"
+            #include "VpPaletteAtlas.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -53,6 +56,8 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
+                float4 _BaseMap_ST;
+                float _VpUsePaletteAtlas;
             CBUFFER_END
 
             // A clip-space position outside the view volume: triangles whose vertices all take it cover no pixel.
@@ -76,6 +81,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
                 float4 positionCS : SV_POSITION;
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
+                float2 rawUv : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -117,6 +123,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, VpDecodeNormal(vertex));
                 output.positionWS = positionWS;
+                output.rawUv = VpDecodeUv(vertex);
                 return output;
             }
 
@@ -124,7 +131,10 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
             {
                 half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
                 half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
-                return half4(_BaseColor.rgb * (0.5 + 0.5 * facing * shadow), 1.0);
+                half3 colour = _BaseColor.rgb;
+                if (_VpUsePaletteAtlas > 0.0 && _VpPaletteAtlasEnabled > 0.0)
+                    colour = VpPaletteBase(input.rawUv, TRANSFORM_TEX(input.rawUv, _BaseMap), _BaseColor.rgb);
+                return half4(colour * (0.5 + 0.5 * facing * shadow), 1.0);
             }
             ENDHLSL
         }

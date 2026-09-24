@@ -30,6 +30,7 @@ Shader "Zantetsu/VP Stencil Cap"
     Properties
     {
         _BaseColor ("Base Colour", Color) = (1, 0, 0, 1)
+        [Toggle] _VpUsePaletteAtlas("Use shared Compact16uv palette atlas", Float) = 0
     }
 
     SubShader
@@ -66,6 +67,7 @@ Shader "Zantetsu/VP Stencil Cap"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
             #include "VpCutSurfaceShading.hlsl"
+            #include "VpPaletteAtlas.hlsl"
 
             StructuredBuffer<float4> _VpCapVertices;
 
@@ -80,6 +82,7 @@ Shader "Zantetsu/VP Stencil Cap"
 
             CBUFFER_START(UnityPerMaterial)
             half4 _BaseColor;
+            float _VpUsePaletteAtlas;
 
             // 1 when the caller has bound a normal per cap vertex and wants the shared shading; 0 (the default) draws
             // the flat base colour, which is what this pass did before.
@@ -137,12 +140,15 @@ Shader "Zantetsu/VP Stencil Cap"
 
             half4 Fragment(Varyings input) : SV_Target
             {
+                half4 colour = _BaseColor;
+                if (_VpUsePaletteAtlas > 0.0 && _VpPaletteAtlasEnabled > 0.0)
+                    colour = half4(VpPaletteCap(true),1.0);
                 if (_VpCapShaded > 0.0)
                 {
-                    return half4(VpShadeSurface(_BaseColor.rgb, input.normalWS, input.positionWS), _BaseColor.a);
+                    return half4(VpShadeSurface(colour.rgb, input.normalWS, input.positionWS), colour.a);
                 }
 
-                return _BaseColor;
+                return colour;
             }
             ENDHLSL
         }
