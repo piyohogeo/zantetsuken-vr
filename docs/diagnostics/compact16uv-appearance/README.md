@@ -45,6 +45,8 @@ Isolated upload of **11884 committed vertices (190144 bytes)** plus **3240 index
 
 Product scene selection/bootstrap and material opt-in; full licensed asset coverage; character current-pose/self-skin integration; actual product-scene Main/residency/growth peaks with a comparable baseline; XR. Do not treat this representative image gate or isolated SetData timing as completion of those tasks.
 
+Follow-up: [product Sandbox scene integration](../compact16uv-scene/README.md) adds explicit composition-root atlas ownership. Its hidden-window rendering/performance attempts are recorded as failures, not as completion of the performance gate.
+
 ## Failure history
 
 `player-first` passed 16/20, with four failures and no skipped cases. The reference MeshRenderer had only one material slot for the source's **three submeshes** (10173 / 1653 / 1338 indices). This omitted source geometry while VP rendered all 13164 indices, producing 23 / 7 / 56 silhouette mismatches across the three views. The reference now assigns the same oracle material to all source submeshes, asserts material-slot and total index counts, and retains the original per-submesh index ordering. Neither the VP implementation nor the colour/silhouette tolerance changed. The fourth failure was the pre-existing shadow diagnostic's required output-directory environment variable missing from the launch; the second run sets it. Original failed images and XML/logs are retained, not overwritten.
