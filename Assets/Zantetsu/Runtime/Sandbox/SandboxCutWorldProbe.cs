@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
@@ -52,6 +55,13 @@ namespace Zantetsu.Sandbox
 
         [Tooltip("Whether the body falls. A sandbox body at rest is easier to look at.")]
         [SerializeField] private bool bodyUsesGravity;
+
+        [Header("Optional private authored Megacity diagnostic")]
+        [SerializeField] private TextAsset authoredPhysics;
+        [SerializeField] private TextAsset static16Geometry;
+        [SerializeField] private Vector3 bodyEuler;
+        public bool IsAuthoredMegacity => authoredPhysics != null;
+        public Vector4 FirstPlane => plane;
 
         [Header("The cut this scene asks for")]
         [Tooltip("The plane, in the body's own logical frame: xyz is its normal, w its offset.")]
@@ -203,6 +213,7 @@ namespace Zantetsu.Sandbox
         /// <summary>The one box: its convex, its collider mesh, its display geometry, and the registration of all three.</summary>
         private bool TryAddBody()
         {
+            if (authoredPhysics != null || static16Geometry != null) return TryAddAuthoredMegacity();
 #if VP_DIAGNOSTIC_SCENE_AB
             lookImpulse = 0f;
             childPlane = new Vector4(1f, 0f, 0f, -.137f);
@@ -232,8 +243,14 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            _actor = new GameObject("Sandbox body");
+            return RegisterBody(geometry);
+        }
+
+        private bool RegisterBody(VpStoredGeometry geometry)
+        {
+            _actor = new GameObject(IsAuthoredMegacity ? "Authored Megacity body" : "Sandbox body");
             _actor.transform.position = bodyPosition;
+            _actor.transform.rotation = Quaternion.Euler(bodyEuler);
             var body = _actor.AddComponent<Rigidbody>();
             body.useGravity = bodyUsesGravity;
             body.automaticCenterOfMass = false;
@@ -259,6 +276,34 @@ namespace Zantetsu.Sandbox
             _actor = null;
             return false;
         }
+
+        // Registration-only diagnostic. The two private TextAssets are hash-bound
+        // and retained by this fixture; temporary decoded arrays are not cached.
+        private bool TryAddAuthoredMegacity()
+        {
+            if (authoredPhysics == null || static16Geometry == null) throw new InvalidOperationException("Both authored inputs required");
+            if (Hash(authoredPhysics.bytes) != "21cfe6a62ecff7d36426f2b2212a5757764840ddab399601b154e6579c36b2a6")
+                throw new InvalidOperationException("Unverified authored physics fixture");
+            var fixture = JsonUtility.FromJson<AuthoredFixture>(authoredPhysics.text);
+            if (fixture.schemaVersion != 1 || fixture.hulls.Length != 1 || Hash(static16Geometry.bytes) != fixture.static16Sha256)
+                throw new InvalidOperationException("Authored/display binding mismatch");
+            var hull = fixture.hulls[0];
+            var corners = Enumerable.Range(0, hull.vertices.Length / 3)
+                .Select(i => new float3(hull.vertices[3*i], hull.vertices[3*i+1], hull.vertices[3*i+2])).ToArray();
+            BuildEdges(hull.faceOffsets, hull.faceIndices, out var faceEdges, out var edges);
+            _shape = NewShape(corners, hull.faceOffsets, hull.faceIndices, faceEdges, edges, out _colliderMesh);
+            using var stream = new MemoryStream(static16Geometry.bytes, false);
+            if (!VpStatic16File.TryAppendCuttable(stream, world.Storage, out var geometry, out var failure))
+                throw new InvalidOperationException("Authored Static16 registration: " + failure);
+            Debug.Log("AUTHORED MEGACITY: source=" + fixture.sourceSha256 + " static16=" + fixture.static16Sha256
+                + " hullVertices=" + corners.Length + " hullFaces=" + (hull.faceOffsets.Length-1)
+                + " displayVertices=" + geometry.vertexCount + " stride=" + VpRenderVertex.Stride
+                + " mesh-local/owner-local identity; actorEuler=" + bodyEuler + " anchors=disabled");
+            return RegisterBody(geometry);
+        }
+        private static string Hash(byte[] bytes) { using var sha = SHA256.Create(); return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(); }
+        [Serializable] private sealed class AuthoredFixture { public int schemaVersion; public string sourceSha256, static16Sha256; public AuthoredHull[] hulls; }
+        [Serializable] private sealed class AuthoredHull { public float[] vertices; public int[] faceOffsets, faceIndices; }
 
         private static readonly (int[] cycle, int submesh)[] Faces =
         {
@@ -297,10 +342,10 @@ namespace Zantetsu.Sandbox
             var range = new ConvexBrepRange
             {
                 vertexBase = 0, vertexCount = corners.Length,
-                faceBase = 0, faceCount = Faces.Length,
+                faceBase = 0, faceCount = faceOffsets.Length - 1,
                 faceIndexBase = 0, faceIndexCount = faceIndices.Length,
                 edgeBase = 0, edgeCount = edges.Length,
-                maxFaceLoop = 4,
+                maxFaceLoop = Enumerable.Range(0, faceOffsets.Length - 1).Max(i => faceOffsets[i+1] - faceOffsets[i]),
             };
 
             colliderMesh = new Mesh { name = "Sandbox collider", hideFlags = HideFlags.HideAndDontSave };
@@ -311,11 +356,11 @@ namespace Zantetsu.Sandbox
             }
 
             colliderMesh.vertices = meshVertices;
-            colliderMesh.triangles = new[]
-            {
-                0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
-                2, 3, 7, 2, 7, 6, 1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3,
-            };
+            var triangles = new List<int>();
+            for (int f = 0; f + 1 < faceOffsets.Length; f++)
+                for (int k = faceOffsets[f] + 1; k + 1 < faceOffsets[f+1]; k++)
+                { triangles.Add(faceIndices[faceOffsets[f]]); triangles.Add(faceIndices[k+1]); triangles.Add(faceIndices[k]); }
+            colliderMesh.triangles = triangles.ToArray();
             UnityEngine.Physics.BakeMesh(colliderMesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking);
 
             return PhysicsOwnerShape.Authored(

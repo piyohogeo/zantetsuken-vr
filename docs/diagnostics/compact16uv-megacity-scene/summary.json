@@ -1,0 +1,428 @@
+{
+    "baselineCommit":  "2db5cc06",
+    "passed":  true,
+    "rows":  [
+                 {
+                     "name":  "accepted1",
+                     "provisionalObservedFrames":  2,
+                     "samples":  [
+                                     {
+                                         "phase":  "before-cut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.3635,
+                                         "inclusiveMainP95Ms":  0.8286,
+                                         "unityAllocatedBytes":  119874659,
+                                         "unityReservedBytes":  251547648,
+                                         "processWorkingSetBytes":  330784768,
+                                         "storageVertices":  5326,
+                                         "vertexCapacityBytes":  1048576
+                                     },
+                                     {
+                                         "phase":  "after-recut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.4325,
+                                         "inclusiveMainP95Ms":  1.1501,
+                                         "unityAllocatedBytes":  121126064,
+                                         "unityReservedBytes":  270422016,
+                                         "processWorkingSetBytes":  351645696,
+                                         "storageVertices":  6974,
+                                         "vertexCapacityBytes":  1048576
+                                     }
+                                 ]
+                 },
+                 {
+                     "name":  "accepted2",
+                     "provisionalObservedFrames":  2,
+                     "samples":  [
+                                     {
+                                         "phase":  "before-cut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.3535,
+                                         "inclusiveMainP95Ms":  4.7006,
+                                         "unityAllocatedBytes":  120914499,
+                                         "unityReservedBytes":  251547648,
+                                         "processWorkingSetBytes":  325406720,
+                                         "storageVertices":  5326,
+                                         "vertexCapacityBytes":  1048576
+                                     },
+                                     {
+                                         "phase":  "after-recut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.3461,
+                                         "inclusiveMainP95Ms":  0.6671,
+                                         "unityAllocatedBytes":  122164964,
+                                         "unityReservedBytes":  270422016,
+                                         "processWorkingSetBytes":  346914816,
+                                         "storageVertices":  6974,
+                                         "vertexCapacityBytes":  1048576
+                                     }
+                                 ]
+                 },
+                 {
+                     "name":  "accepted3",
+                     "provisionalObservedFrames":  2,
+                     "samples":  [
+                                     {
+                                         "phase":  "before-cut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.36,
+                                         "inclusiveMainP95Ms":  0.7155,
+                                         "unityAllocatedBytes":  120260519,
+                                         "unityReservedBytes":  251547648,
+                                         "processWorkingSetBytes":  329170944,
+                                         "storageVertices":  5326,
+                                         "vertexCapacityBytes":  1048576
+                                     },
+                                     {
+                                         "phase":  "after-recut",
+                                         "drawnFrames":  240,
+                                         "inclusiveMainMedianMs":  0.4011,
+                                         "inclusiveMainP95Ms":  0.8085,
+                                         "unityAllocatedBytes":  121469316,
+                                         "unityReservedBytes":  270422016,
+                                         "processWorkingSetBytes":  349249536,
+                                         "storageVertices":  6974,
+                                         "vertexCapacityBytes":  1048576
+                                     }
+                                 ]
+                 }
+             ],
+    "repeatImages":  [
+                         {
+                             "name":  "accepted2/01-before-the-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/02-after-the-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/03-children-apart",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/03b-children-apart-debug",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/04-after-the-child-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/04b-after-recut-debug",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted2/05-after-the-ending",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/01-before-the-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/02-after-the-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/03-children-apart",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/03b-children-apart-debug",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/04-after-the-child-cut",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/04b-after-recut-debug",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         },
+                         {
+                             "name":  "accepted3/05-after-the-ending",
+                             "comparison":  {
+                                                "width":  960,
+                                                "height":  540,
+                                                "changedPixels":  0,
+                                                "maxRgb":  0,
+                                                "meanAbsoluteRgb":  0.0
+                                            }
+                         }
+                     ],
+    "editmodePassed":  3614,
+    "hashes":  [
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SandboxCutWorldProbe.cs",
+                       "sha256":  "4f89f83fa1c63bb474f5b6477605712437ff954aca909d8cf01e4ea7935a4a40"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Runtime/Sandbox/SandboxPlayerCheck.cs",
+                       "sha256":  "3db5e53fcd6a7abd435a3e6ffb3336e38c20ab869560d5d7aa42c2eff3169d47"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs",
+                       "sha256":  "e54a64da34fa0174e0414b3665ab07b13ac8ac9f9f69b0f32d21ea6c2235a60b"
+                   },
+                   {
+                       "path":  "Tools/Summarize-Megacity-Scene.ps1",
+                       "sha256":  "532bc3f9b06d492961c8d580bb861d36f59ef1df0f85324478ef113e8e1a810c"
+                   },
+                   {
+                       "path":  "DESIGN.md",
+                       "sha256":  "837658369355e0d070e781659a772323a74e84617c107725147187b41fcb0e59"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-megacity-scene/README.md",
+                       "sha256":  "e2a0a2c32aeb35e71afbbfe0cb10c8ef98518c2ac4647ef657a01baab3fa26da"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Settings/CutWorldSandboxProfile.asset",
+                       "sha256":  "5c92f73cf4aeb89214f6e5837e3e8d422a9e92f056c206d3d0d18b06b2f024a5"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/SceneIntegration/Compact16uvMegacity.unity",
+                       "sha256":  "b1370857e8413d380794405ed08f4136c86e0b53974e71d74b6891772924080f"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/Resources/Static16Migration/Megacity.bytes",
+                       "sha256":  "4542dbe96f3938fff0f0fa58fc753cac70dc8cfc6b93883fbf0d0591f77ccb78"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/Resources/AuthoredPhysicsMigration/Megacity.json",
+                       "sha256":  "21cfe6a62ecff7d36426f2b2212a5757764840ddab399601b154e6579c36b2a6"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/SceneIntegration/MegacityForward0.mat",
+                       "sha256":  "eaa2e1f081f72385b90e883509a3ce80bd4e2a11b0bc21c8291fbece6af31892"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/SceneIntegration/MegacityForward1.mat",
+                       "sha256":  "32ca19bbeb4df700907a5a97b03eaae176f093214dfdcb9ef44a97a803db4819"
+                   },
+                   {
+                       "path":  "Assets/Licensed/Compact16uvIntake/SceneIntegration/MegacityForward2.mat",
+                       "sha256":  "32ca19bbeb4df700907a5a97b03eaae176f093214dfdcb9ef44a97a803db4819"
+                   },
+                   {
+                       "path":  "player/CutWorldSandbox.exe",
+                       "sha256":  "427c7f94b3719f47d68a1cec2e0949e7bca2aad2fb521013683a9d3618cc8590"
+                   },
+                   {
+                       "path":  "player/GameAssembly.dll",
+                       "sha256":  "02a18b4ede528eeb656f4c41db37b023d0b519da1a69c4a9713511d790d80f27"
+                   },
+                   {
+                       "path":  "player/CutWorldSandbox_Data/globalgamemanagers",
+                       "sha256":  "8429093059372d08d49cc66976f94489b90de426111aca3a80cb2052a969df28"
+                   },
+                   {
+                       "path":  "build-trace.txt",
+                       "sha256":  "646d15fe0b5e56f0624a024a2cd1ead6b2998402e046c991f74e27aab0afd8cf"
+                   },
+                   {
+                       "path":  "editmode.xml",
+                       "sha256":  "8a0ef7d2063507bbf33a5af24f9276a58ad76c5b26c79a5130e53e68b7b82446"
+                   },
+                   {
+                       "path":  "accepted1/01-before-the-cut.png",
+                       "sha256":  "ad6d549692e2092a50f0ca953ed370c283c73ff6c3ded1c99cf2bd0b723202b8"
+                   },
+                   {
+                       "path":  "accepted1/02-after-the-cut.png",
+                       "sha256":  "fe667c269aa89612bd5d8bee8fcd82c8267a10bd7b1638c1219b1144810c8c7f"
+                   },
+                   {
+                       "path":  "accepted1/03-children-apart.png",
+                       "sha256":  "d7e43456d7be59f3df10bfb8d6db5375a4824de9c7280b6c4ec4a36ca6efdaa1"
+                   },
+                   {
+                       "path":  "accepted1/03b-children-apart-debug.png",
+                       "sha256":  "a966b98ddc76ab3c69ae5d0ec30d01c0247d0a3b9ccd0e06a02d1b198daf4d7a"
+                   },
+                   {
+                       "path":  "accepted1/04-after-the-child-cut.png",
+                       "sha256":  "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+                   },
+                   {
+                       "path":  "accepted1/04b-after-recut-debug.png",
+                       "sha256":  "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+                   },
+                   {
+                       "path":  "accepted1/05-after-the-ending.png",
+                       "sha256":  "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+                   },
+                   {
+                       "path":  "accepted1/trace.txt",
+                       "sha256":  "3a3148fad17ac4c3e3d34dd62fde0ba358ed8ea8d9638a13b3ec96cc2b9ca3cc"
+                   },
+                   {
+                       "path":  "accepted2/01-before-the-cut.png",
+                       "sha256":  "ad6d549692e2092a50f0ca953ed370c283c73ff6c3ded1c99cf2bd0b723202b8"
+                   },
+                   {
+                       "path":  "accepted2/02-after-the-cut.png",
+                       "sha256":  "fe667c269aa89612bd5d8bee8fcd82c8267a10bd7b1638c1219b1144810c8c7f"
+                   },
+                   {
+                       "path":  "accepted2/03-children-apart.png",
+                       "sha256":  "d7e43456d7be59f3df10bfb8d6db5375a4824de9c7280b6c4ec4a36ca6efdaa1"
+                   },
+                   {
+                       "path":  "accepted2/03b-children-apart-debug.png",
+                       "sha256":  "a966b98ddc76ab3c69ae5d0ec30d01c0247d0a3b9ccd0e06a02d1b198daf4d7a"
+                   },
+                   {
+                       "path":  "accepted2/04-after-the-child-cut.png",
+                       "sha256":  "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+                   },
+                   {
+                       "path":  "accepted2/04b-after-recut-debug.png",
+                       "sha256":  "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+                   },
+                   {
+                       "path":  "accepted2/05-after-the-ending.png",
+                       "sha256":  "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+                   },
+                   {
+                       "path":  "accepted2/trace.txt",
+                       "sha256":  "8362a0d89f8ced116e22d7b368e758f9e30f80df0ba2280eabcae6eae0b0f5bb"
+                   },
+                   {
+                       "path":  "accepted3/01-before-the-cut.png",
+                       "sha256":  "ad6d549692e2092a50f0ca953ed370c283c73ff6c3ded1c99cf2bd0b723202b8"
+                   },
+                   {
+                       "path":  "accepted3/02-after-the-cut.png",
+                       "sha256":  "fe667c269aa89612bd5d8bee8fcd82c8267a10bd7b1638c1219b1144810c8c7f"
+                   },
+                   {
+                       "path":  "accepted3/03-children-apart.png",
+                       "sha256":  "d7e43456d7be59f3df10bfb8d6db5375a4824de9c7280b6c4ec4a36ca6efdaa1"
+                   },
+                   {
+                       "path":  "accepted3/03b-children-apart-debug.png",
+                       "sha256":  "a966b98ddc76ab3c69ae5d0ec30d01c0247d0a3b9ccd0e06a02d1b198daf4d7a"
+                   },
+                   {
+                       "path":  "accepted3/04-after-the-child-cut.png",
+                       "sha256":  "72c65270f82e626849bb30c17cd235b79338b3c79800625db4a298f781e7f02b"
+                   },
+                   {
+                       "path":  "accepted3/04b-after-recut-debug.png",
+                       "sha256":  "f1676bac0e73d5183f8d4b82b6c4ce4f4a51e6634c2534d4c83723494b7575a0"
+                   },
+                   {
+                       "path":  "accepted3/05-after-the-ending.png",
+                       "sha256":  "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+                   },
+                   {
+                       "path":  "accepted3/trace.txt",
+                       "sha256":  "7358f573963f57912b848ca9354f43689c36d840f29acfa7196c908b5b067ae9"
+                   },
+                   {
+                       "path":  "run1/01-before-the-cut.png",
+                       "sha256":  "ad6d549692e2092a50f0ca953ed370c283c73ff6c3ded1c99cf2bd0b723202b8"
+                   },
+                   {
+                       "path":  "run1/02-after-the-cut.png",
+                       "sha256":  "93a6c0bfe592a9c6e560cb5d26772d524a4ae0c8ff31aa1b39076599e1932e5c"
+                   },
+                   {
+                       "path":  "run1/03-children-apart.png",
+                       "sha256":  "7b0dc2191510f08f8c51624e3017526d71ba3be82f1b4963dfca0b8bb22685e8"
+                   },
+                   {
+                       "path":  "run1/03b-children-apart-debug.png",
+                       "sha256":  "ab0d7992b82fb26a6d4814a0f68602fb343128895ae61cc813f45b69d7456de5"
+                   },
+                   {
+                       "path":  "run1/04-after-the-child-cut.png",
+                       "sha256":  "35aa58967298330f899062e314c41c82e280aa5782cc1019aa6aabf4bbc41082"
+                   },
+                   {
+                       "path":  "run1/05-after-the-ending.png",
+                       "sha256":  "60e492639e61d057da1a82939465bb5aa7313ea0f11162441c11c95a85549371"
+                   }
+               ],
+    "scope":  "Actual Megacity ordinary scene, fixed diagnostic placement and post-commit poses, anchors disabled; no Legacy32 comparison, XR, current-pose character or peak claim"
+}

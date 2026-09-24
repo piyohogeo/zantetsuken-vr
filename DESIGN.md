@@ -270,6 +270,8 @@ Compact16uvのStatic入力はEditor/offlineで一度だけ16Bへ変換し、`VpS
 
 代表Megacityの実物理入力は、表示に使った同じBottomHalfUV `.blend`からauthoring済みUCXを取り出す。移動後の最新版と固定入力のSHA一致を確認し、owner local→import済みMesh localの明示変換と既存topology対応で全表示頂点・全三角形を照合する。古いPhase 0.21の別SHAの物理JSONや合成boxを代用しない。24頂点44面のconvex・21 Anchorを非公開fixtureに固定し、同一3平面でのconvex Job切断／再切断、BakeMesh呼出し、16B表示storage切断は単体検証済み（`docs/diagnostics/compact16uv-physics-intake/`）。Anchorは抽出のみで登録動作は未検証。これは製品sceneのowner登録／commit／表示追従／寿命、PhysX内部形状の同一性、Legacy32性能比較、キャラクター現在poseの合格を意味しない。
 
+実Megacityの製品scene接続は別途`docs/diagnostics/compact16uv-megacity-scene/`に記録する。同じUCX＋Static16を専用private sceneへ登録し、3材質slot・共通actor frame（unit scale、Mesh Z-up→World Y-up）で通常のroot／driver／Worker／Cook／commit／cameraを通す。建物本体の横切断とpositive child再切断を独立3 processで確認し、geometry fault 0、頂点数5,326→6,078→6,974、正常drain／display破棄／atlas解除、7場面の画像再現を確認した。commit後kinematic固定と明示移動による観察であり、Anchor固定・自由落下の物理応答・元prefab配置の再現ではない。登録入力のTextAssetはこのfixtureでは常駐する。Main／memoryは16B単独の参考sampleに留め、Legacy32差・peak削減・現在poseキャラクターやXRの証拠にしない。
+
 通常命中で即切断開始に必要なSkinned入力は、現在の実Bone Poseを使う同期`SkinnedMeshRenderer.BakeMesh(mesh, useScale: false)`→CPUデータ取得・VP変換を基本経路とする。未来予測用に限り、Phase 4.65で`ResolvedAnimationPoseInput`→19.3の不変Rig Pose→4.3のBurst数値処理による線形ブレンドスキニング→共通CPU側VP入力を限定実装し、同期経路との比較から導入の採否を決める。目的は複数候補の頂点処理と同期待ちをMain Threadへ集中させないことであり、ベイク総時間の短縮や負荷ゼロを要求しない。非スキニング対象はベイクを省き、必要な形状・姿勢で準備済みなら再利用する。
 
 Skinned対象の切断前の共通VP入力は、元SkinnedMeshRendererのTransformを基準とするlocal空間とし、Root Bone localやWorld空間を混在させない。同期経路と比較基準のSkinnedMeshRenderer.BakeMeshはともに`useScale: false`へ固定する。非同期経路はRoot Boneを含む骨Poseと対応するbindposeをRenderer基準へ変換したskinning変換で骨由来のscaleを反映し、bindposeやRoot Boneのscaleを別途重ね掛けしない。Rendererおよび祖先のobject scaleは、VPからWorldへの既存Transform／frame写像で一度だけ適用し、VP頂点へ追加で焼き込まない。切断面も同じ入力空間へ写し、切断後の物理frameへの配置・表示追従は4.5.6に従う。
