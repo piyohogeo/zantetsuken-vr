@@ -72,6 +72,12 @@ namespace Zantetsu.PhysicsCut
         [SerializeField]
         private Material provisionalShadowMaterial;
 
+        [Header("Optional shared Compact16uv atlas")]
+        [Tooltip("Both textures or neither. This world exclusively owns the global binding until shutdown; shared forward materials opt in offline.")]
+        [SerializeField] private Texture2D normalPaletteAtlas;
+        [SerializeField] private Texture2D debugPaletteAtlas;
+        private bool _ownsPaletteBinding;
+
         private IWorkExecutor _unityJob;
         private IWorkExecutor _geometryPool;
         private IWorkExecutor _backgroundPool;
@@ -231,6 +237,17 @@ namespace Zantetsu.PhysicsCut
                 materialsBySourceIndex[materials[i].sourceIndex] = materials[i].material;
             }
 
+            bool usePalette = normalPaletteAtlas != null || debugPaletteAtlas != null;
+            if (usePalette && (normalPaletteAtlas == null || debugPaletteAtlas == null
+                || normalPaletteAtlas.width != 256 || normalPaletteAtlas.height != 256
+                || debugPaletteAtlas.width != 256 || debugPaletteAtlas.height != 256
+                || VpCutSurfaceAtlas.IsBound))
+            {
+                UnityEngine.Debug.LogError(name + ": atlas setup requires a 256x256 pair and an unowned global binding.", this);
+                enabled = false;
+                return;
+            }
+
             Ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(profile.MaxIncompleteCuts));
             Owners = new PhysicsOwnerRegistry();
             Placement = new PhysicsOwnerPlacementLookup(Owners);
@@ -260,6 +277,12 @@ namespace Zantetsu.PhysicsCut
             }
 
             Display = display;
+            if (usePalette)
+            {
+                VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);
+                _ownsPaletteBinding = true;
+                Display.SetCapPaletteAtlasEnabled(true);
+            }
 
             // What is drawn follows the physics owners, and only them: a fragment with no owner in the scene is not
             // drawn somewhere it used to be.
@@ -502,6 +525,13 @@ namespace Zantetsu.PhysicsCut
         {
             Owners?.Dispose();
             Display?.Dispose();
+            if (_ownsPaletteBinding)
+            {
+                // Never clear a replacement installed by a different caller. Texture assets remain caller-owned.
+                if (VpCutSurfaceAtlas.Normal == normalPaletteAtlas && VpCutSurfaceAtlas.Debug == debugPaletteAtlas)
+                    VpCutSurfaceAtlas.Clear();
+                _ownsPaletteBinding = false;
+            }
             Storage?.Dispose();
             (_geometryPool as IDisposable)?.Dispose();
             (_backgroundPool as IDisposable)?.Dispose();

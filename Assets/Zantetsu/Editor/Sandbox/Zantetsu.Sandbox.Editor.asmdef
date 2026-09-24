@@ -7,7 +7,9 @@
         "Zantetsu.PhysicsCut",
         "Zantetsu.MeshCut",
         "Zantetsu.Rendering",
-        "Unity.Mathematics"
+        "Unity.Mathematics",
+        "Unity.XR.Management",
+        "Unity.XR.Management.Editor"
     ],
     "includePlatforms": [
         "Editor"

@@ -1,0 +1,439 @@
+{
+    "schemaVersion":  1,
+    "baselineCommit":  "737adcfa",
+    "profile":  "Compact16uv-ProductSandboxScene",
+    "tests":  [
+                  {
+                      "name":  "editmode-first.xml",
+                      "total":  3613,
+                      "passed":  3613,
+                      "failed":  0,
+                      "skipped":  0,
+                      "inconclusive":  0,
+                      "failures":  [
+
+                                   ]
+                  },
+                  {
+                      "name":  "lifecycle-first.xml",
+                      "total":  5,
+                      "passed":  5,
+                      "failed":  0,
+                      "skipped":  0,
+                      "inconclusive":  0,
+                      "failures":  [
+
+                                   ]
+                  }
+              ],
+    "playerObservations":  [
+                               {
+                                   "run":  "run1.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 mainThreadMedianMs=0.053700 mainThreadP95Ms=0.146900 unityAllocatedBytes=112190906 unityReservedBytes=251547648 processWorkingSetBytes=317104128 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 mainThreadMedianMs=0.066200 mainThreadP95Ms=0.161100 unityAllocatedBytes=113659890 unityReservedBytes=253644800 processWorkingSetBytes=335671296 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run2.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 0"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=0 mainThreadMedianMs=0.067300 mainThreadP95Ms=0.160100 unityAllocatedBytes=113431346 unityReservedBytes=251547648 processWorkingSetBytes=303026176 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=0 mainThreadMedianMs=0.071800 mainThreadP95Ms=0.188500 unityAllocatedBytes=114820546 unityReservedBytes=253644800 processWorkingSetBytes=328269824 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run3.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 8"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=0 mainThreadMedianMs=0.049300 mainThreadP95Ms=0.155900 unityAllocatedBytes=113151620 unityReservedBytes=251547648 processWorkingSetBytes=303759360 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=0 mainThreadMedianMs=0.072300 mainThreadP95Ms=0.159600 unityAllocatedBytes=114537128 unityReservedBytes=253644800 processWorkingSetBytes=328605696 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run4.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 8"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=0 mainThreadMedianMs=0.031500 mainThreadP95Ms=0.057500 unityAllocatedBytes=96041836 unityReservedBytes=234434560 processWorkingSetBytes=283348992 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=0 mainThreadMedianMs=0.067900 mainThreadP95Ms=0.189600 unityAllocatedBytes=97410464 unityReservedBytes=236531712 processWorkingSetBytes=304590848 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run5.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 8"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound=True vertexStride=16"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=0 mainThreadMedianMs=0.054600 mainThreadP95Ms=0.150000 unityAllocatedBytes=114084286 unityReservedBytes=249450496 processWorkingSetBytes=305434624 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=0 mainThreadMedianMs=0.054300 mainThreadP95Ms=0.131400 unityAllocatedBytes=115453326 unityReservedBytes=251547648 processWorkingSetBytes=328445952 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: atlas bound after shutdown=False"
+                               },
+                               {
+                                   "run":  "run6.log",
+                                   "line":  "SANDBOX PLAYER: finished with code 8"
+                               }
+                           ],
+    "evidence":  [
+                     {
+                         "file":  "build-first.log",
+                         "sha256":  "938b8bfe178617c5e41e8fc2c8e2e76804517d4b2ccac1160551959dc7058ef8",
+                         "beforeAnonymizationSha256":  "56f402a53195445b5c89c40082abc50505032a87a19d62a0b59b6979949d7fe7"
+                     },
+                     {
+                         "file":  "build-mono.log",
+                         "sha256":  "2936beff1badae0c4675c7dbbc63d0f47557b166be2829d3c907b821a24b5d79",
+                         "beforeAnonymizationSha256":  "b7f25ec36129bbb362a42d8d083c1d91ae305b049ae21f171bbdc4ab0d02ffb2"
+                     },
+                     {
+                         "file":  "build-no-xr.log",
+                         "sha256":  "5f8cf007ad262c1f6b6f59b0cbd98477349eb3be7e9a0843bfd6c6f74bd30709",
+                         "beforeAnonymizationSha256":  "746e7902fa5e3dddf915e564ee33a1ee1272027a462f87e0bf19d8eee41ae029"
+                     },
+                     {
+                         "file":  "build-offscreen.log",
+                         "sha256":  "7b0bea50c650c0630720da5c9e7d196028210602ec7ce084987b9ff202814864",
+                         "beforeAnonymizationSha256":  "24c7060bfa432ce1c49b02c3a29dd8956c25a5cf22a914679bca20dc46f0fabd"
+                     },
+                     {
+                         "file":  "build-second.log",
+                         "sha256":  "3753879e067c530ad1f3b3f4fa3aa8ac3d55b232a103d38bf6625daaf8f5874d",
+                         "beforeAnonymizationSha256":  "49fae72cf04fe4eb940877b71386617039e172b2bbc29b3c7e5d7faaa98e88cc"
+                     },
+                     {
+                         "file":  "editmode-first.log",
+                         "sha256":  "a89b9751a57ed74e72d33608e6269e386b33a6a5ee4e0ddd3464978ed5d13c97",
+                         "beforeAnonymizationSha256":  "468b20770318907bb58a55883b9169d0d1a5d05fc2dde63cadb5eb5f0499b46c"
+                     },
+                     {
+                         "file":  "editmode-first.xml",
+                         "sha256":  "c1ad934d6c3ba76388825d78665f49d0132027184a52043179b06de103d4d76e",
+                         "beforeAnonymizationSha256":  "ba0ef44082561fb3b908e57c6a28eec84a288a48b3a568fd64c1d0232cbbd28a"
+                     },
+                     {
+                         "file":  "lifecycle-first.log",
+                         "sha256":  "c016f8b942d93e56bd164c668f12ddcf1fc2f0b55098c25b3cf615675504ba35",
+                         "beforeAnonymizationSha256":  "9655183d258095d5cf915f2d95a752cf9378f101a14357a49bd7643f55526130"
+                     },
+                     {
+                         "file":  "lifecycle-first.xml",
+                         "sha256":  "1f94eb845d67b8022664d4f1b3f0c795dc841696d04adbe97e35d67071fb4b7f",
+                         "beforeAnonymizationSha256":  "ca643a523ea48f2c98541fb13cc9cd6ce234a063f34fda16f44e962d39786699"
+                     },
+                     {
+                         "file":  "run1.log",
+                         "sha256":  "26d053a4c74a7fcd6990e28179b57ab356c8a85f4f687ced1a5eb50b617a6909",
+                         "beforeAnonymizationSha256":  "eae8b26eb935458cc09e9ce5122797530efcd517790cfffc9e50dbb12f3305af"
+                     },
+                     {
+                         "file":  "run2.log",
+                         "sha256":  "b770669d4fa7232f04014918f2adc7a01c3ea0ab30d11316a662e74c58d46feb",
+                         "beforeAnonymizationSha256":  "6a56ce5e45e10382711407cc144eaa82e176742bbd20dc4435553bf24c3b2132"
+                     },
+                     {
+                         "file":  "run3.log",
+                         "sha256":  "5ebdd5bd8bcb653d8f87d58b6e7ec052a29553e66678a58bfe641177799579a1",
+                         "beforeAnonymizationSha256":  "4d1bcfd66c287d094a4efe42c2badd4a4cbce103539e6f0ea0b148d811cea56d"
+                     },
+                     {
+                         "file":  "run4.log",
+                         "sha256":  "1e65594e815f3055d1f70b46e1e78da966a126f6d94b50527b8227f2ae2099ca",
+                         "beforeAnonymizationSha256":  "dac084ceaba0945d67be2b395be5177f14e1c53a9013005c273e4f43bd5f2284"
+                     },
+                     {
+                         "file":  "run5.log",
+                         "sha256":  "68b448ccbd247955f06d2947d82563bd39836d54bdf2b9f5d9e162ca094f65ee",
+                         "beforeAnonymizationSha256":  "6b28843cff6611a37a863eae9188adcd658189c008e3ef6deb63a1854bdc8fc6"
+                     },
+                     {
+                         "file":  "run6.log",
+                         "sha256":  "f6d1a64ac25dff66e7320274a547212e93e830ad906392b0cf398b3bc660d9dc",
+                         "beforeAnonymizationSha256":  "85199dbc220fee61adbe47ad1201bea11293c7000bad5a09f853ee97b94379c6"
+                     },
+                     {
+                         "file":  "README.md",
+                         "sha256":  "edf8d28994b22f3329adf9ffd15b7739c7fbc46b8171d10beee8e9a0d7746628"
+                     },
+                     {
+                         "file":  "run2-images/01-before-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run2-images/02-after-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run2-images/03-children-apart.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run2-images/03b-children-apart-debug.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run2-images/04-after-the-child-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run2-images/05-after-the-ending.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/01-before-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/02-after-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/03-children-apart.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/03b-children-apart-debug.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/04-after-the-child-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run3-images/05-after-the-ending.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/01-before-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/02-after-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/03-children-apart.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/03b-children-apart-debug.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/04-after-the-child-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run4-images/05-after-the-ending.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/01-before-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/02-after-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/03-children-apart.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/03b-children-apart-debug.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/04-after-the-child-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run5-images/05-after-the-ending.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/01-before-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/02-after-the-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/03-children-apart.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/03b-children-apart-debug.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/04-after-the-child-cut.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     },
+                     {
+                         "file":  "run6-images/05-after-the-ending.png",
+                         "sha256":  "da3e4e903aa7d6a60b3b03726dc9ec6d10ae629918c8b15f12d6f00980d4ee20"
+                     }
+                 ],
+    "sources":  [
+                    {
+                        "path":  "Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs",
+                        "sha256":  "a5a6d9cb11c0b00065e0089cc745297d40ff5b49d1307ff7cfba69dc96553724"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/Sandbox/Compact16uvSandboxSceneBuild.cs.meta",
+                        "sha256":  "2227e42eda515db3c1da0175dc1ebcd2e7cfcec860008e8be46339d4420713cb"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/Sandbox/CutWorldSandboxPlayerBuild.cs",
+                        "sha256":  "981995f46bc391b924074833d581eb18e5ede20f221cf6af392d8b51825d9f55"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/Sandbox/Zantetsu.Sandbox.Editor.asmdef",
+                        "sha256":  "7716f63cbbcf9c6037c21fbfd4d81d2b7b32519a2dc7798114925e8f1710d3ac"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/PhysicsCut/CutWorldRoot.cs",
+                        "sha256":  "688e4b1f64819a83a294d345b04bfd698194938beb6c907045f7e901d2781423"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Sandbox/SandboxPlayerCheck.cs",
+                        "sha256":  "ee88ee44bc0c1791155892583a8a3bf5d9c53bce7ab929839efccf3a48bb1493"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/PlayMode/CutWorldAtlasLifecycleTests.cs",
+                        "sha256":  "748f8f174c3bc26499e0afe8f08109ca77da0b8420a39dfda59119d48a93c50f"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/PlayMode/CutWorldAtlasLifecycleTests.cs.meta",
+                        "sha256":  "aaed820a4c121954b94872c03f62c4e2a62e07b999f4c6b37d987f85c2c5a8d6"
+                    },
+                    {
+                        "path":  "DESIGN.md",
+                        "sha256":  "b6a02026c6843e1157f0d0f7513ffc2bc89e4107a77e4cf084541a30dcb8e897"
+                    },
+                    {
+                        "path":  "Tools/Summarize-Compact16uv-Scene.ps1",
+                        "sha256":  "772f52eece89dcea97dbdeac047d7210bce720d96785706ae91055ec1c046888"
+                    }
+                ],
+    "privateSceneHashes":  [
+                               {
+                                   "file":  "Compact16uvSandbox.unity",
+                                   "sha256":  "426591220632e5cd25379f9a7f22a774e3bfebafe18329034c761b6244bb006f"
+                               },
+                               {
+                                   "file":  "Compact16uvSandbox.unity.meta",
+                                   "sha256":  "8f0ca71ed083cba7bc42f036bd7fdccffb810f6b6c2bb9a4d8513ac78cc56b5e"
+                               },
+                               {
+                                   "file":  "SharedForward0.mat",
+                                   "sha256":  "e7f1c3e36b14604670c70f1932c0c1851e348401d3ead0d6d7a621eb981f69c7"
+                               },
+                               {
+                                   "file":  "SharedForward0.mat.meta",
+                                   "sha256":  "ec611b2c4ee0424e45a75b12ad0d1c0a95f28a02664d96b0c5e8df12fd62a0df"
+                               },
+                               {
+                                   "file":  "SharedForward1.mat",
+                                   "sha256":  "30a4baffb88d31c7523486fc4c48c25fecb4cfa565ae811bfafb796d5424a265"
+                               },
+                               {
+                                   "file":  "SharedForward1.mat.meta",
+                                   "sha256":  "714c74e9551cee7f8cec310243a00b51f635ef2f8932a20d6125594617669d60"
+                               }
+                           ],
+    "excludedPlayerRuns":  {
+                               "run3.log":  "XR stopped but hidden-window draws remained zero; blank-image guard returned exit 8.",
+                               "run2.log":  "Exit 0 but blank captures with idle XR; rendering/performance acceptance refused.",
+                               "run4.log":  "Offscreen camera target did not restore drawing; exit 8.",
+                               "run6.log":  "XR disabled before startup still had zero draws and blank captures; exit 8.",
+                               "run1.log":  "IL2CPP unsupported Process API; coroutine aborted, task process stopped.",
+                               "run5.log":  "Graphics-enabled batchmode also had zero draws and blank captures; exit 8."
+                           },
+    "renderingAndPerformanceAcceptance":  "NOT ESTABLISHED: all six Player runs excluded. Visible-window diagnostic awaits approval.",
+    "limitations":  [
+                        "Original synthetic product sandbox, not Megacity physics or character integration.",
+                        "Inclusive Main Thread contains waits; working set is a process snapshot, not GPU residency or peak.",
+                        "No matching Legacy32 comparison or measured memory reduction.",
+                        "Original scene/materials unchanged; product main unmerged; XR unverified."
+                    ]
+}
