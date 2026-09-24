@@ -465,7 +465,7 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 Compact16uvの実Cap新規頂点はUV byte slot `(247,247)`、復号値`(247.5/256,247.5/256)`を保持する。負UV markerは廃止する。atlas経路では実cap `(247,247)`・仮cap `(239,247)`の各中心±2の5×5 patchを256² textureに置く。通常atlasは両者グレー、debug atlasは実cap緑・仮cap赤。仮capはpass固定UVとし、両capともmaterial tint／UV Transformを適用せずmip 0から色を取得する。専用Vertex field、Vertex Color、別UV channelは追加しない。
 
-製品worktreeのatlas対応は明示的opt-inとする。`VpCutSurfaceAtlas.Bind`で共有normal/debug textureを設定し、確認済み共有materialの`_VpUsePaletteAtlas`を有効化する。`VpLogicalCutDisplay.SetCapPaletteAtlasEnabled`は所有する仮cap materialだけを有効化する。texture/materialをrendererごとに複製しない。通常surfaceはnormal atlasを参照し続け、debug switchではcap参照だけを切り替える。これによりdebug patchの粗いmipから通常surfaceへの色混入を避ける。normal/debug画像の生成はoffline、切替はカメラ群の描画登録前に行い、描画途中のper-camera差替えは契約外とする。`SetColours`は非atlas経路だけへ作用する。未opt-in materialと未binding時の従来表示を保ち、全製品sceneの導入済みとはしない。設定・画像検証範囲は`docs/diagnostics/compact16uv-atlas/`に記録する。
+製品worktreeのatlas対応は明示的opt-inとする。`VpCutSurfaceAtlas.Bind`で共有normal/debug textureを設定し、確認済み共有materialの`_VpUsePaletteAtlas`を有効化する。`VpLogicalCutDisplay.SetCapPaletteAtlasEnabled`は所有する仮cap materialだけを有効化する。texture/materialをrendererごとに複製しない。通常surfaceはnormal atlasを参照し続け、debug switchではcap参照だけを切り替える。これによりdebug patchの粗いmipから通常surfaceへの色混入を避ける。normal/debug画像の生成はoffline、切替はカメラ群の描画登録前に行い、描画途中のper-camera差替えは契約外とする。`SetColours`は非atlas経路だけへ作用する。未opt-in materialと未binding時の従来表示を保ち、全製品sceneの導入済みとはしない。設定・画像検証範囲は`docs/diagnostics/compact16uv-atlas/`に記録する。代表Megacityの未切断・3回の切断／再切断を3視点で比較した結果は`docs/diagnostics/compact16uv-appearance/`に記録し、全material・製品scene性能・XRの確認とは分ける。
 
 元Assetの負UVは4.5.1の入力契約に従って拒否する。予約slotを通常surfaceへ割り当てないことはasset pipeline契約とする。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。これはD-171の旧負UV許容方針をCompact16uv移行範囲で置き換える。
 

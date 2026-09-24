@@ -56,3 +56,5 @@ The `images/` directory retains 39 atlas captures. Visual inspection of `path2-v
 4. Standalone IL2CPP: `-runTests -testPlatform StandaloneWindows64 -assemblyNames Zantetsu.Rendering.StandaloneTests -buildPlayerPath <fresh external directory> -force-d3d11 -testResults <fresh.xml> -logFile <fresh.log>`. Set `VP_ATLAS_DIAGNOSTICS` to a fresh atlas-image directory and `VP3_SHADOW_DIAGNOSTICS` to a separate shadow-control directory.
 
 Still separate: actual licensed-asset appearance oracle, all product materials, finished scene bootstrap/selection of shared materials, full asset topology export, product-scene Main/residency/growth peaks, XR, and upstream distribution artifact generation. The optional runtime atlas API is not a claim that every product scene already uses it. Stage 2 remains until its separately planned deletion.
+
+Follow-up: the [actual Megacity appearance checkpoint](../compact16uv-appearance/README.md) verifies one representative asset before/after three cuts in three views. It does not close the all-material, scene-performance or XR gates above.
