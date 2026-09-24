@@ -280,6 +280,8 @@ Skinned対象の切断前の共通VP入力は、元SkinnedMeshRendererのTransfo
 
 2026-09-24の現在pose component検証により、以前の`useScale: false`指定を訂正した（`docs/diagnostics/compact16uv-current-pose/`）。Casual／Professionalの固定入力は最新版SHAと一致し、基準pose・骨回転・祖先非一様scale・root bone非一様scaleの計8条件で、`true`の出力が全weightのRenderer-local行列oracleに一致し、16B storageへの登録と各2回の切断が通った。`false`はProfessionalの元Renderer scale 0.01や祖先scale付きCasualで不一致となり、丸め誤差として許容しない。旧benchmarkの`false`を基準にした結果はその出力空間での履歴として残し、Renderer-local統合の証拠へ転用しない。本検証はEditorのcomponent単体であり、製品sceneの現在pose取込み、骨Physics Proxyとの共通frame、表示／Stencil、IL2CPP、性能、未来非同期skinの採用を完了扱いにしない。
 
+現在poseの専用mono scene比較は`docs/diagnostics/compact16uv-character-scene/`。Windows x64 IL2CPP Development／D3D11でCasual／Professional各2 poseを3独立processで撮影した。実Skinned→Bake→16B VPを分け、Bake通常Mesh→VPは各20比較すべて輪郭差0・RGB最大差2/255、切断後の復号Mesh oracleとはpixel完全一致だった。実Skinned→Bakeではscale付きCasualの輪郭に1 pixel差が残り、厳密gateは各23/24合格の部分成立とする。共通被覆領域のRGB差は最大1/255、48画像はprocess間で完全再現したが、許容を拡大して全面合格としない。実capは両切断stageで可視確認した。仮Stencil cap・Shadow・XR、CutWorldRoot／物理owner／commitへの接続、性能は未検証。同じauthoring入力に19 UCXずつ存在し、PHYS_NULL経由のbone親と代表bone metadataが一致することは確認したが、Unity現在poseでの物理Proxy写像・cook／登録は別工程とする。
+
 Phase 4.65は限定実装・品質と負荷の比較・人間による採否決定までを必須とし、効果がなければ導入見送りを正常な完了結果とする。採用時だけ本体の既存DAG／VPプールへ接続し、以下の非同期経路の本体契約、Phase 4.71の未来VP準備、Phase 4.72の人形先行切断統合を適用する。不採用時はこれらを必須範囲から外し、4.70の軌道・Animation計画と4.52の現在Pose同期切断を残す。人形の先行準備による命中時負荷削減を必達にせず、準備費用・表示開始は本節の通常同期経路に従う。採否は開発時の判断であり、実行時の自動切替・再挑戦や代替の未来Pose同期ベイクを追加しない。判断と理由を本書へ記録し、不採用となった本体設計は削除してGit履歴へ残せる。
 
 未来用Workは元Mesh由来の不変な頂点属性・weight・bindpose・骨対応を読み込み・登録時などに準備して共有し、候補ごとの取出し・再構築を避ける。共通VP用AoSへ直接出力するか、一時Native出力からWork側で同じ形式へ変換する。ベイク済みUnity Meshの生成・再読取りを挟む義務はなく、頂点数に比例する変換・コピーをMain Threadへ戻さない。Work分割、並列度、入力layout、型・field列、初期対応Asset・変形機能は実装と代表入力の比較で選ぶ。
