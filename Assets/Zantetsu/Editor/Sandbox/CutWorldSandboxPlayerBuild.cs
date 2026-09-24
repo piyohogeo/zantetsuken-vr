@@ -59,9 +59,9 @@ namespace Zantetsu.EditorTools.Sandbox
         /// Builds the Player into <paramref name="directory"/>, after saying what it is building with. Returns
         /// whether the build succeeded; everything it found is in the log either way.
         /// </summary>
-        public static bool Build(string directory)
+        public static bool Build(string directory, string scene = null)
         {
-            string scene = CutWorldSandboxSceneBuilder.ScenePathInProject;
+            scene ??= CutWorldSandboxSceneBuilder.ScenePathInProject;
             if (!File.Exists(scene))
             {
                 Debug.LogError("PLAYER BUILD: the scene " + scene + " is not there. Build it first.");

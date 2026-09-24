@@ -1,9 +1,12 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Runtime.InteropServices;
+using Unity.Profiling;
 using UnityEngine;
 using Zantetsu.MeshCut;
 using Zantetsu.PhysicsCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.Sandbox
 {
@@ -77,9 +80,30 @@ namespace Zantetsu.Sandbox
 
             private CutWorldRoot _world;
             private SandboxCutWorldProbe _probe;
+            private bool _measure;
+            private bool _measurementFailed;
+            private Camera _captureCamera;
+            private RenderTexture _captureTarget;
 
             private IEnumerator Start()
             {
+                _measure = Environment.GetEnvironmentVariable("VP_COMPACT16UV_SCENE_MEASURE") == "1";
+                if (_measure)
+                {
+                    Application.runInBackground = true; // Diagnostic Player only; project settings stay unchanged.
+                    // The dedicated diagnostic build disables XR initialization, not just an already-started loader.
+                    if (UnityEngine.XR.XRSettings.isDeviceActive) { Log("FAILED: mono diagnostic requires XR disabled at build time"); _measurementFailed = true; }
+                    _captureCamera = Camera.main;
+                    if (_captureCamera != null)
+                    {
+                        _captureTarget = new RenderTexture(Screen.width, Screen.height, 0,
+                            UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm)
+                        { depthStencilFormat = VpStencilAttachment.EightBitStencilFormat, antiAliasing = 1 };
+                        _captureTarget.Create();
+                        _captureCamera.targetTexture = _captureTarget;
+                    }
+                    else _measurementFailed = true;
+                }
                 Directory.CreateDirectory(directory);
                 Log("started. directory=" + directory + " graphics=" + SystemInfo.graphicsDeviceType
                     + " device=" + SystemInfo.graphicsDeviceName + " screen=" + Screen.width + "x" + Screen.height
@@ -101,6 +125,11 @@ namespace Zantetsu.Sandbox
                 }
 
                 LogState("the body is registered");
+                if (_measure)
+                {
+                    Log("atlas bound=" + VpCutSurfaceAtlas.IsBound + " vertexStride=" + VpRenderVertex.Stride);
+                    yield return MeasureSettledScene("before-cut");
+                }
                 yield return null;
                 yield return Capture("01-before-the-cut");
 
@@ -167,6 +196,13 @@ namespace Zantetsu.Sandbox
                     yield return null;
                     yield return null;
                     yield return Capture("03-children-apart");
+                    if (_measure && VpCutSurfaceAtlas.IsBound)
+                    {
+                        var colours = VpCutSurfaceColour.Capture();
+                        VpCutSurfaceColour.SetDebugEnabled(true);
+                        yield return Capture("03b-children-apart-debug");
+                        VpCutSurfaceColour.Restore(colours);
+                    }
                 }
 
                 // ----- cutting one of the published children ------------------------------------------------------
@@ -206,6 +242,7 @@ namespace Zantetsu.Sandbox
                 Log("the child's cut committed. operation=" + second
                     + " positive=" + secondRecord.positive + " negative=" + secondRecord.negative);
                 LogState("after the child's commit");
+                if (_measure) yield return MeasureSettledScene("after-recut");
                 yield return null;
                 yield return Capture("04-after-the-child-cut");
 
@@ -237,6 +274,7 @@ namespace Zantetsu.Sandbox
                 yield return null;
                 yield return null;
                 LogState("two frames after the ending");
+                if (_measure) Log("atlas bound after shutdown=" + VpCutSurfaceAtlas.IsBound);
                 yield return Capture("05-after-the-ending");
                 yield return Finish(0);
             }
@@ -280,8 +318,21 @@ namespace Zantetsu.Sandbox
                 string file = Path.Combine(directory, name + ".png");
                 yield return new WaitForEndOfFrame();
                 var picture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
-                picture.ReadPixels(new Rect(0f, 0f, Screen.width, Screen.height), 0, 0);
+                var previousTarget = RenderTexture.active;
+                try
+                {
+                    if (_measure) RenderTexture.active = _captureTarget;
+                    picture.ReadPixels(new Rect(0f, 0f, Screen.width, Screen.height), 0, 0);
+                }
+                finally { RenderTexture.active = previousTarget; }
                 picture.Apply(false);
+                if (_measure)
+                {
+                    bool nonblack = false;
+                    foreach (var pixel in picture.GetPixels32())
+                        if (pixel.r + pixel.g + pixel.b > 12) { nonblack = true; break; }
+                    if (!nonblack) { Log("FAILED: blank capture " + name); _measurementFailed = true; }
+                }
                 File.WriteAllBytes(file, picture.EncodeToPNG());
                 Destroy(picture);
                 Log("picture " + name + " -> " + file);
@@ -301,9 +352,70 @@ namespace Zantetsu.Sandbox
 
             private IEnumerator Finish(int code)
             {
+                if (code == 0 && _measurementFailed) code = 8;
                 Log("finished with code " + code);
                 yield return null;
                 Application.Quit(code);
+            }
+
+            // Existing explicit Player-check path only. The recorder includes Main-thread waits; it is not
+            // a custom CPU-work marker. Memory is a settled process snapshot, not WDDM GPU residency or peak.
+            private IEnumerator MeasureSettledScene(string phase)
+            {
+                using var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "Main Thread", 1);
+                if (!recorder.Valid)
+                {
+                    Log("FAILED: Main Thread recorder unavailable; no timing result inferred.");
+                    _measurementFailed = true;
+                    yield break;
+                }
+                for (int i = 0; i < 60; i++) yield return null;
+                var drawing = UnityEngine.Object.FindFirstObjectByType<CutWorldCameraDrawing>();
+                int drawnBefore = drawing != null ? drawing.DrawnFrames : 0;
+                var values = new double[240];
+                for (int i = 0; i < values.Length; i++)
+                {
+                    yield return null;
+                    values[i] = recorder.LastValue * 1e-6;
+                }
+                Array.Sort(values);
+                if (values[0] <= 0) _measurementFailed = true;
+                int drawnDelta = drawing != null ? drawing.DrawnFrames - drawnBefore : 0;
+                if (drawnDelta <= 0) { Log("FAILED: no product camera draw during sample window"); _measurementFailed = true; }
+                long workingSet = WorkingSetBytes();
+                if (workingSet < 0) _measurementFailed = true;
+                Log("scene sample " + phase + ": frames=240 drawnFrames=" + drawnDelta + " mainThreadMedianMs=" + values[120].ToString("F6")
+                    + " mainThreadP95Ms=" + values[228].ToString("F6")
+                    + " unityAllocatedBytes=" + UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong()
+                    + " unityReservedBytes=" + UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong()
+                    + " processWorkingSetBytes=" + workingSet
+                    + " storageVertices=" + _world.Storage.VertexCount
+                    + " vertexCapacityBytes=" + ((long)_world.Storage.VertexCapacity * VpRenderVertex.Stride)
+                    + " vSync=" + QualitySettings.vSyncCount + " targetFrameRate=" + Application.targetFrameRate
+                    + "; inclusive Main Thread / settled snapshots, not peak or 32B comparison");
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct ProcessMemoryCounters
+            {
+                public uint size, pageFaultCount;
+                public UIntPtr peakWorkingSet, workingSet, quotaPeakPagedPool, quotaPagedPool;
+                public UIntPtr quotaPeakNonPagedPool, quotaNonPagedPool, pageFile, peakPageFile;
+            }
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            [DllImport("kernel32.dll", EntryPoint = "K32GetProcessMemoryInfo", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool GetProcessMemoryInfo(IntPtr process, ref ProcessMemoryCounters counters, uint size);
+#endif
+            private static long WorkingSetBytes()
+            {
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+                var counters = new ProcessMemoryCounters { size = (uint)Marshal.SizeOf<ProcessMemoryCounters>() };
+                // Current-process pseudo handle is not owned and must not be closed.
+                if (GetProcessMemoryInfo(new IntPtr(-1), ref counters, counters.size)) return (long)counters.workingSet.ToUInt64();
+#endif
+                Log("FAILED: process working-set query unavailable; no memory value inferred.");
+                return -1;
             }
 
             private static void Hold(GameObject actor)
@@ -313,6 +425,12 @@ namespace Zantetsu.Sandbox
                 {
                     actorBody.isKinematic = true;
                 }
+            }
+
+            private void OnDestroy()
+            {
+                if (_captureCamera != null && _captureCamera.targetTexture == _captureTarget) _captureCamera.targetTexture = null;
+                if (_captureTarget != null) { _captureTarget.Release(); Destroy(_captureTarget); }
             }
 
             private static void Log(string line)

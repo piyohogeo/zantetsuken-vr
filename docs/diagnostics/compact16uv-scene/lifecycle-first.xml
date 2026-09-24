@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="5" result="Passed" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.0923213">
+  <test-suite type="TestSuite" id="1122" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="81" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.092321" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="PlayMode" />
+    </properties>
+    <test-suite type="Assembly" id="1087" name="Zantetsu.PhysicsCut.PlayModeTests.dll" fullname="C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.PhysicsCut.PlayModeTests.dll" runstate="Runnable" testcasecount="46" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.084881" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="101416" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="PlayMode" />
+        <property name="EditorOnly" value="False" />
+      </properties>
+      <test-suite type="TestSuite" id="1088" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="46" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.084096" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1089" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="46" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.083595" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="1090" name="PlayModeTests" fullname="Zantetsu.PhysicsCut.PlayModeTests" runstate="Runnable" testcasecount="46" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.083100" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="TestFixture" id="1030" name="CutWorldAtlasLifecycleTests" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" testcasecount="5" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.081735" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-case id="1036" name="OptOutWorldDoesNotOwnOrClearAnExistingBinding" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.OptOutWorldDoesNotOwnOrClearAnExistingBinding" methodname="OptOutWorldDoesNotOwnOrClearAnExistingBinding" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" seed="1433333161" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.044783" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-case id="1031" name="PairBindsAtAwake_AndClearsOnlyAfterShutdown_WithoutDestroyingAssets" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.PairBindsAtAwake_AndClearsOnlyAfterShutdown_WithoutDestroyingAssets" methodname="PairBindsAtAwake_AndClearsOnlyAfterShutdown_WithoutDestroyingAssets" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" seed="1864930977" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.011851" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+              </test-case>
+              <test-suite type="ParameterizedMethod" id="1034" name="PartialOrWrongSizePair_RefusesBeforeAllocatingWorld" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.PartialOrWrongSizePair_RefusesBeforeAllocatingWorld" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.006569" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-case id="1032" name="PartialOrWrongSizePair_RefusesBeforeAllocatingWorld(False)" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.PartialOrWrongSizePair_RefusesBeforeAllocatingWorld(False)" methodname="PartialOrWrongSizePair_RefusesBeforeAllocatingWorld" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" seed="525530089" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.003524" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[Atlas lifecycle: atlas setup requires a 256x256 pair and an unowned global binding.
+]]></output>
+                </test-case>
+                <test-case id="1033" name="PartialOrWrongSizePair_RefusesBeforeAllocatingWorld(True)" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.PartialOrWrongSizePair_RefusesBeforeAllocatingWorld(True)" methodname="PartialOrWrongSizePair_RefusesBeforeAllocatingWorld" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" seed="1974838172" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.001142" asserts="0">
+                  <properties>
+                    <property name="retryIteration" value="0" />
+                    <property name="repeatIteration" value="0" />
+                  </properties>
+                  <output><![CDATA[Atlas lifecycle: atlas setup requires a 256x256 pair and an unowned global binding.
+]]></output>
+                </test-case>
+              </test-suite>
+              <test-case id="1035" name="SecondAtlasWorldCannotStealBinding_AndItsShutdownDoesNotClearFirst" fullname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests.SecondAtlasWorldCannotStealBinding_AndItsShutdownDoesNotClearFirst" methodname="SecondAtlasWorldCannotStealBinding_AndItsShutdownDoesNotClearFirst" classname="Zantetsu.PhysicsCut.PlayModeTests.CutWorldAtlasLifecycleTests" runstate="Runnable" seed="1883259889" result="Passed" start-time="2026-09-24 04:32:20Z" end-time="2026-09-24 04:32:20Z" duration="0.007201" asserts="0">
+                <properties>
+                  <property name="retryIteration" value="0" />
+                  <property name="repeatIteration" value="0" />
+                </properties>
+                <output><![CDATA[Atlas lifecycle: atlas setup requires a 256x256 pair and an unowned global binding.
+Saving results to: C:/Users/%USERNAME%/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+              </test-case>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

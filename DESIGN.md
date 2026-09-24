@@ -467,6 +467,8 @@ Compact16uvの実Cap新規頂点はUV byte slot `(247,247)`、復号値`(247.5/2
 
 製品worktreeのatlas対応は明示的opt-inとする。`VpCutSurfaceAtlas.Bind`で共有normal/debug textureを設定し、確認済み共有materialの`_VpUsePaletteAtlas`を有効化する。`VpLogicalCutDisplay.SetCapPaletteAtlasEnabled`は所有する仮cap materialだけを有効化する。texture/materialをrendererごとに複製しない。通常surfaceはnormal atlasを参照し続け、debug switchではcap参照だけを切り替える。これによりdebug patchの粗いmipから通常surfaceへの色混入を避ける。normal/debug画像の生成はoffline、切替はカメラ群の描画登録前に行い、描画途中のper-camera差替えは契約外とする。`SetColours`は非atlas経路だけへ作用する。未opt-in materialと未binding時の従来表示を保ち、全製品sceneの導入済みとはしない。設定・画像検証範囲は`docs/diagnostics/compact16uv-atlas/`に記録する。代表Megacityの未切断・3回の切断／再切断を3視点で比較した結果は`docs/diagnostics/compact16uv-appearance/`に記録し、全material・製品scene性能・XRの確認とは分ける。
 
+scene起動点の`CutWorldRoot`には任意のnormal/debug atlas pairを指定できる。両方未指定なら従来経路を維持する。指定時は256² pairとglobal bindingの排他的所有を要求し、不備・既存bindingとの競合はstorage確保前のauthoring errorとする。共有forward materialはofflineでopt-in済みにし、Rootはdisplay生成後にbindingと所有仮cap materialのopt-inを行う。通常終了ではdisplay破棄後に自分のbindingだけを解除し、texture assetを破棄しない。additive scene間のatlas調停機構は追加しない。専用Sandbox sceneによる起動・切断／再切断・終了と、描画／性能検証の未成立条件は`docs/diagnostics/compact16uv-scene/`に分けて記録する。
+
 元Assetの負UVは4.5.1の入力契約に従って拒否する。予約slotを通常surfaceへ割り当てないことはasset pipeline契約とする。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。これはD-171の旧負UV許容方針をCompact16uv移行範囲で置き換える。
 
 デバッグ表示は全対象共通の有効／無効だけとし、描画する断面ごとに次を適用する。

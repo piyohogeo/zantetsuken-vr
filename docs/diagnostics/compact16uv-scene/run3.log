@@ -1,0 +1,460 @@
+Found 5 interfaces on host : 0) 192.168.133.1 1) 192.168.10.200 2) 192.168.211.100 3) 192.168.118.1 4) 172.30.96.1
+Player connection [20528]  Target information:
+
+Player connection [20528]  * "[IP] 192.168.133.1 [Port] 55001 [Flags] 2 [Guid] 700870025 [EditorId] 1324183271 [Version] 1048832 [Id] WindowsPlayer(2,DESKTOP-8GNVAER) [Debug] 0 [PackageName] WindowsPlayer [ProjectName] zantetsuken-vr" 
+
+Player connection [20528]  * "[IP] 192.168.10.200 [Port] 55001 [Flags] 2 [Guid] 700870025 [EditorId] 1324183271 [Version] 1048832 [Id] WindowsPlayer(2,DESKTOP-8GNVAER) [Debug] 0 [PackageName] WindowsPlayer [ProjectName] zantetsuken-vr" 
+
+Player connection [20528]  * "[IP] 192.168.211.100 [Port] 55001 [Flags] 2 [Guid] 700870025 [EditorId] 1324183271 [Version] 1048832 [Id] WindowsPlayer(2,DESKTOP-8GNVAER) [Debug] 0 [PackageName] WindowsPlayer [ProjectName] zantetsuken-vr" 
+
+Player connection [20528]  * "[IP] 192.168.118.1 [Port] 55001 [Flags] 2 [Guid] 700870025 [EditorId] 1324183271 [Version] 1048832 [Id] WindowsPlayer(2,DESKTOP-8GNVAER) [Debug] 0 [PackageName] WindowsPlayer [ProjectName] zantetsuken-vr" 
+
+Player connection [20528]  * "[IP] 172.30.96.1 [Port] 55001 [Flags] 2 [Guid] 700870025 [EditorId] 1324183271 [Version] 1048832 [Id] WindowsPlayer(2,DESKTOP-8GNVAER) [Debug] 0 [PackageName] WindowsPlayer [ProjectName] zantetsuken-vr" 
+
+Player connection [20528] Started UDP target info broadcast (1) on [225.0.0.222:54997].
+
+Input System module state changed to: Initialized.
+[Physics::Module] Initialized fallback backend.
+[Physics::Module] Id: 0xdecafbad
+Initialize engine version: 6000.3.22f1 (1c726e1fb402)
+[Subsystems] Discovering subsystems at path C:/Users/%USERNAME%/AppData/Local/Zantetsu/TestPlayers/SceneCompact16uv20260924Mono/CutWorldSandbox_Data/UnitySubsystems
+[Subsystems] No descriptors matched for  examples in UnitySubsystems/UnityOpenXR/UnitySubsystemsManifest.json.
+[Subsystems] 1 'inputs' descriptors matched in UnitySubsystems/UnityOpenXR/UnitySubsystemsManifest.json
+[Subsystems] 1 'displays' descriptors matched in UnitySubsystems/UnityOpenXR/UnitySubsystemsManifest.json
+[Subsystems] No descriptors matched for  meshings in UnitySubsystems/UnityOpenXR/UnitySubsystemsManifest.json.
+Forcing GfxDevice: Direct3D 11
+GfxDevice: creating device client; kGfxThreadingModeClientWorkerJobs
+[XR] [20528] [13:40:56.181][Info   ] Available Layers: (0)
+Direct3D:
+    Version:  Direct3D 11.0 [level 11.1]
+    Renderer: NVIDIA GeForce RTX 3090 (ID=0x2204)
+    Vendor:   NVIDIA
+    VRAM:     24322 MB
+    Driver:   32.0.15.9186
+[Physics::Module] Selected backend.
+[Physics::Module] Name: PhysX
+[Physics::Module] Id: 0xf2b8ea05
+[Physics::Module] SDK Version: 4.1.2
+[Physics::Module] Integration Version: 1.0.0
+[Physics::Module] Threading Mode: Multi-Threaded
+XRGeneral Settings awakening...
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+UnityEngine.XR.Management.XRGeneralSettings:Awake()
+
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Display
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Input
+[Subsystems] OpenXR XR Plugin successfully registered Provider for OpenXR Display
+Loading OpenXR loader library at path: openxr_loader
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:LoadOpenXRSymbols()
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:InitializeInternal()
+UnityEngine.XR.OpenXR.OpenXRLoaderBase:Initialize()
+UnityEngine.XR.Management.XRManagerSettings:InitializeLoaderSync()
+UnityEngine.XR.Management.XRGeneralSettings:InitXRSDK()
+
+[XR] XR_META_performance_metrics: Attempted to stop before session ready
+[Subsystems] Loading plugin UnityOpenXR for subsystem OpenXR Display...
+[XR] [20528] [13:40:56.650][Info   ] Available Layers: (0)
+[Subsystems] Loading plugin UnityOpenXR for subsystem OpenXR Input...
+<RI> Initializing input.
+Using Windows.Gaming.Input
+[XR] [20528] [13:40:56.811][Info   ] OpenXRSession::HandleSessionStateChangedEvent: state XR_SESSION_STATE_UNKNOWN->XR_SESSION_STATE_IDLE session=2 time=2062812362458899
+UnloadTime: 0.442000 ms
+[XR] [20528] [13:41:01.310][Info   ] 
+
+==== Start Unity OpenXR Diagnostic Report ====
+
+
+[XR] [20528] [13:41:01.310][Info   ] ==== Report Reason: System Shutdown ====
+
+
+[XR] [20528] [13:41:01.310][Info   ] ==== OpenXR Settings ====
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Symmetric Projection: False
+[XR] [20528] [13:41:01.310][Info   ] Stereo Rendering Mode: SinglePassInstanced
+[XR] [20528] [13:41:01.310][Info   ] Latency Optimization: PrioritizeRendering
+[XR] [20528] [13:41:01.310][Info   ] Color Submission Modes: kRenderTextureFormatGroup8888
+[XR] [20528] [13:41:01.310][Info   ] Depth Submission Mode: None
+[XR] [20528] [13:41:01.310][Info   ] Space Warp Motion Vector Texture Format: RGBA16f
+[XR] [20528] [13:41:01.310][Info   ] Optimize Buffer Discards: False
+[XR] [20528] [13:41:01.310][Info   ] Multiview Render Regions Optimization Mode: None
+[XR] [20528] [13:41:01.310][Info   ] Use OpenXR Predicted Time: True
+[XR] [20528] [13:41:01.310][Info   ] Foveated Rendering API: SRPFoveation
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] ==== OpenXR Provider Info ====
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Provider Version: ecb5f4e-dirty
+[XR] [20528] [13:41:01.310][Info   ] App: zantetsuken-vr #1521753221
+[XR] [20528] [13:41:01.310][Info   ] Engine: 6000.3.22f1 #87122945
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] ==== OpenXR Runtime Info ====
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Available Runtime Extensions: (36)
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_D3D11_enable: Version=11
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_D3D12_enable: Version=11
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_opengl_enable: Version=12
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_vulkan_enable: Version=10
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_vulkan_enable2: Version=4
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_depth: Version=6
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_win32_convert_performance_counter_time: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_convert_timespec_time: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_cube: Version=8
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_cylinder: Version=4
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_equirect: Version=3
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_visibility_mask: Version=2
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_color_scale_bias: Version=5
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_maintenance1: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_win32_appcontainer_compatible: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_debug_utils: Version=5
+[XR] [20528] [13:41:01.310][Info   ]   XR_OCULUS_recenter_event: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_OCULUS_audio_device_guid: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_color_space: Version=3
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_display_refresh_rate: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_META_performance_metrics: Version=2
+[XR] [20528] [13:41:01.310][Info   ]   XR_META_headset_id: Version=2
+[XR] [20528] [13:41:01.310][Info   ]   XR_OCULUS_ovrsession_handle: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_local_floor: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_active_action_set_priority: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_future: Version=2
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_palm_pose: Version=3
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_haptic_parametric: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_haptic_amplitude_envelope: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_haptic_pcm: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_touch_controller_pro: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_META_touch_controller_plus: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_FB_touch_controller_proximity: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_OCULUS_external_camera: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_META_detached_controllers: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_LOGITECH_mx_ink_stylus_interaction: Version=1
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Available Layers: (0)
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Runtime Name: Oculus
+[XR] [20528] [13:41:01.310][Info   ] Runtime Version: 1.207.0
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Form factor: XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Runtime extensions enabled: (6)
+[XR] [20528] [13:41:01.310][Info   ]   XR_EXT_local_floor: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_D3D11_enable: Version=11
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_composition_layer_depth: Version=6
+[XR] [20528] [13:41:01.310][Info   ]   XR_KHR_visibility_mask: Version=2
+[XR] [20528] [13:41:01.310][Info   ]   XR_OCULUS_audio_device_guid: Version=1
+[XR] [20528] [13:41:01.310][Info   ]   XR_META_performance_metrics: Version=2
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Available Reference Spaces: (4)
+[XR] [20528] [13:41:01.310][Info   ]   XR_REFERENCE_SPACE_TYPE_VIEW
+[XR] [20528] [13:41:01.310][Info   ]   XR_REFERENCE_SPACE_TYPE_LOCAL
+[XR] [20528] [13:41:01.310][Info   ]   XR_REFERENCE_SPACE_TYPE_STAGE
+[XR] [20528] [13:41:01.310][Info   ]   XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] Instance Id  : 0x1
+[XR] [20528] [13:41:01.310][Info   ] System Id    : 0x18
+[XR] [20528] [13:41:01.310][Info   ] Session Id   : 0x2
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] ==== OpenXR API Spec Version ====
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] XrInstance Created with OpenXR API Version: 1.1.54
+[XR] [20528] [13:41:01.310][Info   ] 
+[XR] [20528] [13:41:01.310][Info   ] ==== Last 20 Events ====
+[XR] [20528] [13:41:01.310][Info   ] XrEventDataSessionStateChanged: XR_SESSION_STATE_UNKNOWN->XR_SESSION_STATE_IDLE
+[XR] [20528] [13:41:01.310][Info   ] 
+
+==== End Unity OpenXR Diagnostic Report ====
+
+
+[XR] XR_META_performance_metrics: Attempted to stop before session ready
+SANDBOX PLAYER: started. directory=C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images graphics=Direct3D11 device=NVIDIA GeForce RTX 3090 screen=960x540 batchMode=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: waited for the scene's world and body: True
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<WaitUntil>d__8:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: the body is registered: frame=79487 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=1 drawCommands=2 settledCollections=1 broken=False halted=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.Walk:LogState(String)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: atlas bound=True vertexStride=16
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: FAILED: no product camera draw during sample window
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<MeasureSettledScene>d__10:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: scene sample before-cut: frames=240 drawnFrames=0 mainThreadMedianMs=0.067300 mainThreadP95Ms=0.160100 unityAllocatedBytes=113431346 unityReservedBytes=251547648 processWorkingSetBytes=303026176 storageVertices=24 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<MeasureSettledScene>d__10:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 01-before-the-cut
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 01-before-the-cut -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\01-before-the-cut.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: asked for a cut of the body: True
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: frames in which a provisional pair stood: 2
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: the cut committed. operation=operation 1 positive=fragment 2 negative=fragment 3 stage=Committed
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: after the commit: frame=79792 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=2 drawCommands=2 settledCollections=306 broken=False halted=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.Walk:LogState(String)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 02-after-the-cut
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 02-after-the-cut -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\02-after-the-cut.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: carried the positive child from (0.00, 1.00, 0.00) to (0.00, 2.10, 0.00); the negative child is at (0.00, 0.99, 0.00)
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 03-children-apart
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 03-children-apart -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\03-children-apart.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 03b-children-apart-debug
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 03b-children-apart-debug -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\03b-children-apart-debug.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: asked for a cut of the published child fragment 2: True
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: the child's cut committed. operation=operation 2 positive=fragment 4 negative=fragment 5
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: after the child's commit: frame=79800 ready=True released=False provisionalPairs=0 geometryFaults=0 displayDisposed=False renderFragments=3 drawCommands=4 settledCollections=314 broken=False halted=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.Walk:LogState(String)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: FAILED: no product camera draw during sample window
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<MeasureSettledScene>d__10:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: scene sample after-recut: frames=240 drawnFrames=0 mainThreadMedianMs=0.071800 mainThreadP95Ms=0.188500 unityAllocatedBytes=114820546 unityReservedBytes=253644800 processWorkingSetBytes=328269824 storageVertices=95 vertexCapacityBytes=1048576 vSync=0 targetFrameRate=-1; inclusive Main Thread / settled snapshots, not peak or 32B comparison
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<MeasureSettledScene>d__10:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 04-after-the-child-cut
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 04-after-the-child-cut -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\04-after-the-child-cut.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: asking the world to end
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: accepted after Shutdown: IsReady=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: the ending: IsReleased=True IsDrained=True displayDisposed=True ordinary frames spent=0
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: two frames after the ending: frame=80104 ready=False released=True provisionalPairs=0 geometryFaults=0 displayDisposed=True renderFragments=-1 drawCommands=-1 settledCollections=-1 broken=False halted=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.Walk:LogState(String)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: atlas bound after shutdown=False
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Start>d__5:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+ReadPixels was called to read pixels from system frame buffer, while not inside drawing frame.
+UnityEngine.Texture2D:ReadPixels(Rect, Int32, Int32)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[C:\build\output\unity\unity\Runtime\Graphics\Texture2D.cpp line 1325131784]
+
+SANDBOX PLAYER: FAILED: blank capture 05-after-the-ending
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: picture 05-after-the-ending -> C:/Users/%USERNAME%/src/zantetsuken-vr-compact16uv/docs/diagnostics/compact16uv-scene/run3-images\05-after-the-ending.png
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Capture>d__7:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+SANDBOX PLAYER: finished with code 8
+UnityEngine.DebugLogHandler:Internal_Log(LogType, LogOption, String, Object)
+UnityEngine.Logger:Log(LogType, Object)
+UnityEngine.Debug:Log(Object)
+Zantetsu.Sandbox.<Finish>d__9:MoveNext()
+UnityEngine.SetupCoroutine:InvokeMoveNext(IEnumerator, IntPtr)
+
+[Physics::Module] Cleanup current backend.
+[Physics::Module] Id: 0xf2b8ea05
+Input System module state changed to: ShutdownInProgress.
+Input System polling thread exited.
+Input System module state changed to: Shutdown.
+PlayerConnection::Cleanup##utp:{"type":"MemoryLeaks","version":2,"phase":"Immediate","time":1790224861546,"processId":87348,"allocatedMemory":1578963,"memoryLabels":[{"Default":136},{"NewDelete":104},{"Manager":540787},{"GfxDevice":72},{"Animation":832},{"Audio":752},{"Serialization":520},{"JobScheduler":32768},{"ScriptingNativeRuntime":987752},{"Renderer":264},{"File":1104},{"String":276},{"DynamicArray":224},{"HashMap":5120},{"PoolAlloc":240},{"VR":7424},{"Video":144},{"SceneLoad":248},{"NativeArray":5636},{"CoreBusinessMetrics":120}]}
