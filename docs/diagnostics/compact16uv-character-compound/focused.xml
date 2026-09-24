@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="24" result="Passed" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.3645595">
+  <test-suite type="TestSuite" id="1000" name="zantetsuken-vr" fullname="zantetsuken-vr" runstate="Runnable" testcasecount="3662" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.364560" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties>
+      <property name="platform" value="EditMode" />
+    </properties>
+    <test-suite type="Assembly" id="4930" name="Zantetsu.Core.EditModeTests.dll" fullname="[REDACTED]/src/zantetsuken-vr-compact16uv/Library/ScriptAssemblies/Zantetsu.Core.EditModeTests.dll" runstate="Runnable" testcasecount="3648" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.330913" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="33272" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+        <property name="EditorOnly" value="True" />
+      </properties>
+      <test-suite type="TestSuite" id="4931" name="Zantetsu" fullname="Zantetsu" runstate="Runnable" testcasecount="3648" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.301765" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="4934" name="PhysicsCut" fullname="Zantetsu.PhysicsCut" runstate="Runnable" testcasecount="315" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.279039" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestSuite" id="4935" name="Tests" fullname="Zantetsu.PhysicsCut.Tests" runstate="Runnable" testcasecount="315" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.276831" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-suite type="ParameterizedFixture" id="1539" name="CutGeometryConnectionTests" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="45" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:41Z" duration="3.273972" total="24" passed="24" failed="0" inconclusive="0" skipped="0" asserts="0">
+              <properties />
+              <test-suite type="TestFixture" id="1503" name="CutGeometryConnectionTests(0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:39Z" duration="1.231290" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-suite type="ParameterizedMethod" id="1506" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:38Z" duration="0.609953" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1504" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1567254517" result="Passed" start-time="2026-09-24 07:14:37Z" end-time="2026-09-24 07:14:38Z" duration="0.394597" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=0 fill=0 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=False volumeBefore=0.096827118406527357 volumeAfter=0.096827119516190413 commits=1
+compound family=character-casual pose=0 fill=0 stage=1 input=19 split=9 inheritedPositive=3 inheritedNegative=7 positive=12 negative=16 geometryFirst=True volumeBefore=0.052067488020321705 volumeAfter=0.052067487983720455 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1505" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="972803714" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:38Z" duration="0.207312" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=1 fill=0 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=True volumeBefore=0.096827127479826872 volumeAfter=0.096827127340195218 commits=1
+compound family=character-casual pose=1 fill=0 stage=1 input=19 split=4 inheritedPositive=2 inheritedNegative=13 positive=6 negative=17 geometryFirst=False volumeBefore=0.054526098509399136 volumeAfter=0.054526098680926074 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+                <test-suite type="ParameterizedMethod" id="1513" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="6" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:39Z" duration="0.616876" total="6" passed="6" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1507" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="781033716" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:38Z" duration="0.103757" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=2 fill=0 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1508" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="115398133" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:38Z" duration="0.104961" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=3 fill=0 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1509" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="463871828" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:38Z" duration="0.095236" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=0 fill=0 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1510" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="241751669" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:38Z" duration="0.127268" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=1 fill=0 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1511" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1580737440" result="Passed" start-time="2026-09-24 07:14:38Z" end-time="2026-09-24 07:14:39Z" duration="0.091201" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=2 fill=0 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1512" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1901481938" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.092603" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=3 fill=0 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+              <test-suite type="TestFixture" id="1485" name="CutGeometryConnectionTests(-1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:40Z" duration="1.026821" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-suite type="ParameterizedMethod" id="1488" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.414441" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1486" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="211599599" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.194167" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=0 fill=-1 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=False volumeBefore=0.096827118406527357 volumeAfter=0.096827119516190413 commits=1
+compound family=character-casual pose=0 fill=-1 stage=1 input=19 split=9 inheritedPositive=3 inheritedNegative=7 positive=12 negative=16 geometryFirst=True volumeBefore=0.052067488020321705 volumeAfter=0.052067487983720455 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1487" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1673964437" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.219778" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=1 fill=-1 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=True volumeBefore=0.096827127479826872 volumeAfter=0.096827127340195218 commits=1
+compound family=character-casual pose=1 fill=-1 stage=1 input=19 split=4 inheritedPositive=2 inheritedNegative=13 positive=6 negative=17 geometryFirst=False volumeBefore=0.054526098509399136 volumeAfter=0.054526098680926074 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+                <test-suite type="ParameterizedMethod" id="1495" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="6" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:40Z" duration="0.610715" total="6" passed="6" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1489" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="890880272" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.100674" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=2 fill=-1 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1490" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="240993287" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.137886" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=3 fill=-1 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1491" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1005898332" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.091197" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=0 fill=-1 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1492" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1788950884" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:39Z" duration="0.092747" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=1 fill=-1 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1493" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1312027725" result="Passed" start-time="2026-09-24 07:14:39Z" end-time="2026-09-24 07:14:40Z" duration="0.092285" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=2 fill=-1 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1494" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1311875509" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.094203" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=3 fill=-1 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+              <test-suite type="TestFixture" id="1521" name="CutGeometryConnectionTests(205)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205)" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="15" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:41Z" duration="1.014300" total="8" passed="8" failed="0" inconclusive="0" skipped="0" asserts="0">
+                <properties />
+                <test-suite type="ParameterizedMethod" id="1524" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="2" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.431474" total="2" passed="2" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1522" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,0)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="849334742" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.189572" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=0 fill=205 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=False volumeBefore=0.096827118406527357 volumeAfter=0.096827119516190413 commits=1
+compound family=character-casual pose=0 fill=205 stage=1 input=19 split=9 inheritedPositive=3 inheritedNegative=7 positive=12 negative=16 geometryFirst=True volumeBefore=0.052067488020321705 volumeAfter=0.052067487983720455 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1523" name="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(&quot;character-casual&quot;,1)" methodname="RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="450534831" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.241476" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[compound family=character-casual pose=1 fill=205 stage=0 input=19 split=19 inheritedPositive=0 inheritedNegative=0 positive=19 negative=19 geometryFirst=True volumeBefore=0.096827127479826872 volumeAfter=0.096827127340195218 commits=1
+compound family=character-casual pose=1 fill=205 stage=1 input=19 split=4 inheritedPositive=2 inheritedNegative=13 positive=6 negative=17 geometryFirst=False volumeBefore=0.054526098509399136 volumeAfter=0.054526098680926074 commits=2
+CutFixtureEnding state=ReleasedSafely registration=Held | registration=Held driverAlive=True recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=0 | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                </test-suite>
+                <test-suite type="ParameterizedMethod" id="1531" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests.RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" testcasecount="6" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:41Z" duration="0.581183" total="6" passed="6" failed="0" inconclusive="0" skipped="0" asserts="0">
+                  <properties />
+                  <test-case id="1525" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1607665277" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.101672" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=2 fill=205 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1526" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-casual&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1737107259" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.101747" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-casual pose=3 fill=205 hulls=19 mappingDeterminant=0.8741259 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1527" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,0)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="749452984" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.090468" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=0 fill=205 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1528" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,1)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="1706823415" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:40Z" duration="0.092587" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=1 fill=205 hulls=19 mappingDeterminant=1000000 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1529" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,2)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="931814919" result="Passed" start-time="2026-09-24 07:14:40Z" end-time="2026-09-24 07:14:41Z" duration="0.092414" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=2 fill=205 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+]]></output>
+                  </test-case>
+                  <test-case id="1530" name="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" fullname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(&quot;character-professional&quot;,3)" methodname="RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload" classname="Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests" runstate="Runnable" seed="963837598" result="Passed" start-time="2026-09-24 07:14:41Z" end-time="2026-09-24 07:14:41Z" duration="0.100457" asserts="0">
+                    <properties>
+                      <property name="retryIteration" value="0" />
+                      <property name="repeatIteration" value="0" />
+                    </properties>
+                    <output><![CDATA[FRAME_REJECT family=character-professional pose=3 fill=205 hulls=19 mappingDeterminant=874125.9 cuts=0 commits=0 uploads=0 reason=F-CHARACTER-LINEAGE-SCALE
+CutFixtureEnding state=ReleasedSafely registration=NotBound | registration=NotBound driverAlive=False recordsListed=0 | S8: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S8: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | workersStopped=True | S11: cookDrained=True dagDrained=True submitted=0 recoveryCount=n/a(not bound) | S11: stillListed=0 recordsOpen=0/0 requestsRunning=0/0 | released=[display,background,storage,harness]
+Saving results to: [REDACTED]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\TestResults.xml
+]]></output>
+                  </test-case>
+                </test-suite>
+              </test-suite>
+            </test-suite>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

@@ -42,7 +42,7 @@ namespace Zantetsu.PhysicsCut.Tests
     [TestFixture(-1)]
     [TestFixture(0x00)]
     [TestFixture(0xCD)]
-    public unsafe class CutGeometryConnectionTests
+    public unsafe partial class CutGeometryConnectionTests
     {
         private const double ParentMass = 12.0;
         private const float SupportEpsilon = 1e-4f;
@@ -393,14 +393,14 @@ namespace Zantetsu.PhysicsCut.Tests
 
         private static readonly Matrix4x4 k_geometryLocalToOwner = Matrix4x4.identity;
 
-        private World NewWorld(int frameBudget = 64, int concurrentReservations = 1)
+        private World NewWorld(int frameBudget = 64, int concurrentReservations = 1, CharacterCompoundData character = null, bool expectFrameRejection = false)
         {
             var w = new World
             {
                 harness = new OwnerCutHarness(),
                 registry = new PhysicsOwnerRegistry(),
                 ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(8)),
-                storage = new VpCpuGeometryStorage(8192, 32768, 128, 512, 512, Allocator.Persistent),
+                storage = new VpCpuGeometryStorage(character == null ? 8192 : 65536, character == null ? 32768 : 262144, 128, 512, 512, Allocator.Persistent),
                 physicsJob = new HoldingExecutor(WorkDestination.UnityJob, 4),
                 geometryPool = new HoldingExecutor(WorkDestination.GeometryPool, 4),
                 background = WorkerPoolExecutor.BackgroundPool(2),
@@ -433,7 +433,8 @@ namespace Zantetsu.PhysicsCut.Tests
             w.harness.planeW = 0f;
             w.harness.eps = SupportEpsilon;
             w.harness.parentMass = ParentMass;
-            w.harness.Add(CaseGenerator.Box());
+            if (character == null) w.harness.Add(CaseGenerator.Box());
+            else foreach (ConvexPoly poly in character.polys) w.harness.Add(poly);
             w.harness.Build();
 
             var ranges = new ConvexBrepRange[w.harness.input.convexCount];
@@ -441,7 +442,9 @@ namespace Zantetsu.PhysicsCut.Tests
             for (int c = 0; c < ranges.Length; c++)
             {
                 ranges[c] = w.harness.input.convexes[c];
-                colliderMeshes.Add(BoxColliderOf(w.harness.input.bank, ranges[c], "Authored " + c));
+                colliderMeshes.Add(character == null
+                    ? BoxColliderOf(w.harness.input.bank, ranges[c], "Authored " + c)
+                    : CharacterColliderOf(character.polys[c], "Character UCX " + c));
             }
 
             w.meshSource = PhysicsShapeSource.External();
@@ -449,6 +452,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 w.harness.input.bank, ranges, colliderMeshes, w.meshSource, float4x4.identity);
 
             w.root = Track(new GameObject("Authored Source"));
+            if (character != null) w.root.transform.SetPositionAndRotation(character.position, character.rotation);
             var body = w.root.AddComponent<Rigidbody>();
             body.useGravity = false;
             body.automaticCenterOfMass = false;
@@ -465,7 +469,8 @@ namespace Zantetsu.PhysicsCut.Tests
             }
 
             w.source = w.ledger.AddFragment();
-            w.registry.RegisterAuthored(w.source, w.root, body, w.shape, false, k_geometryLocalToOwner);
+            Matrix4x4 geometryToOwner = character == null ? k_geometryLocalToOwner : character.geometryToOwner;
+            w.registry.RegisterAuthored(w.source, w.root, body, w.shape, false, geometryToOwner);
 
             // What is drawn follows the physics owners, which is what makes the placements in these cases the real
             // actors' and not a value a test supplied.
@@ -474,12 +479,19 @@ namespace Zantetsu.PhysicsCut.Tests
 
             // The display geometry of that same body, in the same coordinates, registered with both the display and
             // the DAG -- the one mapping, given by the caller in both places.
-            w.baseGeometry = AppendBox(w.storage);
-            w.dag.RegisterBaseGeometry(w.source, w.baseGeometry, Matrix4x4.identity);
-            Assert.That(
-                w.display.TryShow(
-                    w.source, w.baseGeometry, w.root.transform.localToWorldMatrix, Matrix4x4.identity,
-                    Array.Empty<VpClipBoundary>()),
+            w.baseGeometry = character == null ? AppendBox(w.storage) : AppendCharacter(w.storage, character);
+            w.dag.RegisterBaseGeometry(w.source, w.baseGeometry, geometryToOwner.inverse);
+            bool shown = w.display.TryShow(
+                    w.source, w.baseGeometry, w.root.transform.localToWorldMatrix * geometryToOwner, geometryToOwner.inverse,
+                    Array.Empty<VpClipBoundary>());
+            if (expectFrameRejection)
+            {
+                Assert.That(shown, Is.False, "scaled lineage mapping must be rejected by the existing contract");
+                Assert.That(w.display.VertexTransfers, Is.Zero);
+                Assert.That(w.display.IndexTransfers, Is.Zero);
+                return w;
+            }
+            Assert.That(shown,
                 Is.True,
                 "the body is shown");
 

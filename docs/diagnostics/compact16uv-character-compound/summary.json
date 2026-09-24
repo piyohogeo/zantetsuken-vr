@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "9a499e1",
+  "unity": "6000.3.22f1",
+  "platform": "Windows Editor EditMode",
+  "allCharacterIntegrationAccepted": false,
+  "classification": "F-CHARACTER-LINEAGE-SCALE",
+  "distinctIntegratedFamilyPoses": 2,
+  "distinctRejectedFamilyPoses": 6,
+  "integratedCases": 6,
+  "expectedRejectionCases": 18,
+  "committedCuts": 12,
+  "memoryInitializationResultsExactlyEqual": true,
+  "fullEditMode": {
+    "passed": 3662,
+    "failed": 0,
+    "skipped": 0
+  },
+  "initialFailures": {
+    "total": 24,
+    "scaledMappingRejections": 18,
+    "testInstrumentationErrors": 6,
+    "instrumentationCorrection": "Read diagnostic kernel plane before committed work is released, not after."
+  },
+  "runtimeContractChanged": false,
+  "originalInputsPreserved": true,
+  "productionSceneReferencesChanged": false,
+  "sourceSha256": {
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/CutGeometryConnectionTests.cs": "9b5da2dcbc242280c0ac2c3a28d784ab9c0f24acb4d7a07560ba5e739e3e2d38",
+    "Assets/Zantetsu/Tests/EditMode/PhysicsCut/CutGeometryConnectionTests.Character.cs": "909b10911a1e91db196e5596f9f9a581c23cbcbff2428a1996d0ebab5d74365b",
+    "Assets/Zantetsu/Runtime/MeshCut/VpMultiCutSnapshot.cs": "75dc8bb8972bee78e61850ec942aba1e3bf9de8bfcf5acf26a7c1ab375d9e6cb",
+    "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerBuild.cs": "95062162f5493f7894c3893883e11384a40e6c41a2dcfde6e2f6d16de4a72bb3"
+  },
+  "steps": [
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": 0,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": false,
+      "volumeBefore": 0.09682711840652736,
+      "volumeAfter": 0.09682711951619041,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": 0,
+      "stage": 1,
+      "input": 19,
+      "split": 9,
+      "inheritedPositive": 3,
+      "inheritedNegative": 7,
+      "positive": 12,
+      "negative": 16,
+      "geometryFirst": true,
+      "volumeBefore": 0.052067488020321705,
+      "volumeAfter": 0.052067487983720455,
+      "commits": 2
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": 0,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": true,
+      "volumeBefore": 0.09682712747982687,
+      "volumeAfter": 0.09682712734019522,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": 0,
+      "stage": 1,
+      "input": 19,
+      "split": 4,
+      "inheritedPositive": 2,
+      "inheritedNegative": 13,
+      "positive": 6,
+      "negative": 17,
+      "geometryFirst": false,
+      "volumeBefore": 0.054526098509399136,
+      "volumeAfter": 0.054526098680926074,
+      "commits": 2
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": -1,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": false,
+      "volumeBefore": 0.09682711840652736,
+      "volumeAfter": 0.09682711951619041,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": -1,
+      "stage": 1,
+      "input": 19,
+      "split": 9,
+      "inheritedPositive": 3,
+      "inheritedNegative": 7,
+      "positive": 12,
+      "negative": 16,
+      "geometryFirst": true,
+      "volumeBefore": 0.052067488020321705,
+      "volumeAfter": 0.052067487983720455,
+      "commits": 2
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": -1,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": true,
+      "volumeBefore": 0.09682712747982687,
+      "volumeAfter": 0.09682712734019522,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": -1,
+      "stage": 1,
+      "input": 19,
+      "split": 4,
+      "inheritedPositive": 2,
+      "inheritedNegative": 13,
+      "positive": 6,
+      "negative": 17,
+      "geometryFirst": false,
+      "volumeBefore": 0.054526098509399136,
+      "volumeAfter": 0.054526098680926074,
+      "commits": 2
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": 205,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": false,
+      "volumeBefore": 0.09682711840652736,
+      "volumeAfter": 0.09682711951619041,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 0,
+      "fill": 205,
+      "stage": 1,
+      "input": 19,
+      "split": 9,
+      "inheritedPositive": 3,
+      "inheritedNegative": 7,
+      "positive": 12,
+      "negative": 16,
+      "geometryFirst": true,
+      "volumeBefore": 0.052067488020321705,
+      "volumeAfter": 0.052067487983720455,
+      "commits": 2
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": 205,
+      "stage": 0,
+      "input": 19,
+      "split": 19,
+      "inheritedPositive": 0,
+      "inheritedNegative": 0,
+      "positive": 19,
+      "negative": 19,
+      "geometryFirst": true,
+      "volumeBefore": 0.09682712747982687,
+      "volumeAfter": 0.09682712734019522,
+      "commits": 1
+    },
+    {
+      "family": "character-casual",
+      "pose": 1,
+      "fill": 205,
+      "stage": 1,
+      "input": 19,
+      "split": 4,
+      "inheritedPositive": 2,
+      "inheritedNegative": 13,
+      "positive": 6,
+      "negative": 17,
+      "geometryFirst": false,
+      "volumeBefore": 0.054526098509399136,
+      "volumeAfter": 0.054526098680926074,
+      "commits": 2
+    }
+  ],
+  "rejected": [
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "fill": 0,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "fill": 0,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "fill": 0,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "fill": 0,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "fill": 0,
+      "mappingDeterminant": 874125.9
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "fill": 0,
+      "mappingDeterminant": 874125.9
+    },
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "fill": -1,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "fill": -1,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "fill": -1,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "fill": -1,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "fill": -1,
+      "mappingDeterminant": 874125.9
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "fill": -1,
+      "mappingDeterminant": 874125.9
+    },
+    {
+      "family": "character-casual",
+      "pose": 2,
+      "fill": 205,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-casual",
+      "pose": 3,
+      "fill": 205,
+      "mappingDeterminant": 0.8741259
+    },
+    {
+      "family": "character-professional",
+      "pose": 0,
+      "fill": 205,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 1,
+      "fill": 205,
+      "mappingDeterminant": 1000000.0
+    },
+    {
+      "family": "character-professional",
+      "pose": 2,
+      "fill": 205,
+      "mappingDeterminant": 874125.9
+    },
+    {
+      "family": "character-professional",
+      "pose": 3,
+      "fill": 205,
+      "mappingDeterminant": 874125.9
+    }
+  ],
+  "limitations": [
+    "No scaled-frame integration acceptance",
+    "No Rigidbody simulation, player images, XR, performance or IL2CPP acceptance",
+    "Static explicit pose snapshot, not animation-driven character runtime intake"
+  ]
+}
