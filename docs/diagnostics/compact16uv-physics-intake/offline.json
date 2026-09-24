@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "blender": "4.5.13 LTS",
+  "sourceSha256": "d014869e992fc4d80b7c898e4acc173d1038e5c6fa10f26e4bccb392716b4f87",
+  "upstreamEqualsPinned": true,
+  "sourceUnchanged": true,
+  "inputManifestSha256": "9620c63d7c8f11279c0ed7c9a85818f197d152e8ba2844ea72f7ea4cfa66ffe1",
+  "static16Sha256": "4542dbe96f3938fff0f0fa58fc753cac70dc8cfc6b93883fbf0d0591f77ccb78",
+  "fixtureSha256": "21cfe6a62ecff7d36426f2b2212a5757764840ddab399601b154e6579c36b2a6",
+  "scriptSha256": "d72ae2adf2c1de7fdfa634b735dfcb565e65df63f15e19a651feabb95e476799",
+  "explicitBasis": "(-x,y,z), owner local -> imported Mesh local",
+  "mappedDisplayVertices": 5326,
+  "authoredTopologyVertices": 2408,
+  "positionMaximumError": 0.0,
+  "orientedTrianglesMatched": 4388,
+  "submeshes": 3,
+  "hulls": [
+    {
+      "name": "UCX_bar_001_0",
+      "vertices": 24,
+      "faces": 44,
+      "edges": 66,
+      "signedVolume": 1434.1973982030183,
+      "maximumConvexityError": 6.412724777351678e-16,
+      "tolerance": 1.3817984104156494e-05
+    }
+  ],
+  "anchors": 21,
+  "disposition": "offline physics binding only; Unity cook/cut/scene/current-pose not yet verified"
+}
