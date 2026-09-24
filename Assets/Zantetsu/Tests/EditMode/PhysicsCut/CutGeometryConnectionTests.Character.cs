@@ -176,11 +176,13 @@ namespace Zantetsu.PhysicsCut.Tests
             foreach (var animator in instance.GetComponentsInChildren<Animator>(true)) animator.enabled = false;
             var skin = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Single(s => s.sharedMesh != null && s.sharedMesh.name == entry.objectName);
             var originalSkin=skin;
+            using var scaleCache=new VpFixedScaleSkinCache();
+            using var preparedInput=normalizeFixedScale ? scaleCache.Prepare(skin,ancestor.transform) : null;
             float preparedScale=1;
             if (normalizeFixedScale)
             {
-                skin=CharacterFixedScalePreparation.Create(skin,ancestor.transform,out preparedScale);
-                _meshes.Add(skin.sharedMesh);
+                skin=preparedInput.Renderer;
+                preparedScale=preparedInput.FixedScale;
             }
             if (pose > 0) for (int i = 0; i < skin.bones.Length; i++) skin.bones[i].localRotation *= Quaternion.Euler(0,(i%3-1)*4f,(i%5-2)*3f);
             if (pose == 2 || pose == 3)
@@ -190,7 +192,9 @@ namespace Zantetsu.PhysicsCut.Tests
             }
             if (pose == 3 || pose == 4) skin.rootBone.localScale = Vector3.Scale(skin.rootBone.localScale,new Vector3(1.05f,.95f,1.1f));
             var baked = new Mesh(); _meshes.Add(baked);
-            skin.BakeMesh(baked, true);
+            // Rejection tests deliberately inspect unsupported post-load parent scale before registration.
+            if (normalizeFixedScale && pose!=2 && pose!=3) preparedInput.BakeCurrentPose(baked);
+            else skin.BakeMesh(baked, true);
             if (normalizeFixedScale)
             {
                 var originalBake=new Mesh(); _meshes.Add(originalBake); originalSkin.BakeMesh(originalBake,true);

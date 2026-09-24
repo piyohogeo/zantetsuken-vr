@@ -4,48 +4,10 @@ using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut.Tests
 {
-    // Read-time representation probe, not an importer hook or a product runtime entry.
-    // Keep the rig/animation hierarchy untouched; a new unit-scale renderer shares its bones.
-    internal static class CharacterFixedScalePreparation
-    {
-        internal static SkinnedMeshRenderer Create(SkinnedMeshRenderer source, Transform unitParent, out float scale)
-        {
-            Vector3 s = source.transform.lossyScale;
-            scale = s.x;
-            if (!(scale > 0) || !float.IsFinite(scale) || Mathf.Abs(s.y-scale)>scale*1e-5f || Mathf.Abs(s.z-scale)>scale*1e-5f)
-                throw new InvalidOperationException("Only fixed positive uniform scale is supported.");
-            if ((unitParent.lossyScale-Vector3.one).magnitude>1e-5f || source.sharedMesh.blendShapeCount != 0)
-                throw new InvalidOperationException("Prepare under a unit-scale parent, without blendshapes.");
-            Matrix4x4 expected = Matrix4x4.TRS(source.transform.position,source.transform.rotation,Vector3.one*scale);
-            for (int i=0;i<16;i++) if (Mathf.Abs(expected[i]-source.transform.localToWorldMatrix[i])>1e-5f)
-                throw new InvalidOperationException("Sheared source frame is not supported.");
-            var mesh = UnityEngine.Object.Instantiate(source.sharedMesh);
-            mesh.name = source.sharedMesh.name + "-FixedScalePrepared";
-            float fixedScale = scale;
-            mesh.vertices = source.sharedMesh.vertices.Select(p => p*fixedScale).ToArray();
-            Matrix4x4 inverseScale = Matrix4x4.Scale(Vector3.one/scale);
-            mesh.bindposes = source.sharedMesh.bindposes.Select(b => b*inverseScale).ToArray();
-            mesh.bounds = new Bounds(source.sharedMesh.bounds.center*scale,source.sharedMesh.bounds.size*scale);
-            var go = new GameObject(source.name+"-UnitScaleRenderer");
-            go.transform.SetParent(unitParent,false);
-            go.transform.SetPositionAndRotation(source.transform.position,source.transform.rotation);
-            go.transform.localScale = Vector3.one;
-            var renderer = go.AddComponent<SkinnedMeshRenderer>();
-            renderer.sharedMesh = mesh;
-            renderer.bones = source.bones;
-            renderer.rootBone = source.rootBone;
-            renderer.sharedMaterials = source.sharedMaterials;
-            renderer.quality = source.quality;
-            renderer.updateWhenOffscreen = source.updateWhenOffscreen;
-            renderer.localBounds = new Bounds(source.localBounds.center*scale,source.localBounds.size*scale);
-            renderer.enabled = false; // Diagnostic snapshots only; don't draw a duplicate.
-            return renderer;
-        }
-    }
-
     public class Compact16uvScaleNormalizationTests
     {
         [TestCase("character-casual")] [TestCase("character-professional")]
@@ -55,7 +17,8 @@ namespace Zantetsu.PhysicsCut.Tests
             if (!File.Exists(root+"intake.json")) Assert.Ignore("Private repaired intake missing.");
             var entry = JsonUtility.FromJson<Manifest>(File.ReadAllText(root+"intake.json")).assets.Single(e => e.family==family);
             var parent = new GameObject("Fixed scale preparation comparison");
-            Mesh preparedMesh=null;
+            using var cache=new VpFixedScaleSkinCache();
+            VpFixedScaleSkinInput input=null;
             var beforeBake = new Mesh(); var afterBake = new Mesh();
             try
             {
@@ -66,8 +29,10 @@ namespace Zantetsu.PhysicsCut.Tests
                 var initialMatrices = hierarchy.Select(t => t.localToWorldMatrix).ToArray();
                 var bindPositions = original.sharedMesh.vertices;
                 var originalBindposes = original.sharedMesh.bindposes;
-                var prepared = CharacterFixedScalePreparation.Create(original,parent.transform,out float scale);
-                preparedMesh=prepared.sharedMesh;
+                input=cache.Prepare(original,parent.transform);
+                var prepared=input.Renderer;
+                float scale=input.FixedScale;
+                var preparedMesh=prepared.sharedMesh;
                 Assert.That(scale, Is.EqualTo(family=="character-professional" ? .01f : 1f).Within(1e-6f));
                 CollectionAssert.AreEqual(initialMatrices,hierarchy.Select(t => t.localToWorldMatrix),"rig and UCX hierarchy untouched at preparation");
                 CollectionAssert.AreEqual(original.bones,prepared.bones);
@@ -91,7 +56,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     }
                     original.rootBone.localScale=Vector3.Scale(rootScale,frame<100 ? Vector3.one : frame<200 ? Vector3.one*1.05f : new Vector3(1.05f,.95f,1.1f));
                     parent.transform.SetPositionAndRotation(new Vector3(2,0,3),Quaternion.Euler(0,frame*.1f,0));
-                    original.BakeMesh(beforeBake,true); prepared.BakeMesh(afterBake,true);
+                    original.BakeMesh(beforeBake,true); input.BakeCurrentPose(afterBake);
                     var a=beforeBake.vertices; var b=afterBake.vertices;
                     var an=beforeBake.normals; var bn=afterBake.normals;
                     Matrix4x4 normalA=original.transform.worldToLocalMatrix.transpose;
@@ -111,9 +76,57 @@ namespace Zantetsu.PhysicsCut.Tests
             }
             finally
             {
+                input?.Dispose();
                 UnityEngine.Object.DestroyImmediate(parent);
-                if (preparedMesh!=null) UnityEngine.Object.DestroyImmediate(preparedMesh);
                 UnityEngine.Object.DestroyImmediate(beforeBake); UnityEngine.Object.DestroyImmediate(afterBake);
+            }
+        }
+        [TestCase("character-casual")] [TestCase("character-professional")]
+        public void FixedScale_ImportedClip_PreservesWorldGeometry(string family)
+        {
+            const string root="Assets/Licensed/Compact16uvConvexRepair/";
+            if (!File.Exists(root+"intake.json")) Assert.Ignore("Private repaired intake missing.");
+            var entry=JsonUtility.FromJson<Manifest>(File.ReadAllText(root+"intake.json")).assets.Single(e=>e.family==family);
+            var clip=AssetDatabase.LoadAllAssetsAtPath(entry.assetPath).OfType<AnimationClip>()
+                .First(c=>!c.name.StartsWith("__preview__") && c.length>0 && AnimationUtility.GetCurveBindings(c).Length>0);
+            var bindings=AnimationUtility.GetCurveBindings(clip);
+            int varying=bindings.Count(b=>AnimationUtility.GetEditorCurve(clip,b).keys.Select(k=>k.value).Distinct().Count()>1);
+            var parent=new GameObject("Imported clip scale input");
+            var a=new Mesh(); var b=new Mesh();
+            using var cache=new VpFixedScaleSkinCache();
+            VpFixedScaleSkinInput input=null;
+            try
+            {
+                var instance=UnityEngine.Object.Instantiate(AssetDatabase.LoadAssetAtPath<GameObject>(entry.assetPath),parent.transform);
+                foreach (var animator in instance.GetComponentsInChildren<Animator>(true)) animator.enabled=false;
+                var source=instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Single(r=>r.sharedMesh!=null && r.sharedMesh.name==entry.objectName);
+                input=cache.Prepare(source,parent.transform);
+                float error=0,motion=0,normalError=0;
+                Vector3[] first=null;
+                for (int frame=0;frame<120;frame++)
+                {
+                    clip.SampleAnimation(instance,clip.length*frame/119);
+                    source.BakeMesh(a,true); input.BakeCurrentPose(b);
+                    var av=a.vertices; var bv=b.vertices;
+                    var an=a.normals; var bn=b.normals;
+                    var na=source.transform.worldToLocalMatrix.transpose;
+                    var nb=input.Renderer.transform.worldToLocalMatrix.transpose;
+                    var world=av.Select(p=>source.transform.TransformPoint(p)).ToArray();
+                    if (first==null) first=world;
+                    for (int i=0;i<world.Length;i++)
+                    {
+                        error=Mathf.Max(error,Vector3.Distance(world[i],input.Renderer.transform.TransformPoint(bv[i])));
+                        motion=Mathf.Max(motion,Vector3.Distance(first[i],world[i]));
+                        normalError=Mathf.Max(normalError,Vector3.Distance(na.MultiplyVector(an[i]).normalized,nb.MultiplyVector(bn[i]).normalized));
+                    }
+                }
+                Assert.That(error,Is.LessThan(2e-5f)); Assert.That(normalError,Is.LessThan(2e-5f));
+                TestContext.WriteLine($"IMPORTED_CLIP family={family} clip={clip.name} length={clip.length:R} curves={bindings.Length} varyingCurves={varying} samples=120 maxWorldError={error:R} maxWorldNormalError={normalError:R} maxWorldMotion={motion:R}");
+            }
+            finally
+            {
+                input?.Dispose(); UnityEngine.Object.DestroyImmediate(parent);
+                UnityEngine.Object.DestroyImmediate(a); UnityEngine.Object.DestroyImmediate(b);
             }
         }
         [Serializable] sealed class Manifest { public Entry[] assets; }

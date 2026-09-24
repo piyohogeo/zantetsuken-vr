@@ -11,15 +11,18 @@ namespace Zantetsu.EditorTools.Sandbox
 {
     public static class Compact16uvCharacterSceneBuild
     {
-        const string Root = "Assets/Licensed/Compact16uvIntake";
-        const string Scene = Root + "/SceneIntegration/Compact16uvCurrentPose.unity";
+        static bool FixedScale => Environment.GetEnvironmentVariable("VP_CHARACTER_FIXED_SCALE")=="1";
+        static string Root => FixedScale ? "Assets/Licensed/Compact16uvConvexRepair" : "Assets/Licensed/Compact16uvIntake";
+        static string Scene => Root + "/SceneIntegration/Compact16uvCurrentPose.unity";
         public static void BuildPlayer()
         {
             string output = Environment.GetEnvironmentVariable("VP_CHARACTER_PLAYER_OUT");
             if (string.IsNullOrEmpty(output)) throw new Exception("Set VP_CHARACTER_PLAYER_OUT");
             var manifest = JsonUtility.FromJson<Input>(File.ReadAllText(Root + "/intake.json"));
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            Directory.CreateDirectory(Root+"/SceneIntegration"); AssetDatabase.Refresh();
             var probe = new GameObject("Current pose scene diagnostic (no physics owner)").AddComponent<Compact16uvCharacterSceneProbe>();
+            probe.normalizeFixedScale=FixedScale;
             probe.intake = AssetDatabase.LoadAssetAtPath<TextAsset>(Root + "/intake.json");
             probe.models = new[] { "character-casual", "character-professional" }.Select(f => {
                 var entry = manifest.assets.Single(e => e.family == f);
@@ -28,9 +31,17 @@ namespace Zantetsu.EditorTools.Sandbox
                 if (actual != entry.sourceSha256) throw new Exception("Pinned source changed");
                 return AssetDatabase.LoadAssetAtPath<GameObject>(entry.assetPath);
             }).ToArray();
-            probe.normalAtlas = AssetDatabase.LoadAssetAtPath<Texture2D>(Root + "/Resources/PaletteAtlas/Normal.png");
-            probe.debugAtlas = AssetDatabase.LoadAssetAtPath<Texture2D>(Root + "/Resources/PaletteAtlas/Debug.png");
-            probe.meshMaterial = AssetDatabase.LoadAssetAtPath<Material>(Root + "/Resources/AppearanceMigration/SourcePalette.mat");
+            probe.animationClips=new[] { "character-casual", "character-professional" }.Select(f=> {
+                var entry=manifest.assets.Single(e=>e.family==f);
+                var clips=AssetDatabase.LoadAllAssetsAtPath(entry.assetPath).OfType<AnimationClip>()
+                    .Where(c=>!c.name.StartsWith("__preview__")).ToArray();
+                foreach (var clip in clips) Debug.Log($"FIXED SCALE CLIP family={f} name={clip.name} length={clip.length:R} curves={AnimationUtility.GetCurveBindings(clip).Length}");
+                Debug.Log($"FIXED SCALE CLIP INVENTORY family={f} count={clips.Length}");
+                return clips.FirstOrDefault(c=>c.length>0 && AnimationUtility.GetCurveBindings(c).Length>0);
+            }).ToArray();
+            probe.normalAtlas = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Licensed/Compact16uvIntake/Resources/PaletteAtlas/Normal.png");
+            probe.debugAtlas = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Licensed/Compact16uvIntake/Resources/PaletteAtlas/Debug.png");
+            probe.meshMaterial = AssetDatabase.LoadAssetAtPath<Material>("Assets/Licensed/Compact16uvIntake/Resources/AppearanceMigration/SourcePalette.mat");
             string path = Root + "/SceneIntegration/CharacterForward.mat";
             var material = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (material == null) { material = new Material(Shader.Find("Zantetsu/VP Indexed Indirect Unlit")); AssetDatabase.CreateAsset(material, path); }
