@@ -1,0 +1,27 @@
+{
+    "unity": "6000.3.22f1",
+    "textures": [
+        {
+            "name": "Normal",
+            "format": "DXT5",
+            "filter": "Bilinear",
+            "wrap": "Repeat",
+            "width": 256,
+            "height": 256,
+            "mips": 9,
+            "aniso": 1,
+            "residentBytes": 175712
+        },
+        {
+            "name": "Debug",
+            "format": "DXT5",
+            "filter": "Bilinear",
+            "wrap": "Repeat",
+            "width": 256,
+            "height": 256,
+            "mips": 9,
+            "aniso": 1,
+            "residentBytes": 175712
+        }
+    ]
+}

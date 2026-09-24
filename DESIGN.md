@@ -461,9 +461,11 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 ### 5.3 断面色と最小デバッグ表示
 
-通常表示では、即時仮断面とGeometry Commit済みの実Capを、共通トゥーンシェーダーの固定`CutSurfaceColor`（低彩度グレー）で描画する。陰影段数、輪郭、ライト応答を揃え、断面専用Texture、Texture atlas領域、Texture Mapping用UV展開、特殊陰影、色選択用Material／submeshを追加しない。
+通常表示では、即時仮断面とGeometry Commit済みの実Capを、共通トゥーンシェーダーの低彩度グレーで描画し、陰影段数、輪郭、ライト応答を揃える。Compact16uv対応のpalette materialでは既存palette上半分の予約slotを利用する。Texture Mapping用のCap UV展開、特殊陰影、色選択用Material／submeshは追加しない。atlas未採用materialでは既存の固定`CutSurfaceColor`経路を維持する。
 
-Compact16uvの実Cap新規頂点はUV byte slot `(247,247)`、復号値`(247.5/256,247.5/256)`を保持する。負UV markerは廃止する。移行第一段階ではShaderがMaterial UV Transform前の予約slotを判定し、既存の断面色・デバッグ色を共通トゥーン陰影へ渡す。専用Vertex field、Vertex Color、別UV channelは追加しない。完成atlasの通常／debug texture切替と仮cap slot `(239,247)`による色選択は別工程であり、この段階でatlas導入完了とはしない。
+Compact16uvの実Cap新規頂点はUV byte slot `(247,247)`、復号値`(247.5/256,247.5/256)`を保持する。負UV markerは廃止する。atlas経路では実cap `(247,247)`・仮cap `(239,247)`の各中心±2の5×5 patchを256² textureに置く。通常atlasは両者グレー、debug atlasは実cap緑・仮cap赤。仮capはpass固定UVとし、両capともmaterial tint／UV Transformを適用せずmip 0から色を取得する。専用Vertex field、Vertex Color、別UV channelは追加しない。
+
+製品worktreeのatlas対応は明示的opt-inとする。`VpCutSurfaceAtlas.Bind`で共有normal/debug textureを設定し、確認済み共有materialの`_VpUsePaletteAtlas`を有効化する。`VpLogicalCutDisplay.SetCapPaletteAtlasEnabled`は所有する仮cap materialだけを有効化する。texture/materialをrendererごとに複製しない。通常surfaceはnormal atlasを参照し続け、debug switchではcap参照だけを切り替える。これによりdebug patchの粗いmipから通常surfaceへの色混入を避ける。normal/debug画像の生成はoffline、切替はカメラ群の描画登録前に行い、描画途中のper-camera差替えは契約外とする。`SetColours`は非atlas経路だけへ作用する。未opt-in materialと未binding時の従来表示を保ち、全製品sceneの導入済みとはしない。設定・画像検証範囲は`docs/diagnostics/compact16uv-atlas/`に記録する。
 
 元Assetの負UVは4.5.1の入力契約に従って拒否する。予約slotを通常surfaceへ割り当てないことはasset pipeline契約とする。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。これはD-171の旧負UV許容方針をCompact16uv移行範囲で置き換える。
 
@@ -478,7 +480,7 @@ Geometry Commit前は仮断面、Commit後は計算経路によらず実断面�
 
 実装状況（2026-09-20追記。上の目標仕様は変更しない）。色の選択と現行の陰影への接続は01472bbで実装し、166584cでlocal mainへ統合した。通常表示では仮断面も実Capも共通の断面色を読み、デバッグ表示では同じ一つのスイッチで仮断面が赤、実Capが緑になる。両者の違いはBase Colorの選択だけで、本体・実Cap・表示経路の仮断面は同じ陰影計算（`VpShadeSurface`）を通る。これは本体にあった現行の陰影計算を共通化したものであり、本節が定める共通トゥーンの仕上げ（陰影段数、輪郭、ライト応答）ではない。仮断面はSnapshotが持つworldの外向き法線で陰影を付けるため、同じColorに別の向きの面が入っても分かれる。色の反映時点は、仮断面がカメラ準備時、実Capが描画時であり、切り替えは対象カメラ群の準備前に行う。今回の実装では、準備済みのカメラへ色変更を自動反映する仕組みは追加していない。確認の範囲と残る未確認は5.6の「実装状況」による。
 
-色値とデバッグ有効状態はGlobal Shader Constantまたは既存のDraw／Fragment Descriptorで指定する。色変更だけを目的とする既存Vertex／Indexの書換え、VB／IB再生成・SetData、Geometry複製は行わない。切断成果物自体の生成・転送・Commitは従来どおり行う。
+色値とデバッグ有効状態はGlobal Shader Constant、共有atlas bindingまたは既存のDraw／Fragment Descriptorで指定する。色変更だけを目的とする既存Vertex／Indexの書換え、VB／IB再生成・SetData、Geometry複製は行わない。切断成果物自体の生成・転送・Commitは従来どおり行う。
 
 計算経路、待機、Reject／Fallback理由、Physics状態の詳細は既存Trace／Profilerで確認し、断面色へ割り当てない。断面専用の点滅・縞・縁取り、常時テキスト、固定パネル、色覚補助表示、公開schema・状態機械を追加しない。Exact RGB、色遷移Animation、表示保持時間は固定しない。
 

@@ -182,6 +182,7 @@ namespace Zantetsu.Rendering
         {
             EnsureInitialized();
             Shader.SetGlobalFloat(DebugId, enabled ? 1f : 0f);
+            VpCutSurfaceAtlas.SelectDebug(enabled);
         }
 
         /// <summary>
@@ -209,6 +210,7 @@ namespace Zantetsu.Rendering
             Shader.SetGlobalColor(ColourId, DefaultColour);
             Shader.SetGlobalColor(DebugColourId, DefaultDebugColour);
             Shader.SetGlobalFloat(DebugId, 0f);
+            VpCutSurfaceAtlas.SelectDebug(false);
             s_initialized = true;
         }
 
