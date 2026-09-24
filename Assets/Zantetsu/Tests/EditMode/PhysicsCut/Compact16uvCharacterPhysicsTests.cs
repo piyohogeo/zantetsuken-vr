@@ -20,13 +20,25 @@ namespace Zantetsu.PhysicsCut.Tests
         [TestCase("character-professional", 0)] [TestCase("character-professional", 1)]
         [TestCase("character-professional", 2)] [TestCase("character-professional", 3)]
         public void AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(string family, int pose)
+            => VerifyProxies(family, pose, false);
+
+        [TestCase("character-casual", 0)] [TestCase("character-casual", 1)]
+        [TestCase("character-casual", 2)] [TestCase("character-casual", 3)]
+        [TestCase("character-professional", 0)] [TestCase("character-professional", 1)]
+        [TestCase("character-professional", 2)] [TestCase("character-professional", 3)]
+        public void RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(string family, int pose)
+            => VerifyProxies(family, pose, true);
+
+        static void VerifyProxies(string family, int pose, bool repaired)
         {
-            string path = Root + "Resources/CharacterPhysicsMigration/" + family + ".json";
+            string intakeRoot = repaired ? "Assets/Licensed/Compact16uvConvexRepair/" : Root;
+            string path = intakeRoot + "Resources/CharacterPhysicsMigration/" + family + ".json";
             if (!File.Exists(path)) Assert.Ignore("Private character physics fixture absent.");
             string expected = family == "character-casual" ? "73ba893fdf0be1001b7dd19cddb9453ce09f7d111e2c1cca9acaa0b9b3bc8695" : "e20f8f25caec423cac6edea771195aaee068e63416c7dc1007a7f1535d30991b";
+            if (repaired) expected = family == "character-casual" ? "bbe481867248beef03e88446279e9246861a3ff95641e8e554b6b85a785451ed" : "452c746ef4801493a7c78a127291810064cdad218b4f6e78d3c1fcc911c61c4d";
             Assert.That(Hash(path), Is.EqualTo(expected));
             var fixture = JsonUtility.FromJson<Fixture>(File.ReadAllText(path));
-            var entry = JsonUtility.FromJson<Input>(File.ReadAllText(Root + "intake.json")).assets.Single(e => e.family == family);
+            var entry = JsonUtility.FromJson<Input>(File.ReadAllText(intakeRoot + "intake.json")).assets.Single(e => e.family == family);
             Assert.That(fixture.sourceSha256, Is.EqualTo(Hash(entry.assetPath)));
             Assert.That(fixture.coordinateSystem, Is.EqualTo("RendererBindLocal_MirrorBlenderOwnerX"));
             Assert.That(fixture.schemaVersion, Is.EqualTo(1)); Assert.That(fixture.hulls.Length, Is.EqualTo(19));
@@ -36,6 +48,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 var instance = UnityEngine.Object.Instantiate(AssetDatabase.LoadAssetAtPath<GameObject>(entry.assetPath), parent.transform);
                 foreach (var animator in instance.GetComponentsInChildren<Animator>(true)) animator.enabled = false;
                 var skin = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Single(r => r.sharedMesh != null && r.sharedMesh.name == entry.objectName);
+                if (repaired) AssertDisplayUnchanged(skin, family, entry);
                 var sourcePositions = skin.sharedMesh.vertices;
                 var authored = Vectors(fixture.authoredDisplayVertices);
                 Assert.That(authored.Length, Is.EqualTo(entry.topologyCount));
@@ -64,6 +77,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     var bindLocal = Vectors(hull.rendererBindVertices);
                     float meshTolerance = 8 * 1.1920929e-7f * Mathf.Max(1, meshLocal.Max(v => v.magnitude));
                     var seen = new HashSet<int>();
+                    var importedVertexMap = new List<int>();
                     var boneLocal = bindLocal.Select(v => skin.sharedMesh.bindposes[boneIndex].MultiplyPoint3x4(v)).ToArray();
                     var toRenderer = skin.transform.worldToLocalMatrix * skin.bones[boneIndex].localToWorldMatrix;
                     var posed = boneLocal.Select(v => toRenderer.MultiplyPoint3x4(v)).ToArray();
@@ -75,6 +89,7 @@ namespace Zantetsu.PhysicsCut.Tests
                         var matches = Enumerable.Range(0, meshLocal.Length).Where(i => Vector3.Distance(meshLocal[i], vertex) <= meshTolerance).ToArray();
                         Assert.That(matches.Length, Is.EqualTo(1), hull.name + " imported raw mesh differs from explicit mirror-X basis: " + vertex);
                         int id = matches[0];
+                        importedVertexMap.Add(id);
                         seen.Add(id);
                         Vector3 referenceWorld = imported.transform.TransformPoint(vertex);
                         Vector3 computedWorld = skin.transform.TransformPoint(posed[id]);
@@ -84,6 +99,19 @@ namespace Zantetsu.PhysicsCut.Tests
                         wrongBoneError = Mathf.Max(wrongBoneError, Vector3.Distance(referenceWorld, wrongWorld));
                     }
                     Assert.That(seen.Count, Is.EqualTo(32));
+                    if (repaired)
+                    {
+                        var triangles = imported.sharedMesh.triangles;
+                        var actualFaces = Enumerable.Range(0, triangles.Length / 3).Select(t => FaceKey(
+                            importedVertexMap[triangles[t*3]], importedVertexMap[triangles[t*3+1]], importedVertexMap[triangles[t*3+2]])).OrderBy(x => x).ToArray();
+                        var expectedFaces = Enumerable.Range(0, hull.faceOffsets.Length - 1).Select(f =>
+                        {
+                            int offset = hull.faceOffsets[f];
+                            Assert.That(hull.faceOffsets[f+1] - offset, Is.EqualTo(3));
+                            return FaceKey(hull.faceIndices[offset], hull.faceIndices[offset+1], hull.faceIndices[offset+2]);
+                        }).OrderBy(x => x).ToArray();
+                        CollectionAssert.AreEqual(expectedFaces, actualFaces, hull.name + " imported oriented triangles differ");
+                    }
                     maxWorldError = Mathf.Max(maxWorldError, hullWorldError);
                     Assert.That(hullWorldError, Is.LessThan(2e-5f), hull.name + " world frame mismatch");
                     var poly = Poly(bindLocal, hull);
@@ -115,12 +143,40 @@ namespace Zantetsu.PhysicsCut.Tests
                         Cook(poly); Cook(harness.AdoptedSet(false).Single()); cuts++;
                     }
                 }
-                Assert.That(accepted, Is.EqualTo(family == "character-casual" ? 17 : 18));
-                Assert.That(rejected, Is.EqualTo(family == "character-casual" ? 2 : 1));
+                Assert.That(accepted, Is.EqualTo(repaired ? 19 : family == "character-casual" ? 17 : 18));
+                Assert.That(rejected, Is.EqualTo(repaired ? 0 : family == "character-casual" ? 2 : 1));
+                Assert.That(cuts, Is.EqualTo(accepted * 2));
                 Assert.That(wrongBoneError, Is.GreaterThan(.01f), "Wrong bone negative control must be observable.");
-                TestContext.WriteLine($"family={family} pose={pose} hulls=19 mappedVertices=608 maxWorldError={maxWorldError:R} maxRendererLocalError={maxLocalError:R} wrongBoneError={wrongBoneError:R} accepted={accepted} rejected={rejected} cuts={cuts}");
+                TestContext.WriteLine($"family={family} pose={pose} hulls=19 mappedVertices=608 maxWorldError={maxWorldError:R} maxRendererLocalError={maxLocalError:R} wrongBoneError={wrongBoneError:R} accepted={accepted} rejected={rejected} cuts={cuts} repaired={repaired}");
             }
             finally { UnityEngine.Object.DestroyImmediate(parent); }
+        }
+        static string FaceKey(int a, int b, int c)
+        {
+            if (b < a && b < c) return $"{b},{c},{a}";
+            if (c < a && c < b) return $"{c},{a},{b}";
+            return $"{a},{b},{c}";
+        }
+        static void AssertDisplayUnchanged(SkinnedMeshRenderer current, string family, Entry repaired)
+        {
+            var original = JsonUtility.FromJson<Input>(File.ReadAllText(Root + "intake.json")).assets.Single(e => e.family == family);
+            Assert.That(Hash(original.assetPath), Is.EqualTo(repaired.originalSourceSha256));
+            Assert.That(repaired.originalAssetPath, Is.EqualTo(original.assetPath));
+            var old = AssetDatabase.LoadAssetAtPath<GameObject>(original.assetPath).GetComponentsInChildren<SkinnedMeshRenderer>(true).Single(r => r.sharedMesh != null && r.sharedMesh.name == original.objectName);
+            var a = old.sharedMesh; var b = current.sharedMesh;
+            CollectionAssert.AreEqual(a.vertices, b.vertices, "display positions");
+            CollectionAssert.AreEqual(a.normals, b.normals, "display normals");
+            CollectionAssert.AreEqual(a.tangents, b.tangents, "display tangents");
+            CollectionAssert.AreEqual(a.uv, b.uv, "display UV");
+            CollectionAssert.AreEqual(a.bindposes, b.bindposes, "bindposes");
+            using var oldWeights = a.GetAllBoneWeights(); using var newWeights = b.GetAllBoneWeights();
+            using var oldCounts = a.GetBonesPerVertex(); using var newCounts = b.GetBonesPerVertex();
+            CollectionAssert.AreEqual(oldWeights.ToArray(), newWeights.ToArray(), "bone weights");
+            CollectionAssert.AreEqual(oldCounts.ToArray(), newCounts.ToArray(), "bone counts");
+            CollectionAssert.AreEqual(old.bones.Select(x => x.name), current.bones.Select(x => x.name), "bone order");
+            Assert.That(b.subMeshCount, Is.EqualTo(a.subMeshCount));
+            for (int s = 0; s < a.subMeshCount; s++) CollectionAssert.AreEqual(a.GetIndices(s), b.GetIndices(s), "display submesh indices");
+            TestContext.WriteLine($"displayImportExactlyUnchanged=True vertices={b.vertexCount} submeshes={b.subMeshCount}");
         }
         static bool IsConvex(ConvexPoly p, out double outside, out double tolerance)
         {
@@ -145,7 +201,7 @@ namespace Zantetsu.PhysicsCut.Tests
         }
         static string Hash(string path) { using var stream = File.OpenRead(path); using var sha = SHA256.Create(); return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant(); }
         [Serializable] sealed class Input { public Entry[] assets; }
-        [Serializable] sealed class Entry { public string family, assetPath, objectName; public int[] topologyMap; public int topologyCount; }
+        [Serializable] sealed class Entry { public string family, assetPath, objectName, originalAssetPath, originalSourceSha256; public int[] topologyMap; public int topologyCount; }
         [Serializable] sealed class Fixture { public int schemaVersion; public string sourceSha256, coordinateSystem; public double[] authoredDisplayVertices; public Hull[] hulls; }
         [Serializable] sealed class Hull { public string name, boneName; public bool convexAccepted; public double[] rendererBindVertices, importedMeshLocalVertices; public int[] faceOffsets, faceIndices; }
     }
