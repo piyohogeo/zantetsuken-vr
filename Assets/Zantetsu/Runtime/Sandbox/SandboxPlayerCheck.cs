@@ -125,6 +125,16 @@ namespace Zantetsu.Sandbox
                 }
 
                 LogState("the body is registered");
+                if (Environment.GetEnvironmentVariable("VP_VERTEX_UPLOAD_COMPARE") == "1")
+                {
+                    // Separate transfer diagnostic, no scene-frame or physics-performance claim.
+                    bool comparisonPassed = false;
+                    yield return CompactVertexUploadComparison.RunGuarded(directory, passed => comparisonPassed = passed);
+                    _world.Shutdown();
+                    yield return WaitUntil(() => _world.IsReleased, "comparison world shutdown");
+                    yield return Finish(comparisonPassed && _world.IsReleased ? 0 : 9);
+                    yield break;
+                }
                 if (_measure)
                 {
                     Log("atlas bound=" + VpCutSurfaceAtlas.IsBound + " vertexStride=" + VpRenderVertex.Stride);
