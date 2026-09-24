@@ -1,0 +1,517 @@
+{
+  "schemaVersion": 1,
+  "blender": "4.5.13 LTS",
+  "scriptSha256": "7e79b3c62f17bbffba609dc69f8307832069a1763d5bab53fe6e0d770c8ebfc2",
+  "manifestSha256": "9620c63d7c8f11279c0ed7c9a85818f197d152e8ba2844ea72f7ea4cfa66ffe1",
+  "assets": [
+    {
+      "family": "character-casual",
+      "sourceSha256": "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+      "upstreamEqualsPinned": true,
+      "fixtureSha256": "73ba893fdf0be1001b7dd19cddb9453ce09f7d111e2c1cca9acaa0b9b3bc8695",
+      "fixtureFile": "character-casual.json",
+      "sourceUnchanged": true,
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.L",
+          "bone": "DEF-foot.L",
+          "poseVsRestMax": 3.473121530057986e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0022429453164210145,
+          "maximumConvexityError": 5.495014760261299e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.R",
+          "bone": "DEF-foot.R",
+          "poseVsRestMax": 3.4450376098444734e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.002245240056805782,
+          "maximumConvexityError": 1.0250755545257454e-17,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.L",
+          "bone": "DEF-forearm.L",
+          "poseVsRestMax": 1.1500231206739792e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.001503765905053715,
+          "maximumConvexityError": 2.0884379923202613e-17,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.R",
+          "bone": "DEF-forearm.R",
+          "poseVsRestMax": 2.53567857338706e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0013075496263636078,
+          "maximumConvexityError": 2.7690769487918912e-08,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.L",
+          "bone": "DEF-hand.L",
+          "poseVsRestMax": 1.378986538863152e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0004043985558662615,
+          "maximumConvexityError": 9.813387536405877e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.R",
+          "bone": "DEF-hand.R",
+          "poseVsRestMax": 1.5395740354067655e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0004074206815978467,
+          "maximumConvexityError": 5.900057643617545e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.L",
+          "bone": "DEF-shin.L",
+          "poseVsRestMax": 3.156084430941705e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0032070549137942273,
+          "maximumConvexityError": 4.991675664248803e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.R",
+          "bone": "DEF-shin.R",
+          "poseVsRestMax": 3.152440935081248e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0032071684333583135,
+          "maximumConvexityError": 5.610438764019457e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.L",
+          "bone": "DEF-shoulder.L",
+          "poseVsRestMax": 1.341104507446289e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.000995006553376577,
+          "maximumConvexityError": 1.2153902010331985e-08,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.R",
+          "bone": "DEF-shoulder.R",
+          "poseVsRestMax": 1.3758380198940178e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.002964584995077686,
+          "maximumConvexityError": 3.1552063251818124e-17,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.001",
+          "bone": "DEF-spine.001",
+          "poseVsRestMax": 2.9802322387695312e-08,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.01535733320338905,
+          "maximumConvexityError": 9.392396041956746e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.002",
+          "bone": "DEF-spine.002",
+          "poseVsRestMax": 1.341104507446289e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.01161900606653666,
+          "maximumConvexityError": 7.50589166867899e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.003",
+          "bone": "DEF-spine.003",
+          "poseVsRestMax": 1.3328003749250113e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.002163742335679411,
+          "maximumConvexityError": 8.287995573907236e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.004",
+          "bone": "DEF-spine.004",
+          "poseVsRestMax": 1.3328003749250113e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.0020807807087531048,
+          "maximumConvexityError": 6.009652453937185e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.006",
+          "bone": "DEF-spine.006",
+          "poseVsRestMax": 5.960464477539063e-08,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.016180386110755212,
+          "maximumConvexityError": 7.854449132064672e-18,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+          "bone": "DEF-thigh.L",
+          "poseVsRestMax": 1.7136335372924805e-07,
+          "vertices": 32,
+          "faces": 60,
+          "convexAccepted": false,
+          "failure": "nonconvex or inward face",
+          "diagnostics": [
+            {
+              "frame": "source",
+              "extent": 0.6016479581594467,
+              "worstOutside": 5.597962236338035e-05,
+              "tolerance": 1e-06
+            },
+            {
+              "frame": "transformed",
+              "extent": 0.5931001305580139,
+              "worstOutside": 5.59814004779479e-05,
+              "tolerance": 1e-06
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+          "bone": "DEF-thigh.R",
+          "poseVsRestMax": 1.7136335372924805e-07,
+          "vertices": 32,
+          "faces": 60,
+          "convexAccepted": false,
+          "failure": "nonconvex or inward face",
+          "diagnostics": [
+            {
+              "frame": "source",
+              "extent": 0.6004104018211365,
+              "worstOutside": 5.337257535770638e-05,
+              "tolerance": 1e-06
+            },
+            {
+              "frame": "transformed",
+              "extent": 0.5918153822422028,
+              "worstOutside": 5.332677701697812e-05,
+              "tolerance": 1e-06
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.L",
+          "bone": "DEF-upper_arm.L",
+          "poseVsRestMax": 2.466862370244161e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.00342875356263777,
+          "maximumConvexityError": 4.6067175290859267e-08,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.R",
+          "bone": "DEF-upper_arm.R",
+          "poseVsRestMax": 2.7314279645418166e-07,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 0.003791562500242207,
+          "maximumConvexityError": 1.6372540807613833e-17,
+          "tolerance": 1e-06,
+          "convexAccepted": true
+        }
+      ]
+    },
+    {
+      "family": "character-professional",
+      "sourceSha256": "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+      "upstreamEqualsPinned": true,
+      "fixtureSha256": "e20f8f25caec423cac6edea771195aaee068e63416c7dc1007a7f1535d30991b",
+      "fixtureFile": "character-professional.json",
+      "sourceUnchanged": true,
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.L",
+          "bone": "DEF-foot.L",
+          "poseVsRestMax": 3.6054060832435474e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 1950.3434103201914,
+          "maximumConvexityError": 3.5412447431563536e-16,
+          "tolerance": 2.6510265350341796e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.R",
+          "bone": "DEF-foot.R",
+          "poseVsRestMax": 3.5147136137715115e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 1956.0962899848398,
+          "maximumConvexityError": 7.046059591431783e-16,
+          "tolerance": 2.6471062660217284e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.L",
+          "bone": "DEF-forearm.L",
+          "poseVsRestMax": 1.4177387950247293e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 2394.984458579684,
+          "maximumConvexityError": 8.853075649955647e-16,
+          "tolerance": 2.793952178955078e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.R",
+          "bone": "DEF-forearm.R",
+          "poseVsRestMax": 2.490989281961246e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 2469.0069327303104,
+          "maximumConvexityError": 8.104778664531528e-16,
+          "tolerance": 2.8310302734374998e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.L",
+          "bone": "DEF-hand.L",
+          "poseVsRestMax": 1.7455513053148744e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 404.3170921128044,
+          "maximumConvexityError": 6.430693357117739e-16,
+          "tolerance": 1.666987609863281e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.R",
+          "bone": "DEF-hand.R",
+          "poseVsRestMax": 1.840770544715654e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 407.33815702322266,
+          "maximumConvexityError": 5.560914270578123e-16,
+          "tolerance": 1.6669853210449218e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.L",
+          "bone": "DEF-shin.L",
+          "poseVsRestMax": 3.208175363531269e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 5852.277615236765,
+          "maximumConvexityError": 4.194157244418642e-16,
+          "tolerance": 4.793209457397461e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.R",
+          "bone": "DEF-shin.R",
+          "poseVsRestMax": 3.245301861717535e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 5854.110844996778,
+          "maximumConvexityError": 3.4733674963565156e-16,
+          "tolerance": 4.79337158203125e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.L",
+          "bone": "DEF-shoulder.L",
+          "poseVsRestMax": 3.065232242996109e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 1800.6710833209088,
+          "maximumConvexityError": 7.777660782323161e-16,
+          "tolerance": 2.0791057229042053e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.R",
+          "bone": "DEF-shoulder.R",
+          "poseVsRestMax": 1.616330266635732e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 1750.255191737169,
+          "maximumConvexityError": 1.1668000081441593e-15,
+          "tolerance": 2.1136504650115965e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.001",
+          "bone": "DEF-spine.001",
+          "poseVsRestMax": 7.688768146799611e-06,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 21975.71980282812,
+          "maximumConvexityError": 1.041757200432525e-15,
+          "tolerance": 3.930712890625e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.002",
+          "bone": "DEF-spine.002",
+          "poseVsRestMax": 1.7507133246122188e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 15196.77462509762,
+          "maximumConvexityError": 4.553740183381697e-16,
+          "tolerance": 3.1998491287231445e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.003",
+          "bone": "DEF-spine.003",
+          "poseVsRestMax": 1.7059844799040185e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 1326.912732435876,
+          "maximumConvexityError": 8.99038269100605e-16,
+          "tolerance": 2.5442092895507812e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.004",
+          "bone": "DEF-spine.004",
+          "poseVsRestMax": 1.629639386237627e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 886.5195653454015,
+          "maximumConvexityError": 3.58923710580128e-16,
+          "tolerance": 1.740397834777832e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.006",
+          "bone": "DEF-spine.006",
+          "poseVsRestMax": 1.5986494650116168e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 9413.492981927018,
+          "maximumConvexityError": 7.112282872759851e-16,
+          "tolerance": 3.16656494140625e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.L",
+          "bone": "DEF-thigh.L",
+          "poseVsRestMax": 2.384185791015625e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 15511.780999625913,
+          "maximumConvexityError": 1.4336374547842032e-15,
+          "tolerance": 5.5195186614990234e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.R",
+          "bone": "DEF-thigh.R",
+          "poseVsRestMax": 2.503281545335138e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 15937.464391226713,
+          "maximumConvexityError": 1.4349446321656397e-15,
+          "tolerance": 5.5224601745605464e-05,
+          "convexAccepted": true
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "bone": "DEF-upper_arm.L",
+          "poseVsRestMax": 2.5303839037745665e-05,
+          "vertices": 32,
+          "faces": 60,
+          "convexAccepted": false,
+          "failure": "nonconvex or inward face",
+          "diagnostics": [
+            {
+              "frame": "source",
+              "extent": 0.32136138156056404,
+              "worstOutside": 4.823942445574256e-05,
+              "tolerance": 1e-06
+            },
+            {
+              "frame": "transformed",
+              "extent": 28.07646942138672,
+              "worstOutside": 0.004831758992177128,
+              "tolerance": 2.8076469421386718e-05
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.R",
+          "bone": "DEF-upper_arm.R",
+          "poseVsRestMax": 2.0700239182856946e-05,
+          "vertices": 32,
+          "faces": 60,
+          "edges": 90,
+          "signedVolume": 4647.996894621167,
+          "maximumConvexityError": 9.540527632151449e-16,
+          "tolerance": 2.8013328552246093e-05,
+          "convexAccepted": true
+        }
+      ]
+    }
+  ]
+}

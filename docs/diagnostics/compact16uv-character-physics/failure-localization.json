@@ -1,0 +1,173 @@
+[
+  {
+    "family": "character-casual",
+    "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+    "sourceSha256": "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+    "tolerance": 1e-06,
+    "floatResolution32Ulp": 2.2951048295083954e-06,
+    "failingFaces": [
+      {
+        "faceIndex": 34,
+        "vertexIds": [
+          8,
+          16,
+          22
+        ],
+        "outsideVertex": 24,
+        "outsideDistance": 4.2030801238741495e-05,
+        "doubleArea": 0.0042509643139170125,
+        "minimumTriangleAltitude": 0.03578696430012423
+      },
+      {
+        "faceIndex": 35,
+        "vertexIds": [
+          8,
+          24,
+          16
+        ],
+        "outsideVertex": 22,
+        "outsideDistance": 5.597962236338035e-05,
+        "doubleArea": 0.003191722784255681,
+        "minimumTriangleAltitude": 0.027901846042037836
+      }
+    ],
+    "alternateDiagonalHypothesis": {
+      "tested": true,
+      "passed": true,
+      "sourceModified": false,
+      "vertexPositionsUnchanged": true,
+      "replacementFaces": [
+        [
+          8,
+          24,
+          22
+        ],
+        [
+          24,
+          16,
+          22
+        ]
+      ],
+      "vertices": 32,
+      "faces": 60,
+      "edges": 90,
+      "signedVolume": 0.011942085401447759,
+      "maximumConvexityError": 4.0275909371782597e-08,
+      "tolerance": 1e-06
+    }
+  },
+  {
+    "family": "character-casual",
+    "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+    "sourceSha256": "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+    "tolerance": 1e-06,
+    "floatResolution32Ulp": 2.2903839267107966e-06,
+    "failingFaces": [
+      {
+        "faceIndex": 52,
+        "vertexIds": [
+          20,
+          24,
+          8
+        ],
+        "outsideVertex": 5,
+        "outsideDistance": 5.337257535770638e-05,
+        "doubleArea": 0.0009891860996963484,
+        "minimumTriangleAltitude": 0.013854722037966819
+      },
+      {
+        "faceIndex": 53,
+        "vertexIds": [
+          20,
+          5,
+          24
+        ],
+        "outsideVertex": 8,
+        "outsideDistance": 2.2447493330304048e-05,
+        "doubleArea": 0.002351951234464368,
+        "minimumTriangleAltitude": 0.024461534746944447
+      }
+    ],
+    "alternateDiagonalHypothesis": {
+      "tested": true,
+      "passed": true,
+      "sourceModified": false,
+      "vertexPositionsUnchanged": true,
+      "replacementFaces": [
+        [
+          20,
+          5,
+          8
+        ],
+        [
+          5,
+          24,
+          8
+        ]
+      ],
+      "vertices": 32,
+      "faces": 60,
+      "edges": 90,
+      "signedVolume": 0.011778362804458981,
+      "maximumConvexityError": 3.688277578265743e-08,
+      "tolerance": 1e-06
+    }
+  },
+  {
+    "family": "character-professional",
+    "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+    "sourceSha256": "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+    "tolerance": 1e-06,
+    "floatResolution32Ulp": 1.2258963881361258e-06,
+    "failingFaces": [
+      {
+        "faceIndex": 45,
+        "vertexIds": [
+          14,
+          20,
+          16
+        ],
+        "outsideVertex": 1,
+        "outsideDistance": 4.823942445574256e-05,
+        "doubleArea": 0.0033470341855938238,
+        "minimumTriangleAltitude": 0.013646659582532365
+      },
+      {
+        "faceIndex": 46,
+        "vertexIds": [
+          14,
+          1,
+          20
+        ],
+        "outsideVertex": 16,
+        "outsideDistance": 1.4751909344472905e-05,
+        "doubleArea": 0.010944956274911476,
+        "minimumTriangleAltitude": 0.04686542484288023
+      }
+    ],
+    "alternateDiagonalHypothesis": {
+      "tested": true,
+      "passed": true,
+      "sourceModified": false,
+      "vertexPositionsUnchanged": true,
+      "replacementFaces": [
+        [
+          14,
+          1,
+          16
+        ],
+        [
+          1,
+          20,
+          16
+        ]
+      ],
+      "vertices": 32,
+      "faces": 60,
+      "edges": 90,
+      "signedVolume": 0.004610725250456335,
+      "maximumConvexityError": 6.7428147786774006e-18,
+      "tolerance": 1e-06
+    }
+  }
+]
