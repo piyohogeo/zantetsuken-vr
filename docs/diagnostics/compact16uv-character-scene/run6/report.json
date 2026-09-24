@@ -1,0 +1,226 @@
+{
+    "unity": "6000.3.22f1",
+    "graphics": "Direct3D11",
+    "failure": "",
+    "passed": false,
+    "development": true,
+    "vertexStride": 16,
+    "comparisons": [
+        {
+            "name": "character-casual-pose0-skin-vs-bake",
+            "passed": true,
+            "covered": 27946,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 4,
+            "meanRgb": 0.000047711061809680574
+        },
+        {
+            "name": "character-casual-pose0-stage0-debug0",
+            "passed": true,
+            "covered": 27946,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 5349,
+            "meanRgb": 0.07914072377680766
+        },
+        {
+            "name": "character-casual-pose0-stage1-debug0",
+            "passed": true,
+            "covered": 26004,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage1-debug1",
+            "passed": true,
+            "covered": 26004,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage2-debug0",
+            "passed": true,
+            "covered": 2312,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose0-stage2-debug1",
+            "passed": true,
+            "covered": 2312,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-skin-vs-bake",
+            "passed": false,
+            "covered": 28098,
+            "silhouette": 1,
+            "maxRgb": 188,
+            "changed": 23,
+            "meanRgb": 0.005943483521958858
+        },
+        {
+            "name": "character-casual-pose1-stage0-debug0",
+            "passed": true,
+            "covered": 28098,
+            "silhouette": 0,
+            "maxRgb": 2,
+            "changed": 5731,
+            "meanRgb": 0.08692196360357796
+        },
+        {
+            "name": "character-casual-pose1-stage1-debug0",
+            "passed": true,
+            "covered": 30996,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage1-debug1",
+            "passed": true,
+            "covered": 30996,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage2-debug0",
+            "passed": true,
+            "covered": 5961,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-casual-pose1-stage2-debug1",
+            "passed": true,
+            "covered": 5961,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-skin-vs-bake",
+            "passed": true,
+            "covered": 28240,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 1,
+            "meanRgb": 0.000011803588290840415
+        },
+        {
+            "name": "character-professional-pose0-stage0-debug0",
+            "passed": true,
+            "covered": 28240,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 2092,
+            "meanRgb": 0.027160056657223796
+        },
+        {
+            "name": "character-professional-pose0-stage1-debug0",
+            "passed": true,
+            "covered": 8048,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage1-debug1",
+            "passed": true,
+            "covered": 8048,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage2-debug0",
+            "passed": true,
+            "covered": 3307,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose0-stage2-debug1",
+            "passed": true,
+            "covered": 3307,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-skin-vs-bake",
+            "passed": true,
+            "covered": 27888,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 2,
+            "meanRgb": 0.000023905144387072098
+        },
+        {
+            "name": "character-professional-pose1-stage0-debug0",
+            "passed": true,
+            "covered": 27888,
+            "silhouette": 0,
+            "maxRgb": 1,
+            "changed": 2405,
+            "meanRgb": 0.03204484605087015
+        },
+        {
+            "name": "character-professional-pose1-stage1-debug0",
+            "passed": true,
+            "covered": 11158,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage1-debug1",
+            "passed": true,
+            "covered": 11158,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage2-debug0",
+            "passed": true,
+            "covered": 3199,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        },
+        {
+            "name": "character-professional-pose1-stage2-debug1",
+            "passed": true,
+            "covered": 3199,
+            "silhouette": 0,
+            "maxRgb": 0,
+            "changed": 0,
+            "meanRgb": 0.0
+        }
+    ]
+}

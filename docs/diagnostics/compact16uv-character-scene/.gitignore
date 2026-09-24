@@ -1,0 +1,6 @@
+*.log
+/run1/
+/run2/
+/run3/
+/run5/*.png
+/run6/*.png

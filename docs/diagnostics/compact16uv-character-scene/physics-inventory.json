@@ -1,0 +1,2276 @@
+{
+  "blender": "4.5.13 LTS",
+  "disposition": "Authoring metadata only; no pose binding/cook/physics registration verified",
+  "assets": [
+    {
+      "family": "character-casual",
+      "sourceSha256": "7b1b2a977f7c0fddac7649893e6df5647a737bd8c5ef1242d17de03b86130462",
+      "hullCount": 19,
+      "armatures": [
+        {
+          "name": "rig",
+          "bones": 358
+        }
+      ],
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-foot.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-foot.L",
+            "raw_hull_vertices": "78",
+            "threshold_edge_points": "68",
+            "max_inward_gap_cm": "0.40684607811272144"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-foot.L",
+                "raw_hull_vertices": 78,
+                "threshold_edge_points": 68,
+                "max_inward_gap_cm": 0.40684607811272144
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-foot.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-foot.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-foot.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-foot.R",
+            "raw_hull_vertices": "82",
+            "threshold_edge_points": "68",
+            "max_inward_gap_cm": "0.4035531368572265"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-foot.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-foot.R",
+                "raw_hull_vertices": 82,
+                "threshold_edge_points": 68,
+                "max_inward_gap_cm": 0.4035531368572265
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-foot.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-foot.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-forearm.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-forearm.L",
+            "raw_hull_vertices": "56",
+            "threshold_edge_points": "32",
+            "max_inward_gap_cm": "0.2011810045587481"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-forearm.L",
+                "raw_hull_vertices": 56,
+                "threshold_edge_points": 32,
+                "max_inward_gap_cm": 0.2011810045587481
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-forearm.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-forearm.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-forearm.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-forearm.R",
+            "raw_hull_vertices": "59",
+            "threshold_edge_points": "32",
+            "max_inward_gap_cm": "0.07255068048834801"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-forearm.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-forearm.R",
+                "raw_hull_vertices": 59,
+                "threshold_edge_points": 32,
+                "max_inward_gap_cm": 0.07255068048834801
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-forearm.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-forearm.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-hand.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-hand.L",
+            "raw_hull_vertices": "93",
+            "threshold_edge_points": "16",
+            "max_inward_gap_cm": "0.2766468096524477"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-hand.L",
+                "raw_hull_vertices": 93,
+                "threshold_edge_points": 16,
+                "max_inward_gap_cm": 0.2766468096524477
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-hand.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-hand.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-hand.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-hand.R",
+            "raw_hull_vertices": "93",
+            "threshold_edge_points": "16",
+            "max_inward_gap_cm": "0.2711197122152953"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-hand.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-hand.R",
+                "raw_hull_vertices": 93,
+                "threshold_edge_points": 16,
+                "max_inward_gap_cm": 0.2711197122152953
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-hand.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-hand.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shin.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shin.L",
+            "raw_hull_vertices": "48",
+            "threshold_edge_points": "88",
+            "max_inward_gap_cm": "0.08001801616046578"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shin.L",
+                "raw_hull_vertices": 48,
+                "threshold_edge_points": 88,
+                "max_inward_gap_cm": 0.08001801616046578
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shin.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-shin.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shin.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shin.R",
+            "raw_hull_vertices": "48",
+            "threshold_edge_points": "88",
+            "max_inward_gap_cm": "0.08002824906725436"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-shin.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shin.R",
+                "raw_hull_vertices": 48,
+                "threshold_edge_points": 88,
+                "max_inward_gap_cm": 0.08002824906725436
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shin.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-shin.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shoulder.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shoulder.L",
+            "raw_hull_vertices": "35",
+            "threshold_edge_points": "46",
+            "max_inward_gap_cm": "0.04538185894489288"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shoulder.L",
+                "raw_hull_vertices": 35,
+                "threshold_edge_points": 46,
+                "max_inward_gap_cm": 0.04538185894489288
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shoulder.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-shoulder.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shoulder.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shoulder.R",
+            "raw_hull_vertices": "44",
+            "threshold_edge_points": "141",
+            "max_inward_gap_cm": "0.08729096734896302"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-shoulder.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shoulder.R",
+                "raw_hull_vertices": 44,
+                "threshold_edge_points": 141,
+                "max_inward_gap_cm": 0.08729096734896302
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-shoulder.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-shoulder.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.001",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.001",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.001",
+            "raw_hull_vertices": "71",
+            "threshold_edge_points": "70",
+            "max_inward_gap_cm": "0.6714061251841486"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.001",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.001",
+                "raw_hull_vertices": 71,
+                "threshold_edge_points": 70,
+                "max_inward_gap_cm": 0.6714061251841486
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.001",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.001",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.002",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.002",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.002",
+            "raw_hull_vertices": "61",
+            "threshold_edge_points": "67",
+            "max_inward_gap_cm": "0.34487711964175105"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.002",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.002",
+                "raw_hull_vertices": 61,
+                "threshold_edge_points": 67,
+                "max_inward_gap_cm": 0.34487711964175105
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.002",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.002",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.003",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.003",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.003",
+            "raw_hull_vertices": "54",
+            "threshold_edge_points": "114",
+            "max_inward_gap_cm": "0.18136273720301688"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.003",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.003",
+                "raw_hull_vertices": 54,
+                "threshold_edge_points": 114,
+                "max_inward_gap_cm": 0.18136273720301688
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.003",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.003",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.004",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.004",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.004",
+            "raw_hull_vertices": "63",
+            "threshold_edge_points": "190",
+            "max_inward_gap_cm": "0.25507882237434387"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.004",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.004",
+                "raw_hull_vertices": 63,
+                "threshold_edge_points": 190,
+                "max_inward_gap_cm": 0.25507882237434387
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.004",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.004",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.006",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.006",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.006",
+            "raw_hull_vertices": "169",
+            "threshold_edge_points": "117",
+            "max_inward_gap_cm": "1.5485521202208474"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-spine.006",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.006",
+                "raw_hull_vertices": 169,
+                "threshold_edge_points": 117,
+                "max_inward_gap_cm": 1.5485521202208474
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-spine.006",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.006",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-thigh.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-thigh.L",
+            "raw_hull_vertices": "58",
+            "threshold_edge_points": "52",
+            "max_inward_gap_cm": "0.30368087318493053"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-thigh.L",
+                "raw_hull_vertices": 58,
+                "threshold_edge_points": 52,
+                "max_inward_gap_cm": 0.30368087318493053
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-thigh.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-thigh.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-thigh.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-thigh.R",
+            "raw_hull_vertices": "57",
+            "threshold_edge_points": "52",
+            "max_inward_gap_cm": "0.16256216913461685"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-thigh.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-thigh.R",
+                "raw_hull_vertices": 57,
+                "threshold_edge_points": 52,
+                "max_inward_gap_cm": 0.16256216913461685
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-thigh.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-thigh.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-upper_arm.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-upper_arm.L",
+            "raw_hull_vertices": "41",
+            "threshold_edge_points": "41",
+            "max_inward_gap_cm": "0.09638280607759953"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-upper_arm.L",
+                "raw_hull_vertices": 41,
+                "threshold_edge_points": 41,
+                "max_inward_gap_cm": 0.09638280607759953
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-upper_arm.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-upper_arm.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-upper_arm.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-upper_arm.R",
+            "raw_hull_vertices": "49",
+            "threshold_edge_points": "56",
+            "max_inward_gap_cm": "0.11151380022056401"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_f_1__DEF-upper_arm.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-upper_arm.R",
+                "raw_hull_vertices": 49,
+                "threshold_edge_points": 56,
+                "max_inward_gap_cm": 0.11151380022056401
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_f_1__DEF-upper_arm.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-upper_arm.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_CasualCharacters",
+                "zpp_asset_id": "f_1",
+                "zpp_source_collection": "f 1",
+                "zpp_source_blend_sha256": "3943da147b0433e4a336440858108b90c362d39b53687610035d8d747a307a3c",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        }
+      ],
+      "allRepresentativeBonesMatchParents": true
+    },
+    {
+      "family": "character-professional",
+      "sourceSha256": "26a354feaf869cacdb8746c144c017ec4346187efc97551e76554bf1e81d0a42",
+      "hullCount": 19,
+      "armatures": [
+        {
+          "name": "rig",
+          "bones": 358
+        }
+      ],
+      "hulls": [
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-foot.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-foot.L",
+            "raw_hull_vertices": "63",
+            "threshold_edge_points": "50",
+            "max_inward_gap_cm": "0.3253727685660124"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-foot.L",
+                "raw_hull_vertices": 63,
+                "threshold_edge_points": 50,
+                "max_inward_gap_cm": 0.3253727685660124
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-foot.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-foot.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-foot.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-foot.R",
+            "raw_hull_vertices": "64",
+            "threshold_edge_points": "50",
+            "max_inward_gap_cm": "0.258501258213073"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-foot.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-foot.R",
+                "raw_hull_vertices": 64,
+                "threshold_edge_points": 50,
+                "max_inward_gap_cm": 0.258501258213073
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-foot.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-foot.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-forearm.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-forearm.L",
+            "raw_hull_vertices": "55",
+            "threshold_edge_points": "32",
+            "max_inward_gap_cm": "0.15162414056248963"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-forearm.L",
+                "raw_hull_vertices": 55,
+                "threshold_edge_points": 32,
+                "max_inward_gap_cm": 0.15162414056248963
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-forearm.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-forearm.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-forearm.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-forearm.R",
+            "raw_hull_vertices": "53",
+            "threshold_edge_points": "32",
+            "max_inward_gap_cm": "0.12955109996255487"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-forearm.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-forearm.R",
+                "raw_hull_vertices": 53,
+                "threshold_edge_points": 32,
+                "max_inward_gap_cm": 0.12955109996255487
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-forearm.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-forearm.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-hand.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-hand.L",
+            "raw_hull_vertices": "93",
+            "threshold_edge_points": "16",
+            "max_inward_gap_cm": "0.276950653642416"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-hand.L",
+                "raw_hull_vertices": 93,
+                "threshold_edge_points": 16,
+                "max_inward_gap_cm": 0.276950653642416
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-hand.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-hand.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-hand.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-hand.R",
+            "raw_hull_vertices": "93",
+            "threshold_edge_points": "16",
+            "max_inward_gap_cm": "0.2711439741688082"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-hand.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-hand.R",
+                "raw_hull_vertices": 93,
+                "threshold_edge_points": 16,
+                "max_inward_gap_cm": 0.2711439741688082
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-hand.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-hand.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shin.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shin.L",
+            "raw_hull_vertices": "47",
+            "threshold_edge_points": "70",
+            "max_inward_gap_cm": "0.1997411367483437"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shin.L",
+                "raw_hull_vertices": 47,
+                "threshold_edge_points": 70,
+                "max_inward_gap_cm": 0.1997411367483437
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shin.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-shin.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shin.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shin.R",
+            "raw_hull_vertices": "45",
+            "threshold_edge_points": "70",
+            "max_inward_gap_cm": "0.20192450610920787"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-shin.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shin.R",
+                "raw_hull_vertices": 45,
+                "threshold_edge_points": 70,
+                "max_inward_gap_cm": 0.20192450610920787
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shin.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-shin.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shoulder.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shoulder.L",
+            "raw_hull_vertices": "71",
+            "threshold_edge_points": "155",
+            "max_inward_gap_cm": "0.2615085802972317"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shoulder.L",
+                "raw_hull_vertices": 71,
+                "threshold_edge_points": 155,
+                "max_inward_gap_cm": 0.2615085802972317
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shoulder.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-shoulder.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shoulder.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-shoulder.R",
+            "raw_hull_vertices": "67",
+            "threshold_edge_points": "145",
+            "max_inward_gap_cm": "0.28508848045021296"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-shoulder.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-shoulder.R",
+                "raw_hull_vertices": 67,
+                "threshold_edge_points": 145,
+                "max_inward_gap_cm": 0.28508848045021296
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-shoulder.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-shoulder.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.001",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.001",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.001",
+            "raw_hull_vertices": "60",
+            "threshold_edge_points": "142",
+            "max_inward_gap_cm": "0.7444070477504283"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.001",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.001",
+                "raw_hull_vertices": 60,
+                "threshold_edge_points": 142,
+                "max_inward_gap_cm": 0.7444070477504283
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.001",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.001",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.002",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.002",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.002",
+            "raw_hull_vertices": "73",
+            "threshold_edge_points": "138",
+            "max_inward_gap_cm": "0.4579467233270407"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.002",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.002",
+                "raw_hull_vertices": 73,
+                "threshold_edge_points": 138,
+                "max_inward_gap_cm": 0.4579467233270407
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.002",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.002",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.003",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.003",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.003",
+            "raw_hull_vertices": "47",
+            "threshold_edge_points": "91",
+            "max_inward_gap_cm": "0.15080054290591227"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.003",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.003",
+                "raw_hull_vertices": 47,
+                "threshold_edge_points": 91,
+                "max_inward_gap_cm": 0.15080054290591227
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.003",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.003",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.004",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.004",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.004",
+            "raw_hull_vertices": "60",
+            "threshold_edge_points": "122",
+            "max_inward_gap_cm": "0.265158643014729"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.004",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.004",
+                "raw_hull_vertices": 60,
+                "threshold_edge_points": 122,
+                "max_inward_gap_cm": 0.265158643014729
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.004",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.004",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.006",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.006",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-spine.006",
+            "raw_hull_vertices": "128",
+            "threshold_edge_points": "36",
+            "max_inward_gap_cm": "1.1522276792675257"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-spine.006",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-spine.006",
+                "raw_hull_vertices": 128,
+                "threshold_edge_points": 36,
+                "max_inward_gap_cm": 1.1522276792675257
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-spine.006",
+              "parentType": "BONE",
+              "parentBone": "DEF-spine.006",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-thigh.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-thigh.L",
+            "raw_hull_vertices": "64",
+            "threshold_edge_points": "79",
+            "max_inward_gap_cm": "0.35622332943603396"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-thigh.L",
+                "raw_hull_vertices": 64,
+                "threshold_edge_points": 79,
+                "max_inward_gap_cm": 0.35622332943603396
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-thigh.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-thigh.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-thigh.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-thigh.R",
+            "raw_hull_vertices": "64",
+            "threshold_edge_points": "77",
+            "max_inward_gap_cm": "0.3703292924910784"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-thigh.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-thigh.R",
+                "raw_hull_vertices": 64,
+                "threshold_edge_points": 77,
+                "max_inward_gap_cm": 0.3703292924910784
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-thigh.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-thigh.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-upper_arm.L",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-upper_arm.L",
+            "raw_hull_vertices": "47",
+            "threshold_edge_points": "51",
+            "max_inward_gap_cm": "0.1437152037397027"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.L",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-upper_arm.L",
+                "raw_hull_vertices": 47,
+                "threshold_edge_points": 51,
+                "max_inward_gap_cm": 0.1437152037397027
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-upper_arm.L",
+              "parentType": "BONE",
+              "parentBone": "DEF-upper_arm.L",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        },
+        {
+          "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.R",
+          "type": "MESH",
+          "parent": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-upper_arm.R",
+          "parentType": "OBJECT",
+          "parentBone": "",
+          "vertices": 32,
+          "faces": 60,
+          "properties": {
+            "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+            "representative_bone": "DEF-upper_arm.R",
+            "raw_hull_vertices": "46",
+            "threshold_edge_points": "50",
+            "max_inward_gap_cm": "0.1666612683038693"
+          },
+          "ancestry": [
+            {
+              "name": "UCX_PHYS_CONVEX_c_1__DEF-upper_arm.R",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "skinned_convex_profile": "ithappy-casualcharacters-rigify-human-convex-v1",
+                "representative_bone": "DEF-upper_arm.R",
+                "raw_hull_vertices": 46,
+                "threshold_edge_points": 50,
+                "max_inward_gap_cm": 0.1666612683038693
+              },
+              "constraints": []
+            },
+            {
+              "name": "PHYS_NULL__PHYS_CONVEX_c_1__DEF-upper_arm.R",
+              "parentType": "BONE",
+              "parentBone": "DEF-upper_arm.R",
+              "properties": {},
+              "constraints": []
+            },
+            {
+              "name": "rig",
+              "parentType": "OBJECT",
+              "parentBone": "",
+              "properties": {
+                "zpp_profile_id": "ithappy-character-collection-rigged-v2",
+                "zpp_asset_family": "ITHappy_ProfessionalCharacters",
+                "zpp_asset_id": "c_1",
+                "zpp_source_collection": "c_1",
+                "zpp_source_blend_sha256": "9da1e663ed80d40d50931caa4c000c3c88adcdcc2056830317a8cc434259b99f",
+                "zpp_shared_source_rig": "rig",
+                "zpp_rig_policy": "full-generated-rig-with-referenced-custom-shapes",
+                "zpp_mesh_repair_profile": "ithappy-mesh-repair-optimized-cap-v6",
+                "zpp_mesh_repair_addon_version": "1.23.0",
+                "zpp_skinned_convex_profile": "ithappy-character-skinned-convex-v1",
+                "zpp_skinned_convex_addon_version": "0.5.1",
+                "ztk_building": false,
+                "ztk_cuttable": true
+              },
+              "constraints": []
+            }
+          ]
+        }
+      ],
+      "allRepresentativeBonesMatchParents": true
+    }
+  ]
+}
