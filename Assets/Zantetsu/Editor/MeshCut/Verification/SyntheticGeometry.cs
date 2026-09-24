@@ -184,7 +184,9 @@ namespace Zantetsu.MeshCut.Verification
             mesh.TopologyOfVertex = new int[R];
             for (int r = 0; r < R; r++)
             {
-                mesh.Vertices[r] = new VpRenderVertex { position = Positions[renderLogical[r]], normal = renderN[r], uv0 = renderUv[r] };
+                // Affine fit of the unwrapped cylindrical seam into the supported UV domain; not a runtime wrap.
+                // Negative-offset rejection fixtures remain outside the domain.
+                mesh.Vertices[r] = new VpRenderVertex { position = Positions[renderLogical[r]], normal = renderN[r], uv0 = .25f + .5f * renderUv[r] };
                 mesh.TopologyOfVertex[r] = renderLogical[r];
             }
             mesh.TopologyVertexCount = V;

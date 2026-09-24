@@ -808,7 +808,7 @@ namespace Zantetsu.MeshCut
                 for (int i = 0; i < newVertexCount; i++)
                 {
                     NewVertex rec = l.records[i];
-                    VpRenderVertex v;
+                    VpRenderVertex v = default;
                     if (rec.kind == 0)
                     {
                         VpRenderVertex a = input.vertices[rec.rLo], b = input.vertices[rec.rHi];

@@ -480,7 +480,7 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(buffers.IndexBuffer.target & GraphicsBuffer.Target.Index, Is.EqualTo(GraphicsBuffer.Target.Index), "index target");
                 Assert.That(buffers.IndexBuffer.target & GraphicsBuffer.Target.Structured, Is.EqualTo((GraphicsBuffer.Target)0), "not structured");
                 Assert.That(buffers.VertexBuffer.target & GraphicsBuffer.Target.Structured, Is.EqualTo(GraphicsBuffer.Target.Structured), "structured vertices");
-                Assert.That(new[] { buffers.IndexBuffer.stride, buffers.IndexBuffer.count, buffers.VertexBuffer.stride }, Is.EqualTo(new[] { 4, 12, 32 }));
+                Assert.That(new[] { buffers.IndexBuffer.stride, buffers.IndexBuffer.count, buffers.VertexBuffer.stride }, Is.EqualTo(new[] { 4, 12, 16 }));
 
                 var indices = new uint[12];
                 buffers.IndexBuffer.GetData(indices);

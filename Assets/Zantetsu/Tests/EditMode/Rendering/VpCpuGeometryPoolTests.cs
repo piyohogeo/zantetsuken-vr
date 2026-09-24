@@ -61,8 +61,8 @@ namespace Zantetsu.Rendering.Tests
             {
                 VpRenderVertex vertex = vertices[range.vertexStart + v];
                 Assert.That(vertex.position, Is.EqualTo(positions[v]), "position " + v);
-                Assert.That(vertex.normal, Is.EqualTo(normals[v]), "normal " + v);
-                Assert.That(vertex.uv0, Is.EqualTo(uvs[v]), "uv0 " + v);
+                Assert.That(Vector3.Angle(vertex.normal, normals[v]), Is.LessThan(1f), "normal " + v);
+                Assert.That(Vector2.Distance(vertex.uv0, uvs[v]), Is.LessThanOrEqualTo(Mathf.Sqrt(2f) * (1f / 512f + VpRenderVertex.UvEndpointTolerance)), "uv0 " + v);
             }
 
             Assert.That(range.indexCount, Is.EqualTo(triangles.Length));

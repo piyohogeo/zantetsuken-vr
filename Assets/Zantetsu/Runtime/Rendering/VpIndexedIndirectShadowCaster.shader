@@ -48,13 +48,8 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #include "UnityIndirect.cginc"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
-            // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
-            struct VpRenderVertex
-            {
-                float3 position;
-                float3 normal;
-                float2 uv0;
-            };
+            // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
+            #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -142,7 +137,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 output.clipDistance0 = clipDistance0;
                 output.clipDistance1 = clipDistance1;
 
-                float3 normalWS = normalize(mul((float3x3)objectToWorld, vertex.normal));
+                float3 normalWS = normalize(mul((float3x3)objectToWorld, VpDecodeNormal(vertex)));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW
                 float3 lightDirectionWS = normalize(_LightPosition - positionWS);
             #else

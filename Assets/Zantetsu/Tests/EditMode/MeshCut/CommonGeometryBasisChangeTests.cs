@@ -63,7 +63,7 @@ namespace Zantetsu.MeshCut.Tests
                     float2[] uv = { new float2(0.05f, 0.1f), new float2(0.95f, 0.1f), new float2(0.95f, 0.9f), new float2(0.05f, 0.9f) };
                     for (int k = 0; k < 4; k++)
                     {
-                        vertices.Add(new VpRenderVertex { position = k_controlPoints[c[k]], normal = n, uv0 = uv[k] + new float2(f * 0.013f, f * 0.021f) });
+                        vertices.Add(new VpRenderVertex { position = k_controlPoints[c[k]], normal = n, uv0 = uv[k] * .8f + new float2(f * 0.013f, f * 0.021f) });
                         topology.Add(c[k]);
                     }
                     indices.AddRange(new[] { b, b + 1, b + 2, b, b + 2, b + 3 });
@@ -412,17 +412,17 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
-        public void TheCommonVertex_Is32ByteVpRenderVertex_AndMeshCutDefinesNoVertexOfItsOwn()
+        public void TheCommonVertex_Is16ByteVpRenderVertex_AndMeshCutDefinesNoVertexOfItsOwn()
         {
-            Assert.That(VpRenderVertex.Stride, Is.EqualTo(32));
-            Assert.That(UnsafeUtility.SizeOf<VpRenderVertex>(), Is.EqualTo(32));
-            Assert.That(Marshal.SizeOf<VpRenderVertex>(), Is.EqualTo(32));
+            Assert.That(VpRenderVertex.Stride, Is.EqualTo(16));
+            Assert.That(UnsafeUtility.SizeOf<VpRenderVertex>(), Is.EqualTo(16));
+            Assert.That(Marshal.SizeOf<VpRenderVertex>(), Is.EqualTo(16));
             Assert.That(Marshal.OffsetOf<VpRenderVertex>("position").ToInt32(), Is.EqualTo(0));
-            Assert.That(Marshal.OffsetOf<VpRenderVertex>("normal").ToInt32(), Is.EqualTo(12));
-            Assert.That(Marshal.OffsetOf<VpRenderVertex>("uv0").ToInt32(), Is.EqualTo(24));
+            Assert.That(Marshal.OffsetOf<VpRenderVertex>("normalX").ToInt32(), Is.EqualTo(12));
+            Assert.That(Marshal.OffsetOf<VpRenderVertex>("u").ToInt32(), Is.EqualTo(14));
             FieldInfo[] fields = typeof(VpRenderVertex).GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(fields.Length, Is.EqualTo(3), "exactly three instance fields");
-            Assert.That(fields.Select(f => f.Name), Is.EquivalentTo(new[] { "position", "normal", "uv0" }), "position, normal and uv0, and nothing else");
+            Assert.That(fields.Length, Is.EqualTo(5), "only packed fields are stored");
+            Assert.That(fields.Select(f => f.Name), Is.EquivalentTo(new[] { "position", "normalX", "normalY", "u", "v" }));
             // the three offsets above are asserted one by one, so neither the field order nor this list decides the layout
 
             // every stage of the common path uses that one type, and the cut kernel no longer carries a vertex of its own

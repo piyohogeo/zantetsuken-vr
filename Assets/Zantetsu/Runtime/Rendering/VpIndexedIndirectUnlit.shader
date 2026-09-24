@@ -53,13 +53,8 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
             #include "VpCutSurfaceShading.hlsl"
 
-            // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
-            struct VpRenderVertex
-            {
-                float3 position;
-                float3 normal;
-                float2 uv0;
-            };
+            // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
+            #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -208,10 +203,10 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 output.clipDistance1 = clipDistance1;
 
                 output.positionCS = TransformWorldToHClip(positionWS);
-                output.normalWS = mul((float3x3)objectToWorld, vertex.normal);
+                output.normalWS = mul((float3x3)objectToWorld, VpDecodeNormal(vertex));
                 output.positionWS = positionWS;
-                output.uv = TRANSFORM_TEX(vertex.uv0, _BaseMap);
-                output.rawUv = vertex.uv0;
+                output.uv = TRANSFORM_TEX(VpDecodeUv(vertex), _BaseMap);
+                output.rawUv = VpDecodeUv(vertex);
                 return output;
             }
 
@@ -221,7 +216,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 // sampling. A cap takes the cut surface colour and neither the texture nor the material's own colour;
                 // everything else is unchanged. The chosen colour then goes through the same shading as before.
                 half3 base;
-                if (input.rawUv.x < 0.0)
+                if (VpIsRealCap(input.rawUv))
                 {
                     base = _VpCutSurfaceDebug > 0.0 ? _VpCutSurfaceDebugColor.rgb : _VpCutSurfaceColor.rgb;
                 }

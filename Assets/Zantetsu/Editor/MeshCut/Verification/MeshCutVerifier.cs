@@ -427,7 +427,9 @@ namespace Zantetsu.MeshCut.Verification
         {
             why = null;
             double u = lo.uv0.x + (hi.uv0.x - lo.uv0.x) * t, v = lo.uv0.y + (hi.uv0.y - lo.uv0.y) * t;
-            if (Math.Abs(u - outV.uv0.x) > tol || Math.Abs(v - outV.uv0.y) > tol) { why = "uv"; return false; }
+            // A new Compact16uv vertex rounds each interpolated component to a byte centre.
+            double uvTol = tol + 1.0 / 512.0;
+            if (Math.Abs(u - outV.uv0.x) > uvTol || Math.Abs(v - outV.uv0.y) > uvTol) { why = "uv"; return false; }
             if (!DirectionMatches(lo.normal, hi.normal, t, outV.normal, tol)) { why = "normal"; return false; }
             return true;
         }
@@ -438,7 +440,8 @@ namespace Zantetsu.MeshCut.Verification
             double len = math.length(d);
             if (len < 1e-3) return true;   // near-cancelling endpoints: the normalized direction is float noise
             d /= len;
-            return math.cmax(math.abs(d - (double3)actual)) <= tol;
+            // One new oct8 encode, not a relaxation of position/topology tolerances.
+            return math.dot(d, math.normalize((double3)actual)) >= Math.Cos(Math.PI / 180.0);
         }
 
         // ---------------------------------------------------------------- caps

@@ -1,0 +1,926 @@
+{
+    "profile":  "Compact16uv-Product-CPU16",
+    "baselineCommit":  "4326c48",
+    "unity":  "6000.3.22f1",
+    "cpuVertexBytes":  16,
+    "gpuVertexBytes":  16,
+    "mainUploadPackOperations":  0,
+    "runs":  [
+                 {
+                     "name":  "migration-first",
+                     "total":  928,
+                     "passed":  799,
+                     "failed":  129,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Apply_BothBases_CutByTheKernel_HaveCorrespondingNodesSurfaceAndCapBoundaries",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Apply_DoesNotModifyTheInput",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Apply_Rejects_UndefinedBasisAndStructuralProblems_BeforeProducingOutput_WithoutTouchingTheInput",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Apply_TransformsEveryAttributeAsSpecified_AndKeepsTopologySeamsAndSubmeshes",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Apply_Twice_RestoresGeometryAndPlane",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.Cut_InBothBases_KeepsUv0InRange_AndNormalsFiniteWithOutwardWinding",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.FromImported_KeepsRangesAndMapsMaterialNamesBySubmeshMaterialIndex",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.FromImported_Rejects_MaterialIndexOutsideTheMaterialList_OrNegative_WithoutTouchingTheInput",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.FromImported_Rejects_MissingOrRaggedSubmeshMaterialRecord_WithoutTouchingTheInput",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.FromImported_WithoutMaterialList_KeepsTheRecordedMappingWithEmptyNames",
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.TheCommonVertex_Is32ByteVpRenderVertex_AndMeshCutDefinesNoVertexOfItsOwn",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.CapacityDeficits_FailBeforeWriting_AndReportTheExactNeed",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.ConcurrentJobs_ShareOneInput_AndWriteDisjointReservations",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.NegativeSourceUv_IsNotRejected_AndCapMarkerIsInheritedByARecut",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.PlaneThroughVertices_Edges_AndAFace_AreOrdinaryCases",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.RecutChain_ThreeGenerations_ReferencesExistingVerticesAndAppendsBlocks",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.RepresentativeInputs_ThreePlanes_SatisfyTheOutputContract",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.ScratchContents_JobPath_AndRepeatedRuns_GiveBitwiseIdenticalOutput",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.Seams_KeepSidesApart_AndCapsAreHardEdged",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.TwoSubmeshes_KeepTheirRanges_AndCapsJoinTheLastNonEmptyRange",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ACutAheadOfTheOneThatFreesTheRoom_IsTheOneServed",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ACutWaitingForRoom_IsSubmittedInTheFrameTheRoomCameBackIn",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ADestinationWithNoRoom_EndsTheUpdateAndIsTakenUpWhenRoomAppears",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.AParticipantStillMoving_BuysNoFurtherOccasion_OnceTheBudgetIsSpent",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.AWorkWhoseCollectionIsHeldBack_IsCollectedAtALaterUpdateOfTheSameFrame",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.TheBudgetIsTheFramesNotTheUpdates",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.ACutGivenUpWhileItRuns_IsNotInterrupted_AndGivesEverythingBackWhenItIsCollected",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.AnEstimateTooSmallForTheInput_ReservesAgain_AndPublishesNothingUntilItSucceeds",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.AReservationThatIsTooSmall_IsTakenAgainLarger_AndTheCutSucceeds",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.ARunnerCut_IsTheSameGeometryAsTheSynchronousEntry",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutAbandonedMidRun_LeavesTheOtherAlone_AndGivesItsRoomBackOnlyOnCollection",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutFailing_LeavesTheOtherWithItsOwnResult",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutThrowingOnItsWorker_KeepsItsRoomUntilCollection_AndTheOtherIsWhole",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TheCut_RunsOnAWorker_AndIsCollectedOnTheMainThread",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TheSizes_CostNoPassOverTheGeometry_AndWhatTheyReserveIsRecorded",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TwoCutsFinishingInReverseOrder_EachPublishIntoItsOwnRoom",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TwoCutsOfOneStorage_HoldRoomAndRunAtTheSameTime",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.UninitialisedScratch_FilledWithPatterns_AndShapesOfDifferentSizesInTurn_GiveTheSameCutsAsTheSynchronousCut",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ACreationThatCannotBeShown_RegistersNothing",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ACreationWithNoRoomForAnInstance_LeavesTheGeometryPublished",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ACrossingCut_SwapsTheParentForTheTwoChildren",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.AFailedDisplayPreparation_KeepsTheParentAndTakesBackWhatItBuilt",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ANonCrossingCut_KeepsTheParentAndRegistersNothingNew(True)",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ANonCrossingCut_KeepsTheParentAndRegistersNothingNew(False)",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.ARefusedCutAndACapacityRetry_LeaveTheDisplayExactlyAsItWas",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.EverythingIsGivenBackOnce_AfterASwapAndOnDispose",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.TheChildren_KeepTheAttributesAndTheSubmeshMaterialMapping",
+                                      "Zantetsu.MeshCut.Tests.VpCutDisplayTests.TheChildren_TakeTheParentDisplaysPlacement",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AChildCutAgain_HasGrandchildrenRecordedAsTheirIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AGeometryAppendedFromAMesh_IsRecordedAsItsIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AGeometryTakingOverARetiredDescriptor_HasItsOwnRecord_AndTheRetiredOneHasNone",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AnAppendedCuttableGeometry_IsRecordedAsItsIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.BothSidesOfACut_AreRecordedAsTheirIndicesMeasure_CapsAndAllSubmeshes",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.TheDrawCommands_CarryTheRecordedBounds_AndTheReferencedRange",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.AGeometryRetiredWhileLeased_StaysRetiringUntilTheAdapterIsDisposed",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.AGeometryWhollyOnOneSide_ReusesTheInputInViewNumberingWithoutWritingOutput(True)",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.AGeometryWhollyOnOneSide_ReusesTheInputInViewNumberingWithoutWritingOutput(False)",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.AStoredGeometry_IsCutThroughTheStorageViewsAndPassesTheVerifier",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.GeometriesTheStorageDoesNotOwn_AreRefusedWithoutLeavingALease",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.ReusedIndexSpace_IsCutAtItsOwnVertexAndIndexOffsets",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.TheKernelRun_LeavesTheStorageInputUnchanged",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutInputTests.TheStorageRun_AgreesWithTheHarnessRunOnTheSameSourceData",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AChild_CanBeCutAgainThroughItsInheritedAndAppendedTopology",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AChild_StaysReadableAfterItsParentIsRetired",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.ACommittedCut_LetsAppendingResumeAfterItsOwnOutput",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.ACutAtNonZeroStarts_WritesBothSidesIntoTheStorageAndPassesTheVerifier",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AGeometryWhollyOnOneSide_BorrowsTheInputAndCommitsNothing(True)",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AGeometryWhollyOnOneSide_BorrowsTheInputAndCommitsNothing(False)",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AReservationIsClosedOnce_AndRefusesEveryLaterUse",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AReservationOfAnotherStorage_IsRefusedAndLeavesBothAlone",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AReservationTheKernelOutgrows_IsGivenBackAndTheCutReRunToSuccess",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AScratchBlockTheKernelOutgrows_IsAlsoReRunToSuccess",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.AStorageThatCannotHoldTheOutput_PublishesNeitherSide",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.DisposingTheStorage_ClosesAnOpenReservation",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.EachSide_KeepsTheInputSubmeshOrderAndMaterialMapping",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.RetiringOneSideAndReusingItsSpace_LeavesTheOtherUntouched",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.SlotsUnderTheHighWater_AreNotCommittedUnlessTheyWerePublished",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.StaleForeignAndRepeatedUse_IsRefusedWithoutChangingAnything",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.TheAppendedVerticesAndTopology_AreWrittenOnceAndSharedByBothSides",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.TheAttemptLimit_ReportsWhatToReserveAndTheCutResumesFromIt",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.TheTwoSides_SitInOneReservationInOrderAndTheirUnusedTailIsReusable",
+                                      "Zantetsu.MeshCut.Tests.VpStorageCutOutputTests.TwoOpenReservations_AreGivenRoomOfTheirOwn_AndAppendsAreStillRefused",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryPoolTests.AppendingMoreMeshes_RebasesTheirIndicesAndKeepsEarlierRanges",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryPoolTests.AppendingOneMesh_ReturnsItsRangeAndOnlyThatIsVisible",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryStorageTests.ALaterMesh_HasItsIndicesRebasedOntoItsVertexStart",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryStorageTests.AppendingOneMesh_StoresItsVerticesAndPublishesItsIndices",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryStorageTests.SubmeshesAndBaseVertices_AreKeptInOrderAndRebased",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.AddingAnotherDisplay_KeepsTheDebugSwitch",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.APositiveRawUv_IsDrawnWithTheTexture_AndANegativeOneWithTheCutSurfaceColour",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.TheCapColour_IgnoresTheTextureAndTheMaterialColour",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.TheDebugSwitch_TurnsCapsGreen_WithoutTransferringAnything",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.TheDefaults_AreInPlaceWithoutAnyoneApplyingThem",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.TheSwitchTurnedOnFirst_StillGetsTheDefaultColours",
+                                      "Zantetsu.Rendering.Tests.VpCutSurfaceColourTests.TheUvTransform_DoesNotChangeWhatCountsAsACap",
+                                      "Zantetsu.Rendering.Tests.VpGpuGeometryBuffersTests.UploadingSeveralMeshes_ReadsBackTheirRebasedIndices",
+                                      "Zantetsu.Rendering.Tests.VpIndexedIndirectDrawTests.TheIndexBuffer_IsAHardwareIndexBufferHoldingTheGlobalVertexNumbers",
+                                      "Zantetsu.Rendering.Tests.VpIndexedShadowTileSetTests.ShadowTiles_RenderTheSamePixelsAsTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Tests.VpIndexedShadowTileSetTests.TileShadowCallsAlone_CastShadowsWithoutDrawingColour",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.BuiltInMeshes_ConvertAttributesAndRestoreTheirTriangles(\"Quad.fbx\")",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.BuiltInMeshes_ConvertAttributesAndRestoreTheirTriangles(\"Cube.fbx\")",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.BuiltInMeshes_ConvertAttributesAndRestoreTheirTriangles(\"Sphere.fbx\")",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.ConvertingAcquiredMeshData_MatchesConvertingTheMeshAndLeavesTheDataToTheCaller(\"Sphere.fbx\")",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.MissingUv0_IsWrittenAsZero",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.SubMeshes_AreAppendedInOrderWithTheirBaseVertexApplied",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.Tangents_AreIgnored",
+                                      "Zantetsu.Rendering.Tests.VpRenderVertexTests.TheVertex_HasOnlyPositionNormalAndUv0InOrder",
+                                      "Zantetsu.Rendering.Tests.VpRenderVertexTests.TheVertex_Is32BytesWithoutPadding",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryDisplayTests.TheThreeGeometriesOfACut_AreShownTogether",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryDrawTests.AnOverflowingBase_IsRefusedForAMultiSubmeshCutResultToo",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryDrawTests.BothSidesOfACut_AndAMultiBlockChild_Upload",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryDrawTests.TheUploadAndTheUnityMeshPath_DescribeTheSameTriangles",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryDrawTests.TheUploadedIndices_AddressTheStoredAttributesIncludingSeams",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryMeshTests.AGeometryAtNonZeroStarts_KeepsItsAttributesWindingAndSubmeshes",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryMeshTests.BothSidesOfACut_AndAReCutChild_Convert",
+                                      "Zantetsu.Rendering.Tests.VpStoredGeometryMeshTests.RetiringTheGeometryAfterTheCopy_LeavesTheMeshAsItWas",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.SoftShadowsAndSmallInstances_TheCascadePathMatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_DrawingEachCascadesCulledSelection_MatchesTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_DrawingEveryInstanceIntoEveryCascade_MatchesTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_WritingUrpsShadowMap_MatchesTheSingleBatchTexelForTexel(False)",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_WritingUrpsShadowMap_MatchesTheSingleBatchTexelForTexel(True)",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePassShadowMap_EqualsUrpsTexelForTexel_WithTheRulesCullAndNotWithTheOther",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCulledForwardView_WithCulledCascades_MatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.WithPostProcessing_AndASceneViewCamera_TheCulledPathMatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.AnUnchangedView_UploadsNoSelectionAgain",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.ByDefault_TheRouteIssuesTheSingleBatch_WithNoCallbackPassOrVp3cIssue",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.CamerasThatCannotShowVp3cShadows_AreRefused_OrFallBackExplicitly",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.ChangesWithinAFrame_NeitherDrawTheSetTwiceNorDropIt",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.Enabled_TheTargetCameraRendersVp3c_OtherCamerasTheSingleBatch_EachOnce",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.EnablingAndDisablingTwice_SubscribeAndReleaseOnce_AndTheRouteCanBeEnabledAgain"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-second",
+                     "total":  932,
+                     "passed":  882,
+                     "failed":  50,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.MeshCut.Tests.CommonGeometryBasisChangeTests.TheCommonVertex_Is32ByteVpRenderVertex_AndMeshCutDefinesNoVertexOfItsOwn",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.NegativeSourceUv_IsNotRejected_AndCapMarkerIsInheritedByARecut",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.RecutChain_ThreeGenerations_ReferencesExistingVerticesAndAppendsBlocks",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.RepresentativeInputs_ThreePlanes_SatisfyTheOutputContract",
+                                      "Zantetsu.MeshCut.Tests.MeshCutKernelTests.Seams_KeepSidesApart_AndCapsAreHardEdged",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ACutAheadOfTheOneThatFreesTheRoom_IsTheOneServed",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ACutWaitingForRoom_IsSubmittedInTheFrameTheRoomCameBackIn",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.ADestinationWithNoRoom_EndsTheUpdateAndIsTakenUpWhenRoomAppears",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.AParticipantStillMoving_BuysNoFurtherOccasion_OnceTheBudgetIsSpent",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.AWorkWhoseCollectionIsHeldBack_IsCollectedAtALaterUpdateOfTheSameFrame",
+                                      "Zantetsu.MeshCut.Tests.SharedWorkFrameTests.TheBudgetIsTheFramesNotTheUpdates",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.ACutGivenUpWhileItRuns_IsNotInterrupted_AndGivesEverythingBackWhenItIsCollected",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.AnEstimateTooSmallForTheInput_ReservesAgain_AndPublishesNothingUntilItSucceeds",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.AReservationThatIsTooSmall_IsTakenAgainLarger_AndTheCutSucceeds",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.ARunnerCut_IsTheSameGeometryAsTheSynchronousEntry",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutAbandonedMidRun_LeavesTheOtherAlone_AndGivesItsRoomBackOnlyOnCollection",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutFailing_LeavesTheOtherWithItsOwnResult",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.OneCutThrowingOnItsWorker_KeepsItsRoomUntilCollection_AndTheOtherIsWhole",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TheCut_RunsOnAWorker_AndIsCollectedOnTheMainThread",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TheSizes_CostNoPassOverTheGeometry_AndWhatTheyReserveIsRecorded",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TwoCutsFinishingInReverseOrder_EachPublishIntoItsOwnRoom",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TwoCutsOfOneStorage_HoldRoomAndRunAtTheSameTime",
+                                      "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.UninitialisedScratch_FilledWithPatterns_AndShapesOfDifferentSizesInTurn_GiveTheSameCutsAsTheSynchronousCut",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AChildCutAgain_HasGrandchildrenRecordedAsTheirIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AGeometryAppendedFromAMesh_IsRecordedAsItsIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AGeometryTakingOverARetiredDescriptor_HasItsOwnRecord_AndTheRetiredOneHasNone",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.AnAppendedCuttableGeometry_IsRecordedAsItsIndicesMeasure",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.BothSidesOfACut_AreRecordedAsTheirIndicesMeasure_CapsAndAllSubmeshes",
+                                      "Zantetsu.MeshCut.Tests.VpRecordedExtentTests.TheDrawCommands_CarryTheRecordedBounds_AndTheReferencedRange",
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryPoolTests.AppendingMoreMeshes_RebasesTheirIndicesAndKeepsEarlierRanges",
+                                      "Zantetsu.Rendering.Tests.VpGpuGeometryBuffersTests.UploadingSeveralMeshes_ReadsBackTheirRebasedIndices",
+                                      "Zantetsu.Rendering.Tests.VpIndexedIndirectDrawTests.TheIndexBuffer_IsAHardwareIndexBufferHoldingTheGlobalVertexNumbers",
+                                      "Zantetsu.Rendering.Tests.VpIndexedShadowTileSetTests.ShadowTiles_RenderTheSamePixelsAsTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Tests.VpIndexedShadowTileSetTests.TileShadowCallsAlone_CastShadowsWithoutDrawingColour",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.BuiltInMeshes_ConvertAttributesAndRestoreTheirTriangles(\"Sphere.fbx\")",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.ConvertingAcquiredMeshData_MatchesConvertingTheMeshAndLeavesTheDataToTheCaller(\"Sphere.fbx\")",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.SoftShadowsAndSmallInstances_TheCascadePathMatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_DrawingEachCascadesCulledSelection_MatchesTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_DrawingEveryInstanceIntoEveryCascade_MatchesTheSingleShadowBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_WritingUrpsShadowMap_MatchesTheSingleBatchTexelForTexel(False)",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePass_WritingUrpsShadowMap_MatchesTheSingleBatchTexelForTexel(True)",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCascadePassShadowMap_EqualsUrpsTexelForTexel_WithTheRulesCullAndNotWithTheOther",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.TheCulledForwardView_WithCulledCascades_MatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCascadeShadowPassTests.WithPostProcessing_AndASceneViewCamera_TheCulledPathMatchesTheSingleBatch",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.AnUnchangedView_UploadsNoSelectionAgain",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.ByDefault_TheRouteIssuesTheSingleBatch_WithNoCallbackPassOrVp3cIssue",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.CamerasThatCannotShowVp3cShadows_AreRefused_OrFallBackExplicitly",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.ChangesWithinAFrame_NeitherDrawTheSetTwiceNorDropIt",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.Enabled_TheTargetCameraRendersVp3c_OtherCamerasTheSingleBatch_EachOnce",
+                                      "Zantetsu.Rendering.Urp.Tests.VpCulledCameraRouteTests.EnablingAndDisablingTwice_SubscribeAndReleaseOnce_AndTheRouteCanBeEnabledAgain"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-third",
+                     "total":  932,
+                     "passed":  930,
+                     "failed":  2,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.Rendering.Tests.VpCpuGeometryPoolTests.AppendingMoreMeshes_RebasesTheirIndicesAndKeepsEarlierRanges",
+                                      "Zantetsu.Rendering.Tests.VpMeshConverterTests.BuiltInMeshes_ConvertAttributesAndRestoreTheirTriangles(\"Sphere.fbx\")"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-all-editmode",
+                     "total":  3596,
+                     "passed":  3596,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-player",
+                     "total":  3,
+                     "passed":  2,
+                     "failed":  1,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.Rendering.StandaloneTests.VpIndexedDrawSubmissionOrderProbeTests.ShadowReceiverAndCasterControls_RecordFinalImagesAndAtlasSeparately"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-player-final",
+                     "total":  3,
+                     "passed":  3,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-final-editmode",
+                     "total":  938,
+                     "passed":  937,
+                     "failed":  1,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.Rendering.Tests.VpGpuGeometryBuffersTests.TheReplacedPair_IsReleasedOnceAfterTheReadbacksOfBothOfItsBuffersComplete"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-readback-repro",
+                     "result":  "NoTestResults",
+                     "note":  "Build/compile failure; inspect retained log. Not a passed test run."
+                 },
+                 {
+                     "name":  "migration-readback-repro2",
+                     "total":  1,
+                     "passed":  0,
+                     "failed":  1,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+                                      "Zantetsu.Rendering.Tests.VpGpuGeometryBuffersTests.CompletedReadbacks_RemainSuccessfulWhenRetirementPollingIsDelayed"
+                                  ]
+                 },
+                 {
+                     "name":  "migration-verified-editmode",
+                     "total":  3598,
+                     "passed":  3598,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-playmode",
+                     "total":  41,
+                     "passed":  34,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  7,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-playmode-normal",
+                     "total":  6,
+                     "passed":  6,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-playmode-termination",
+                     "total":  1,
+                     "passed":  1,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 },
+                 {
+                     "name":  "migration-player-verified",
+                     "result":  "NoTestResults",
+                     "note":  "Build/compile failure; inspect retained log. Not a passed test run."
+                 },
+                 {
+                     "name":  "migration-player-verified-fresh",
+                     "total":  3,
+                     "passed":  3,
+                     "failed":  0,
+                     "skipped":  0,
+                     "inconclusive":  0,
+                     "failures":  [
+
+                                  ]
+                 }
+             ],
+    "evidence":  [
+                     {
+                         "file":  "migration-first.log",
+                         "sha256":  "a8655bf4f6995d3afe4f8c78e84f7fd02a569e2ddbf7f224daab278c8111bcbb",
+                         "beforeAnonymizationSha256":  "40ffe6c27d59686eda9fcd5cc191a26dc9d76190a8299dac05396bbbf171d31c"
+                     },
+                     {
+                         "file":  "migration-first.xml",
+                         "sha256":  "0c7e3a49e88bbcd22d14ab7075e085509747e13e1ee09b3e41d5cbfabe304670",
+                         "beforeAnonymizationSha256":  "002d6d951c3040e7677625e132299491013841df302e4a4a73356a1bd424b060"
+                     },
+                     {
+                         "file":  "migration-second.log",
+                         "sha256":  "f4bb312c84fdb9fcdcbdec3d5d4345d192e85c77c6f703ce219b04248891f0d3",
+                         "beforeAnonymizationSha256":  "5fd48fe5a3cafae2898b6e8eea94f00cd2980317c867e71b9bff4c987e7e03e9"
+                     },
+                     {
+                         "file":  "migration-second.xml",
+                         "sha256":  "11e7f0a582d6b17fac08175cb015debca597c80fc4cbc27c501b0d92f320d234",
+                         "beforeAnonymizationSha256":  "276828c5626655912342ed1cf6702a48d49c810a0af969e4a69f93984e5ec715"
+                     },
+                     {
+                         "file":  "migration-third.log",
+                         "sha256":  "6972f10bb6f87c432fc17d405c2fb90173009254b2d2869cf039759750296f24",
+                         "beforeAnonymizationSha256":  "eec312744762ed6f37e42f2a5bde67de457e95f8ff55ecd8b77b92a005545ab8"
+                     },
+                     {
+                         "file":  "migration-third.xml",
+                         "sha256":  "4f6dc1295abf34496d0594a22c7770a56c78e7d02e3825763f6621289a94e40e",
+                         "beforeAnonymizationSha256":  "5f4142f820a9d82eff83e05e29c67458c28b7953f681580676f968d6b030c24b"
+                     },
+                     {
+                         "file":  "migration-all-editmode.log",
+                         "sha256":  "f18cfce383a831113dc56fe9367ae442b37b912391a407c572d548535a1c6c71",
+                         "beforeAnonymizationSha256":  "b8a4326ceaa2d47ca295f204a91134db58f674d223526c995c937f8e9e77cdec"
+                     },
+                     {
+                         "file":  "migration-all-editmode.xml",
+                         "sha256":  "9d95c642318154b475d2ad87a294429c8cf95048be5d3d59ebf177560fe0bab4",
+                         "beforeAnonymizationSha256":  "8cb4a48587ce2e6e29887d0ce795750188f290f5b0541660fe9abefc84d20cb7"
+                     },
+                     {
+                         "file":  "migration-player.log",
+                         "sha256":  "ede63a2719082b09ff2dc4fd961b38d9358386959d0816e0c9b76248f39a9af4",
+                         "beforeAnonymizationSha256":  "c945704ec802448501341d0e015fd17037dfe5d186a7f9f407d8e07df46602c4"
+                     },
+                     {
+                         "file":  "migration-player.xml",
+                         "sha256":  "49b505c6c9723de3c01eb81978b9f39c94bde328de26d123006ae85a3b647955",
+                         "beforeAnonymizationSha256":  "f134abb3cb3a4d887230e431702d5559f7896ab13f7002dee8a1a949775276db"
+                     },
+                     {
+                         "file":  "migration-player-final.log",
+                         "sha256":  "1b9fd3132eea5c2b171ed3ca7611ae79d026258499578b16d64fb4fc60891dbf",
+                         "beforeAnonymizationSha256":  "84b37373c0295b8034d4bbe3880402e31034392843200d5597c7e375fd4d0aa1"
+                     },
+                     {
+                         "file":  "migration-player-final.xml",
+                         "sha256":  "abd47e8ab4c57b4871846815c363200bb95da5f5e6fd54feb3af04c618150223",
+                         "beforeAnonymizationSha256":  "486b05c1aa4728fa33111048962c99cd3bbe0607b703e19901f4f010d1c8255f"
+                     },
+                     {
+                         "file":  "migration-final-editmode.log",
+                         "sha256":  "46af60b625731b6759b58125e05f67cf74464ba8b2fbdff319b484162af9d064",
+                         "beforeAnonymizationSha256":  "bb332e5f3bc9f3110d6dc87df6fa86dcbcc9076b38f8954cc3785851af7b64e9"
+                     },
+                     {
+                         "file":  "migration-final-editmode.xml",
+                         "sha256":  "9737aea74c6fe192ef01409aeda8b201cc042580f79b88c26c8b3e6e99072b88",
+                         "beforeAnonymizationSha256":  "357584847df2ebd150e42b6868233b9d756ff47787b20f412b9b469c9b90c970"
+                     },
+                     {
+                         "file":  "migration-readback-repro.log",
+                         "sha256":  "6f3e13310fd0eef0d7387a86078971ab2b86fc5863d82403909376648d68e646",
+                         "beforeAnonymizationSha256":  "ee1e9410fb2699671694bc9de995457e0fa7d2a89c7562f9478a8cab95ed3746"
+                     },
+                     {
+                         "file":  "migration-readback-repro2.log",
+                         "sha256":  "6d2b4765e53eef387498b2bd9a86f4f6e1d5fc5d2ebf0e5bea7d0e51e410774e",
+                         "beforeAnonymizationSha256":  "365a126986180757bcae5c28b72d4f9655b6b9d7c079142570084040ca45f160"
+                     },
+                     {
+                         "file":  "migration-readback-repro2.xml",
+                         "sha256":  "f1a98595c39f1e21875de3fa62085f74d6edd64fa69f9590e13225d0e132b68e",
+                         "beforeAnonymizationSha256":  "749d725014c7b4c5a35339fd3915ed131eb771d99b9b60b3c577096d7f01c4e4"
+                     },
+                     {
+                         "file":  "migration-verified-editmode.log",
+                         "sha256":  "f25ee548489045bb81a700d58058f9f254f70db5321996c87bf1a4a13d63b60d",
+                         "beforeAnonymizationSha256":  "95aea668dcb9244d820f5128034eae7d2ccfa64361c4a029acfc0950a325836f"
+                     },
+                     {
+                         "file":  "migration-verified-editmode.xml",
+                         "sha256":  "3f3dd78db1cb3eed3968cd4ebdcb95d7700871ab5ab95eadfb4d3d3127042c01",
+                         "beforeAnonymizationSha256":  "1df588a3bf4871432a1a490cdb8e450e6d6807522541a031f68854c9cd4babaa"
+                     },
+                     {
+                         "file":  "migration-playmode.log",
+                         "sha256":  "36685013a00720766e3db1ae6b9fdf2efd5fd461536afeac473afcc0c405c36b",
+                         "beforeAnonymizationSha256":  "f4d7c851f6cae06b2d3ce9232e98425450499eb52ee891f07f4c8cc936e10360"
+                     },
+                     {
+                         "file":  "migration-playmode.xml",
+                         "sha256":  "03552e1fdf62c96eb1f808f63ebc5880190fa3c0421b39447e18bb3ebccceb76",
+                         "beforeAnonymizationSha256":  "d373d3078db951274d01ad1caf0c1c47a838d12c95b5b463e6e30060f6a4edb0"
+                     },
+                     {
+                         "file":  "migration-playmode-normal.log",
+                         "sha256":  "9d8c7412dd95136a5311b91ae7b42cf6baddc5cd70761779cb202013c3bcdf42",
+                         "beforeAnonymizationSha256":  "a5220103140ba0f27916977f225e3d7d9f059527cbf9925782671b99591cf830"
+                     },
+                     {
+                         "file":  "migration-playmode-normal.xml",
+                         "sha256":  "20b3b128ae088d11d0c7d23ecf97779b93bb8a5b62dceb7f1b7f491d6502d0d6",
+                         "beforeAnonymizationSha256":  "a3fb343e43ac3edba87d6314ba3931c7422a9bff11d55afd773c4d1f217298aa"
+                     },
+                     {
+                         "file":  "migration-playmode-termination.log",
+                         "sha256":  "ceea2e96dfd2a2d500199bda1279ed5f78a9b4f2dd86e21be9f06fb1cb4b86d9",
+                         "beforeAnonymizationSha256":  "919cc3f9716e8927385ff3be4718c89e8884b10709cc9e311106e1a7e9cc9e29"
+                     },
+                     {
+                         "file":  "migration-playmode-termination.xml",
+                         "sha256":  "edb076fa191ab6fb140a34a498127fcb0cca6a584f26f069c317352c94b5f0b7",
+                         "beforeAnonymizationSha256":  "2c15d39b49dd6962d8360649868fdddd5ad04a3c6a8e5808849aaf411fb9a2dc"
+                     },
+                     {
+                         "file":  "migration-player-verified.log",
+                         "sha256":  "ec096b5b2a1f02cba0510536ad14eb1618f52eb8556ef4e0acf845ac1880b829",
+                         "beforeAnonymizationSha256":  "f22a8e427cb8675f710db30d98f971a8f92fe56845fb9b0bbd4b222958d38937"
+                     },
+                     {
+                         "file":  "migration-player-verified-fresh.log",
+                         "sha256":  "c695c46d3c2752c666fbe61800d3bce907ac81e184200cab160bba07dda68760",
+                         "beforeAnonymizationSha256":  "2eae134def7bf94b4977800f7255a884f66f270fc32e67642954d9af012aedc4"
+                     },
+                     {
+                         "file":  "migration-player-verified-fresh.xml",
+                         "sha256":  "84ffbffd26f0d9b266cf255e0f0e4542a3f76e946c26a001348e3a549d1ef2a5",
+                         "beforeAnonymizationSha256":  "b8ac3fbd3cd3eb13ef0d49373abc8461395ce42b8435e8ccc0da37f5f7a30b3c"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/01-default-vp-forward.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/02-default-vp-both.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/03-default-mesh-off.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/04-default-mesh-on.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/05-lit-mesh-off.png",
+                         "sha256":  "b1719cd40dc68a916a044307cb404d5fbd2bd105561ed0ab133b04f21ddccd9b"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/06-lit-mesh-on.png",
+                         "sha256":  "5c90515af16963305dff58a69b016a3273e0c35692b3b21577646da9f583107b"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/07-lit-vp-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/08-lit-vp-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/09-lit-vp-forward-repeat.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/10-lit-request-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images/11-lit-request-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images/measurements.txt",
+                         "sha256":  "713905d90a240799e30bcf040a1ed795307444953b7b40c9b183857160837725"
+                     },
+                     {
+                         "file":  "player-images-verified/01-default-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/01-default-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/01-default-vp-forward.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images-verified/02-default-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/02-default-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/02-default-vp-both.png",
+                         "sha256":  "0054e204e02bb8758070133026cb920f4d89b9c0bcc47369184b83d40ad45e03"
+                     },
+                     {
+                         "file":  "player-images-verified/03-default-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/03-default-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/03-default-mesh-off.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images-verified/04-default-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/04-default-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/04-default-mesh-on.png",
+                         "sha256":  "2608a5ccdb2b17324f57c8882bc7e24b92c37353356c62810b8d413e4a066f66"
+                     },
+                     {
+                         "file":  "player-images-verified/05-lit-mesh-off.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/05-lit-mesh-off.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/05-lit-mesh-off.png",
+                         "sha256":  "b1719cd40dc68a916a044307cb404d5fbd2bd105561ed0ab133b04f21ddccd9b"
+                     },
+                     {
+                         "file":  "player-images-verified/06-lit-mesh-on.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/06-lit-mesh-on.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/06-lit-mesh-on.png",
+                         "sha256":  "5c90515af16963305dff58a69b016a3273e0c35692b3b21577646da9f583107b"
+                     },
+                     {
+                         "file":  "player-images-verified/07-lit-vp-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/07-lit-vp-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/07-lit-vp-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images-verified/08-lit-vp-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/08-lit-vp-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/08-lit-vp-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images-verified/09-lit-vp-forward-repeat.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/09-lit-vp-forward-repeat.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/09-lit-vp-forward-repeat.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images-verified/10-lit-request-forward.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/10-lit-request-forward.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/10-lit-request-forward.png",
+                         "sha256":  "bb042b676fa5058c26a3ec25d268c6ccc6ef6c2b0ab3c13591e0f00c8c278787"
+                     },
+                     {
+                         "file":  "player-images-verified/11-lit-request-both.atlas-occupancy.png",
+                         "sha256":  "088604a9d18d88671602033e75cce062a142d81aba340b9d8148bdce43971272"
+                     },
+                     {
+                         "file":  "player-images-verified/11-lit-request-both.atlas.rfloat",
+                         "sha256":  "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+                     },
+                     {
+                         "file":  "player-images-verified/11-lit-request-both.png",
+                         "sha256":  "caa5ece1046232c8ca781345724ee321e0541a076b269b36be086a30c78b713e"
+                     },
+                     {
+                         "file":  "player-images-verified/measurements.txt",
+                         "sha256":  "433662a23e03b32bd7c7480c5882dba054714013e13fb345bd9e59ea54ae6235"
+                     }
+                 ],
+    "sources":  [
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/Verification/MeshCutVerifier.cs",
+                        "sha256":  "586c409fdea3ef69bcf9574bf6c5f5d918a3efd6a9a1f015d1acfa9b1281b9b2"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Editor/MeshCut/Verification/SyntheticGeometry.cs",
+                        "sha256":  "41458e0c7e3482214cb4916403e910903117328903c519352a81c705f858c63a"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/MeshCut/MeshCutKernel.cs",
+                        "sha256":  "e73b3031f4a67edd1f800dcb4b159f209558acc41e488bbe6dc81277c51e2b5b"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/MeshCut/RenderCutMarker.cs",
+                        "sha256":  "6fcd879651ea83b1b7451d59cd62e7f16f19d1020ab9ec5b73c0a58a40e53a82"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpCompactVertex.hlsl",
+                        "sha256":  "01f8758bc249ab6f300a2eb095f0be5135467009ba0baa15950d071b0f5fb26c"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpCompactVertex.hlsl.meta",
+                        "sha256":  "9401c4b23156a50229303c40dcf1cf4a5952d092969995220bc2496ad0066c5f"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpCpuGeometryStorage.cs",
+                        "sha256":  "5ff52dccf70e267ed47e3e35fd9651f0dd6c38ac25d8a4dd9e70bcb2e6e5e1ef"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedIndirectUnlit.shader",
+                        "sha256":  "71d2c9fab12c617fccca9f632317476574084944ff406522a7695a9c8784bb0e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpCulledIndexedShadowCaster.shader",
+                        "sha256":  "8027d1b9cf0b53aede8d4209c2f9781194bbec1c08ee83c43f09c07d4d50814e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpGpuGeometryBuffers.cs",
+                        "sha256":  "515d170f3f7f92ec3013bfbcfe497ef24e46e225d81e5985d15bb94b3887a6f0"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+                        "sha256":  "8037a7fb628344357bf2eadc87d7223dc747ab4c0f80bacf5ffbb7eedec2f0cd"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+                        "sha256":  "e6d9a287bb12b619a9d3c351800a7b8e29b78c5cfed8a959f63de8616dc86279"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndirectShadowCaster.shader",
+                        "sha256":  "ed3ae52fb5385f0d488695a1298487eaca27a2d3ce98c07902748645ae04e89e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpIndirectUnlit.shader",
+                        "sha256":  "7460521975324b1d300a058f45d765302b267b09b21aac5655499655f847cc73"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpMeshConverter.cs",
+                        "sha256":  "4d6fa22136820d5e454e5abfcc36b9f6160832d706a12c7f053ddda72265d2e9"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpRenderVertex.cs",
+                        "sha256":  "5177cc749a08c09b7d03a95a2731ee9d9b1ccec79d0068aa2cf432ae23ace835"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader",
+                        "sha256":  "7463e8a3830e0eeb709196a5eda3eca2f37f172aa221143eba34dbcee7b141ab"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/VpUnlit.shader",
+                        "sha256":  "b3cba23c61e983e293f6d03c6abf07f3108e6aacb730be0d3982248c91faf1f0"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Runtime/Rendering/Zantetsu.Rendering.asmdef",
+                        "sha256":  "14cb89a08c3b731edf55ee2c2c0fd005ad65c204a8ffcc4a65e1b7b4b6d40c28"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/CommonGeometryBasisChangeTests.cs",
+                        "sha256":  "152462091fe44d9d9355de15d18d5f5aa6716ed4c385a31afb31ee2de5a30bdf"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/MeshCutKernelTests.cs",
+                        "sha256":  "3b7d53c1093436938945f7544a38ef280ed30d83f5504c421c22abf16f3f946e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/VpCutDisplayTests.cs",
+                        "sha256":  "3cdbad586f5e4b30f87c097e23a23a874738927ec74fb75f71057b4702f0ce7b"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/VpCutInputGateTests.cs",
+                        "sha256":  "0fbe7b2584302903e628b7b1f2e0297b499898ddd0bceb431ba6a20148aaa6bd"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/VpStorageCutInputTests.cs",
+                        "sha256":  "cd136bec00afcfecc396031ea71b85fec5f303045779293da870d69a6a50809f"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/MeshCut/VpStorageCutOutputTests.cs",
+                        "sha256":  "971e524b8d4ebbaace90cbca06532b6c88ab7e70656bd58cd83b8b3bae77455c"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpCpuGeometryPoolTests.cs",
+                        "sha256":  "846235f6423e43e48455aa5755dbc00ee39eb3b5ed8091ce824eac1fba054d4d"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpCpuGeometryStorageMetadataTests.cs",
+                        "sha256":  "aabea3ad92933f80a89e09ef218c19aa2b8b8f469bc2d3bba9563a3767a9e3fc"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpCpuGeometryStorageTests.cs",
+                        "sha256":  "f011a6f5516ae560ba3719f28d4f009dbfeb4ccbb100afb3c5383648336baddb"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpCutSurfaceColourTests.cs",
+                        "sha256":  "012e786cdc43f29642fc81e695a79c42b9826041cf87f91baacdbf416547609a"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpGpuGeometryBuffersTests.cs",
+                        "sha256":  "e7a24911400c1d93d8e541aaee8a380c2720fbbf20369e9bcd4cf9a994689c38"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpIndexedIndirectDrawTests.cs",
+                        "sha256":  "543a83799711986ef9b05020f4dd807c557349ff671298082a3ca6ef3c0859d1"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpMeshConverterTests.cs",
+                        "sha256":  "ac04c3f9920f5d9521e2dcb4ac73acd858d51b24680e93d6d9ac6fa5101edf8d"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpRenderVertexTests.cs",
+                        "sha256":  "a039151a12cb87f03a55ed17d521935556cdbfcfb15403607e1bd6d91ddad87d"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpStoredGeometryDisplayTests.cs",
+                        "sha256":  "f213918f7e8f8eaaa9e247ea19e62f764bbadca0bcc9324430e8ae07187b894e"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpStoredGeometryDrawTests.cs",
+                        "sha256":  "624089b0d2bed5a5e1910580ce0cd1ab3363002797ad911a217bb7388994a85a"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/EditMode/Rendering/VpStoredGeometryMeshTests.cs",
+                        "sha256":  "a2f71ab8cf1228654d1c6c2dc8a1b15852e2d9c68c25e59575899da34c7491a2"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvStoragePlayerTests.cs",
+                        "sha256":  "8d07202e3edd27743e1134089ebe91c22102d2d86fe9d375b5e587be88480a66"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Compact16uvStoragePlayerTests.cs.meta",
+                        "sha256":  "6ad6cbfae7b6a01ac088e72fd4d40c1b0a3ea7f99422faf4646e0d7e59cba709"
+                    },
+                    {
+                        "path":  "Assets/Zantetsu/Tests/StandaloneRendering/Zantetsu.Rendering.StandaloneTests.asmdef",
+                        "sha256":  "ae1ef00162250eb211c18187fdc89d27a72d6320ce1a15a00f7dbb763ffa5e67"
+                    },
+                    {
+                        "path":  "DESIGN.md",
+                        "sha256":  "cd31b53c1fd108e132b22d814cf1d768ba248e51ad1dad97d73ed95002e4c0f0"
+                    },
+                    {
+                        "path":  "Tools/Summarize-Compact16uv-Migration.ps1",
+                        "sha256":  "7629f1fcd9747f845e0db5cd27275936e955add296685312473ec74bec9e06cd"
+                    }
+                ],
+    "limitations":  [
+                        "Player correctness is not a performance measurement.",
+                        "Atlas texture switching, new asset intake, product scene residency and XR are separate gates.",
+                        "Logs/XML anonymize the current user-profile path; before and after hashes are recorded."
+                    ]
+}

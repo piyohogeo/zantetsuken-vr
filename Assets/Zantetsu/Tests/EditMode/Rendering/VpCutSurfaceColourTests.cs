@@ -24,7 +24,7 @@ namespace Zantetsu.Rendering.Tests
 
         // The marker every generated cap vertex carries (Zantetsu.MeshCut.RenderCutMarker); written here as the raw
         // value so that this test does not depend on the MeshCut assembly.
-        private static readonly Vector2 CapUv = new Vector2(-0.5f, 0f);
+        private static readonly Vector2 CapUv = new Vector2(247.5f / 256f, 247.5f / 256f);
         private static readonly Vector2 SurfaceUv = new Vector2(0.5f, 0.5f);
 
         private static readonly Vector3[] k_leftTriangle =
@@ -216,7 +216,7 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
-        public void APositiveRawUv_IsDrawnWithTheTexture_AndANegativeOneWithTheCutSurfaceColour()
+        public void ASurfaceUv_IsTextured_AndTheReservedSlotUsesTheCutSurfaceColour()
         {
             Material material = ForwardMaterial(Color.red, Color.white);
             WithSurfaceAndCap(material, (render, buffers) =>

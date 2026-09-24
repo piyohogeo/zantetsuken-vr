@@ -215,28 +215,28 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
-        public void NegativeSourceUv_IsNotRejected_AndCapMarkerIsInheritedByARecut()
+        public void CompactSourceUv_AndCapSlotAreInheritedByARecut()
         {
-            var mesh = SyntheticGeometry.Box(3, new float3(1, 1, 1), k_origin).Finish(new LogicalMeshBuilder.AttributeOptions { UvOffset = new float2(-2f, -1.5f) });
+            var mesh = SyntheticGeometry.Box(3, new float3(1, 1, 1), k_origin).Finish();
             using (var h = new MeshCutHarness())
             {
-                var g = h.Place(mesh, "negative-uv", 7, 11);
+                var g = h.Place(mesh, "compact-uv", 7, 11);
                 var first = h.Cut(g, SyntheticGeometry.Plane(new float3(0, 1, 0), k_origin + new float3(0, 0.0137f, 0)));
-                VerifyOk(h, first, "negative-uv first cut");
-                // interpolated surface vertices keep negative UVs (no clamp, no marker); cap vertices carry the marker
-                int negativeInterpolated = 0;
+                VerifyOk(h, first, "compact-uv first cut");
+                // Surface and cap slots stay distinct after interpolation and quantization.
+                int surfaceInterpolated = 0;
                 foreach (uint v in first.Positive.ReferencedVertices())
-                    if (first.IsNew(v) && h.Pool.Vertices[v].uv0.x < -1f) negativeInterpolated++;
-                Assert.That(negativeInterpolated, Is.GreaterThan(0), "interpolated surface vertices keep the source's negative UV");
+                    if (first.IsNew(v) && h.Pool.Vertices[v].u < 240) surfaceInterpolated++;
+                Assert.That(surfaceInterpolated, Is.GreaterThan(0), "interpolated surface vertices do not become caps");
 
                 // second cut through the first cap: the first cap's render vertices carry the marker, so every node
-                // interpolated on the cap's face side inherits exactly (-0.5, 0) by ordinary attribute interpolation
+                // interpolated on the cap's face side inherits exactly slot (247,247).
                 var firstCapVertices = new HashSet<uint>();
                 foreach (var (a, b, c, _) in first.Positive.Triangles())
                     if (first.IsNew(a) && first.IsNew(b) && first.IsNew(c)) { firstCapVertices.Add(a); firstCapVertices.Add(b); firstCapVertices.Add(c); }
                 Assert.That(firstCapVertices.Count, Is.GreaterThan(0));
                 var second = h.Cut(first.Positive, SyntheticGeometry.Plane(new float3(1, 0, 0.05f), k_origin + new float3(0.0231f, 0, 0)));
-                VerifyOk(h, second, "negative-uv second cut");
+                VerifyOk(h, second, "compact-uv second cut");
                 int onOldCap = 0, clippedCapTriangles = 0;
                 foreach (var (a, b, c, _) in second.Positive.Triangles())
                 {
