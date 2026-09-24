@@ -29,9 +29,26 @@ $changed+=@(& git -C $root ls-files --others --exclude-standard -- Assets/Zantet
 $sources=@($changed | Sort-Object -Unique | ForEach-Object{[ordered]@{path=$_;sha256=(Get-FileHash (Join-Path $root $_)).Hash.ToLowerInvariant()}})
 $private=Join-Path $root 'Assets/Licensed/Compact16uvIntake/SceneIntegration'
 $inputs=@(Get-ChildItem -LiteralPath $private -File | ForEach-Object{[ordered]@{file=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLowerInvariant()}})
+$accepted=@()
+foreach($name in @('run7-visible.log','run8-visible.log','run9-visible.log')){
+    $path=Join-Path $directory $name
+    if(Test-Path $path){
+        $log=[IO.File]::ReadAllText($path)
+        if($log -match 'SANDBOX PLAYER: finished with code 0' -and $log -notmatch 'SANDBOX PLAYER: FAILED' -and
+            [regex]::Matches($log,'frames=240 drawnFrames=240').Count -eq 2 -and
+            $log -match 'IsReleased=True IsDrained=True displayDisposed=True' -and
+            $log -match 'atlas bound after shutdown=False'){$accepted+=$name}
+    }
+}
+$binaryRoot=Join-Path $env:LOCALAPPDATA 'Zantetsu/TestPlayers/SceneCompact16uv20260924NoXR'
+$binaryHashes=@('CutWorldSandbox.exe','GameAssembly.dll','CutWorldSandbox_Data/globalgamemanagers' | ForEach-Object {
+    $path=Join-Path $binaryRoot $_
+    if(Test-Path $path){[ordered]@{file=$_;sha256=(Get-FileHash $path).Hash.ToLowerInvariant()}}
+})
 $summary=[ordered]@{schemaVersion=1;baselineCommit='737adcfa';profile='Compact16uv-ProductSandboxScene';tests=$runs;playerObservations=$measurements;evidence=$evidence;sources=$sources;privateSceneHashes=$inputs;
     excludedPlayerRuns=@{ 'run1.log'='IL2CPP unsupported Process API; coroutine aborted, task process stopped.'; 'run2.log'='Exit 0 but blank captures with idle XR; rendering/performance acceptance refused.'; 'run3.log'='XR stopped but hidden-window draws remained zero; blank-image guard returned exit 8.'; 'run4.log'='Offscreen camera target did not restore drawing; exit 8.'; 'run5.log'='Graphics-enabled batchmode also had zero draws and blank captures; exit 8.'; 'run6.log'='XR disabled before startup still had zero draws and blank captures; exit 8.' };
-    renderingAndPerformanceAcceptance='NOT ESTABLISHED: all six Player runs excluded. Visible-window diagnostic awaits approval.';
+    acceptedVisiblePlayerRuns=$accepted;validatedBinarySourceCommit='2dd216fc';diagnosticBinaryHashes=$binaryHashes;
+    renderingAndPerformanceAcceptance=if($accepted.Count -eq 3){'Representative synthetic product scene: three visible-host offscreen mono runs accepted, captures visually reviewed. No Legacy32 comparison or shipping/XR performance claim.'}else{'Visible-window acceptance incomplete; inspect logs and captures.'};
     limitations=@('Original synthetic product sandbox, not Megacity physics or character integration.','Inclusive Main Thread contains waits; working set is a process snapshot, not GPU residency or peak.','No matching Legacy32 comparison or measured memory reduction.','Original scene/materials unchanged; product main unmerged; XR unverified.')}
 [IO.File]::WriteAllText($summaryPath,($summary | ConvertTo-Json -Depth 10).Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
 $runs | ForEach-Object{[pscustomobject]$_}|Format-Table name,total,passed,failed,skipped,inconclusive
