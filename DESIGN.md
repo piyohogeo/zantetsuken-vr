@@ -258,6 +258,8 @@ Compact16uv移行ではCPU永続VP頂点・切断予約出力・GPU頂点を同�
 
 入力UVの対応域は有限な`[0,1]`とし、両端を含め最近傍のbyte centreへ量子化する。import端点の丸め余白だけは`2.3841858e-7`（1における2 ULP）まで許容する。Unity標準Sphereの`1.00000012`をこれで扱う。BottomHalfUVアセットの中心値は正確に保持する。余白を超える域外／非有限UV、非有限位置、非有限／zero normalは入力準備で拒否し、wrapや制限のないclampを行わない。normalは単位方向としてoct量子化し、長さは保持しない。再切断の累積属性誤差は許容するが、位置・index・topology差の許容へ流用しない。移植状況・テスト証拠は`docs/diagnostics/compact16uv-migration/`を参照する。
 
+同一binaryの転送境界比較では、代表Megacityの切断前／3回再切断後の同じ属性を16Bと復号32Bに置き、同じ要素容量・転送範囲でSetData費用を測る。結果は`docs/diagnostics/compact16uv-upload/`。大転送で16B側のCPU費用低下と頂点capacityの半減を確認したが、少量の新規tailでは差が小さい。これはGPU非消費bufferへの転送診断であり、製品scene全体のLegacy32比較、元float属性の切断比較、GPU residency、growth／retirement peakとは分ける。比較用32Bコピーは明示diagnostic実行時だけ作り、製品経路へ並行常駐を追加しない。
+
 #### 4.5.2 準備と表示採用
 
 Compact16uvのStatic入力はEditor/offlineで一度だけ16Bへ変換し、`VpStatic16File`からCPU storageへ登録できる。ファイル内indexはmesh-local UInt32とし、配置先のglobal offsetへ登録時に一度だけrebasingする。topology IDとmaterial対応はauthoring由来で保持し、位置weldで生成しない。登録時の16B一時配列・入力gate・storage copyは残るが、定常frameでoct/UV encodeやfloat32 Mesh展開を行わず、source配列を永続cacheとして保持しない。skin／blend shapeをStaticとして固定姿勢化する代替経路にはしない。現段階は代表Megacityの取り込み境界であり、既存Sceneの自動置換ではない（`docs/diagnostics/compact16uv-intake/`）。
