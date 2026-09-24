@@ -1,0 +1,61 @@
+{
+    "baselineCommit":  "deafb0aa",
+    "passed":  true,
+    "pythonControlsPassed":  7,
+    "tests":  [
+                  {
+                      "name":  "focused",
+                      "passed":  1,
+                      "failed":  0,
+                      "skipped":  0,
+                      "actualAssetOutput":  "axis=2 offset=-7.608755 physicsVolumes=309.78085230067194,1124.4165393968387 displayCommittedVertices=5518\naxis=0 offset=0.01360642 physicsVolumes=116.31674679703852,193.46409761449871 displayCommittedVertices=5887\naxis=1 offset=1.72333145 physicsVolumes=58.695569163368923,57.621177339978395 displayCommittedVertices=6130\nSaving results to: [USERPROFILE]/AppData/LocalLow/DefaultCompany/zantetsuken-vr\\TestResults.xml\n"
+                  },
+                  {
+                      "name":  "editmode",
+                      "passed":  3614,
+                      "failed":  0,
+                      "skipped":  0,
+                      "actualAssetOutput":  "axis=2 offset=-7.608755 physicsVolumes=309.78085230067194,1124.4165393968387 displayCommittedVertices=5518\naxis=0 offset=0.01360642 physicsVolumes=116.31674679703852,193.46409761449871 displayCommittedVertices=5887\naxis=1 offset=1.72333145 physicsVolumes=58.695569163368923,57.621177339978395 displayCommittedVertices=6130\n"
+                  }
+              ],
+    "hashes":  [
+                   {
+                       "path":  "Tools/Export-Compact16uv-Physics.py",
+                       "sha256":  "d72ae2adf2c1de7fdfa634b735dfcb565e65df63f15e19a651feabb95e476799"
+                   },
+                   {
+                       "path":  "Tools/Test-Compact16uv-Physics.py",
+                       "sha256":  "4d8e09ef5b8793c4466af44f7cbb347166ac35dd15555a65f29aabd67deabb51"
+                   },
+                   {
+                       "path":  "Tools/Summarize-Compact16uv-Physics.ps1",
+                       "sha256":  "fc07b7ebd01f3478ac37a3153ee7c5e43516f14ba1fe18690642812690cc9e7a"
+                   },
+                   {
+                       "path":  "Assets/Zantetsu/Tests/EditMode/PhysicsCut/Compact16uvAuthoredPhysicsTests.cs",
+                       "sha256":  "90e59a2be5c1ae6dd7c06b1c3ca8b229a9646f52e87d6e444ff7f92a0d1b9d36"
+                   },
+                   {
+                       "path":  "DESIGN.md",
+                       "sha256":  "db60190faa339318c0b7893ffe9fb042a618d8ff70b60e21ff4d046cda7f849c"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-physics-intake/README.md",
+                       "sha256":  "d3c9556f4456882ecaf6ca5c7f0398ff25aabe14cb440e85721d111b06df65c6"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-physics-intake/offline.json",
+                       "sha256":  "c2fe0f39460d0cc7652552fc98f055e455d96ad6ef1eb608d7e10eff67407c13"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-physics-intake/focused.xml",
+                       "sha256":  "5d8b25c4e6790b9420327a13fcaa14e99f4a579f4c2041c55d5d2ab752cfdb25"
+                   },
+                   {
+                       "path":  "docs/diagnostics/compact16uv-physics-intake/editmode.xml",
+                       "sha256":  "f1d8ccab75b2523ae487ebe3bbaf8b2be86f686b8bc09d9dcb5052caca6554c5"
+                   }
+               ],
+    "scope":  "Actual authored physics + Static16 offline binding and component tests only; no product-scene integration/performance claim",
+    "privateFixtureSha256":  "21cfe6a62ecff7d36426f2b2212a5757764840ddab399601b154e6579c36b2a6"
+}
