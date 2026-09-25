@@ -1,0 +1,292 @@
+{
+  "baselineCommit": "64fc03d7fe8eaadc264cf23206530ceb5dd734c8",
+  "runs": [
+    {
+      "name": "focused-1",
+      "result": "Passed",
+      "total": 24,
+      "passed": 24,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 24,
+      "physicsPlayModePassed": 0,
+      "failures": [],
+      "pids": [
+        "30556"
+      ],
+      "xmlSha256": "3d1e78e3ace30b456629637e275b831e619a2765a445f58f2998ca0f6778b798",
+      "logSha256": "39db59df1399f8388d7678b033741b992d8e4ac0436a4929f7d6349aa8a38fd7",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "fba2cb5a905e10dc4165d9bf43ae94aa1131d6713eeeff34f53b7f409be7306b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "f0194e9106be16ab5c6e5c6101e03b584a700930e28034669ce191ad49fb0d72"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "4331c13b63b954b4198d4d98f914483c6817154cb5f90de3833889915ceef9fc"
+        }
+      ]
+    },
+    {
+      "name": "playmode-1",
+      "result": "Failed(Child)",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 1,
+      "physicsPlayModePassed": 0,
+      "failures": [
+        {
+          "name": "Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.D5_ColdPreparation_InactiveBeforeReturn_DetachesMesh_DeferredObjectsDisappear",
+          "message": "  pending destroy must not borrow the input Mesh\n  Expected: null\n  But was:  <Prepared bone-local convex (UnityEngine.Mesh)>\n",
+          "stack": "at Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests+<D5_ColdPreparation_InactiveBeforeReturn_DetachesMesh_DeferredObjectsDisappear>d__9.MoveNext () [0x0014a] in C:\\Users\\junic\\src\\zantetsuken-vr-compact16uv\\Assets\\Zantetsu\\Tests\\PlayMode\\ProvisionalMassFlagActivationPlayModeTests.cs:47\nat UnityEngine.TestTools.TestEnumerator+<Execute>d__7.MoveNext () [0x0003a] in .\\Library\\PackageCache\\com.unity.test-framework@bd7f943e9647\\UnityEngine.TestRunner\\NUnitExtensions\\Attributes\\TestEnumerator.cs:44\n"
+        }
+      ],
+      "pids": [
+        "103152"
+      ],
+      "xmlSha256": "3efb0ab010e33ace038cd75765a553c55d5fab7f956f6c3c905a9ee6d6046847",
+      "logSha256": "b585229b561cb487df5e0b4f0e9145e7eae32144dfb8a488dfb32106583b4922",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "fba2cb5a905e10dc4165d9bf43ae94aa1131d6713eeeff34f53b7f409be7306b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "f0194e9106be16ab5c6e5c6101e03b584a700930e28034669ce191ad49fb0d72"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "4331c13b63b954b4198d4d98f914483c6817154cb5f90de3833889915ceef9fc"
+        }
+      ]
+    },
+    {
+      "name": "playmode-2",
+      "result": "Passed",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 1,
+      "physicsPlayModePassed": 1,
+      "failures": [],
+      "pids": [
+        "47900"
+      ],
+      "xmlSha256": "b13d602960e0ca684ecc942025d2c71ecea5d0a442dd6e20958df12d45f1f65e",
+      "logSha256": "9a5bd018d812e9f85e7c242b0a5aa8b64274236c24331ccc4704d9252ea36e79",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "4e10dd75e27f8b3d05fd4d36e36459b453059948b5a82d8658fec06b285e0b2b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "71f94b1892aeb48c36034568b9277e78b4e198d82feb6ce60cedf9d76d8760e1"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "c44eb3129a78bf4c4d98a42ee6f8b3485ab1d11706cb730128d1d4c0a8a6a3cd"
+        }
+      ]
+    },
+    {
+      "name": "provisional-playmode-1",
+      "result": "Failed(Child)",
+      "total": 14,
+      "passed": 13,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 1,
+      "physicsPlayModePassed": 13,
+      "failures": [
+        {
+          "name": "Zantetsu.Rendering.StandaloneTests.PaletteAtlasPlayerTests.StencilProvisional_UsesRedSlot_SwitchesWithoutUpload_AndStillNeedsPositiveStencil",
+          "message": "  Expected: 2048\n  But was:  6144\n",
+          "stack": "at Zantetsu.Rendering.StandaloneTests.PaletteAtlasPlayerTests.StencilProvisional_UsesRedSlot_SwitchesWithoutUpload_AndStillNeedsPositiveStencil () [0x00610] in C:\\Users\\junic\\src\\zantetsuken-vr-compact16uv\\Assets\\Zantetsu\\Tests\\StandaloneRendering\\PaletteAtlasPlayerTests.cs:126\n"
+        }
+      ],
+      "pids": [
+        "120516"
+      ],
+      "xmlSha256": "7bd6520015d466cbb02aa272fa93749f8c098e35e90649601d63a965e946835d",
+      "logSha256": "bdfed512627e4aa11b5edc5a7afdd4df2d5a5eed3b05b37ed551ddc8a1dc862c",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "4e10dd75e27f8b3d05fd4d36e36459b453059948b5a82d8658fec06b285e0b2b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "71f94b1892aeb48c36034568b9277e78b4e198d82feb6ce60cedf9d76d8760e1"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "c44eb3129a78bf4c4d98a42ee6f8b3485ab1d11706cb730128d1d4c0a8a6a3cd"
+        }
+      ]
+    },
+    {
+      "name": "full-1",
+      "result": "Passed",
+      "total": 3821,
+      "passed": 3821,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 24,
+      "physicsPlayModePassed": 0,
+      "failures": [],
+      "pids": [
+        "130960"
+      ],
+      "xmlSha256": "e985a1b5e053a0bc6ff5b692c005c4b96de9d35191c5b144510a2908c0cd00de",
+      "logSha256": "7256b8645815fc0850ccdf0b6f1ca08290dfbe91d6652355c97891b22a7920aa",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "4e10dd75e27f8b3d05fd4d36e36459b453059948b5a82d8658fec06b285e0b2b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "71f94b1892aeb48c36034568b9277e78b4e198d82feb6ce60cedf9d76d8760e1"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "c44eb3129a78bf4c4d98a42ee6f8b3485ab1d11706cb730128d1d4c0a8a6a3cd"
+        }
+      ]
+    },
+    {
+      "name": "palette-recheck-1",
+      "result": "Passed",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d5Cases": 0,
+      "physicsPlayModePassed": 0,
+      "failures": [],
+      "pids": [
+        "87056"
+      ],
+      "xmlSha256": "d94908576c0b91d9c9dbf5c4414417496109b4b22a1b025004db9a5a7c285b55",
+      "logSha256": "7e0530bc506b63a3851d412668d4540bf1ccb258f4e348a63124d248688f0c52",
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/ProvisionalSeparation.cs",
+          "sha256": "3af1289a1ae0d714e6a2c3ab2fd9f35c3a8c49889bdb1caf9448f3203c78cb2a"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "4e10dd75e27f8b3d05fd4d36e36459b453059948b5a82d8658fec06b285e0b2b"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/VpPhysicsColdPreparation.cs",
+          "sha256": "71f94b1892aeb48c36034568b9277e78b4e198d82feb6ce60cedf9d76d8760e1"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "543d7f2495cebd517a86b8581edcb09bcf32934a8e890d66caaff0b2528c45e7"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/D5JointDefaultsTests.cs",
+          "sha256": "875a40e6f5570aac155548f3e8663f78113c10dc05a242c0dbd0e7720440c1be"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/PlayMode/ProvisionalMassFlagActivationPlayModeTests.cs",
+          "sha256": "c44eb3129a78bf4c4d98a42ee6f8b3485ab1d11706cb730128d1d4c0a8a6a3cd"
+        }
+      ]
+    }
+  ],
+  "freshJointSettersOmitted": 5,
+  "coldEntryGameplayConnected": false,
+  "performanceMeasured": false,
+  "standalonePlayerVerified": false,
+  "privateSnapshotsModified": false,
+  "paletteTestSourceSha256": "4b25f4f4c5548eb479aac4db4a3f0b3e492f9d2444429113b4e3036b7b17fddc",
+  "unityGeneratedSettingsRestored": false,
+  "unitySettingsBackup": [
+    {
+      "file": "OpenXR Package Settings.asset",
+      "sha256": "821490dc0ef84568dd72f817013328984a44f7a61c383fea69031daeac55513d"
+    },
+    {
+      "file": "SceneTemplateSettings.json",
+      "sha256": "bb9098b3bfcde78d93e264b96f7b77b5430e64e8c57a7aad7f5a5d9c3945e16a"
+    }
+  ]
+}

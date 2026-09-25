@@ -8,6 +8,7 @@
 // inertia is recomputed internally.
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -31,6 +32,35 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private NativeArray<int> _faceEdges;
         private NativeArray<BrepEdge> _edges;
         private PhysicsShapeSource _meshSource;
+
+        [UnityTest]
+        public IEnumerator D5_ColdPreparation_InactiveBeforeReturn_HoldsMeshUntilDeferredObjectsDisappear()
+        {
+            var source=NewAuthoredShape(1);
+            var input=new VpPreparedPhysicsInput(source.BankOf(0),new[]{source.Convex(0)});_disposables.Add(input);
+            var warm=new VpPhysicsColdPreparation();warm.Prepare(input);
+            var roots=Resources.FindObjectsOfTypeAll<GameObject>().Where(g=>g.name.StartsWith("Cold physics preparation ")).ToArray();
+            Assert.That(roots.Length,Is.EqualTo(2));
+            var colliders=roots.SelectMany(r=>r.GetComponentsInChildren<MeshCollider>(true)).ToArray();
+            Assert.That(colliders.Length,Is.EqualTo(1));
+            foreach(var root in roots)Assert.That(root.activeInHierarchy,Is.False);
+            var borrowedMesh=colliders[0].sharedMesh;Assert.That(borrowedMesh,Is.Not.Null);
+            Assert.That(warm.IsPrepared,Is.False);Assert.That(warm.TryFinish(),Is.False);
+            Assert.Throws<System.InvalidOperationException>(()=>warm.Dispose());
+            Assert.That(colliders[0].gameObject.activeInHierarchy,Is.False);
+            Physics.SyncTransforms();
+            Assert.That(Physics.OverlapBox(Vector3.zero,Vector3.one*20).Any(c=>colliders.Contains(c)),Is.False);
+            warm.Prepare(input);Assert.That(input.IsPosed,Is.False);Assert.That(input.ColdCookCalls,Is.EqualTo(1));
+            Assert.That(input.TryPose(new[]{float4x4.identity},out _),Is.True);
+            input.Dispose();
+            Assert.That(borrowedMesh!=null,Is.True,"temporary Collider must retain its Mesh independently of the input");
+            yield return null;
+            foreach(var root in roots)Assert.That(root==null,Is.True);
+            Assert.That(colliders[0]==null,Is.True);Assert.That(borrowedMesh!=null,Is.True);
+            Assert.That(warm.TryFinish(),Is.True);Assert.That(warm.IsPrepared,Is.True);warm.Dispose();
+            yield return null;
+            Assert.That(borrowedMesh==null,Is.True,"last cold hold releases the unregistered input Mesh");
+        }
 
         [TearDown]
         public void Cleanup()

@@ -60,6 +60,7 @@ namespace Zantetsu.PhysicsCut
     public sealed unsafe class VpPreparedPhysicsInput : IDisposable
     {
         PhysicsOwnerShape shape;
+        readonly PhysicsShapeSource meshOwner;
         readonly float3[][] bindPoints;
         readonly PhysicsMeshFrame[] frames;
         bool attempted, transferred, disposed;
@@ -72,7 +73,7 @@ namespace Zantetsu.PhysicsCut
             if (ranges == null || ranges.Count == 0) throw new ArgumentException("Validated bone-local convexes required", nameof(ranges));
             bindPoints = new float3[ranges.Count][]; frames = new PhysicsMeshFrame[ranges.Count];
             var meshes = new Mesh[ranges.Count];
-            var owner = PhysicsShapeSource.OwnPreparedMeshes(meshes);
+            var owner = meshOwner = PhysicsShapeSource.OwnPreparedMeshes(meshes);
             try
             {
                 for (int c = 0; c < ranges.Count; c++)
@@ -109,6 +110,21 @@ namespace Zantetsu.PhysicsCut
             }
             catch { shape?.Dispose(); throw; }
             finally { owner.Release(); }
+        }
+
+        // Borrowed synchronously by the load-time preparer only; it must release every temporary hold before returning.
+        internal PhysicsOwnerShape ColdPreparationShape()
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(VpPreparedPhysicsInput));
+            if (attempted || transferred || shape.BankUsers != 0 || shape.WorkUsers != 0)
+                throw new InvalidOperationException("Cold preparation requires an unposed, unborrowed input");
+            return shape;
+        }
+
+        internal PhysicsShapeSource AcquireColdMeshHold()
+        {
+            ColdPreparationShape();
+            meshOwner.Acquire(); return meshOwner;
         }
 
         /// <summary>Borrowed until TakeShape. Invalid pose consumes the attempt but never exposes partial output.</summary>
