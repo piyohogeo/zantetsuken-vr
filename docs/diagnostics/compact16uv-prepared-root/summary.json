@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "D3-prepared-root-display-editor-component",
+  "productBaseCommit": "44dfccc7e72bb2bcdd185c1c1b6bbfc5d2f088b7",
+  "privateProgressBaseCommit": "ff214e6",
+  "unity": "6000.3.22f1",
+  "focusedPassed": 19,
+  "fullEditModePassed": 3776,
+  "initialFullRunHadFailure": true,
+  "workerOverlapFailureCauseResolved": false,
+  "gameplaySwitched": false,
+  "performanceMeasured": false,
+  "playerVerified": false,
+  "licensedPayloadAdded": false,
+  "runs": [
+    {
+      "name": "focused-1",
+      "exitCode": 0,
+      "result": "Passed",
+      "total": 19,
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "failures": [],
+      "logSha256": "c23f2f3ffd8825eae9497c86b5ede2dc0764df82aed595c805c14e67499d5886",
+      "xmlSha256": "0c50cc4f6d19dbbe52cea3968cb837ed3687f73042c2360c5ef6c99ac19bd3d4"
+    },
+    {
+      "name": "full-1",
+      "exitCode": 2,
+      "result": "Failed(Child)",
+      "total": 3776,
+      "passed": 3775,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "failures": [
+        {
+          "test": "Zantetsu.MeshCut.Tests.VpAsyncStorageCutTests.TwoKernelsOfOneStorage_RunOnWorkersAtTheSameTime",
+          "message": "  two kernel calls overlapped in time, on different threads\n  Expected: True\n  But was:  False\n"
+        }
+      ],
+      "logSha256": "03c23f77f7b6b1995c550c4e8dba420f59eb4680c184309c5d71a251b21984fc",
+      "xmlSha256": "83fbee672941aa6df3b603539cdfc216cf57201733acd44f70def81f2d7fe623"
+    },
+    {
+      "name": "worker-recheck-1",
+      "exitCode": 0,
+      "result": "Passed",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "failures": [],
+      "logSha256": "935129e5b6aa30bdf255f80bfae7eec6dbb00e218b11e5af85489be6a488f535",
+      "xmlSha256": "2be93c50c77c773e4564e755592a1d2e8e4f187a6ff2d6fb4506fa5b7d7d4d38"
+    },
+    {
+      "name": "full-2",
+      "exitCode": 0,
+      "result": "Passed",
+      "total": 3776,
+      "passed": 3776,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "failures": [],
+      "logSha256": "99cbab24fba85ea953c7ed517d718b35890c6c5b0f9253e310c7f252b4f8f352",
+      "xmlSha256": "6551f56e7f57a931c8bab6750744e8803489a4ca7f1321b7270fcab96fe52458"
+    }
+  ],
+  "sources": [
+    {
+      "file": "Assets/Zantetsu/Runtime/MeshCut/VpLogicalCutDisplay.cs",
+      "sha256": "7694ad304eb861c9765f091f7086c723b14a82a33b7e6cfdfac497f8981832aa"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/MeshCut/VpPreparedRootDisplay.cs",
+      "sha256": "e35ba73929a3164f13a1c5e561e8075c5466c101bdd9ba5074c8b525303c0908"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/MeshCut/VpPreparedRootDisplay.cs.meta",
+      "sha256": "75d2f573c1a6a3d3b2dd607710a79e0258ad80c293babb8acbbcc90bd3fee69a"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinInput.cs",
+      "sha256": "a94fe4eb3d367d88cd94830d9b3fca45c7b4bcb41d13b443eeac299680339b31"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinOutput.cs",
+      "sha256": "9b4493bc7af3561651807d1cfed79b7b3381390a57341da4cde9371463ed3364"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinOutput.cs.meta",
+      "sha256": "f1152b70910ab70c36e90de56a681130a1277f725099d2854211def520a06bf2"
+    },
+    {
+      "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/VpPreparedRootDisplayTests.cs",
+      "sha256": "6509d5c6ae926002e1ebbce296337396a002a0fc2256667588c1c2a563236ce5"
+    },
+    {
+      "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/VpPreparedRootDisplayTests.cs.meta",
+      "sha256": "108e0c1826e119b9d45554f60019bf955e000362936f2b621457742dd133c386"
+    }
+  ]
+}
