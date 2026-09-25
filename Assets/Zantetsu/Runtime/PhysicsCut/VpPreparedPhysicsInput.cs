@@ -26,6 +26,14 @@ namespace Zantetsu.PhysicsCut
         public PhysicsMeshFrame MeshFrameOf(int convex) => _meshFrames == null ? default : _meshFrames[TableIndex(convex)];
         internal void PrepareMeshFrames() { _meshFrames = new PhysicsMeshFrame[ConvexCount]; }
 
+        internal bool HasLivePreparedPose => _preparedPoseWritten && !_ownerDone && !_freed;
+        internal bool RearmPreparedPose()
+        {
+            if (!HasLivePreparedPose || _bankUsers != 0 || _workUsers != 0) return false;
+            _preparedPoseWritten = false;
+            return true;
+        }
+
         // Only the unpublished one-shot producer has this capability. No public mutable shape/Frame registry.
         internal bool WritePreparedPose(float3[][] bindPoints, PhysicsMeshFrame[] frames)
         {
@@ -63,7 +71,7 @@ namespace Zantetsu.PhysicsCut
         readonly PhysicsShapeSource meshOwner;
         readonly float3[][] bindPoints;
         readonly PhysicsMeshFrame[] frames;
-        bool attempted, transferred, disposed;
+        bool attempted, everAttempted, transferred, disposed;
         public int ConvexCount => bindPoints.Length;
         public int ColdCookCalls { get; private set; }
         public bool IsPosed { get; private set; }
@@ -116,7 +124,7 @@ namespace Zantetsu.PhysicsCut
         internal PhysicsOwnerShape ColdPreparationShape()
         {
             if (disposed) throw new ObjectDisposedException(nameof(VpPreparedPhysicsInput));
-            if (attempted || transferred || shape.BankUsers != 0 || shape.WorkUsers != 0)
+            if (everAttempted || transferred || shape.BankUsers != 0 || shape.WorkUsers != 0)
                 throw new InvalidOperationException("Cold preparation requires an unposed, unborrowed input");
             return shape;
         }
@@ -127,13 +135,31 @@ namespace Zantetsu.PhysicsCut
             meshOwner.Acquire(); return meshOwner;
         }
 
+        // Only the internal fresh-character adapter may rearm; public TryPose remains one-shot.
+        // The adapter must keep all classification readers in tracked leases, never raw TryClassify results.
+        internal bool TryRearmAfterRefusal()
+        {
+            if (disposed || transferred || !attempted || !IsPosed || meshOwner.Users != 1) return false;
+            if (!shape.RearmPreparedPose()) return false;
+            attempted = false; IsPosed = false;
+            return true;
+        }
+
+        internal bool TryBorrowPosedShape(out PhysicsOwnerShape posed)
+        {
+            posed = null;
+            if (disposed || transferred || !IsPosed || !shape.HasLivePreparedPose) return false;
+            posed = shape;
+            return true;
+        }
+
         /// <summary>Borrowed until TakeShape. Invalid pose consumes the attempt but never exposes partial output.</summary>
         public bool TryPose(IReadOnlyList<float4x4> boneToOwner, out PhysicsOwnerShape posed)
         {
             if (disposed) throw new ObjectDisposedException(nameof(VpPreparedPhysicsInput));
             posed = null;
             if (attempted || transferred) return false;
-            attempted = true;
+            attempted = everAttempted = true;
             if (boneToOwner == null || boneToOwner.Count != ConvexCount) return false;
             for (int c = 0; c < frames.Length; c++)
             {
