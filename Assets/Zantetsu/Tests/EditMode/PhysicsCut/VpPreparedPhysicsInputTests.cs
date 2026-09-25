@@ -11,7 +11,7 @@ using Zantetsu.MeshCut;
 namespace Zantetsu.PhysicsCut.Tests
 {
     // Synthetic boxes only. Builder/collider ownership tests do not claim scene publication or solver coverage.
-    public unsafe class VpPreparedPhysicsInputTests
+    public unsafe partial class VpPreparedPhysicsInputTests
     {
         readonly List<IDisposable> owned = new List<IDisposable>();
         T Keep<T>(T item) where T : IDisposable { owned.Add(item); return item; }

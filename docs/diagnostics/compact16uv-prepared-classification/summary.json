@@ -1,0 +1,748 @@
+{
+  "baseProductCommit": "54515f9e6fc8808eab1ac73f52c5659597074717",
+  "candidateFileCount": 1405,
+  "candidateManifestDigest": "9837355e12797008ce8d4e9dc3e9df00555c96d8700254e3888cd8beda7d8449",
+  "sources": [
+    {
+      "file": "Runtime/PhysicsCut/ProvisionalCutDriver.cs",
+      "sha256": "7a96420e00a390a62235fc280734d08894c89b49079db05987bf9391e6c240d3"
+    },
+    {
+      "file": "Runtime/PhysicsCut/PreparedCutLease.cs",
+      "sha256": "f6c19e7fc879eb75335d3df59ec242fa3ad2851b22795f83590ae9bf8e160ecf"
+    },
+    {
+      "file": "Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+      "sha256": "75c5199067dda49b6c5d3631019b30677e86e21835a1d114aa7ccddb08f852ff"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/ProvisionalCutDriverTests.cs",
+      "sha256": "00044bac0bf2ef8739e8ade751383bda4cf48e7f954ee2aa55221651f3ea4d3c"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+      "sha256": "8be88724657b0ec79cac7764e4a500d79e7f60a05678991f22ed119a36eba0b8"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/PreparedCutLeaseTests.cs",
+      "sha256": "84fe40a0015f6635be8e4a32b6bbf18f2b0f5be81770655819fc15ff6ee5f75b"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/PreparedInputRearmTests.cs",
+      "sha256": "2b6d73dd3c485dcfdf950273f70a47d9ff8a0e356e6b0a30475a29681095edbc"
+    }
+  ],
+  "runs": [
+    {
+      "name": "focused-1",
+      "logSha256": "e0cb71177cf5c248cf3ad7eac1069124afa46b8a761afe97d5a1ed37a44cee1a",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/ProvisionalCutDriver.cs",
+          "sha256": "7a96420e00a390a62235fc280734d08894c89b49079db05987bf9391e6c240d3"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PreparedCutLease.cs",
+          "sha256": "f6c19e7fc879eb75335d3df59ec242fa3ad2851b22795f83590ae9bf8e160ecf"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "75c5199067dda49b6c5d3631019b30677e86e21835a1d114aa7ccddb08f852ff"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/ProvisionalCutDriverTests.cs",
+          "sha256": "00044bac0bf2ef8739e8ade751383bda4cf48e7f954ee2aa55221651f3ea4d3c"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "8be88724657b0ec79cac7764e4a500d79e7f60a05678991f22ed119a36eba0b8"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCutLeaseTests.cs",
+          "sha256": "84fe40a0015f6635be8e4a32b6bbf18f2b0f5be81770655819fc15ff6ee5f75b"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedInputRearmTests.cs",
+          "sha256": "2b6d73dd3c485dcfdf950273f70a47d9ff8a0e356e6b0a30475a29681095edbc"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "def7fd94bf1683e0ffc9b11c6b96b35272af91131e2ff00edaceb3d22606376a",
+      "pids": [
+        "132760"
+      ],
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 20,
+      "failures": []
+    },
+    {
+      "name": "full-1",
+      "logSha256": "cda33467c2c302c839521fb04962b805912e269ba29c3c6d616dd98fd34e13ad",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/ProvisionalCutDriver.cs",
+          "sha256": "7a96420e00a390a62235fc280734d08894c89b49079db05987bf9391e6c240d3"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PreparedCutLease.cs",
+          "sha256": "f6c19e7fc879eb75335d3df59ec242fa3ad2851b22795f83590ae9bf8e160ecf"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "75c5199067dda49b6c5d3631019b30677e86e21835a1d114aa7ccddb08f852ff"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/ProvisionalCutDriverTests.cs",
+          "sha256": "00044bac0bf2ef8739e8ade751383bda4cf48e7f954ee2aa55221651f3ea4d3c"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "8be88724657b0ec79cac7764e4a500d79e7f60a05678991f22ed119a36eba0b8"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCutLeaseTests.cs",
+          "sha256": "84fe40a0015f6635be8e4a32b6bbf18f2b0f5be81770655819fc15ff6ee5f75b"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedInputRearmTests.cs",
+          "sha256": "2b6d73dd3c485dcfdf950273f70a47d9ff8a0e356e6b0a30475a29681095edbc"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Failed(Child)",
+      "xmlSha256": "ae550c61ff7cbba2457e0242b10d1e703d0da2a2ad733b9b3d2124168884a7aa",
+      "pids": [
+        "136184"
+      ],
+      "total": 3841,
+      "passed": 3733,
+      "failed": 25,
+      "skipped": 83,
+      "inconclusive": 0,
+      "d6Cases": 20,
+      "failures": [
+        {
+          "name": "Zantetsu.Core.Tests.Phase02AdoptedFixtureTests.AdoptedSet_ResolvesTheThreeCurrentGeometryUses",
+          "result": "Failed",
+          "message": "OneTimeSetUp: System.IO.FileNotFoundException : The adopted fixture index was not found."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.Phase02AdoptedFixtureTests.LicensedAdoptedSet_WhenPresent_ResolvesAndRunsCurrentUses",
+          "result": "Failed",
+          "message": "OneTimeSetUp: System.IO.FileNotFoundException : The adopted fixture index was not found."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.Phase02AdoptedFixtureTests.PhysicsCookInput_LoadsAndCooksAsConvex",
+          "result": "Failed",
+          "message": "OneTimeSetUp: System.IO.FileNotFoundException : The adopted fixture index was not found."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.Phase02AdoptedFixtureTests.RenderCutInput_RunsThroughTheCurrentMeshCutHarness",
+          "result": "Failed",
+          "message": "OneTimeSetUp: System.IO.FileNotFoundException : The adopted fixture index was not found."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.SandboxScene_PutsTheEdgeStripeOnTheEdgeDirectionSide",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.SandboxScene_SavesTheKatanaHidden",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.TheSandboxScene_ChecksBeginsAgainstTheMainCamera",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.TheSandboxScene_HasFourHiddenWaveSlotsSharingOneMeshAndMaterial",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.TheSandboxScene_HasOneDiagnosticsOverlayReadingTheKatana",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxRightHandKatanaTests.TheSandboxScene_HasOnePoseRecorderReadingTheKatana",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.AdoptedGrid_HasTwentyFourInstancesPerCategoryReferencingItsLicensedMesh",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.AdoptedGrid_ShowsTheLicensedMeshWhereItHasBeenGenerated",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.AdoptedSlots_ShowTheLicensedMeshWhereItHasBeenGenerated",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.BuiltInInstancesOfOneShape_ShareOneMeshAtDifferentTransforms",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.DisplayRenderers_AreEnabledWithAMaterialAndCastAndReceiveShadows",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.TheDisplay_HasTwoAdoptedSlotsPerCategoryReferencingItsLicensedMesh",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.TheSandboxScene_HasExactlyOneUnityMeshDisplayRoot",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxUnityMeshDisplayTests.TheSandboxScene_IsLitByAShadowingDirectionalLightPlusAmbient",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxVpMeshDisplayTests.TheAdoptedSubset_ShowsEachOfTwoLicensedMeshesTwiceThroughTheVpPathOnly",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxVpMeshDisplayTests.TheMultiGeometryProbe_DrawsEachLicensedMeshAtItsOwnGroupOfChildTransforms",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxVpMeshDisplayTests.TheProbe_SharesTheSceneWithTheUnityMeshDisplayAndOneShadowingDirectionalLight",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxVpMeshDisplayTests.TheProbe_ShowsTheBuiltInCubeThroughTheVpPathOnly",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.SandboxVpMeshDisplayTests.TheSharedGeometryProbe_DrawsOneLicensedMeshAtEachOfItsChildTransforms",
+          "result": "Failed",
+          "message": "SetUp : System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.Core.Tests.WorldPhysicsBootstrapTests.SandboxScene_EnterPlayMode_AppliesGravity",
+          "result": "Failed",
+          "message": "Unhandled log message: '[Error] Scene 'Sandbox' couldn't be loaded because it has not been added to the active build profile or shared scene list or the AssetBundle has not been loaded.\nTo add a scene to the active build profile or shared scene list use the menu File->Build Profiles'. Use UnityEngine.TestTools.LogAssert.Expect"
+        },
+        {
+          "name": "Zantetsu.Core.Tests.WorldPhysicsBootstrapTests.SandboxScene_HasSingleBootstrapReferencingStandardProfile",
+          "result": "Failed",
+          "message": "System.ArgumentException : Scene file not found: 'Assets/Scenes/Sandbox.unity'."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvAuthoredPhysicsTests.AuthoredConvex_AndStatic16_ThreeCommonPlanes_CutAndRecut",
+          "result": "Skipped",
+          "message": "Private authored Megacity fixture is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.AuthoredProxies_BindposeBoneLocal_MatchesImportedHierarchy(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCharacterPhysicsTests.RepairedProxies_All19_BindCookAndCutWithoutDroppingHulls(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private character physics fixture absent."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvCurrentPoseTests.CurrentPose_BakeTrue_RendererLocal_CompactStorage_CutAndRecut(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private character intake is not installed."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvScaleNormalizationTests.FixedScale_ImportedClip_PreservesWorldGeometry(\"character-casual\")",
+          "result": "Skipped",
+          "message": "Private repaired intake missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvScaleNormalizationTests.FixedScale_ImportedClip_PreservesWorldGeometry(\"character-professional\")",
+          "result": "Skipped",
+          "message": "Private repaired intake missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvScaleNormalizationTests.FixedScale_LoadPreparation_PreservesAnimatedWorldGeometry(\"character-casual\")",
+          "result": "Skipped",
+          "message": "Private repaired intake missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.Compact16uvScaleNormalizationTests.FixedScale_LoadPreparation_PreservesAnimatedWorldGeometry(\"character-professional\")",
+          "result": "Skipped",
+          "message": "Private repaired intake missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(0).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(-1).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_Compound19_CommonPlane_CommitsAndRecuts(\"character-professional\",4)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_RuntimeParentScale_RemainsRejected(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).FixedScale_RuntimeParentScale_RemainsRejected(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_Compound19_CommonPlane_CommitsAndRecuts(\"character-casual\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-casual\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",0)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",1)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",2)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        },
+        {
+          "name": "Zantetsu.PhysicsCut.Tests.CutGeometryConnectionTests(205).RepairedCharacter_ScaledLineage_RegistrationIsRejectedWithoutCutOrUpload(\"character-professional\",3)",
+          "result": "Skipped",
+          "message": "Private repaired character input missing."
+        }
+      ]
+    },
+    {
+      "name": "full-2",
+      "logSha256": "032d32e67133e90b68c24b4f738ceb4d242cc4ba72fac1c8fc5f5a44912f3100",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/ProvisionalCutDriver.cs",
+          "sha256": "7a96420e00a390a62235fc280734d08894c89b49079db05987bf9391e6c240d3"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PreparedCutLease.cs",
+          "sha256": "f6c19e7fc879eb75335d3df59ec242fa3ad2851b22795f83590ae9bf8e160ecf"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedPhysicsInput.cs",
+          "sha256": "75c5199067dda49b6c5d3631019b30677e86e21835a1d114aa7ccddb08f852ff"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/ProvisionalCutDriverTests.cs",
+          "sha256": "00044bac0bf2ef8739e8ade751383bda4cf48e7f954ee2aa55221651f3ea4d3c"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/VpPreparedPhysicsInputTests.cs",
+          "sha256": "8be88724657b0ec79cac7764e4a500d79e7f60a05678991f22ed119a36eba0b8"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCutLeaseTests.cs",
+          "sha256": "84fe40a0015f6635be8e4a32b6bbf18f2b0f5be81770655819fc15ff6ee5f75b"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedInputRearmTests.cs",
+          "sha256": "2b6d73dd3c485dcfdf950273f70a47d9ff8a0e356e6b0a30475a29681095edbc"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "7199f083361249c447ce5fb978395198186954178407ae0377edf197280ffd00",
+      "pids": [
+        "124544"
+      ],
+      "total": 3841,
+      "passed": 3841,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 20,
+      "failures": []
+    }
+  ],
+  "regressionFixtureSets": [
+    {
+      "name": "scenes",
+      "fileCount": 4,
+      "manifestDigest": "9d4ee6930e5551b8b3bf06d0836cf1c720a561ddc3939b60e8dffa624724baac"
+    },
+    {
+      "name": "licensed-intake",
+      "fileCount": 92,
+      "manifestDigest": "5cce84bfd05c851227f6e4cbcd4881a871427f2cb6dd6c11cdf963b60354b1e3"
+    },
+    {
+      "name": "public-adopted",
+      "fileCount": 23,
+      "manifestDigest": "884d7ec5dcdaf7f682881e2f299fae71fb3bc85cbe952febf7417665f7c09b28"
+    },
+    {
+      "name": "licensed-adopted",
+      "fileCount": 419,
+      "manifestDigest": "0ccd71d158c0baad67ca624541ad35471821a8a50ee96a949466b7b0bd2a46f4"
+    }
+  ],
+  "licensedAssetsUsed": true,
+  "newD6TestsSyntheticOnly": true,
+  "gameplayConnected": false,
+  "publicPreparedApiAdded": false,
+  "performanceMeasured": false,
+  "playerVerified": false,
+  "productUnityLaunched": false
+}
