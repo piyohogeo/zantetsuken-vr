@@ -218,10 +218,10 @@ namespace Zantetsu.PhysicsCut
                     // published configuration is still what answers, and a failure of the second side leaves the first
                     // one exactly as it was.
                     positivePrepared = PhysicsOwnerBuilder.PrepareFinalColliders(
-                        input.products, sourceOwner.Shape.Meshes, positiveSide, pair.PositiveShape, localRotation, localOffset);
+                        input.products, sourceOwner.Shape.Meshes, positiveSide, pair.PositiveShape, localRotation, localOffset, sourceOwner.Shape);
                     preparingHook?.Invoke(true);
                     negativePrepared = PhysicsOwnerBuilder.PrepareFinalColliders(
-                        input.products, sourceOwner.Shape.Meshes, negativeSide, pair.NegativeShape, localRotation, localOffset);
+                        input.products, sourceOwner.Shape.Meshes, negativeSide, pair.NegativeShape, localRotation, localOffset, sourceOwner.Shape);
                     preparingHook?.Invoke(false);
 
                     // The borrowed parts are read here, from the shape the cut was of, and each final shape takes its
