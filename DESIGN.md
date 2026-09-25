@@ -312,6 +312,8 @@ Meshからデータを取得する初期経路はCPU-readableを前提とし、A
 
 個体別physics準備の限定component移植は`docs/diagnostics/compact16uv-prepared-physics/`。`VpPreparedPhysicsInput`は検証済みbone-local凸B-repをcoldコピーし、個体専用Meshを所定cook profileで一度cookする。要求時は同一poseの剛体行列から数値B-rep／boundsへ直接出力し、Meshは書き換えず、convexごとの不変Mesh frameをProvisional・Final継承・再切断へ保持する。専用Collider子の交換／取消時は子も解放する。pose構築と所有権移譲を区別し、未移譲入力はDisposeで回収、移譲後の拒否は受取側がshapeを解放する。worker／子孫のbank・Mesh保持は既存寿命契約に従う。sourceの中間Colliderは生成しないが、現在poseの分類／mass／Actor構築／公開は残る。合成Editor component検証であり、Gameplay入口・同frame公開への採用、実asset／Player性能の確認とは区別する。7.1の公開／Abortや7.3のcook品質許容を緩和しない。
 
+Direct16のcold表示枠の限定移植は`docs/diagnostics/compact16uv-prepared-root/`。`TryPrepareRoot`でproducer／display別のShown・command・materialを準備し、D1が返す生成元／Storage付きの出力を`TryShowPreparedRoot`へ明示的に渡す。global armは使わず、現在の公開extent・index世代／開始位置を使う。転送前の早期拒否では枠を保持し、転送開始後は失敗でも再利用しない。未使用枠はslot／displayのDisposeで解放する。これはGeometry／GPU／参照slot／admissionの予約やrollbackではなく、一般登録・Final・再切断の経路を置換しない。cold material bindingは固定で、変更時は枠を作り直す。Editor component検証に限り、Gameplayの同frame接続・実asset／Player性能の採用判断は残す。
+
 #### 4.5.3 CPUプール・範囲所有権
 
 CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Mainの専用アロケータが入力参照寿命と出力予約を所有する。Workへ渡すNativeArray view／unsafe pointerの形状は実装詳細とし、view全域とアクセス許可範囲を区別する。Unity JobでVPプールを扱う場合はNativeDisableContainerSafetyRestrictionでcontainer単位の粗い依存判定を外せるが、外部Workを含む範囲所有と利用終了を省略しない。
