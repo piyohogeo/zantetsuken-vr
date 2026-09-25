@@ -1,10 +1,10 @@
 {
     "name": "Zantetsu.Rendering",
     "rootNamespace": "Zantetsu.Rendering",
-    "references": ["Unity.Mathematics"],
+    "references": ["Unity.Mathematics", "Unity.Burst", "Unity.Collections"],
     "includePlatforms": [],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
