@@ -27,6 +27,7 @@ namespace Zantetsu.PhysicsCut
     public sealed class PhysicsShapeSource
     {
         private PhysicsCutProducts _products;
+        private Mesh[] _preparedMeshes;
         private int _users;
         private bool _owns;
         private bool _released;
@@ -77,6 +78,14 @@ namespace Zantetsu.PhysicsCut
             return new PhysicsShapeSource(null);
         }
 
+        // The prepared-input constructor retains a hold until its shape has been created or construction fails.
+        internal static PhysicsShapeSource OwnPreparedMeshes(Mesh[] meshes)
+        {
+            var source = new PhysicsShapeSource(null) { _preparedMeshes = meshes, _owns = true };
+            source.Acquire();
+            return source;
+        }
+
         /// <summary>How many owners and pieces of work are holding this.</summary>
         public int Users => _users;
 
@@ -120,6 +129,11 @@ namespace Zantetsu.PhysicsCut
             _released = true;
             _products?.Dispose();
             _products = null;
+            if (_preparedMeshes != null)
+            {
+                foreach (Mesh mesh in _preparedMeshes) PhysicsCutCook.DestroyMesh(mesh);
+                _preparedMeshes = null;
+            }
         }
     }
 
@@ -147,7 +161,7 @@ namespace Zantetsu.PhysicsCut
     /// once, whichever of the two comes last. Nothing schedules or waits here.
     /// </para>
     /// </summary>
-    public sealed unsafe class PhysicsOwnerShape : IDisposable
+    public sealed unsafe partial class PhysicsOwnerShape : IDisposable
     {
         private readonly List<PhysicsShapeSource> _sources = new List<PhysicsShapeSource>(2);
         /// <summary>
@@ -219,6 +233,7 @@ namespace Zantetsu.PhysicsCut
                 _blockOwnerOf = viewOf._blockOwnerOf;
                 _convexLo = viewOf._convexLo;
                 _convexHi = viewOf._convexHi;
+                _meshFrames = viewOf._meshFrames;
             }
         }
 
@@ -538,6 +553,7 @@ namespace Zantetsu.PhysicsCut
                             range = parent._convexes[at],
                             mesh = parent._meshes[at],
                             source = parent.SourceOf(part.inputConvex),
+                            meshFrame = parent.MeshFrameOf(part.inputConvex),
 
                             // Inherited uncut: the parent's box for that very convex.
                             lo = parent._convexLo[at],
@@ -621,6 +637,7 @@ namespace Zantetsu.PhysicsCut
             internal ConvexBrepRange range;
             internal Mesh mesh;
             internal PhysicsShapeSource source;
+            internal PhysicsMeshFrame meshFrame;
 
             /// <summary>The shape that owns the block <see cref="bank"/> is in, when a shape does; null when it is a cut's products'.</summary>
             internal PhysicsOwnerShape bankOwner;
@@ -802,6 +819,11 @@ namespace Zantetsu.PhysicsCut
             _banks[i] = part.bank;
             _blockOwnerOf[i] = part.bankOwner;
             _meshes.Add(part.mesh);
+            if (part.meshFrame.HasFrame)
+            {
+                if (_meshFrames == null) _meshFrames = new PhysicsMeshFrame[_convexes.Length];
+                _meshFrames[i] = part.meshFrame;
+            }
             _convexLo[i] = part.lo;
             _convexHi[i] = part.hi;
             AddToLocalBounds(part.lo, part.hi);
