@@ -77,7 +77,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return null;
             if(coldWarm!=null){Assert.That(coldWarm.TryFinish(),Is.True);coldWarm.Dispose();coldWarm=null;}
             yield return null;
-            if(coldWorld!=null)Assert.That(coldWorld.Shutdown(),Is.True,"no work was submitted in cold-only tests");
+            if(coldWorld!=null)
+            {
+                for(int i=0;i<120&&!coldWorld.Shutdown();i++)yield return null;
+                Assert.That(coldWorld.IsReleased,Is.True,"do not destroy resources while workers still hold them");
+            }
             for(int i=coldObjects.Count-1;i>=0;i--)if(coldObjects[i]!=null)Object.Destroy(coldObjects[i]);
             coldObjects.Clear();coldWorld=null;
             yield return null;

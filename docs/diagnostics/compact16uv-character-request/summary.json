@@ -1,0 +1,447 @@
+{
+  "baseProductCommit": "cdb53ea0e47dbdd5f58a04eb396d7c50d27b040a",
+  "candidateFileCount": 1417,
+  "candidateManifestDigest": "f30fd22fde7c0e1886459da40fa7f3833c3af58a198500deb17d560440434d59",
+  "sources": [
+    {
+      "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+      "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+    },
+    {
+      "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+      "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+    },
+    {
+      "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+      "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+    },
+    {
+      "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+      "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+      "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+    },
+    {
+      "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+      "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+    },
+    {
+      "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+      "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+    },
+    {
+      "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+      "sha256": "f7bf04b5de75e08905d0881b6286aa1d3960add338ade414e5501b122ed2700a"
+    }
+  ],
+  "runs": [
+    {
+      "name": "focused-1",
+      "logSha256": "aee5e66b1e5aa10f5ce7231600504bd92593003412cb2bce16fe6ac9d4214472",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "14da556e49dfeca331ee4d85a10cc9d257670f78ef7972384e6fa085bef8a1f8"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "e76760c6ebff7bc7c06b5b8885fccca1d354e4d5f74283458b8f910e13e36db5",
+      "pids": [
+        "63440"
+      ],
+      "total": 16,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 16,
+      "failures": [],
+      "matchesCurrentSources": false
+    },
+    {
+      "name": "focused-2",
+      "logSha256": "110c02588738a2dfcacc3f94d9fab9b46ff5d219c2bb329a7e52ebd91af528c1",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "f7bf04b5de75e08905d0881b6286aa1d3960add338ade414e5501b122ed2700a"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "78612e4fc3b98fdb14ff26088de15f99b4c132a78518a45eabca9469b3d2af6b",
+      "pids": [
+        "44380"
+      ],
+      "total": 16,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 16,
+      "failures": [],
+      "matchesCurrentSources": true
+    },
+    {
+      "name": "full-1",
+      "logSha256": "7bfb0e038382a0937e1297a6344d6c3bc5ba89242348752824c90d232429557b",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "f7bf04b5de75e08905d0881b6286aa1d3960add338ade414e5501b122ed2700a"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "46ef50ac1a559e7063b6ce0ba6d74f8bf1f160d217f481b8b251f1576558b497",
+      "pids": [
+        "21252"
+      ],
+      "total": 3871,
+      "passed": 3871,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 16,
+      "failures": [],
+      "matchesCurrentSources": true
+    },
+    {
+      "name": "play-1",
+      "logSha256": "94d5227654500e96bb5dba2b2059af898a98a6dc5f20991fa2e27f6064a1e041",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "14da556e49dfeca331ee4d85a10cc9d257670f78ef7972384e6fa085bef8a1f8"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Failed(Child)",
+      "xmlSha256": "a6b7eae3fec8094d3ea5ce4dd907379fc970fc5c6fa17cbef51d15e0103ed9ab",
+      "pids": [
+        "76408"
+      ],
+      "total": 2,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 2,
+      "failures": [
+        {
+          "name": "Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.D6T_RealOnDisable_ReentryDispose_SameFramePublicationThenFinal",
+          "result": "Failed",
+          "message": "  Expected: HandedOff\n  But was:  Recovered\n"
+        }
+      ],
+      "matchesCurrentSources": false
+    },
+    {
+      "name": "play-2",
+      "logSha256": "0b60ae1a958c5730a31cc69f2cf2f8572d3fda1c915d37a5d9577a1ae4f921f4",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "77fd216adddb37bbe1c4d24bb59dd7edbf8da68cb141f6ae47195d647e667d3e"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Failed(Child)",
+      "xmlSha256": "e4cbd14ef1ee87363cdf59710f38048b0337517d1dd117589fb37cf9e8f417de",
+      "pids": [
+        "67680"
+      ],
+      "total": 2,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 2,
+      "failures": [
+        {
+          "name": "Zantetsu.PhysicsCut.PlayModeTests.ProvisionalMassFlagActivationPlayModeTests.D6T_RealOnDisable_ReentryDispose_SameFramePublicationThenFinal",
+          "result": "Failed",
+          "message": "  cut=KernelFailed, request=, kernel=, failure=\n  Expected: HandedOff\n  But was:  Recovered\n"
+        }
+      ],
+      "matchesCurrentSources": false
+    },
+    {
+      "name": "play-3",
+      "logSha256": "c57b263d8499a4fc324d4f8e181605299921038fefab38b00f3d4e3db02cb413",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "f7bf04b5de75e08905d0881b6286aa1d3960add338ade414e5501b122ed2700a"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "1d24b3e669e432e414bd9bb37fa83adc7cb166c321f0b399eefa491f12af6959",
+      "pids": [
+        "121432"
+      ],
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 3,
+      "failures": [],
+      "matchesCurrentSources": true
+    },
+    {
+      "name": "related-1",
+      "logSha256": "092ea998ff3aa047551d93a9824c86620e885579a659b21e82b5135264cd8e48",
+      "sources": [
+        {
+          "file": "Runtime/PhysicsCut/CutWorldRoot.cs",
+          "sha256": "6f2bb81725f878fb1e70f1b319a6d8f89d46baf726f80320f97c0ff2901e9b2f"
+        },
+        {
+          "file": "Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "07955e9b13d294626f34774b712bf46eb1c1762270f81383b5f9cb6f584258c1"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.cs",
+          "sha256": "344043d74d077900fdaa820155f2cc19ab9f94c50ac8145132e61ed8f125c8fc"
+        },
+        {
+          "file": "Runtime/PhysicsCut/VpPreparedCharacterCut.Request.cs",
+          "sha256": "1db1a01f45e3a155dbe61dd3cc68f0daf1f587a6d81dee3114fbd1b31c296a07"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterColdTests.cs",
+          "sha256": "c27fb5bd6a6b91c1dba2f26284807db205084cfe989025c64bcd8ecf9d106e46"
+        },
+        {
+          "file": "Tests/EditMode/PhysicsCut/PreparedCharacterRequestTests.cs",
+          "sha256": "f33e76c1cb6b4845eb18ca4fab94b5aa3fe43d704595c760b591361ae27b147a"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterColdPlayModeTests.cs",
+          "sha256": "f5fef9de04a601943f18bb05fbb1923c8178ba9df659f72c9f2fb7c0b42591be"
+        },
+        {
+          "file": "Tests/PlayMode/PreparedCharacterRequestPlayModeTests.cs",
+          "sha256": "f7bf04b5de75e08905d0881b6286aa1d3960add338ade414e5501b122ed2700a"
+        }
+      ],
+      "compileErrors": [],
+      "result": "Passed",
+      "xmlSha256": "6d154e58d6d069abb96cd5075c2e45ca74ffedfba2f170d9e280c5b5a79b725d",
+      "pids": [
+        "96484"
+      ],
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "d6Cases": 3,
+      "failures": [],
+      "matchesCurrentSources": true
+    }
+  ],
+  "regressionFixtureSets": [
+    {
+      "name": "scenes",
+      "fileCount": 4,
+      "manifestDigest": "9d4ee6930e5551b8b3bf06d0836cf1c720a561ddc3939b60e8dffa624724baac"
+    },
+    {
+      "name": "licensed-intake",
+      "fileCount": 92,
+      "manifestDigest": "5cce84bfd05c851227f6e4cbcd4881a871427f2cb6dd6c11cdf963b60354b1e3"
+    },
+    {
+      "name": "public-adopted",
+      "fileCount": 23,
+      "manifestDigest": "884d7ec5dcdaf7f682881e2f299fae71fb3bc85cbe952febf7417665f7c09b28"
+    },
+    {
+      "name": "licensed-adopted",
+      "fileCount": 419,
+      "manifestDigest": "0ccd71d158c0baad67ca624541ad35471821a8a50ee96a949466b7b0bd2a46f4"
+    }
+  ],
+  "licensedAssetsUsed": true,
+  "newD6TestsSyntheticOnly": true,
+  "gameplayConnected": false,
+  "publicColdPreparationApiAdded": true,
+  "hotAdapterAdded": true,
+  "performanceMeasured": false,
+  "playerVerified": false,
+  "productUnityLaunched": false
+}
