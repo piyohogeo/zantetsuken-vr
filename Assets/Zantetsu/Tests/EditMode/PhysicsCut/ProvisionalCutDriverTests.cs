@@ -33,7 +33,7 @@ namespace Zantetsu.PhysicsCut.Tests
     /// from the same snapshot and lookup a display collects through.
     /// </para>
     /// </summary>
-    public unsafe class ProvisionalCutDriverTests
+    public unsafe partial class ProvisionalCutDriverTests
     {
         private const double ParentMass = 12.0;
         private const float SupportEpsilon = 1e-5f;

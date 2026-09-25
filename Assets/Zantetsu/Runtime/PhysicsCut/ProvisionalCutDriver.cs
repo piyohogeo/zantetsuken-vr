@@ -119,7 +119,7 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(-100)]
-    public sealed class ProvisionalCutDriver : MonoBehaviour
+    public sealed partial class ProvisionalCutDriver : MonoBehaviour
     {
         private readonly List<ProvisionalCutTransaction> _transactions = new List<ProvisionalCutTransaction>(4);
         private readonly List<ProvisionalCutAsk> _asked = new List<ProvisionalCutAsk>(4);
@@ -199,6 +199,7 @@ namespace Zantetsu.PhysicsCut
             CutDag dag = null,
             ICutTerminationLatch latch = null)
         {
+            _preparedBindingEpoch++;
             _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _cook = cook ?? throw new ArgumentNullException(nameof(cook));
@@ -269,6 +270,11 @@ namespace Zantetsu.PhysicsCut
         /// </param>
         public ProvisionalCutAcceptance RequestCut(
             in ProvisionalCutAsk ask, out ProvisionalCutTransaction transaction, out LogicalCutAdmission admission)
+            => RequestCutCore(in ask, null, out transaction, out admission);
+
+        private ProvisionalCutAcceptance RequestCutCore(
+            in ProvisionalCutAsk ask, PreparedCutLease prepared,
+            out ProvisionalCutTransaction transaction, out LogicalCutAdmission admission)
         {
             transaction = null;
 
@@ -302,45 +308,57 @@ namespace Zantetsu.PhysicsCut
             // not how the convexes were allocated -- a convex with no support at all goes to the positive side by the
             // allocation rule, and that alone is not something to cut off. A no-op must not leave an accepted cut
             // behind, so this is asked before the ledger is.
-            if (!PhysicsCutClassification.TryClassify(
-                    owner.Shape, ask.plane, _supportEpsilon, owner.Mass, _vertexLimit,
-                    out PhysicsCutClassification classification))
+            PhysicsCutClassification classification;
+            if (prepared != null)
+            {
+                if (!prepared.TryConsume(this, owner, in ask, out classification))
+                    return ProvisionalCutAcceptance.InvalidRequest;
+            }
+            else if (!PhysicsCutClassification.TryClassify(
+                    owner.Shape, ask.plane, _supportEpsilon, owner.Mass, _vertexLimit, out classification))
             {
                 return ProvisionalCutAcceptance.InvalidRequest;
             }
 
-            if (!classification.SplitsBothSides)
+            bool ownedByTransaction = false;
+            try
             {
-                classification.Dispose();
-                return ProvisionalCutAcceptance.EmptySide;
-            }
+                if (!classification.SplitsBothSides)
+                {
+                    return ProvisionalCutAcceptance.EmptySide;
+                }
 
-            // **One acceptance.** Where there is display geometry to cut, the ledger is asked through the DAG, which
-            // registers that cut's geometry work with the very operation the ledger issued; where there is none, the
-            // ledger is asked directly. Either way it is asked once, here, after the support scan has decided that
-            // there is a cut at all -- so a no-op and a refused admission leave no geometry work behind, because
-            // nothing was admitted for one to belong to. The plane is the adopted one, in the source fragment's own
-            // logical frame: the kernel's own is made from it where the geometry is read, and nothing here rebuilds it
-            // from where the actor happens to stand.
-            admission = _dag != null
-                ? _dag.TryAdmit(ask.source, ask.plane, true, out CutOperationId operation)
-                : _ledger.Admit(ask.source, ask.plane, true, out operation);
-            if (admission != LogicalCutAdmission.Admitted)
+                // **One acceptance.** Where there is display geometry to cut, the ledger is asked through the DAG, which
+                // registers that cut's geometry work with the very operation the ledger issued; where there is none, the
+                // ledger is asked directly. Either way it is asked once, here, after the support scan has decided that
+                // there is a cut at all -- so a no-op and a refused admission leave no geometry work behind, because
+                // nothing was admitted for one to belong to. The plane is the adopted one, in the source fragment's own
+                // logical frame: the kernel's own is made from it where the geometry is read, and nothing here rebuilds it
+                // from where the actor happens to stand.
+                admission = _dag != null
+                    ? _dag.TryAdmit(ask.source, ask.plane, true, out CutOperationId operation)
+                    : _ledger.Admit(ask.source, ask.plane, true, out operation);
+                if (admission != LogicalCutAdmission.Admitted)
+                {
+                    return ProvisionalCutAcceptance.NotAccepted;
+                }
+
+                // The record is made before anything can be waited for, and it keeps the one classification: a cut that
+                // waits here is taken up again from where it left off, not classified a second time.
+                // The parent mass of this cut, read from the source once, here: the temporary split and the final
+                // masses are both against this one number (DESIGN 7.2), and after the publication there is no source body
+                // left to read it from.
+                var made = new ProvisionalCutTransaction(operation, ask.source, classification);
+                made.Asked(in ask, owner.Mass);
+                _transactions.Add(made);
+                ownedByTransaction = true;
+                transaction = made;
+                return TryEstablish(made, owner);
+            }
+            finally
             {
-                classification.Dispose();
-                return ProvisionalCutAcceptance.NotAccepted;
+                if (!ownedByTransaction) classification.Dispose();
             }
-
-            // The record is made before anything can be waited for, and it keeps the one classification: a cut that
-            // waits here is taken up again from where it left off, not classified a second time.
-            // The parent mass of this cut, read from the source once, here: the temporary split and the final
-            // masses are both against this one number (DESIGN 7.2), and after the publication there is no source body
-            // left to read it from.
-            var made = new ProvisionalCutTransaction(operation, ask.source, classification);
-            made.Asked(in ask, owner.Mass);
-            _transactions.Add(made);
-            transaction = made;
-            return TryEstablish(made, owner);
         }
 
         /// <summary>
