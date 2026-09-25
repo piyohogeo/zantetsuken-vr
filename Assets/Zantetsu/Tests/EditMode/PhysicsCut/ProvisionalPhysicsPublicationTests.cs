@@ -6,6 +6,7 @@ using UnityEngine;
 using Zantetsu.ConvexCut;
 using Zantetsu.ConvexCut.Tests;
 using Zantetsu.MeshCut;
+using Zantetsu.MeshCut.Tests;
 
 namespace Zantetsu.PhysicsCut.Tests
 {
@@ -101,13 +102,14 @@ namespace Zantetsu.PhysicsCut.Tests
         /// display is arranged some other way says about itself. It is not the same as leaving the argument out.
         /// </param>
         private World NewWorld(
-            float3[] anchors = null, Matrix4x4? geometryLocalToOwner = null, bool arrangedElsewhere = false)
+            float3[] anchors = null, Matrix4x4? geometryLocalToOwner = null, bool arrangedElsewhere = false,
+            PhysicsOwnerRegistry registry = null, LogicalCutLedger ledger = null)
         {
             var w = new World
             {
                 harness = new OwnerCutHarness(),
-                registry = new PhysicsOwnerRegistry(),
-                ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(8)),
+                registry = registry ?? new PhysicsOwnerRegistry(),
+                ledger = ledger ?? new LogicalCutLedger(new LogicalCutIncompleteBudget(8)),
             };
             _disposables.Add(w);
 
@@ -333,6 +335,30 @@ namespace Zantetsu.PhysicsCut.Tests
                 "the pair was published");
             Assert.That(ledgerOutcome, Is.EqualTo(LogicalCutResultOutcome.Applied), "the ledger allowed it");
             return pair;
+        }
+
+        [Test] public void D4_TwoRootsAndTwoPublishedPairs_UsePreparedMapsWithoutGrowth()
+        {
+            using var registry = new PhysicsOwnerRegistry();
+            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(2));
+            registry.PrepareCapacity(2,2); ledger.PrepareCapacity(2,2);
+            string[] names = {"_owners","_fragmentOfBody","_pairsByOperation","_pairsBySource","_pairOfBody"};
+            var capacities = new int[names.Length];
+            for(int i=0;i<names.Length;i++) capacities[i]=D4ColdPreparationTests.Capacity(registry,names[i]);
+            using var a=NewWorld(registry:registry,ledger:ledger);
+            using var b=NewWorld(registry:registry,ledger:ledger);
+            b.root.transform.position=new Vector3(10,0,0);
+            var oa=Admit(a);var ob=Admit(b);
+            var pa=Publish(a,oa,Build(a,oa));var pb=Publish(b,ob,Build(b,ob));
+            Assert.That(registry.Count,Is.EqualTo(2)); Assert.That(registry.ProvisionalPairCount,Is.EqualTo(2));
+            Assert.That(ledger.FragmentCount,Is.EqualTo(2)); Assert.That(ledger.Budget.IncompleteCutOperationCount,Is.EqualTo(2));
+            foreach(var pair in new[]{pa,pb})
+            foreach(bool positive in new[]{true,false})
+            {
+                Assert.That(registry.TryResolveSource(pair.Side(positive).Body,out var source,out float side),Is.True);
+                Assert.That(source,Is.EqualTo(pair.Source));Assert.That(side,Is.EqualTo(positive?1f:-1f));
+            }
+            for(int i=0;i<names.Length;i++) Assert.That(D4ColdPreparationTests.Capacity(registry,names[i]),Is.EqualTo(capacities[i]));
         }
 
         // ----- 1. the switch -----------------------------------------------------------------------------------------

@@ -39,6 +39,20 @@ namespace Zantetsu.MeshCut
         }
         PreparedRoot _preparedRoots;
         int _preparedRootCount;
+
+        /// <summary>
+        /// Cold absolute Shown-list high-water capacity, including outstanding prepared roots.
+        /// No entry, GPU room, reference slot, fragment or admission unit is reserved.
+        /// Other display buffers/candidate limits retain their independent constructor capacities.
+        /// </summary>
+        public void PrepareShownCapacity(int shownCapacity)
+        {
+            ThrowIfDisposed(); ThrowIfBroken(); ThrowIfPreparing();
+            if (shownCapacity < 0) throw new ArgumentOutOfRangeException(nameof(shownCapacity));
+            if (_halted) throw new InvalidOperationException("The display is halted");
+            _shown.Capacity = Math.Max(_shown.Capacity,
+                Math.Max(shownCapacity, checked(_shown.Count + _preparedRootCount)));
+        }
         void UnlinkPreparedRoot(PreparedRoot slot)
         {
             if (slot.previous != null) slot.previous.next = slot.next; else _preparedRoots = slot.next;

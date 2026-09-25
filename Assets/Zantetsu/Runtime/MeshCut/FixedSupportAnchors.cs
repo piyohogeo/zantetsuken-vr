@@ -162,23 +162,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            if (!math.isfinite(epsilon) || epsilon < 0f)
-            {
-                result = new AnchorDistributionResult(AnchorDistributionStatus.InvalidEpsilon, 0, 0);
-                return false;
-            }
-
-            if (!math.all(math.isfinite(plane)))
-            {
-                result = new AnchorDistributionResult(AnchorDistributionStatus.NonFinitePlane, 0, 0);
-                return false;
-            }
-
-            if (math.all(plane.xyz == float3.zero))
-            {
-                result = new AnchorDistributionResult(AnchorDistributionStatus.DegeneratePlane, 0, 0);
-                return false;
-            }
+            if (!TryValidatePlane(plane, epsilon, out result)) return false;
 
             int count = anchors?.Count ?? 0;
 
@@ -231,6 +215,31 @@ namespace Zantetsu.MeshCut
             }
 
             result = new AnchorDistributionResult(AnchorDistributionStatus.Ok, positives, negatives);
+            return true;
+        }
+
+        // Shared by the public list path and the ledger's canonical-empty path. Same validation order.
+        internal static bool TryValidatePlane(float4 plane, float epsilon, out AnchorDistributionResult result)
+        {
+            if (!math.isfinite(epsilon) || epsilon < 0f)
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.InvalidEpsilon, 0, 0);
+                return false;
+            }
+
+            if (!math.all(math.isfinite(plane)))
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.NonFinitePlane, 0, 0);
+                return false;
+            }
+
+            if (math.all(plane.xyz == float3.zero))
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.DegeneratePlane, 0, 0);
+                return false;
+            }
+
+            result = new AnchorDistributionResult(AnchorDistributionStatus.Ok, 0, 0);
             return true;
         }
 
