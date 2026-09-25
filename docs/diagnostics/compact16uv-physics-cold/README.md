@@ -36,7 +36,7 @@ Registry／Ledger／ID／admission／Storage／GPUへ接続せず、実ActorやC
 
 上記Atlas／Stencilは無変更の単独`palette-recheck-1`で1/1通過した。元のgrey／red不一致の原因は未確定であり、実行順・残存scene等を確認したとはしない。失敗を修復済み・全PlayMode成功へ読み替えず、runとソースSHAを両方保持する。
 
-Unity起動前はcleanだったが、起動が`Assets/XR/Settings/OpenXR Package Settings.asset`を自動更新し、`ProjectSettings/SceneTemplateSettings.json`を新規生成した。両方を`Logs/PhysicsColdMigration/unity-generated-settings/`へSHA一致で退避した。OpenXRを開始時のHEADへ戻す操作は、多数の機能設定削除と判定され安全審査に拒否されたため**復元は保留**。D5コミットに両設定を混ぜず、未コミット差分／未追跡のままユーザー確認を求める。製品worktreeが完全cleanとは主張しない。復元は開始時状態へ戻す意図だが、生成されたXR機能設定を除くため明示承認後に行う。
+Unity起動前はcleanだったが、起動が`Assets/XR/Settings/OpenXR Package Settings.asset`を自動更新し、`ProjectSettings/SceneTemplateSettings.json`を新規生成した。両方を`Logs/PhysicsColdMigration/unity-generated-settings/`へSHA一致で退避した。OpenXR復元は一度安全審査で保留となったが、2026-09-25にユーザーの明示承認を得て**復元完了**。OpenXRは開始時のGit blob `3ecd4343a07b606469695cd872f833ee3fb67d40`との一致を確認し、開始時に存在しなかったSceneTemplateSettingsは削除した。生成版2ファイルのバックアップは保持し、復元直後の製品worktreeはclean。D5実装・テストソースは変更せず、Unity再起動・テスト再実行は行っていない。
 
 新規PlayModeは、返却時の2 inactive rootと1 Collider、query非参加、同frame再呼出し、pending中のDispose拒否、cold後のpose出力とinput解放、次frameでroot／Collider消滅と独立Mesh hold維持、TryFinish後のMesh破棄を確認する。PlayModeテストはEditor上であり、standalone Player／IL2CPPの合格ではない。
 
