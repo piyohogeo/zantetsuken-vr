@@ -20,7 +20,7 @@ using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut.PlayModeTests
 {
-    public unsafe class ProvisionalMassFlagActivationPlayModeTests
+    public unsafe partial class ProvisionalMassFlagActivationPlayModeTests
     {
         private const double ParentMass = 12.0;
 
