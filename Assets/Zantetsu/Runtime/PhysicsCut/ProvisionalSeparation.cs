@@ -42,7 +42,9 @@ namespace Zantetsu.PhysicsCut
 
             // The relation the pair is built with is the inward boundary: the anchors are one metre apart along the
             // normal, and the symmetric limit of one metre makes two metres apart the other boundary.
-            joint.anchor = Vector3.zero;
+            // Configure always adds a fresh component. anchor=zero, projection=None, breakForce/breakTorque=+Inf,
+            // enableCollision=false are Unity 6000.3.22f1 fresh defaults, covered by baseline-equivalence tests.
+            // Do not turn this into a pooled/deserialized-joint configurator without restoring those writes.
             joint.connectedAnchor = (Vector3)(axis * Metre);
 
             joint.xMotion = ConfigurableJointMotion.Limited;
@@ -53,11 +55,7 @@ namespace Zantetsu.PhysicsCut
             joint.angularZMotion = ConfigurableJointMotion.Locked;
             joint.linearLimit = new SoftJointLimit { limit = Metre, bounciness = 0f, contactDistance = 0f };
 
-            // No drive, spring, damper, projection or break (DESIGN 7.1.1). These are the values that say so.
-            joint.projectionMode = JointProjectionMode.None;
-            joint.breakForce = float.PositiveInfinity;
-            joint.breakTorque = float.PositiveInfinity;
-            joint.enableCollision = false;
+            // No drive, spring, damper, projection or break (DESIGN 7.1.1); fresh defaults remain untouched.
             return joint;
         }
 
