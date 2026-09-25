@@ -26,7 +26,7 @@ namespace Zantetsu.PhysicsCut
 
     /// <summary>
     /// Cold-owned resources for the limited first-cut path (unit-scale renderer, four weights, one submesh).
-    /// This first component exposes preparation/lifetime only; the synchronous hit adapter is a separate step.
+    /// Bind the dedicated source during cold preparation to enable the synchronous first-cut adapter.
     /// No raw shape, classification, prepared display slot or rearm capability escapes this handle.
     /// The rig, mesh, transforms, world and shared cold preparer are borrowed, never disposed here.
     /// Recreate after changing mesh contents, bone bindings or authoring data; no hot rescan is introduced.
@@ -54,7 +54,7 @@ namespace Zantetsu.PhysicsCut
             && !world.IsEnding && !world.IsReleased && !world.TerminationRequested;
 
         /// <summary>Cold lifetime readiness only, not admission or storage capacity. Does not advance preparation.</summary>
-        public bool IsReady => !disposed && Usable(world) && sharedCold.IsPrepared
+        public bool IsReady => !disposed && !busy && !terminal && !disposeRequested && Usable(world) && sharedCold.IsPrepared
             && slot != null && !slot.IsDisposed && !slot.IsConsumed;
         public bool IsDisposed => disposed;
 
@@ -64,7 +64,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool TryFinishPreparation()
         {
-            if (disposed || !Usable(world)) return false;
+            if (disposed || busy || terminal || disposeRequested || !Usable(world)) return false;
             sharedCold.TryFinish();
             return IsReady;
         }
@@ -105,13 +105,24 @@ namespace Zantetsu.PhysicsCut
         public void Dispose()
         {
             if (disposed) return;
+            if (busy) { disposeRequested = true; return; }
             disposed = true;
             try { slot?.Dispose(); }
             finally
             {
                 slot = null;
                 try { physics?.Dispose(); }
-                finally { physics = null; direct?.Dispose(); direct = null; }
+                finally
+                {
+                    physics = null;
+                    try { direct?.Dispose(); }
+                    finally
+                    {
+                        direct = null;
+                        if (!actorTransferred) PhysicsOwnerBuilder.DestroyObject(actor);
+                        actor = null; actorBody = null;
+                    }
+                }
             }
         }
     }
