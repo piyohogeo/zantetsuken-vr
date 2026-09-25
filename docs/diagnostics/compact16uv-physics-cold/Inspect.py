@@ -1,5 +1,5 @@
 """Read-only D5 evidence collector, including retained unsuccessful runs."""
-import hashlib, json, sys
+import hashlib, json, subprocess, sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -33,11 +33,15 @@ for name,total,passed in [('focused-1',24,24),('playmode-1',1,0),('playmode-2',1
         pids=sorted({p.attrib['value'] for p in xml.findall('.//property[@name="_PID"]')}),
         xmlSha256=sha(directory/'results.xml'),logSha256=sha(directory/'editor.log'),
         sources=[dict(file=p,sha256=sha(source_root/p)) for p in paths]))
+xr_blob=subprocess.check_output(['git','-c','safe.directory='+str(product),'-C',str(product),
+    'hash-object','Assets/XR/Settings/OpenXR Package Settings.asset'],text=True).strip()
+assert xr_blob=='3ecd4343a07b606469695cd872f833ee3fb67d40'
+assert not (product/'ProjectSettings/SceneTemplateSettings.json').exists()
 summary=dict(baselineCommit='64fc03d7fe8eaadc264cf23206530ceb5dd734c8',runs=runs,
     freshJointSettersOmitted=5,coldEntryGameplayConnected=False,performanceMeasured=False,
     standalonePlayerVerified=False,privateSnapshotsModified=False,
     paletteTestSourceSha256=sha(product/'Assets/Zantetsu/Tests/StandaloneRendering/PaletteAtlasPlayerTests.cs'),
-    unityGeneratedSettingsRestored=False,
+    unityGeneratedSettingsRestored=True,
     unitySettingsBackup=[dict(file=name,sha256=sha(product/'Logs/PhysicsColdMigration/unity-generated-settings'/name))
         for name in ['OpenXR Package Settings.asset','SceneTemplateSettings.json']])
 if '--check' in sys.argv:
