@@ -47,7 +47,7 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(-200)]
-    public sealed class CutWorldRoot : MonoBehaviour, ICutTerminationLatch
+    public sealed partial class CutWorldRoot : MonoBehaviour, ICutTerminationLatch
     {
         /// <summary>One submesh source index and the material it is drawn with.</summary>
         [Serializable]
