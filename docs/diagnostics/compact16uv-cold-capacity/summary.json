@@ -1,0 +1,170 @@
+{
+  "baselineCommit": "0d5313044ec1844e81a9cd5caf3d77201a546058",
+  "runs": [
+    {
+      "name": "focused-1",
+      "result": "Passed",
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "pids": [
+        "132648"
+      ],
+      "d4Cases": 20,
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/FixedSupportAnchors.cs",
+          "sha256": "64cbec0d91cdebf7c370abc6652b1aa0df6b63bd85d55e4d8af330e0cd657775"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/LogicalCutLedger.cs",
+          "sha256": "aa2cb9666175d594b203a6585e9b3921cfa3bfe2e4fd831d038efb6385706b8d"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/CutDag.cs",
+          "sha256": "325e3da8c7a627ad47c576399deeab2faf2f144f6db7cd9e558e26d50b3655a5"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/VpPreparedRootDisplay.cs",
+          "sha256": "a3447c03db557cf56b19ea8e82bccc090caa424338acb124af9a2c8edbdd27a6"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "cfd25973fa534f5f2cb68c2db6846c55ac01324082d847894399e362c6023937"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/D4ColdPreparationTests.cs",
+          "sha256": "e1d4dafac74157f710310b20946872ae4224b8bd524649ee97316d9cbe837e09"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/CutDagTests.cs",
+          "sha256": "320428d7881e1b786fb167cca82fa08f9e73b1084b902009c8d0b84fe6ff5b00"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/VpPreparedRootDisplayTests.cs",
+          "sha256": "ca59c10d85d56ba32762be37ab1f3d2b769005544b93ff3b9fb4cc1b7dde85b0"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/ProvisionalPhysicsPublicationTests.cs",
+          "sha256": "6ad2c923bf8bd78f97ecf7f68a35a97d5277122f863af02e6a8b68246f01ca80"
+        }
+      ],
+      "xmlSha256": "75b3de9df844b3d85cf25bd33b3b41887fafb74ac43c59018eaaf22f62e7740d",
+      "logSha256": "693ed9a5cc4c321f29a1be9faecb99a14ff740962b9ef6d537f862f29c67be63"
+    },
+    {
+      "name": "focused-2",
+      "result": "Passed",
+      "total": 21,
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "pids": [
+        "109752"
+      ],
+      "d4Cases": 21,
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/FixedSupportAnchors.cs",
+          "sha256": "64cbec0d91cdebf7c370abc6652b1aa0df6b63bd85d55e4d8af330e0cd657775"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/LogicalCutLedger.cs",
+          "sha256": "aa2cb9666175d594b203a6585e9b3921cfa3bfe2e4fd831d038efb6385706b8d"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/CutDag.cs",
+          "sha256": "325e3da8c7a627ad47c576399deeab2faf2f144f6db7cd9e558e26d50b3655a5"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/VpPreparedRootDisplay.cs",
+          "sha256": "a3447c03db557cf56b19ea8e82bccc090caa424338acb124af9a2c8edbdd27a6"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "cfd25973fa534f5f2cb68c2db6846c55ac01324082d847894399e362c6023937"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/D4ColdPreparationTests.cs",
+          "sha256": "e1d4dafac74157f710310b20946872ae4224b8bd524649ee97316d9cbe837e09"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/CutDagTests.cs",
+          "sha256": "320428d7881e1b786fb167cca82fa08f9e73b1084b902009c8d0b84fe6ff5b00"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/VpPreparedRootDisplayTests.cs",
+          "sha256": "ca59c10d85d56ba32762be37ab1f3d2b769005544b93ff3b9fb4cc1b7dde85b0"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/ProvisionalPhysicsPublicationTests.cs",
+          "sha256": "e7e03869048e00cb8a7a711f31b04088acbef4ae85233268ee0e4da6caaef719"
+        }
+      ],
+      "xmlSha256": "ab71fe17197147432abb0025be6526c751042b6884c5fbb2d80d551b233902ac",
+      "logSha256": "be481e2e2a9e8ab9c2eacdc1a97989505707f8f051025bf890ec2c0e47e5e31f"
+    },
+    {
+      "name": "full-1",
+      "result": "Passed",
+      "total": 3797,
+      "passed": 3797,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "pids": [
+        "56096"
+      ],
+      "d4Cases": 21,
+      "sources": [
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/FixedSupportAnchors.cs",
+          "sha256": "64cbec0d91cdebf7c370abc6652b1aa0df6b63bd85d55e4d8af330e0cd657775"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/LogicalCutLedger.cs",
+          "sha256": "aa2cb9666175d594b203a6585e9b3921cfa3bfe2e4fd831d038efb6385706b8d"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/CutDag.cs",
+          "sha256": "325e3da8c7a627ad47c576399deeab2faf2f144f6db7cd9e558e26d50b3655a5"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/MeshCut/VpPreparedRootDisplay.cs",
+          "sha256": "a3447c03db557cf56b19ea8e82bccc090caa424338acb124af9a2c8edbdd27a6"
+        },
+        {
+          "file": "Assets/Zantetsu/Runtime/PhysicsCut/PhysicsOwnerRegistry.cs",
+          "sha256": "cfd25973fa534f5f2cb68c2db6846c55ac01324082d847894399e362c6023937"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/D4ColdPreparationTests.cs",
+          "sha256": "e1d4dafac74157f710310b20946872ae4224b8bd524649ee97316d9cbe837e09"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/CutDagTests.cs",
+          "sha256": "320428d7881e1b786fb167cca82fa08f9e73b1084b902009c8d0b84fe6ff5b00"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/MeshCut/VpPreparedRootDisplayTests.cs",
+          "sha256": "ca59c10d85d56ba32762be37ab1f3d2b769005544b93ff3b9fb4cc1b7dde85b0"
+        },
+        {
+          "file": "Assets/Zantetsu/Tests/EditMode/PhysicsCut/ProvisionalPhysicsPublicationTests.cs",
+          "sha256": "e7e03869048e00cb8a7a711f31b04088acbef4ae85233268ee0e4da6caaef719"
+        }
+      ],
+      "xmlSha256": "cc67052fdaebb73f679a8c41257457c0e5d5db02ff32a910d15c6261c686afb9",
+      "logSha256": "d62021b40008321061ee3b1231dca6d17c397c80b95ac775fd3f726544c53b93"
+    }
+  ],
+  "gameplayCapacityConnected": false,
+  "emptyAnchorPathEnabled": true,
+  "playerVerified": false,
+  "performanceMeasured": false,
+  "licensedInputsAdded": false,
+  "privateSnapshotsModified": false
+}

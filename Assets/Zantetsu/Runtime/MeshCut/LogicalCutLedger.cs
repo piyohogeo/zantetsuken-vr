@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Unity.Mathematics;
 
 namespace Zantetsu.MeshCut
@@ -132,6 +133,19 @@ namespace Zantetsu.MeshCut
 
         /// <summary>How many operation ids have been issued, ever.</summary>
         public int OperationCount => _operations.Count;
+
+        /// <summary>
+        /// Cold high-water capacities for this ledger's lifetime-issued IDs, not additional reservations.
+        /// Never shrinks, issues IDs, changes Revision or takes shared admission budget. Repeated calls do not add.
+        /// Include future children/history in the totals; this does not prepare any other World resources.
+        /// </summary>
+        public void PrepareCapacity(int fragmentCapacity, int operationCapacity)
+        {
+            if (fragmentCapacity < 0) throw new ArgumentOutOfRangeException(nameof(fragmentCapacity));
+            if (operationCapacity < 0) throw new ArgumentOutOfRangeException(nameof(operationCapacity));
+            if (_fragments.Capacity < fragmentCapacity) _fragments.Capacity = fragmentCapacity;
+            if (_operations.Capacity < operationCapacity) _operations.Capacity = operationCapacity;
+        }
 
         /// <summary>
         /// **How often <see cref="TryGetOrigin"/> has been asked** -- one per call, whatever the answer. It counted
@@ -463,10 +477,13 @@ namespace Zantetsu.MeshCut
                 return AnchorPreparationOutcome.OperationNotActive;
             }
 
-            var positive = new List<float3>();
-            var negative = new List<float3>();
-            if (!FixedSupportAnchors.TryDistribute(
-                    _fragments[sourceIndex].anchors, operation.plane, anchorEpsilon, positive, negative, out AnchorDistributionResult result))
+            var anchors = _fragments[sourceIndex].anchors;
+            List<float3> positive = null, negative = null;
+            AnchorDistributionResult result;
+            bool valid = anchors == null
+                ? FixedSupportAnchors.TryValidatePlane(operation.plane, anchorEpsilon, out result)
+                : DistributeNonempty(anchors, operation.plane, anchorEpsilon, out positive, out negative, out result);
+            if (!valid)
             {
                 distribution = result;
                 return AnchorPreparationOutcome.DistributionRefused;
@@ -793,6 +810,20 @@ namespace Zantetsu.MeshCut
             Budget.Return();
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool DistributeNonempty(List<float3> anchors, float4 plane, float epsilon,
+            out List<float3> positive, out List<float3> negative, out AnchorDistributionResult result)
+        {
+            positive = new List<float3>(); negative = new List<float3>();
+            bool valid = FixedSupportAnchors.TryDistribute(anchors, plane, epsilon, positive, negative, out result);
+            if (valid)
+            {
+                if (positive.Count == 0) positive = null;
+                if (negative.Count == 0) negative = null;
+            }
+            return valid;
+        }
+
         // Copies a caller's anchor positions into the ledger's own list, refusing a non-finite position the way an
         // adopted plane is refused: it is the caller's mistake, not a state this ledger can hold.
         private static List<float3> CopyAnchors(IReadOnlyList<float3> anchors)
@@ -803,6 +834,13 @@ namespace Zantetsu.MeshCut
                 return null;
             }
 
+            return CopyNonemptyAnchors(anchors, count);
+        }
+
+        // Keep List allocation / first-use metadata off the canonical-empty entry.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static List<float3> CopyNonemptyAnchors(IReadOnlyList<float3> anchors, int count)
+        {
             var owned = new List<float3>(count);
             for (int i = 0; i < count; i++)
             {

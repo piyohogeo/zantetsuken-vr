@@ -231,6 +231,17 @@ namespace Zantetsu.MeshCut
         public bool IsDrained => _nodes.Count == 0 && _cuts.ActiveCount == 0;
 
         /// <summary>
+        /// Cold absolute high-water capacity for geometry/frame mappings, including retained history and children.
+        /// No base geometry, IDs, work, Storage or admission budget is reserved. Does not prepare nodes/fault maps.
+        /// </summary>
+        public void PrepareGeometryCapacity(int fragmentCapacity)
+        {
+            if (_closed) throw new InvalidOperationException("The DAG is closed");
+            if (fragmentCapacity < 0) throw new ArgumentOutOfRangeException(nameof(fragmentCapacity));
+            _geometryOf.EnsureCapacity(fragmentCapacity); _frameOf.EnsureCapacity(fragmentCapacity);
+        }
+
+        /// <summary>
         /// Says which geometry a fragment is, and in which coordinates, for the first fragment of a branch: the
         /// geometry it was registered with before anything was cut (DESIGN 4.5.6, the registered base geometry of the
         /// first cut). Every later fragment gets both from the commit of the cut that produced it, and is never

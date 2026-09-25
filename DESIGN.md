@@ -314,6 +314,8 @@ Meshからデータを取得する初期経路はCPU-readableを前提とし、A
 
 Direct16のcold表示枠の限定移植は`docs/diagnostics/compact16uv-prepared-root/`。`TryPrepareRoot`でproducer／display別のShown・command・materialを準備し、D1が返す生成元／Storage付きの出力を`TryShowPreparedRoot`へ明示的に渡す。global armは使わず、現在の公開extent・index世代／開始位置を使う。転送前の早期拒否では枠を保持し、転送開始後は失敗でも再利用しない。未使用枠はslot／displayのDisposeで解放する。これはGeometry／GPU／参照slot／admissionの予約やrollbackではなく、一般登録・Final・再切断の経路を置換しない。cold material bindingは固定で、変更時は枠を作り直す。Editor component検証に限り、Gameplayの同frame接続・実asset／Player性能の採用判断は残す。
 
+空anchor／cold容量の限定移植は`docs/diagnostics/compact16uv-cold-capacity/`。空anchor配分ではList生成を省略するが、plane／epsilon検証・準備済み状態・Revision・公開／Abort／staleは維持する。Ledger履歴、owner／pair辞書、DAG geometry／frame辞書、display Shown Listはcoldで必要総容量を明示できる。同値の反復を追加予約とせず、ID・Revision・admission予算・Storage／GPU／参照slotを先取りしない。子・履歴・同時pairを含むhigh-waterと各bufferの上限は別途満たす。容量APIの通常Gameplay接続と製品Player性能は未確認であり、確保量から任意多体やhot allocationゼロを保証しない。
+
 #### 4.5.3 CPUプール・範囲所有権
 
 CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Mainの専用アロケータが入力参照寿命と出力予約を所有する。Workへ渡すNativeArray view／unsafe pointerの形状は実装詳細とし、view全域とアクセス許可範囲を区別する。Unity JobでVPプールを扱う場合はNativeDisableContainerSafetyRestrictionでcontainer単位の粗い依存判定を外せるが、外部Workを含む範囲所有と利用終了を省略しない。
