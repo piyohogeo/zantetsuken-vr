@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "kind": "D1-synchronous-direct16-editor-component",
+  "productBaseCommit": "523f6249bfbdc49a36702f832777622891434fce",
+  "privateSourceAuditCommit": "c98b290",
+  "unity": "6000.3.22f1",
+  "focusedPassed": 33,
+  "fullEditModePassed": 3737,
+  "gameplaySwitched": false,
+  "performanceMeasured": false,
+  "playerVerified": false,
+  "licensedPayloadAdded": false,
+  "runs": [
+    {
+      "name": "focused-1",
+      "exitCode": 0,
+      "logSha256": "ea3565a9a4b20c919103383c80d176c6bab4dc88db1bd74304d56b0c9bc8cc49",
+      "result": "Passed",
+      "total": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "xmlSha256": "2a3e2258ea0804c49005aec30409cd214c2386514c2c83bb74e4c1ec03b4b2e0",
+      "failedTests": []
+    },
+    {
+      "name": "focused-2",
+      "exitCode": 2,
+      "logSha256": "62a6e67b3291d726394fda159edd5b7757bbeb630e6a3f3f52668979a5cedd28",
+      "result": "Failed(Child)",
+      "total": 29,
+      "passed": 28,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "xmlSha256": "b946211178d5223e06d66d48e78f511cc7fd67e630dd3b4963218b1dfafd87d3",
+      "failedTests": [
+        "Zantetsu.Rendering.Tests.VpDirectSkinInputTests.UnsupportedColdInputDoesNotCreateProducer(\"unreferenced\")"
+      ]
+    },
+    {
+      "name": "focused-3",
+      "exitCode": 1,
+      "logSha256": "b6c53e6cbac0e05b73ec69f924b4def2b580b7e128543f036afa3ca01822f7d4",
+      "result": "CompileError",
+      "error": "CS1654 in five-influence test fixture"
+    },
+    {
+      "name": "focused-4",
+      "exitCode": 2,
+      "logSha256": "5bf6f6b723035314e09f443aa2d5e49aa83b7cd0079cbdd13c9ef1449ce67453",
+      "result": "Failed(Child)",
+      "total": 33,
+      "passed": 32,
+      "failed": 1,
+      "skipped": 0,
+      "inconclusive": 0,
+      "xmlSha256": "6b28fe98b1838c8984a3770cd03faf634e7327eee49dedc3d0fd3d602414bc3c",
+      "failedTests": [
+        "Zantetsu.Rendering.Tests.VpDirectSkinInputTests.MoreThanFourInfluencesRefusedEvenWhenRendererQualityIsFour"
+      ]
+    },
+    {
+      "name": "focused-5",
+      "exitCode": 0,
+      "logSha256": "1689d1bb82cca8cb989e467c722d99ee2e776614578dae45c8fd7d7aef8979c6",
+      "result": "Passed",
+      "total": 33,
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "xmlSha256": "7ab27a2bce35055ed10ec1447d5ffaf69a89ed7d68424dbe72ef15c0ad371157",
+      "failedTests": []
+    },
+    {
+      "name": "full-1",
+      "exitCode": 0,
+      "logSha256": "9dd77d7f8afd66544cabc731cc49f9f60229d85d8d63baca31c2ea7e5a370810",
+      "result": "Passed",
+      "total": 3737,
+      "passed": 3737,
+      "failed": 0,
+      "skipped": 0,
+      "inconclusive": 0,
+      "xmlSha256": "7e2f3a224442d1613035493d0f24273eca546f06d040bab4b61d24a31b7e027a",
+      "failedTests": []
+    }
+  ],
+  "sources": [
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpCpuGeometryStorage.cs",
+      "sha256": "9097c306347a236728f927404d93b06a61b84c388cf0186df4e62115413fe58a"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinStorage.cs",
+      "sha256": "8115dc699eba610c82245e4e28f370e0e94e5e9865558b76dd38651c148f81c7"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinInput.cs",
+      "sha256": "05c2b4b20005cc35a4024e63f7760619afa2cbd3e1bb8e396661da0f7e9292ee"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/Zantetsu.Rendering.asmdef",
+      "sha256": "ef047527a412d5ac9e750b65603660ccb63646f33560d080863541c02207546f"
+    },
+    {
+      "file": "Assets/Zantetsu/Tests/EditMode/Rendering/VpDirectSkinInputTests.cs",
+      "sha256": "06fa5b53858fab4a95416dc4b2b1c284cfc758702c0a15859980d8265b4299b1"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinInput.cs.meta",
+      "sha256": "5d7a92e7e513acbe368f311954abbfa086c3e13bf51c20cee61faa6aaf00f8c1"
+    },
+    {
+      "file": "Assets/Zantetsu/Runtime/Rendering/VpDirectSkinStorage.cs.meta",
+      "sha256": "933dceaab50cdec29cd3df492bf91e119c9f7a5df68ece4ed1f59031c05cdff1"
+    },
+    {
+      "file": "Assets/Zantetsu/Tests/EditMode/Rendering/VpDirectSkinInputTests.cs.meta",
+      "sha256": "8053134b5b689f76830e03c93f90fa3141aaa1be1acf380c31f071fcde943d1c"
+    }
+  ]
+}
