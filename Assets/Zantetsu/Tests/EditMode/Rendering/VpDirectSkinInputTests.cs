@@ -1,0 +1,277 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using NUnit.Framework;
+using Unity.Collections;
+using UnityEngine;
+using Object = UnityEngine.Object;
+
+namespace Zantetsu.Rendering.Tests
+{
+    public class VpDirectSkinInputTests
+    {
+        readonly List<Mesh> ownedMeshes = new List<Mesh>();
+        GameObject root;
+        Mesh mesh;
+        SkinnedMeshRenderer renderer;
+        Transform[] bones;
+        static readonly int[] Topology = { 0, 1, 2, 3 };
+        static readonly int[] Triangles = { 0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3 };
+
+        [SetUp] public void SetUp()
+        {
+            root = new GameObject("Direct16 synthetic rig");
+            var go = new GameObject("renderer"); go.transform.SetParent(root.transform, false);
+            renderer = go.AddComponent<SkinnedMeshRenderer>(); renderer.quality = SkinQuality.Bone4;
+            bones = new Transform[4];
+            for (int i = 0; i < bones.Length; i++)
+            {
+                bones[i] = new GameObject("bone " + i).transform; bones[i].SetParent(root.transform, false);
+            }
+            mesh = Own(new Mesh { vertices = new[] { Vector3.zero, Vector3.right, Vector3.up, Vector3.forward },
+                normals = Enumerable.Repeat(new Vector3(.2f, .3f, -.7f).normalized, 4).ToArray(),
+                uv = new[] { new Vector2(.5f/256, 255.5f/256), new Vector2(31.5f/256, 63.5f/256),
+                    new Vector2(128.5f/256, 127.5f/256), new Vector2(255.5f/256, .5f/256) },
+                triangles = Triangles, bindposes = Enumerable.Repeat(Matrix4x4.identity, 4).ToArray(),
+                boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = .4f,
+                    boneIndex1 = 1, weight1 = .3f, boneIndex2 = 2, weight2 = .2f, boneIndex3 = 3, weight3 = .1f }, 4).ToArray() });
+            renderer.sharedMesh = mesh; renderer.bones = bones; renderer.rootBone = bones[0];
+        }
+        Mesh Own(Mesh value) { ownedMeshes.Add(value); return value; }
+        [TearDown] public void TearDown()
+        {
+            Object.DestroyImmediate(root);
+            foreach (var item in ownedMeshes) Object.DestroyImmediate(item);
+            ownedMeshes.Clear();
+        }
+        VpDirectSkinInput Input()
+        {
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, Topology, 4, out var input), Is.True);
+            return input;
+        }
+        static VpCpuGeometryStorage Storage(int vertices = 32, int indices = 96, int descriptors = 8, int submeshes = 8, int blocks = 8)
+            => new VpCpuGeometryStorage(vertices, indices, descriptors, submeshes, blocks, Allocator.Persistent);
+        static uint[] ReadIndices(VpCpuGeometryStorage storage, VpStoredGeometry geometry)
+        {
+            Assert.That(storage.TryAcquireIndexReadLease(geometry.indexRange, out var lease, out var view), Is.True);
+            try { return view.ToArray(); }
+            finally { Assert.That(storage.TryReleaseIndexReadLease(lease), Is.True); }
+        }
+
+        [TestCase(0)] [TestCase(1)] [TestCase(2)]
+        public void CurrentPoseMatchesUnityBake_AndBoundsUvTopologyIndices(int pose)
+        {
+            using var input = Input(); using var storage = Storage();
+            var bake = Own(new Mesh());
+            if (pose > 0)
+            {
+                renderer.transform.SetLocalPositionAndRotation(new Vector3(.2f, -.3f, .1f), Quaternion.Euler(3, 17, -9));
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    bones[i].localPosition = new Vector3(.1f*i, -.03f*i, .07f*i);
+                    bones[i].localRotation = Quaternion.Euler(7*i, -11*i, 4*i);
+                    if (pose == 2) bones[i].localScale = new Vector3(1 + .05f*i, 1 - .04f*i, 1 + .03f*i);
+                }
+            }
+            renderer.BakeMesh(bake, true);
+            Assert.That(input.TryAppendTo(storage, out var geometry), Is.True);
+            Assert.That(geometry.cutInputAccepted && geometry.hasTopology, Is.True);
+            Assert.That(VpRenderVertex.Stride, Is.EqualTo(16));
+            Assert.That(storage.TryGetPublishedExtent(geometry, out int start, out int count, out var bounds), Is.True);
+            Assert.That(start, Is.Zero); Assert.That(count, Is.EqualTo(4));
+            Vector3 min = Vector3.positiveInfinity, max = Vector3.negativeInfinity;
+            for (int i = 0; i < 4; i++)
+            {
+                var v = storage.Vertices[i];
+                Assert.That(Vector3.Distance(v.position, bake.vertices[i]), Is.LessThan(3e-6f));
+                Assert.That(Vector3.Angle(v.normal, bake.normals[i]), Is.LessThan(1.4f));
+                Assert.That(v.uv0, Is.EqualTo(mesh.uv[i]));
+                min = Vector3.Min(min, v.position); max = Vector3.Max(max, v.position);
+            }
+            Assert.That(Vector3.Distance(bounds.min, min), Is.LessThan(2e-7f));
+            Assert.That(Vector3.Distance(bounds.max, max), Is.LessThan(2e-7f));
+            Assert.That(ReadIndices(storage, geometry), Is.EqualTo(Triangles.Select(i => (uint)i)));
+            Assert.That(storage.TryGetTopology(geometry, out var topology, out int topologyCount), Is.True);
+            Assert.That(topologyCount, Is.EqualTo(4));
+            Assert.That(topology.ToArray(), Is.EqualTo(Topology));
+        }
+
+        [Test] public void RepeatedPosesUseNewRanges_NonzeroOffset_DifferentStorageRejected()
+        {
+            using var input = Input(); using var storage = Storage(); using var foreign = Storage();
+            Assert.That(input.TryAppendTo(storage, out var first), Is.True);
+            var old = storage.Vertices.ToArray();
+            foreach (var bone in bones) bone.localPosition = new Vector3(3, 2, 1);
+            Assert.That(input.TryAppendTo(storage, out var second), Is.True);
+            Assert.That(second.vertexStart, Is.EqualTo(4));
+            Assert.That(ReadIndices(storage, second), Is.EqualTo(Triangles.Select(i => (uint)(i + 4))));
+            for (int i = 0; i < 4; i++) Assert.That(storage.Vertices[i], Is.EqualTo(old[i]));
+            Assert.That(foreign.TryGetPublishedExtent(first, out _, out _, out _), Is.False);
+            Assert.That(input.TryAppendTo(foreign, out var other), Is.True);
+            Assert.That(other.vertexStart, Is.Zero);
+            Assert.That(storage.TryGetPublishedExtent(other, out _, out _, out _), Is.False);
+        }
+
+        [TestCase("vertices")] [TestCase("indices")] [TestCase("descriptors")]
+        [TestCase("submeshes")] [TestCase("blocks")]
+        public void CapacityFailureDoesNotPublishOrLeakSpans(string shortage)
+        {
+            using var input = Input();
+            using var storage = Storage(shortage == "vertices" ? 3 : 4, shortage == "indices" ? 11 : 12,
+                shortage == "descriptors" ? 0 : 1, shortage == "submeshes" ? 0 : 1, shortage == "blocks" ? 0 : 1);
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(input.TryAppendTo(storage, out _), Is.False);
+                Assert.That(storage.VertexCount, Is.Zero);
+                Assert.That(storage.TryGetCommittedVertices(0, 1, out _), Is.False);
+            }
+        }
+
+        [Test] public void InvalidGeneratedNormalCancelsAllSpans_ThenValidPoseFitsExactCapacity()
+        {
+            using var input = Input(); using var storage = Storage(4, 12, 1, 1, 1);
+            foreach (var bone in bones) bone.localScale = Vector3.zero;
+            for (int i = 0; i < 3; i++) Assert.That(input.TryAppendTo(storage, out _), Is.False);
+            Assert.That(storage.VertexCount, Is.Zero);
+            Assert.That(storage.TryGetCommittedVertices(0, 1, out _), Is.False);
+            foreach (var bone in bones) bone.localScale = Vector3.one;
+            Assert.That(input.TryAppendTo(storage, out var g), Is.True);
+            Assert.That(g.vertexStart, Is.Zero);
+            Assert.That(ReadIndices(storage, g), Is.EqualTo(Triangles.Select(i => (uint)i)));
+            Assert.That(input.TryAppendTo(storage, out _), Is.False);
+        }
+
+        [Test] public void OpenCutReservationRefusesDirectAppend_AndSurvivesIt()
+        {
+            using var input = Input(); using var storage = Storage();
+            Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
+            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var reservation), Is.True);
+            Assert.That(input.TryAppendTo(storage, out _), Is.False);
+            Assert.That(storage.VertexCount, Is.EqualTo(4));
+            Assert.That(storage.TryCancelCutOutput(reservation), Is.True);
+            Assert.That(storage.TryCancelCutOutput(reservation), Is.False);
+            Assert.That(input.TryAppendTo(storage, out var next), Is.True);
+            Assert.That(next.vertexStart, Is.EqualTo(4));
+        }
+
+        [Test] public void DisposingInputDoesNotRetirePublishedData_AndDisposedStorageThrows()
+        {
+            using var input = Input(); using var storage = Storage();
+            Assert.That(input.TryAppendTo(storage, out var g), Is.True);
+            input.Dispose(); input.Dispose();
+            Assert.That(ReadIndices(storage, g).Length, Is.EqualTo(12));
+            Assert.Throws<ObjectDisposedException>(() => input.TryAppendTo(storage, out _));
+            using var other = Input(); storage.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => other.TryAppendTo(storage, out _));
+        }
+
+        [TestCase("quality")] [TestCase("frame")] [TestCase("mesh")] [TestCase("bone")]
+        public void ChangedDynamicInputIsRejectedBeforePublication(string change)
+        {
+            using var input = Input(); using var storage = Storage();
+            if (change == "quality") renderer.quality = SkinQuality.Bone1;
+            if (change == "frame") root.transform.localScale = new Vector3(1, 2, 1);
+            if (change == "mesh") renderer.sharedMesh = Own(Object.Instantiate(mesh));
+            if (change == "bone") Object.DestroyImmediate(bones[3].gameObject);
+            Assert.That(input.TryAppendTo(storage, out _), Is.False);
+            Assert.That(storage.VertexCount, Is.Zero);
+        }
+
+        [TestCase("normal")] [TestCase("uv")] [TestCase("open")] [TestCase("blendshape")]
+        [TestCase("submeshes")] [TestCase("quality")] [TestCase("frame")] [TestCase("topology")]
+        [TestCase("unreferenced")] [TestCase("missing-bone")] [TestCase("bindpose")] [TestCase("weights")]
+        public void UnsupportedColdInputDoesNotCreateProducer(string invalid)
+        {
+            int[] topo = Topology;
+            if (invalid == "normal") mesh.normals = Enumerable.Repeat(Vector3.zero, 4).ToArray();
+            if (invalid == "uv") mesh.uv = Enumerable.Repeat(new Vector2(2, 0), 4).ToArray();
+            if (invalid == "open") mesh.triangles = new[] { 0, 1, 2 };
+            if (invalid == "blendshape") mesh.AddBlendShapeFrame("test", 100, new Vector3[4], new Vector3[4], new Vector3[4]);
+            if (invalid == "submeshes") mesh.subMeshCount = 2;
+            if (invalid == "quality") renderer.quality = SkinQuality.Bone2;
+            if (invalid == "frame") renderer.transform.localScale = Vector3.one * .01f;
+            if (invalid == "topology") topo = new[] { 0, 1, 2, 9 };
+            if (invalid == "missing-bone") { renderer.bones = new[] { bones[0], bones[1], bones[2], null }; }
+            if (invalid == "bindpose") { var b = mesh.bindposes; b[3].m00 = float.NaN; mesh.bindposes = b; }
+            if (invalid == "weights") { var w = mesh.boneWeights; w[0].weight0 = .2f; mesh.boneWeights = w; }
+            if (invalid == "unreferenced")
+            {
+                // Changing the vertex count clears Unity's attribute arrays; capture them first.
+                var p = mesh.vertices; var n = mesh.normals; var u = mesh.uv; var w = mesh.boneWeights;
+                mesh.vertices = p.Concat(new[] { p[0] }).ToArray();
+                mesh.normals = n.Concat(new[] { n[0] }).ToArray();
+                mesh.uv = u.Concat(new[] { u[0] }).ToArray();
+                mesh.boneWeights = w.Concat(new[] { w[0] }).ToArray();
+                mesh.triangles = Triangles;
+                topo = new[] { 0, 1, 2, 3, 0 };
+            }
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, topo, 4, out var input), Is.False);
+            Assert.That(input, Is.Null); Assert.That(renderer.enabled, Is.True);
+        }
+
+        [Test] public void MoreThanFourInfluencesRefusedEvenWhenRendererQualityIsFour()
+        {
+            renderer.bones = bones.Concat(new[] { root.transform }).ToArray();
+            // Build a variable-weight mesh directly, rather than converting legacy BoneWeight vertex channels.
+            mesh = Own(new Mesh { vertices = mesh.vertices, normals = mesh.normals, uv = mesh.uv,
+                triangles = Triangles, bindposes = Enumerable.Repeat(Matrix4x4.identity, 5).ToArray() });
+            renderer.sharedMesh = mesh;
+            using var counts = new NativeArray<byte>(new byte[] { 5, 5, 5, 5 }, Allocator.Temp);
+            var values = Enumerable.Range(0, 20).Select(i => new BoneWeight1 { boneIndex = i % 5, weight = .2f }).ToArray();
+            using var weights = new NativeArray<BoneWeight1>(values, Allocator.Temp);
+            mesh.SetBoneWeights(counts, weights);
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, Topology, 4, out _), Is.False);
+        }
+
+        [Test] public void TopologyIsCopiedCold_AndSourceChangeRequiresRecreation()
+        {
+            var topology = (int[])Topology.Clone();
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, topology, 4, out var input), Is.True);
+            using (input)
+            using (var storage = Storage())
+            {
+                topology[0] = 999;
+                Assert.That(input.TryAppendTo(storage, out var g), Is.True);
+                Assert.That(storage.TryGetTopology(g, out var actual, out _), Is.True);
+                Assert.That(actual.ToArray(), Is.EqualTo(Topology));
+                input.Dispose();
+                var p = mesh.vertices; p[1] = Vector3.right * 2; mesh.vertices = p;
+                using var replacement = Input();
+                Assert.That(replacement.TryAppendTo(storage, out var changed), Is.True);
+                Assert.That(storage.Vertices[changed.vertexStart + 1].position, Is.EqualTo(p[1]));
+                Assert.That(storage.Vertices[g.vertexStart + 1].position, Is.EqualTo(Vector3.right));
+            }
+        }
+
+        [Test] public void RetiredIndexHandleCannotReadTheNextRegistration()
+        {
+            using var input = Input(); using var storage = Storage(8, 12, 1, 2, 2);
+            Assert.That(input.TryAppendTo(storage, out var first), Is.True);
+            Assert.That(storage.TryRetireIndices(first.indexRange), Is.True);
+            Assert.That(input.TryAppendTo(storage, out var next), Is.True);
+            Assert.That(storage.TryGetPublishedExtent(first, out _, out _, out _), Is.False);
+            Assert.That(ReadIndices(storage, next), Is.EqualTo(Triangles.Select(i => (uint)(i + 4))));
+        }
+
+        [TestCase(false)] [TestCase(true)]
+        public void AttributeSeamsRequireIdenticalPositionAndWeightArithmetic(bool mismatch)
+        {
+            var p = mesh.vertices; var n = mesh.normals; var u = mesh.uv; var w = mesh.boneWeights;
+            mesh.vertices = Triangles.Select(i => p[i]).ToArray();
+            mesh.normals = Triangles.Select(i => n[i]).ToArray(); mesh.uv = Triangles.Select(i => u[i]).ToArray();
+            var seamWeights = Triangles.Select(i => w[i]).ToArray();
+            if (mismatch) { seamWeights[3].weight0 = .3f; seamWeights[3].weight1 = .4f; }
+            mesh.boneWeights = seamWeights; mesh.triangles = Enumerable.Range(0, 12).ToArray();
+            bool accepted = VpDirectSkinInput.TryCreate(renderer, Triangles, 4, out var input);
+            using (input)
+            {
+                Assert.That(accepted, Is.EqualTo(!mismatch));
+                if (accepted)
+                {
+                    using var storage = Storage(); Assert.That(input.TryAppendTo(storage, out _), Is.True);
+                    Assert.That(storage.Vertices[0].position, Is.EqualTo(storage.Vertices[3].position));
+                }
+            }
+        }
+    }
+}

@@ -33,7 +33,7 @@ namespace Zantetsu.Rendering
     /// again does nothing.
     /// </para>
     /// </summary>
-    public sealed class VpCpuGeometryStorage : IDisposable
+    public sealed partial class VpCpuGeometryStorage : IDisposable
     {
         /// <summary>
         /// What one index descriptor's current registration was appended with. A stored geometry is one of this
