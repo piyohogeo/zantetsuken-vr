@@ -74,6 +74,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether it has left the physics scene.</summary>
         public bool IsWithdrawn { get; private set; }
 
+        // Dedicated first-cut bridge. Borrowed character hierarchy is stopped, never destroyed by this owner.
+        internal GameObject PreparedCharacterRoot;
+
         /// <summary>Whether its objects have been destroyed and its shape given up.</summary>
         public bool IsReleased { get; private set; }
 
@@ -116,6 +119,10 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsWithdrawn = true;
+            if (PreparedCharacterRoot != null)
+            {
+                PreparedCharacterRoot.SetActive(false);
+            }
             if (Root != null)
             {
                 Root.SetActive(false);

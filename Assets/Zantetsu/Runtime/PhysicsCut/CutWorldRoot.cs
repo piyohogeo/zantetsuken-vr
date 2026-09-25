@@ -438,6 +438,9 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool Shutdown()
         {
+            // A character's OnDisable may request shutdown during the synchronous publication switch.
+            // Do not release the world underneath that stack; its outer scope performs the ordinary ending.
+            if (_preparedCharacterCall) { _preparedCharacterShutdown = true; return false; }
             if (_released)
             {
                 return true;

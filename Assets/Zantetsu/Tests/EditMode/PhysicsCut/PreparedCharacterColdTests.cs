@@ -12,7 +12,7 @@ using Object = UnityEngine.Object;
 
 namespace Zantetsu.PhysicsCut.Tests
 {
-    public unsafe class PreparedCharacterColdTests
+    public unsafe partial class PreparedCharacterColdTests
     {
         readonly List<IDisposable> owned = new List<IDisposable>();
         readonly List<Object> objects = new List<Object>();
