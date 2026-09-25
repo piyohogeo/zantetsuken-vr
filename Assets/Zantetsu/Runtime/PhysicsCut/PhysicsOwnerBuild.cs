@@ -161,6 +161,8 @@ namespace Zantetsu.PhysicsCut
         /// destroyed here, and must outlive the owners.
         /// </summary>
         public IReadOnlyList<Mesh> inheritedMeshes;
+        /// <summary>When supplied, authoritative inherited meshes AND their per-convex frames. Overrides inheritedMeshes.</summary>
+        public PhysicsOwnerShape inheritedShape;
 
         /// <summary>What to call the two objects. Optional.</summary>
         public string name;
@@ -467,7 +469,7 @@ namespace Zantetsu.PhysicsCut
                 MeshCollider had = colliders[i];
                 if (had != null && !KeepsSideCollider(i))
                 {
-                    PhysicsOwnerBuilder.DestroyComponent(had);
+                    PhysicsOwnerBuilder.DestroyComponent(had, Side.ShapeFrame);
                 }
             }
 
@@ -484,7 +486,7 @@ namespace Zantetsu.PhysicsCut
 
             for (int i = 0; i < _made.Count; i++)
             {
-                PhysicsOwnerBuilder.DestroyComponent(_made[i]);
+                PhysicsOwnerBuilder.DestroyComponent(_made[i], Side.ShapeFrame);
             }
 
             _made.Clear();
@@ -638,7 +640,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            if (!ShapesArePresent(products, input.inheritedMeshes))
+            if (!ShapesArePresent(products, input.inheritedShape != null ? input.inheritedShape.Meshes : input.inheritedMeshes))
             {
                 outcome = PhysicsOwnerBuildOutcome.ShapeMissing;
                 return false;
@@ -768,7 +770,8 @@ namespace Zantetsu.PhysicsCut
 
                 var body = root.AddComponent<Rigidbody>();
                 side = new PhysicsOwnerSide(positive, root, shapeFrame, body);
-                AddColliders(products, input.inheritedMeshes, side, shapeFrame);
+                AddColliders(products, input.inheritedShape != null ? input.inheritedShape.Meshes : input.inheritedMeshes,
+                    side, shapeFrame, input.inheritedShape);
 
                 side.Mass = mass.mass;
                 side.CenterOfMass = mass.centerOfMass;
@@ -959,7 +962,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal static PreparedSideColliders PrepareFinalColliders(
             PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side,
-            PhysicsOwnerShape sideShape, quaternion localRotation, float3 localOffset)
+            PhysicsOwnerShape sideShape, quaternion localRotation, float3 localOffset, PhysicsOwnerShape inheritedShape = null)
         {
             int count = products.PartCount(side.positive);
             var ordered = new List<MeshCollider>(count);
@@ -1017,7 +1020,9 @@ namespace Zantetsu.PhysicsCut
                              && part.inputConvex >= 0 && part.inputConvex < sideColliderOfInputConvex.Length
                         ? sideColliderOfInputConvex[part.inputConvex]
                         : -1;
-                    MeshCollider keptOne = at >= 0 ? Reusable(sideColliders[at], mesh, products.Cooking) : null;
+                    PhysicsMeshFrame meshFrame = part.borrowed && inheritedShape != null ? inheritedShape.MeshFrameOf(part.inputConvex) : default;
+                    MeshCollider keptOne = at >= 0 && meshFrame.Equals(sideShape.MeshFrameOf(at))
+                        ? Reusable(sideColliders[at], mesh, products.Cooking) : null;
                     if (keptOne != null)
                     {
                         // Taken: the entry goes, so this convex cannot be kept a second time.
@@ -1027,7 +1032,7 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    MeshCollider collider = MakeOne(side.ShapeFrame, products.Cooking, mesh, false, made);
+                    MeshCollider collider = MakeOne(side.ShapeFrame, products.Cooking, mesh, false, made, meshFrame);
                     ordered.Add(collider);
                     if (!part.borrowed)
                     {
@@ -1040,7 +1045,7 @@ namespace Zantetsu.PhysicsCut
                 // Half a set is no preparation. What was made comes off again and the side is as it was.
                 for (int i = 0; i < made.Count; i++)
                 {
-                    DestroyComponent(made[i]);
+                    DestroyComponent(made[i], side.ShapeFrame);
                 }
 
                 throw;
@@ -1066,9 +1071,10 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>One collider on the frame, in the list before it is set up, with the profile before the mesh.</summary>
-        private static MeshCollider MakeOne(GameObject shapeFrame, MeshColliderCookingOptions cooking, Mesh mesh, bool enabled, List<MeshCollider> into)
+        private static MeshCollider MakeOne(GameObject shapeFrame, MeshColliderCookingOptions cooking, Mesh mesh, bool enabled,
+            List<MeshCollider> into, PhysicsMeshFrame meshFrame = default)
         {
-            var collider = shapeFrame.AddComponent<MeshCollider>();
+            var collider = CreateMeshCollider(shapeFrame, meshFrame);
             into.Add(collider);
             collider.enabled = enabled;
             collider.cookingOptions = cooking;
@@ -1084,10 +1090,11 @@ namespace Zantetsu.PhysicsCut
         }
 
         private static void AddColliders(
-            PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side, GameObject shapeFrame)
+            PhysicsCutProducts products, IReadOnlyList<Mesh> inherited, PhysicsOwnerSide side, GameObject shapeFrame,
+            PhysicsOwnerShape inheritedShape)
         {
             var made = new List<MeshCollider>(4);
-            int produced = MakeColliders(products, inherited, side.positive, shapeFrame, made, true);
+            int produced = MakeColliders(products, inherited, side.positive, shapeFrame, made, true, inheritedShape);
             for (int i = 0; i < made.Count; i++)
             {
                 side.Add(made[i]);
@@ -1107,7 +1114,7 @@ namespace Zantetsu.PhysicsCut
             bool positive,
             GameObject shapeFrame,
             List<MeshCollider> into,
-            bool enabled)
+            bool enabled, PhysicsOwnerShape inheritedShape)
         {
             int count = products.PartCount(positive);
             int produced = 0;
@@ -1115,7 +1122,8 @@ namespace Zantetsu.PhysicsCut
             {
                 PhysicsCutPart part = products.Part(positive, i);
                 Mesh mesh = part.borrowed ? inherited[part.inputConvex] : part.mesh;
-                var collider = shapeFrame.AddComponent<MeshCollider>();
+                var collider = CreateMeshCollider(shapeFrame,
+                    part.borrowed && inheritedShape != null ? inheritedShape.MeshFrameOf(part.inputConvex) : default);
 
                 // In the list from the moment it exists, before it is set up at all: what is set up on it can throw --
                 // a mesh that cannot be cooked -- and a component the caller does not know about is one nothing takes
@@ -1226,10 +1234,19 @@ namespace Zantetsu.PhysicsCut
         /// while playing. A caller that needs the component to stop answering **now** disables it first — this only
         /// asks for it to go.
         /// </summary>
-        internal static void DestroyComponent(Component component)
+        internal static void DestroyComponent(Component component, GameObject shapeFrame)
         {
             if (component == null)
             {
+                return;
+            }
+
+            // These lists contain only colliders made by this builder. A dedicated direct child is ours,
+            // unlike the shared shapeFrame itself. No object-name test, global dictionary, or marker component.
+            if (component.gameObject != shapeFrame && component.transform.parent == shapeFrame.transform)
+            {
+                if (component is Collider collider) collider.enabled = false;
+                DestroyObject(component.gameObject);
                 return;
             }
 
@@ -1241,6 +1258,19 @@ namespace Zantetsu.PhysicsCut
             {
                 UnityEngine.Object.DestroyImmediate(component);
             }
+        }
+
+        internal static MeshCollider CreateMeshCollider(GameObject shapeFrame, PhysicsMeshFrame meshFrame)
+        {
+            if (!meshFrame.HasFrame) return shapeFrame.AddComponent<MeshCollider>();
+            var child = new GameObject("Convex mesh frame");
+            try
+            {
+                child.transform.SetParent(shapeFrame.transform, false);
+                child.transform.SetLocalPositionAndRotation(meshFrame.Position, meshFrame.Rotation);
+                return child.AddComponent<MeshCollider>();
+            }
+            catch { DestroyObject(child); throw; }
         }
 
         internal static void DestroyObject(GameObject go)

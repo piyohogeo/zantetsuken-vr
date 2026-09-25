@@ -344,7 +344,7 @@ namespace Zantetsu.PhysicsCut
                 var side = new PhysicsOwnerSide(positive, root, shapeFrame, body);
                 for (int i = 0; i < shape.ConvexCount; i++)
                 {
-                    var collider = shapeFrame.AddComponent<MeshCollider>();
+                    var collider = PhysicsOwnerBuilder.CreateMeshCollider(shapeFrame, shape.MeshFrameOf(i));
 
                     // The profile before the mesh, and the mesh the source already had: a collider given its mesh
                     // first would be cooked with the wrong options (DESIGN 7.1.1).

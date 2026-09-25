@@ -310,6 +310,8 @@ Meshからデータを取得する初期経路はCPU-readableを前提とし、A
 
 同期Direct16の限定component移植は`docs/diagnostics/compact16uv-direct-skin/`に記録する。`VpDirectSkinInput`は不変の単一submesh・4 influence以下・blend shapeなし・rigid/unit-scale Rendererをcold検証し、現在bone行列からskin・oct encode・bounds・topologyをCPUの予約済み16Bへ直接書く。global index補正コピーは残す。Mesh経由の中間出力、Main再pack、出力後のbounds全走査は追加しない。予約は同期scope内で閉じ、失敗時は未公開範囲を返す。入力のMesh内容・bone binding・topology変更前にproducerを破棄・再準備し、毎hitの入力hash走査はしない。現段階は合成入力によるEditor component検証であり、通常GameplayのBakeMesh経路、初回body登録・cook・実hit移譲・同frame Provisionalは切り替えていない。製品入口への採用時に未対応入力の既存同期経路と寿命を接続し、実asset／Player／連続Mainを別途検証する。private測定の短縮率を製品達成値にはしない。
 
+個体別physics準備の限定component移植は`docs/diagnostics/compact16uv-prepared-physics/`。`VpPreparedPhysicsInput`は検証済みbone-local凸B-repをcoldコピーし、個体専用Meshを所定cook profileで一度cookする。要求時は同一poseの剛体行列から数値B-rep／boundsへ直接出力し、Meshは書き換えず、convexごとの不変Mesh frameをProvisional・Final継承・再切断へ保持する。専用Collider子の交換／取消時は子も解放する。pose構築と所有権移譲を区別し、未移譲入力はDisposeで回収、移譲後の拒否は受取側がshapeを解放する。worker／子孫のbank・Mesh保持は既存寿命契約に従う。sourceの中間Colliderは生成しないが、現在poseの分類／mass／Actor構築／公開は残る。合成Editor component検証であり、Gameplay入口・同frame公開への採用、実asset／Player性能の確認とは区別する。7.1の公開／Abortや7.3のcook品質許容を緩和しない。
+
 #### 4.5.3 CPUプール・範囲所有権
 
 CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Mainの専用アロケータが入力参照寿命と出力予約を所有する。Workへ渡すNativeArray view／unsafe pointerの形状は実装詳細とし、view全域とアクセス許可範囲を区別する。Unity JobでVPプールを扱う場合はNativeDisableContainerSafetyRestrictionでcontainer単位の粗い依存判定を外せるが、外部Workを含む範囲所有と利用終了を省略しない。
