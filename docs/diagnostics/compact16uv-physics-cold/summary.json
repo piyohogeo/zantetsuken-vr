@@ -278,7 +278,7 @@
   "standalonePlayerVerified": false,
   "privateSnapshotsModified": false,
   "paletteTestSourceSha256": "4b25f4f4c5548eb479aac4db4a3f0b3e492f9d2444429113b4e3036b7b17fddc",
-  "unityGeneratedSettingsRestored": false,
+  "unityGeneratedSettingsRestored": true,
   "unitySettingsBackup": [
     {
       "file": "OpenXR Package Settings.asset",
