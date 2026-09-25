@@ -169,6 +169,17 @@ namespace Zantetsu.Rendering
             return storage.TryAppendDirectSkin(this, out geometry);
         }
 
+        public bool IsDisposed => disposed;
+
+        /// <summary>Same synchronous output, with an unforgeable producer/storage receipt for cold display preparation.</summary>
+        public bool TryAppendForDisplay(VpCpuGeometryStorage storage, out VpDirectSkinOutput output)
+        {
+            output = default;
+            if (!TryAppendTo(storage, out var geometry)) return false;
+            output = new VpDirectSkinOutput(this, storage, geometry);
+            return true;
+        }
+
         internal unsafe bool Write(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology,
             NativeArray<uint> outputIndices, int baseVertex, out float3 min, out float3 max)
         {

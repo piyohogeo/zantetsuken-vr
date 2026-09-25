@@ -381,9 +381,9 @@ namespace Zantetsu.MeshCut
         public readonly long generation;
     }
 
-    public sealed class VpLogicalCutDisplay : IDisposable
+    public sealed partial class VpLogicalCutDisplay : IDisposable
     {
-        private sealed class Shown
+        internal sealed class Shown
         {
             public LogicalFragmentId fragment;
             public VpStoredGeometry geometry;
@@ -1729,6 +1729,11 @@ namespace Zantetsu.MeshCut
             Matrix4x4 objectToWorld,
             Matrix4x4 lineageToGeometryLocal,
             IReadOnlyCollection<VpClipBoundary> reflected)
+            => TryShowCore(fragment, geometry, objectToWorld, lineageToGeometryLocal, reflected, null);
+
+        private bool TryShowCore(
+            LogicalFragmentId fragment, VpStoredGeometry geometry, Matrix4x4 objectToWorld,
+            Matrix4x4 lineageToGeometryLocal, IReadOnlyCollection<VpClipBoundary> reflected, PreparedRoot prepared)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
@@ -1759,8 +1764,11 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            if (!TryPrepare(
-                    geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials, out Bounds localBounds)
+            VpIndirectCommand[] commands; Material[] commandMaterials; Bounds localBounds;
+            bool ready = prepared == null
+                ? TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
+                : TryPrepareRootCommand(prepared, geometry, out commands, out commandMaterials, out localBounds);
+            if (!ready
                 || !VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
                 || !VpMultiCutSnapshot.IsWithinSectionBounds(
                     localBounds, objectToWorld, VpCapBoundsPolygon.EpsilonFor(localBounds)))
@@ -1773,11 +1781,14 @@ namespace Zantetsu.MeshCut
 
             // Room for the body now, and for a second render fragment it may take later.
             if (_commandCount + commands.Length > _commandCapacity
-                || CurrentInstanceCount() + (commands.Length * 2) > _instanceCapacity)
+                || CurrentInstanceCount() + (commands.Length * 2) > _instanceCapacity
+                || (prepared != null && _shown.Count == _shown.Capacity))
             {
                 return false;
             }
 
+            // Consume before the first transfer: no reusable scratch arm can escape on failure.
+            Shown coldEntry = prepared?.Take();
             int vertices;
             int indices;
             try
@@ -1805,35 +1816,34 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            var reflectedCopy = new VpClipBoundary[reflected.Count];
+            var reflectedCopy = coldEntry == null ? new VpClipBoundary[reflected.Count] : coldEntry.reflected;
             int k = 0;
             foreach (VpClipBoundary boundary in reflected)
             {
                 reflectedCopy[k++] = boundary;
             }
 
-            var ranges = new VpGeometryRange[commands.Length];
+            var ranges = coldEntry == null ? new VpGeometryRange[commands.Length] : coldEntry.ranges;
             for (int c = 0; c < commands.Length; c++)
             {
                 ranges[c] = commands[c].range;
             }
 
-            var entry = new Shown
-            {
-                fragment = fragment,
-                geometry = geometry,
-                reference = reference,
-                objectToWorld = objectToWorld,
-                lineageToGeometryLocal = lineageToGeometryLocal,
-                reflected = reflectedCopy,
-                commands = commands,
-                commandMaterials = commandMaterials,
-                ranges = ranges,
-                localBounds = localBounds,
-            };
+            var entry = coldEntry ?? new Shown();
+            entry.fragment = fragment;
+            entry.geometry = geometry;
+            entry.reference = reference;
+            entry.objectToWorld = objectToWorld;
+            entry.lineageToGeometryLocal = lineageToGeometryLocal;
+            entry.reflected = reflectedCopy;
+            entry.commands = commands;
+            entry.commandMaterials = commandMaterials;
+            entry.ranges = ranges;
+            entry.localBounds = localBounds;
             entry.instances.Add(instance);
             _shown.Add(entry);
             InputChanged();
+            if (prepared != null) prepared.IsCommitted = true;
             return true;
         }
 
@@ -2588,6 +2598,7 @@ namespace Zantetsu.MeshCut
             }
 
             _disposed = true;
+            while (_preparedRoots != null) _preparedRoots.Dispose();
             for (int i = 0; i < _shown.Count; i++)
             {
                 ReleaseReferences(_shown[i]);
