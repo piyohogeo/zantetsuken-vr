@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Mathematics;
 using UnityEngine;
@@ -33,6 +34,58 @@ namespace Zantetsu.PhysicsCut.Tests
             return Keep(new VpPreparedPhysicsInput(h.input.bank, ranges));
         }
         static float4x4 Pose(float x = 2) => new float4x4(quaternion.RotateY(0.37f), new float3(x, 0, -3));
+
+        [TestCase(-1)][TestCase(0)][TestCase(205)]
+        public void D5_ColdPreparation_PreservesInputAndHolds_ReleasesObjects_ThenPoses(int fill)
+        {
+            int saved = PhysicsCutBlocks.Fill; PhysicsCutBlocks.Fill = fill;
+            try
+            {
+                var input=Input(Bank(2));var shape=input.ColdPreparationShape();
+                var meshes=new[]{shape.MeshOf(0),shape.MeshOf(1)};
+                var points=meshes.Select(m=>m.vertices).ToArray();
+                shape.TryLocalBounds(out var lo,out var hi);
+                var before=Resources.FindObjectsOfTypeAll<GameObject>().Select(g=>g.GetEntityId()).ToArray();
+                var warm=new VpPhysicsColdPreparation(); warm.Prepare(input);
+                Assert.That(warm.IsPrepared,Is.True); Assert.That(input.IsPosed,Is.False);
+                Assert.That(input.ColdCookCalls,Is.EqualTo(2));
+                Assert.That(shape.BankUsers+shape.WorkUsers,Is.Zero);Assert.That(shape.IsFreed||shape.MeshHoldsReleased,Is.False);
+                shape.TryLocalBounds(out var afterLo,out var afterHi);Assert.That(afterLo,Is.EqualTo(lo));Assert.That(afterHi,Is.EqualTo(hi));
+                for(int c=0;c<2;c++)
+                {
+                    CollectionAssert.AreEqual(points[c],meshes[c].vertices);
+                    var range=shape.Convex(c);
+                    for(int v=0;v<range.vertexCount;v++) Assert.That((Vector3)shape.BankOf(c).vertices[range.vertexBase+v],Is.EqualTo(points[c][v]));
+                }
+                warm.Prepare(null); // Completed preparer does not inspect or retain another per-NPC input.
+                CollectionAssert.AreEquivalent(before,Resources.FindObjectsOfTypeAll<GameObject>().Select(g=>g.GetEntityId()).ToArray());
+                Assert.That(input.TryPose(new[]{Pose(),Pose(5)},out var posed),Is.True);
+                using(var pair=Pair(posed)) Assert.That(pair.Positive.Colliders.Count,Is.EqualTo(2));
+            }
+            finally {PhysicsCutBlocks.Fill=saved;}
+        }
+
+        [TestCase("posed")][TestCase("transferred")][TestCase("failed-pose")][TestCase("disposed")]
+        public void D5_ColdPreparation_RefusesNonColdInputWithoutMarkingDone(string state)
+        {
+            var input=Input(Bank());
+            if(state=="posed"||state=="transferred") Posed(input,Pose());
+            if(state=="transferred") Keep(input.TakeShape());
+            if(state=="failed-pose") Assert.That(input.TryPose(null,out _),Is.False);
+            if(state=="disposed") input.Dispose();
+            var warm=new VpPhysicsColdPreparation();
+            if(state=="disposed") Assert.Throws<ObjectDisposedException>(()=>warm.Prepare(input));
+            else Assert.Throws<InvalidOperationException>(()=>warm.Prepare(input));
+            Assert.That(warm.IsPrepared,Is.False);
+            warm.Prepare(Input(Bank()));Assert.That(warm.IsPrepared,Is.True);
+        }
+
+        [Test] public void D5_ColdPreparation_NullRejected_RepresentativeNotRetained()
+        {
+            var warm=new VpPhysicsColdPreparation();Assert.Throws<ArgumentNullException>(()=>warm.Prepare(null));
+            var input=Input(Bank());warm.Prepare(input);input.Dispose();
+            warm.Prepare(input);Assert.That(warm.IsPrepared,Is.True);
+        }
         PhysicsOwnerShape Posed(VpPreparedPhysicsInput input, params float4x4[] frames)
         {
             Assert.That(input.TryPose(frames, out var shape), Is.True);
