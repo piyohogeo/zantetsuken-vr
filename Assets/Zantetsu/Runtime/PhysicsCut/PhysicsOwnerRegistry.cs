@@ -182,6 +182,21 @@ namespace Zantetsu.PhysicsCut
         public int ProvisionalPairCount => _pairsByOperation.Count;
 
         /// <summary>
+        /// Cold absolute high-water capacities for owner maps and simultaneously retained Provisional pair maps.
+        /// Includes two body entries per pair. No owners, bodies, IDs or admission slots are created/reserved.
+        /// Repeated/lower requests never shrink or add to the requested totals. Not a transaction reservation.
+        /// </summary>
+        public void PrepareCapacity(int ownerCapacity, int provisionalPairCapacity)
+        {
+            if (ownerCapacity < 0) throw new ArgumentOutOfRangeException(nameof(ownerCapacity));
+            if (provisionalPairCapacity < 0) throw new ArgumentOutOfRangeException(nameof(provisionalPairCapacity));
+            int pairBodies = checked(2 * provisionalPairCapacity);
+            _owners.EnsureCapacity(ownerCapacity); _fragmentOfBody.EnsureCapacity(ownerCapacity);
+            _pairsByOperation.EnsureCapacity(provisionalPairCapacity);
+            _pairsBySource.EnsureCapacity(provisionalPairCapacity); _pairOfBody.EnsureCapacity(pairBodies);
+        }
+
+        /// <summary>
         /// Makes room for a few more owners before anything is added, so that adding them cannot be what fails. It
         /// changes nothing else.
         /// </summary>

@@ -64,6 +64,20 @@ namespace Zantetsu.MeshCut.Tests
         static bool Show(World w,VpLogicalCutDisplay.PreparedRoot slot,VpDirectSkinOutput output,LogicalFragmentId id)
             =>w.display.TryShowPreparedRoot(slot,output,id,Matrix4x4.identity,Matrix4x4.identity);
 
+        [Test] public void D4_ShownCapacity_TwoRoots_NoGrowth_NoLogicalOrGpuReservation()
+        {
+            var w=NewWorld(); var a=Input();var b=Input();
+            w.display.PrepareShownCapacity(8); int capacity=D4ColdPreparationTests.Capacity(w.display,"_shown");
+            var sa=Slot(w,a);var sb=Slot(w,b);w.display.PrepareShownCapacity(0);
+            Assert.That(w.ledger.FragmentCount+w.ledger.Revision+w.table.LiveGeometryCount+w.storage.VertexCount,Is.Zero);
+            Assert.Throws<ArgumentOutOfRangeException>(()=>w.display.PrepareShownCapacity(-1));
+            Assert.That(Show(w,sa,Append(a,w.storage),w.ledger.AddFragment()),Is.True);
+            Assert.That(Show(w,sb,Append(b,w.storage),w.ledger.AddFragment()),Is.True);
+            Assert.That(D4ColdPreparationTests.Capacity(w.display,"_shown"),Is.EqualTo(capacity));
+            Assert.That(w.table.LiveGeometryCount,Is.EqualTo(2));
+            w.display.Dispose();Assert.Throws<ObjectDisposedException>(()=>w.display.PrepareShownCapacity(8));
+        }
+
         [Test] public void ColdSlots_AreDistinct_DoNotReserveIdsStorageReferencesOrBudget()
         {
             var a=Input();var b=Input();var w=NewWorld();int vertices=w.storage.VertexCount;

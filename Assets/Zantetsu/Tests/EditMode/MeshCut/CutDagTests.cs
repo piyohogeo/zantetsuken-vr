@@ -409,6 +409,24 @@ namespace Zantetsu.MeshCut.Tests
             return record.state;
         }
 
+        [Test] public void D4_GeometryCapacity_TwoRootsNoGrowth_NoWorkOrBudget_ClosedRefused()
+        {
+            using (Fixture f = NewFixture())
+            {
+                Assert.Throws<ArgumentOutOfRangeException>(()=>f.dag.PrepareGeometryCapacity(-1));
+                f.dag.PrepareGeometryCapacity(8);
+                int capacity = D4ColdPreparationTests.Capacity(f.dag,"_geometryOf");
+                f.dag.PrepareGeometryCapacity(8); f.dag.PrepareGeometryCapacity(0);
+                Assert.That(f.ledger.FragmentCount + f.ledger.OperationCount + f.ledger.Revision, Is.Zero);
+                Assert.That(f.dag.ActiveCount + f.ledger.Budget.IncompleteCutOperationCount, Is.Zero);
+                var a = NewBranch(f,float3.zero); var b = NewBranch(f,new float3(5,0,0));
+                Assert.That(a,Is.Not.EqualTo(b));
+                Assert.That(D4ColdPreparationTests.Capacity(f.dag,"_geometryOf"),Is.EqualTo(capacity));
+                Assert.That(D4ColdPreparationTests.Capacity(f.dag,"_frameOf"),Is.EqualTo(capacity));
+                f.dag.Dispose(); Assert.Throws<InvalidOperationException>(()=>f.dag.PrepareGeometryCapacity(8));
+            }
+        }
+
         // ----- 1. geometry first, publication later --------------------------------------------------------------------
 
         /// <summary>
