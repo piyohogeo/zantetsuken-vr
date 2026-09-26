@@ -1978,6 +1978,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 ProvisionalCutTransaction transaction = Publish(w);
                 PhysicsOwnerSide positive = transaction.Pair.Positive;
                 var collidersBefore = new List<MeshCollider>(positive.Colliders);
+                var meshesBefore = collidersBefore.ConvertAll(c => c.sharedMesh);
                 int producedBefore = positive.ProducedColliderCount;
                 Vector3 frameBefore = positive.ShapeFrame.transform.localPosition;
                 Quaternion turnBefore = positive.ShapeFrame.transform.localRotation;
@@ -2011,6 +2012,9 @@ namespace Zantetsu.PhysicsCut.Tests
                         ReferenceEquals(positive.Colliders[i], collidersBefore[i]), Is.True,
                         "the very same ones, in the same order: element " + i);
                     Assert.That(collidersBefore[i] != null && collidersBefore[i].enabled, Is.True, "still answering");
+                    Assert.That(
+                        collidersBefore[i].sharedMesh, Is.SameAs(meshesBefore[i]),
+                        "with the mesh it had: a collider the first side would have refitted was only noted");
                 }
 
                 Assert.That(

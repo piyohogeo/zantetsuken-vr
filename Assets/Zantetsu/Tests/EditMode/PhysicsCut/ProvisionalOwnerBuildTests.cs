@@ -1309,7 +1309,8 @@ namespace Zantetsu.PhysicsCut.Tests
                 side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
             Assert.That(prepared.Count, Is.EqualTo(parts.Count), "one final collider per part");
             Assert.That(prepared.KeptCount, Is.EqualTo(2), "both inherited parts kept a collider");
-            Assert.That(prepared.MadeCount, Is.EqualTo(1), "and only the produced part got a new one");
+            Assert.That(prepared.RefittedCount, Is.EqualTo(1), "and only the produced part needed one");
+            Assert.That(prepared.MadeCount, Is.Zero, "which it takes from the collider no part kept");
 
             prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
 
@@ -1318,8 +1319,10 @@ namespace Zantetsu.PhysicsCut.Tests
                 if (!parts[i].borrowed)
                 {
                     Assert.That(
-                        before.Contains(side.Colliders[i]), Is.False,
-                        "the produced part has a collider of its own, none of the side's old ones");
+                        side.Colliders[i], Is.SameAs(before[0]),
+                        "the produced part has the crossed convex's collider, the one no part kept");
+                    Assert.That(side.Colliders[i].sharedMesh, Is.SameAs(parts[i].mesh), "refitted with the part's mesh");
+                    Assert.That(side.Colliders[i].enabled, Is.True);
                     continue;
                 }
 
@@ -1341,7 +1344,6 @@ namespace Zantetsu.PhysicsCut.Tests
             }
 
             Assert.That(side.Colliders[1], Is.Not.SameAs(side.Colliders[2]), "no collider is kept twice");
-            Assert.That(before[0] == null, Is.True, "the crossed convex's collider is the one that was replaced and destroyed");
             Assert.That(side.ProducedColliderCount, Is.EqualTo(1), "one convex of this side was produced by the cut");
         }
 
@@ -1350,9 +1352,10 @@ namespace Zantetsu.PhysicsCut.Tests
         /// One box, crossed by the plane: each side is the cut's own half and nothing is inherited, so there is no
         /// part that could keep a collider.
         /// <para>
-        /// What the side had is replaced, as it is for any part that cannot be kept: the preparation makes one
-        /// collider per part and adopting them destroys what was there. The frame is not moved, and the side's own
-        /// colliders are untouched while the preparation is being made.
+        /// What the side had is not kept, as it is not for any part that cannot keep one: each part refits one of the
+        /// side's colliders while there are any, gets one made after that, and adopting them destroys whatever is left
+        /// over. The frame is not moved, and the side's own colliders are untouched while the preparation is being
+        /// made -- a refit is only noted until the switch.
         /// </para>
         /// </summary>
         [Test]
@@ -1391,9 +1394,12 @@ namespace Zantetsu.PhysicsCut.Tests
 
                 Assert.That(prepared.Count, Is.EqualTo(count), what + ": one final collider per part");
                 Assert.That(prepared.KeptCount, Is.Zero, what + ": nothing of the side was kept");
-                Assert.That(prepared.MadeCount, Is.EqualTo(count), what + ": every one was made here");
+                int refitted = Math.Min(count, before.Count);
+                Assert.That(prepared.RefittedCount, Is.EqualTo(refitted), what + ": the side's own are refitted first");
+                Assert.That(prepared.MadeCount, Is.EqualTo(count - refitted), what + ": and the rest were made here");
 
                 // Until they are adopted, the side is what it was.
+                var meshesBefore = before.ConvertAll(c => c.sharedMesh);
                 Assert.That(side.Colliders.Count, Is.EqualTo(before.Count), what + ": the side still has its own");
                 for (int i = 0; i < before.Count; i++)
                 {
@@ -1401,6 +1407,7 @@ namespace Zantetsu.PhysicsCut.Tests
                         ReferenceEquals(side.Colliders[i], before[i]), Is.True,
                         what + ": collider " + i + " is the very same one");
                     Assert.That(before[i] != null && before[i].enabled, Is.True, what + ": and still answering");
+                    Assert.That(before[i].sharedMesh, Is.SameAs(meshesBefore[i]), what + ": with its own mesh");
                 }
 
                 Assert.That(
@@ -1410,9 +1417,19 @@ namespace Zantetsu.PhysicsCut.Tests
 
                 prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
                 Assert.That(side.Colliders.Count, Is.EqualTo(count), what + ": and takes the new set");
-                foreach (MeshCollider had in before)
+                for (int i = 0; i < count; i++)
                 {
-                    Assert.That(had == null, Is.True, what + ": what it had was replaced and destroyed");
+                    Assert.That(
+                        side.Colliders[i].sharedMesh, Is.SameAs(products.Part(positive, i).mesh),
+                        what + ": part " + i + " answers with its own mesh");
+                    Assert.That(side.Colliders[i].enabled, Is.True, what);
+                }
+
+                for (int i = 0; i < before.Count; i++)
+                {
+                    Assert.That(
+                        i < refitted ? IndexOfCollider(side.Colliders, before[i]) >= 0 : before[i] == null, Is.True,
+                        what + ": what it had was refitted, or destroyed when no part needed it");
                 }
 
                 Assert.That(
@@ -1459,11 +1476,18 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(
                 prepared.KeepsSideCollider(1), Is.False,
                 "while the crossed convex's is not kept");
-            Assert.That(prepared.MadeCount, Is.EqualTo(prepared.Count - 1), "the rest were made here");
+            Assert.That(
+                prepared.RefitsSideCollider(1), Is.True, "the crossed convex's is refitted for a part that needs one");
+            Assert.That(
+                prepared.MadeCount + prepared.RefittedCount, Is.EqualTo(prepared.Count - 1),
+                "the rest were refitted or made here");
 
             prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
             Assert.That(side.Colliders, Has.Member(before[0]), "the kept one is still the side's");
-            Assert.That(before[1] == null, Is.True, "and the crossed convex's was replaced and destroyed");
+            Assert.That(side.Colliders, Has.Member(before[1]), "and so is the crossed convex's, refitted");
+            int at = IndexOfCollider(side.Colliders, before[1]);
+            Assert.That(products.Part(true, at).borrowed, Is.False, "for a part the cut produced");
+            Assert.That(before[1].sharedMesh, Is.SameAs(products.Part(true, at).mesh), "with that part's mesh");
         }
 
         /// <summary>
@@ -1538,7 +1562,8 @@ namespace Zantetsu.PhysicsCut.Tests
             var before = new List<MeshCollider>(side.Colliders);
 
             // The collider of the side's convex for source convex 2 stops answering: it is no longer a candidate,
-            // and the part that would have kept it must get one of its own.
+            // and the part that would have kept it must get one of its own. Not answering, it cannot be refitted
+            // either, so that part's is made here.
             before[1].enabled = false;
 
             PhysicsCutProducts products = CookProducts(in s.harness.input, _disposables);
@@ -1546,16 +1571,18 @@ namespace Zantetsu.PhysicsCut.Tests
                 products, s.shape.Meshes, side, sideShape,
                 side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
             Assert.That(prepared.KeptCount, Is.EqualTo(1), "only the convex whose collider still answers is kept");
-            Assert.That(prepared.MadeCount, Is.EqualTo(2), "the produced part and the one that could not be kept");
+            Assert.That(prepared.RefittedCount, Is.EqualTo(1), "the one that answers and no part kept is refitted");
+            Assert.That(prepared.MadeCount, Is.EqualTo(1), "and the one that does not answer is replaced by a new one");
 
             prepared.Adopt(side.ShapeFrame.transform.localRotation, side.ShapeFrame.transform.localPosition);
             Assert.That(side.Colliders.Count, Is.EqualTo(3));
             Assert.That(side.Colliders, Has.Member(before[2]), "the other inherited convex kept its own collider");
-            Assert.That(before[0] == null && before[1] == null, Is.True, "what was replaced was destroyed");
+            Assert.That(side.Colliders, Has.Member(before[0]), "the crossed convex's was refitted");
+            Assert.That(before[1] == null, Is.True, "and what was replaced was destroyed");
         }
 
         [Test]
-        public void AFrameThatTheSwitchWouldMove_KeepsNothing_AndEveryPartGetsANewCollider()
+        public void AFrameThatTheSwitchWouldMove_KeepsNothing_AndEveryPartGetsACollider()
         {
             Source s = NewSourceWhereTwoConvexesShareAMesh();
             var plane = new float4(0f, 1f, 0f, 0f);
@@ -1570,12 +1597,35 @@ namespace Zantetsu.PhysicsCut.Tests
                 products, s.shape.Meshes, side, candidate.PositiveShape,
                 side.ShapeFrame.transform.localRotation, movedTo);
             Assert.That(prepared.KeptCount, Is.Zero, "a frame the switch would move keeps nothing");
-            Assert.That(prepared.MadeCount, Is.EqualTo(prepared.Count), "every part got a collider of its own");
+            Assert.That(
+                prepared.MadeCount + prepared.RefittedCount, Is.EqualTo(prepared.Count),
+                "every part got a collider: refitted from the side's while there are any, made after that");
 
             prepared.Adopt(side.ShapeFrame.transform.localRotation, movedTo);
-            Assert.That(before[0] == null && before[1] == null && before[2] == null, Is.True, "and all three old ones went");
+            for (int i = 0; i < prepared.Count; i++)
+            {
+                Mesh mesh = products.Part(true, i).borrowed
+                    ? s.shape.Meshes[products.Part(true, i).inputConvex]
+                    : products.Part(true, i).mesh;
+                Assert.That(side.Colliders[i].sharedMesh, Is.SameAs(mesh), "part " + i + " answers with its own mesh");
+                Assert.That(side.Colliders[i].enabled, Is.True);
+            }
             Vector3 at = side.ShapeFrame.transform.localPosition;
             Assert.That(at.y, Is.EqualTo(movedTo.y).Within(1e-5f), "the frame moved as the switch said");
+        }
+
+        /// <summary>Where <paramref name="collider"/> is in <paramref name="colliders"/>, by instance; -1 if it is not there.</summary>
+        private static int IndexOfCollider(IReadOnlyList<MeshCollider> colliders, MeshCollider collider)
+        {
+            for (int i = 0; i < colliders.Count; i++)
+            {
+                if (ReferenceEquals(colliders[i], collider))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>A compound the plane really cuts, for the cook to have something to produce.</summary>

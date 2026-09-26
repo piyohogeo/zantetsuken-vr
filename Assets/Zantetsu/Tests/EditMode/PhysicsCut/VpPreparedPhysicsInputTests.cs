@@ -256,7 +256,9 @@ namespace Zantetsu.PhysicsCut.Tests
         {
             var shape = Posed(Input(Bank()), Pose()); var pair = Pair(shape); var products = Products(shape);
             var old = pair.Positive.Colliders[0]; var oldChild = old.gameObject;
-            // Same Mesh, different descriptor: the old unframed caller cannot reuse a framed child.
+            // Same Mesh, different descriptor: the old unframed caller cannot reuse a framed child. Not answering, it
+            // cannot be refitted either: this is the path that makes a new one.
+            old.enabled = false;
             var prepared = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, pair.Positive,
                 pair.PositiveShape, quaternion.identity, float3.zero);
             Assert.That(prepared.KeptCount, Is.Zero); Assert.That(prepared.MadeCount, Is.EqualTo(1));
@@ -276,6 +278,7 @@ namespace Zantetsu.PhysicsCut.Tests
         {
             var shape = Posed(Input(Bank()), Pose()); var pair = Pair(shape); var products = Products(shape);
             var side = pair.Positive; var old = side.Colliders[0];
+            old.enabled = false; // not refittable: this is the path that makes a new framed child
             var prepared = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, side,
                 pair.PositiveShape, quaternion.identity, new float3(1, 0, 0), shape);
             Assert.That(prepared.MadeCount, Is.EqualTo(1)); Assert.That(side.ShapeFrame.transform.childCount, Is.EqualTo(2));
@@ -286,12 +289,62 @@ namespace Zantetsu.PhysicsCut.Tests
         {
             var shape = Posed(Input(Bank()), Pose()); var pair = Pair(shape); var products = Products(shape, true);
             var oldChild = pair.Positive.Colliders[0].gameObject;
+            pair.Positive.Colliders[0].enabled = false; // not refittable: this is the path that replaces the child
             var prepared = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, pair.Positive,
                 pair.PositiveShape, quaternion.identity, float3.zero, shape);
             Assert.That(prepared.KeptCount, Is.Zero); prepared.Adopt(quaternion.identity, float3.zero);
             Assert.That(oldChild == null, Is.True);
             Assert.That(pair.Positive.Colliders[0].gameObject, Is.SameAs(pair.Positive.ShapeFrame));
             Assert.That(pair.Positive.Colliders[0].sharedMesh, Is.SameAs(products.Part(true, 0).mesh));
+        }
+        [Test] public void ProducedFinalCollider_RefitsTheFramedChild_IntoTheNumericalFrame_AtTheSwitchOnly()
+        {
+            var shape = Posed(Input(Bank()), Pose()); var pair = Pair(shape); var products = Products(shape, true);
+            var old = pair.Positive.Colliders[0]; var oldChild = old.gameObject; var oldMesh = old.sharedMesh;
+            Vector3 at = oldChild.transform.localPosition; Quaternion turn = oldChild.transform.localRotation;
+            Assert.That(at.sqrMagnitude, Is.GreaterThan(0f), "the Provisional collider sits on a framed child");
+            var prepared = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, pair.Positive,
+                pair.PositiveShape, quaternion.identity, float3.zero, shape);
+            Assert.That(prepared.KeptCount, Is.Zero); Assert.That(prepared.MadeCount, Is.Zero);
+            Assert.That(prepared.RefittedCount, Is.EqualTo(1)); Assert.That(prepared.RefitsSideCollider(0), Is.True);
+            // Only noted: the side answers as it did until the switch.
+            Assert.That(old.enabled, Is.True); Assert.That(old.sharedMesh, Is.SameAs(oldMesh));
+            Assert.That(oldChild.transform.localPosition, Is.EqualTo(at)); Assert.That(oldChild.transform.localRotation, Is.EqualTo(turn));
+            Assert.That(pair.Positive.ShapeFrame.GetComponents<MeshCollider>().Length, Is.Zero, "nothing was added");
+            prepared.Adopt(quaternion.identity, float3.zero);
+            Assert.That(pair.Positive.Colliders[0], Is.SameAs(old)); Assert.That(old.enabled, Is.True);
+            Assert.That(old.sharedMesh, Is.SameAs(products.Part(true, 0).mesh));
+            Assert.That(oldChild.transform.parent, Is.SameAs(pair.Positive.ShapeFrame.transform));
+            Assert.That(oldChild.transform.localPosition, Is.EqualTo(Vector3.zero), "the produced part has no frame of its own");
+            Assert.That(Quaternion.Angle(oldChild.transform.localRotation, Quaternion.identity), Is.LessThan(1e-4f));
+        }
+        // A collider that already carries the part's mesh is not refitted: giving it that mesh again would rebuild
+        // nothing, so the moved frame would not reach the physics scene (FinalColliderRefitQueryPlayModeTests). The
+        // part gets one made, and a withdrawn preparation leaves the side's own as it was.
+        [Test] public void ACollider_ThatAlreadyCarriesThePartsMesh_IsNotRefitted_AndThePartGetsOneMade()
+        {
+            var shape = Posed(Input(Bank()), Pose()); var pair = Pair(shape); var products = Products(shape);
+            var side = pair.Positive; var old = side.Colliders[0]; var oldChild = old.gameObject;
+            Vector3 at = oldChild.transform.localPosition; Quaternion turn = oldChild.transform.localRotation;
+            Assert.That(old.sharedMesh, Is.SameAs(shape.Meshes[0]), "the side's collider carries the borrowed part's mesh");
+            // The frame will move, so nothing is kept.
+            var withdrawn = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, side,
+                pair.PositiveShape, quaternion.identity, new float3(1, 0, 0), shape);
+            Assert.That(withdrawn.KeptCount, Is.Zero); Assert.That(withdrawn.RefittedCount, Is.Zero);
+            Assert.That(withdrawn.MadeCount, Is.EqualTo(1));
+            withdrawn.Withdraw();
+            Assert.That(side.Colliders[0], Is.SameAs(old)); Assert.That(old.enabled, Is.True);
+            Assert.That(side.ShapeFrame.transform.childCount, Is.EqualTo(1));
+            Assert.That(oldChild.transform.localPosition, Is.EqualTo(at)); Assert.That(oldChild.transform.localRotation, Is.EqualTo(turn));
+
+            var prepared = PhysicsOwnerBuilder.PrepareFinalColliders(products, shape.Meshes, side,
+                pair.PositiveShape, quaternion.identity, new float3(1, 0, 0), shape);
+            prepared.Adopt(quaternion.identity, new float3(1, 0, 0));
+            Assert.That(oldChild == null, Is.True, "the side's own went");
+            Assert.That(side.Colliders[0], Is.Not.SameAs(old)); Assert.That(side.Colliders[0].sharedMesh, Is.SameAs(shape.Meshes[0]));
+            PhysicsMeshFrame frame = shape.MeshFrameOf(0);
+            Near(side.Colliders[0].transform.localPosition, frame.Position);
+            Assert.That(side.ShapeFrame.transform.childCount, Is.EqualTo(1), "one framed child, the new one");
         }
         [Test] public void DirectFinalBuilder_UsesInheritedShapeFrames()
         {

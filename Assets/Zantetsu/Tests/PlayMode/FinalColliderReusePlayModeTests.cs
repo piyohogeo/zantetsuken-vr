@@ -651,13 +651,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(positive.ShapeFrame.transform.localPosition, Is.EqualTo(frameAt), "the frame did not move");
             Assert.That(positive.ShapeFrame.transform.localRotation, Is.EqualTo(frameRotation));
 
-            // Replaced: the cut convex's Provisional collider is not among the final ones and is disabled at once.
-            Assert.That(positive.Colliders, Has.No.Member(positiveCutOne), "the cut convex's collider is replaced");
-            Assert.That(positiveCutOne == null || !positiveCutOne.enabled, Is.True, "and no longer answers");
-            Assert.That(negative.Colliders, Has.No.Member(negativeBefore[0]), "the negative side's only collider is replaced");
-            Assert.That(negativeBefore[0] == null || !negativeBefore[0].enabled, Is.True);
+            // Refitted: the cut convex's Provisional collider, which no part keeps, is taken over by the part the cut
+            // produced -- the same instance, answering with that part's mesh instead of the whole convex.
+            Assert.That(positive.Colliders, Has.Member(positiveCutOne), "the cut convex's collider is refitted");
+            Assert.That(positiveCutOne.enabled, Is.True, "and answers");
+            Assert.That(positiveCutOne.sharedMesh, Is.Not.SameAs(cutMesh), "with the produced half, not the whole convex");
+            Assert.That(negative.Colliders, Has.Member(negativeBefore[0]), "the negative side's only collider is refitted");
+            Assert.That(negativeBefore[0].enabled, Is.True);
+            Assert.That(negativeBefore[0].sharedMesh, Is.Not.SameAs(cutMesh));
+            Assert.That(keptA.sharedMesh, Is.SameAs(inheritedMeshes[0]), "while a kept one carries the mesh it had");
+            Assert.That(keptB.sharedMesh, Is.SameAs(inheritedMeshes[1]));
 
-            // Final: one collider per part, every one enabled with a mesh, the produced ones new.
+            // Final: one collider per part, every one enabled with a mesh, the produced ones refitted.
             Assert.That(positive.Colliders.Count, Is.EqualTo(3), "cut half + two inherited");
             Assert.That(negative.Colliders.Count, Is.EqualTo(1), "cut half");
             foreach (PhysicsOwnerSide side in new[] { positive, negative })
@@ -672,8 +677,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(negative.ProducedColliderCount, Is.EqualTo(1));
 
             yield return null;
-            Assert.That(positiveCutOne == null, Is.True, "the replaced collider was destroyed once the frame was over");
-            Assert.That(negativeBefore[0] == null, Is.True);
+            Assert.That(positiveCutOne != null && positiveCutOne.enabled, Is.True, "the refitted collider stays once the frame is over");
+            Assert.That(negativeBefore[0] != null && negativeBefore[0].enabled, Is.True);
+            Assert.That(keptA != null && keptB != null, Is.True, "and so do the kept ones");
             Assert.That(
                 positive.ShapeFrame.GetComponents<MeshCollider>().Length, Is.EqualTo(positive.Colliders.Count),
                 "the actor carries exactly its final set");
