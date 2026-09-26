@@ -652,17 +652,20 @@ namespace Zantetsu.Sandbox
                 Transform shownKatana = katana.Katana;
                 if (shownKatana != null && shownKatana.gameObject.activeSelf)
                 {
+                    // Beside the view, in the same tracking space.
+                    Vector3 bladeNow = katana.TrackingDirection(shownKatana.forward);
                     text.Append("  blade now ");
-                    AppendVector(text, shownKatana.forward);
+                    AppendVector(text, bladeNow);
                     text.Append("  elevation ");
-                    AppendNumber(text, ElevationDegrees(shownKatana.forward));
+                    AppendNumber(text, ElevationDegrees(bladeNow));
                     text.Append(" deg  dot ");
-                    AppendNumber(text, Vector3.Dot(shownKatana.forward, view.normalized));
+                    AppendNumber(text, Vector3.Dot(bladeNow, view.normalized));
                 }
 
                 text.Append('\n');
             }
 
+            text.Append("Spaces  view, accepted and begin: tracking space; waves: world").Append('\n');
             int acceptedCount = katana.AcceptedSampleCount;
             text.Append("Accepted ").Append(acceptedCount)
                 .Append("  latch ").Append(katana.IsLatchReady ? "ready" : "waiting").Append('\n');

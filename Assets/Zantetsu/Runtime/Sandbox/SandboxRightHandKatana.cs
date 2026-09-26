@@ -152,6 +152,9 @@ namespace Zantetsu.Sandbox
         [Tooltip("Head transform (the Main Camera) whose forward a stroke begin is checked against. Unassigned: no begin view check.")]
         [SerializeField] private Transform viewForwardReference;
 
+        [Tooltip("The XR tracking space (the XR Origin's Camera Offset). The gesture is judged in it, so artificial movement of the origin is no part of a swing; the katana is shown, and a wave is latched, where it places them now. Unassigned: tracking space is world.")]
+        [SerializeField] private Transform trackingSpace;
+
         [Header("Provisional fixed grip-to-katana offset")]
         [SerializeField] private Vector3 offsetPosition = new Vector3(0f, 0f, 0.02f);
         [SerializeField] private Vector3 offsetEulerAngles = new Vector3(-15f, 0f, 0f);
@@ -255,9 +258,27 @@ namespace Zantetsu.Sandbox
 
         /// <summary>
         /// The view forward the live path hands to the begin check: the
-        /// reference's forward, or zero -- no check -- without a reference.
+        /// reference's forward in tracking space, the space the gesture is
+        /// judged in, or zero -- no check -- without a reference.
         /// </summary>
-        internal Vector3 CurrentViewForward => viewForwardReference != null ? viewForwardReference.forward : Vector3.zero;
+        internal Vector3 CurrentViewForward => viewForwardReference != null
+            ? Quaternion.Inverse(TrackingSpacePose.rotation) * viewForwardReference.forward
+            : Vector3.zero;
+
+        /// <summary>
+        /// Where the tracking space stands in the world now: its position and
+        /// rotation, or identity without one. Scale is not applied; the XR
+        /// origin is at unit scale.
+        /// </summary>
+        internal Pose TrackingSpacePose => trackingSpace != null
+            ? new Pose(trackingSpace.position, trackingSpace.rotation)
+            : new Pose(Vector3.zero, Quaternion.identity);
+
+        /// <summary>A world direction expressed in tracking space, for readouts beside the gesture's values.</summary>
+        internal Vector3 TrackingDirection(Vector3 worldDirection)
+        {
+            return Quaternion.Inverse(TrackingSpacePose.rotation) * worldDirection;
+        }
 
         /// <summary>
         /// The normalised view forward the stroke's begin was checked against,
@@ -917,7 +938,13 @@ namespace Zantetsu.Sandbox
             WaveCapacity = SandboxSlashWaveStore.Capacity,
         };
 
-        /// <summary>Explicit view forward for live/replayed input; zero skips the begin view check.</summary>
+        /// <summary>
+        /// Explicit view forward for live/replayed input; zero skips the begin
+        /// view check. The sample and the view are in tracking space -- the
+        /// device's own space -- so a swing is judged without the player's
+        /// artificial movement; what is shown and latched is placed in the
+        /// world by the tracking space as it stands.
+        /// </summary>
         internal bool TryRecordSample(in BladePoseSample sample, Vector3 viewForward)
         {
             // Waves that have reached their expiry go first, so a latch later
@@ -935,12 +962,16 @@ namespace Zantetsu.Sandbox
             // A pose the gate turned away is still a live guide, as long as it
             // could be shown and recorded. An unusable sample resets the stroke
             // and leaves the waves flying on their existing span.
+            // The guide is the katana as it is shown now: the gesture's pose
+            // placed by the tracking space as it stands, artificial movement
+            // included (19.1.5.1). Only the gesture leaves that movement out.
+            Pose space = TrackingSpacePose;
             waveStore.Advance(
                 sample.TimestampSeconds,
                 wavesAlreadyFlying,
                 recorded,
-                recorded ? EmitterPosition(current) : Vector3.zero,
-                recorded ? current.BladeAxis : Vector3.zero);
+                recorded ? space.position + (space.rotation * EmitterPosition(current)) : Vector3.zero,
+                recorded ? space.rotation * current.BladeAxis : Vector3.zero);
 
             // Last, so a wave latched or expired in this update is shown or
             // hidden in it too. Slots follow the store's current indices, so
@@ -1119,6 +1150,22 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // The frame was derived in tracking space. It is settled in the
+            // world here, once, by the tracking space as it stands at the
+            // latch: the wave leaves from where the player is now, and nothing
+            // later moves or turns it.
+            // Without a tracking space the frame is already the world's and
+            // is passed on exactly as derived.
+            if (trackingSpace != null)
+            {
+                Pose space = TrackingSpacePose;
+                Vector3 planePoint = space.position + (space.rotation * (-plane.normal * plane.distance));
+                plane = new Plane(space.rotation * plane.normal, planePoint);
+                beginEmitter = space.position + (space.rotation * beginEmitter);
+                travelAxis = space.rotation * travelAxis;
+                spanAxis = space.rotation * spanAxis;
+            }
+
             strokeLatchSpent = true;
             waveStore.TryLatch(
                 nowSeconds, plane, beginEmitter, beginEmitter + spanAxis * acceptedSpan,
@@ -1252,7 +1299,12 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            katana.SetPositionAndRotation(evaluated.KatanaPose.position, evaluated.KatanaPose.rotation);
+            // Shown where the tracking space places it now; the evaluated pose
+            // itself stays in tracking space for the gesture.
+            Pose space = TrackingSpacePose;
+            katana.SetPositionAndRotation(
+                space.position + (space.rotation * evaluated.KatanaPose.position),
+                space.rotation * evaluated.KatanaPose.rotation);
             katana.gameObject.SetActive(true);
             return true;
         }

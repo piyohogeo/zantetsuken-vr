@@ -493,8 +493,11 @@ namespace Zantetsu.Sandbox
             text.Append(Environment.NewLine);
 
             text.Append("-- coordinate space and units --").Append(Environment.NewLine);
-            text.Append("positions and lengths: metres, Unity world space, left-handed, Y up").Append(Environment.NewLine);
-            text.Append("rotations: Unity quaternions (x, y, z, w), world space").Append(Environment.NewLine);
+            text.Append("positions and lengths: metres, left-handed, Y up").Append(Environment.NewLine);
+            text.Append("rotations: Unity quaternions (x, y, z, w)").Append(Environment.NewLine);
+            text.Append("input (grip pose, view): tracking space, the device's own space the gesture is judged in")
+                .Append(Environment.NewLine);
+            text.Append("waves (plane, origin, axes, segments, guides): Unity world space").Append(Environment.NewLine);
             text.Append("times: seconds, Time.unscaledTimeAsDouble as the sample carried it, not rebased")
                 .Append(Environment.NewLine);
             text.Append("grip pose: the right-hand device pose, never the aim pose").Append(Environment.NewLine);
