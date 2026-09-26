@@ -84,6 +84,9 @@ namespace Zantetsu.PhysicsCut
         private TerminatingGeometryFault _fault;
         private bool _ending;
         private bool _released;
+
+        // The inactive holder of the Provisional collider template: made with the world, destroyed at its release.
+        private GameObject _colliderTemplateHolder;
         private bool _stopRefused;
 
         /// <summary>
@@ -322,6 +325,7 @@ namespace Zantetsu.PhysicsCut
             Driver.Bind(
                 Ledger, Owners, Cook, Frame, Display, profile.SupportEpsilon, profile.AnchorEpsilon,
                 profile.VertexLimit, null, Geometry, this);
+            MakeColliderTemplate();
 
             IsReady = true;
         }
@@ -524,8 +528,40 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
+        /// <summary>
+        /// One collider set up the way every Provisional collider is -- this world's cooking profile, convex, no mesh --
+        /// under an inactive holder, so it never enters the physics scene while the template itself stays active and
+        /// its copies are active in their own hierarchy. The first copy of a process is made here, at load, and given
+        /// straight back, so that no hit pays for it.
+        /// </summary>
+        private void MakeColliderTemplate()
+        {
+            var holder = new GameObject("Provisional collider template");
+            holder.SetActive(false);
+            holder.transform.SetParent(transform, false);
+            _colliderTemplateHolder = holder;
+            var made = new GameObject("Convex mesh frame");
+            made.transform.SetParent(holder.transform, false);
+            var template = made.AddComponent<MeshCollider>();
+            template.cookingOptions = Cook.Cooking;
+            template.convex = true;
+            PhysicsOwnerBuilder.DestroyObject(Instantiate(template, holder.transform, false).gameObject);
+            Driver.ColliderTemplate = template;
+        }
+
         private void Release()
         {
+            if (_colliderTemplateHolder != null)
+            {
+                if (Driver != null)
+                {
+                    Driver.ColliderTemplate = null;
+                }
+
+                PhysicsOwnerBuilder.DestroyObject(_colliderTemplateHolder);
+                _colliderTemplateHolder = null;
+            }
+
             Owners?.Dispose();
             Display?.Dispose();
             if (_ownsPaletteBinding)

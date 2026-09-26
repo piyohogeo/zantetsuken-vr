@@ -1273,6 +1273,30 @@ namespace Zantetsu.PhysicsCut
             catch { DestroyObject(child); throw; }
         }
 
+        /// <summary>
+        /// The collider of a convex that has a frame of its own, made in one call as a copy of
+        /// <paramref name="template"/>: the object, its parenting under <paramref name="shapeFrame"/> and the collider
+        /// with the template's cooking profile and convex flag all come from the copy, and only the frame's pose is
+        /// written after it. Like the ordinary path it is a dedicated direct child of the shape frame, so
+        /// <see cref="DestroyComponent"/> takes it with its collider. The mesh is still the caller's to set. The caller
+        /// makes sure there is a template and that the convex has a frame.
+        /// </summary>
+        internal static MeshCollider CreateMeshCollider(
+            GameObject shapeFrame, PhysicsMeshFrame meshFrame, MeshCollider template)
+        {
+            MeshCollider collider = UnityEngine.Object.Instantiate(template, shapeFrame.transform, false);
+            try
+            {
+                collider.transform.SetLocalPositionAndRotation(meshFrame.Position, meshFrame.Rotation);
+                return collider;
+            }
+            catch
+            {
+                DestroyObject(collider.gameObject);
+                throw;
+            }
+        }
+
         internal static void DestroyObject(GameObject go)
         {
             if (go == null)
