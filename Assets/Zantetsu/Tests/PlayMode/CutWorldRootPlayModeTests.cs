@@ -1018,7 +1018,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         private CutWorldRoot NewWorld(
-            out Shader shader, Func<WorkDestination, IWorkExecutor> executors, Action terminatePlayer)
+            out Shader shader,
+            Func<WorkDestination, IWorkExecutor> executors,
+            Action terminatePlayer,
+            Action<CutWorldProfile> configure = null)
         {
             shader = Shader.Find("Zantetsu/VP Indexed Indirect Unlit");
             Assert.That(shader, Is.Not.Null, "the display's shader is in this project");
@@ -1031,6 +1034,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             _root = root;
             _rootMade = true;
             var profile = NewProfile();
+            configure?.Invoke(profile);
             var materials = new[]
             {
                 new CutWorldRoot.MaterialBinding

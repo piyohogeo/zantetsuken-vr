@@ -2,6 +2,9 @@
     "name": "Zantetsu.PhysicsCut",
     "rootNamespace": "Zantetsu.PhysicsCut",
     "references": [
+        "Zantetsu.Core",
+        "Zantetsu.Observability",
+        "Zantetsu.Trace",
         "Zantetsu.ConvexCut",
         "Zantetsu.MeshCut",
         "Zantetsu.Rendering",

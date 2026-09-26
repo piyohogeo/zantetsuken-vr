@@ -147,21 +147,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void TraceEventType_HasNoAliasesOrGaps_0To46()
+        public void TraceEventType_HasNoAliasesOrGaps_0To47()
         {
             Type type = typeof(TraceEventType);
 
-            Assert.That(Enum.GetNames(type).Length, Is.EqualTo(47));
-            Assert.That(Enum.GetValues(type).Length, Is.EqualTo(47));
+            Assert.That(Enum.GetNames(type).Length, Is.EqualTo(48));
+            Assert.That(Enum.GetValues(type).Length, Is.EqualTo(48));
 
-            for (int i = 0; i <= 46; i++)
+            for (int i = 0; i <= 47; i++)
             {
                 Assert.That(Enum.GetName(type, i), Is.Not.Null, "Missing name for value " + i);
                 Assert.That(Enum.IsDefined(type, i), Is.True, "Value " + i + " is not defined.");
             }
 
-            Assert.That(Enum.IsDefined(type, 47), Is.False);
+            Assert.That(Enum.IsDefined(type, 48), Is.False);
             Assert.That(Enum.IsDefined(type, -1), Is.False);
+        }
+
+        [Test]
+        public void TraceEventType_SlashHitConfirmed_Is47_AppendedAfterTheExistingValues()
+        {
+            Assert.That((int)TraceEventType.SlashHitConfirmed, Is.EqualTo(47));
+            Assert.That(Enum.GetName(typeof(TraceEventType), 46), Is.EqualTo("TraceIntegritySummary"), "46 is unchanged");
         }
 
         // ---- Payload contracts ----
