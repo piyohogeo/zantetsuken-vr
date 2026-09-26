@@ -1100,6 +1100,189 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+        /// <summary>
+        /// Reads the display's settled draw data at the very start of a frame, before any update of that frame: what
+        /// the previous frame settled, after everything that frame did after its own late update.
+        /// </summary>
+        [DefaultExecutionOrder(-32000)]
+        private sealed class EarlyFrameReader : MonoBehaviour
+        {
+            internal CutWorldRoot world;
+            internal LogicalFragmentId watched;
+            internal int Frame { get; private set; } = -1;
+            internal int Drawn { get; private set; }
+
+            private void Update()
+            {
+                if (world == null || !world.IsReady)
+                {
+                    return;
+                }
+
+                Frame = Time.frameCount;
+                Drawn = DrawnFragmentsOf(world, watched);
+            }
+        }
+
+        /// <summary>After the driver's late update of the frame it is armed in: reads that frame, then does one thing.</summary>
+        [DefaultExecutionOrder(1000)]
+        private sealed class LateReleaser : MonoBehaviour
+        {
+            internal CutWorldRoot world;
+            internal LogicalFragmentId watched;
+            internal Action release;
+            internal int Frame { get; private set; } = -1;
+            internal int Drawn { get; private set; }
+            internal int Pairs { get; private set; }
+
+            private void LateUpdate()
+            {
+                if (release == null)
+                {
+                    return;
+                }
+
+                Frame = Time.frameCount;
+                Drawn = DrawnFragmentsOf(world, watched);
+                Pairs = world.Owners.ProvisionalPairCount;
+                Action once = release;
+                release = null;
+                once();
+            }
+        }
+
+        // ----- the turn after rendering -----------------------------------------------------------------------------
+
+        /// <summary>
+        /// **A result that ends after the late update is taken by the frame's turn after rendering, without rewriting
+        /// what that frame drew.** The cut's bake is held at its destination until the driver's late update of one
+        /// frame has settled the display; it is let go right after that. The same frame's turn after rendering then
+        /// collects it and hands the cut off -- before the next frame's update could -- while the snapshot that frame
+        /// settled stays as it was until the next frame collects the change.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator AResultEndingAfterTheLateUpdate_IsHandedOffInThatFrame_AndDrawnFromTheNextFrame()
+        {
+            HoldingExecutor unityJob = null;
+            CutWorldRoot root = NewWorld(
+                out Shader _,
+                destination => destination == WorkDestination.UnityJob
+                    ? unityJob = Held(new HoldingExecutor(new UnityJobWorkExecutor(8)))
+                    : null,
+                null);
+            Assert.That(unityJob, Is.Not.Null);
+            unityJob.HoldEverything = true;
+            LogicalFragmentId body = AddBody(root, Vector3.zero);
+            yield return null;
+
+            ProvisionalCutAsk ask = Ask(body, new float4(0f, 1f, 0f, 0f));
+            Assert.That(root.TryAsk(in ask), Is.True);
+            yield return null;
+            ProvisionalCutTransaction transaction = null;
+            foreach (ProvisionalCutTransaction candidate in root.Driver.Transactions)
+            {
+                transaction = candidate;
+            }
+
+            Assert.That(transaction, Is.Not.Null, "the cut was accepted");
+
+            // The cut's numbers go through; its bake is the one held.
+            yield return Until(() => unityJob.HoldingCount == 1, "the cut's numbers finished and are held");
+            Assert.That(unityJob.TryLetOneThrough(), Is.True);
+            yield return Until(
+                () => transaction.Cut.Stage == PhysicsCutStage.Baking && unityJob.HoldingCount == 1,
+                "the bake finished and is held");
+
+            EarlyFrameReader early = Track(new GameObject("Early reader")).AddComponent<EarlyFrameReader>();
+            early.world = root;
+            early.watched = body;
+            LateReleaser late = Track(new GameObject("Late releaser")).AddComponent<LateReleaser>();
+            late.world = root;
+            late.watched = body;
+            late.release = unityJob.ReleaseEverything;
+
+            // This frame's late update settles the display, then the bake is let go; the early reader reads the next
+            // frame before anything of it runs, and this resumes after that frame's update.
+            yield return null;
+            int released = late.Frame;
+            Assert.That(released, Is.GreaterThan(0), "the bake was let go after a late update");
+            Assert.That(late.Pairs, Is.EqualTo(1), "the pair stood in that frame");
+            Assert.That(late.Drawn, Is.EqualTo(2), "and that frame's snapshot drew the two sides");
+
+            Assert.That(
+                transaction.HandedOffFrame, Is.EqualTo(released),
+                "handed off in the frame it was let go in, which only the turn after rendering can do (driver's last turn "
+                + root.Driver.LastAfterRenderingFrame + ")");
+            Assert.That(root.Driver.LastAfterRenderingFrame, Is.GreaterThanOrEqualTo(released));
+
+            // What the frame settled was not rewritten by that turn: read before anything of the next frame ran.
+            Assert.That(early.Frame, Is.EqualTo(released + 1), "the early reading is of the frame after");
+            Assert.That(
+                early.Drawn, Is.EqualTo(2),
+                "and before that frame's own collection the settled snapshot still drew the two sides it drew");
+
+            yield return Until(
+                () => root.Geometry.StageOf(transaction.Operation) == CutGeometryStage.Committed,
+                "the geometry is committed");
+            LogicalCutOperation record = OperationOf(root, transaction.Operation);
+            yield return Until(
+                () => IsDrawn(root, record.positive) && IsDrawn(root, record.negative),
+                "and a later frame's collection draws the two children");
+            Assert.That(root.GeometryFaults, Is.Zero);
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **The turn after rendering is taken once a frame, while the driver drives, and not after the world has
+        /// ended.** Where the runner renders, it is also taken after the frame's rendering and never before it.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator TheTurnAfterRendering_IsTakenOncePerFrame_AfterRendering_AndNotAfterTheEnding()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            LogicalFragmentId body = AddBody(root, Vector3.zero);
+            var camera = Track(new GameObject("Camera")).AddComponent<Camera>();
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+
+            var rendered = new List<(int frame, int lastTurn)>();
+            Action<UnityEngine.Rendering.ScriptableRenderContext, List<Camera>> onRendered =
+                (context, cameras) => rendered.Add((Time.frameCount, root.Driver.LastAfterRenderingFrame));
+            UnityEngine.Rendering.RenderPipelineManager.endContextRendering += onRendered;
+            try
+            {
+                yield return null;
+                ProvisionalCutAsk ask = Ask(body, new float4(0f, 1f, 0f, 0f));
+                Assert.That(root.TryAsk(in ask), Is.True);
+
+                for (int i = 0; i < 8; i++)
+                {
+                    int turns = root.Driver.AfterRenderingTurns;
+                    yield return null;
+                    Assert.That(root.Driver.AfterRenderingTurns, Is.EqualTo(turns + 1), "one turn in the frame that ended");
+                    Assert.That(root.Driver.LastAfterRenderingFrame, Is.EqualTo(Time.frameCount - 1), "and it was that frame's");
+                }
+            }
+            finally
+            {
+                UnityEngine.Rendering.RenderPipelineManager.endContextRendering -= onRendered;
+            }
+
+            foreach ((int frame, int lastTurn) in rendered)
+            {
+                Assert.That(lastTurn, Is.LessThan(frame), "a frame's rendering ended before its turn after rendering");
+            }
+
+            yield return EndWorld(root);
+            int after = root.Driver.AfterRenderingTurns;
+            for (int i = 0; i < 3; i++)
+            {
+                yield return null;
+            }
+
+            Assert.That(root.Driver.AfterRenderingTurns, Is.EqualTo(after), "an ended world's driver takes no turn");
+            TestContext.WriteLine("frames rendered while watched: " + rendered.Count);
+        }
+
         private static void SetPrivate(object target, string field, object value)
         {
             System.Reflection.FieldInfo info = target.GetType().GetField(
@@ -1795,6 +1978,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return null;
             Assert.That(terminations, Is.EqualTo(1), "the termination API is not called again");
             Assert.That(root.TerminationCalls, Is.EqualTo(1));
+
+            // Nor is the turn after rendering taken any more: the latch stopped the driver, and that turn is the
+            // driver's.
+            int turns = root.Driver.AfterRenderingTurns;
+            yield return null;
+            yield return null;
+            Assert.That(
+                root.Driver.AfterRenderingTurns, Is.EqualTo(turns),
+                "no turn after rendering is taken after the termination request");
 
             // **A termination is not an ending.** The ordinary ending -- ending every cut, collecting, confirming the
             // workers -- is not started by it and cannot be started after it.
