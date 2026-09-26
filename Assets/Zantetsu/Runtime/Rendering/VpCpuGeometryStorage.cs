@@ -635,19 +635,23 @@ namespace Zantetsu.Rendering
 
         /// <summary>
         /// Sets aside room for the output of one cut of <paramref name="parent"/>: the vertices the cut may append and
-        /// their mapping entries, one index range for both sides together, and the metadata the two sides may need.
-        /// Nothing is visible to a reader until the reservation is committed. Returns false with a null reservation,
-        /// having taken nothing, when the parent is not a geometry of this storage whose metadata is readable, when a
-        /// capacity is negative, when a free tail is too small, or when no index range or descriptor can be reserved.
+        /// their mapping entries, one index range for both sides together, the descriptor the second side's range will
+        /// take, and the metadata the two sides may need. Nothing is visible to a reader until the reservation is
+        /// committed. Returns false with a null reservation, having taken nothing, when the parent is not a geometry of
+        /// this storage whose metadata is readable, when a capacity is negative, when a free tail is too small, or when
+        /// the index range or either of its two descriptors cannot be reserved.
         /// </summary>
         /// <param name="submeshCapacity">Descriptors the two sides may use together, normally twice the parent's.</param>
         /// <param name="vertexBlockCapacity">Blocks the children's shared list may use, normally the parent's plus one.</param>
         /// <remarks>
         /// **Several reservations may be open at once.** Each holds spans of its own -- vertices with their mapping
-        /// entries, submesh descriptors, vertex blocks, and an index range -- so two cuts of this storage write in
-        /// different places and their kernels may run together. A span is never moved, so taking one while a worker
-        /// writes another leaves that worker's views valid. What is refused while any reservation is open is an
-        /// append, which is unchanged. A commit that fails leaves its reservation open, to be cancelled.
+        /// entries, submesh descriptors, vertex blocks, and an index range with the descriptor its split will use --
+        /// so two cuts of this storage write in different places and their kernels may run together, and nothing taken
+        /// after a reservation, by another reservation or an append, can leave its commit short of a descriptor. A span
+        /// is never moved, so taking one while a worker writes another leaves that worker's views valid. What is
+        /// refused while any reservation is open is a mesh or prepared append, which is unchanged; a direct skin
+        /// append takes room of its own beside the open ones. A commit that fails leaves its reservation open, to be
+        /// cancelled.
         /// </remarks>
         public bool TryReserveCutOutput(
             VpStoredGeometry parent,
@@ -679,11 +683,20 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            // The second side's descriptor, taken now as an empty range and owned until the commit or the cancel.
+            if (!_indices.TryReserve(0, out VpIndexRangeHandle splitDescriptor))
+            {
+                _indices.TryCancelReservation(indexRange);
+                GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
+                return false;
+            }
+
             try
             {
                 if (!_indices.TryGetReservedWriteView(indexRange, out NativeArray<uint> indexView)
                     || !_indices.TryGetState(indexRange, out _, out int indexStart, out _))
                 {
+                    _indices.TryCancelReservation(splitDescriptor);
                     _indices.TryCancelReservation(indexRange);
                     GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
                     return false;
@@ -693,6 +706,7 @@ namespace Zantetsu.Rendering
                 reservation = new VpCutOutputReservation(
                     parent,
                     indexRange,
+                    splitDescriptor,
                     indexStart,
                     vertexStart,
                     submeshStart,
@@ -707,6 +721,7 @@ namespace Zantetsu.Rendering
             {
                 reservation = null;
                 GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
+                CancelWhileThrowing(splitDescriptor);
                 CancelWhileThrowing(indexRange);
                 throw;
             }
@@ -735,6 +750,7 @@ namespace Zantetsu.Rendering
                 reservation.vertexStart, reservation.NewVertexCapacity,
                 reservation.submeshStart, reservation.submeshCapacity,
                 reservation.vertexBlockStart, reservation.vertexBlockCapacity);
+            _indices.TryCancelReservation(reservation.splitDescriptor);
             return _indices.TryCancelReservation(reservation.indexRange);
         }
 
@@ -751,8 +767,8 @@ namespace Zantetsu.Rendering
         /// reservation is null, foreign or closed; when a count is negative or exceeds what was reserved; when the two
         /// index counts are both 0; when a side with no index is given submesh descriptors; when a side's descriptors do
         /// not cover its indices once, in order and in whole triangles; when the topology vertex count does not cover
-        /// the parent's ids and the ones written for the appended vertices; or when the second side's index descriptor
-        /// cannot be registered. That last check is made before anything is published, so a side is never published
+        /// the parent's ids and the ones written for the appended vertices. The second side's index descriptor is the
+        /// reservation's own, taken when it was reserved, so a commit is never short of one; a side is never published
         /// alone.
         /// </para>
         /// <para>
@@ -839,6 +855,7 @@ namespace Zantetsu.Rendering
                     reservation.indexRange,
                     positiveIndexCount,
                     negativeIndexCount,
+                    reservation.splitDescriptor,
                     out VpIndexRangeHandle positiveRange,
                     out VpIndexRangeHandle negativeRange))
             {

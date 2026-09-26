@@ -111,6 +111,30 @@ namespace Zantetsu.Rendering
             return false;
         }
 
+        /// <summary>
+        /// Gives a Reserved range with no index -- a descriptor its owner holds in reserve -- the range
+        /// [indexStart, indexStart + indexCount), still Reserved and under the same handle. It is how a publish in two
+        /// parts uses a descriptor that was reserved beforehand instead of looking for a free one. Fails, changing
+        /// nothing, for a handle that is not Reserved or already has indices, or a range that is negative or ends past
+        /// int.MaxValue.
+        /// </summary>
+        internal bool TryPlaceHeld(VpIndexRangeHandle handle, int indexStart, int indexCount)
+        {
+            if (!TryFind(handle, out int d)
+                || _descriptors[d].state != VpIndexRangeState.Reserved
+                || _descriptors[d].indexCount != 0
+                || indexStart < 0
+                || indexCount < 0
+                || (long)indexStart + indexCount > int.MaxValue)
+            {
+                return false;
+            }
+
+            _descriptors[d].indexStart = indexStart;
+            _descriptors[d].indexCount = indexCount;
+            return true;
+        }
+
         /// <summary>Reserved → Published.</summary>
         public bool TryPublish(VpIndexRangeHandle handle)
         {

@@ -141,17 +141,228 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(input.TryAppendTo(storage, out _), Is.False);
         }
 
-        [Test] public void OpenCutReservationRefusesDirectAppend_AndSurvivesIt()
+        // Another owner's cut holds room in the same storage while this character's first cut is appended.
+        [TestCase(true)] [TestCase(false)]
+        public void OpenCutReservationLeavesDirectAppendItsOwnRoom_AndEndsWithoutTouchingIt(bool commitA)
         {
             using var input = Input(); using var storage = Storage();
             Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
-            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var reservation), Is.True);
+            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var a), Is.True);
+            Assert.That(storage.TryGetIndexState(a.indexRange, out _, out int aIndexStart, out _), Is.True);
+            WriteMarked(a, 4);
+            foreach (var bone in bones) bone.localPosition = new Vector3(3, 2, 1);
+
+            Assert.That(input.TryAppendTo(storage, out var b), Is.True, "B appends while A's reservation is open");
+            Assert.That(a.IsClosed, Is.False, "and A's reservation stays open");
+            AssertApart(b.vertexStart, b.vertexCount, a.VertexStart, a.NewVertexCapacity, "vertices");
+            AssertApart(parent.vertexStart, parent.vertexCount, b.vertexStart, b.vertexCount, "vertices of the parent");
+            AssertApart(b.submeshStart, b.submeshCount, a.SubmeshStart, a.SubmeshCapacity, "submeshes");
+            AssertApart(b.blockStart, b.blockCount, a.VertexBlockStart, a.VertexBlockCapacity, "blocks");
+            Assert.That(storage.TryGetIndexState(b.indexRange, out _, out int bIndexStart, out int bIndexCount), Is.True);
+            AssertApart(bIndexStart, bIndexCount, aIndexStart, a.NewIndexCapacity, "indices");
+            Assert.That(ReadIndices(storage, b), Is.EqualTo(Triangles.Select(i => (uint)(i + b.vertexStart))));
+            var before = Snapshot(storage, b);
+
+            // B is published above A's room: the high-water now covers A, and still nothing of A can be read or sent.
+            Assert.That(storage.VertexCount, Is.GreaterThanOrEqualTo(a.VertexStart + a.NewVertexCapacity));
+            Assert.That(storage.TryGetCommittedVertices(a.VertexStart, a.NewVertexCapacity, out _), Is.False);
+            Assert.That(storage.TryGetCommittedVertices(0, storage.VertexCount, out _), Is.False);
+            Assert.That(storage.TryGetIndexState(a.indexRange, out var aState, out _, out _), Is.True);
+            Assert.That(aState, Is.EqualTo(VpIndexRangeState.Reserved));
+            using (var gpu = new GraphicsBuffer(GraphicsBuffer.Target.Structured, storage.VertexCapacity, VpRenderVertex.Stride))
+            {
+                Assert.That(VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                    storage, gpu, a.VertexStart, a.NewVertexCapacity, out int refused), Is.False);
+                Assert.That(refused, Is.Zero);
+                Assert.That(VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                    storage, gpu, 0, storage.VertexCount, out refused), Is.False);
+                Assert.That(refused, Is.Zero);
+                Assert.That(VpStoredGeometryTransfer.TryUploadCommittedVertices(
+                    storage, gpu, b.vertexStart, b.vertexCount, out int sent), Is.True);
+                Assert.That(sent, Is.EqualTo(4));
+            }
+
+            // A ends after B: committed, or given back.
+            if (commitA)
+            {
+                Assert.That(CommitMarked(storage, a, 4, out var positive, out var negative), Is.True);
+                Assert.That(storage.TryGetCommittedVertices(a.VertexStart, 4, out var aVertices), Is.True);
+                for (int i = 0; i < 4; i++) Assert.That(aVertices[i].position.x, Is.EqualTo(100 + i));
+                Assert.That(ReadIndices(storage, positive).Length, Is.EqualTo(3));
+                Assert.That(ReadIndices(storage, negative).Length, Is.EqualTo(3));
+            }
+            else
+            {
+                Assert.That(storage.TryCancelCutOutput(a), Is.True);
+                Assert.That(storage.TryCancelCutOutput(a), Is.False);
+                Assert.That(storage.TryGetCommittedVertices(a.VertexStart, a.NewVertexCapacity, out _), Is.False);
+            }
+            Assert.That(a.IsClosed, Is.True);
+            Assert.That(Snapshot(storage, b), Is.EqualTo(before), "B is as it was published");
+        }
+
+        // B's own shortage or failed write, beside A's open reservation: B gives back what it took and A is untouched.
+        [TestCase("vertices")] [TestCase("indices")] [TestCase("descriptors")]
+        [TestCase("submeshes")] [TestCase("blocks")] [TestCase("write")]
+        public void DirectAppendFailureBesideOpenReservation_GivesBackOnlyItsOwnRoom(string failure)
+        {
+            // Room for the parent, A's reservation (its range and the descriptor its split will use) and B, less one
+            // of B's needs.
+            using var input = Input();
+            using var storage = Storage(failure == "vertices" ? 11 : 12, failure == "indices" ? 35 : 36,
+                failure == "descriptors" ? 3 : 4, failure == "submeshes" ? 3 : 4, failure == "blocks" ? 3 : 4);
+            Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
+            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var a), Is.True);
+            WriteMarked(a, 4);
+            int highWater = storage.VertexCount, room = a.VertexStart + a.NewVertexCapacity;
+            if (failure == "write") foreach (var bone in bones) bone.localScale = Vector3.zero;
+
+            for (int i = 0; i < 3; i++) Assert.That(input.TryAppendTo(storage, out _), Is.False);
+            Assert.That(storage.VertexCount, Is.EqualTo(highWater));
+            Assert.That(storage.TryGetCommittedVertices(room, 1, out _), Is.False);
+            Assert.That(a.IsClosed, Is.False, "A's reservation is still open");
+            for (int i = 0; i < 4; i++) Assert.That(a.NewVertices[i].position.x, Is.EqualTo(100 + i));
+
+            if (failure == "write")
+            {
+                // Everything B took came back: a valid pose takes the same room and fits it exactly beside A.
+                foreach (var bone in bones) bone.localScale = Vector3.one;
+                Assert.That(input.TryAppendTo(storage, out var b), Is.True);
+                Assert.That(b.vertexStart, Is.EqualTo(room));
+                Assert.That(ReadIndices(storage, b), Is.EqualTo(Triangles.Select(i => (uint)(i + b.vertexStart))));
+            }
+            Assert.That(CommitMarked(storage, a, 4, out _, out _), Is.True, "A commits as it would have alone");
+            Assert.That(storage.TryGetCommittedVertices(a.VertexStart, 4, out var aVertices), Is.True);
+            for (int i = 0; i < 4; i++) Assert.That(aVertices[i].position.x, Is.EqualTo(100 + i));
+        }
+
+        // The descriptors: the parent's, two per open reservation (its range and the one its split will use), and B's.
+        // With one fewer, B is refused: the one a commit needs is already the reservation's. Every reservation commits.
+        [TestCase(1, true)] [TestCase(1, false)] [TestCase(2, true)] [TestCase(2, false)]
+        public void DirectAppendLeavesEveryOpenCommitItsDescriptor(int open, bool roomForB)
+        {
+            using var input = Input();
+            using var storage = Storage(descriptors: 1 + 2 * open + (roomForB ? 1 : 0));
+            Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
+            var reservations = new VpCutOutputReservation[open];
+            for (int r = 0; r < open; r++)
+            {
+                Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out reservations[r]), Is.True);
+                WriteMarked(reservations[r], 4);
+            }
+            int highWater = storage.VertexCount;
+
+            Assert.That(input.TryAppendTo(storage, out var b), Is.EqualTo(roomForB), "B takes the last descriptor only if spare");
+            if (!roomForB)
+            {
+                Assert.That(storage.VertexCount, Is.EqualTo(highWater));
+                Assert.That(input.TryAppendTo(storage, out _), Is.False, "and is refused again, taking nothing");
+            }
+            var before = roomForB ? Snapshot(storage, b) : null;
+            for (int r = 0; r < open; r++)
+            {
+                Assert.That(CommitMarked(storage, reservations[r], 4, out var positive, out var negative), Is.True,
+                    "reservation " + r + " commits both sides");
+                Assert.That(ReadIndices(storage, positive).Length + ReadIndices(storage, negative).Length, Is.EqualTo(6));
+            }
+            if (roomForB) Assert.That(Snapshot(storage, b), Is.EqualTo(before));
+            // Every descriptor is in use now: nothing is left for another registration.
             Assert.That(input.TryAppendTo(storage, out _), Is.False);
-            Assert.That(storage.VertexCount, Is.EqualTo(4));
-            Assert.That(storage.TryCancelCutOutput(reservation), Is.True);
-            Assert.That(storage.TryCancelCutOutput(reservation), Is.False);
-            Assert.That(input.TryAppendTo(storage, out var next), Is.True);
-            Assert.That(next.vertexStart, Is.EqualTo(4));
+        }
+
+        // A holds a reservation; B appends; B's own cut then asks for output room; A commits both sides. With four
+        // descriptors B's reservation finds none and is refused, taking nothing. With six it is granted and both commit.
+        [TestCase(4)] [TestCase(6)]
+        public void LaterReservationAfterDirectAppendCannotTakeTheDescriptorAnOpenCommitNeeds(int descriptors)
+        {
+            using var input = Input(); using var storage = Storage(descriptors: descriptors);
+            Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
+            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var a), Is.True);
+            WriteMarked(a, 4);
+            foreach (var bone in bones) bone.localPosition = new Vector3(3, 2, 1);
+            Assert.That(input.TryAppendTo(storage, out var b), Is.True, "B appends beside A's reservation");
+            int highWater = storage.VertexCount, freeIndices = storage.FreeIndexRoom;
+
+            bool granted = storage.TryReserveCutOutput(b, 4, 12, 2, 2, out var bCut);
+            Assert.That(granted, Is.EqualTo(descriptors >= 6), "B's reservation is granted only if descriptors of its own remain");
+            if (!granted)
+            {
+                Assert.That(bCut, Is.Null);
+                Assert.That(storage.VertexCount, Is.EqualTo(highWater));
+                Assert.That(storage.FreeIndexRoom, Is.EqualTo(freeIndices), "a refused reservation takes no index room");
+            }
+            else WriteMarked(bCut, 4);
+
+            Assert.That(CommitMarked(storage, a, 4, out var aPositive, out var aNegative), Is.True, "A commits both sides");
+            Assert.That(ReadIndices(storage, aPositive).Length + ReadIndices(storage, aNegative).Length, Is.EqualTo(6));
+            Assert.That(ReadIndices(storage, b), Is.EqualTo(Triangles.Select(i => (uint)(i + b.vertexStart))));
+            if (granted)
+            {
+                Assert.That(CommitMarked(storage, bCut, 4, out var bPositive, out var bNegative), Is.True, "B's cut commits too");
+                Assert.That(ReadIndices(storage, bPositive).Length + ReadIndices(storage, bNegative).Length, Is.EqualTo(6));
+            }
+        }
+
+        // The held descriptor goes back when it is not used: a one-sided commit, and a cancel. Three descriptors: the
+        // parent's and the reservation's two; the append afterwards needs the one given back.
+        [TestCase(true)] [TestCase(false)]
+        public void HeldSplitDescriptorGoesBackWhenNotUsed(bool commitOneSide)
+        {
+            using var input = Input(); using var storage = Storage(descriptors: 3);
+            Assert.That(input.TryAppendTo(storage, out var parent), Is.True);
+            Assert.That(storage.TryReserveCutOutput(parent, 4, 12, 2, 2, out var a), Is.True);
+            Assert.That(input.TryAppendTo(storage, out _), Is.False, "every descriptor is held");
+            WriteMarked(a, 4);
+            if (commitOneSide)
+            {
+                uint at = a.NewVertexBase;
+                Assert.That(storage.TryCommitCutOutput(a, 4, a.Parent.topologyVertexCount, 6, 0,
+                    new[] { new VpGeometrySubmesh(0, 6, 0) }, 1, 0, new VpGeometryBounds[1], at, at, 1, 0,
+                    out var positive, out var negative), Is.True);
+                Assert.That(ReadIndices(storage, positive).Length, Is.EqualTo(6));
+                Assert.That(negative.indexRange, Is.EqualTo(default(VpIndexRangeHandle)));
+            }
+            else Assert.That(storage.TryCancelCutOutput(a), Is.True);
+            Assert.That(input.TryAppendTo(storage, out var next), Is.True, "the held descriptor came back");
+            Assert.That(ReadIndices(storage, next).Length, Is.EqualTo(12));
+        }
+
+        static void AssertApart(int start, int count, int otherStart, int otherCount, string what)
+        {
+            Assert.That(start + count <= otherStart || otherStart + otherCount <= start, Is.True,
+                what + ": [" + start + ", " + (start + count) + ") and [" + otherStart + ", " + (otherStart + otherCount) + ")");
+        }
+        static void WriteMarked(VpCutOutputReservation reservation, int vertices)
+        {
+            var newVertices = reservation.NewVertices; var newTopology = reservation.NewVertexTopology;
+            for (int v = 0; v < vertices; v++)
+            {
+                newVertices[v] = new VpRenderVertex { position = new Vector3(100 + v, 0, 0) };
+                newTopology[v] = 0;
+            }
+            var newIndices = reservation.NewIndices;
+            for (int i = 0; i < 6; i++) newIndices[i] = reservation.NewVertexBase;
+        }
+        static bool CommitMarked(VpCpuGeometryStorage storage, VpCutOutputReservation reservation, int vertices,
+            out VpStoredGeometry positive, out VpStoredGeometry negative)
+        {
+            uint at = reservation.NewVertexBase;
+            return storage.TryCommitCutOutput(reservation, vertices, reservation.Parent.topologyVertexCount, 3, 3,
+                new[] { new VpGeometrySubmesh(0, 3, 0), new VpGeometrySubmesh(0, 3, 0) }, 1, 1,
+                new VpGeometryBounds[2], at, at, at, at, out positive, out negative);
+        }
+        static string Snapshot(VpCpuGeometryStorage storage, VpStoredGeometry geometry)
+        {
+            Assert.That(storage.TryGetCommittedVertices(geometry.vertexStart, geometry.vertexCount, out var vertices), Is.True);
+            Assert.That(storage.TryGetTopology(geometry, out var topology, out int topologyCount), Is.True);
+            Assert.That(storage.TryGetPublishedExtent(geometry, out int start, out int count, out var bounds), Is.True);
+            Assert.That(storage.TryGetSubmeshes(geometry, out var submeshes), Is.True);
+            Assert.That(storage.TryGetVertexBlocks(geometry, out var blocks, out _), Is.True);
+            return string.Join("|", vertices.Select(v => v.position.ToString("G9") + v.normal.ToString("G9") + v.uv0.ToString("G9")))
+                + "/" + string.Join(",", topology.ToArray()) + "/" + topologyCount + "/" + string.Join(",", ReadIndices(storage, geometry))
+                + "/" + start + "," + count + "," + bounds.min.ToString("G9") + bounds.max.ToString("G9")
+                + "/" + string.Join(",", submeshes.Select(m => m.indexOffset + ":" + m.indexCount + ":" + m.materialIndex))
+                + "/" + string.Join(",", blocks.Select(k => k.vertexStart + ":" + k.vertexCount));
         }
 
         [Test] public void DisposingInputDoesNotRetirePublishedData_AndDisposedStorageThrows()
