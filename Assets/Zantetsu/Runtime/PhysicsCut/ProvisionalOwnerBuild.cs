@@ -63,6 +63,13 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public MeshColliderCookingOptions cooking;
 
+        /// <summary>
+        /// A collider already set up with <see cref="cooking"/> and as convex, never in the physics scene, which the
+        /// collider of every framed convex is copied from. Optional: without one, or with one set up differently, each
+        /// collider is made and set up call by call as before.
+        /// </summary>
+        internal MeshCollider colliderTemplate;
+
         public string name;
     }
 
@@ -342,14 +349,32 @@ namespace Zantetsu.PhysicsCut
 
                 var body = root.AddComponent<Rigidbody>();
                 var side = new PhysicsOwnerSide(positive, root, shapeFrame, body);
+
+                // Copies come out with the template's profile, so it is used only when that is this build's profile.
+                MeshCollider template = input.colliderTemplate;
+                if (template != null && (template.cookingOptions != input.cooking || !template.convex))
+                {
+                    template = null;
+                }
+
                 for (int i = 0; i < shape.ConvexCount; i++)
                 {
-                    var collider = PhysicsOwnerBuilder.CreateMeshCollider(shapeFrame, shape.MeshFrameOf(i));
+                    PhysicsMeshFrame meshFrame = shape.MeshFrameOf(i);
+                    MeshCollider collider;
+                    if (template != null && meshFrame.HasFrame)
+                    {
+                        // Object, parenting, collider, profile and convex flag in one copy; then the frame's pose.
+                        collider = PhysicsOwnerBuilder.CreateMeshCollider(shapeFrame, meshFrame, template);
+                    }
+                    else
+                    {
+                        collider = PhysicsOwnerBuilder.CreateMeshCollider(shapeFrame, meshFrame);
+                        collider.cookingOptions = input.cooking;
+                        collider.convex = true;
+                    }
 
                     // The profile before the mesh, and the mesh the source already had: a collider given its mesh
-                    // first would be cooked with the wrong options (DESIGN 7.1.1).
-                    collider.cookingOptions = input.cooking;
-                    collider.convex = true;
+                    // first would be cooked with the wrong options (DESIGN 7.1.1). A copy already has the profile.
                     collider.sharedMesh = shape.MeshOf(i);
                     side.Add(collider);
                 }
