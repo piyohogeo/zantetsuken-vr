@@ -1229,6 +1229,47 @@ namespace Zantetsu.PhysicsCut.Tests
             }
         }
 
+        /// <summary>
+        /// **The turn after rendering continues the frame; it does not open another.** It is the driver's own frame,
+        /// so a budget spent earlier in the frame stays spent and nothing more is submitted; it is taken once per
+        /// frame; and a driver that is not driving -- disabled, as the ending and the termination leave it -- takes
+        /// none.
+        /// </summary>
+        [Test]
+        public void TheTurnAfterRendering_ContinuesTheFramesBudget_OncePerFrame_AndOnlyWhileDriving()
+        {
+            using (World w = NewWorld(frameBudget: 1))
+            {
+                w.job.HoldEverything = true;
+                ProvisionalCutTransaction transaction = Publish(w);
+
+                // The frame the driver counts in, as its own turns see it.
+                int frame = Time.frameCount;
+                w.driver.Advance(frame);
+                int accepted = w.job.Accepted.Count;
+                Assert.That(accepted, Is.EqualTo(1), "one unit of budget went on one submission");
+                Assert.That(w.dispatcher.RemainingBudget, Is.Zero, "the frame's budget is spent");
+
+                // Not driving first, so that "once per frame" below cannot be what refuses it.
+                w.driver.enabled = false;
+                w.driver.DriveAfterRendering();
+                Assert.That(w.driver.AfterRenderingTurns, Is.Zero, "a driver that is not driving takes no turn");
+                Assert.That(w.driver.LastAfterRenderingFrame, Is.EqualTo(int.MinValue));
+                w.driver.enabled = true;
+
+                w.driver.DriveAfterRendering();
+                Assert.That(w.driver.AfterRenderingTurns, Is.EqualTo(1), "the turn was taken");
+                Assert.That(w.driver.LastAfterRenderingFrame, Is.EqualTo(frame), "in this frame");
+                Assert.That(w.job.Accepted.Count, Is.EqualTo(accepted), "and the spent budget bought nothing more");
+                Assert.That(w.dispatcher.RemainingBudget, Is.Zero, "nothing refilled it");
+                Assert.That(transaction.Cut.IsOver, Is.False, "and nothing waited for the work that is still held");
+
+                w.driver.DriveAfterRendering();
+                Assert.That(w.driver.AfterRenderingTurns, Is.EqualTo(1), "a second turn in the same frame is not taken");
+                Assert.That(w.job.Accepted.Count, Is.EqualTo(accepted));
+            }
+        }
+
         // ----- 7. the update route, with the real display entrance ----------------------------------------------------
 
         /// <summary>
