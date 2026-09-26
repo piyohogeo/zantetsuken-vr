@@ -47,8 +47,11 @@ namespace Zantetsu.PhysicsCut
         MassNotUsable = 6,
 
         /// <summary>
-        /// Building threw. Everything this call had made is destroyed; the source and the borrowed shapes are
-        /// untouched.
+        /// The two sides could not be built: building threw, or a constraint a side needs (DESIGN 7.1.1, 7.2.2)
+        /// could not be made -- there is no room left for it, or no usable settings. Everything this call had made is
+        /// destroyed, or nothing was made; the source and the borrowed shapes are untouched. A side without the
+        /// constraint it needs is not a side that was built, and no reason of its own is given for that (DESIGN
+        /// 7.2.2): the caller goes the way any build that cannot be made goes.
         /// </summary>
         BuildFailed = 7,
     }
@@ -164,6 +167,22 @@ namespace Zantetsu.PhysicsCut
         /// <summary>When supplied, authoritative inherited meshes AND their per-convex frames. Overrides inheritedMeshes.</summary>
         public PhysicsOwnerShape inheritedShape;
 
+        /// <summary>
+        /// What the two children carry (DESIGN 7.2.2), planned from the source before this build:
+        /// <see cref="BuildingLineage.ChildOfSplit"/> of the source's own. A building child's anchor-less sides get a
+        /// building World D6 at this depth.
+        /// </summary>
+        public BuildingLineage childLineage;
+
+        /// <summary>The building World D6 settings, read only for a building child.</summary>
+        public BuildingWorldD6Settings buildingWorld;
+
+        /// <summary>
+        /// How many more system constraints the world has room for, or none to leave the count unbounded. A build
+        /// whose sides need more than this is refused before anything is made.
+        /// </summary>
+        public int? constraintRoom;
+
         /// <summary>What to call the two objects. Optional.</summary>
         public string name;
     }
@@ -217,6 +236,12 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>This side received at least one anchor, so it is fixed (DESIGN 7.1).</summary>
         public bool FixedByAnchors { get; internal set; }
+
+        /// <summary>
+        /// The building World D6 on this side's actor (DESIGN 7.2.2), or none: an anchor-less side of a building
+        /// child has one, anything else never. It lives as long as the actor, across the Final handoff.
+        /// </summary>
+        public ConfigurableJoint BuildingWorld { get; internal set; }
 
         /// <summary>The side's mass, as the kernel computed it.</summary>
         public double Mass { get; internal set; }
@@ -318,6 +343,9 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
         {
             Root.transform.SetPositionAndRotation(placement.position, placement.rotation);
+
+            // Still out of the scene: where it stands now is what its building constraint starts from.
+            BuildingWorldD6.Place(this);
             if (FixedByAnchors)
             {
                 LinearVelocity = float3.zero;
@@ -595,11 +623,15 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class PhysicsOwnerCandidate : IDisposable
     {
-        internal PhysicsOwnerCandidate(PhysicsOwnerSide positive, PhysicsOwnerSide negative)
+        internal PhysicsOwnerCandidate(PhysicsOwnerSide positive, PhysicsOwnerSide negative, BuildingLineage childLineage = default)
         {
             Positive = positive;
             Negative = negative;
+            ChildLineage = childLineage;
         }
+
+        /// <summary>What both children are published with: the lineage planned before the build (DESIGN 7.2.2).</summary>
+        public BuildingLineage ChildLineage { get; }
 
         public PhysicsOwnerSide Positive { get; private set; }
 
@@ -739,6 +771,17 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
+            // The building constraints the sides need (DESIGN 7.2.2) are part of what is built, so whether they can be
+            // made is judged with the rest, before anything is.
+            int constraints = BuildingWorldD6.Needed(
+                in input.childLineage, input.anchors.IsPositiveFixed, input.anchors.IsNegativeFixed);
+            if (constraints > 0 && !input.buildingWorld.IsValid
+                || input.constraintRoom.HasValue && constraints > input.constraintRoom.Value)
+            {
+                outcome = PhysicsOwnerBuildOutcome.BuildFailed;
+                return false;
+            }
+
             // Everything that can be judged has been judged; only now is anything made, so an ordinary refusal leaves
             // nothing behind at all.
             PhysicsOwnerSide positive = null;
@@ -747,6 +790,12 @@ namespace Zantetsu.PhysicsCut
             {
                 positive = BuildSide(in input, true, in positiveMass, localRotation, localOffset);
                 negative = BuildSide(in input, false, in negativeMass, localRotation, localOffset);
+                if (constraints > 0)
+                {
+                    int depth = input.childLineage.SplitDepth;
+                    if (!positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
+                    if (!negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
+                }
             }
             catch (Exception)
             {
@@ -757,7 +806,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            candidate = new PhysicsOwnerCandidate(positive, negative);
+            candidate = new PhysicsOwnerCandidate(positive, negative, input.childLineage);
             outcome = PhysicsOwnerBuildOutcome.Ok;
             return true;
         }

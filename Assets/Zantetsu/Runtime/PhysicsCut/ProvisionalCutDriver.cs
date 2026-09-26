@@ -139,6 +139,11 @@ namespace Zantetsu.PhysicsCut
         private VpLogicalCutDisplay _display;
         private float _supportEpsilon;
         private float _anchorEpsilon;
+
+        // The building World D6 settings and the system constraint capacity (DESIGN 7.2.2, O-048). Until the world
+        // configures them: the provisional settings, and no capacity counted.
+        private BuildingWorldD6Settings _buildingWorld = BuildingWorldD6Settings.Provisional;
+        private int? _constraintCapacity;
         private int _vertexLimit;
         private Func<int> _frameSource;
         private ProvisionalCutRecovery _recovery;
@@ -631,6 +636,27 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>
+        /// The building World D6 settings every building child of this driver's cuts is built with, and how many
+        /// system constraints -- sibling and building ones together -- the scene may hold (DESIGN 7.2.2). A cut whose
+        /// pair would need more than is left cannot be built, and goes the way any build that cannot be made goes.
+        /// </summary>
+        public void ConfigureConstraints(BuildingWorldD6Settings buildingWorld, int constraintCapacity)
+        {
+            if (!buildingWorld.IsValid)
+            {
+                throw new ArgumentOutOfRangeException(nameof(buildingWorld), "the building World D6 settings are not usable");
+            }
+
+            if (constraintCapacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(constraintCapacity));
+            }
+
+            _buildingWorld = buildingWorld;
+            _constraintCapacity = constraintCapacity;
+        }
+
         private ProvisionalCutAcceptance TryBuildAndPublish(
             ProvisionalCutTransaction transaction,
             PhysicsFragmentOwner owner,
@@ -650,6 +676,14 @@ namespace Zantetsu.PhysicsCut
                 sourceInertiaRotation = owner.Body.inertiaTensorRotation,
                 cooking = _cook.Cooking,
                 colliderTemplate = ColliderTemplate,
+
+                // The children's lineage, planned now, before anything is built (DESIGN 7.2.2): the pair and the
+                // children are published with this one value.
+                childLineage = owner.Building.ChildOfSplit(),
+                buildingWorld = _buildingWorld,
+                constraintRoom = _constraintCapacity.HasValue
+                    ? Math.Max(0, _constraintCapacity.Value - _registry.SystemConstraintCount)
+                    : (int?)null,
                 name = owner.Root != null ? owner.Root.name : "Provisional",
             };
 

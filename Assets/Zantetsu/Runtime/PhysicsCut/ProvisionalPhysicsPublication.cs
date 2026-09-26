@@ -209,7 +209,7 @@ namespace Zantetsu.PhysicsCut
             var published = new ProvisionalOwnerPair(
                 input.operation, source, positive, negative,
                 input.candidate.PositiveShape, input.candidate.NegativeShape, input.candidate.Separation,
-                sourceOwner.GeometryLocalToOwner);
+                sourceOwner.GeometryLocalToOwner, input.candidate.ChildLineage);
             input.registry.ReserveProvisional();
 
             // ---- one main-thread update from here: nothing steps, admits, resolves or collects in between ----
