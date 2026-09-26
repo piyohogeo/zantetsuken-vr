@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using Unity.Collections;
+using Unity.Mathematics;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -363,6 +364,74 @@ namespace Zantetsu.Rendering.Tests
                 + "/" + start + "," + count + "," + bounds.min.ToString("G9") + bounds.max.ToString("G9")
                 + "/" + string.Join(",", submeshes.Select(m => m.indexOffset + ":" + m.indexCount + ":" + m.materialIndex))
                 + "/" + string.Join(",", blocks.Select(k => k.vertexStart + ":" + k.vertexCount));
+        }
+
+        // Every region starts on 16 bytes, lies inside the block, and overlaps no other; the sizes are the element
+        // counts'. Counts that would not fit one block, or are negative, are refused rather than wrapped.
+        [TestCase(4, 12, 4)] [TestCase(1, 3, 1)] [TestCase(7, 21, 3)] [TestCase(12345, 67890, 77)] [TestCase(0, 0, 0)]
+        public unsafe void LayoutRegionsAreAlignedApartAndInside(int vertices, int indexCount, int boneCount)
+        {
+            Assert.That(VpDirectSkinInput.TryLayout(vertices, indexCount, boneCount, out var l), Is.True);
+            var regions = new (long at, long size)[]
+            {
+                (l.matrices, (long)boneCount * sizeof(float4x4)), (l.weights, (long)vertices * sizeof(BoneWeight)),
+                (l.positions, (long)vertices * 12), (l.normals, (long)vertices * 12), (l.topology, (long)vertices * 4),
+                (l.indices, (long)indexCount * 4), (l.bounds, 24), (l.valid, 4), (l.uv, (long)vertices * 2),
+            };
+            for (int a = 0; a < regions.Length; a++)
+            {
+                Assert.That(regions[a].at % 16, Is.Zero, "region " + a + " aligned");
+                Assert.That(regions[a].at + regions[a].size, Is.LessThanOrEqualTo(l.bytes), "region " + a + " inside");
+                for (int b = a + 1; b < regions.Length; b++)
+                    Assert.That(regions[a].at + regions[a].size <= regions[b].at || regions[b].at + regions[b].size <= regions[a].at,
+                        Is.True, "regions " + a + " and " + b + " apart");
+            }
+            Assert.That(l.bytes, Is.LessThan(regions.Sum(r => r.size) + 16 * regions.Length), "only alignment padding added");
+        }
+
+        [TestCase(int.MaxValue, 0, 0)] [TestCase(0, int.MaxValue, 0)] [TestCase(0, 0, int.MaxValue)]
+        [TestCase(-1, 0, 0)] [TestCase(0, -1, 0)] [TestCase(0, 0, -1)] [TestCase(67108864, 0, 0)]
+        public void LayoutRefusesCountsThatDoNotFitOneBlock(int vertices, int indexCount, int boneCount)
+        {
+            Assert.That(VpDirectSkinInput.TryLayout(vertices, indexCount, boneCount, out _), Is.False);
+        }
+
+        // Nothing is read that was not written: the block filled with 0x00, with 0xFF (NaN in every float), or left as
+        // it comes gives the same vertices, topology, indices and bounds, before and after a pose change.
+        [Test] public void BlockContentsBeforeWritingNeverReachTheOutput()
+        {
+            var results = new List<string>();
+            try
+            {
+                foreach (int fill in new[] { -1, 0x00, 0xFF })
+                {
+                    VpDirectSkinInput.Fill = fill;
+                    foreach (var bone in bones) bone.localPosition = Vector3.zero;
+                    using var input = Input(); using var storage = Storage();
+                    Assert.That(input.NativeBytes, Is.GreaterThan(0));
+                    Assert.That(input.TryAppendTo(storage, out var first), Is.True, "fill " + fill);
+                    foreach (var bone in bones) bone.localPosition = new Vector3(.3f, -.2f, .1f);
+                    Assert.That(input.TryAppendTo(storage, out var second), Is.True, "fill " + fill);
+                    results.Add(Snapshot(storage, first) + "#" + Snapshot(storage, second));
+                }
+            }
+            finally { VpDirectSkinInput.Fill = -1; }
+            Assert.That(results[1], Is.EqualTo(results[0]), "0x00 fill");
+            Assert.That(results[2], Is.EqualTo(results[0]), "0xFF fill");
+        }
+
+        // One block for the whole input, held from creation and given back once, however often Dispose is called.
+        [Test] public void OneBlockHeldUntilDispose_ThenNoneAndPublishedDataStays()
+        {
+            var input = Input(); using var storage = Storage();
+            Assert.That(VpDirectSkinInput.TryLayout(4, 12, bones.Length, out var layout), Is.True);
+            Assert.That(input.NativeBytes, Is.EqualTo(layout.bytes));
+            Assert.That(input.TryAppendTo(storage, out var g), Is.True);
+            var before = Snapshot(storage, g);
+            input.Dispose(); Assert.That(input.NativeBytes, Is.Zero);
+            input.Dispose(); Assert.That(input.NativeBytes, Is.Zero);
+            Assert.That(Snapshot(storage, g), Is.EqualTo(before), "published storage outlives the input");
+            Assert.Throws<ObjectDisposedException>(() => input.TryAppendTo(storage, out _));
         }
 
         [Test] public void DisposingInputDoesNotRetirePublishedData_AndDisposedStorageThrows()
