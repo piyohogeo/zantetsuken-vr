@@ -702,7 +702,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// One of the product's destinations, wrapped: the work runs as usual and is handed back only once the case
         /// lets it. It holds the **collection**, never the running, and it is the seam the product already has.
         /// </summary>
-        private sealed class HoldingExecutor : IWorkExecutor
+        internal sealed class HoldingExecutor : IWorkExecutor
         {
             private readonly IWorkExecutor _inner;
 
@@ -721,6 +721,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             internal bool HoldEverything { get; set; }
+
+            /// <summary>
+            /// Whether work that finishes from now on is handed on as it comes, while what is already held stays held:
+            /// how one request's collection is kept back while another's goes through.
+            /// </summary>
+            internal bool LetNewWorkThrough { get; set; }
 
             /// <summary>How many it is holding back from the collection now.</summary>
             internal int HoldingCount => _held.Count;
@@ -773,7 +779,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     return false;
                 }
 
-                if (!HoldEverything)
+                if (!HoldEverything || LetNewWorkThrough)
                 {
                     return true;
                 }
