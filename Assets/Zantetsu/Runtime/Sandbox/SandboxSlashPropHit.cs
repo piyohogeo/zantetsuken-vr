@@ -22,6 +22,9 @@ namespace Zantetsu.Sandbox
         [Tooltip("The impulse each child is given at a cut, in newton-seconds. A value of this scene.")]
         [SerializeField] private float separationImpulse = 1.5f;
 
+        /// <summary>The impulse each child is given at a cut, as this scene sets it.</summary>
+        public float SeparationImpulse => separationImpulse;
+
         /// <summary>The detector, once the world has been built.</summary>
         public SlashHitDetector Detector { get; private set; }
 
