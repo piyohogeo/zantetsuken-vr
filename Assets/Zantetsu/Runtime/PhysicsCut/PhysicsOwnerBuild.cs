@@ -375,13 +375,24 @@ namespace Zantetsu.PhysicsCut
     /// makes "the old shape is gone from here on" true at the moment of the switch rather than at the end of the frame.
     /// </para>
     /// <para>
+    /// **A collider the side would lose can be refitted instead of replaced.** Where the side has a collider that no
+    /// part keeps, a part that needs one takes it over: the preparation only notes which, and the switch gives it the
+    /// part's mesh and frame. That removes a component made, one disabled and one destroyed for each, and changes
+    /// nothing before the switch, so a preparation still leaves the side as it was. What the switch does to it cannot
+    /// fail any more than enabling can: the mesh is present, cooked with the same profile, and the collider is the
+    /// side's own.
+    /// </para>
+    /// <para>
     /// A preparation that is not adopted is withdrawn (<see cref="Withdraw"/>): the new components come off again and
     /// the side is exactly as it was.
     /// </para>
     /// </summary>
     public sealed class PreparedSideColliders
     {
-        /// <summary>The final colliders in the products' order: the ones kept from the Provisional side and the ones made here.</summary>
+        /// <summary>
+        /// The final colliders in the products' order: the ones kept from the Provisional side, the ones refitted from
+        /// it and the ones made here.
+        /// </summary>
         private readonly List<MeshCollider> _ordered;
 
         /// <summary>The colliders this preparation made, disabled; the only ones it can take back.</summary>
@@ -393,15 +404,24 @@ namespace Zantetsu.PhysicsCut
         /// twice, and neither asks a list whether it contains a collider.
         /// </summary>
         private readonly bool[] _keptFromSide;
+
+        /// <summary>Which of the side's colliders, in the same order, the switch refits; null when none is.</summary>
+        private readonly bool[] _refittedFromSide;
+
+        /// <summary>What each refitted collider becomes at the switch; null when none is refitted.</summary>
+        private readonly List<SideColliderRefit> _refits;
         private readonly int _produced;
 
         internal PreparedSideColliders(
-            PhysicsOwnerSide side, List<MeshCollider> ordered, List<MeshCollider> made, bool[] keptFromSide, int produced)
+            PhysicsOwnerSide side, List<MeshCollider> ordered, List<MeshCollider> made, bool[] keptFromSide, int produced,
+            bool[] refittedFromSide = null, List<SideColliderRefit> refits = null)
         {
             Side = side;
             _ordered = ordered;
             _made = made;
             _keptFromSide = keptFromSide;
+            _refittedFromSide = refittedFromSide;
+            _refits = refits;
             _produced = produced;
         }
 
@@ -411,8 +431,11 @@ namespace Zantetsu.PhysicsCut
         /// <summary>How many final colliders there are: kept and made, the made ones disabled until adopted.</summary>
         public int Count => _ordered.Count;
 
-        /// <summary>How many of the final colliders were the Provisional side's already: the ordered ones not made here.</summary>
-        public int KeptCount => _ordered.Count - _made.Count;
+        /// <summary>
+        /// How many of the final colliders were the Provisional side's already, as they were: the ordered ones neither
+        /// made nor refitted here.
+        /// </summary>
+        public int KeptCount => _ordered.Count - _made.Count - RefittedCount;
 
         /// <summary>Whether the side's collider at <paramref name="index"/> (the side's order at preparation time) is kept.</summary>
         internal bool KeepsSideCollider(int index)
@@ -420,16 +443,25 @@ namespace Zantetsu.PhysicsCut
             return index >= 0 && index < _keptFromSide.Length && _keptFromSide[index];
         }
 
+        /// <summary>Whether the side's collider at <paramref name="index"/> is refitted by the switch.</summary>
+        internal bool RefitsSideCollider(int index)
+        {
+            return _refittedFromSide != null && index >= 0 && index < _refittedFromSide.Length && _refittedFromSide[index];
+        }
+
         /// <summary>How many the preparation made new.</summary>
         public int MadeCount => _made.Count;
+
+        /// <summary>How many of the side's colliders the switch refits for a part that needs one.</summary>
+        public int RefittedCount => _refits?.Count ?? 0;
 
         /// <summary>Whether these are the side's colliders now.</summary>
         public bool IsAdopted { get; private set; }
 
         /// <summary>
         /// The switch for one side, with nothing in it that can fail: the old colliders are disabled, the shape frame
-        /// is put into the products' numerical local frame, the new colliders are enabled and become the side's, and
-        /// the old ones are destroyed afterwards.
+        /// is put into the products' numerical local frame, the new colliders are enabled, the refitted ones take their
+        /// part's mesh and frame, all of them become the side's, and the old ones are destroyed afterwards.
         /// </summary>
         internal void Adopt(quaternion localRotation, float3 localOffset)
         {
@@ -441,13 +473,13 @@ namespace Zantetsu.PhysicsCut
             IsAdopted = true;
             List<MeshCollider> colliders = Side.ColliderList;
 
-            // Replaced: what the side had that the preparation did not keep. A kept collider is never touched here:
-            // it carries the right mesh already and keeps answering through the switch. Which is which was settled by
-            // the preparation, so this is one pass over the side's own list and no search.
+            // Replaced: what the side had that the preparation neither kept nor refitted. A kept collider is never
+            // touched here: it carries the right mesh already and keeps answering through the switch. Which is which
+            // was settled by the preparation, so this is one pass over the side's own list and no search.
             for (int i = 0; i < colliders.Count; i++)
             {
                 MeshCollider had = colliders[i];
-                if (had != null && !KeepsSideCollider(i))
+                if (had != null && !KeepsSideCollider(i) && !RefitsSideCollider(i))
                 {
                     had.enabled = false;
                 }
@@ -462,12 +494,24 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
+            // Refitted: each stays enabled and answers with its part's mesh from here on. The mesh it is given is not
+            // the one it had (Refittable), and giving it rebuilds the collider's shape from the transforms as they
+            // are now -- after the shape frame's move above and the child's new pose -- so the physics scene has the
+            // final shape in its final place at once, with no sync (FinalColliderRefitQueryPlayModeTests).
+            if (_refits != null)
+            {
+                for (int i = 0; i < _refits.Count; i++)
+                {
+                    _refits[i].Apply(Side.ShapeFrame);
+                }
+            }
+
             // The replaced ones are asked to go -- deferred, so they are still there for this frame's remainder --
             // and then the side's list is the final one.
             for (int i = 0; i < colliders.Count; i++)
             {
                 MeshCollider had = colliders[i];
-                if (had != null && !KeepsSideCollider(i))
+                if (had != null && !KeepsSideCollider(i) && !RefitsSideCollider(i))
                 {
                     PhysicsOwnerBuilder.DestroyComponent(had, Side.ShapeFrame);
                 }
@@ -476,7 +520,10 @@ namespace Zantetsu.PhysicsCut
             Side.TakeColliders(_ordered, _produced);
         }
 
-        /// <summary>Gives up an unadopted preparation: the components come off and the side is untouched.</summary>
+        /// <summary>
+        /// Gives up an unadopted preparation: the components come off and the side is untouched. A refit was only
+        /// noted, so there is nothing of it to take back.
+        /// </summary>
         internal void Withdraw()
         {
             if (IsAdopted)
@@ -490,6 +537,44 @@ namespace Zantetsu.PhysicsCut
             }
 
             _made.Clear();
+        }
+    }
+
+    /// <summary>One of a side's colliders taken over by a part at the switch: the collider, and the part's mesh and frame.</summary>
+    internal readonly struct SideColliderRefit
+    {
+        private readonly MeshCollider _collider;
+        private readonly Mesh _mesh;
+        private readonly PhysicsMeshFrame _meshFrame;
+
+        internal SideColliderRefit(MeshCollider collider, Mesh mesh, PhysicsMeshFrame meshFrame)
+        {
+            _collider = collider;
+            _mesh = mesh;
+            _meshFrame = meshFrame;
+        }
+
+        /// <summary>
+        /// The collider takes the part's frame -- only one on a child of its own has one to take -- and then the
+        /// part's mesh. **The pose before the mesh**: the mesh, another than the collider had, is what rebuilds the
+        /// shape from the transforms, so the pose must already be written when it is given. The profile and the
+        /// convex flag are the collider's already.
+        /// </summary>
+        internal void Apply(GameObject shapeFrame)
+        {
+            if (_collider.gameObject != shapeFrame)
+            {
+                if (_meshFrame.HasFrame)
+                {
+                    _collider.transform.SetLocalPositionAndRotation(_meshFrame.Position, _meshFrame.Rotation);
+                }
+                else
+                {
+                    _collider.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+                }
+            }
+
+            _collider.sharedMesh = _mesh;
         }
     }
 
@@ -952,12 +1037,15 @@ namespace Zantetsu.PhysicsCut
         /// (<see cref="PhysicsOwnerShape.InputConvexOf"/>), never by searching for a collider that happens to carry
         /// the same mesh -- provided that collider still carries the part's mesh with the products' profile, convex
         /// and enabled, and provided the frame's pose the switch will set (<paramref name="localRotation"/>,
-        /// <paramref name="localOffset"/>) is the pose the frame has, so nothing kept moves. Every other part gets a
-        /// collider made here, disabled, its mesh cooked now. A failure part way takes back only what was made.
+        /// <paramref name="localOffset"/>) is the pose the frame has, so nothing kept moves. Every other part takes over
+        /// a collider of the side that no part kept, where one fits (<see cref="Refittable"/>), to be refitted at the
+        /// switch; the rest get a collider made here, disabled, its mesh cooked now. A failure part way takes back only
+        /// what was made.
         /// <para>
         /// Each collider of the side and each part of the side is looked at a fixed number of times: the side's
         /// convexes are walked once to put its collider index under its input convex, and each part then reads one
-        /// entry of that array and clears it, so no input convex can be kept twice and nothing is searched for.
+        /// entry of that array and clears it, so no input convex can be kept twice and nothing is searched for. The
+        /// colliders left over are then offered once each, in the side's order, to the parts still without one.
         /// </para>
         /// </summary>
         internal static PreparedSideColliders PrepareFinalColliders(
@@ -969,6 +1057,8 @@ namespace Zantetsu.PhysicsCut
             var made = new List<MeshCollider>(count);
             List<MeshCollider> sideColliders = side.ColliderList;
             var keptFromSide = new bool[sideColliders.Count];
+            bool[] refittedFromSide = null;
+            List<SideColliderRefit> refits = null;
 
             // The side's collider for each input convex, by the correspondence the side shape carries. -1 where the
             // side has no collider for that convex, and set back to -1 once a part has taken it.
@@ -976,9 +1066,7 @@ namespace Zantetsu.PhysicsCut
             // **It is worked out when the first part that could keep something is reached, and not before.** A side
             // whose parts were all produced here keeps nothing, so it asks nothing: no frame comparison, no array,
             // no walk of the side's convexes. Delaying it is safe because nothing the loop does before that point
-            // can change either answer -- making a collider adds a component to the frame's object and sets that
-            // component's own fields; it does not move the frame, it does not go into the side's own collider list,
-            // and it does not touch a collider the side already has.
+            // can change either answer: it makes nothing and touches nothing, it only decides.
             // </para>
             int[] sideColliderOfInputConvex = null;
             bool lookedForSomethingToKeep = false;
@@ -1032,12 +1120,46 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    MeshCollider collider = MakeOne(side.ShapeFrame, products.Cooking, mesh, false, made, meshFrame);
-                    ordered.Add(collider);
+                    // Still without a collider: settled below, once every part has had its chance to keep one.
+                    ordered.Add(null);
                     if (!part.borrowed)
                     {
                         produced++;
                     }
+                }
+
+                // The side's colliders no part kept, offered once each and in order: a part takes the next one that
+                // fits, or gets one made. A collider passed over is not offered again; it goes at the switch.
+                int offered = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    if (ordered[i] != null)
+                    {
+                        continue;
+                    }
+
+                    PhysicsCutPart part = products.Part(side.positive, i);
+                    Mesh mesh = part.borrowed ? inherited[part.inputConvex] : part.mesh;
+                    PhysicsMeshFrame meshFrame = part.borrowed && inheritedShape != null ? inheritedShape.MeshFrameOf(part.inputConvex) : default;
+                    while (offered < sideColliders.Count
+                           && (keptFromSide[offered]
+                               || !Refittable(sideColliders[offered], side.ShapeFrame, meshFrame, mesh, products.Cooking)))
+                    {
+                        offered++;
+                    }
+
+                    if (offered < sideColliders.Count)
+                    {
+                        refittedFromSide ??= new bool[sideColliders.Count];
+                        refits ??= new List<SideColliderRefit>(count - i);
+                        refittedFromSide[offered] = true;
+                        refits.Add(new SideColliderRefit(sideColliders[offered], mesh, meshFrame));
+                        ordered[i] = sideColliders[offered];
+                        offered++;
+                        continue;
+                    }
+
+                    ordered[i] = MakeOne(side.ShapeFrame, products.Cooking, mesh, false, made, meshFrame);
                 }
             }
             catch (Exception)
@@ -1051,7 +1173,37 @@ namespace Zantetsu.PhysicsCut
                 throw;
             }
 
-            return new PreparedSideColliders(side, ordered, made, keptFromSide, produced);
+            return new PreparedSideColliders(side, ordered, made, keptFromSide, produced, refittedFromSide, refits);
+        }
+
+        /// <summary>
+        /// Whether the side's collider <paramref name="had"/> can be refitted for a part with <paramref name="mesh"/>
+        /// and <paramref name="meshFrame"/>: it answers now (enabled), convex, with the products' profile, carries a
+        /// mesh other than the part's, and either sits on a dedicated child of the shape frame, which can take any
+        /// frame, or on the shape frame itself for a part that has no frame.
+        /// <para>
+        /// **Another mesh, because that is what brings the new place into the physics scene at once.** With
+        /// <c>Physics.autoSyncTransforms</c> off a transform write alone is not seen by queries until the next sync;
+        /// giving a collider a different mesh rebuilds its shape from the transforms as they are then -- the child's
+        /// new pose and the shape frame's -- while giving it the mesh it already carries rebuilds nothing. So a
+        /// collider that already carries the part's mesh is left to go, and the part gets one made
+        /// (FinalColliderRefitQueryPlayModeTests).
+        /// </para>
+        /// </summary>
+        private static bool Refittable(
+            MeshCollider had, GameObject shapeFrame, PhysicsMeshFrame meshFrame, Mesh mesh, MeshColliderCookingOptions cooking)
+        {
+            if (had == null || !had.enabled || !had.convex || had.cookingOptions != cooking)
+            {
+                return false;
+            }
+
+            if (had.sharedMesh == mesh)
+            {
+                return false;
+            }
+
+            return had.gameObject == shapeFrame ? !meshFrame.HasFrame : had.transform.parent == shapeFrame.transform;
         }
 
         /// <summary>This collider itself, if it carries this mesh with this profile, convex and enabled; else null.</summary>
