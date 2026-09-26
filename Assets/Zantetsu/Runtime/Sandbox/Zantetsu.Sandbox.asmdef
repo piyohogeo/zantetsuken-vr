@@ -3,6 +3,8 @@
     "rootNamespace": "Zantetsu.Sandbox",
     "references": [
         "Zantetsu.Core",
+        "Zantetsu.Observability",
+        "Zantetsu.Trace",
         "Zantetsu.PhysicsCut",
         "Zantetsu.MeshCut",
         "Zantetsu.Rendering",

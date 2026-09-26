@@ -4,6 +4,9 @@
     "allowUnsafeCode": true,
     "references": [
         "Zantetsu.PhysicsCut",
+        "Zantetsu.Core",
+        "Zantetsu.Observability",
+        "Zantetsu.Trace",
         "Zantetsu.MeshCut",
         "Zantetsu.ConvexCut",
         "Zantetsu.Rendering",

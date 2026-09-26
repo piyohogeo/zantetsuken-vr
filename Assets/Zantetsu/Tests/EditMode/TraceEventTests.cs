@@ -55,6 +55,7 @@ namespace Zantetsu.Core.Tests
             "FallbackActivated",
             "TaskCancelled",
             "ResultDisposed",
+            "SlashHitConfirmed",
         };
 
         [Test]

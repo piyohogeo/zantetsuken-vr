@@ -182,6 +182,30 @@ namespace Zantetsu.PhysicsCut
     /// one of them resolve to the fragment they are both still part of.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// One convex set a fragment is made of now, and what places it (<see cref="PhysicsOwnerRegistry.CollectCurrentShapes"/>).
+    /// <see cref="Side"/> is +1 or -1 for a side of a Provisional pair, whose <see cref="Fragment"/> is the source it
+    /// still is, and 0 for a published owner.
+    /// </summary>
+    public readonly struct CurrentShape
+    {
+        public CurrentShape(LogicalFragmentId fragment, float side, PhysicsOwnerShape shape, Transform owner)
+        {
+            Fragment = fragment;
+            Side = side;
+            Shape = shape;
+            Owner = owner;
+        }
+
+        public LogicalFragmentId Fragment { get; }
+
+        public float Side { get; }
+
+        public PhysicsOwnerShape Shape { get; }
+
+        public Transform Owner { get; }
+    }
+
     public sealed class PhysicsOwnerRegistry : IDisposable
     {
         private readonly Dictionary<LogicalFragmentId, PhysicsFragmentOwner> _owners =
@@ -329,6 +353,50 @@ namespace Zantetsu.PhysicsCut
 
             side = 0f;
             return true;
+        }
+
+        /// <summary>
+        /// Every convex set the fragments are made of now, for a hit (DESIGN 19.1.7), added to <paramref name="into"/>
+        /// after it is cleared: each published owner in the scene with its own shape, and each standing side of a
+        /// published Provisional pair with that side's shape, answering with the source it still is and its side. Each
+        /// comes with the object its shape is placed by, whose world transform with
+        /// <see cref="PhysicsOwnerShape.LocalToOwner"/> is where the convexes stand now -- the transform a cut reads, and
+        /// the one the next step takes the body from. A withdrawn owner, an ended pair and a shape given up are not in it.
+        /// <para>
+        /// It reads the correspondence and nothing else, and what it hands out is a list the caller owns: a publication
+        /// after it changes the correspondence, not the list.
+        /// </para>
+        /// </summary>
+        public void CollectCurrentShapes(List<CurrentShape> into)
+        {
+            if (into == null)
+            {
+                throw new ArgumentNullException(nameof(into));
+            }
+
+            into.Clear();
+            foreach (KeyValuePair<LogicalFragmentId, PhysicsFragmentOwner> entry in _owners)
+            {
+                PhysicsFragmentOwner owner = entry.Value;
+                if (!owner.IsWithdrawn && owner.Root != null && owner.Shape != null && !owner.Shape.IsFreed)
+                {
+                    into.Add(new CurrentShape(entry.Key, 0f, owner.Shape, owner.Root.transform));
+                }
+            }
+
+            foreach (KeyValuePair<CutOperationId, ProvisionalOwnerPair> entry in _pairsByOperation)
+            {
+                ProvisionalOwnerPair pair = entry.Value;
+                for (int s = 0; s < 2; s++)
+                {
+                    bool positive = s == 0;
+                    PhysicsOwnerShape shape = positive ? pair.PositiveShape : pair.NegativeShape;
+                    if (pair.IsStanding(positive) && shape != null && !shape.IsFreed)
+                    {
+                        into.Add(new CurrentShape(pair.Source, positive ? 1f : -1f, shape, pair.Side(positive).Root.transform));
+                    }
+                }
+            }
         }
 
         public bool TryResolveSource(Rigidbody body, out LogicalFragmentId source, out float side)

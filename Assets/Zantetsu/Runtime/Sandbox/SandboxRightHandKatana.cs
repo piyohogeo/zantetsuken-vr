@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.XR;
 using Zantetsu.Core.Input;
 using Zantetsu.Core.Slash;
+using Zantetsu.PhysicsCut;
 
 [assembly: InternalsVisibleTo("Zantetsu.Core.EditModeTests")]
 
@@ -208,6 +209,12 @@ namespace Zantetsu.Sandbox
         /// gesture values each time, the latch and close estimators only when their value changed -- a new instance,
         /// so a wave already published keeps the one it latched with.
         /// </summary>
+        /// <summary>
+        /// The hit detector of a cut world this katana's waves hit (DESIGN 19.1.7), or none. It is given by whoever
+        /// composes the scene; this katana only hands it each core update's sweeps, right after the update.
+        /// </summary>
+        internal SlashHitDetector HitDetector { get; set; }
+
         internal SlashWaveCore Core
         {
             get
@@ -768,6 +775,10 @@ namespace Zantetsu.Sandbox
                     BladeTrackingState.None);
             Pose? space = trackingSpace != null ? TrackingSpacePose : (Pose?)null;
             SlashInputOutcome outcome = slash.Update(in input, viewForward, space, out EvaluatedBladePose current);
+
+            // The sweeps this update gave, whatever became of the sample: a wave already flying hits whether or not
+            // the blade can fire (T-040).
+            HitDetector?.Evaluate(slash);
             if (outcome == SlashInputOutcome.PoseUnusable)
             {
                 // A pose that cannot be shown is hidden; a missing katana or blade has nothing to hide.

@@ -98,6 +98,11 @@ namespace Zantetsu.Sandbox
         [SerializeField] private float lookImpulse = 1.5f;
 
         [Header("Keys")]
+        [Tooltip(
+            "Whether the two cut keys ask for cuts. Off where the cuts come from real hits instead (Sandbox.unity), so "
+            + "that nothing but a hit asks for one there.")]
+        [SerializeField] private bool cutKeys = true;
+
         [Tooltip("The key that asks for a cut of the body.")]
         [SerializeField] private Key cutKey = Key.Space;
 
@@ -169,12 +174,12 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            if (keyboard[cutKey].wasPressedThisFrame)
+            if (cutKeys && keyboard[cutKey].wasPressedThisFrame)
             {
                 AskCut(Body, plane);
             }
 
-            if (keyboard[cutChildKey].wasPressedThisFrame)
+            if (cutKeys && keyboard[cutChildKey].wasPressedThisFrame)
             {
                 AskChildCut();
             }
