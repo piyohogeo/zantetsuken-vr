@@ -16,21 +16,73 @@ namespace Zantetsu.Rendering
     /// Source rig/mesh are borrowed; native bind input belongs to this instance. Dispose before unloading the rig.
     /// Does not switch renderers, register bodies, upload, or publish Provisional Physics. Main thread only.
     /// </summary>
-    public sealed class VpDirectSkinInput : IDisposable
+    public sealed unsafe class VpDirectSkinInput : IDisposable
     {
         readonly SkinnedMeshRenderer renderer;
         readonly Mesh mesh;
         readonly Transform[] bones;
         readonly Matrix4x4[] bindposes;
-        NativeArray<float3> positions, normals;
-        NativeArray<BoneWeight> weights;
-        NativeArray<DirectUv> uv;
-        NativeArray<int> topology;
-        NativeArray<uint> indices;
-        NativeArray<float4x4> matrices;
-        NativeArray<float3> bounds;
-        NativeArray<int> valid;
+
+        // One Persistent block owns all the native data of this input; the regions below are borrowed views into it,
+        // valid exactly as long as the block, and nothing else frees them. Every byte a read reaches is written first:
+        // the bind data when the block is made, the matrices by TryAppendTo for every bone before Write reads any,
+        // bounds and valid by the kernel before they are read. So the block is taken uninitialized.
+        NativeArray<byte> block;
+        float3* positions, normals;
+        BoneWeight* weights;
+        DirectUv* uv;
+        int* topology;
+        uint* indices;
+        float4x4* matrices;
+        float3* bounds;
+        int* valid;
         bool disposed;
+
+        /// <summary>Tests only. Negative: the block as it comes, which is the product. 0-255: every byte is set to this.</summary>
+        internal static int Fill = -1;
+
+        /// <summary>Where each region starts in the block, and the block's size, all in bytes.</summary>
+        internal readonly struct Layout
+        {
+            public readonly long matrices, weights, positions, normals, topology, indices, bounds, valid, uv, bytes;
+
+            internal Layout(long matrices, long weights, long positions, long normals, long topology, long indices,
+                long bounds, long valid, long uv, long bytes)
+            {
+                this.matrices = matrices; this.weights = weights; this.positions = positions; this.normals = normals;
+                this.topology = topology; this.indices = indices; this.bounds = bounds; this.valid = valid; this.uv = uv;
+                this.bytes = bytes;
+            }
+        }
+
+        static long Align16(long bytes) => (bytes + 15) & ~15L;
+
+        /// <summary>
+        /// The regions for these counts, each starting on 16 bytes, widest element first. False when a count is
+        /// negative or the block would not fit one NativeArray. The arithmetic is in long: no count up to
+        /// int.MaxValue can overflow it.
+        /// </summary>
+        internal static bool TryLayout(int vertexCount, int indexCount, int boneCount, out Layout layout)
+        {
+            layout = default;
+            if (vertexCount < 0 || indexCount < 0 || boneCount < 0) return false;
+            long at = 0;
+            long m = at; at += Align16((long)boneCount * sizeof(float4x4));
+            long w = at; at += Align16((long)vertexCount * sizeof(BoneWeight));
+            long p = at; at += Align16((long)vertexCount * sizeof(float3));
+            long n = at; at += Align16((long)vertexCount * sizeof(float3));
+            long t = at; at += Align16((long)vertexCount * sizeof(int));
+            long i = at; at += Align16((long)indexCount * sizeof(uint));
+            long b = at; at += Align16(2L * sizeof(float3));
+            long v = at; at += Align16(sizeof(int));
+            long u = at; at += Align16((long)vertexCount * sizeof(DirectUv));
+            if (at > int.MaxValue) return false;
+            layout = new Layout(m, w, p, n, t, i, b, v, u, at);
+            return true;
+        }
+
+        /// <summary>The block's size in bytes while it is held, else 0. Diagnostic and tests.</summary>
+        internal int NativeBytes => block.IsCreated ? block.Length : 0;
         public int VertexCount { get; }
         public int IndexCount { get; }
         public int TopologyCount { get; }
@@ -111,36 +163,48 @@ namespace Zantetsu.Rendering
             }
             if (referenced.Any(x => !x) || !VpCutInputGate.Check(vertices, ix, topology, topologyCount,
                     new[] { new VpGeometrySubmesh(0, ix.Length, 0) }).Accepted) return false;
+            if (!TryLayout(p.Length, ix.Length, usedBones.Length, out Layout layout)) return false;
             input = new VpDirectSkinInput(renderer, mesh, usedBones.Select(i => sourceBones[i]).ToArray(),
-                usedBones.Select(i => binds[i]).ToArray(), p, n, w, bytes, topology, topologyCount, ix);
+                usedBones.Select(i => binds[i]).ToArray(), p, n, w, bytes, topology, topologyCount, ix, layout);
             return true;
         }
 
         VpDirectSkinInput(SkinnedMeshRenderer renderer, Mesh mesh, Transform[] bones, Matrix4x4[] bindposes,
-            Vector3[] p, Vector3[] n, BoneWeight[] w, DirectUv[] tex, int[] topo, int topologyCount, uint[] ix)
+            Vector3[] p, Vector3[] n, BoneWeight[] w, DirectUv[] tex, int[] topo, int topologyCount, uint[] ix,
+            Layout layout)
         {
             this.renderer = renderer; this.mesh = mesh; this.bones = bones; this.bindposes = bindposes;
             VertexCount = p.Length; IndexCount = ix.Length; TopologyCount = topologyCount;
             try
             {
-                positions = new NativeArray<float3>(p.Select(x => (float3)x).ToArray(), Allocator.Persistent);
-                normals = new NativeArray<float3>(n.Select(x => (float3)x).ToArray(), Allocator.Persistent);
-                weights = new NativeArray<BoneWeight>(w, Allocator.Persistent);
-                uv = new NativeArray<DirectUv>(tex, Allocator.Persistent);
-                topology = new NativeArray<int>(topo, Allocator.Persistent);
-                indices = new NativeArray<uint>(ix, Allocator.Persistent);
-                matrices = new NativeArray<float4x4>(bones.Length, Allocator.Persistent);
-                bounds = new NativeArray<float3>(2, Allocator.Persistent);
-                valid = new NativeArray<int>(1, Allocator.Persistent);
+                block = new NativeArray<byte>((int)layout.bytes, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                byte* at = (byte*)block.GetUnsafePtr();
+                if (Fill >= 0) UnsafeUtility.MemSet(at, (byte)Fill, layout.bytes);
+                matrices = (float4x4*)(at + layout.matrices);
+                weights = (BoneWeight*)(at + layout.weights);
+                positions = (float3*)(at + layout.positions);
+                normals = (float3*)(at + layout.normals);
+                topology = (int*)(at + layout.topology);
+                indices = (uint*)(at + layout.indices);
+                bounds = (float3*)(at + layout.bounds);
+                valid = (int*)(at + layout.valid);
+                uv = (DirectUv*)(at + layout.uv);
+                // The bind data straight from the arrays the cold checks read: Vector3 and float3 are the same three
+                // floats, so no converted copy is made on the way.
+                fixed (Vector3* source = p) UnsafeUtility.MemCpy(positions, source, (long)VertexCount * sizeof(float3));
+                fixed (Vector3* source = n) UnsafeUtility.MemCpy(normals, source, (long)VertexCount * sizeof(float3));
+                fixed (BoneWeight* source = w) UnsafeUtility.MemCpy(weights, source, (long)VertexCount * sizeof(BoneWeight));
+                fixed (DirectUv* source = tex) UnsafeUtility.MemCpy(uv, source, (long)VertexCount * sizeof(DirectUv));
+                fixed (int* source = topo) UnsafeUtility.MemCpy(topology, source, (long)VertexCount * sizeof(int));
+                fixed (uint* source = ix) UnsafeUtility.MemCpy(indices, source, (long)IndexCount * sizeof(uint));
                 Warm();
             }
             catch { Dispose(); throw; }
         }
 
-        unsafe void Warm()
+        void Warm()
         {
-            VpDirectSkinKernel.Skin(null, null, null, null, null, null, 0, null, null,
-                (float3*)bounds.GetUnsafePtr(), (int*)valid.GetUnsafePtr());
+            VpDirectSkinKernel.Skin(null, null, null, null, null, null, 0, null, null, bounds, valid);
             VpDirectSkinKernel.CopyIndices(null, null, 0, 0);
         }
 
@@ -180,18 +244,14 @@ namespace Zantetsu.Rendering
             return true;
         }
 
-        internal unsafe bool Write(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology,
+        internal bool Write(NativeArray<VpRenderVertex> output, NativeArray<int> outputTopology,
             NativeArray<uint> outputIndices, int baseVertex, out float3 min, out float3 max)
         {
-            VpDirectSkinKernel.Skin((float3*)positions.GetUnsafeReadOnlyPtr(), (float3*)normals.GetUnsafeReadOnlyPtr(),
-                (BoneWeight*)weights.GetUnsafeReadOnlyPtr(), (DirectUv*)uv.GetUnsafeReadOnlyPtr(),
-                (float4x4*)matrices.GetUnsafeReadOnlyPtr(), (int*)topology.GetUnsafeReadOnlyPtr(), VertexCount,
-                (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(),
-                (float3*)bounds.GetUnsafePtr(), (int*)valid.GetUnsafePtr());
+            VpDirectSkinKernel.Skin(positions, normals, weights, uv, matrices, topology, VertexCount,
+                (VpRenderVertex*)output.GetUnsafePtr(), (int*)outputTopology.GetUnsafePtr(), bounds, valid);
             min = bounds[0]; max = bounds[1];
             if (valid[0] == 0 || !math.all(math.isfinite(min)) || !math.all(math.isfinite(max)) || !math.all(min <= max)) return false;
-            VpDirectSkinKernel.CopyIndices((uint*)indices.GetUnsafeReadOnlyPtr(), (uint*)outputIndices.GetUnsafePtr(),
-                IndexCount, (uint)baseVertex);
+            VpDirectSkinKernel.CopyIndices(indices, (uint*)outputIndices.GetUnsafePtr(), IndexCount, (uint)baseVertex);
             return true;
         }
 
@@ -199,11 +259,10 @@ namespace Zantetsu.Rendering
         {
             if (disposed) return;
             disposed = true;
-            if (positions.IsCreated) positions.Dispose(); if (normals.IsCreated) normals.Dispose();
-            if (weights.IsCreated) weights.Dispose(); if (uv.IsCreated) uv.Dispose();
-            if (topology.IsCreated) topology.Dispose(); if (indices.IsCreated) indices.Dispose();
-            if (matrices.IsCreated) matrices.Dispose(); if (bounds.IsCreated) bounds.Dispose();
-            if (valid.IsCreated) valid.Dispose();
+            // The views go first, so nothing can reach the block once it is given back.
+            positions = normals = null; weights = null; uv = null; topology = null; indices = null;
+            matrices = null; bounds = null; valid = null;
+            if (block.IsCreated) block.Dispose();
         }
     }
 
