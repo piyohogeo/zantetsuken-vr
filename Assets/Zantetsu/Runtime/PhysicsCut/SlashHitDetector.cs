@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Unity.Profiling;
 using UnityEngine;
 using Zantetsu.Core.Slash;
 using Zantetsu.MeshCut;
@@ -100,12 +101,22 @@ namespace Zantetsu.PhysicsCut
     /// again or waited for.
     /// </para>
     /// <para>
+    /// **A character before its first cut** (DESIGN 19.1.7, 4.52) is a candidate too, through its prepared cut
+    /// (<see cref="AddCharacter"/>): the same query on its bone-local convexes, each placed by its bone's world transform
+    /// as the current pose left it -- the transform its cut poses the same convex with. A hit identifies the character as
+    /// its fragment (issued then, if this is the first), consumes that fragment like any other, and is passed once to
+    /// the character's own acceptance, <see cref="VpPreparedCharacterCut.TryCut"/>, with the plane in its renderer's
+    /// frame. Its children descend from that fragment, so the Slash that cut it leaves them alone.
+    /// </para>
+    /// <para>
     /// **Nothing of the blade.** Only the waves' sweeps are read: the blade's own pose, its gate and whether it may
     /// fire play no part, so a wave already flying keeps hitting while the gesture cannot fire (T-040).
     /// </para>
     /// </summary>
     public sealed class SlashHitDetector
     {
+        private static readonly ProfilerMarker s_evaluate = new ProfilerMarker("Zantetsu.SlashHit.Evaluate");
+
         private readonly PhysicsOwnerRegistry _registry;
         private readonly LogicalCutLedger _ledger;
         private readonly ProvisionalCutDriver _driver;
@@ -115,6 +126,8 @@ namespace Zantetsu.PhysicsCut
         private readonly List<Pending> _pending = new List<Pending>(8);
         private readonly List<SlashHitConfirmed> _hits = new List<SlashHitConfirmed>(8);
         private readonly List<CurrentShape> _shapes = new List<CurrentShape>(16);
+        private readonly List<VpPreparedCharacterCut> _characters = new List<VpPreparedCharacterCut>(4);
+        private readonly List<VpPreparedCharacterCut> _characterTargets = new List<VpPreparedCharacterCut>(4);
         private readonly long[] _live = new long[SlashWaveCore.Capacity];
         private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.Capacity];
         private float3[] _section = new float3[64];
@@ -129,6 +142,7 @@ namespace Zantetsu.PhysicsCut
             public float side;
             public float4 plane;
             public float3 renderAnchor;
+            public VpPreparedCharacterCut character;
         }
 
         /// <summary>A detector over one cut world's parts, open while <paramref name="open"/> says so.</summary>
@@ -166,6 +180,23 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>What each live Slash has consumed.</summary>
         public SlashLineageConsumption Consumption => _consumption;
+
+        /// <summary>
+        /// Makes a prepared character a candidate from now on, until it is cut or taken away. The handle stays its
+        /// owner's: this only reads it and calls its cut.
+        /// </summary>
+        public void AddCharacter(VpPreparedCharacterCut character)
+        {
+            if (character != null && !_characters.Contains(character))
+            {
+                _characters.Add(character);
+            }
+        }
+
+        public void RemoveCharacter(VpPreparedCharacterCut character)
+        {
+            _characters.Remove(character);
+        }
 
         /// <summary>
         /// The main thread's trace lane the hits are written into, from whoever composes the trace of a run. Until one
@@ -211,6 +242,8 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public void Evaluate(ReadOnlySpan<SlashSweep> sweeps, ReadOnlySpan<long> live)
         {
+            // The whole of it: the query, the consumption and each hit's acceptance with its publication.
+            using ProfilerMarker.AutoScope scope = s_evaluate.Auto();
             _hits.Clear();
             _pending.Clear();
 
@@ -224,14 +257,30 @@ namespace Zantetsu.PhysicsCut
             // What the fragments are made of now, read once: every sweep of this update is tested against the same
             // present state, and the acceptances below change the correspondence, not this list.
             _registry.CollectCurrentShapes(_shapes);
+            _characterTargets.Clear();
+            for (int c = 0; c < _characters.Count; c++)
+            {
+                if (_characters[c] != null && _characters[c].IsHitTarget)
+                {
+                    _characterTargets.Add(_characters[c]);
+                }
+            }
+
             for (int s = 0; s < sweeps.Length; s++)
             {
                 Find(in sweeps[s]);
+                FindCharacters(in sweeps[s]);
             }
 
             for (int i = 0; i < _pending.Count; i++)
             {
                 Pending hit = _pending[i];
+                if (hit.character != null)
+                {
+                    AcceptCharacter(in hit);
+                    continue;
+                }
+
                 var ask = new ProvisionalCutAsk
                 {
                     source = hit.fragment,
@@ -248,6 +297,119 @@ namespace Zantetsu.PhysicsCut
                     transaction != null ? transaction.Operation : default);
                 _hits.Add(confirmed);
                 Trace(in confirmed);
+            }
+        }
+
+        // A character's own acceptance: the prepared cut classifies, admits and publishes through the same driver.
+        private void AcceptCharacter(in Pending hit)
+        {
+            VpCharacterCutResult result = hit.character.TryCut(
+                hit.plane, hit.renderAnchor, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse);
+            ProvisionalCutAcceptance acceptance;
+            LogicalCutAdmission admission;
+            switch (result.Outcome)
+            {
+                case VpCharacterCutOutcome.Requested:
+                    acceptance = result.Acceptance;
+                    admission = result.Operation.IsSet ? LogicalCutAdmission.Admitted : LogicalCutAdmission.NoOp;
+                    break;
+                case VpCharacterCutOutcome.EmptySide:
+                    acceptance = ProvisionalCutAcceptance.EmptySide;
+                    admission = LogicalCutAdmission.NoOp;
+                    break;
+                case VpCharacterCutOutcome.Full:
+                    acceptance = ProvisionalCutAcceptance.NotAccepted;
+                    admission = LogicalCutAdmission.Full;
+                    break;
+                case VpCharacterCutOutcome.Unavailable:
+                    acceptance = ProvisionalCutAcceptance.NotAccepted;
+                    admission = LogicalCutAdmission.SourceNotLive;
+                    break;
+                default:
+                    acceptance = ProvisionalCutAcceptance.InvalidRequest;
+                    admission = LogicalCutAdmission.NoOp;
+                    break;
+            }
+
+            if (hit.character.IsDisposed || result.Outcome == VpCharacterCutOutcome.Requested)
+            {
+                // Its cut is done with it: from here the character is its fragment's owner, or nothing.
+                _characters.Remove(hit.character);
+            }
+
+            var confirmed = new SlashHitConfirmed(
+                hit.slashId, hit.at, hit.atLatch, hit.fragment, hit.side, acceptance, admission, result.Operation);
+            _hits.Add(confirmed);
+            Trace(in confirmed);
+        }
+
+        // The characters not cut yet: each bone-local convex placed by its bone as it stands now.
+        private void FindCharacters(in SlashSweep sweep)
+        {
+            float3 n = sweep.SourceSlashPlane.normal;
+            float3 a0 = sweep.PreviousA;
+            float3 b0 = sweep.PreviousB;
+            float3 a1 = sweep.CurrentA;
+            float3 b1 = sweep.CurrentB;
+            if (_characterTargets.Count == 0 || !math.all(math.isfinite(n)) || math.lengthsq(n) <= 0f
+                || !math.all(math.isfinite(a0) & math.isfinite(b0) & math.isfinite(a1) & math.isfinite(b1)))
+            {
+                return;
+            }
+
+            var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
+            for (int c = 0; c < _characterTargets.Count; c++)
+            {
+                VpPreparedCharacterCut character = _characterTargets[c];
+                if (character.Source.IsSet && _consumption.IsConsumed(sweep.SlashId, character.Source))
+                {
+                    continue;
+                }
+
+                VpCharacterHitShape shape = character.HitShape;
+                bool hit = false;
+                for (int k = 0; k < shape.ConvexCount && !hit; k++)
+                {
+                    float4x4 boneToWorld = (float4x4)character.ConvexBone(k).localToWorldMatrix;
+                    float4x4 worldToBone = math.inverse(boneToWorld);
+                    float4 plane = math.mul(math.transpose(boneToWorld), worldPlane);
+                    plane /= math.length(plane.xyz);
+                    float3 la0 = math.transform(worldToBone, a0);
+                    float3 lb0 = math.transform(worldToBone, b0);
+                    float3 la1 = math.transform(worldToBone, a1);
+                    float3 lb1 = math.transform(worldToBone, b1);
+                    shape.Bounds(k, out float3 lo, out float3 hi);
+                    float3 qlo = math.min(math.min(la0, lb0), math.min(la1, lb1));
+                    float3 qhi = math.max(math.max(la0, lb0), math.max(la1, lb1));
+                    if (math.any(qhi < lo) || math.any(hi < qlo))
+                    {
+                        continue;
+                    }
+
+                    hit = SlashSweepConvexQuery.Intersects(plane, la0, lb0, la1, lb1, shape.Bank, shape.Convex(k), ref _section);
+                }
+
+                if (!hit || !character.TryIdentify(out LogicalFragmentId fragment)
+                    || !_consumption.TryConsume(sweep.SlashId, fragment))
+                {
+                    continue;
+                }
+
+                // The plane its cut is asked with: the wave's, in the renderer's frame, as the bones stand now.
+                Transform renderer = character.RendererTransform;
+                float4 rendererPlane = math.mul(math.transpose((float4x4)renderer.localToWorldMatrix), worldPlane);
+                rendererPlane /= math.length(rendererPlane.xyz);
+                _pending.Add(new Pending
+                {
+                    slashId = sweep.SlashId,
+                    at = sweep.At,
+                    atLatch = sweep.IsLatch,
+                    fragment = fragment,
+                    side = 0f,
+                    plane = rendererPlane,
+                    renderAnchor = renderer.position,
+                    character = character,
+                });
             }
         }
 

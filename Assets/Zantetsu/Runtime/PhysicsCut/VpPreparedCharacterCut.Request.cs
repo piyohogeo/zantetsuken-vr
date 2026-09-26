@@ -64,6 +64,33 @@ namespace Zantetsu.PhysicsCut
         public LogicalFragmentId Source { get; private set; }
         public CutOperationId Operation { get; private set; }
 
+        /// <summary>
+        /// The live fragment this character is, issued the first time a hit identifies it (DESIGN 19.1.9): a hit's
+        /// consumption and the cut that follows it name the same fragment, and the children of that cut descend from
+        /// it. Nothing is issued before a hit, so cold preparation still publishes nothing. False while the handle is
+        /// not a target -- not ready, busy, terminal, or its character withdrawn.
+        /// </summary>
+        internal bool TryIdentify(out LogicalFragmentId fragment)
+        {
+            fragment = Source;
+            if (Source.IsSet) return true;
+            if (!IsHitTarget) return false;
+            Source = world.Ledger.AddFragment();
+            fragment = Source;
+            return true;
+        }
+
+        /// <summary>Whether a hit may test this character now: ready, and its character still in the scene.</summary>
+        internal bool IsHitTarget => IsReady && characterRoot != null && characterRoot.activeInHierarchy && renderer != null;
+
+        /// <summary>The bone-local convexes a hit reads, and the bone that places each.</summary>
+        internal VpCharacterHitShape HitShape => hitShape;
+
+        internal Transform ConvexBone(int index) => convexBones[index];
+
+        /// <summary>The frame a cut plane is given in (renderer-local, see <see cref="TryCut"/>).</summary>
+        internal Transform RendererTransform => renderer != null ? renderer.transform : null;
+
         internal void BindSource(GameObject root, Rigidbody motion)
         {
             characterRoot=root; motionBody=motion;
@@ -125,7 +152,8 @@ namespace Zantetsu.PhysicsCut
                 actorBody.inertiaTensor=motionBody.inertiaTensor;
                 actorBody.inertiaTensorRotation=Quaternion.Inverse(renderer.transform.rotation)*motionBody.rotation*motionBody.inertiaTensorRotation;
                 actorBody.linearVelocity=motionBody.linearVelocity;actorBody.angularVelocity=motionBody.angularVelocity;
-                Source=world.Ledger.AddFragment();
+                // Issued here unless a hit already identified this character; either way the cut names that fragment.
+                if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))
                     return Result(VpCharacterCutOutcome.Failed);
                 taken=physics.TakeShape();
@@ -157,10 +185,11 @@ namespace Zantetsu.PhysicsCut
                 {
                     try
                     {
+                        // A refusal that leaves the handle usable (EmptySide/Full) keeps the character and its fragment.
                         if(!registered)
                         {
                             taken?.Dispose();
-                            if(Source.IsSet)world.Ledger.Retire(Source);
+                            if(terminal&&Source.IsSet&&world.Ledger.IsCurrentTarget(Source))world.Ledger.Retire(Source);
                         }
                     }
                     finally
