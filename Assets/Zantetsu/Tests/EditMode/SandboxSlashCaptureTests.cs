@@ -6,6 +6,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using Zantetsu.Core.Input;
+using Zantetsu.Core.Slash;
 using Zantetsu.Sandbox;
 
 namespace Zantetsu.Core.Tests
@@ -132,9 +133,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(read.LatchChordMetres, Is.EqualTo(0.28f));
             Assert.That(read.SpanCaptureTimeoutSeconds, Is.EqualTo(0.18f));
             Assert.That(read.MinimumSpeed, Is.EqualTo(4.25f));
-            Assert.That(read.WaveSpeed, Is.EqualTo(SandboxSlashWaveStore.WaveSpeed));
-            Assert.That(read.WaveLifetimeSeconds, Is.EqualTo(SandboxSlashWaveStore.WaveLifetimeSeconds));
-            Assert.That(read.WaveCapacity, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(read.WaveSpeed, Is.EqualTo(SlashWaveFlight.Adopted.Speed));
+            Assert.That(read.WaveLifetimeSeconds, Is.EqualTo(SlashWaveFlight.Adopted.LifetimeSeconds));
+            Assert.That(read.WaveCapacity, Is.EqualTo(SlashWaveCore.Capacity));
             Assert.That(read.BladeLength, Is.EqualTo(katana.CaptureConditions.BladeLength));
         }
 
@@ -425,9 +426,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ARefusedCandidate_StillReportsItsActualRawSpan()
         {
-            var store = new SandboxSlashWaveStore();
+            var store = new SlashWaveCore(new SlashBlade(new Pose(Vector3.zero, Quaternion.identity), 0.9f))
+            {
+                SpanCloseEstimator = new CaptureTimeoutSpanClose(0.25f),
+            };
             Assert.That(store.TryLatch(0, new Plane(Vector3.forward, 0), Vector3.zero,
-                Vector3.up, Vector3.right, Vector3.up, 1, 0.25f), Is.True);
+                Vector3.up, Vector3.right, Vector3.up, 1), Is.True);
             store.Advance(0.01, 1, true, Vector3.down, Vector3.right);
             Assert.That(store.TryGetWaveCandidate(0, out _, out bool evaluated, out _, out _, out _,
                 out float r, out float q, out float denominator, out bool finite,

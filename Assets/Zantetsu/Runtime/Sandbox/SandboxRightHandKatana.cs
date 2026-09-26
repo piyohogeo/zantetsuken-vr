@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.XR;
 using Zantetsu.Core.Input;
+using Zantetsu.Core.Slash;
 
 [assembly: InternalsVisibleTo("Zantetsu.Core.EditModeTests")]
 
@@ -103,48 +104,19 @@ namespace Zantetsu.Sandbox
         /// Fraction of the blade length at which the cut sample point sits.
         /// A fixed implementation constant, not a tuning value.
         /// </summary>
-        internal const float CutSampleRatio = 0.7f;
+        internal const float CutSampleRatio = SlashBlade.CutSampleRatio;
 
-        // Fixed implementation capacity, not a tuning value: eight samples
-        // cover the 30-60 ms initial sample window at the 90 Hz Quest Link
-        // mode. Nothing here keeps history for a longer span.
-        private const int HistoryCapacity = 8;
+        // The product slash core this component feeds (Phase 4.50): the gesture, the latch and the waves are all its.
+        // This component reads the device, shows the katana and the waves, and holds the development tuning.
+        private SlashWaveCore core;
+        private float appliedLatchChord = float.NaN;
+        private float appliedCaptureTimeout = float.NaN;
 
-        private readonly BladePoseWindow poseHistory = new BladePoseWindow(HistoryCapacity);
-
-        // Fixed implementation capacity, not a tuning value. Allocated once;
-        // the stroke never grows it, reallocates, or queues.
-        private const int AcceptedSampleCapacity = 8;
-
-        private readonly EvaluatedBladePose[] acceptedSamples = new EvaluatedBladePose[AcceptedSampleCapacity];
-        private int acceptedSampleCount;
-
-        private readonly SandboxSlashWaveStore waveStore = new SandboxSlashWaveStore();
-
-        // The whole of the "one latch per stroke" rule: set when a stroke has
-        // had its chance, cleared with the stroke itself.
-        private bool strokeLatchSpent;
-
-        // The normalised view forward the stroke's begin was checked against,
-        // zero when it began without one. Cleared with the stroke; kept only
-        // so a development readout can show what the check saw.
-        private Vector3 strokeBeginViewForward;
-
-        // Provisional Phase 0.52 gate values that stay fixed in code: the
-        // sample window, and the speed above which a motion is not a swing.
-        private const double GateMinimumWindowSeconds = 0.030;
-        private const double GateMaximumWindowSeconds = 0.060;
-        internal const float GateMaximumSpeed = 20f;
-
-        // A derived vector shorter than this cannot be normalised into a
-        // direction: a plane normal this short is a stroke with no swept area,
-        // and a frame axis this short has no direction to report.
+        // A derived vector shorter than this has no direction to show a wave quad along.
         private const float MinDerivedVectorLengthSquared = 1e-12f;
 
-        // Provisional Phase 0.53 values, fixed in code like the gate's.
-        // The emission control point sits halfway along the blade, apart from
-        // the cut sample point at 70%.
-        private const float EmissionControlPointRatio = 0.5f;
+        /// <summary>The fixed gate ceiling, the core's.</summary>
+        internal const float GateMaximumSpeed = SlashWaveCore.GateMaximumSpeed;
 
         [Tooltip("Katana visual root. Its local axes are the blade frame: +Z blade axis, -Y edge direction, +X side normal.")]
         [SerializeField] private Transform katana;
@@ -195,7 +167,7 @@ namespace Zantetsu.Sandbox
 
         [Header("Slash wave display")]
         [Tooltip("One display slot per wave the store can hold, placed under a world-fixed root with identity scale.")]
-        [SerializeField] private Transform[] waveVisuals = new Transform[SandboxSlashWaveStore.Capacity];
+        [SerializeField] private Transform[] waveVisuals = new Transform[SlashWaveCore.Capacity];
         // Assigned in the scene and only ever read from here; a slot left
         // unassigned simply shows nothing.
 
@@ -230,6 +202,70 @@ namespace Zantetsu.Sandbox
                 ResetToKnownState();
             }
         }
+
+        /// <summary>
+        /// The product core, made on first use and brought up to this component's current values: the blade and the
+        /// gesture values each time, the latch and close estimators only when their value changed -- a new instance,
+        /// so a wave already published keeps the one it latched with.
+        /// </summary>
+        internal SlashWaveCore Core
+        {
+            get
+            {
+                SyncCore();
+                return core;
+            }
+        }
+
+        private void SyncCore()
+        {
+            var blade = new SlashBlade(GripToKatanaOffset, bladeLength);
+            if (core == null)
+            {
+                core = new SlashWaveCore(in blade);
+            }
+            else
+            {
+                core.Blade = blade;
+            }
+
+            core.Gesture = new SlashGestureSettings
+            {
+                MinimumSpeed = minimumSpeed,
+                MinimumDisplacement = minimumDisplacement,
+                MinimumEdgeLeadScore = minimumEdgeLeadScore,
+                ReturnStrokeEdgeLeadScore = returnStrokeEdgeLeadScore,
+                BeginBladeAxisViewDotMinimum = beginBladeAxisViewDotMinimum,
+            };
+
+            // A value that cannot make its estimator -- a latch distance or a capture timeout that is not finite and
+            // positive, as only the Inspector can give -- latches nothing, as it always did.
+            if (!latchChordMetres.Equals(appliedLatchChord) || !spanCaptureTimeoutSeconds.Equals(appliedCaptureTimeout))
+            {
+                bool usable = EmitterChordLatch.IsUsable(latchChordMetres) && IsValidSpanCaptureTimeout(spanCaptureTimeoutSeconds);
+                core.LatchEstimator = usable
+                    ? new EmitterChordLatch(latchChordMetres)
+                    : (ISlashLatchEstimator)NeverReadyLatch.Instance;
+                if (IsValidSpanCaptureTimeout(spanCaptureTimeoutSeconds))
+                {
+                    core.SpanCloseEstimator = new CaptureTimeoutSpanClose(spanCaptureTimeoutSeconds);
+                }
+
+                appliedLatchChord = latchChordMetres;
+                appliedCaptureTimeout = spanCaptureTimeoutSeconds;
+            }
+        }
+
+        // A latch distance that is not usable latches nothing, as it always did.
+        private sealed class NeverReadyLatch : ISlashLatchEstimator
+        {
+            internal static readonly NeverReadyLatch Instance = new NeverReadyLatch();
+
+            public bool IsLatchReady(System.ReadOnlySpan<EvaluatedBladePose> accepted, in SlashBlade blade) => false;
+        }
+
+        /// <summary>The wave display slots, read only, for checks that compare what is shown with the live waves.</summary>
+        internal System.Collections.Generic.IReadOnlyList<Transform> WaveVisualsForReadout => waveVisuals;
 
         /// <summary>Katana visual root driven by the grip pose.</summary>
         internal Transform Katana
@@ -284,7 +320,7 @@ namespace Zantetsu.Sandbox
         /// The normalised view forward the stroke's begin was checked against,
         /// or zero with no stroke under way or a begin made without a view.
         /// </summary>
-        internal Vector3 StrokeBeginViewForward => acceptedSampleCount > 0 ? strokeBeginViewForward : Vector3.zero;
+        internal Vector3 StrokeBeginViewForward => Core.StrokeBeginViewForward;
 
         /// <summary>
         /// Sets the gate's minimum speed. False, changing nothing, unless it is
@@ -363,8 +399,9 @@ namespace Zantetsu.Sandbox
 
         /// <summary>
         /// Sets the span capture timeout for waves latched from now on. False,
-        /// changing nothing, unless it is finite, positive and shorter than the
-        /// wave lifetime -- the store refuses to latch with anything else.
+        /// changing nothing, unless it is finite and positive. It may be as long
+        /// as the wave lifetime or longer: such a wave expires with its span
+        /// still open (DESIGN 19.1.1).
         /// </summary>
         internal bool TrySetSpanCaptureTimeoutSeconds(float value)
         {
@@ -400,7 +437,7 @@ namespace Zantetsu.Sandbox
 
         private static bool IsValidMinimumSpeed(float value)
         {
-            return IsFinitePositive(value) && value <= GateMaximumSpeed;
+            return SlashGestureSettings.IsValidMinimumSpeed(value);
         }
 
         private static bool IsWithinUnitRange(float value)
@@ -410,133 +447,43 @@ namespace Zantetsu.Sandbox
 
         private static bool IsValidSpanCaptureTimeout(float value)
         {
-            return IsFinitePositive(value) && value < SandboxSlashWaveStore.WaveLifetimeSeconds;
+            return IsFinitePositive(value);
         }
 
         /// <summary>
-        /// Number of poses currently in the history. Derived and read-only:
-        /// the history itself never leaves this component.
+        /// Number of poses currently in the core's history.
         /// </summary>
-        internal int RecordedPoseCount => poseHistory.Count;
+        internal int RecordedPoseCount => Core.RecordedPoseCount;
 
         /// <summary>
-        /// Number of accepted samples in the stroke under way. Zero means no
-        /// stroke is under way; nothing else records that.
+        /// Number of accepted samples in the stroke under way. Zero means no stroke is under way.
         /// </summary>
-        internal int AcceptedSampleCount => acceptedSampleCount;
+        internal int AcceptedSampleCount => Core.AcceptedSampleCount;
 
-        /// <summary>
-        /// The stroke's begin sample, or false when no stroke is under way.
-        /// The accepted samples themselves never leave this component.
-        /// </summary>
+        /// <summary>The stroke's begin sample, or false when no stroke is under way.</summary>
         internal bool TryGetStrokeBeginSample(out EvaluatedBladePose sample)
         {
-            if (acceptedSampleCount == 0)
-            {
-                sample = default;
-                return false;
-            }
-
-            sample = acceptedSamples[0];
-            return true;
+            return TryGetAcceptedSample(0, out sample);
         }
 
-        /// <summary>
-        /// One accepted sample of the stroke under way, oldest first, or false
-        /// when the index is outside them. Read-only, for development readouts.
-        /// </summary>
+        /// <summary>One accepted sample of the stroke under way, oldest first. Read-only, for readouts.</summary>
         internal bool TryGetAcceptedSample(int index, out EvaluatedBladePose sample)
         {
-            if (index < 0 || index >= acceptedSampleCount)
+            SlashWaveCore slash = Core;
+            if (index < 0 || index >= slash.AcceptedSampleCount)
             {
                 sample = default;
                 return false;
             }
 
-            sample = acceptedSamples[index];
+            sample = slash.AcceptedSamples[index];
             return true;
         }
 
-        /// <summary>
-        /// Derives the stroke's source slash plane from the accepted samples,
-        /// or false when there are fewer than two of them or the samples are
-        /// too degenerate to give a finite plane. Nothing is stored: the plane is
-        /// computed from the accepted samples every time it is asked for, so
-        /// it becomes unavailable the moment they do.
-        ///
-        /// Each consecutive pair contributes the cross product of the later
-        /// sample's blade axis with the movement between them, folded onto
-        /// that sample's side normal, so movement along the blade contributes
-        /// nothing and no separate projection is kept. The plane passes
-        /// through the stroke's begin cut sample point, and the summed normal
-        /// finally takes the side the newest accepted sample faces.
-        /// </summary>
+        /// <summary>The stroke's source slash plane candidate, derived on demand by the core (tracking space).</summary>
         internal bool TryGetSourceSlashPlaneCandidate(out Plane plane)
         {
-            plane = default;
-
-            if (acceptedSampleCount < 2)
-            {
-                return false;
-            }
-
-            Vector3 sum = Vector3.zero;
-            for (int i = 1; i < acceptedSampleCount; i++)
-            {
-                Vector3 movement = acceptedSamples[i].CutSamplePosition - acceptedSamples[i - 1].CutSamplePosition;
-                Vector3 candidate = Vector3.Cross(acceptedSamples[i].BladeAxis, movement);
-                if (!IsFinite(candidate))
-                {
-                    return false;
-                }
-
-                if (Vector3.Dot(candidate, acceptedSamples[i].SideNormal) < 0f)
-                {
-                    candidate = -candidate;
-                }
-
-                sum += candidate;
-            }
-
-            if (!IsFinite(sum))
-            {
-                return false;
-            }
-
-            float lengthSquared = sum.sqrMagnitude;
-            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
-            {
-                return false;
-            }
-
-            float length = Mathf.Sqrt(lengthSquared);
-            Vector3 normal = new Vector3(sum.x / length, sum.y / length, sum.z / length);
-            if (!IsFinite(normal))
-            {
-                return false;
-            }
-
-            if (Vector3.Dot(normal, acceptedSamples[acceptedSampleCount - 1].SideNormal) < 0f)
-            {
-                normal = -normal;
-            }
-
-            Vector3 origin = acceptedSamples[0].CutSamplePosition;
-            if (!IsFinite(origin))
-            {
-                return false;
-            }
-
-            // A finite normal and a finite point can still give a distance
-            // that overflows, so the constructed plane is what gets checked.
-            plane = new Plane(normal, origin);
-            if (!IsFinite(plane.normal) || !float.IsFinite(plane.distance))
-            {
-                plane = default;
-                return false;
-            }
-
-            return true;
+            return Core.TryGetSourceSlashPlaneCandidate(out plane);
         }
 
         private static bool IsFinite(Vector3 v)
@@ -544,47 +491,12 @@ namespace Zantetsu.Sandbox
             return float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
         }
 
-        /// <summary>
-        /// Whether the stroke has swept far enough to be worth latching:
-        /// the emitter chord from its begin sample to its newest one has
-        /// reached the latch distance. Derived on demand, so it goes the
-        /// moment the accepted samples do, and it says nothing about whether
-        /// a plane or a frame can be derived -- bringing those together is a
-        /// later concern.
-        /// </summary>
-        internal bool IsLatchReady
-        {
-            get
-            {
-                if (acceptedSampleCount < 2 || !IsFinitePositive(latchChordMetres))
-                {
-                    return false;
-                }
-
-                Vector3 chord = EmitterPosition(acceptedSamples[acceptedSampleCount - 1])
-                    - EmitterPosition(acceptedSamples[0]);
-                if (!IsFinite(chord))
-                {
-                    return false;
-                }
-
-                float lengthSquared = chord.sqrMagnitude;
-                return float.IsFinite(lengthSquared) && lengthSquared >= latchChordMetres * latchChordMetres;
-            }
-        }
+        /// <summary>Whether the stroke has swept far enough to latch, by the core's current latch estimator.</summary>
+        internal bool IsLatchReady => Core.IsLatchReady;
 
         /// <summary>
-        /// The stroke's first-candidate slash frame, per 19.1.5.1: the source
-        /// slash plane, the begin and newest emitter points projected onto it,
-        /// the travel axis (the begin sample's blade tip direction projected
-        /// onto the plane), a span axis at 150 degrees to travel on the side
-        /// indicated by the emitter chord, and the chord's length as the
-        /// initial span. The initial endpoint is no longer the latest emitter.
-        ///
-        /// False when there are fewer than two accepted samples, when no plane
-        /// can be derived, or when any projection or normalisation degenerates.
-        /// Nothing is stored: like the plane, the frame lives and dies with the
-        /// accepted samples.
+        /// The stroke's first-candidate slash frame (19.1.5.1), from the core's current frame estimator, in tracking
+        /// space: the plane, the begin and newest emitter points on it, the travel and span axes, and the initial span.
         /// </summary>
         internal bool TryGetSlashFrameCandidate(
             out Plane plane,
@@ -594,114 +506,24 @@ namespace Zantetsu.Sandbox
             out Vector3 spanAxis,
             out float span)
         {
-            plane = default;
-            beginEmitter = default;
-            latestEmitter = default;
-            travelAxis = default;
-            spanAxis = default;
-            span = 0f;
-
-            if (acceptedSampleCount < 2)
-            {
-                return false;
-            }
-
-            if (!TryGetSourceSlashPlaneCandidate(out Plane candidate))
-            {
-                return false;
-            }
-
-            EvaluatedBladePose begin = acceptedSamples[0];
-            Vector3 projectedBegin = candidate.ClosestPointOnPlane(EmitterPosition(begin));
-            Vector3 projectedLatest = candidate.ClosestPointOnPlane(EmitterPosition(acceptedSamples[acceptedSampleCount - 1]));
-            if (!IsFinite(projectedBegin) || !IsFinite(projectedLatest))
-            {
-                return false;
-            }
-
-            if (!TryProjectOntoPlane(begin.BladeAxis, candidate.normal, out Vector3 travel))
-            {
-                return false;
-            }
-
-            Vector3 chord = projectedLatest - projectedBegin;
-            if (!IsFinite(chord))
-            {
-                return false;
-            }
-
-            float chordLengthSquared = chord.sqrMagnitude;
-            if (!float.IsFinite(chordLengthSquared) || chordLengthSquared <= MinDerivedVectorLengthSquared)
-            {
-                return false;
-            }
-
-            float chordLength = Mathf.Sqrt(chordLengthSquared);
-            if (!float.IsFinite(chordLength) || !(chordLength > 0f))
-            {
-                return false;
-            }
-
-            Vector3 chordDirection = new Vector3(chord.x / chordLength, chord.y / chordLength, chord.z / chordLength);
-            float side = Vector3.Dot(candidate.normal, Vector3.Cross(travel, chordDirection));
-            if (!IsFinite(chordDirection) || !float.IsFinite(side) || side == 0f)
-            {
-                return false;
-            }
-
-            // Adopted fixed-angle frame: cos(150) T + sign(side) sin(150) (N x T).
-            // Only the axis changes; chord length, guide and Close rules do not.
-            Vector3 fixedSpan = -0.8660254037844386f * travel
-                + (side > 0f ? 0.5f : -0.5f) * Vector3.Cross(candidate.normal, travel);
-            if (!TryProjectOntoPlane(fixedSpan, candidate.normal, out fixedSpan))
-            {
-                return false;
-            }
-
-            plane = candidate;
-            beginEmitter = projectedBegin;
-            latestEmitter = projectedLatest;
-            travelAxis = travel;
-            spanAxis = fixedSpan;
-            span = chordLength;
-            return true;
+            bool ok = Core.TryGetSlashFrameCandidate(out SlashFrame frame);
+            plane = frame.SourceSlashPlane;
+            beginEmitter = frame.BeginEmitter;
+            latestEmitter = frame.LatestEmitter;
+            travelAxis = frame.TravelAxis;
+            spanAxis = frame.SpanAxis;
+            span = frame.InitialSpan;
+            return ok;
         }
-
-        // The emission control point, halfway along the blade. Derived from the
-        // pose rather than stored alongside it.
-        private Vector3 EmitterPosition(in EvaluatedBladePose pose)
-        {
-            return pose.KatanaPose.position + pose.BladeAxis * (bladeLength * EmissionControlPointRatio);
-        }
-
-        private static bool TryProjectOntoPlane(Vector3 direction, Vector3 normal, out Vector3 result)
-        {
-            result = default;
-
-            Vector3 inPlane = direction - Vector3.Dot(direction, normal) * normal;
-            if (!IsFinite(inPlane))
-            {
-                return false;
-            }
-
-            float lengthSquared = inPlane.sqrMagnitude;
-            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
-            {
-                return false;
-            }
-
-            float length = Mathf.Sqrt(lengthSquared);
-            result = new Vector3(inPlane.x / length, inPlane.y / length, inPlane.z / length);
-            return IsFinite(result);
-        }
-
-        /// <summary>Number of slash waves this katana currently has alive.</summary>
-        internal int WaveCount => waveStore.Count;
 
         /// <summary>
-        /// Reads one live wave back by value. The store itself never leaves
-        /// this component.
-        /// </summary>
+        /// <summary>Number of slash waves this katana currently has alive: the core's.</summary>
+        internal int WaveCount => Core.WaveCount;
+
+        /// <summary>The SlashId of one live wave, or 0 outside them.</summary>
+        internal long SlashIdAt(int index) => Core.SlashIdAt(index);
+
+        /// <summary>Reads one live wave back by value, from the core.</summary>
         internal bool TryGetWave(
             int index,
             out double latchedAt,
@@ -715,7 +537,7 @@ namespace Zantetsu.Sandbox
             out Vector3 currentSegmentStart,
             out Vector3 currentSegmentEnd)
         {
-            return waveStore.TryGetWave(
+            return Core.TryGetWave(
                 index,
                 out latchedAt,
                 out sourceSlashPlane,
@@ -729,12 +551,7 @@ namespace Zantetsu.Sandbox
                 out currentSegmentEnd);
         }
 
-        /// <summary>
-        /// What one wave's last candidate evaluation saw: which guide, the
-        /// intersection terms, and whether they were usable or widened the
-        /// span. Observation only, as 19.1.12 asks for; the update had already
-        /// decided before these were written.
-        /// </summary>
+        /// <summary>What one wave's last candidate evaluation saw, from the core (observation only, 19.1.12).</summary>
         internal bool TryGetWaveCandidate(
             int index,
             out double candidateAt,
@@ -749,7 +566,7 @@ namespace Zantetsu.Sandbox
             out bool usable,
             out bool widenedSpan)
         {
-            return waveStore.TryGetWaveCandidate(
+            return Core.TryGetWaveCandidate(
                 index, out candidateAt, out evaluated, out fromFrozenGuide, out guideOrigin, out guideDirection,
                 out rawSpan, out q, out denominator, out termsFinite, out usable, out widenedSpan);
         }
@@ -761,19 +578,14 @@ namespace Zantetsu.Sandbox
             out Vector3 frozenGuideOrigin,
             out Vector3 frozenGuideDirection)
         {
-            return waveStore.TryGetWaveSpanClose(index, out spanClosedAt, out frozenGuideOrigin, out frozenGuideDirection);
+            return Core.TryGetWaveSpanClose(index, out spanClosedAt, out frozenGuideOrigin, out frozenGuideDirection);
         }
 
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>
         internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles));
 
-        /// <summary>Blade-local coordinate system of the katana visual root.</summary>
-        // cross(BladeAxis, EdgeDirection) == SideNormal: cross(+Z, -Y) == +X.
-        internal BladeFrame BladeFrame => new BladeFrame(
-            Vector3.forward,
-            Vector3.down,
-            Vector3.right,
-            Vector3.forward * (bladeLength * CutSampleRatio));
+        /// <summary>Blade-local coordinate system of the katana visual root: the core blade's.</summary>
+        internal BladeFrame BladeFrame => new SlashBlade(GripToKatanaOffset, bladeLength).Frame;
 
         /// <summary>
         /// Test seam and hot path: shows one grip pose sample without ever
@@ -823,8 +635,7 @@ namespace Zantetsu.Sandbox
             Capture?.Stop("the calculation was reset; capturing ended before the reset");
             Capture = null;
             Hide();
-            ResetStroke();
-            waveStore.Clear();
+            Core.Reset();
             HideAllWaveVisuals();
         }
 
@@ -930,12 +741,12 @@ namespace Zantetsu.Sandbox
             BladeLength = bladeLength,
             GripOffsetPosition = offsetPosition,
             GripOffsetRotation = Quaternion.Euler(offsetEulerAngles),
-            EmissionControlPointRatio = EmissionControlPointRatio,
+            EmissionControlPointRatio = SlashBlade.EmissionControlPointRatio,
             CutSampleRatio = CutSampleRatio,
-            WaveSpeed = SandboxSlashWaveStore.WaveSpeed,
-            WaveLifetimeSeconds = SandboxSlashWaveStore.WaveLifetimeSeconds,
-            NearParallelDenominator = SandboxSlashWaveStore.NearParallelDenominatorThreshold,
-            WaveCapacity = SandboxSlashWaveStore.Capacity,
+            WaveSpeed = Core.Flight.Speed,
+            WaveLifetimeSeconds = Core.Flight.LifetimeSeconds,
+            NearParallelDenominator = GuideRaySpanCandidate.DefaultNearParallelDenominator,
+            WaveCapacity = SlashWaveCore.Capacity,
         };
 
         /// <summary>
@@ -947,43 +758,36 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal bool TryRecordSample(in BladePoseSample sample, Vector3 viewForward)
         {
-            // Waves that have reached their expiry go first, so a latch later
-            // in this same update can use the capacity they free. How many are
-            // left is also how the waves already flying are told apart from one
-            // latched further down this same update: the ones counted here fly
-            // and take the live guide, and anything published after does not.
-            // No flag or id is needed.
-            waveStore.RemoveExpired(sample.TimestampSeconds);
-            int wavesAlreadyFlying = waveStore.Count;
+            // The product core does the whole update (DESIGN 19.1.5.1): expiry first, the gesture, one latch at most,
+            // then the flying waves with the blade as it is now as their guide. This component only feeds it and shows
+            // what it produced. Without a katana to show the sample is no pose at all to the gesture, as before.
+            SlashWaveCore slash = Core;
+            BladePoseSample input = katana != null
+                ? sample
+                : new BladePoseSample(sample.FrameId, sample.TimestampSeconds, sample.GripPosition, sample.GripRotation,
+                    BladeTrackingState.None);
+            Pose? space = trackingSpace != null ? TrackingSpacePose : (Pose?)null;
+            SlashInputOutcome outcome = slash.Update(in input, viewForward, space, out EvaluatedBladePose current);
+            if (outcome == SlashInputOutcome.PoseUnusable)
+            {
+                // A pose that cannot be shown is hidden; a missing katana or blade has nothing to hide.
+                if (katana != null && slash.Blade.IsValid)
+                {
+                    Hide();
+                }
+            }
+            else
+            {
+                Show(current);
+            }
 
-            bool recorded = TryRecordGestureSample(sample, viewForward, out EvaluatedBladePose current);
-            TryPublishWave(sample.TimestampSeconds);
+            bool recorded = outcome == SlashInputOutcome.Recorded;
 
-            // A pose the gate turned away is still a live guide, as long as it
-            // could be shown and recorded. An unusable sample resets the stroke
-            // and leaves the waves flying on their existing span.
-            // The guide is the katana as it is shown now: the gesture's pose
-            // placed by the tracking space as it stands, artificial movement
-            // included (19.1.5.1). Only the gesture leaves that movement out.
-            Pose space = TrackingSpacePose;
-            waveStore.Advance(
-                sample.TimestampSeconds,
-                wavesAlreadyFlying,
-                recorded,
-                recorded ? space.position + (space.rotation * EmitterPosition(current)) : Vector3.zero,
-                recorded ? space.rotation * current.BladeAxis : Vector3.zero);
-
-            // Last, so a wave latched or expired in this update is shown or
-            // hidden in it too. Slots follow the store's current indices, so
-            // there is no second bookkeeping to fall out of step after the
-            // store compacts.
+            // Last, so a wave latched or expired in this update is shown or hidden in it too.
             SyncWaveVisuals();
 
-            // After the update, so what the capture holds beside the input is
-            // what this update produced from it. Rejected input is captured
-            // too: it still steered the guide, or reset the stroke.
-            Capture?.Append(sample, viewForward, recorded, acceptedSampleCount, this);
-
+            // After the update, so what the capture holds beside the input is what this update produced from it.
+            Capture?.Append(sample, viewForward, recorded, slash.AcceptedSampleCount, this);
             return recorded;
         }
 
@@ -994,7 +798,7 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            int liveWaves = waveStore.Count;
+            int liveWaves = Core.WaveCount;
             for (int i = 0; i < waveVisuals.Length; i++)
             {
                 Transform visual = waveVisuals[i];
@@ -1030,7 +834,7 @@ namespace Zantetsu.Sandbox
             rotation = Quaternion.identity;
             scale = Vector3.one;
 
-            if (!waveStore.TryGetWave(index, out _, out Plane plane, out _, out _, out Vector3 spanAxis,
+            if (!Core.TryGetWave(index, out _, out Plane plane, out _, out _, out Vector3 spanAxis,
                     out float acceptedSpan, out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd))
             {
                 return false;
@@ -1105,207 +909,34 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        private bool TryRecordGestureSample(in BladePoseSample sample, Vector3 viewForward, out EvaluatedBladePose evaluated)
+        // Shows the pose where the tracking space places it now; the evaluated pose itself stays in tracking space.
+        private void Show(in EvaluatedBladePose evaluated)
         {
-            // A sample that cannot be shown has already reset the stroke.
-            if (!TryApplySample(sample, out evaluated))
-            {
-                return false;
-            }
-
-            // The history refuses a timestamp that does not move forward; it
-            // clears itself, and the accepted samples go with it.
-            if (!poseHistory.TryAppend(evaluated))
-            {
-                ResetStroke();
-                return false;
-            }
-
-            EvaluateGesture(evaluated, viewForward);
-            return true;
-        }
-
-        // Every condition a wave needs, decided in one place at one instant:
-        // the stroke has not latched yet, it has swept far enough, it has a
-        // frame right now, and the store has room. A stroke with a frame gets
-        // exactly one attempt, so a full store costs it its latch rather than
-        // leaving it queued for the next free slot.
-        private void TryPublishWave(double nowSeconds)
-        {
-            if (strokeLatchSpent || !IsLatchReady)
-            {
-                return;
-            }
-
-            if (!TryGetSlashFrameCandidate(
-                    out Plane plane,
-                    out Vector3 beginEmitter,
-                    out _,
-                    out Vector3 travelAxis,
-                    out Vector3 spanAxis,
-                    out float acceptedSpan))
-            {
-                // Not yet a frame; a later sample of the same stroke may still
-                // give one.
-                return;
-            }
-
-            // The frame was derived in tracking space. It is settled in the
-            // world here, once, by the tracking space as it stands at the
-            // latch: the wave leaves from where the player is now, and nothing
-            // later moves or turns it.
-            // Without a tracking space the frame is already the world's and
-            // is passed on exactly as derived.
-            if (trackingSpace != null)
-            {
-                Pose space = TrackingSpacePose;
-                Vector3 planePoint = space.position + (space.rotation * (-plane.normal * plane.distance));
-                plane = new Plane(space.rotation * plane.normal, planePoint);
-                beginEmitter = space.position + (space.rotation * beginEmitter);
-                travelAxis = space.rotation * travelAxis;
-                spanAxis = space.rotation * spanAxis;
-            }
-
-            strokeLatchSpent = true;
-            waveStore.TryLatch(
-                nowSeconds, plane, beginEmitter, beginEmitter + spanAxis * acceptedSpan,
-                travelAxis, spanAxis, acceptedSpan, spanCaptureTimeoutSeconds);
-        }
-
-        // Update boundary only. Before Render never reaches here.
-        private void EvaluateGesture(in EvaluatedBladePose current, Vector3 viewForward)
-        {
-            // Values left invalid in the Inspector decide nothing, rather than
-            // throw from the settings constructor on every update.
-            if (!IsValidMinimumSpeed(minimumSpeed)
-                || !IsFinitePositive(minimumDisplacement)
-                || !IsWithinUnitRange(minimumEdgeLeadScore)
-                || !IsWithinUnitRange(returnStrokeEdgeLeadScore)
-                || !IsWithinUnitRange(beginBladeAxisViewDotMinimum))
-            {
-                return;
-            }
-
-            if (!poseHistory.TryEvaluateLatest(GateMinimumWindowSeconds, GateMaximumWindowSeconds, out BladeMotionSample motion))
-            {
-                // Not enough history to span the window yet: decide nothing.
-                return;
-            }
-
-            // Built from the current values each time; a value type, so this
-            // allocates nothing.
-            BladeEdgeGateSettings gateSettings = new BladeEdgeGateSettings(
-                GateMinimumWindowSeconds,
-                GateMaximumWindowSeconds,
-                minimumSpeed,
-                GateMaximumSpeed,
-                minimumDisplacement,
-                minimumEdgeLeadScore);
-            BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(motion, gateSettings);
-            if (decision.IsAccepted)
-            {
-                AppendAcceptedSample(current, viewForward);
-                return;
-            }
-
-            if (decision.Reason == BladeEdgeGateReason.SpeedAboveMaximum)
-            {
-                ResetStroke();
-                return;
-            }
-
-            // Reaching the edge lead check means every non-directional check
-            // passed, so a score this far onto the spine side is the return
-            // half of the stroke rather than a slow or short motion. Only a
-            // stroke that is under way has a return half: with nothing
-            // accepted this is just a rejected motion, and clearing the raw
-            // history would throw away samples for no reason.
-            if (acceptedSampleCount > 0
-                && decision.Reason == BladeEdgeGateReason.EdgeLeadBelowThreshold
-                && motion.EdgeLeadScore <= returnStrokeEdgeLeadScore)
-            {
-                ResetStroke();
-            }
-        }
-
-        private void AppendAcceptedSample(in EvaluatedBladePose pose, Vector3 viewForward)
-        {
-            // Only a sample that would begin the stroke is checked against the
-            // view. One that fails is just not taken as the begin: this is a
-            // begin candidate update, not a stroke split -- nothing is reset,
-            // the raw history stays, and the next accepted sample of the same
-            // motion is the next candidate. Once begun, the view is not asked.
-            if (acceptedSampleCount == 0)
-            {
-                if (!PassesBeginViewCheck(pose, viewForward, out Vector3 checkedView))
-                {
-                    return;
-                }
-
-                strokeBeginViewForward = checkedView;
-            }
-
-            if (acceptedSampleCount < AcceptedSampleCapacity)
-            {
-                acceptedSamples[acceptedSampleCount] = pose;
-                acceptedSampleCount++;
-                return;
-            }
-
-            // Full: keep the begin sample at index 0 and overwrite the last
-            // slot with the newest one. No growth, no allocation, no shifting.
-            acceptedSamples[AcceptedSampleCapacity - 1] = pose;
-        }
-
-        // True when there is no usable view forward -- no check -- or when the
-        // blade axis has at least the minimum dot product with it.
-        private bool PassesBeginViewCheck(in EvaluatedBladePose pose, Vector3 viewForward, out Vector3 normalizedView)
-        {
-            normalizedView = Vector3.zero;
-
-            float lengthSquared = viewForward.sqrMagnitude;
-            if (!IsFinite(viewForward) || !float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
-            {
-                return true;
-            }
-
-            float length = Mathf.Sqrt(lengthSquared);
-            normalizedView = new Vector3(viewForward.x / length, viewForward.y / length, viewForward.z / length);
-            return Vector3.Dot(pose.BladeAxis, normalizedView) >= beginBladeAxisViewDotMinimum;
-        }
-
-        // Waves are deliberately not touched here: they outlive the stroke.
-        private void ResetStroke()
-        {
-            poseHistory.Clear();
-            acceptedSampleCount = 0;
-            strokeLatchSpent = false;
-            strokeBeginViewForward = Vector3.zero;
-        }
-
-        private bool TryApplySample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
-        {
-            if (katana == null || !float.IsFinite(bladeLength) || bladeLength <= 0f)
-            {
-                evaluated = default;
-                ResetStroke();
-                return false;
-            }
-
-            if (!BladePoseAdapter.TryEvaluate(sample, GripToKatanaOffset, BladeFrame, out evaluated))
-            {
-                Hide();
-                ResetStroke();
-                return false;
-            }
-
-            // Shown where the tracking space places it now; the evaluated pose
-            // itself stays in tracking space for the gesture.
             Pose space = TrackingSpacePose;
             katana.SetPositionAndRotation(
                 space.position + (space.rotation * evaluated.KatanaPose.position),
                 space.rotation * evaluated.KatanaPose.rotation);
             katana.gameObject.SetActive(true);
+        }
+
+        private bool TryApplySample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
+        {
+            SlashWaveCore slash = Core;
+            if (katana == null || !slash.Blade.IsValid)
+            {
+                evaluated = default;
+                slash.ResetStroke();
+                return false;
+            }
+
+            if (!slash.TryEvaluatePose(sample, out evaluated))
+            {
+                Hide();
+                slash.ResetStroke();
+                return false;
+            }
+
+            Show(evaluated);
             return true;
         }
 

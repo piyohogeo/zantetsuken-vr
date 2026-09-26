@@ -3,6 +3,7 @@ using System.Text;
 using UnityEngine;
 using Zantetsu.Core;
 using Zantetsu.Core.Input;
+using Zantetsu.Core.Slash;
 
 namespace Zantetsu.Sandbox
 {
@@ -118,12 +119,12 @@ namespace Zantetsu.Sandbox
         private int pinnedAcceptedSampleCount;
         private bool pinnedLatchReady;
         private string pinnedCandidateName;
-        private readonly double[] pinnedLatchedAt = new double[SandboxSlashWaveStore.Capacity];
-        private readonly float[] pinnedAcceptedSpan = new float[SandboxSlashWaveStore.Capacity];
-        private readonly bool[] pinnedSpanClosed = new bool[SandboxSlashWaveStore.Capacity];
-        private readonly double[] pinnedSpanClosedAt = new double[SandboxSlashWaveStore.Capacity];
-        private readonly Vector3[] pinnedSegmentStart = new Vector3[SandboxSlashWaveStore.Capacity];
-        private readonly Vector3[] pinnedSegmentEnd = new Vector3[SandboxSlashWaveStore.Capacity];
+        private readonly double[] pinnedLatchedAt = new double[SlashWaveCore.Capacity];
+        private readonly float[] pinnedAcceptedSpan = new float[SlashWaveCore.Capacity];
+        private readonly bool[] pinnedSpanClosed = new bool[SlashWaveCore.Capacity];
+        private readonly double[] pinnedSpanClosedAt = new double[SlashWaveCore.Capacity];
+        private readonly Vector3[] pinnedSegmentStart = new Vector3[SlashWaveCore.Capacity];
+        private readonly Vector3[] pinnedSegmentEnd = new Vector3[SlashWaveCore.Capacity];
 
         // Reused across draws: OnGUI runs more than once per frame.
         private readonly StringBuilder comparisonText = new StringBuilder(1024);
@@ -380,7 +381,7 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            int waveCount = Mathf.Min(katana.WaveCount, SandboxSlashWaveStore.Capacity);
+            int waveCount = Mathf.Min(katana.WaveCount, SlashWaveCore.Capacity);
             int pinned = 0;
             for (int i = 0; i < waveCount; i++)
             {
@@ -746,9 +747,15 @@ namespace Zantetsu.Sandbox
                     text.Append('\n');
 
                     // The frozen guide against the current segment start: the
-                    // same terms the store evaluates. Shown, never fed back.
+                    // same terms the core evaluates, judged by the candidate
+                    // estimator this wave latched with. Shown, never fed back.
                     text.Append("      frozen guide  r ");
-                    if (SandboxSlashWaveStore.TryEvaluateRawSpanTerms(plane.normal, segmentStart, spanAxis, frozenOrigin,
+                    GuideRaySpanCandidate judge =
+                        katana.Core.TryGetWaveMethod(i, out _, out ISlashSpanCandidateEstimator used, out _)
+                        && used is GuideRaySpanCandidate latched
+                            ? latched
+                            : GuideRaySpanCandidate.Default;
+                    if (GuideRaySpanCandidate.TryEvaluateTerms(plane.normal, segmentStart, spanAxis, frozenOrigin,
                             frozenDirection, out float r, out float q, out float denominator))
                     {
                         AppendNumber(text, r);
@@ -756,7 +763,7 @@ namespace Zantetsu.Sandbox
                         AppendNumber(text, q);
                         text.Append("  denominator ");
                         text.Append(denominator.ToString("F5", CultureInfo.InvariantCulture));
-                        text.Append("  usable ").Append(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator) ? "yes" : "no");
+                        text.Append("  usable ").Append(judge.IsUsable(r, q, denominator) ? "yes" : "no");
                     }
                     else
                     {

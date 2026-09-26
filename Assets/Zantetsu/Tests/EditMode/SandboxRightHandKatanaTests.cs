@@ -9,6 +9,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Zantetsu.Core.Input;
+using Zantetsu.Core.Slash;
 using Zantetsu.Sandbox;
 
 namespace Zantetsu.Core.Tests
@@ -27,6 +28,16 @@ namespace Zantetsu.Core.Tests
         // The span capture timeout handed to a bare wave store in tests; the
         // katana hands in its own tuning value.
         private const float StoreTestSpanCaptureTimeout = 0.15f;
+
+        // The product core the katana feeds, set up as the store these tests used to call: the adopted flight and the
+        // capture timeout the old store calls passed.
+        private static SlashWaveCore NewCore(float spanCaptureTimeout = StoreTestSpanCaptureTimeout)
+        {
+            return new SlashWaveCore(new SlashBlade(new Pose(new Vector3(0f, 0f, 0.02f), Quaternion.Euler(-15f, 0f, 0f)), 0.9f))
+            {
+                SpanCloseEstimator = new CaptureTimeoutSpanClose(spanCaptureTimeout),
+            };
+        }
         private const float PositionTolerance = 1e-4f;
         private const float AngleTolerance = 1e-3f;
         private const float BladeLength = 0.9f;
@@ -354,7 +365,7 @@ namespace Zantetsu.Core.Tests
             waveVisualRoot.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             waveVisualRoot.transform.localScale = Vector3.one;
 
-            waveVisuals = new Transform[SandboxSlashWaveStore.Capacity];
+            waveVisuals = new Transform[SlashWaveCore.Capacity];
             GameObject template = GameObject.CreatePrimitive(PrimitiveType.Quad);
             Mesh sharedMesh = template.GetComponent<MeshFilter>().sharedMesh;
             Material sharedMaterial = template.GetComponent<MeshRenderer>().sharedMaterial;
@@ -427,7 +438,7 @@ namespace Zantetsu.Core.Tests
         // snapshot -- the same arithmetic the store does.
         private static Vector3 ExpectedA(Vector3 waveOrigin, Vector3 travelAxis, double latchedAt, double nowSeconds)
         {
-            return waveOrigin + travelAxis * (float)(SandboxSlashWaveStore.WaveSpeed * (nowSeconds - latchedAt));
+            return waveOrigin + travelAxis * (float)(SlashWaveFlight.Adopted.Speed * (nowSeconds - latchedAt));
         }
 
         private bool HasWaveLatchedAt(double latchedAt)
@@ -1631,14 +1642,14 @@ namespace Zantetsu.Core.Tests
 
             // Just short of the lifetime the wave is still alive.
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds - 0.001;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
 
             // At the lifetime exactly it is gone, before anything else in the update.
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(0));
@@ -1647,19 +1658,19 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void AFullStore_PublishesNothingAndDoesNotEvictOrRewriteLatchSnapshots()
         {
-            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            for (int i = 0; i < SlashWaveCore.Capacity; i++)
             {
                 SweepUntilLatch();
                 ReArmStroke();
             }
 
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity));
             Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out Plane firstPlane, out Vector3 firstOrigin,
                 out Vector3 firstTravel, out Vector3 firstSpanAxis, out _, out _, out _, out _, out _), Is.True);
 
             SweepUntilLatch();
 
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity), "no wave was added");
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity), "no wave was added");
 
             // The living waves keep flying and may still take the live guide;
             // what a full store must not do is retire one or rewrite its latch.
@@ -1675,18 +1686,18 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void AStrokeTurnedAwayByAFullStore_DoesNotRetryWhenASlotFrees()
         {
-            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            for (int i = 0; i < SlashWaveCore.Capacity; i++)
             {
                 SweepUntilLatch();
                 ReArmStroke();
             }
 
             SweepUntilLatch();
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity));
             Assert.That(follower.IsLatchReady, Is.True, "the turned-away stroke is still under way");
 
             // Let the oldest waves expire without disturbing that stroke.
-            SkipTime(SandboxSlashWaveStore.WaveLifetimeSeconds + 0.1);
+            SkipTime(SlashWaveFlight.Adopted.LifetimeSeconds + 0.1);
 
             Assert.That(follower.WaveCount, Is.EqualTo(0), "every wave expired");
             Assert.That(follower.IsLatchReady, Is.True);
@@ -1700,16 +1711,16 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ExpiryFreesCapacityForALatchInTheSameUpdate()
         {
-            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            for (int i = 0; i < SlashWaveCore.Capacity; i++)
             {
                 SweepUntilLatch();
                 ReArmStroke();
             }
 
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity));
             Assert.That(follower.TryGetWave(0, out double oldestLatchedAt,
                 out _, out _, out _, out _, out _, out _, out _, out _, out _), Is.True);
-            double oldestExpiry = oldestLatchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            double oldestExpiry = oldestLatchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
 
             // Start the next stroke shortly before the oldest wave runs out.
             // The jump itself is far outside the gate's window, so it only
@@ -1729,7 +1740,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
             Assert.That(follower.IsLatchReady, Is.False);
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity), "nothing has expired yet");
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity), "nothing has expired yet");
 
             // Land the sample that completes the latch exactly on the oldest
             // wave's expiry, so both happen in the one update.
@@ -1746,48 +1757,47 @@ namespace Zantetsu.Core.Tests
             Assert.That(HasWaveLatchedAt(oldestLatchedAt), Is.False, "the oldest wave expired in this update");
             Assert.That(HasWaveLatchedAt(strokeTime), Is.True,
                 "the slot the expiry freed was used by this update's latch");
-            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.WaveCount, Is.EqualTo(SlashWaveCore.Capacity));
         }
 
         [Test]
         public void WaveStore_RefusesAStateThatCannotStayFinite()
         {
-            SandboxSlashWaveStore store = new SandboxSlashWaveStore();
+            SlashWaveCore store = NewCore();
             Plane plane = new Plane(Vector3.right, Vector3.zero);
 
-            Assert.That(store.TryLatch(double.NaN, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, new Vector3(float.NaN, 0f, 0f), Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, float.PositiveInfinity, StoreTestSpanCaptureTimeout), Is.False);
+            Assert.That(store.TryLatch(double.NaN, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, new Vector3(float.NaN, 0f, 0f), Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, float.PositiveInfinity), Is.False);
 
             // A finite origin whose travel over the lifetime overflows.
             Assert.That(
                 store.TryLatch(0.0, plane, new Vector3(float.MaxValue, 0f, 0f), Vector3.up,
-                    new Vector3(float.MaxValue, 0f, 0f), Vector3.up, 1f, StoreTestSpanCaptureTimeout),
+                    new Vector3(float.MaxValue, 0f, 0f), Vector3.up, 1f),
                 Is.False);
 
             // Both ends have to survive the lifetime, not just A. This travel
             // lands A well inside the finite range and takes B past it.
             Vector3 travelAxis = new Vector3(1.8e37f, 0f, 0f);
-            Vector3 travel = travelAxis * (SandboxSlashWaveStore.WaveSpeed * SandboxSlashWaveStore.WaveLifetimeSeconds);
+            Vector3 travel = travelAxis * (SlashWaveFlight.Adopted.Speed * SlashWaveFlight.Adopted.LifetimeSeconds);
             Vector3 aEnd = new Vector3(-3.0e38f, 0f, 0f);
             Vector3 bEnd = new Vector3(1.0e38f, 0f, 0f);
             Assert.That(float.IsFinite(travel.x), Is.True, "the travel itself must stay finite for this case to bite");
             Assert.That(float.IsFinite((aEnd + travel).x), Is.True, "the A end stays finite");
             Assert.That(float.IsFinite((bEnd + travel).x), Is.False, "the B end does not");
 
-            Assert.That(store.TryLatch(0.0, plane, aEnd, bEnd, travelAxis, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, aEnd, bEnd, travelAxis, Vector3.up, 1f), Is.False);
 
-            // The span capture timeout has to be positive and shorter than the lifetime.
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, float.NaN), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, 0f), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f,
-                SandboxSlashWaveStore.WaveLifetimeSeconds), Is.False);
+            // The span capture timeout has to be finite and positive: a close estimator cannot be made with one that
+            // is not. It need not be shorter than the lifetime (DESIGN 19.1.1).
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => new CaptureTimeoutSpanClose(float.NaN));
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => new CaptureTimeoutSpanClose(0f));
 
-            Assert.That(store.Count, Is.EqualTo(0));
+            Assert.That(store.WaveCount, Is.EqualTo(0));
 
             // The same call with a state that stays finite does publish.
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.True);
-            Assert.That(store.Count, Is.EqualTo(1));
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.True);
+            Assert.That(store.WaveCount, Is.EqualTo(1));
         }
 
         [Test]
@@ -1868,9 +1878,9 @@ namespace Zantetsu.Core.Tests
 
             // Adding each update's travel on top of the last would have taken
             // it much further than the elapsed time allows.
-            float analytic = (float)(SandboxSlashWaveStore.WaveSpeed * (strokeTime - latchedAt));
+            float analytic = (float)(SlashWaveFlight.Adopted.Speed * (strokeTime - latchedAt));
             Assert.That(Vector3.Distance(origin, secondStart), Is.EqualTo(analytic).Within(1e-3f));
-            float accumulated = analytic + (float)(SandboxSlashWaveStore.WaveSpeed * (firstNow - latchedAt));
+            float accumulated = analytic + (float)(SlashWaveFlight.Adopted.Speed * (firstNow - latchedAt));
             Assert.That(Vector3.Distance(origin, secondStart), Is.LessThan(accumulated - 0.5f));
             Assert.That(Vector3.Distance(secondStart, secondEnd), Is.EqualTo(Vector3.Distance(firstStart, firstEnd)).Within(PositionTolerance));
         }
@@ -1999,7 +2009,7 @@ namespace Zantetsu.Core.Tests
 
             // Just short of the lifetime it is still there, and it has flown.
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds - 0.001;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
@@ -2009,7 +2019,7 @@ namespace Zantetsu.Core.Tests
 
             // At the lifetime it is gone rather than moved one last time.
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(0));
@@ -2552,13 +2562,13 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.WaveCount, Is.EqualTo(1));
 
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds - 0.001;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
 
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(0));
@@ -2712,16 +2722,16 @@ namespace Zantetsu.Core.Tests
         {
             // Straight at the store: no pose sequence puts the span axis on the
             // travel axis, and the contract still has to hold if one did.
-            SandboxSlashWaveStore store = new SandboxSlashWaveStore();
+            SlashWaveCore store = NewCore();
             Plane plane = new Plane(Vector3.right, Vector3.zero);
             Vector3 travelAxis = Vector3.forward;
             Vector3 spanAxis = travelAxis * spanSign;
             Vector3 beginEmitter = Vector3.zero;
             Vector3 latestEmitter = beginEmitter + spanAxis * 0.5f;
 
-            Assert.That(store.TryLatch(0.0, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, 0.5f, StoreTestSpanCaptureTimeout), Is.True,
+            Assert.That(store.TryLatch(0.0, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, 0.5f), Is.True,
                 "axes on one line are not a reason to refuse a wave");
-            Assert.That(store.Count, Is.EqualTo(1));
+            Assert.That(store.WaveCount, Is.EqualTo(1));
 
             store.Advance(0.2, 1, false, Vector3.zero, Vector3.zero);
 
@@ -2729,7 +2739,7 @@ namespace Zantetsu.Core.Tests
                 out Vector3 previousA, out Vector3 previousB,
                 out Vector3 currentA, out Vector3 currentB), Is.True);
 
-            Assert.That(store.Count, Is.EqualTo(1), "it was not clipped or retired");
+            Assert.That(store.WaveCount, Is.EqualTo(1), "it was not clipped or retired");
             Assert.That(span, Is.EqualTo(0.5f).Within(PositionTolerance));
             AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
             AssertSweepIsCollinear(plane.normal, previousA, previousB, currentA, currentB);
@@ -2745,7 +2755,7 @@ namespace Zantetsu.Core.Tests
                 out _, out _, out _, out _), Is.True);
 
             strokeFrameId++;
-            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            strokeTime = latchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
 
@@ -2776,13 +2786,13 @@ namespace Zantetsu.Core.Tests
                 Assert.That(sceneFollower, Is.Not.Null);
                 Assert.That(sceneFollower.Katana, Is.Not.Null);
 
-                Assert.That(ReadWaveVisualCount(sceneFollower), Is.EqualTo(SandboxSlashWaveStore.Capacity),
+                Assert.That(ReadWaveVisualCount(sceneFollower), Is.EqualTo(SlashWaveCore.Capacity),
                     "there is one display slot per wave the store can hold");
 
                 Transform displayRoot = null;
                 Mesh sharedMesh = null;
                 Material sharedMaterial = null;
-                for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+                for (int i = 0; i < SlashWaveCore.Capacity; i++)
                 {
                     Transform slot = ReadWaveVisual(sceneFollower, i);
                     Assert.That(slot, Is.Not.Null, "display slot " + i + " is not assigned");
@@ -2962,7 +2972,7 @@ namespace Zantetsu.Core.Tests
 
             // Long enough for the first wave and not the second.
             strokeFrameId++;
-            strokeTime = firstLatchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            strokeTime = firstLatchedAt + SlashWaveFlight.Adopted.LifetimeSeconds;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
 
@@ -3106,7 +3116,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(shown, Does.Contain("Stroke begin  no"));
             Assert.That(shown, Does.Contain("Plane         no"));
             Assert.That(shown, Does.Contain("Frame         no"));
-            Assert.That(shown, Does.Contain("Waves         0 / " + SandboxSlashWaveStore.Capacity));
+            Assert.That(shown, Does.Contain("Waves         0 / " + SlashWaveCore.Capacity));
             Assert.That(shown, Does.Not.Contain("#0"));
         }
 
@@ -3125,7 +3135,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(shown, Does.Contain("Latch         ready"));
             Assert.That(shown, Does.Contain("Frame         yes  span"));
-            Assert.That(shown, Does.Contain("Waves         1 / " + SandboxSlashWaveStore.Capacity));
+            Assert.That(shown, Does.Contain("Waves         1 / " + SlashWaveCore.Capacity));
             Assert.That(shown, Does.Contain("#0"));
             Assert.That(shown, Does.Contain("latched"));
             Assert.That(shown, Does.Contain("open"));
@@ -3682,8 +3692,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(1.1f), Is.False);
             Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(float.NaN), Is.False);
             Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(0f), Is.False);
-            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(SandboxSlashWaveStore.WaveLifetimeSeconds), Is.False,
-                "a timeout the store refuses would silently stop every wave");
+            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(float.NaN), Is.False);
+            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(-0.1f), Is.False);
 
             AssertDefaultTuning();
         }
@@ -4131,27 +4141,27 @@ namespace Zantetsu.Core.Tests
             Vector3 normal = Vector3.right;
             Vector3 guideDirection = new Vector3(0f, 1f, -1f).normalized;
 
-            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+            Assert.That(GuideRaySpanCandidate.TryEvaluateTerms(normal, Vector3.zero, Vector3.up,
                 new Vector3(0f, 0f, 1f), guideDirection, out float r, out float q, out float denominator), Is.True);
             Assert.That(r, Is.EqualTo(1f).Within(PositionTolerance));
             Assert.That(q, Is.EqualTo(Mathf.Sqrt(2f)).Within(PositionTolerance));
             Assert.That(Mathf.Abs(denominator), Is.EqualTo(Mathf.Sqrt(0.5f)).Within(PositionTolerance));
-            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.True);
+            Assert.That(GuideRaySpanCandidate.Default.IsUsable(r, q, denominator), Is.True);
 
             // Behind the span start: finite terms, not a usable candidate.
-            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+            Assert.That(GuideRaySpanCandidate.TryEvaluateTerms(normal, Vector3.zero, Vector3.up,
                 new Vector3(0f, 0f, 1f), new Vector3(0f, -1f, -1f).normalized, out r, out q, out denominator), Is.True);
             Assert.That(r, Is.LessThan(0f));
-            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.False);
+            Assert.That(GuideRaySpanCandidate.Default.IsUsable(r, q, denominator), Is.False);
 
             // Nearly parallel: the meeting point is far out, and not usable.
-            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+            Assert.That(GuideRaySpanCandidate.TryEvaluateTerms(normal, Vector3.zero, Vector3.up,
                 new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, -1e-4f).normalized, out r, out q, out denominator), Is.True);
             Assert.That(r, Is.GreaterThan(1000f));
-            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.False);
+            Assert.That(GuideRaySpanCandidate.Default.IsUsable(r, q, denominator), Is.False);
 
             // Exactly parallel: no finite terms at all.
-            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+            Assert.That(GuideRaySpanCandidate.TryEvaluateTerms(normal, Vector3.zero, Vector3.up,
                 new Vector3(0f, 0f, 1f), Vector3.up, out _, out _, out _), Is.False);
         }
 
