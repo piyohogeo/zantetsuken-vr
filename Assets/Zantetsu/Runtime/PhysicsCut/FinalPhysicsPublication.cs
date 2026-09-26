@@ -231,12 +231,15 @@ namespace Zantetsu.PhysicsCut
                     // Nothing is taken from where the lineage was registered, and nothing of the display's
                     // separation is added to it here.
                     Matrix4x4? displayFrame = sourceOwner.GeometryLocalToOwner;
+                    // The lineage the candidate was built with, planned from the source before the build.
                     positiveOwner = new PhysicsFragmentOwner(
                         input.candidate.Positive.Root, input.candidate.Positive.Body, positiveShape,
-                        input.candidate.Positive.FixedByAnchors, displayFrame);
+                        input.candidate.Positive.FixedByAnchors, displayFrame,
+                        input.candidate.ChildLineage, input.candidate.Positive.BuildingWorld);
                     negativeOwner = new PhysicsFragmentOwner(
                         input.candidate.Negative.Root, input.candidate.Negative.Body, negativeShape,
-                        input.candidate.Negative.FixedByAnchors, displayFrame);
+                        input.candidate.Negative.FixedByAnchors, displayFrame,
+                        input.candidate.ChildLineage, input.candidate.Negative.BuildingWorld);
                     input.registry.Reserve(2);
                 }
                 catch (Exception)

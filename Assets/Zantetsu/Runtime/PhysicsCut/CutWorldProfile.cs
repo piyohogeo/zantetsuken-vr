@@ -16,7 +16,9 @@ namespace Zantetsu.PhysicsCut
     /// </para>
     /// <para>
     /// **What it does not decide.** The separation impulses of a cut are the caller's own two values (DESIGN 7.2) and
-    /// are not here; neither is what a hit is, nor anything of Character, the building constraint or XR.
+    /// are not here; neither is what a hit is, nor anything of Character or XR. Which body is a building is not here
+    /// either: that is said when the body is registered. What is here of the building constraint is its three
+    /// settings and the system constraint capacity (DESIGN 7.2.2, O-048).
     /// </para>
     /// </summary>
     [CreateAssetMenu(menuName = "Zantetsu/Cut World Profile", fileName = "CutWorldProfile")]
@@ -86,6 +88,25 @@ namespace Zantetsu.PhysicsCut
         [SerializeField]
         private int maxIncompleteCuts = 32;
 
+        [Header("Building World D6 (DESIGN 7.2.2; provisional values, O-048)")]
+        [Tooltip("L1: the horizontal distance limit of a first-split building child, in metres.")]
+        [SerializeField]
+        private float buildingWorldFirstLimitMetres = 0.25f;
+
+        [Tooltip("A1: the symmetric angle limit of a first-split building child, in degrees (0 to 180).")]
+        [SerializeField]
+        private float buildingWorldFirstAngleDegrees = 15f;
+
+        [Tooltip("r: the common ratio both limits shrink by per split depth, strictly between 0 and 1.")]
+        [SerializeField]
+        private float buildingWorldRatio = 0.5f;
+
+        [Tooltip(
+            "How many system constraints -- Provisional sibling constraints and building World D6 together -- the "
+            + "scene may hold. A cut whose constraints would not fit cannot be built.")]
+        [SerializeField]
+        private int systemConstraintCapacity = 256;
+
         [Header("Ending")]
         [Tooltip(
             "How long an explicit shutdown gives the workers to hand back what they are running, in milliseconds. "
@@ -138,6 +159,11 @@ namespace Zantetsu.PhysicsCut
         public int ChainDepth => chainDepth;
 
         public int MaxIncompleteCuts => maxIncompleteCuts;
+
+        public BuildingWorldD6Settings BuildingWorld =>
+            new BuildingWorldD6Settings(buildingWorldFirstLimitMetres, buildingWorldFirstAngleDegrees, buildingWorldRatio);
+
+        public int SystemConstraintCapacity => systemConstraintCapacity;
 
         public int ShutdownTimeoutMilliseconds => shutdownTimeoutMilliseconds;
 

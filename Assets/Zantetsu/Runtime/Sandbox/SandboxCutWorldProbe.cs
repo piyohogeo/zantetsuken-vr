@@ -56,6 +56,28 @@ namespace Zantetsu.Sandbox
         [Tooltip("Whether the body falls. A sandbox body at rest is easier to look at.")]
         [SerializeField] private bool bodyUsesGravity;
 
+        [Tooltip(
+            "Register the body as a building (DESIGN 7.2.2): an explicit statement, as an authored building flag is. "
+            + "The Player turns it on with " + BuildingArgument + ".")]
+        [SerializeField] private bool bodyIsBuilding;
+
+        [Tooltip(
+            "Give the body fixed support anchors at its four bottom corners, so the lower side of a horizontal cut is "
+            + "fixed. The Player turns it on with " + BuildingAnchorsArgument + ".")]
+        [SerializeField] private bool bodyHasBottomAnchors;
+
+        /// <summary>The Player argument that registers the sandbox body as a building.</summary>
+        public const string BuildingArgument = "-zantetsuBuilding";
+
+        /// <summary>The Player argument that gives the sandbox body its bottom anchors.</summary>
+        public const string BuildingAnchorsArgument = "-zantetsuBuildingAnchors";
+
+        /// <summary>Whether the body was registered as a building.</summary>
+        public bool IsBuilding => bodyIsBuilding;
+
+        /// <summary>Whether the body was registered with its bottom anchors.</summary>
+        public bool HasBottomAnchors => bodyHasBottomAnchors;
+
         [Header("Optional private authored Megacity diagnostic")]
         [SerializeField] private TextAsset authoredPhysics;
         [SerializeField] private TextAsset static16Geometry;
@@ -213,6 +235,12 @@ namespace Zantetsu.Sandbox
         /// <summary>The one box: its convex, its collider mesh, its display geometry, and the registration of all three.</summary>
         private bool TryAddBody()
         {
+            foreach (string argument in Environment.GetCommandLineArgs())
+            {
+                bodyIsBuilding |= string.Equals(argument, BuildingArgument, StringComparison.OrdinalIgnoreCase);
+                bodyHasBottomAnchors |= string.Equals(argument, BuildingAnchorsArgument, StringComparison.OrdinalIgnoreCase);
+            }
+
             if (authoredPhysics != null || static16Geometry != null) return TryAddAuthoredMegacity();
 #if VP_DIAGNOSTIC_SCENE_AB
             lookImpulse = 0f;
@@ -263,8 +291,20 @@ namespace Zantetsu.Sandbox
             collider.convex = true;
             collider.sharedMesh = _shape.MeshOf(0);
 
+            // The four bottom corners, in the body's own frame, when asked for; none otherwise.
+            float3[] anchors = null;
+            if (bodyHasBottomAnchors && !IsAuthoredMegacity)
+            {
+                float3 e = bodyExtents;
+                anchors = new[]
+                {
+                    new float3(-e.x, -e.y, -e.z), new float3(e.x, -e.y, -e.z),
+                    new float3(e.x, -e.y, e.z), new float3(-e.x, -e.y, e.z),
+                };
+            }
+
             if (world.TryAddBody(
-                    _actor, _shape, geometry, Matrix4x4.identity, Matrix4x4.identity, null,
+                    _actor, _shape, geometry, Matrix4x4.identity, Matrix4x4.identity, anchors, bodyIsBuilding,
                     out LogicalFragmentId fragment))
             {
                 Body = fragment;

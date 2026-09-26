@@ -39,7 +39,7 @@ namespace Zantetsu.PhysicsCut
     /// nothing is freed by it.
     /// </para>
     /// <para>
-    /// **What is not here.** Hit detection, the building constraint, Character, the separation impulses of a cut, XR,
+    /// **What is not here.** Hit detection, Character, the separation impulses of a cut, XR,
     /// and the drawing itself: this settles what a collection is built from, and a caller that wants it drawn calls
     /// <see cref="VpLogicalCutDisplay.Render"/> with its own camera. Nothing here is a scheduler and this registers
     /// nothing into the player loop; the driver does (its turn after rendering, and joining
@@ -112,6 +112,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Whether everything was built and a cut may be asked for.</summary>
         public bool IsReady { get; private set; }
+
+        /// <summary>The profile this world was built with. Read only.</summary>
+        public CutWorldProfile Profile => profile;
 
         /// <summary>The logical state of every cut in this world.</summary>
         public LogicalCutLedger Ledger { get; private set; }
@@ -326,6 +329,7 @@ namespace Zantetsu.PhysicsCut
             Driver.Bind(
                 Ledger, Owners, Cook, Frame, Display, profile.SupportEpsilon, profile.AnchorEpsilon,
                 profile.VertexLimit, null, Geometry, this);
+            Driver.ConfigureConstraints(profile.BuildingWorld, profile.SystemConstraintCapacity);
             MakeColliderTemplate();
 
             IsReady = true;
@@ -364,6 +368,25 @@ namespace Zantetsu.PhysicsCut
             IReadOnlyList<float3> anchors,
             out LogicalFragmentId fragment)
         {
+            return TryAddBody(
+                root, shape, geometry, lineageToGeometryLocal, geometryLocalToOwner, anchors, false, out fragment);
+        }
+
+        /// <param name="isBuildingDerived">
+        /// Whether this body is registered as a building (DESIGN 7.2.2). It is the caller's explicit statement -- an
+        /// authored flag, never something read off a name, bounds or a material -- and every split of this body
+        /// inherits it.
+        /// </param>
+        public bool TryAddBody(
+            GameObject root,
+            PhysicsOwnerShape shape,
+            VpStoredGeometry geometry,
+            Matrix4x4 lineageToGeometryLocal,
+            Matrix4x4 geometryLocalToOwner,
+            IReadOnlyList<float3> anchors,
+            bool isBuildingDerived,
+            out LogicalFragmentId fragment)
+        {
             fragment = default;
             if (!IsReady || root == null || shape == null)
             {
@@ -374,6 +397,17 @@ namespace Zantetsu.PhysicsCut
             if (body == null)
             {
                 UnityEngine.Debug.LogError(root.name + ": a body of a cut world needs a Rigidbody.", root);
+                return false;
+            }
+
+            // A body with a joint of its own is not a cut target (DESIGN 7.2.2): the only constraints a registered
+            // body has are the ones the cut system makes. Refused here, once, when it is registered; nothing is
+            // inherited, re-targeted or watched afterwards. A joint on another body that names this one is the
+            // authoring contract's to keep out, not something searched for here.
+            if (root.GetComponentInChildren<Joint>(true) != null)
+            {
+                UnityEngine.Debug.LogError(
+                    root.name + ": a body with a joint is not a cut target, so it was not registered.", root);
                 return false;
             }
 
@@ -404,7 +438,8 @@ namespace Zantetsu.PhysicsCut
             }
 
             Owners.RegisterAuthored(
-                fragment, root, body, shape, anchorArray != null && anchorArray.Length > 0, geometryLocalToOwner);
+                fragment, root, body, shape, anchorArray != null && anchorArray.Length > 0, geometryLocalToOwner,
+                isBuildingDerived);
             Geometry.RegisterBaseGeometry(fragment, geometry, lineageToGeometryLocal);
             return true;
         }

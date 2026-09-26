@@ -21,14 +21,30 @@ namespace Zantetsu.PhysicsCut
             Rigidbody body,
             PhysicsOwnerShape shape,
             bool fixedByAnchors,
-            Matrix4x4? geometryLocalToOwner = null)
+            Matrix4x4? geometryLocalToOwner = null,
+            BuildingLineage building = default,
+            ConfigurableJoint buildingWorld = null)
         {
             Root = root != null ? root : throw new ArgumentNullException(nameof(root));
             Body = body != null ? body : throw new ArgumentNullException(nameof(body));
             Shape = shape ?? throw new ArgumentNullException(nameof(shape));
             FixedByAnchors = fixedByAnchors;
             GeometryLocalToOwner = geometryLocalToOwner;
+            Building = building;
+            BuildingWorldConstraint = buildingWorld;
         }
+
+        /// <summary>
+        /// Whether this owner comes from a building and its split depth (DESIGN 7.2.2): the owner's own record of it.
+        /// Registered explicitly for a first owner, and for a child the value planned before its cut was built.
+        /// </summary>
+        public BuildingLineage Building { get; }
+
+        /// <summary>
+        /// The building World D6 this owner's actor carries (DESIGN 7.2.2), or none. It is the system's own
+        /// constraint, known here so that nothing has to look for joints on the actor; it ends with the actor.
+        /// </summary>
+        public ConfigurableJoint BuildingWorldConstraint { get; }
 
         public GameObject Root { get; private set; }
 
@@ -185,6 +201,38 @@ namespace Zantetsu.PhysicsCut
 
         public int Count => _owners.Count;
 
+        /// <summary>
+        /// How many system constraints are in the scene's keeping now: each published Provisional pair's sibling
+        /// constraint, and every building World D6 on a pair's actor or a published owner's (DESIGN 7.1.1, 7.2.2).
+        /// A constraint counts from the moment what carries it is taken in here until what carries it is ended.
+        /// </summary>
+        public int SystemConstraintCount { get; private set; }
+
+        /// <summary>
+        /// Whether a body is held by a constraint the cut system itself made -- a Provisional pair's sibling
+        /// constraint, or a building World D6 -- rather than moving on its own. This is the whole of what a later
+        /// consumer (DESIGN 4.54's prediction) needs to tell such a body apart; nothing is searched for on the body.
+        /// A registered owner carries no other joint (DESIGN 7.2.2), so a body this does not know is not held.
+        /// </summary>
+        public bool HeldBySystemConstraint(Rigidbody body)
+        {
+            if (body == null)
+            {
+                return false;
+            }
+
+            // Both actors of a live pair are held by the sibling constraint between them.
+            if (_pairOfBody.TryGetValue(body, out ProvisionalOwnerPair pair) && !pair.IsEnded)
+            {
+                return true;
+            }
+
+            return _fragmentOfBody.TryGetValue(body, out LogicalFragmentId fragment)
+                && _owners.TryGetValue(fragment, out PhysicsFragmentOwner owner)
+                && !owner.IsWithdrawn
+                && owner.BuildingWorldConstraint != null;
+        }
+
         /// <summary>How many published Provisional pairs are in the scene now.</summary>
         public int ProvisionalPairCount => _pairsByOperation.Count;
 
@@ -339,6 +387,12 @@ namespace Zantetsu.PhysicsCut
             _pairsBySource.Add(pair.Source, pair);
             AddBody(pair.Positive, pair);
             AddBody(pair.Negative, pair);
+            SystemConstraintCount += ConstraintsOf(pair);
+        }
+
+        private static int ConstraintsOf(ProvisionalOwnerPair pair)
+        {
+            return (pair.Separation != null ? 1 : 0) + pair.BuildingWorldCount;
         }
 
         private void AddBody(PhysicsOwnerSide side, ProvisionalOwnerPair pair)
@@ -376,6 +430,10 @@ namespace Zantetsu.PhysicsCut
             _pairsBySource.Remove(pair.Source);
             RemoveBody(pair.Positive);
             RemoveBody(pair.Negative);
+
+            // The sibling constraint ends with the pair; the building constraints go on with the actors, and are
+            // counted from here by the owners the caller registered for them.
+            SystemConstraintCount -= ConstraintsOf(pair);
             pair.HandOver(out positive, out negative);
             return true;
         }
@@ -402,6 +460,7 @@ namespace Zantetsu.PhysicsCut
             _pairsBySource.Remove(pair.Source);
             RemoveBody(pair.Positive);
             RemoveBody(pair.Negative);
+            SystemConstraintCount -= ConstraintsOf(pair);
             pair.End();
             return true;
         }
@@ -423,15 +482,22 @@ namespace Zantetsu.PhysicsCut
         /// (<see cref="PhysicsFragmentOwner.GeometryLocalToOwner"/>). Left out for a lineage whose display is
         /// arranged some other way; every cut of this one inherits what is given here.
         /// </param>
+        /// <param name="isBuildingDerived">
+        /// Whether this owner is registered as a building (DESIGN 7.2.2): the caller's explicit statement, never
+        /// inferred. A building starts at split depth 0; anything else is not building-derived and stays at 0.
+        /// </param>
         public PhysicsFragmentOwner RegisterAuthored(
             LogicalFragmentId fragment,
             GameObject root,
             Rigidbody body,
             PhysicsOwnerShape shape,
             bool fixedByAnchors = false,
-            Matrix4x4? geometryLocalToOwner = null)
+            Matrix4x4? geometryLocalToOwner = null,
+            bool isBuildingDerived = false)
         {
-            var owner = new PhysicsFragmentOwner(root, body, shape, fixedByAnchors, geometryLocalToOwner);
+            var owner = new PhysicsFragmentOwner(
+                root, body, shape, fixedByAnchors, geometryLocalToOwner,
+                isBuildingDerived ? BuildingLineage.RegisteredBuilding : BuildingLineage.NotBuilding);
             Add(fragment, owner);
             return owner;
         }
@@ -449,6 +515,11 @@ namespace Zantetsu.PhysicsCut
             }
 
             _owners.Add(fragment, owner);
+            if (owner.BuildingWorldConstraint != null)
+            {
+                SystemConstraintCount++;
+            }
+
             if (owner.Body != null)
             {
                 // And the way back, so that the actor this fragment is can be resolved to it: a child of a handoff is
@@ -493,6 +564,11 @@ namespace Zantetsu.PhysicsCut
                 _fragmentOfBody.Remove(owner.Body);
             }
 
+            if (owner.BuildingWorldConstraint != null)
+            {
+                SystemConstraintCount--;
+            }
+
             owner.Release();
             return true;
         }
@@ -521,6 +597,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             _owners.Clear();
+            SystemConstraintCount = 0;
         }
     }
 }
