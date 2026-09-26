@@ -140,10 +140,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var oldColliders = new List<MeshCollider>(positive.Colliders);
             oldColliders.AddRange(negative.Colliders);
             Assert.That(oldColliders.Count, Is.GreaterThan(0), "the pair stands on colliders of its own");
+            var oldMeshes = oldColliders.ConvertAll(c => c.sharedMesh);
 
+            // Where the source box's halves are, read through each Provisional shape frame: the whole box on both, as
+            // they share the source's convex. Refreshed every frame before the call that may hand off, since the
+            // actors move between frames and the switch itself moves the frames.
+            Matrix4x4 positiveBox = default;
+            Matrix4x4 negativeBox = default;
             float deadline = Time.realtimeSinceStartup + DeadlineSeconds;
             while (transaction.Phase != ProvisionalCutPhase.HandedOff && Time.realtimeSinceStartup < deadline)
             {
+                positiveBox = positive.ShapeFrame.transform.localToWorldMatrix;
+                negativeBox = negative.ShapeFrame.transform.localToWorldMatrix;
                 driver.Advance(Time.frameCount);
                 if (transaction.Phase == ProvisionalCutPhase.HandedOff)
                 {
@@ -157,12 +165,30 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 transaction.Phase, Is.EqualTo(ProvisionalCutPhase.HandedOff),
                 "the handoff happened, in a call this test made");
 
-            // Still inside that frame: the old colliders have only been asked to go, and not one of them answers.
-            foreach (MeshCollider old in oldColliders)
+            // Still inside that frame, with no yield, step or sync: what the physics scene answers is the final shape.
+            // Each side's final colliders answer inside its own half of the source box and not inside the other's --
+            // where both sides' old colliders, the whole box, did answer before the switch.
+            Assert.That(Physics.autoSyncTransforms, Is.False, "the project's setting, under which this is read");
+            Assert.That(AnswersAt(positive, positiveBox.MultiplyPoint3x4(new Vector3(0f, 0.5f, 0f))), Is.True, "the positive half answers");
+            Assert.That(AnswersAt(positive, positiveBox.MultiplyPoint3x4(new Vector3(0f, -0.5f, 0f))), Is.False, "and nothing of it below the plane");
+            Assert.That(AnswersAt(negative, negativeBox.MultiplyPoint3x4(new Vector3(0f, -0.5f, 0f))), Is.True, "the negative half answers");
+            Assert.That(AnswersAt(negative, negativeBox.MultiplyPoint3x4(new Vector3(0f, 0.5f, 0f))), Is.False, "and nothing of it above the plane");
+
+            // An old collider is either refitted -- one of the final set, answering with a final mesh -- or no part
+            // needed it and it stopped answering at once, with only its destruction left to the end of the frame.
+            var finalColliders = new List<MeshCollider>(positive.Colliders);
+            finalColliders.AddRange(negative.Colliders);
+            for (int i = 0; i < oldColliders.Count; i++)
             {
-                Assert.That(
-                    old == null || !old.enabled, Is.True,
-                    "an old collider was left answering after the switch: " + old);
+                MeshCollider old = oldColliders[i];
+                if (finalColliders.Contains(old))
+                {
+                    Assert.That(old.enabled, Is.True, "a refitted collider answers");
+                    Assert.That(old.sharedMesh, Is.Not.SameAs(oldMeshes[i]), "with the final mesh, not the Provisional one");
+                    continue;
+                }
+
+                Assert.That(old == null || !old.enabled, Is.True, "an old collider no part needed was left answering: " + old);
             }
 
             foreach (PhysicsOwnerSide side in new[] { positive, negative })
@@ -171,7 +197,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 foreach (MeshCollider collider in side.Colliders)
                 {
                     Assert.That(collider != null && collider.enabled, Is.True, "and they are the ones answering");
-                    Assert.That(oldColliders.Contains(collider), Is.False, "none of them is one of the old ones");
+                    Assert.That(oldMeshes.Contains(collider.sharedMesh), Is.False, "none of them answers with a Provisional mesh");
                 }
 
                 Assert.That(side.Root.activeInHierarchy, Is.True, "the actor is in the scene throughout");
@@ -216,7 +242,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(negativeRoot != null && negativeRoot.activeInHierarchy, Is.True);
             foreach (MeshCollider old in oldColliders)
             {
-                Assert.That(old == null, Is.True, "the old colliders were destroyed once the frame was over");
+                Assert.That(
+                    finalColliders.Contains(old) ? old != null && old.enabled : old == null, Is.True,
+                    "a refitted collider stays; one no part needed was destroyed once the frame was over");
             }
 
             Assert.That(joint == null, Is.True, "and so was the sibling constraint");
@@ -235,6 +263,23 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 _registry.TryResolveFragment(negativeBody, out LogicalFragmentId negativeChild, out float _), Is.True);
             Assert.That(negativeChild, Is.EqualTo(published.negative));
             Assert.That(sourceRoot == null, Is.True, "and the source's own object went with its retirement");
+        }
+
+        /// <summary>Whether one of <paramref name="side"/>'s colliders is among what the physics scene finds at <paramref name="point"/>.</summary>
+        private static bool AnswersAt(PhysicsOwnerSide side, Vector3 point)
+        {
+            foreach (Collider found in Physics.OverlapSphere(point, 0.05f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                foreach (MeshCollider own in side.Colliders)
+                {
+                    if (found == own)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         // ----- one authored box, made without the editor-only harness -------------------------------------------------
