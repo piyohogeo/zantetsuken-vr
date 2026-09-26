@@ -169,9 +169,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
-        /// What one frame's own state was, written down in that frame's late update -- after the scene's collection
-        /// and before its picture is drawn. A coroutine cannot see it: it resumes between the updates and the late
-        /// updates, so by the time it looks, the frame it wanted has moved on.
+        /// What one frame's own state was. What stands for the body and how far its cut has come are written down in
+        /// that frame's late update; what the frame **drew** and where its actors were are read at the next frame's
+        /// update, because the frame's physics step and its collection come after the late updates
+        /// (<see cref="CutPhysicsStep"/>) and nothing moves the actors or rewrites the collection before the next
+        /// frame's. A coroutine cannot see it: it resumes between the updates and the late updates, so by the time it
+        /// looks, the frame it wanted has moved on.
         /// <para>
         /// **This is what makes a state and a picture the same frame's.** A case reads these in the resume after the
         /// frame they were written in, which is the first moment that frame's picture exists, and checks the frame
@@ -219,6 +222,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             /// <summary>How many collections had settled by this frame: it grows in the frame one settles in.</summary>
             internal int SettledCollections { get; private set; }
 
+            private Transform _positiveRoot;
+            private Transform _negativeRoot;
+            private bool _pending;
+
             private void LateUpdate()
             {
                 if (world == null || !world.IsReady || world.Display == null || world.Display.IsDisposed)
@@ -227,24 +234,45 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 Frame = Time.frameCount;
-                SettledCollections = world.Display.SettledCollections;
                 Following = operation.IsSet;
                 if (Following)
                 {
                     Stage = world.Geometry.StageOf(operation);
                 }
+
                 PairStood = world.Owners.TryGetProvisionalOf(body, out ProvisionalOwnerPair pair) && !pair.IsEnded;
+                _positiveRoot = null;
+                _negativeRoot = null;
                 if (PairStood)
                 {
-                    PositiveAt = pair.Positive.Root.transform.position;
-                    NegativeAt = pair.Negative.Root.transform.position;
+                    _positiveRoot = pair.Positive.Root.transform;
+                    _negativeRoot = pair.Negative.Root.transform;
                 }
                 else if (positive.IsSet
                          && world.Owners.TryGet(positive, out PhysicsFragmentOwner positiveOwner)
                          && world.Owners.TryGet(negative, out PhysicsFragmentOwner negativeOwner))
                 {
-                    PositiveAt = positiveOwner.Root.transform.position;
-                    NegativeAt = negativeOwner.Root.transform.position;
+                    _positiveRoot = positiveOwner.Root.transform;
+                    _negativeRoot = negativeOwner.Root.transform;
+                }
+
+                _pending = true;
+            }
+
+            /// <summary>The rest of the frame written down in the late update: its step and its collection.</summary>
+            private void Update()
+            {
+                if (!_pending || world == null || !world.IsReady || world.Display == null || world.Display.IsDisposed)
+                {
+                    return;
+                }
+
+                _pending = false;
+                SettledCollections = world.Display.SettledCollections;
+                if (_positiveRoot != null && _negativeRoot != null)
+                {
+                    PositiveAt = _positiveRoot.position;
+                    NegativeAt = _negativeRoot.position;
                 }
 
                 DrawnForBody = 0;

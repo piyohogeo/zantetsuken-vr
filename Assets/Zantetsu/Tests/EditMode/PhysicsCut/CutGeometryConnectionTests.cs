@@ -632,6 +632,7 @@ namespace Zantetsu.PhysicsCut.Tests
         {
             w.driver.Advance(_frame);
             w.driver.DriveLateUpdate();
+            w.driver.CollectSnapshot();
             _frame++;
         }
 

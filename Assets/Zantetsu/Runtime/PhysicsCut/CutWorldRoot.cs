@@ -41,8 +41,9 @@ namespace Zantetsu.PhysicsCut
     /// <para>
     /// **What is not here.** Hit detection, the building constraint, Character, the separation impulses of a cut, XR,
     /// and the drawing itself: this settles what a collection is built from, and a caller that wants it drawn calls
-    /// <see cref="VpLogicalCutDisplay.Render"/> with its own camera. Nothing here is a scheduler and nothing is
-    /// registered into the player loop.
+    /// <see cref="VpLogicalCutDisplay.Render"/> with its own camera. Nothing here is a scheduler and this registers
+    /// nothing into the player loop; the driver does (its turn after rendering, and joining
+    /// <see cref="CutPhysicsStep"/>, the one place the physics scene is advanced and the display collects).
     /// </para>
     /// </summary>
     [DisallowMultipleComponent]
