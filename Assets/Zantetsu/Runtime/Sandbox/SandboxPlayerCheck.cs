@@ -135,6 +135,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 LogState("the body is registered");
+                LogStep("at the start");
                 if (_probe.IsAuthoredMegacity)
                 {
                     _authoredPosition = _probe.Actor.transform.position;
@@ -216,6 +217,17 @@ namespace Zantetsu.Sandbox
                     + " positive=" + record.positive + " negative=" + record.negative
                     + " stage=" + _world.Geometry.StageOf(operation));
                 LogState("after the commit");
+                LogStep("after the commit");
+                if (!_probe.IsAuthoredMegacity)
+                {
+                    bool physicsHeld = true;
+                    yield return CheckPhysicsAndPause(record.positive, record.negative, ok => physicsHeld = ok);
+                    if (!physicsHeld)
+                    {
+                        yield return Finish(10);
+                        yield break;
+                    }
+                }
                 if (_probe.IsAuthoredMegacity)
                     foreach (var id in new[] { record.positive, record.negative })
                         if (_world.Owners.TryGet(id, out var owner))
@@ -437,6 +449,67 @@ namespace Zantetsu.Sandbox
                 }
 
                 Log("waited for " + what + ": " + condition());
+            }
+
+            /// <summary>What the physics step of the session is and how far it has gone (DESIGN 4.4).</summary>
+            private void LogStep(string what)
+            {
+                ManualPhysicsClock clock = CutPhysicsStep.Clock;
+                Log("physics step " + what + ": mode=" + Physics.simulationMode + " hz=" + clock.FrequencyHz
+                    + " step=" + clock.StepSeconds.ToString("R") + " stepId=" + clock.StepId
+                    + " physicsSeconds=" + clock.PhysicsSeconds.ToString("F4")
+                    + " unsimulated=" + clock.UnsimulatedSeconds.ToString("F4")
+                    + " paused=" + clock.IsPaused + " lastSimulateMs=" + (CutPhysicsStep.LastSimulateSeconds * 1000.0).ToString("F3")
+                    + " frame=" + Time.frameCount);
+            }
+
+            /// <summary>
+            /// The children move by the physics alone -- the steps the session takes, from the separation the cut gave
+            /// them -- and a pause stops both the steps and the motion, which come back after it. Before anything of
+            /// the walk holds or carries them.
+            /// </summary>
+            private IEnumerator CheckPhysicsAndPause(LogicalFragmentId positive, LogicalFragmentId negative, Action<bool> done)
+            {
+                if (!_world.Owners.TryGet(positive, out PhysicsFragmentOwner a) || !_world.Owners.TryGet(negative, out PhysicsFragmentOwner b))
+                {
+                    Log("FAILED: the children are not owned for the physics check.");
+                    done(false);
+                    yield break;
+                }
+
+                float Apart() => Vector3.Distance(a.Root.transform.position, b.Root.transform.position);
+                float apart0 = Apart();
+                long step0 = CutPhysicsStep.Clock.StepId;
+                for (int i = 0; i < 30; i++) yield return null;
+                float apart1 = Apart();
+                long moving = CutPhysicsStep.Clock.StepId - step0;
+                Log("physics motion: over 30 frames steps=" + moving + " apart " + apart0.ToString("F4") + " -> " + apart1.ToString("F4"));
+
+                CutPhysicsStep.SetPaused(true);
+                yield return null;
+                long pausedStep = CutPhysicsStep.Clock.StepId;
+                Vector3 pausedAt = a.Root.transform.position;
+                float until = Time.realtimeSinceStartup + 0.5f;
+                while (Time.realtimeSinceStartup < until) yield return null;
+                long pausedSteps = CutPhysicsStep.Clock.StepId - pausedStep;
+                float pausedMove = Vector3.Distance(pausedAt, a.Root.transform.position);
+                LogStep("while paused");
+                CutPhysicsStep.SetPaused(false);
+                long resumedStep = CutPhysicsStep.Clock.StepId;
+                until = Time.realtimeSinceStartup + 0.3f;
+                while (Time.realtimeSinceStartup < until) yield return null;
+                long resumedSteps = CutPhysicsStep.Clock.StepId - resumedStep;
+                Log("physics pause: 0.5 s paused steps=" + pausedSteps + " moved=" + pausedMove.ToString("F6")
+                    + "; 0.3 s after the resume steps=" + resumedSteps);
+                LogStep("after the resume");
+
+                bool ok = moving > 0 && apart1 > apart0 && pausedSteps == 0 && pausedMove == 0f && resumedSteps > 0;
+                if (!ok)
+                {
+                    Log("FAILED: the physics did not move by its steps, or a pause did not hold it still, or it did not resume.");
+                }
+
+                done(ok);
             }
 
             private IEnumerator Finish(int code)

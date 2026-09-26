@@ -28,8 +28,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// </para>
     /// <para>
     /// **Not here**: hit detection, the impulse of a cut (the two values a case gives are a test's input and not a
-    /// product value), the building constraint, Character, XR, drawing and any measurement. The simulation runs as
-    /// Unity runs it; nothing is stepped by hand.
+    /// product value), the building constraint, Character, XR, drawing and any measurement. The simulation runs as the
+    /// product runs it (<see cref="CutPhysicsStep"/>); nothing is stepped by hand.
     /// </para>
     /// </summary>
     public unsafe class CutWorldRootPlayModeTests
@@ -1065,9 +1065,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
-        /// Reads what one frame's collection settled, **in that frame**: a coroutine that yields resumes after the
-        /// updates and before the late updates, so what it sees is the frame before's. This runs after the driver's
-        /// own late update -- by its execution order -- and writes down what was settled and when.
+        /// Reads what one frame settled: a coroutine that yields resumes after the updates and before the late updates,
+        /// so what it sees is the frame before's. The pairs standing in the scene are read after the driver's own late
+        /// update -- by this component's execution order -- in the frame itself. What the frame **drew** is read at the
+        /// next frame's update: the display collects after every late update (<see cref="CutPhysicsStep"/>), and
+        /// nothing rewrites that collection before the next frame's, so the next update is the first place it can be
+        /// read, and it is still that frame's.
         /// <para>
         /// It drives nothing: it calls nothing of the driver or the root, and only reads.
         /// </para>
@@ -1077,6 +1080,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             internal CutWorldRoot world;
             internal LogicalFragmentId watched;
+            private int _lateFrame = -1;
 
             /// <summary>The frame the last reading is of.</summary>
             internal int Frame { get; private set; } = -1;
@@ -1087,6 +1091,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             /// <summary>How many Provisional pairs stood in the scene in that frame.</summary>
             internal int Pairs { get; private set; }
 
+            private void Update()
+            {
+                if (_lateFrame < 0 || world == null || !world.IsReady)
+                {
+                    return;
+                }
+
+                // The previous frame's collection, which was taken after its late updates.
+                Drawn = DrawnFragmentsOf(world, watched);
+            }
+
             private void LateUpdate()
             {
                 if (world == null || !world.IsReady)
@@ -1095,7 +1110,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 Frame = Time.frameCount;
-                Drawn = DrawnFragmentsOf(world, watched);
+                _lateFrame = Frame;
                 Pairs = world.Owners.ProvisionalPairCount;
             }
         }

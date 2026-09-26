@@ -105,9 +105,12 @@ namespace Zantetsu.PhysicsCut
     /// **The order in one frame.** In <c>Update</c>: classify the source's shape against the plane, accept the cut,
     /// prepare its anchors, build the unpublished pair, publish it — and then, in the same call, submit the final cut
     /// and let <see cref="SharedWorkFrame.Update"/> collect and submit what the frame's remaining budget allows. In
-    /// <c>LateUpdate</c>: the display collects, after the publication and never inside it. Standard
-    /// <c>FixedUpdate</c> simulation is assumed: the switch happens between physics steps because an ordinary update
-    /// is between them, and nothing here steps, simulates or calls anything back inside that switch.
+    /// <c>LateUpdate</c>: one more turn of the same frame, which may publish too. Then, after every late update,
+    /// <see cref="CutPhysicsStep"/> -- the one place the physics scene is advanced (DESIGN 4.4) -- decides whether to
+    /// simulate once and lets this driver's display collect (<see cref="CollectSnapshot"/>): publication, the
+    /// simulation, the collection, the drawing, in that order (DESIGN 7.1.1). Nothing here steps or simulates, and a
+    /// switch is never inside a simulation: the simulation is a call of its own on the main thread, after the late
+    /// updates.
     /// </para>
     /// <para>
     /// **Nothing of the cut is waited for.** Taking the cook's reservation, the numbers coming back, the bake, and the
@@ -541,9 +544,10 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// What this driver does in <c>LateUpdate</c>: carry the frame once more, and then let the display collect —
-        /// after the publication of this same frame and never inside it. The snapshot the display settles is settled
-        /// by its own rules (DESIGN 5.6); this only says when.
+        /// What this driver does in <c>LateUpdate</c>: carry the frame once more. The display does not collect here any
+        /// more: it collects in <see cref="CollectSnapshot"/>, which <see cref="CutPhysicsStep"/> calls after every late
+        /// update and after its decision to simulate, so the snapshot is taken after this frame's publications and after
+        /// the step they are simulated in (DESIGN 7.1.1).
         /// <para>
         /// **The second turn is the same frame's, not a new one.** It is given the same frame id, so the budget is
         /// not refilled and the frame spends what it was given: <see cref="SharedWorkFrame.Update"/> with an id it
@@ -555,18 +559,22 @@ namespace Zantetsu.PhysicsCut
         /// this is one more ordinary occasion, later in the same frame, and it stops by the same rules.
         /// </para>
         /// </summary>
-        public bool DriveLateUpdate()
+        public void DriveLateUpdate()
         {
 #if VP_DIAGNOSTIC_SCENE_AB
             using var measured = SceneAbCounters.Measure(1);
 #endif
             Advance(CurrentFrame);
-            if (_display == null)
-            {
-                return false;
-            }
+        }
 
-            return _display.TryBeginFrame();
+        /// <summary>
+        /// Lets the display collect this frame's snapshot -- after this frame's publications and after the frame's
+        /// decision to simulate, which is where <see cref="CutPhysicsStep"/> calls it. The snapshot the display settles
+        /// is settled by its own rules (DESIGN 5.6); this only says when. Whether it collected is the display's answer.
+        /// </summary>
+        public bool CollectSnapshot()
+        {
+            return _display != null && _display.TryBeginFrame();
         }
 
         private void Update()

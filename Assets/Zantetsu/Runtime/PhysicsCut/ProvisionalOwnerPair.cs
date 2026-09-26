@@ -173,16 +173,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsEnded = true;
+
+            // The constraint goes at once, not at the end of the frame. The actors stay in the scene, and the frame's
+            // physics step comes after the late update this handoff may be in (CutPhysicsStep): a joint only asked to go
+            // is still in that step and would hold the two children together through it. An ending takes the actors out
+            // of the scene first, so there a deferred destroy is enough; here nothing else takes the joint out.
             if (Separation != null)
             {
-                if (Application.isPlaying)
-                {
-                    UnityEngine.Object.Destroy(Separation);
-                }
-                else
-                {
-                    UnityEngine.Object.DestroyImmediate(Separation);
-                }
+                UnityEngine.Object.DestroyImmediate(Separation);
             }
 
             Separation = null;

@@ -1340,8 +1340,10 @@ namespace Zantetsu.PhysicsCut.Tests
                     Assert.That(transaction.Cut.IsOver, Is.False, "and is not finished: nothing waited for it");
                     Assert.That(transaction.Products, Is.Null);
 
-                    // What LateUpdate calls: the display collects, after the publication, in the same frame.
-                    Assert.That(w.driver.DriveLateUpdate(), Is.True, "the display opened this frame");
+                    // What LateUpdate calls, and then what the physics step calls after every late update: the display
+                    // collects, after the publication, in the same frame.
+                    w.driver.DriveLateUpdate();
+                    Assert.That(w.driver.CollectSnapshot(), Is.True, "the display opened this frame");
                     Assert.That(
                         display.SideCount, Is.EqualTo(2),
                         "and it collected the two sides of the accepted cut: " + display.SideCount);

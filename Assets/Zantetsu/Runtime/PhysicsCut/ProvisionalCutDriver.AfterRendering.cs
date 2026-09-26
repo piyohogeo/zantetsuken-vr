@@ -11,10 +11,11 @@ namespace Zantetsu.PhysicsCut
     /// One more turn of the driver's frame, after the frame has been rendered (DESIGN 4.4: a frame may take several
     /// non-blocking turns sharing one budget; where and how many is the implementation's).
     /// <para>
-    /// **Why after rendering.** <see cref="DriveLateUpdate"/> carries the frame and then lets the display settle this
-    /// frame's snapshot, which the cameras draw. A turn between that settling and the drawing would change the
-    /// published state under a snapshot already taken; a turn after the drawing does not: what it hands off or commits
-    /// is collected by the next frame's <see cref="VpLogicalCutDisplay.TryBeginFrame"/>, exactly as if the next frame's
+    /// **Why after rendering.** After the late updates, <see cref="CutPhysicsStep"/> decides the frame's simulation
+    /// and lets the display settle this frame's snapshot (<see cref="CollectSnapshot"/>), which the cameras draw. A
+    /// turn between that settling and the drawing would change the published state under a snapshot already taken; a
+    /// turn after the drawing does not: what it hands off or commits is simulated by the next frame's decision and
+    /// collected by the next frame's <see cref="VpLogicalCutDisplay.TryBeginFrame"/>, exactly as if the next frame's
     /// update had done it, and what the display retires is kept, as always, until that next adoption. So the turn sits
     /// right after <see cref="PostLateUpdate.FinishFrameRendering"/>, where the frame's cameras have rendered.
     /// </para>
@@ -49,11 +50,15 @@ namespace Zantetsu.PhysicsCut
             {
                 s_afterRendering.Add(this);
             }
+
+            // The display collects after the frame's decision to simulate, not in this driver's late update.
+            CutPhysicsStep.Join(this);
         }
 
         private void OnDisable()
         {
             s_afterRendering.Remove(this);
+            CutPhysicsStep.Leave(this);
         }
 
         /// <summary>
