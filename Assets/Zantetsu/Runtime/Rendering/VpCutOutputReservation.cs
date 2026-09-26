@@ -23,6 +23,10 @@ namespace Zantetsu.Rendering
 
         internal readonly VpStoredGeometry parent;
         internal readonly VpIndexRangeHandle indexRange;
+
+        // The descriptor the second side's range takes at a two-sided commit: an empty reservation owned from the
+        // moment this was reserved, so no registration made while the cut runs can leave the commit without one.
+        internal readonly VpIndexRangeHandle splitDescriptor;
         internal readonly int indexStart;
         internal readonly int vertexStart;
         internal readonly int submeshStart;
@@ -34,6 +38,7 @@ namespace Zantetsu.Rendering
         internal VpCutOutputReservation(
             VpStoredGeometry parent,
             VpIndexRangeHandle indexRange,
+            VpIndexRangeHandle splitDescriptor,
             int indexStart,
             int vertexStart,
             int submeshStart,
@@ -46,6 +51,7 @@ namespace Zantetsu.Rendering
         {
             this.parent = parent;
             this.indexRange = indexRange;
+            this.splitDescriptor = splitDescriptor;
             this.indexStart = indexStart;
             this.vertexStart = vertexStart;
             this.submeshStart = submeshStart;

@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -5,6 +6,7 @@ using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
+using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut.PlayModeTests
 {
@@ -13,15 +15,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         CutWorldRoot coldWorld;
         VpPhysicsColdPreparation coldWarm;
         readonly List<VpPreparedCharacterCut> coldHandles=new List<VpPreparedCharacterCut>();
-        readonly List<Object> coldObjects=new List<Object>();
-        T ColdTrack<T>(T obj) where T:Object {coldObjects.Add(obj);return obj;}
+        readonly List<UnityEngine.Object> coldObjects=new List<UnityEngine.Object>();
+        CutWorldRootPlayModeTests.HoldingExecutor coldGeometryHold;
+        T ColdTrack<T>(T obj) where T:UnityEngine.Object {coldObjects.Add(obj);return obj;}
         static void ColdSet(object obj,string name,object value)=>obj.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic).SetValue(obj,value);
-        void ColdWorld()
+        void ColdWorld(Func<WorkDestination,IWorkExecutor> executors=null)
         {
             var profile=ColdTrack(ScriptableObject.CreateInstance<CutWorldProfile>());
             var mat=ColdTrack(new Material(Shader.Find("Zantetsu/VP Indexed Indirect Unlit")));
             var go=ColdTrack(new GameObject("D6H cold world"));go.SetActive(false);coldWorld=go.AddComponent<CutWorldRoot>();
             ColdSet(coldWorld,"profile",profile);ColdSet(coldWorld,"materials",new[]{new CutWorldRoot.MaterialBinding{sourceIndex=0,material=mat}});
+            if(executors!=null)ColdSet(coldWorld,"executors",executors);
             go.SetActive(true);Assert.That(coldWorld.IsReady,Is.True);
         }
         SkinnedMeshRenderer ColdRig()
@@ -73,6 +77,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         [UnityTearDown] public IEnumerator ColdCleanup()
         {
             if(coldWorld==null&&coldWarm==null&&coldHandles.Count==0&&coldObjects.Count==0)yield break;
+            // A case that stopped with geometry work held lets it go, so the world can end on ordinary frames.
+            if(coldGeometryHold!=null){coldGeometryHold.ReleaseEverything();coldGeometryHold=null;}
             foreach(var handle in coldHandles)handle.Dispose();coldHandles.Clear();
             yield return null;
             if(coldWarm!=null){Assert.That(coldWarm.TryFinish(),Is.True);coldWarm.Dispose();coldWarm=null;}
@@ -82,7 +88,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 for(int i=0;i<120&&!coldWorld.Shutdown();i++)yield return null;
                 Assert.That(coldWorld.IsReleased,Is.True,"do not destroy resources while workers still hold them");
             }
-            for(int i=coldObjects.Count-1;i>=0;i--)if(coldObjects[i]!=null)Object.Destroy(coldObjects[i]);
+            for(int i=coldObjects.Count-1;i>=0;i--)if(coldObjects[i]!=null)UnityEngine.Object.Destroy(coldObjects[i]);
             coldObjects.Clear();coldWorld=null;
             yield return null;
         }

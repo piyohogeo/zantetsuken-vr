@@ -7,11 +7,14 @@ namespace Zantetsu.Rendering
     {
         // Synchronous Main-only producer. No reservation, writable view, or "valid" flag escapes this call.
         // Gather has already completed. There are no callbacks, awaits, or Unity object operations in this scope.
+        // Open cut output reservations do not refuse it: it takes spans and an index range of its own beside theirs,
+        // publishes only those, and on refusal gives back only those. The descriptor an open reservation's two-sided
+        // commit needs is that reservation's own from the moment it was reserved, so there is none here to leave free.
         internal bool TryAppendDirectSkin(VpDirectSkinInput input, out VpStoredGeometry geometry)
         {
             ThrowIfDisposed();
             geometry = default;
-            if (!input.IsAlive || _openCutOutputs.Count != 0) return false;
+            if (!input.IsAlive) return false;
             if (!TryTakeSpans(input.VertexCount, 1, 1, out int vertex, out int submesh, out int block)) return false;
             if (!_indices.TryReserve(input.IndexCount, out var range))
             {

@@ -87,11 +87,12 @@ namespace Zantetsu.Rendering
             VpIndexRangeHandle handle,
             int firstCount,
             int secondCount,
+            VpIndexRangeHandle held,
             out VpIndexRangeHandle first,
             out VpIndexRangeHandle second)
         {
             ThrowIfDisposed();
-            return _allocator.TryPublishSplit(handle, firstCount, secondCount, out first, out second);
+            return _allocator.TryPublishSplit(handle, firstCount, secondCount, held, out first, out second);
         }
 
         /// <summary>Reserved → Free; the space is reusable at once and write views of it must no longer be used.</summary>
