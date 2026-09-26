@@ -328,7 +328,8 @@ namespace Zantetsu.PhysicsCut.Tests
             float supportEpsilon = SupportEpsilon,
             double3[] convexOffsets = null,
             float3[] anchors = null,
-            Func<int> frameSource = null)
+            Func<int> frameSource = null,
+            bool building = false)
         {
             var w = new World
             {
@@ -401,7 +402,7 @@ namespace Zantetsu.PhysicsCut.Tests
             }
 
             w.source = w.ledger.AddFragment(anchors);
-            w.registry.RegisterAuthored(w.source, w.root, body, w.shape, false, k_geometryLocalToOwner);
+            w.registry.RegisterAuthored(w.source, w.root, body, w.shape, false, k_geometryLocalToOwner, building);
             w.lookup = new PhysicsOwnerPlacementLookup(w.registry);
 
             var driverObject = new GameObject("Provisional Cut Driver");

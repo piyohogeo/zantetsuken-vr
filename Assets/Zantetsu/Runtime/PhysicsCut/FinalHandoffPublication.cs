@@ -288,12 +288,15 @@ namespace Zantetsu.PhysicsCut
 
                 // ---- published. From here nothing is caught and nothing of the children's is given back. ----
 
+                // The lineage the pair was built with, as it is: the depth was planned once, before the Provisional
+                // build, and is not advanced again here. Each actor keeps the building constraint it was published
+                // with -- the same component, with the reference and limits it had.
                 var positiveOwner = new PhysicsFragmentOwner(
                     positiveSide.Root, positiveSide.Body, positiveShape, positiveSide.FixedByAnchors,
-                    pair.GeometryLocalToOwner);
+                    pair.GeometryLocalToOwner, pair.ChildLineage, positiveSide.BuildingWorld);
                 var negativeOwner = new PhysicsFragmentOwner(
                     negativeSide.Root, negativeSide.Body, negativeShape, negativeSide.FixedByAnchors,
-                    pair.GeometryLocalToOwner);
+                    pair.GeometryLocalToOwner, pair.ChildLineage, negativeSide.BuildingWorld);
 
                 // The children first, so both have their owner -- and each actor resolves to the child it is -- before
                 // anything of the old correspondence goes.

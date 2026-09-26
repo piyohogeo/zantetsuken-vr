@@ -47,6 +47,74 @@ namespace Zantetsu.Sandbox
             host.AddComponent<Walk>().directory = directory;
         }
 
+        /// <summary>
+        /// What the physics step and the building D6 creation cost while the walk runs, per phase: the Simulate time
+        /// the session's own step measures, and the creation marker read with a recorder. Observation only.
+        /// </summary>
+        private sealed class ConstraintSampler : MonoBehaviour
+        {
+            internal string Phase = "";
+            private readonly System.Collections.Generic.Dictionary<string, double[]> _simulate =
+                new System.Collections.Generic.Dictionary<string, double[]>();
+            private readonly System.Collections.Generic.List<string> _order = new System.Collections.Generic.List<string>();
+            private Unity.Profiling.ProfilerRecorder _create;
+            private int _lastFrame = int.MinValue;
+            private long _createNs;
+            private int _createFrames;
+            private long _createMaxNs;
+
+            private void OnEnable()
+            {
+                _create = Unity.Profiling.ProfilerRecorder.StartNew(
+                    Unity.Profiling.ProfilerCategory.Scripts, "Zantetsu.BuildingWorldD6.Create", 1);
+            }
+
+            private void OnDisable()
+            {
+                _create.Dispose();
+            }
+
+            private void Update()
+            {
+                if (_create.Valid && _create.LastValue > 0)
+                {
+                    _createNs += _create.LastValue;
+                    _createFrames++;
+                    _createMaxNs = Math.Max(_createMaxNs, _create.LastValue);
+                }
+
+                if (CutPhysicsStep.LastSimulatedFrame == _lastFrame || CutPhysicsStep.LastSimulatedFrame == int.MinValue)
+                {
+                    return;
+                }
+
+                _lastFrame = CutPhysicsStep.LastSimulatedFrame;
+                if (!_simulate.TryGetValue(Phase, out double[] bucket))
+                {
+                    bucket = new double[3];
+                    _simulate.Add(Phase, bucket);
+                    _order.Add(Phase);
+                }
+
+                bucket[0]++;
+                bucket[1] += CutPhysicsStep.LastSimulateSeconds;
+                bucket[2] = Math.Max(bucket[2], CutPhysicsStep.LastSimulateSeconds);
+            }
+
+            internal void Report()
+            {
+                foreach (string phase in _order)
+                {
+                    double[] b = _simulate[phase];
+                    Debug.Log(Prefix + "simulate " + phase + ": steps=" + b[0] + " meanMs=" + (b[1] / Math.Max(1.0, b[0]) * 1000.0).ToString("F4")
+                        + " maxMs=" + (b[2] * 1000.0).ToString("F4"));
+                }
+
+                Debug.Log(Prefix + "building D6 create marker: recorderValid=" + _create.Valid + " framesWithCreation=" + _createFrames
+                    + " totalUs=" + (_createNs / 1000.0).ToString("F2") + " maxFrameUs=" + (_createMaxNs / 1000.0).ToString("F2"));
+            }
+        }
+
         private static string DirectoryFromCommandLine()
         {
             string[] arguments = Environment.GetCommandLineArgs();
@@ -136,6 +204,9 @@ namespace Zantetsu.Sandbox
 
                 LogState("the body is registered");
                 LogStep("at the start");
+                _sampler = gameObject.AddComponent<ConstraintSampler>();
+                _sampler.Phase = "before the cut";
+                LogConstraints("the body is registered");
                 if (_probe.IsAuthoredMegacity)
                 {
                     _authoredPosition = _probe.Actor.transform.position;
@@ -190,6 +261,7 @@ namespace Zantetsu.Sandbox
                     if (_world.Owners.ProvisionalPairCount > 0)
                     {
                         provisionalFrames++;
+                        NoteProvisionalConstraints(body);
                     }
 
                     if (_world.Ledger.TryGetReplacingOperation(body, out operation)
@@ -218,6 +290,8 @@ namespace Zantetsu.Sandbox
                     + " stage=" + _world.Geometry.StageOf(operation));
                 LogState("after the commit");
                 LogStep("after the commit");
+                _sampler.Phase = "after the first cut";
+                CheckFirstCutConstraints(record.positive, record.negative);
                 if (!_probe.IsAuthoredMegacity)
                 {
                     bool physicsHeld = true;
@@ -324,6 +398,8 @@ namespace Zantetsu.Sandbox
                 Log("the child's cut committed. operation=" + second
                     + " positive=" + secondRecord.positive + " negative=" + secondRecord.negative);
                 LogState("after the child's commit");
+                _sampler.Phase = "after the child's cut";
+                CheckChildCutConstraints(child, secondRecord.positive, secondRecord.negative);
 #if VP_DIAGNOSTIC_SCENE_AB
                 _ab.Phase = 4; _ab.Mark("recut", secondRecord.positive, secondRecord.negative, record.negative);
 #endif
@@ -341,7 +417,12 @@ namespace Zantetsu.Sandbox
                     VpCutSurfaceColour.Restore(colours);
                 }
 
+                // A settled stretch of steps with the constraints of both cuts standing, for the cost observation.
+                for (int settle = 0; settle < 90; settle++) yield return null;
+                _sampler.Report();
+
                 // ----- the ordinary ending -------------------------------------------------------------------------
+                _sampler.Phase = "the ending";
                 Log("asking the world to end");
                 _world.Shutdown();
                 Log("accepted after Shutdown: IsReady=" + _world.IsReady);
@@ -514,6 +595,15 @@ namespace Zantetsu.Sandbox
 
             private IEnumerator Finish(int code)
             {
+                if (_world != null && _world.IsReleased) LogConstraints("after the ending");
+                if (code == 0 && _world != null && _world.IsReleased
+                    && (_world.Owners.SystemConstraintCount != 0
+                        || UnityEngine.Object.FindObjectsByType<ConfigurableJoint>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length != 0))
+                {
+                    ConstraintFailed("constraints were left after the ending");
+                }
+
+                if (code == 0 && _constraintFailed) code = 11;
                 if (code == 0 && _measurementFailed) code = 8;
                 Log("finished with code " + code);
                 yield return null;
@@ -579,6 +669,143 @@ namespace Zantetsu.Sandbox
                 Log("FAILED: process working-set query unavailable; no memory value inferred.");
                 return -1;
             }
+
+            // ---- building World D6 (DESIGN 7.2.2): what each stage of the walk holds, and what it should ----------
+
+            private ConstraintSampler _sampler;
+            private int _provisionalPositiveD6;
+            private int _provisionalNegativeD6;
+            private bool _provisionalNoted;
+
+            private bool Building => _probe != null && _probe.IsBuilding && !_probe.IsAuthoredMegacity;
+
+            private void LogConstraints(string what)
+            {
+                var joints = UnityEngine.Object.FindObjectsByType<ConfigurableJoint>(
+                    FindObjectsInactive.Include, FindObjectsSortMode.None);
+                int active = 0;
+                foreach (ConfigurableJoint joint in joints)
+                {
+                    if (joint.gameObject.activeInHierarchy) active++;
+                }
+
+                Log("constraints " + what + ": building=" + (_probe != null && _probe.IsBuilding)
+                    + " bottomAnchors=" + (_probe != null && _probe.HasBottomAnchors)
+                    + " systemConstraints=" + _world.Owners.SystemConstraintCount
+                    + " configurableJoints=" + joints.Length + " active=" + active
+                    + " provisionalPairs=" + _world.Owners.ProvisionalPairCount);
+            }
+
+            private void NoteProvisionalConstraints(LogicalFragmentId source)
+            {
+                if (_provisionalNoted || !_world.Owners.TryGetProvisionalOf(source, out ProvisionalOwnerPair pair))
+                {
+                    return;
+                }
+
+                _provisionalNoted = true;
+                _provisionalPositiveD6 = pair.Positive?.BuildingWorld != null ? pair.Positive.BuildingWorld.GetInstanceID() : 0;
+                _provisionalNegativeD6 = pair.Negative?.BuildingWorld != null ? pair.Negative.BuildingWorld.GetInstanceID() : 0;
+                Log("provisional pair: lineage=" + pair.ChildLineage
+                    + " positive D6=" + Describe(pair.Positive?.BuildingWorld) + " fixed=" + pair.Positive?.FixedByAnchors
+                    + " negative D6=" + Describe(pair.Negative?.BuildingWorld) + " fixed=" + pair.Negative?.FixedByAnchors
+                    + " systemConstraints=" + _world.Owners.SystemConstraintCount);
+                LogConstraints("while the provisional pair stands");
+            }
+
+            private void CheckFirstCutConstraints(LogicalFragmentId positive, LogicalFragmentId negative)
+            {
+                LogConstraints("after the first cut");
+                if (!_world.Owners.TryGet(positive, out PhysicsFragmentOwner a) || !_world.Owners.TryGet(negative, out PhysicsFragmentOwner b))
+                {
+                    ConstraintFailed("the first cut's children are not owned");
+                    return;
+                }
+
+                LogOwner("first cut +", a);
+                LogOwner("first cut -", b);
+                Log("provisional pair noted=" + _provisionalNoted + " D6 kept through the handoff: +"
+                    + Same(_provisionalPositiveD6, a.BuildingWorldConstraint) + " -" + Same(_provisionalNegativeD6, b.BuildingWorldConstraint));
+                ExpectChild(a, 1, "first cut +");
+                ExpectChild(b, 1, "first cut -");
+                if (_provisionalNoted && (!Same(_provisionalPositiveD6, a.BuildingWorldConstraint)
+                    || !Same(_provisionalNegativeD6, b.BuildingWorldConstraint)))
+                {
+                    ConstraintFailed("a building D6 was not the one the Provisional pair was published with");
+                }
+            }
+
+            private void CheckChildCutConstraints(LogicalFragmentId parent, LogicalFragmentId positive, LogicalFragmentId negative)
+            {
+                LogConstraints("after the child's cut");
+                bool parentGone = !_world.Owners.TryGet(parent, out PhysicsFragmentOwner _);
+                Log("the cut child's owner retired=" + parentGone);
+                if (!parentGone) ConstraintFailed("the cut child's owner was not retired");
+                if (!_world.Owners.TryGet(positive, out PhysicsFragmentOwner a) || !_world.Owners.TryGet(negative, out PhysicsFragmentOwner b))
+                {
+                    ConstraintFailed("the child's children are not owned");
+                    return;
+                }
+
+                LogOwner("child cut +", a);
+                LogOwner("child cut -", b);
+                ExpectChild(a, 2, "child cut +");
+                ExpectChild(b, 2, "child cut -");
+            }
+
+            private void ExpectChild(PhysicsFragmentOwner owner, int depth, string what)
+            {
+                BuildingLineage lineage = owner.Building;
+                bool wantsD6 = Building && !owner.FixedByAnchors;
+                bool lineageOk = Building ? lineage.IsBuildingDerived && lineage.SplitDepth == depth : !lineage.IsBuildingDerived && lineage.SplitDepth == 0;
+                bool d6Ok = wantsD6 == (owner.BuildingWorldConstraint != null);
+                if (wantsD6 && d6Ok)
+                {
+                    BuildingWorldD6Settings settings = _world.Profile.BuildingWorld;
+                    ConfigurableJoint joint = owner.BuildingWorldConstraint;
+                    d6Ok = joint.connectedBody == null
+                        && joint.yMotion == ConfigurableJointMotion.Free
+                        && joint.xMotion == ConfigurableJointMotion.Limited && joint.zMotion == ConfigurableJointMotion.Limited
+                        && joint.angularXMotion == ConfigurableJointMotion.Limited
+                        && Mathf.Approximately(joint.linearLimit.limit, settings.LimitMetres(depth))
+                        && Mathf.Approximately(joint.angularYLimit.limit, settings.AngleDegrees(depth));
+                }
+
+                if (!lineageOk || !d6Ok)
+                {
+                    ConstraintFailed(what + ": lineage " + lineage + " / building D6 " + Describe(owner.BuildingWorldConstraint)
+                        + " is not what depth " + depth + " asks for");
+                }
+            }
+
+            private void LogOwner(string what, PhysicsFragmentOwner owner)
+            {
+                Log(what + ": lineage=" + owner.Building + " fixed=" + owner.FixedByAnchors + " kinematic=" + owner.Body.isKinematic
+                    + " D6=" + Describe(owner.BuildingWorldConstraint)
+                    + " heldBySystemConstraint=" + _world.Owners.HeldBySystemConstraint(owner.Body));
+            }
+
+            private static bool Same(int provisional, ConfigurableJoint published)
+            {
+                return provisional == (published != null ? published.GetInstanceID() : 0);
+            }
+
+            private static string Describe(ConfigurableJoint joint)
+            {
+                if (joint == null) return "none";
+                return "#" + joint.GetInstanceID() + " connected=" + (joint.connectedBody == null ? "World" : joint.connectedBody.name)
+                    + " linear=" + joint.linearLimit.limit.ToString("R") + " angle=" + joint.angularYLimit.limit.ToString("R")
+                    + " motions=" + joint.xMotion + "/" + joint.yMotion + "/" + joint.zMotion
+                    + " anchor=" + joint.connectedAnchor.ToString("F4");
+            }
+
+            private void ConstraintFailed(string what)
+            {
+                Log("FAILED: " + what);
+                _constraintFailed = true;
+            }
+
+            private bool _constraintFailed;
 
             private static void Hold(GameObject actor)
             {

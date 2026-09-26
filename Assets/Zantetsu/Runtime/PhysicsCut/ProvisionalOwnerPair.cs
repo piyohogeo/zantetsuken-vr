@@ -44,7 +44,8 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerShape positiveShape,
             PhysicsOwnerShape negativeShape,
             ConfigurableJoint separation,
-            Matrix4x4? geometryLocalToOwner)
+            Matrix4x4? geometryLocalToOwner,
+            BuildingLineage childLineage = default)
         {
             Operation = operation;
             Source = source;
@@ -54,7 +55,18 @@ namespace Zantetsu.PhysicsCut
             NegativeShape = negativeShape;
             Separation = separation;
             GeometryLocalToOwner = geometryLocalToOwner;
+            ChildLineage = childLineage;
+            BuildingWorldCount = (positive?.BuildingWorld != null ? 1 : 0) + (negative?.BuildingWorld != null ? 1 : 0);
         }
+
+        /// <summary>
+        /// What the children of this cut are published with (DESIGN 7.2.2): the lineage planned before the pair was
+        /// built. The Final publication takes this value as it is and adds nothing to it.
+        /// </summary>
+        public BuildingLineage ChildLineage { get; }
+
+        /// <summary>How many building World D6 the two actors carry. They stay on the actors at the handoff.</summary>
+        internal int BuildingWorldCount { get; }
 
         /// <summary>The accepted cut this pair stands for. It is the ledger's own id.</summary>
         public CutOperationId Operation { get; }

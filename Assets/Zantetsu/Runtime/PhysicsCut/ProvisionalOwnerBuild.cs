@@ -70,6 +70,24 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal MeshCollider colliderTemplate;
 
+        /// <summary>
+        /// What the two children will carry (DESIGN 7.2.2), planned from the source before this build:
+        /// <see cref="BuildingLineage.ChildOfSplit"/> of the source's own. The pair carries it to the Final
+        /// publication, which publishes this same value. A building child's anchor-less sides get a building World D6
+        /// at this depth, here, with the rest of the pair.
+        /// </summary>
+        public BuildingLineage childLineage;
+
+        /// <summary>The building World D6 settings, read only for a building child.</summary>
+        public BuildingWorldD6Settings buildingWorld;
+
+        /// <summary>
+        /// How many more system constraints the world has room for, or none to leave the count unbounded. The pair
+        /// needs one for its siblings and one per building constraint; a build that needs more is refused before
+        /// anything is made.
+        /// </summary>
+        public int? constraintRoom;
+
         public string name;
     }
 
@@ -88,14 +106,18 @@ namespace Zantetsu.PhysicsCut
         internal ProvisionalOwnerCandidate(
             PhysicsOwnerSide positive, PhysicsOwnerSide negative,
             PhysicsOwnerShape positiveShape, PhysicsOwnerShape negativeShape,
-            ConfigurableJoint separation)
+            ConfigurableJoint separation, BuildingLineage childLineage = default)
         {
             Positive = positive;
             Negative = negative;
             PositiveShape = positiveShape;
             NegativeShape = negativeShape;
             Separation = separation;
+            ChildLineage = childLineage;
         }
+
+        /// <summary>What the two children will be published with: the lineage planned before the build.</summary>
+        public BuildingLineage ChildLineage { get; }
 
         public PhysicsOwnerSide Positive { get; private set; }
 
@@ -297,6 +319,17 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
+            // The constraints the pair needs are part of what is built: one between the siblings, and a building World
+            // D6 on each anchor-less side of a building child (DESIGN 7.1.1, 7.2.2). Judged here, before anything is.
+            int buildingConstraints = BuildingWorldD6.Needed(
+                in input.childLineage, input.anchors.IsPositiveFixed, input.anchors.IsNegativeFixed);
+            if (buildingConstraints > 0 && !input.buildingWorld.IsValid
+                || input.constraintRoom.HasValue && 1 + buildingConstraints > input.constraintRoom.Value)
+            {
+                outcome = PhysicsOwnerBuildOutcome.BuildFailed;
+                return false;
+            }
+
             PhysicsOwnerShape positiveShape = null;
             PhysicsOwnerShape negativeShape = null;
             PhysicsOwnerSide positive = null;
@@ -314,7 +347,18 @@ namespace Zantetsu.PhysicsCut
                 negative.Reposition(input.placement, in input.sourceMotion, planeNormalOwner, 0f);
 
                 ConfigurableJoint separation = ProvisionalSeparation.Configure(positive, negative, planeNormalOwner);
-                candidate = new ProvisionalOwnerCandidate(positive, negative, positiveShape, negativeShape, separation);
+
+                // Separate from the sibling constraint and kept after it: each goes to the World, from where the side
+                // stands, and stays with the actor across the Final handoff.
+                if (buildingConstraints > 0)
+                {
+                    int depth = input.childLineage.SplitDepth;
+                    if (!positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
+                    if (!negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
+                }
+
+                candidate = new ProvisionalOwnerCandidate(
+                    positive, negative, positiveShape, negativeShape, separation, input.childLineage);
             }
             catch
             {

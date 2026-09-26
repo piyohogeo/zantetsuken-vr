@@ -23,7 +23,7 @@ namespace Zantetsu.PhysicsCut.Tests
     /// still the source's registration, so these tests say nothing about the whole of DESIGN 7.1.2.
     /// </para>
     /// </summary>
-    public unsafe class FinalPhysicsPublicationTests
+    public unsafe partial class FinalPhysicsPublicationTests
     {
         private const int DeadlineMilliseconds = 30000;
 
@@ -191,7 +191,7 @@ namespace Zantetsu.PhysicsCut.Tests
         /// </summary>
         private static World NewWorld(
             float3[] anchors, PhysicsOwnerPlacement placement, Matrix4x4? geometryLocalToOwner = null,
-            int incompleteBudget = 4)
+            int incompleteBudget = 4, bool building = false)
         {
             var w = new World
             {
@@ -236,7 +236,7 @@ namespace Zantetsu.PhysicsCut.Tests
             }
 
             w.source = w.ledger.AddFragment(anchors);
-            w.registry.RegisterAuthored(w.source, root, body, shape, false, geometryLocalToOwner);
+            w.registry.RegisterAuthored(w.source, root, body, shape, false, geometryLocalToOwner, building);
             return w;
         }
 
@@ -262,7 +262,8 @@ namespace Zantetsu.PhysicsCut.Tests
             CutOperationId operation,
             out PhysicsCutProducts products,
             in ConvexCutOwnerInput input,
-            AnchorDistributionResult? distribution = null)
+            AnchorDistributionResult? distribution = null,
+            BuildingLineage childLineage = default)
         {
             PhysicsCutRequest request = w.cook.Submit(in input, float4x4.identity);
             w.RunUntil(() => request.IsOver, "the cut and cook end");
@@ -289,6 +290,8 @@ namespace Zantetsu.PhysicsCut.Tests
                 anchors = anchors,
                 parentMass = owner.Mass,
                 inheritedMeshes = owner.Shape.Meshes,
+                childLineage = childLineage,
+                buildingWorld = BuildingWorldD6Settings.Provisional,
                 name = "Child",
             };
             Assert.That(

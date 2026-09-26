@@ -32,7 +32,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// product runs it (<see cref="CutPhysicsStep"/>); nothing is stepped by hand.
     /// </para>
     /// </summary>
-    public unsafe class CutWorldRootPlayModeTests
+    public unsafe partial class CutWorldRootPlayModeTests
     {
         private const double ParentMass = 12.0;
         private const int SideMaterial = 7;
@@ -1499,7 +1499,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>One body in the world: its actor, its physics shape and its display geometry, all tied together.</summary>
-        private LogicalFragmentId AddBody(CutWorldRoot root, Vector3 at)
+        private LogicalFragmentId AddBody(CutWorldRoot root, Vector3 at, bool building = false)
         {
             PhysicsOwnerShape shape = NewBoxShape(out Mesh _);
             _disposables.Add(shape);
@@ -1520,7 +1520,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             collider.sharedMesh = shape.MeshOf(0);
 
             bool added = root.TryAddBody(
-                actor, shape, geometry, Matrix4x4.identity, Matrix4x4.identity, null, out LogicalFragmentId fragment);
+                actor, shape, geometry, Matrix4x4.identity, Matrix4x4.identity, null, building, out LogicalFragmentId fragment);
             if (added)
             {
                 _registered.Add(actor);
