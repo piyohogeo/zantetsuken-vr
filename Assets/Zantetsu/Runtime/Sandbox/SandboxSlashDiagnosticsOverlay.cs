@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using UnityEngine;
+using Zantetsu.Core.Slash;
 
 namespace Zantetsu.Sandbox
 {
@@ -89,7 +90,7 @@ namespace Zantetsu.Sandbox
             }
 
             int waveCount = katana.WaveCount;
-            text.Append("Waves         ").Append(waveCount).Append(" / ").Append(SandboxSlashWaveStore.Capacity).Append('\n');
+            text.Append("Waves         ").Append(waveCount).Append(" / ").Append(SlashWaveCore.Capacity).Append('\n');
             for (int i = 0; i < waveCount; i++)
             {
                 if (!katana.TryGetWave(i, out double latchedAt, out _, out _, out _, out _, out float acceptedSpan,
