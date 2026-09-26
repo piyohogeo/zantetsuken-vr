@@ -3744,6 +3744,124 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 612443368}
   m_Mesh: {fileID: 4300000, guid: 642c4a06a1e49e36f8d77ad6e395f497, type: 2}
+--- !u!1 &635617473
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 635617478}
+  - component: {fileID: 635617477}
+  - component: {fileID: 635617476}
+  - component: {fileID: 635617475}
+  - component: {fileID: 635617474}
+  m_Layer: 0
+  m_Name: Prop Cut World
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &635617474
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 635617473}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 273a4c13bd278c5419a5a2789a6a0081, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Zantetsu.Sandbox::Zantetsu.Sandbox.SandboxSlashPropHit
+  world: {fileID: 635617477}
+  katana: {fileID: 954653046}
+  separationImpulse: 1.5
+--- !u!114 &635617475
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 635617473}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 54af5737a88eae7429f167cc123e8e6a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Zantetsu.Sandbox::Zantetsu.Sandbox.SandboxCutWorldProbe
+  world: {fileID: 635617477}
+  bodyPosition: {x: 1.4, y: 1.2, z: 2}
+  bodyExtents: {x: 0.2, y: 1.2, z: 0.2}
+  bodyMass: 12
+  bodyUsesGravity: 1
+  bodyIsBuilding: 0
+  bodyHasBottomAnchors: 0
+  authoredPhysics: {fileID: 0}
+  static16Geometry: {fileID: 0}
+  bodyEuler: {x: 0, y: 0, z: 0}
+  plane: {x: 0, y: 1, z: 0, w: 0}
+  childPlane: {x: 1, y: 0, z: 0, w: 0}
+  lookImpulse: 1.5
+  cutKeys: 0
+  cutKey: 1
+  cutChildKey: 17
+  endKey: 19
+--- !u!114 &635617476
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 635617473}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 41020fb020b1f96469a5d941bf4feabd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Zantetsu.PhysicsCut::Zantetsu.PhysicsCut.CutWorldCameraDrawing
+  world: {fileID: 635617477}
+  cameras:
+  - {fileID: 330585545}
+  - {fileID: 962988988}
+  layer: 0
+--- !u!114 &635617477
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 635617473}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26d658f1f8b67004b805faf23cd09b49, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Zantetsu.PhysicsCut::Zantetsu.PhysicsCut.CutWorldRoot
+  profile: {fileID: 11400000, guid: 762cb265a0b17954281df0bde046d3e9, type: 2}
+  materials:
+  - sourceIndex: 0
+    material: {fileID: 2100000, guid: 3ddb8fcfc0e4f1c4b92979dcffb8860b, type: 2}
+  - sourceIndex: 1
+    material: {fileID: 2100000, guid: 68b6d309cd051f149987b019528474b0, type: 2}
+  shadowMaterial: {fileID: 0}
+  provisionalShadowMaterial: {fileID: 0}
+  normalPaletteAtlas: {fileID: 0}
+  debugPaletteAtlas: {fileID: 0}
+--- !u!4 &635617478
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 635617473}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &643431097
 GameObject:
   m_ObjectHideFlags: 0
@@ -6516,6 +6634,89 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 959132276}
   m_Mesh: {fileID: 4300000, guid: 27329d2153600dc4f04161453ef730c6, type: 2}
+--- !u!1 &962988987
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 962988989}
+  - component: {fileID: 962988988}
+  m_Layer: 0
+  m_Name: Prop Check View
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!20 &962988988
+Camera:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 962988987}
+  m_Enabled: 0
+  serializedVersion: 2
+  m_ClearFlags: 1
+  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_projectionMatrixMode: 1
+  m_GateFitMode: 2
+  m_FOVAxisMode: 0
+  m_Iso: 200
+  m_ShutterSpeed: 0.005
+  m_Aperture: 16
+  m_FocusDistance: 10
+  m_FocalLength: 50
+  m_BladeCount: 5
+  m_Curvature: {x: 2, y: 11}
+  m_BarrelClipping: 0.25
+  m_Anamorphism: 0
+  m_SensorSize: {x: 36, y: 24}
+  m_LensShift: {x: 0, y: 0}
+  m_NormalizedViewPortRect:
+    serializedVersion: 2
+    x: 0
+    y: 0
+    width: 1
+    height: 1
+  near clip plane: 0.05
+  far clip plane: 60
+  field of view: 60
+  orthographic: 0
+  orthographic size: 5
+  m_Depth: 0
+  m_CullingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_RenderingPath: -1
+  m_TargetTexture: {fileID: 0}
+  m_TargetDisplay: 0
+  m_TargetEye: 0
+  m_HDR: 1
+  m_AllowMSAA: 1
+  m_AllowDynamicResolution: 0
+  m_ForceIntoRT: 0
+  m_OcclusionCulling: 1
+  m_StereoConvergence: 10
+  m_StereoSeparation: 0.022
+--- !u!4 &962988989
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 962988987}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.21961881, y: 0.21089229, z: -0.04868832, w: 0.9512736}
+  m_LocalPosition: {x: 0.2, y: 3, z: -0.6}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1004925762
 GameObject:
   m_ObjectHideFlags: 0
@@ -11964,6 +12165,59 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1924138719}
   m_Mesh: {fileID: 4300000, guid: 27329d2153600dc4f04161453ef730c6, type: 2}
+--- !u!1 &1946725365
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1946725367}
+  - component: {fileID: 1946725366}
+  m_Layer: 0
+  m_Name: Prop Floor
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!65 &1946725366
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1946725365}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 6, y: 0.1, z: 6}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!4 &1946725367
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1946725365}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0.05, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1958094959
 GameObject:
   m_ObjectHideFlags: 0
@@ -13510,3 +13764,6 @@ SceneRoots:
   - {fileID: 201827746}
   - {fileID: 910000002}
   - {fileID: 1255174797}
+  - {fileID: 1946725367}
+  - {fileID: 962988989}
+  - {fileID: 635617478}

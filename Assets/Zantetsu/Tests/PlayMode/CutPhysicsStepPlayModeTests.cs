@@ -20,6 +20,45 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         private readonly List<GameObject> _objects = new List<GameObject>();
 
+        // The scene a case of this class loaded, and the world that scene built: what this class leaves behind it.
+        private Scene _loaded;
+        private CutWorldRoot _loadedWorld;
+
+        /// <summary>
+        /// Takes away the scene a case loaded, and only that: its world is ended the ordinary way first, if the case did
+        /// not get as far as ending it, and the scene is unloaded once nothing of the world is out any more. An empty
+        /// scene of this class's own stands in as the active one, so that the next fixture does not run inside this one's
+        /// floor and bodies.
+        /// </summary>
+        [UnityTearDown]
+        public IEnumerator UnloadTheSceneThisCaseLoaded()
+        {
+            if (!_loaded.IsValid() || !_loaded.isLoaded)
+            {
+                yield break;
+            }
+
+            if (_loadedWorld != null && !_loadedWorld.IsReleased)
+            {
+                _loadedWorld.Shutdown();
+                float deadline = Time.realtimeSinceStartup + 30f;
+                while (_loadedWorld != null && !_loadedWorld.IsReleased && Time.realtimeSinceStartup < deadline)
+                {
+                    yield return null;
+                    _loadedWorld?.Shutdown();
+                }
+
+                Assert.That(_loadedWorld == null || _loadedWorld.IsReleased, Is.True,
+                    "the loaded scene's world ended before its scene was taken away");
+            }
+
+            Scene empty = SceneManager.CreateScene("After " + nameof(CutPhysicsStepPlayModeTests) + " " + Time.frameCount);
+            SceneManager.SetActiveScene(empty);
+            yield return SceneManager.UnloadSceneAsync(_loaded);
+            _loaded = default;
+            _loadedWorld = null;
+        }
+
         [TearDown]
         public void Cleanup()
         {
@@ -174,7 +213,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             SceneManager.LoadScene(ScenePath, LoadSceneMode.Single);
             yield return null;
+            _loaded = SceneManager.GetSceneByPath(ScenePath);
             var world = Object.FindFirstObjectByType<CutWorldRoot>();
+            _loadedWorld = world;
             Assert.That(world, Is.Not.Null);
             Assert.That(world.IsReady, Is.True);
 

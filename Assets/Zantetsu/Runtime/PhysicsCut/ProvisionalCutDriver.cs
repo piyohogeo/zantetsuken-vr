@@ -278,9 +278,11 @@ namespace Zantetsu.PhysicsCut
         /// </para>
         /// </summary>
         /// <param name="admission">
-        /// What the ledger said, when it was asked. On the paths that do not reach it -- a request that does not hold
-        /// together, and the empty-side no-op -- it reads <see cref="LogicalCutAdmission.NoOp"/>, which is what those
-        /// come to: nothing changed.
+        /// What the ledger said, when it was asked. A source that is not live or already has an active cut reads the
+        /// ledger's own <see cref="LogicalCutAdmission.SourceNotLive"/> or <see cref="LogicalCutAdmission.SourceActive"/>,
+        /// found before its shape is read. On the paths that do not reach the ledger at all -- a request that does not
+        /// hold together, and the empty-side no-op -- it reads <see cref="LogicalCutAdmission.NoOp"/>, which is what
+        /// those come to: nothing changed.
         /// </param>
         public ProvisionalCutAcceptance RequestCut(
             in ProvisionalCutAsk ask, out ProvisionalCutTransaction transaction, out LogicalCutAdmission admission)
@@ -309,6 +311,27 @@ namespace Zantetsu.PhysicsCut
                 || !math.all(math.isfinite(ask.renderAnchor)))
             {
                 return ProvisionalCutAcceptance.InvalidRequest;
+            }
+
+            // **The source comes first** (DESIGN 4.2): whether it is live, and whether a cut of it is already active,
+            // before anything of its shape is read. An active source's own body has left the scene for its Provisional
+            // pair, so asking about the shape first would answer "no such owner" where the answer is "passed over":
+            // nothing is classified, issued or kept for either, and the ledger's own reason is what is handed back.
+            // A prepared cut keeps its own contract -- a lease that is not this driver's, or is spent, is a request
+            // that does not hold together, whatever its source -- so this is the ordinary path's.
+            if (prepared == null)
+            {
+                if (!_ledger.IsCurrentTarget(ask.source))
+                {
+                    admission = LogicalCutAdmission.SourceNotLive;
+                    return ProvisionalCutAcceptance.NotAccepted;
+                }
+
+                if (_ledger.TryGetActiveOperation(ask.source, out _))
+                {
+                    admission = LogicalCutAdmission.SourceActive;
+                    return ProvisionalCutAcceptance.NotAccepted;
+                }
             }
 
             if (!_registry.TryGet(ask.source, out PhysicsFragmentOwner owner) || owner.IsWithdrawn
