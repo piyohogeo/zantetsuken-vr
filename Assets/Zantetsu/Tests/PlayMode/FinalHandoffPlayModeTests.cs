@@ -165,6 +165,16 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 transaction.Phase, Is.EqualTo(ProvisionalCutPhase.HandedOff),
                 "the handoff happened, in a call this test made");
 
+            // The sibling constraint is gone at once, not at the end of the frame: the frame's physics step comes after
+            // the late update a handoff may be in, and a joint only asked to go would still hold the children in it.
+            Assert.That(joint == null, Is.True, "the separation constraint left with the handoff itself");
+            Assert.That(
+                positiveRoot.GetComponents<Joint>().Length + negativeRoot.GetComponents<Joint>().Length, Is.Zero,
+                "so no joint of either child is left for the step that follows in this frame");
+            Assert.That(
+                CutPhysicsStep.LastDecidedFrame, Is.LessThan(Time.frameCount),
+                "and that step has not been taken yet: this is before it");
+
             // Still inside that frame, with no yield, step or sync: what the physics scene answers is the final shape.
             // Each side's final colliders answer inside its own half of the source box and not inside the other's --
             // where both sides' old colliders, the whole box, did answer before the switch.
