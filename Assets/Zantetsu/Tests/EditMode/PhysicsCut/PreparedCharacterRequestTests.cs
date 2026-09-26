@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Mathematics;
 using UnityEngine;
@@ -11,6 +12,109 @@ namespace Zantetsu.PhysicsCut.Tests
     public unsafe partial class PreparedCharacterColdTests
     {
         static float4 CutPlane=>new float4(1,0,0,-.25f);
+
+        // Every collider of both Provisional sides, with the shape convex it stands for.
+        static IEnumerable<(PhysicsOwnerSide side,PhysicsOwnerShape shape,int convex,MeshCollider collider)> SideColliders(ProvisionalOwnerPair pair)
+        {
+            foreach(bool positive in new[]{true,false})
+            {
+                var side=positive?pair.Positive:pair.Negative;var shape=positive?pair.PositiveShape:pair.NegativeShape;
+                Assert.That(side.Colliders.Count,Is.EqualTo(shape.ConvexCount));
+                for(int i=0;i<side.Colliders.Count;i++)yield return (side,shape,i,side.Colliders[i]);
+            }
+        }
+        static void StandsWhereItsFrameSays(PhysicsOwnerSide side,PhysicsOwnerShape shape,int i,MeshCollider c,MeshColliderCookingOptions cooking)
+        {
+            var frame=shape.MeshFrameOf(i);
+            Assert.That(frame.HasFrame,Is.True,"a prepared convex has its own frame");
+            Assert.That(c.gameObject,Is.Not.SameAs(side.ShapeFrame));Assert.That(c.transform.parent,Is.SameAs(side.ShapeFrame.transform),"a dedicated direct child");
+            Assert.That(c.transform.localPosition,Is.EqualTo((Vector3)frame.Position));Assert.That(c.transform.localRotation,Is.EqualTo((Quaternion)frame.Rotation));
+            Assert.That(c.transform.localScale,Is.EqualTo(Vector3.one));
+            Assert.That(c.convex,Is.True);Assert.That(c.cookingOptions,Is.EqualTo(cooking));Assert.That(c.sharedMesh,Is.SameAs(shape.MeshOf(i)));
+            Assert.That(c.enabled&&c.gameObject.activeSelf,Is.True);
+        }
+        static int Copies()=>Resources.FindObjectsOfTypeAll<MeshCollider>().Count(c=>c!=null&&c.name.EndsWith("(Clone)"));
+
+        [Test] public void D6T_ProvisionalColliders_AreCopiesOfTheWorldsTemplate_WhichNeverEntersTheScene()
+        {
+            NewWorld();var template=world.Driver.ColliderTemplate;
+            Assert.That(template,Is.Not.Null);Assert.That(template.sharedMesh,Is.Null);Assert.That(template.convex,Is.True);
+            Assert.That(template.cookingOptions,Is.EqualTo(world.Cook.Cooking));Assert.That(template.gameObject.activeInHierarchy,Is.False);
+            var holder=template.transform.parent.gameObject;Assert.That(holder.activeSelf,Is.False);Assert.That(Copies(),Is.Zero,"the warming copy went at once");
+            var handle=Bound(out _);var result=handle.TryCut(CutPlane,float3.zero);
+            Assert.That(result.Acceptance,Is.EqualTo(ProvisionalCutAcceptance.Published));
+            Assert.That(world.Owners.TryGetProvisional(result.Operation,out var pair),Is.True);
+            int copies=0;
+            foreach(var (side,shape,i,c) in SideColliders(pair))
+            {
+                StandsWhereItsFrameSays(side,shape,i,c,world.Cook.Cooking);
+                Assert.That(c.name.EndsWith("(Clone)"),Is.True,"a copy of the template");copies++;
+            }
+            Assert.That(copies,Is.EqualTo(2));
+            Assert.That(template.sharedMesh,Is.Null,"the template is left as it was");Assert.That(template.transform.parent.gameObject,Is.SameAs(holder));
+            handle.Dispose();Assert.That(world.Shutdown(),Is.True);
+            Assert.That(template==null&&holder==null,Is.True,"given back with the world");Assert.That(world.Driver.ColliderTemplate==null,Is.True);
+        }
+
+        [TestCase("profile")][TestCase("destroyed")]
+        public void D6T_ATemplateNotSetUpForThisBuild_IsNotUsed(string kind)
+        {
+            NewWorld();var template=world.Driver.ColliderTemplate;
+            if(kind=="profile")
+            {
+                template.cookingOptions=MeshColliderCookingOptions.None;
+                Assert.That(template.cookingOptions,Is.Not.EqualTo(world.Cook.Cooking),"a template set up differently");
+            }
+            else UnityEngine.Object.DestroyImmediate(template.gameObject);
+            var handle=Bound(out _);var result=handle.TryCut(CutPlane,float3.zero);
+            Assert.That(result.Acceptance,Is.EqualTo(ProvisionalCutAcceptance.Published));
+            Assert.That(world.Owners.TryGetProvisional(result.Operation,out var pair),Is.True);
+            foreach(var (side,shape,i,c) in SideColliders(pair))
+            {
+                StandsWhereItsFrameSays(side,shape,i,c,world.Cook.Cooking);
+                Assert.That(c.name.EndsWith("(Clone)"),Is.False,"made call by call");
+            }
+            Assert.That(Copies(),Is.Zero);
+        }
+
+        [Test] public void D6T_ABuildThatFailsPartWay_LeavesNoCopyBehind_AndTheTemplateAsItWas()
+        {
+            NewWorld();var template=world.Driver.ColliderTemplate;var handle=Bound(out _);
+            int built=0;
+            ProvisionalOwnerBuilder.sideBuiltHook=positive=>{built++;if(!positive)throw new InvalidOperationException("injected after both sides' copies");};
+            try{Assert.Catch<InvalidOperationException>(()=>handle.TryCut(CutPlane,float3.zero));}
+            finally{ProvisionalOwnerBuilder.sideBuiltHook=null;}
+            Assert.That(built,Is.EqualTo(2),"both sides were built, copies and all");
+            Assert.That(Copies(),Is.Zero,"no copy outlives the failed build");
+            Assert.That(template!=null&&template.sharedMesh==null&&template.convex,Is.True,"the template is left as it was");
+            Assert.That(world.Owners.ProvisionalPairCount,Is.Zero);
+        }
+
+        // Replacing some of a side's colliders destroys each one's own object and nothing next to it.
+        [Test] public void D6T_DestroyingOneCopy_LeavesTheOthersWhereTheyWere()
+        {
+            var root=Track(new GameObject("side"));root.SetActive(false);
+            var frame=new GameObject("Shape Frame");frame.transform.SetParent(root.transform,false);
+            var holder=Track(new GameObject("holder"));holder.SetActive(false);
+            var made=new GameObject("Convex mesh frame");made.transform.SetParent(holder.transform,false);
+            var template=made.AddComponent<MeshCollider>();template.cookingOptions=PhysicsCutCook.DefaultCooking;template.convex=true;
+            var fa=new PhysicsMeshFrame(quaternion.EulerXYZ(.1f,.2f,.3f),new float3(1,2,3));
+            var fb=new PhysicsMeshFrame(quaternion.EulerXYZ(-.4f,0,.2f),new float3(-1,0,2));
+            var a=PhysicsOwnerBuilder.CreateMeshCollider(frame,fa,template);
+            var b=PhysicsOwnerBuilder.CreateMeshCollider(frame,fb,template);
+            var byCalls=PhysicsOwnerBuilder.CreateMeshCollider(frame,fb);
+            Assert.That(b.transform.localPosition,Is.EqualTo(byCalls.transform.localPosition),"the same placement as call by call");
+            Assert.That(b.transform.localRotation,Is.EqualTo(byCalls.transform.localRotation));
+            Assert.That(b.convex&&b.cookingOptions==PhysicsCutCook.DefaultCooking,Is.True);
+            Assert.That(frame.transform.childCount,Is.EqualTo(3));
+            PhysicsOwnerBuilder.DestroyComponent(a,frame);
+            Assert.That(a==null,Is.True,"its own object went with it");
+            Assert.That(b!=null&&b.enabled&&b.gameObject.activeSelf,Is.True,"its neighbour stays usable");
+            Assert.That(b.transform.parent,Is.SameAs(frame.transform));
+            Assert.That(b.transform.localPosition,Is.EqualTo((Vector3)fb.Position));Assert.That(b.transform.localRotation,Is.EqualTo((Quaternion)fb.Rotation));
+            Assert.That(frame.transform.childCount,Is.EqualTo(2));
+            Assert.That(template.sharedMesh==null&&template.transform.parent==holder.transform,Is.True,"the template is untouched");
+        }
         VpPreparedCharacterCut Bound(out SkinnedMeshRenderer rig)
         {
             rig=Rig();var bone=Track(new GameObject("D6T bone"));bone.transform.SetParent(rig.transform,false);

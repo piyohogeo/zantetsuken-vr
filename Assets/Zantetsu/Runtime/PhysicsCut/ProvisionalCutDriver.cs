@@ -126,6 +126,12 @@ namespace Zantetsu.PhysicsCut
         private LogicalCutLedger _ledger;
         private PhysicsOwnerRegistry _registry;
         private PhysicsCutCook _cook;
+
+        /// <summary>
+        /// The world's collider template, handed to every Provisional build; see
+        /// <see cref="ProvisionalOwnerBuildInput.colliderTemplate"/>. None means the builds make colliders call by call.
+        /// </summary>
+        internal MeshCollider ColliderTemplate { get; set; }
         private SharedWorkFrame _frame;
         private VpLogicalCutDisplay _display;
         private float _supportEpsilon;
@@ -635,6 +641,7 @@ namespace Zantetsu.PhysicsCut
                 sourceInertia = owner.Body.inertiaTensor,
                 sourceInertiaRotation = owner.Body.inertiaTensorRotation,
                 cooking = _cook.Cooking,
+                colliderTemplate = ColliderTemplate,
                 name = owner.Root != null ? owner.Root.name : "Provisional",
             };
 
