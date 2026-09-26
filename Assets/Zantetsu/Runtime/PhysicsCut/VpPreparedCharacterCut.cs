@@ -41,6 +41,7 @@ namespace Zantetsu.PhysicsCut
         VpDirectSkinInput direct;
         VpPreparedPhysicsInput physics;
         VpLogicalCutDisplay.PreparedRoot slot;
+        VpCharacterHitShape hitShape;
         bool disposed;
 
         VpPreparedCharacterCut(CutWorldRoot world, SkinnedMeshRenderer renderer,
@@ -90,6 +91,8 @@ namespace Zantetsu.PhysicsCut
                 // Reserve the cold display allocations before creating/cooking per-instance physics meshes.
                 if (!world.Display.TryPrepareRoot(made.direct, out made.slot)) return false;
                 made.physics = new VpPreparedPhysicsInput(bank, convexes);
+                // The bone-local copy a hit reads (DESIGN 19.1.7): made here, once, from the same authored bank.
+                made.hitShape = new VpCharacterHitShape(bank, convexes);
                 sharedCold.Prepare(made.physics);
                 prepared = made; complete = true;
                 return true; // PlayMode may still be pending; IsReady stays false until bootstrap finishes D5.
@@ -107,6 +110,12 @@ namespace Zantetsu.PhysicsCut
             if (disposed) return;
             if (busy) { disposeRequested = true; return; }
             disposed = true;
+            // A character identified by a hit but never cut leaves with this handle: its fragment ends here. Once its
+            // cut registered an owner, the fragment is the owner's and the ledger's, not this handle's.
+            if (Source.IsSet && !actorTransferred && Usable(world) && world.Ledger.IsCurrentTarget(Source))
+                world.Ledger.Retire(Source);
+            try { hitShape?.Dispose(); }
+            finally { hitShape = null; }
             try { slot?.Dispose(); }
             finally
             {

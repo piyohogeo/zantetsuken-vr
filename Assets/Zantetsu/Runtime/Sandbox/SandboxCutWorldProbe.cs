@@ -85,6 +85,12 @@ namespace Zantetsu.Sandbox
         public bool IsAuthoredMegacity => authoredPhysics != null;
         public Vector4 FirstPlane => plane;
 
+        [Tooltip("The material source index the box's sides are drawn with (its world's binding).")]
+        [SerializeField] private int sideSourceIndex;
+
+        [Tooltip("The material source index the box's two ends are drawn with.")]
+        [SerializeField] private int endSourceIndex = 1;
+
         [Header("The cut this scene asks for")]
         [Tooltip("The plane, in the body's own logical frame: xyz is its normal, w its offset.")]
         [SerializeField] private Vector4 plane = new Vector4(0f, 1f, 0f, 0f);
@@ -270,7 +276,7 @@ namespace Zantetsu.Sandbox
             BuildEdges(faceOffsets, faceIndices.ToArray(), out int[] faceEdges, out BrepEdge[] edges);
             _shape = NewShape(corners, faceOffsets, faceIndices.ToArray(), faceEdges, edges, out _colliderMesh);
 
-            if (!TryAppendGeometry(world.Storage, corners, out VpStoredGeometry geometry))
+            if (!TryAppendGeometry(world.Storage, corners, sideSourceIndex, endSourceIndex, out VpStoredGeometry geometry))
             {
                 Debug.LogError(name + ": the body's display geometry would not fit the world's storage.", this);
                 return false;
@@ -415,7 +421,7 @@ namespace Zantetsu.Sandbox
 
         /// <summary>The same box as a display geometry, appended to the world's storage as a cut input.</summary>
         private static bool TryAppendGeometry(
-            VpCpuGeometryStorage storage, float3[] corners, out VpStoredGeometry geometry)
+            VpCpuGeometryStorage storage, float3[] corners, int sideSourceIndex, int endSourceIndex, out VpStoredGeometry geometry)
         {
 #if VP_DIAGNOSTIC_SCENE_AB
             return TryAppendDenseBox(storage, corners, out geometry);
@@ -460,7 +466,7 @@ namespace Zantetsu.Sandbox
                     indices.AddRange(new[] { b, b + 1, b + 2, b, b + 2, b + 3 });
                 }
 
-                submeshes.Add(new VpGeometrySubmesh(start, indices.Count - start, submesh));
+                submeshes.Add(new VpGeometrySubmesh(start, indices.Count - start, submesh == 0 ? sideSourceIndex : endSourceIndex));
             }
 
             return storage.TryAppendCuttable(
