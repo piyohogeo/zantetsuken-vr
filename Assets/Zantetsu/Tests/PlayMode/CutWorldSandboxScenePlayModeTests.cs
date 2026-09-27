@@ -322,7 +322,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                         ? new UnityJobWorkExecutor(4)
                         : destination == WorkDestination.GeometryPool
                             ? WorkerPoolExecutor.GeometryPool(1)
-                            : WorkerPoolExecutor.BackgroundPool(1);
+                            : destination == WorkDestination.PlanningPool
+                                ? WorkerPoolExecutor.PlanningPool()
+                                : WorkerPoolExecutor.BackgroundPool(1);
                     var held = new HoldingExecutor(inner);
                     _holding.Add(held);
                     return held;
@@ -739,6 +741,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             yield return LoadScene(true);
             LogicalFragmentId body = _probe.Body;
+
+            // What is looked at is the Provisional pair and its face while the Final is held, and the case takes the
+            // publication in the update that takes up the ask as given. The build in a frame just after the scene was
+            // loaded can spend what is left of its Main budget, so the driver is given a sufficient one: the product's
+            // budget decision and the Pending path are the subject of their own tests, not of this one.
+            _world.Driver.RemainingMainSeconds = () => 1.0;
             Assert.That(_probe.AskCut(body, new Vector4(0f, 1f, 0f, 0f)), Is.True);
             yield return null;
 
