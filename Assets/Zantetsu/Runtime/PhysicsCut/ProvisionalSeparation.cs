@@ -7,13 +7,16 @@ namespace Zantetsu.PhysicsCut
     /// The sibling separation constraint of DESIGN 7.1.1: the `ProvisionalSeparationConstraint` between the two
     /// provisional siblings of one cut, as a Unity <see cref="ConfigurableJoint"/> fixed to an anchor-offset D6.
     /// <para>
-    /// The adopted plane's normal is the joint's own axis, in the local space of the actor the joint sits on. The two
-    /// tangents and every relative rotation are locked; only the normal moves, and it moves inside a symmetric limit
-    /// of one metre with the anchors offset by one metre along the normal, so that the relation the two actors are
-    /// built with sits at the inward boundary and two metres apart is the other one. **This is the interval the
-    /// joint is configured with, not a guarantee about any step**, and DESIGN 7.1.1 asks for no such guarantee:
-    /// stopping, pulling back, impulses, jitter and the difference in motion after it is removed are all accepted as
-    /// they come. Nothing detects, re-centres or widens anything.
+    /// The adopted plane's normal is the joint's own axis (X), in the local space of the actor the joint sits on. The
+    /// two tangents (Y, Z) are free to slide and the relative rotation about the normal is free; the relative rotations
+    /// about the two tangents are locked. Along the normal the pair moves inside a symmetric limit of one metre with
+    /// the anchors offset by one metre along the normal, so that the relation the two actors are built with sits at the
+    /// inward boundary and two metres apart is the other one. **This is the interval the joint is configured with, not
+    /// a guarantee about any step**, and DESIGN 7.1.1 asks for no such guarantee: stopping, pulling back, impulses,
+    /// jitter and the difference in motion after it is removed are all accepted as they come, and so are the sliding
+    /// and parting along the plane, the turn about the normal, contacts of the old colliders with the outside and the
+    /// rotation about the tangents still held after the two have parted. Nothing detects, re-centres, widens or bounds
+    /// anything: no tangential distance limit, no limit on the turn about the normal, no friction.
     /// </para>
     /// <para>
     /// The sign of the axis, which sibling carries the joint, which anchor carries the offset and how the second axis
@@ -47,10 +50,11 @@ namespace Zantetsu.PhysicsCut
             // Do not turn this into a pooled/deserialized-joint configurator without restoring those writes.
             joint.connectedAnchor = (Vector3)(axis * Metre);
 
+            // Along the normal: limited. Along the plane and about the normal: free. About the tangents: locked.
             joint.xMotion = ConfigurableJointMotion.Limited;
-            joint.yMotion = ConfigurableJointMotion.Locked;
-            joint.zMotion = ConfigurableJointMotion.Locked;
-            joint.angularXMotion = ConfigurableJointMotion.Locked;
+            joint.yMotion = ConfigurableJointMotion.Free;
+            joint.zMotion = ConfigurableJointMotion.Free;
+            joint.angularXMotion = ConfigurableJointMotion.Free;
             joint.angularYMotion = ConfigurableJointMotion.Locked;
             joint.angularZMotion = ConfigurableJointMotion.Locked;
             joint.linearLimit = new SoftJointLimit { limit = Metre, bounciness = 0f, contactDistance = 0f };
