@@ -2048,11 +2048,11 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(math.abs(math.dot(secondary, axis)), Is.LessThan(1e-4f), "orthogonal to it");
             Assert.That(math.length(secondary), Is.EqualTo(1f).Within(1e-4f), "and a direction");
 
-            Assert.That(joint.xMotion, Is.EqualTo(ConfigurableJointMotion.Limited), "only along the normal");
-            Assert.That(joint.yMotion, Is.EqualTo(ConfigurableJointMotion.Locked));
-            Assert.That(joint.zMotion, Is.EqualTo(ConfigurableJointMotion.Locked));
-            Assert.That(joint.angularXMotion, Is.EqualTo(ConfigurableJointMotion.Locked), "and nothing turns");
-            Assert.That(joint.angularYMotion, Is.EqualTo(ConfigurableJointMotion.Locked));
+            Assert.That(joint.xMotion, Is.EqualTo(ConfigurableJointMotion.Limited), "limited along the normal");
+            Assert.That(joint.yMotion, Is.EqualTo(ConfigurableJointMotion.Free), "free along the plane");
+            Assert.That(joint.zMotion, Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(joint.angularXMotion, Is.EqualTo(ConfigurableJointMotion.Free), "free to turn about the normal");
+            Assert.That(joint.angularYMotion, Is.EqualTo(ConfigurableJointMotion.Locked), "and not about the tangents");
             Assert.That(joint.angularZMotion, Is.EqualTo(ConfigurableJointMotion.Locked));
 
             Assert.That(joint.linearLimit.limit, Is.EqualTo(1f).Within(1e-6f), "a symmetric metre");

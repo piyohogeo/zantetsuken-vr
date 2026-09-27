@@ -119,6 +119,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // The frame is the test's to carry, so that the handoff happens inside a call it can look at.
             driver.enabled = false;
 
+            // What is watched is the handoff, and it takes the publication in the ask's own update as given. This
+            // frame's live Main remainder is spent on the test's own setup, so the driver is given a sufficient one: the
+            // product's budget check and the Pending path are the subject of their own tests, not of this one.
+            driver.RemainingMainSeconds = () => 1.0;
+
             var ask = new ProvisionalCutAsk
             {
                 source = source,

@@ -35,7 +35,8 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(j.breakForce,Is.EqualTo(float.PositiveInfinity));Assert.That(j.breakTorque,Is.EqualTo(float.PositiveInfinity));
             Assert.That(j.enableCollision,Is.False);
         }
-        // Frozen pre-D5 configuration, including all 17 setters. Independent of the product Configure method.
+        // Frozen pre-D5 configuration, including all 17 setters. Independent of the product Configure method. The
+        // motions are DESIGN 7.1.1's as of 9c1ce982: X limited, Y/Z and the turn about X free, the turns about Y/Z locked.
         static ConfigurableJoint Baseline(GameObject p,Rigidbody n,float3 normal)
         {
             float3 axis=math.normalize(normal), absolute=math.abs(axis);
@@ -45,8 +46,8 @@ namespace Zantetsu.PhysicsCut.Tests
             float length=math.length(orthogonal);float3 secondary=length>0?orthogonal/length:new float3(0,1,0);
             var j=p.AddComponent<ConfigurableJoint>();j.connectedBody=n;j.autoConfigureConnectedAnchor=false;
             j.axis=axis;j.secondaryAxis=secondary;j.anchor=Vector3.zero;j.connectedAnchor=axis;
-            j.xMotion=ConfigurableJointMotion.Limited;j.yMotion=j.zMotion=ConfigurableJointMotion.Locked;
-            j.angularXMotion=j.angularYMotion=j.angularZMotion=ConfigurableJointMotion.Locked;
+            j.xMotion=ConfigurableJointMotion.Limited;j.yMotion=j.zMotion=ConfigurableJointMotion.Free;
+            j.angularXMotion=ConfigurableJointMotion.Free;j.angularYMotion=j.angularZMotion=ConfigurableJointMotion.Locked;
             j.linearLimit=new SoftJointLimit{limit=1,bounciness=0,contactDistance=0};
             j.projectionMode=JointProjectionMode.None;j.breakForce=float.PositiveInfinity;j.breakTorque=float.PositiveInfinity;j.enableCollision=false;
             return j;
