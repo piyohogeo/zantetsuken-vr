@@ -30,6 +30,9 @@ namespace Zantetsu.EditorTools.Sandbox
         private const string IntakeRoot = "Assets/Licensed/Compact16uvIntake/";
         private const string TablePath = "Assets/Licensed/U8Npc/AS_Fast_WalkCycle_1.bytes";
 
+        /// <summary>The uncut character's material: the product mesh surface, made by <see cref="CharacterSurface"/>.</summary>
+        public const string CharacterSurfacePath = "Assets/Licensed/U8Npc/CharacterMeshSurface.mat";
+
         public static readonly Vector3 NpcPosition = new Vector3(0.8f, 0f, 2.4f);
         public static readonly Vector3 NpcEuler = new Vector3(0f, 180f, 0f);
         public static readonly Vector3 BoxCentre = new Vector3(-0.2f, 1.2f, 2.6f);
@@ -41,9 +44,9 @@ namespace Zantetsu.EditorTools.Sandbox
             var hulls = AssetDatabase.LoadAssetAtPath<TextAsset>(RepairRoot + "Resources/CharacterPhysicsMigration/character-casual.json");
             var table = AssetDatabase.LoadAssetAtPath<TextAsset>(TablePath);
             var forward = AssetDatabase.LoadAssetAtPath<Material>(RepairRoot + "SceneIntegration/CharacterForward.mat");
-            var skinMaterial = AssetDatabase.LoadAssetAtPath<Material>(IntakeRoot + "Resources/AppearanceMigration/SourcePalette.mat");
             var normal = AssetDatabase.LoadAssetAtPath<Texture2D>(IntakeRoot + "Resources/PaletteAtlas/Normal.png");
             var debug = AssetDatabase.LoadAssetAtPath<Texture2D>(IntakeRoot + "Resources/PaletteAtlas/Debug.png");
+            Material skinMaterial = normal != null ? CharacterSurface(normal) : null;
             if (intake == null || hulls == null || table == null || forward == null || skinMaterial == null || normal == null || debug == null)
             {
                 throw new InvalidOperationException("Prepare the private Compact16uv intake, repair, atlas and pose table first.");
@@ -155,6 +158,37 @@ namespace Zantetsu.EditorTools.Sandbox
 
             AssetDatabase.SaveAssets();
             Debug.Log("SandboxNpcSceneBuild: saved " + ScenePath + " (NPC at " + NpcPosition + ", box at " + BoxCentre + ").");
+        }
+
+        /// <summary>
+        /// The uncut character's material, made or brought up to date at <see cref="CharacterSurfacePath"/>: the product
+        /// mesh surface with the shared palette atlas, white, and the normal atlas as its base map -- what the cut pieces'
+        /// material (CharacterForward.mat) is set to -- so a character looks the same before and after its cut, and is
+        /// drawn for both eyes under Single Pass Instanced. The test-only mesh oracle is not a scene material.
+        /// </summary>
+        public static Material CharacterSurface(Texture2D normalAtlas)
+        {
+            Shader shader = Shader.Find("Zantetsu/VP Mesh Surface");
+            if (shader == null || !shader.isSupported)
+            {
+                throw new InvalidOperationException("The product mesh surface shader is not available.");
+            }
+
+            var material = AssetDatabase.LoadAssetAtPath<Material>(CharacterSurfacePath);
+            if (material == null)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(CharacterSurfacePath));
+                material = new Material(shader) { name = "CharacterMeshSurface" };
+                AssetDatabase.CreateAsset(material, CharacterSurfacePath);
+            }
+
+            material.shader = shader;
+            material.SetFloat("_VpUsePaletteAtlas", 1f);
+            material.SetColor("_BaseColor", Color.white);
+            material.SetTexture("_BaseMap", normalAtlas);
+            EditorUtility.SetDirty(material);
+            AssetDatabase.SaveAssets();
+            return material;
         }
 
         /// <summary>The entry for <c>-executeMethod</c>: builds the scene only.</summary>
