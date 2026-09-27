@@ -1021,7 +1021,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             out Shader shader,
             Func<WorkDestination, IWorkExecutor> executors,
             Action terminatePlayer,
-            Action<CutWorldProfile> configure = null)
+            Action<CutWorldProfile> configure = null,
+            Action<CutWorldRoot> beforeAwake = null)
         {
             shader = Shader.Find("Zantetsu/VP Indexed Indirect Unlit");
             Assert.That(shader, Is.Not.Null, "the display's shader is in this project");
@@ -1061,6 +1062,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             {
                 SetPrivate(root, "terminatePlayer", terminatePlayer);
             }
+
+            // Anything else a case gives the component, such as its shadow casters, before Awake reads it.
+            beforeAwake?.Invoke(root);
 
             // And now Awake runs, with everything it needs already there.
             rootObject.SetActive(true);
