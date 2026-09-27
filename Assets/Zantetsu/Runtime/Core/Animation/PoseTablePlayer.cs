@@ -62,6 +62,9 @@ namespace Zantetsu.Core.Animation
         /// <summary>The table this plays, once bound; null when there is none or it could not be read.</summary>
         public PoseTable Table => _table;
 
+        /// <summary>The table asset this was configured with (what two players playing the same table share).</summary>
+        public TextAsset TableAsset => table;
+
         public Transform ModelRoot => modelRoot;
 
         /// <summary>Why the table could not be bound, or null.</summary>
@@ -204,11 +207,36 @@ namespace Zantetsu.Core.Animation
             _table = read;
         }
 
-        private void Update()
+        /// <summary>
+        /// Whether something else decides when this plays (a <see cref="PoseLodDirector"/>): while set, this does not
+        /// update on its own, and the pose is applied only through <see cref="ApplyNow"/>. The time goes on either way.
+        /// </summary>
+        public bool Managed { get; set; }
+
+        /// <summary>Whether a pose can be applied: a bound table, its bones confirmed if required, and this live.</summary>
+        public bool IsPlaying => _table != null && (!requiresBones || _bonesConfirmed) && isActiveAndEnabled;
+
+        /// <summary>The table bones' Transforms, by table index (null where the table's path has none).</summary>
+        public int BoneCount => _bones != null ? _bones.Length : 0;
+
+        public Transform BoneAt(int index) => _bones[index];
+
+        /// <summary>The frame every table bone was last applied in (a whole pose, not a subset), or -1.</summary>
+        public int FullPoseFrame { get; private set; } = -1;
+
+        /// <summary>Whether the last application was a subset of the bones.</summary>
+        public bool LastAppliedSubset { get; private set; }
+
+        /// <summary>
+        /// Applies this frame's pose now: the Source Time of the frame's target time, as the ordinary update does, to
+        /// every table bone (<paramref name="bones"/> null) or only to the table bones in <paramref name="bones"/>[0..count)
+        /// -- evaluated for those alone; the others keep what they had. False, applying nothing, when no pose can be.
+        /// </summary>
+        public bool ApplyNow(int[] bones, int count)
         {
-            if (_table == null || (requiresBones && !_bonesConfirmed))
+            if (!IsPlaying)
             {
-                return;
+                return false;
             }
 
             if (!_started)
@@ -221,22 +249,39 @@ namespace Zantetsu.Core.Animation
             bool evaluated;
             using (s_evaluate.Auto())
             {
-                evaluated = _table.TryEvaluate(source, _positions, _rotations);
+                evaluated = bones == null
+                    ? _table.TryEvaluate(source, _positions, _rotations)
+                    : _table.TryEvaluate(source, bones, count, _positions, _rotations);
             }
 
             if (!evaluated)
             {
-                return;
+                return false;
             }
 
             using (s_apply.Auto())
             {
-                for (int i = 0; i < _bones.Length; i++)
+                if (bones == null)
                 {
-                    Transform bone = _bones[i];
-                    if (bone != null)
+                    for (int i = 0; i < _bones.Length; i++)
                     {
-                        bone.SetLocalPositionAndRotation(_positions[i], _rotations[i]);
+                        Transform bone = _bones[i];
+                        if (bone != null)
+                        {
+                            bone.SetLocalPositionAndRotation(_positions[i], _rotations[i]);
+                        }
+                    }
+                }
+                else
+                {
+                    for (int k = 0; k < count; k++)
+                    {
+                        int i = bones[k];
+                        Transform bone = _bones[i];
+                        if (bone != null)
+                        {
+                            bone.SetLocalPositionAndRotation(_positions[i], _rotations[i]);
+                        }
                     }
                 }
             }
@@ -244,6 +289,41 @@ namespace Zantetsu.Core.Animation
             AppliedFrame = Time.frameCount;
             AppliedTargetTime = target;
             AppliedSourceTime = source;
+            LastAppliedSubset = bones != null;
+            if (bones == null)
+            {
+                FullPoseFrame = Time.frameCount;
+            }
+
+            return true;
+        }
+
+        // Every table bone at one Source Time, recording nothing as applied: a preparation's sweep over the Clip (the
+        // next ordinary application puts the frame's pose back).
+        internal bool ApplySourceForPreparation(double sourceTime)
+        {
+            if (_table == null || !_table.TryEvaluate(sourceTime, _positions, _rotations))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _bones.Length; i++)
+            {
+                if (_bones[i] != null)
+                {
+                    _bones[i].SetLocalPositionAndRotation(_positions[i], _rotations[i]);
+                }
+            }
+
+            return true;
+        }
+
+        private void Update()
+        {
+            if (!Managed)
+            {
+                ApplyNow(null, 0);
+            }
         }
     }
 }

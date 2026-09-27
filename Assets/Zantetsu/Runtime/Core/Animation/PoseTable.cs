@@ -199,6 +199,68 @@ namespace Zantetsu.Core.Animation
             return true;
         }
 
+        /// <summary>
+        /// The pose at <paramref name="sourceTime"/> for the table bones in <paramref name="bones"/>[0..count) only: the
+        /// same interpolation as <see cref="TryEvaluate(double, Vector3[], Quaternion[])"/>, written at each named bone's
+        /// own index and nowhere else, so a caller that applies only those bones evaluates only those. False, writing
+        /// nothing, for the same times and buffers, or an index outside the table.
+        /// </summary>
+        public bool TryEvaluate(double sourceTime, int[] bones, int count, Vector3[] positions, Quaternion[] rotations)
+        {
+            if (!double.IsFinite(sourceTime) || sourceTime < 0.0 || sourceTime > DurationSeconds || bones == null
+                || count < 0 || count > bones.Length || positions == null || rotations == null
+                || positions.Length < BoneCount || rotations.Length < BoneCount)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                if ((uint)bones[i] >= (uint)BoneCount)
+                {
+                    return false;
+                }
+            }
+
+            float time = (float)sourceTime;
+            int first = Math.Min((int)Math.Floor(time * SampleRate), RegularSampleCount - 1);
+            int second = first;
+            float weight = 0f;
+            if (first < SampleCount - 1)
+            {
+                second = first + 1;
+                float span = _sampleTimes[second] - _sampleTimes[first];
+                weight = span > 0f ? Mathf.Clamp01((time - _sampleTimes[first]) / span) : 0f;
+            }
+
+            int a = first * BoneCount;
+            int b = second * BoneCount;
+            for (int i = 0; i < count; i++)
+            {
+                int bone = bones[i];
+                positions[bone] = Vector3.LerpUnclamped(_localPositions[a + bone], _localPositions[b + bone], weight);
+                Quaternion from = _localRotations[a + bone];
+                Quaternion to = _localRotations[b + bone];
+                if (Quaternion.Dot(from, to) < 0f)
+                {
+                    to = new Quaternion(-to.x, -to.y, -to.z, -to.w);
+                }
+
+                rotations[bone] = Quaternion.Normalize(Quaternion.LerpUnclamped(from, to, weight));
+            }
+
+            return true;
+        }
+
+        /// <summary>The sample times (seconds), in order: what a caller that sweeps the whole Clip once walks over.</summary>
+        public float SampleTime(int index) => _sampleTimes[index];
+
+        /// <summary>Table bone <paramref name="bone"/>'s local position at sample <paramref name="sample"/>, as stored.</summary>
+        public Vector3 SampleLocalPosition(int sample, int bone) => _localPositions[sample * BoneCount + bone];
+
+        /// <summary>Table bone <paramref name="bone"/>'s local rotation at sample <paramref name="sample"/>, as stored.</summary>
+        public Quaternion SampleLocalRotation(int sample, int bone) => _localRotations[sample * BoneCount + bone];
+
         private bool HoldsTogether(out string error)
         {
             error = null;

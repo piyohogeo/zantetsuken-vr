@@ -50,6 +50,18 @@ namespace Zantetsu.Sandbox
         [SerializeField] private TextAsset hulls;
         [SerializeField] private string family = "character-casual";
 
+        [Tooltip("The scene's bone level of detail; used only while it is enabled when the character is prepared.")]
+        [SerializeField] private PoseLodDirector poseLod;
+
+        [Tooltip("The wrist bones (hull bones): below them is left out from level 1, they themselves from level 2.")]
+        [SerializeField] private string[] wristBones = { "DEF-hand.L", "DEF-hand.R" };
+
+        [Tooltip("The ankle bones (hull bones): below them is left out from level 1, they themselves from level 3.")]
+        [SerializeField] private string[] ankleBones = { "DEF-foot.L", "DEF-foot.R" };
+
+        /// <summary>The character under the bone level of detail, when there is one.</summary>
+        public PoseLodCharacter Lod { get; private set; }
+
         private VpFixedScaleSkinCache _scaleCache;
         private VpFixedScaleSkinInput _fixedInput;
         private VpPhysicsColdPreparation _cold;
@@ -124,13 +136,21 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            hit.Detector.AddCharacter(Handle);
+            // Under the needed-bones-only mode every needed bone is current every frame: the hit goes as before, with no
+            // range test and no pose asked for.
+            hit.Detector.AddCharacter(Handle, poseLod != null && poseLod.NeededOnly ? null : Lod);
             IsTarget = true;
             PreparationFrames = Time.frameCount - _startFrame;
         }
 
         private void OnDestroy()
         {
+            if (poseLod != null && Lod != null)
+            {
+                poseLod.Unregister(Lod);
+                Lod = null;
+            }
+
             if (hit != null && hit.Detector != null && Handle != null)
             {
                 hit.Detector.RemoveCharacter(Handle);
@@ -209,6 +229,7 @@ namespace Zantetsu.Sandbox
             var edges = new List<BrepEdge>();
             var ranges = new List<ConvexBrepRange>();
             var convexBones = new Transform[fixture.hulls.Length];
+            var hitBoxes = new List<(Transform bone, Bounds box)>(fixture.hulls.Length);
             for (int c = 0; c < fixture.hulls.Length; c++)
             {
                 Hull h = fixture.hulls[c];
@@ -230,11 +251,16 @@ namespace Zantetsu.Sandbox
                     faceIndexBase = indices.Count, faceIndexCount = h.faceIndices.Length,
                     edgeBase = edges.Count, edgeCount = localEdges.Length, maxFaceLoop = maxLoop,
                 });
+                var box = new Bounds();
                 for (int v = 0; v < h.rendererBindVertices.Length / 3; v++)
                 {
                     var p = new Vector3((float)h.rendererBindVertices[3 * v], (float)h.rendererBindVertices[3 * v + 1], (float)h.rendererBindVertices[3 * v + 2]);
-                    points.Add(binds[bone].MultiplyPoint3x4(_fixedInput.PrepareBindPoint(p)));
+                    Vector3 local = binds[bone].MultiplyPoint3x4(_fixedInput.PrepareBindPoint(p));
+                    points.Add(local);
+                    if (v == 0) box = new Bounds(local, Vector3.zero); else box.Encapsulate(local);
                 }
+
+                hitBoxes.Add((bones[bone], box));
 
                 offsets.AddRange(h.faceOffsets);
                 indices.AddRange(h.faceIndices);
@@ -270,6 +296,62 @@ namespace Zantetsu.Sandbox
             WithdrawsParts = handle.TryWithdrawParts(new Behaviour[] { _pose }, out string whyNot);
             ConfirmSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             WholeRootReason = whyNot;
+
+            // The bone level of detail, when the scene has one enabled: the bone sets by level, the range for a hit.
+            if (poseLod != null && poseLod.isActiveAndEnabled)
+            {
+                // What the character is drawn and placed with: the bones with a skin weight (not every bone the renderer
+                // lists), and both renderers' own Transforms and root bones.
+                var references = new List<Transform>();
+                PoseLodDirector.CollectWeightedBones(original, references);
+                foreach (SkinnedMeshRenderer r in new[] { original, skin })
+                {
+                    references.Add(r.transform);
+                    if (r.rootBone != null) references.Add(r.rootBone);
+                }
+
+                Lod = poseLod.Register(_pose, references, LodOmissions(bones), hitBoxes, out string refused);
+                if (Lod == null)
+                {
+                    Failure = "the bone level of detail did not take the character: " + refused;
+                }
+                else
+                {
+                    Debug.Log("POSE LOD: " + characterRoot.name + " table bones " + _pose.BoneCount + ", applied by level "
+                        + Lod.AppliedBoneCount(0) + "/" + Lod.AppliedBoneCount(1) + "/" + Lod.AppliedBoneCount(2) + "/" + Lod.AppliedBoneCount(3)
+                        + ", hull bones left out by level 0/" + Lod.OmittedHitBoneCount(1) + "/" + Lod.OmittedHitBoneCount(2) + "/" + Lod.OmittedHitBoneCount(3)
+                        + ", range (root frame) centre " + Lod.RangeBounds.center.ToString("F3") + " size " + Lod.RangeBounds.size.ToString("F3")
+                        + ", widened between samples by up to " + Lod.LargestBetweenSamples.ToString("F3") + " m"
+                        + ", registration " + (Lod.RegisterSeconds * 1000.0).ToString("F2") + " ms (range " + (Lod.RangeSeconds * 1000.0).ToString("F2") + " ms)"
+                        + (Lod.SharedPlan ? ", plan shared" : ", plan made")
+                        + ", phase " + Lod.Phase);
+                }
+            }
+        }
+
+        // What each level leaves out, from the named wrist and ankle bones (hull bones of this character): below both
+        // from level 1 (fingers, toes), the wrists from level 2, the ankles from level 3. The helpers nothing draws are
+        // the director's to find; nothing else is named.
+        private IReadOnlyList<Transform>[] LodOmissions(Transform[] bones)
+        {
+            var level1 = new List<Transform>();
+            var level2 = new List<Transform>();
+            var level3 = new List<Transform>();
+            foreach (Transform bone in bones)
+            {
+                if (bone == null) continue;
+                bool wrist = Array.IndexOf(wristBones, bone.name) >= 0;
+                bool ankle = Array.IndexOf(ankleBones, bone.name) >= 0;
+                if (!wrist && !ankle) continue;
+                foreach (Transform below in bone.GetComponentsInChildren<Transform>(true))
+                {
+                    if (below != bone) level1.Add(below);
+                }
+
+                (wrist ? level2 : level3).Add(bone);
+            }
+
+            return new IReadOnlyList<Transform>[] { level1, level2, level3 };
         }
 
         private static void BuildEdges(int[] offsets, int[] indices, out int[] faceEdges, out BrepEdge[] edges)

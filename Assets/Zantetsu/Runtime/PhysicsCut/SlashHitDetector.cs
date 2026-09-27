@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
+using Zantetsu.Core.Animation;
 using Zantetsu.Core.Slash;
 using Zantetsu.MeshCut;
 using Zantetsu.Observability;
@@ -109,6 +110,12 @@ namespace Zantetsu.PhysicsCut
     /// frame. Its children descend from that fragment, so the Slash that cut it leaves them alone.
     /// </para>
     /// <para>
+    /// **A character whose bones a level of detail may leave behind** (<see cref="AddCharacter(VpPreparedCharacterCut, IPoseOnDemand)"/>):
+    /// the update's sweeps are first met with the range it can occupy at all, placed by its root as it stands; one no
+    /// sweep can meet is not tested, and one some sweep can meet has its whole pose of the frame put on its bones, once
+    /// for all the sweeps, before the exact test above -- which, and the cut after it, then read that pose.
+    /// </para>
+    /// <para>
     /// **Nothing of the blade.** Only the waves' sweeps are read: the blade's own pose, its gate and whether it may
     /// fire play no part, so a wave already flying keeps hitting while the gesture cannot fire (T-040).
     /// </para>
@@ -132,6 +139,7 @@ namespace Zantetsu.PhysicsCut
         private readonly List<CurrentShape> _shapes = new List<CurrentShape>(16);
         private readonly List<VpPreparedCharacterCut> _characters = new List<VpPreparedCharacterCut>(4);
         private readonly List<VpPreparedCharacterCut> _characterTargets = new List<VpPreparedCharacterCut>(4);
+        private readonly List<IPoseOnDemand> _characterPoses = new List<IPoseOnDemand>(4);
         private readonly long[] _live = new long[SlashWaveCore.Capacity];
         private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.Capacity];
         private float3[] _section = new float3[64];
@@ -191,15 +199,33 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public void AddCharacter(VpPreparedCharacterCut character)
         {
+            AddCharacter(character, null);
+        }
+
+        /// <summary>
+        /// The same, for a character whose bones may stand behind the frame (<paramref name="pose"/>, a level of detail):
+        /// in each update its range (<see cref="IPoseOnDemand.RangeBounds"/>, placed by its root as it stands) is met with
+        /// every sweep first; a character no sweep can meet is not tested further, and one that some sweep can meet has its
+        /// whole current pose put on its bones -- once, however many sweeps or Slashes -- before the exact test, so the test
+        /// and the cut read the pose of the frame, not the one the level of detail left.
+        /// </summary>
+        public void AddCharacter(VpPreparedCharacterCut character, IPoseOnDemand pose)
+        {
             if (character != null && !_characters.Contains(character))
             {
                 _characters.Add(character);
+                _characterPoses.Add(pose);
             }
         }
 
         public void RemoveCharacter(VpPreparedCharacterCut character)
         {
-            _characters.Remove(character);
+            int at = _characters.IndexOf(character);
+            if (at >= 0)
+            {
+                _characters.RemoveAt(at);
+                _characterPoses.RemoveAt(at);
+            }
         }
 
         /// <summary>
@@ -266,10 +292,25 @@ namespace Zantetsu.PhysicsCut
                 _characterTargets.Clear();
                 for (int c = 0; c < _characters.Count; c++)
                 {
-                    if (_characters[c] != null && _characters[c].IsHitTarget)
+                    if (_characters[c] == null || !_characters[c].IsHitTarget)
                     {
-                        _characterTargets.Add(_characters[c]);
+                        continue;
                     }
+
+                    // A character whose bones may be behind: only if a sweep can meet its range, and then with its
+                    // whole current pose on the bones before anything reads them.
+                    IPoseOnDemand pose = _characterPoses[c];
+                    if (pose != null && pose.IsLive)
+                    {
+                        if (!AnySweepMeets(pose, sweeps))
+                        {
+                            continue;
+                        }
+
+                        pose.EnsureCurrentFullPose();
+                    }
+
+                    _characterTargets.Add(_characters[c]);
                 }
 
                 for (int s = 0; s < sweeps.Length; s++)
@@ -345,13 +386,49 @@ namespace Zantetsu.PhysicsCut
             if (hit.character.IsDisposed || result.Outcome == VpCharacterCutOutcome.Requested)
             {
                 // Its cut is done with it: from here the character is its fragment's owner, or nothing.
-                _characters.Remove(hit.character);
+                RemoveCharacter(hit.character);
             }
 
             var confirmed = new SlashHitConfirmed(
                 hit.slashId, hit.at, hit.atLatch, hit.fragment, hit.side, acceptance, admission, result.Operation);
             _hits.Add(confirmed);
             Trace(in confirmed);
+        }
+
+        // Whether any of this update's sweeps can meet the character's range: the box of each sweep's four points in the
+        // root's frame against the range, closed (the convexes' own candidate test, one level up).
+        private static bool AnySweepMeets(IPoseOnDemand pose, ReadOnlySpan<SlashSweep> sweeps)
+        {
+            Transform root = pose.Root;
+            if (root == null)
+            {
+                return false;
+            }
+
+            float4x4 worldToRoot = root.worldToLocalMatrix;
+            Bounds range = pose.RangeBounds;
+            float3 lo = range.min;
+            float3 hi = range.max;
+            for (int s = 0; s < sweeps.Length; s++)
+            {
+                float3 a0 = math.transform(worldToRoot, (float3)sweeps[s].PreviousA);
+                float3 b0 = math.transform(worldToRoot, (float3)sweeps[s].PreviousB);
+                float3 a1 = math.transform(worldToRoot, (float3)sweeps[s].CurrentA);
+                float3 b1 = math.transform(worldToRoot, (float3)sweeps[s].CurrentB);
+                if (!math.all(math.isfinite(a0) & math.isfinite(b0) & math.isfinite(a1) & math.isfinite(b1)))
+                {
+                    continue;
+                }
+
+                float3 qlo = math.min(math.min(a0, b0), math.min(a1, b1));
+                float3 qhi = math.max(math.max(a0, b0), math.max(a1, b1));
+                if (!(math.any(qhi < lo) || math.any(hi < qlo)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         // The characters not cut yet: each bone-local convex placed by its bone as it stands now.
