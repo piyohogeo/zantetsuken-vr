@@ -76,6 +76,9 @@ namespace Zantetsu.EditorTools.Sandbox
             SetBinding(materials.GetArrayElementAtIndex(0), 0, forward);
             SetBinding(materials.GetArrayElementAtIndex(1), 1, side);
             SetBinding(materials.GetArrayElementAtIndex(2), 2, end);
+
+            // The display's two shadow casters (DESIGN 5.4): Stable one-sided, immediate two-sided without a cap.
+            CutWorldShadowCasters.Assign(serialized);
             serialized.ApplyModifiedPropertiesWithoutUndo();
 
             var probeSerialized = new SerializedObject(probe);

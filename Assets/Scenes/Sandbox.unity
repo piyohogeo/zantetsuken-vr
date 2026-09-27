@@ -3843,8 +3843,8 @@ MonoBehaviour:
     material: {fileID: 2100000, guid: 3ddb8fcfc0e4f1c4b92979dcffb8860b, type: 2}
   - sourceIndex: 1
     material: {fileID: 2100000, guid: 68b6d309cd051f149987b019528474b0, type: 2}
-  shadowMaterial: {fileID: 0}
-  provisionalShadowMaterial: {fileID: 0}
+  shadowMaterial: {fileID: 2100000, guid: a55899735d09d44479a9246f93303efe, type: 2}
+  provisionalShadowMaterial: {fileID: 2100000, guid: b1362748169283345abb87aa189dd045, type: 2}
   normalPaletteAtlas: {fileID: 0}
   debugPaletteAtlas: {fileID: 0}
 --- !u!4 &635617478

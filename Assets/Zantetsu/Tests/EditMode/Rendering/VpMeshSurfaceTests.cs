@@ -167,6 +167,117 @@ namespace Zantetsu.Rendering.Tests
             return readback.GetPixels32();
         }
 
+        /// <summary>
+        /// The product surface casts a shadow through the ordinary renderer path: a cube drawn with it darkens a ground
+        /// that receives shadows, on the side the light throws it to, and the same scene with the cube's shadow casting
+        /// off leaves that ground lit. Nothing is brighter with the shadow on. The ground is the product surface too,
+        /// with a plain white base, so what changes between the two images is the shadow alone.
+        /// </summary>
+        [Test]
+        public void TheProductSurface_CastsItsShadowOnTheGround_AndNotWhenCastingIsOff()
+        {
+            VpCutSurfaceColour.SetDebugEnabled(false);
+            Color32[] casting = RenderShadowScene(ShadowCastingMode.On);
+            Color32[] notCasting = RenderShadowScene(ShadowCastingMode.Off);
+
+            int darker = 0, brighter = 0;
+            double sumX = 0, sumY = 0;
+            for (int i = 0; i < casting.Length; i++)
+            {
+                float difference = Luminance(notCasting[i]) - Luminance(casting[i]);
+                if (difference > 20f)
+                {
+                    darker++;
+                    sumX += i % ShadowSize;
+                    sumY += i / ShadowSize;
+                }
+                else if (difference < -20f)
+                {
+                    brighter++;
+                }
+            }
+
+            Assert.That(darker, Is.GreaterThan(100), "the cube's shadow darkens the ground (" + darker + " pixels)");
+            Assert.That(brighter, Is.Zero, "and nothing is brighter with it (" + brighter + " pixels)");
+
+            // The light travels towards +x and +z, so the shadow lies on that side of the cube, which stands at the
+            // centre of the view: image x is world x and image y world z, looking straight down.
+            double centreX = sumX / darker - (ShadowSize - 1) / 2.0;
+            double centreY = sumY / darker - (ShadowSize - 1) / 2.0;
+            Assert.That(centreX, Is.GreaterThan(0.0), "the shadow lies towards +x: " + centreX.ToString("F1"));
+            Assert.That(centreY, Is.GreaterThan(0.0), "and towards +z: " + centreY.ToString("F1"));
+        }
+
+        private const int ShadowSize = 128;
+
+        private Color32[] RenderShadowScene(ShadowCastingMode cubeCasts)
+        {
+            Material surface = Material(ProductShader);
+            surface.SetFloat("_VpUsePaletteAtlas", 0f);
+            surface.SetColor("_BaseColor", Color.white);
+
+            GameObject ground = Track(GameObject.CreatePrimitive(PrimitiveType.Plane));
+            Object.DestroyImmediate(ground.GetComponent<Collider>());
+            MeshRenderer groundRenderer = ground.GetComponent<MeshRenderer>();
+            groundRenderer.sharedMaterial = surface;
+            groundRenderer.shadowCastingMode = ShadowCastingMode.Off;
+            groundRenderer.receiveShadows = true;
+
+            GameObject cube = Track(GameObject.CreatePrimitive(PrimitiveType.Cube));
+            Object.DestroyImmediate(cube.GetComponent<Collider>());
+            cube.transform.position = new Vector3(0f, 1.5f, 0f);
+            MeshRenderer cubeRenderer = cube.GetComponent<MeshRenderer>();
+            cubeRenderer.sharedMaterial = surface;
+            cubeRenderer.shadowCastingMode = cubeCasts;
+
+            Light light = Track(new GameObject("VP Mesh Surface Sun")).AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.shadows = LightShadows.Hard;
+            light.intensity = 1f;
+            light.transform.rotation = Quaternion.Euler(60f, 30f, 0f);
+
+            var target = Track(new RenderTexture(ShadowSize, ShadowSize, 24, RenderTextureFormat.ARGB32) { antiAliasing = 1 });
+            target.Create();
+            Camera camera = Track(new GameObject("VP Mesh Surface Shadow Camera")).AddComponent<Camera>();
+            camera.enabled = false;
+            camera.orthographic = true;
+            camera.orthographicSize = 4f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 30f;
+            camera.targetTexture = target;
+            camera.transform.SetPositionAndRotation(new Vector3(0f, 12f, 0f), Quaternion.Euler(90f, 0f, 0f));
+
+            try
+            {
+                var request = new RenderPipeline.StandardRequest { destination = target };
+                Assert.That(RenderPipeline.SupportsRenderRequest(camera, request), Is.True, "render request");
+                RenderPipeline.SubmitRenderRequest(camera, request);
+
+                RenderTexture previous = RenderTexture.active;
+                RenderTexture.active = target;
+                var readback = Track(new Texture2D(ShadowSize, ShadowSize, TextureFormat.RGBA32, false));
+                readback.ReadPixels(new Rect(0, 0, ShadowSize, ShadowSize), 0, 0);
+                readback.Apply(false);
+                RenderTexture.active = previous;
+                return readback.GetPixels32();
+            }
+            finally
+            {
+                // The scene goes with the drawing that made it: the next drawing must be of one cube, one sun.
+                Object.DestroyImmediate(ground);
+                Object.DestroyImmediate(cube);
+                Object.DestroyImmediate(light.gameObject);
+                Object.DestroyImmediate(camera.gameObject);
+            }
+        }
+
+        private static float Luminance(Color32 p)
+        {
+            return (p.r + p.g + p.b) / 3f;
+        }
+
         private T Track<T>(T tracked) where T : Object
         {
             _objects.Add(tracked);
