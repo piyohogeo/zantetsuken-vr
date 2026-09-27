@@ -78,6 +78,30 @@ namespace Zantetsu.Rendering
 
         public int DescriptorCapacity => _descriptors.Length;
 
+        /// <summary>How many indices the descriptors in <paramref name="state"/> hold. Read only when room is refused.</summary>
+        internal long IndicesInState(VpIndexRangeState state)
+        {
+            long n = 0;
+            for (int d = 0; d < _descriptors.Length; d++)
+            {
+                n += _descriptors[d].state == state ? _descriptors[d].indexCount : 0;
+            }
+
+            return n;
+        }
+
+        /// <summary>How many descriptors are in <paramref name="state"/> now. For the storage's room description, not a hot path.</summary>
+        internal int CountInState(VpIndexRangeState state)
+        {
+            int n = 0;
+            for (int d = 0; d < _descriptors.Length; d++)
+            {
+                n += _descriptors[d].state == state ? 1 : 0;
+            }
+
+            return n;
+        }
+
         /// <summary>
         /// Registers [indexStart, indexStart + indexCount) as Reserved in a free descriptor that can take another
         /// generation. An empty range is accepted. Returns false with a default handle when either value is negative,

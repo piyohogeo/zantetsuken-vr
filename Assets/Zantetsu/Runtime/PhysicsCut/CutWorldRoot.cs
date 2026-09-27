@@ -105,6 +105,13 @@ namespace Zantetsu.PhysicsCut
         internal static Func<WorkDestination, IWorkExecutor> nextWorldExecutors;
 
         /// <summary>
+        /// The page backing of the **next** world built in this domain, read once and cleared there; null is the
+        /// product's (VirtualAlloc). It exists so that a test can make a reservation or a commit fail on purpose through
+        /// the product's own initialisation and updates, without exhausting real memory.
+        /// </summary>
+        internal static IVpPageBacking nextWorldPageBacking;
+
+        /// <summary>
         /// The Player's termination API, called once when the termination request of DESIGN 4 is made. Null means the
         /// product's own; a test gives its own so that no test ends the editor.
         /// </summary>
@@ -258,9 +265,31 @@ namespace Zantetsu.PhysicsCut
             Ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(profile.MaxIncompleteCuts));
             Owners = new PhysicsOwnerRegistry();
             Placement = new PhysicsOwnerPlacementLookup(Owners);
-            Storage = new VpCpuGeometryStorage(
-                profile.VertexCapacity, profile.IndexCapacity, profile.GeometryDescriptorCapacity,
-                profile.SubmeshCapacity, profile.VertexBlockCapacity, Allocator.Persistent);
+            // The vertices and indices on reserved address space with a first commit (DESIGN 4.5.4). A reservation or a
+            // first commit the system refuses is the backing not established: the common termination, as a display
+            // that cannot be made is below.
+            try
+            {
+                Storage = new VpCpuGeometryStorage(
+                    new VpCpuGeometryBacking
+                    {
+                        pages = TakeNextPageBacking(),
+                        vertexReserve = profile.VertexReserve,
+                        vertexInitialCommit = profile.VertexInitialCommit,
+                        indexReserve = profile.IndexReserve,
+                        indexInitialCommit = profile.IndexInitialCommit,
+                    },
+                    profile.GeometryDescriptorCapacity, profile.SubmeshCapacity, profile.VertexBlockCapacity, Allocator.Persistent);
+            }
+            catch (InvalidOperationException exception)
+            {
+                enabled = false;
+                RequestTermination("the geometry storage's backing could not be established: " + exception.Message);
+                return;
+            }
+
+            // Pages that cannot be committed later are the same cause, told when they happen.
+            Storage.BackingFailureHandler = RequestTermination;
             References = new VpGeometryReferenceTable(
                 Storage, profile.GeometryReferenceCapacity, profile.DisplayInstanceCapacity);
 
@@ -268,6 +297,7 @@ namespace Zantetsu.PhysicsCut
                     Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
                     profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
                     profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
+                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity,
                     out VpLogicalCutDisplay display))
             {
                 // The room the display needs, or the stencil configuration it requires, could not be established.
@@ -284,6 +314,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             Display = display;
+            Display.BackingFailureHandler = RequestTermination;
             if (usePalette)
             {
                 VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);
@@ -623,7 +654,14 @@ namespace Zantetsu.PhysicsCut
         /// retired. What becomes of the frames after it is the Player's.
         /// </para>
         /// </summary>
-        private void RequestTermination(string cause)
+        private static IVpPageBacking TakeNextPageBacking()
+        {
+            IVpPageBacking pages = nextWorldPageBacking ?? VpWindowsPageBacking.Instance;
+            nextWorldPageBacking = null;
+            return pages;
+        }
+
+        internal void RequestTermination(string cause)
         {
             if (TerminationRequested)
             {
@@ -684,7 +722,10 @@ namespace Zantetsu.PhysicsCut
             public void GeometryFailed(in CutGeometryFault fault)
             {
                 Count++;
-                _root.RequestTermination("the display geometry of a cut failed: " + fault);
+                // The storage's room of every kind goes with the message, so that a capacity failure says which room.
+                _root.RequestTermination("the display geometry of a cut failed: " + fault
+                    + (_root.Storage != null ? "; storage: " + _root.Storage.DescribeRoom() : "")
+                    + (_root.Display != null ? "; " + _root.Display.DescribeGpuRoom() : ""));
             }
         }
 

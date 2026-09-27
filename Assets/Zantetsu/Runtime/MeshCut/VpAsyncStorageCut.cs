@@ -181,20 +181,6 @@ namespace Zantetsu.MeshCut
         /// <summary>How many cuts are neither finished nor abandoned.</summary>
         public int ActiveCount => _requests.Count;
 
-        /// <summary>Whether some cut of this runner's other than <paramref name="request"/> is holding room.</summary>
-        private bool HoldsRoomOtherThan(VpStorageCutRequest request)
-        {
-            for (int i = 0; i < _requests.Count; i++)
-            {
-                if (_requests[i] != request && _requests[i].HoldsReservation)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         /// <summary>How many of this runner's cuts hold an output reservation right now.</summary>
         public int ReservingCount
         {
@@ -480,11 +466,14 @@ namespace Zantetsu.MeshCut
         /// Takes what one attempt needs and points the kernel's output at it: the reservation, the scratch, and the
         /// input as it stands right now. False when it did not take them, which is not always a failure.
         /// <para>
-        /// **Room refused while other cuts of this runner hold some is a wait.** It changes nothing, the cut stays in
-        /// <see cref="VpStorageCutStage.Ready"/> and asks again at the next pump, by which time a cut that has settled
-        /// may have given its room back. Only a refusal with no other cut of this runner holding anything says the
-        /// room is not there to be had, and that ends the cut as a capacity failure. A holder outside this runner --
-        /// a synchronous cut of the same storage -- is not visible here and such a refusal is read as the second kind.
+        /// **Room refused that can come back is a wait.** It changes nothing, the cut stays in
+        /// <see cref="VpStorageCutStage.Ready"/> and asks again at the next pump. Whether it can come back is the
+        /// storage's classification of the refusal (<see cref="VpCpuGeometryStorage.LastRefusalIsTemporary"/>): the short
+        /// kind is held by open reservations or retiring ranges, and with what is free that covers the request. A refusal
+        /// that cannot clear -- past the reservation, a management area nobody returns -- and one the storage reports as
+        /// a backing failure end the cut as a capacity failure, which the owner turns into the common termination
+        /// (DESIGN 4.5.4). An estimate too small for the input is not a refusal of room at all: that is the kernel's
+        /// capacity status, and the cut reserves again, larger.
         /// </para>
         /// <para>
         /// Every attempt reserves. Whether the plane misses the geometry is only known once the run has looked, and
@@ -503,9 +492,13 @@ namespace Zantetsu.MeshCut
                         request.newIndexCapacity,
                         out VpCutOutputReservation reservation))
                 {
-                    if (HoldsRoomOtherThan(request))
+                    // Three kinds of refusal (DESIGN 4.5.3, 4.5.4), as the storage classifies what was short. Backing it
+                    // could not establish -- a page commit refused -- ends the cut; the storage has already reported it
+                    // for the common termination. Room of the short kind that others hold and will give back, enough with
+                    // what is free for this request, is a wait: the cut stays Ready, unoffered, and is classified anew at
+                    // each attempt. Anything else -- past the reservation, a management area nobody returns -- ends it.
+                    if (_storage.BackingFailure == null && _storage.LastRefusalIsTemporary)
                     {
-                        // Somebody else of this runner's is holding what is free: this cut simply waits here.
                         return false;
                     }
 

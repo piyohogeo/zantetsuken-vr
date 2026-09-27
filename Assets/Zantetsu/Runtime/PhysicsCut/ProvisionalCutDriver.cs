@@ -70,6 +70,15 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Admitted once; input and any unpublished candidate are held until frame budget permits publication.</summary>
         Pending = 7,
+
+        /// <summary>
+        /// **Not accepted yet** -- before the ledger's admission, so no Operation and no admission was asked: a prepared
+        /// character's hit whose display input could not be given room that others hold and will return (DESIGN 4.5.3,
+        /// 4.5.4). The request -- the pose the hit met, its plane and impulses, the character's fragment -- is held, and
+        /// a later update of the driver takes it up once as the same request, into the ordinary acceptance. Room that
+        /// cannot come back is not this: that is the common termination.
+        /// </summary>
+        Held = 8,
     }
 
     /// <summary>What a caller asks for when it asks for a cut.</summary>
@@ -628,6 +637,9 @@ namespace Zantetsu.PhysicsCut
             using var measured = SceneAbCounters.Measure(0);
 #endif
             _taken.Clear();
+
+            // Requests held before acceptance come first: they were made before this update's asks.
+            ResumeHeldCharacterCuts();
             for (int i = 0; i < _asked.Count; i++)
             {
                 ProvisionalCutAsk ask = _asked[i];
@@ -741,6 +753,7 @@ namespace Zantetsu.PhysicsCut
         public void EndEveryCut()
         {
             _asked.Clear();
+            EndHeldCharacterCuts();
             if (!IsBound)
             {
                 return;

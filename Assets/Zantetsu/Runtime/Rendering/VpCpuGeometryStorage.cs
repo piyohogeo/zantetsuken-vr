@@ -6,6 +6,21 @@ using UnityEngine;
 namespace Zantetsu.Rendering
 {
     /// <summary>
+    /// How the storage's two large linear areas are backed (DESIGN 4.5.4): each is a reserved address range -- its
+    /// absolute limit -- of which a first part is committed at once and more as room is given out. The vertices'
+    /// topology entries are one to one with the vertices and follow them. What is reserved is address space; what is
+    /// committed is memory.
+    /// </summary>
+    public struct VpCpuGeometryBacking
+    {
+        public IVpPageBacking pages;
+        public int vertexReserve;
+        public int vertexInitialCommit;
+        public int indexReserve;
+        public int indexInitialCommit;
+    }
+
+    /// <summary>
     /// CPU VP geometry storage made of an append-only <see cref="VpCpuVertexStorage"/> and a leased
     /// <see cref="VpCpuIndexStorage"/> (DESIGN 4.5.3), together with the metadata that belongs to the same append: the
     /// vertex blocks a geometry is made of, the render vertex to topology vertex mapping and the submesh descriptors.
@@ -68,6 +83,9 @@ namespace Zantetsu.Rendering
 
         private readonly VpCpuVertexStorage _vertices;
         private readonly VpCpuIndexStorage _indices;
+
+        // One to one with the vertices, on the same kind of backing: committed with them, never separately fixed.
+        private readonly VpVirtualArray<int> _topologyMemory;
         private NativeArray<int> _topologyOfVertex;
         private NativeArray<VpGeometrySubmesh> _submeshes;
 
@@ -91,6 +109,10 @@ namespace Zantetsu.Rendering
         private bool _disposed;
         private bool _referenceTableClaimed;
 
+        /// <summary>
+        /// A storage whose vertex and index reservations are also what is committed at once: the fixed-size storage it
+        /// used to be, on the product's page backing. <paramref name="allocator"/> is used for the metadata arrays.
+        /// </summary>
         public VpCpuGeometryStorage(
             int vertexCapacity,
             int indexCapacity,
@@ -98,7 +120,40 @@ namespace Zantetsu.Rendering
             int submeshCapacity,
             int vertexBlockCapacity,
             Allocator allocator)
+            : this(
+                new VpCpuGeometryBacking
+                {
+                    pages = VpWindowsPageBacking.Instance,
+                    vertexReserve = vertexCapacity,
+                    vertexInitialCommit = vertexCapacity,
+                    indexReserve = indexCapacity,
+                    indexInitialCommit = indexCapacity,
+                },
+                indexDescriptorCapacity,
+                submeshCapacity,
+                vertexBlockCapacity,
+                allocator)
         {
+        }
+
+        /// <summary>
+        /// A storage on the backing given: the vertices (with their topology entries) and the indices reserved and
+        /// first committed as it says. The index descriptors, the submesh descriptors and the vertex blocks are
+        /// management areas of fixed capacity, allocated with <paramref name="allocator"/>. Throws
+        /// <see cref="InvalidOperationException"/>, holding nothing, when the backing cannot be established.
+        /// </summary>
+        public VpCpuGeometryStorage(
+            in VpCpuGeometryBacking backing,
+            int indexDescriptorCapacity,
+            int submeshCapacity,
+            int vertexBlockCapacity,
+            Allocator allocator)
+        {
+            if (backing.pages == null)
+            {
+                throw new ArgumentNullException(nameof(backing), "a page backing is required");
+            }
+
             if (submeshCapacity < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(submeshCapacity), submeshCapacity, "Must not be negative.");
@@ -109,16 +164,23 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(vertexBlockCapacity), vertexBlockCapacity, "Must not be negative.");
             }
 
-            _vertices = new VpCpuVertexStorage(vertexCapacity, allocator);
+            _vertices = new VpCpuVertexStorage(backing.pages, backing.vertexReserve, backing.vertexInitialCommit);
             try
             {
                 // Inside the try: these can throw on a capacity the vertex storage accepted, and the vertices are
-                // already native memory by then.
-                _vertexSpans = new VpSpanAllocator(vertexCapacity);
+                // already reserved by then. The vertex spans' free list starts at the vertex blocks' size and grows on
+                // demand, since the reservation itself can be large.
+                _vertexSpans = new VpSpanAllocator(backing.vertexReserve, vertexBlockCapacity + 2);
                 _submeshSpans = new VpSpanAllocator(submeshCapacity);
                 _vertexBlockSpans = new VpSpanAllocator(vertexBlockCapacity);
-                _indices = new VpCpuIndexStorage(indexCapacity, indexDescriptorCapacity, allocator);
-                _topologyOfVertex = new NativeArray<int>(vertexCapacity, allocator);
+                _indices = new VpCpuIndexStorage(backing.pages, backing.indexReserve, backing.indexInitialCommit, indexDescriptorCapacity);
+                if (!VpVirtualArray<int>.TryCreate(
+                        backing.pages, backing.vertexReserve, _vertices.CommittedCapacity, out _topologyMemory, out string failure))
+                {
+                    throw new InvalidOperationException("the topology entries' backing could not be established: " + failure);
+                }
+
+                _topologyOfVertex = _topologyMemory.View;
                 _submeshes = new NativeArray<VpGeometrySubmesh>(submeshCapacity, allocator);
                 _submeshBounds = new NativeArray<VpGeometryBounds>(submeshCapacity, allocator);
                 _vertexBlocks = new NativeArray<VpGeometryVertexBlock>(vertexBlockCapacity, allocator);
@@ -143,18 +205,60 @@ namespace Zantetsu.Rendering
                     _submeshes.Dispose();
                 }
 
-                if (_topologyOfVertex.IsCreated)
-                {
-                    _topologyOfVertex.Dispose();
-                }
-
+                _topologyMemory?.Dispose();
                 _indices?.Dispose();
                 _vertices.Dispose();
                 throw;
             }
         }
 
+        /// <summary>The vertex reservation: the absolute limit of the vertices (DESIGN 4.5.4), not memory in use.</summary>
         public int VertexCapacity => _vertices.Capacity;
+
+        /// <summary>How many vertices from 0 are committed now, with their topology entries.</summary>
+        public int CommittedVertexCapacity => Math.Min(_vertices.CommittedCapacity, _topologyMemory.CommittedLength);
+
+        /// <summary>How many indices from 0 are committed now.</summary>
+        public int CommittedIndexCapacity => _indices.CommittedCapacity;
+
+        /// <summary>Bytes reserved for the vertices, their topology entries and the indices together.</summary>
+        public long ReservedBytes => _vertices.ReservedBytes + _topologyMemory.ReservedBytes + _indices.ReservedBytes;
+
+        /// <summary>Bytes committed for the same.</summary>
+        public long CommittedBytes => _vertices.CommittedBytes + _topologyMemory.CommittedBytes + _indices.CommittedBytes;
+
+        /// <summary>
+        /// Called once, on the main thread, the first time the storage cannot establish backing it needs for room it
+        /// has otherwise found -- a page commit refused (DESIGN 4.5.4). That is a cause of the common termination, and
+        /// the owner that set this turns it into that; the room asked for is refused as well. Room that is simply not
+        /// free within the reservation is not reported here.
+        /// </summary>
+        public Action<string> BackingFailureHandler { get; set; }
+
+        /// <summary>The first backing failure, in words, or null while there has been none.</summary>
+        public string BackingFailure { get; private set; }
+
+        /// <summary>
+        /// Whether the last refusal of room can clear by itself: the kind that was short is held, right now, by
+        /// someone who gives it back -- open cut output reservations (vertices, indices, submeshes, blocks and the
+        /// descriptors they hold), and index ranges retiring until their last reader returns -- and what they hold,
+        /// with what is free, covers what was asked. False when nothing of that kind is held, when even all of it would
+        /// not cover the request (past the reservation, or a management area nobody returns), and for a backing
+        /// failure. A caller that waits on it asks again later, and each refusal is classified anew.
+        /// </summary>
+        public bool LastRefusalIsTemporary { get; private set; }
+
+        private void FailBacking(string what, string failure)
+        {
+            Refused(what + " backing failed: " + failure, false);
+            if (BackingFailure != null)
+            {
+                return;
+            }
+
+            BackingFailure = _lastRefusal;
+            BackingFailureHandler?.Invoke(_lastRefusal);
+        }
 
         /// <summary>
         /// How many vertex slots are free: neither held by an open reservation nor taken by something published. It
@@ -256,7 +360,7 @@ namespace Zantetsu.Rendering
                     return false;
                 }
 
-                if (!_indices.TryReserve((int)totalIndexCount, out VpIndexRangeHandle indexRange))
+                if (!TryReserveIndices((int)totalIndexCount, out VpIndexRangeHandle indexRange))
                 {
                     GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                     return false;
@@ -407,7 +511,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            if (!_indices.TryReserve(indexCount, out VpIndexRangeHandle indexRange))
+            if (!TryReserveIndices(indexCount, out VpIndexRangeHandle indexRange))
             {
                 GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 return false;
@@ -677,14 +781,14 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            if (!_indices.TryReserve(newIndexCapacity, out VpIndexRangeHandle indexRange))
+            if (!TryReserveIndices(newIndexCapacity, out VpIndexRangeHandle indexRange))
             {
                 GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
                 return false;
             }
 
             // The second side's descriptor, taken now as an empty range and owned until the commit or the cancel.
-            if (!_indices.TryReserve(0, out VpIndexRangeHandle splitDescriptor))
+            if (!TryReserveIndices(0, out VpIndexRangeHandle splitDescriptor))
             {
                 _indices.TryCancelReservation(indexRange);
                 GiveBackSpans(vertexStart, newVertexCapacity, submeshStart, submeshCapacity, blockStart, vertexBlockCapacity);
@@ -1023,7 +1127,8 @@ namespace Zantetsu.Rendering
             _vertexBlocks.Dispose();
             _submeshBounds.Dispose();
             _submeshes.Dispose();
-            _topologyOfVertex.Dispose();
+            _topologyOfVertex = default;
+            _topologyMemory.Dispose();
             _vertices.Dispose();
         }
 
@@ -1186,12 +1291,14 @@ namespace Zantetsu.Rendering
             blockStart = 0;
             if (!_vertexSpans.TryTake(vertexCount, out vertexStart))
             {
+                Refused(SpanRefusal("vertex", vertexCount, _vertexSpans, HeldByOpen(r => r.NewVertexCapacity)));
                 return false;
             }
 
             if (!_submeshSpans.TryTake(submeshCount, out submeshStart))
             {
                 _vertexSpans.GiveBack(vertexStart, vertexCount);
+                Refused(SpanRefusal("submesh", submeshCount, _submeshSpans, HeldByOpen(r => r.submeshCapacity)));
                 return false;
             }
 
@@ -1199,10 +1306,120 @@ namespace Zantetsu.Rendering
             {
                 _submeshSpans.GiveBack(submeshStart, submeshCount);
                 _vertexSpans.GiveBack(vertexStart, vertexCount);
+                Refused(SpanRefusal("vertex block", blockCount, _vertexBlockSpans, HeldByOpen(r => r.vertexBlockCapacity)));
+                return false;
+            }
+
+            // The vertices and their topology entries are committed before anyone is given the span.
+            string failure = null;
+            if (vertexCount > 0
+                && (!_vertices.TryCommitTo(vertexStart + vertexCount, out failure)
+                    || !_topologyMemory.TryCommitTo(vertexStart + vertexCount, out failure)))
+            {
+                GiveBackSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, blockCount);
+                FailBacking("vertex span of " + vertexCount + " at " + vertexStart, failure);
                 return false;
             }
 
             return true;
+        }
+
+        // What was refused last, and why, in words: kept only for the log of a failure (the common termination's
+        // message and the checks), built only when a refusal happens, and never read to decide anything.
+        private string _lastRefusal;
+
+        /// <summary>The last room this storage refused, in words, or null. Log text only: nothing is decided by it.</summary>
+        public string LastRefusal => _lastRefusal;
+
+        /// <summary>
+        /// How many times room of any kind has been refused, a backing failure included. A caller whose append can fail
+        /// for its input as well as for room tells the two apart by whether this moved.
+        /// </summary>
+        public int RoomRefusalCount { get; private set; }
+
+        private void Refused((string text, bool temporary) refusal) => Refused(refusal.text, refusal.temporary);
+
+        private void Refused(string text, bool temporary)
+        {
+            _lastRefusal = text + (temporary ? "; can clear when held room returns" : "; cannot clear by room being returned");
+            LastRefusalIsTemporary = temporary;
+            RoomRefusalCount++;
+        }
+
+        // What the open cut output reservations hold of one kind: room that goes back when each is committed (its unused
+        // part) or cancelled.
+        private long HeldByOpen(Func<VpCutOutputReservation, int> of)
+        {
+            long held = 0;
+            for (int i = 0; i < _openCutOutputs.Count; i++)
+            {
+                held += of(_openCutOutputs[i]);
+            }
+
+            return held;
+        }
+
+        private static (string, bool) SpanRefusal(string kind, int asked, VpSpanAllocator spans, long held)
+        {
+            long free = spans.Capacity - spans.Used;
+            bool temporary = held > 0 && asked <= free + held;
+            return (kind + " span of " + asked + " refused: free " + free + " of " + spans.Capacity
+                    + ", largest free span " + spans.LargestFreeSpan + " in " + spans.FreeSpanCount + " free spans, held by open reservations " + held,
+                temporary);
+        }
+
+        /// <summary>
+        /// Every index range this storage takes is taken here, so that a refusal is recorded in one place: either no
+        /// free range holds the count, or no descriptor is free.
+        /// </summary>
+        private bool TryReserveIndices(int indexCount, out VpIndexRangeHandle handle)
+        {
+            if (_indices.TryReserve(indexCount, out handle, out string backingFailure))
+            {
+                return true;
+            }
+
+            if (backingFailure != null)
+            {
+                FailBacking("index range of " + indexCount, backingFailure);
+                return false;
+            }
+
+            // A descriptor short, or index room short: each is classified by what would come back of it.
+            int freeDescriptors = _indices.DescriptorsIn(VpIndexRangeState.Free);
+            int returningDescriptors = _indices.DescriptorsIn(VpIndexRangeState.Reserved) + _indices.DescriptorsIn(VpIndexRangeState.Retiring);
+            long heldIndices = HeldByOpen(r => r.NewIndexCapacity) + _indices.IndicesIn(VpIndexRangeState.Retiring);
+            bool temporary = freeDescriptors == 0
+                ? returningDescriptors > 0
+                : heldIndices > 0 && indexCount <= _indices.FreeIndexRoom + heldIndices;
+            Refused("index range of " + indexCount + " refused: free " + _indices.FreeIndexRoom + " of " + _indices.IndexCapacity
+                    + ", largest free range " + _indices.LargestFreeRange + " in " + _indices.FreeRangeCount + " free ranges, held by open reservations"
+                    + " and retiring ranges " + heldIndices + ", descriptors free " + freeDescriptors + " of " + _indices.DescriptorCapacity
+                    + " (returning " + returningDescriptors + ")", temporary);
+            return false;
+        }
+
+        /// <summary>
+        /// The room of every kind, in words: vertices and their topology entries, indices and their descriptors, the
+        /// submesh descriptors and the vertex blocks, and the open cut reservations. Log text only: nothing is decided
+        /// by it, and it is not a reason or a state of its own.
+        /// </summary>
+        public string DescribeRoom()
+        {
+            ThrowIfDisposed();
+            return "vertices used " + _vertexSpans.Used + " of " + _vertexSpans.Capacity + " reserved, " + CommittedVertexCapacity + " committed"
+                   + " (published high-water " + _vertices.Count
+                   + ", largest free span " + _vertexSpans.LargestFreeSpan + ", free spans " + _vertexSpans.FreeSpanCount + ")"
+                   + "; indices free " + _indices.FreeIndexRoom + " of " + _indices.IndexCapacity + " reserved, " + _indices.CommittedCapacity + " committed (largest free range " + _indices.LargestFreeRange
+                   + ", free ranges " + _indices.FreeRangeCount + ")"
+                   + "; descriptors reserved " + _indices.DescriptorsIn(VpIndexRangeState.Reserved) + " published " + _indices.DescriptorsIn(VpIndexRangeState.Published)
+                   + " retiring " + _indices.DescriptorsIn(VpIndexRangeState.Retiring) + " free " + _indices.DescriptorsIn(VpIndexRangeState.Free) + " of " + _indices.DescriptorCapacity
+                   + "; submeshes used " + _submeshSpans.Used + " of " + _submeshSpans.Capacity
+                   + "; vertex blocks used " + _vertexBlockSpans.Used + " of " + _vertexBlockSpans.Capacity
+                   + "; open cut reservations " + _openCutOutputs.Count
+                   + "; bytes reserved " + ReservedBytes + " committed " + CommittedBytes
+                   + (BackingFailure != null ? "; backing failure: " + BackingFailure : "")
+                   + (_lastRefusal != null ? "; last refusal: " + _lastRefusal : "");
         }
 
         /// <summary>Gives three spans back, each merging with its free neighbours. An empty span gives back nothing.</summary>

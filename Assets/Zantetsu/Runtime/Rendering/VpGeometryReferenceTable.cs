@@ -99,6 +99,22 @@ namespace Zantetsu.Rendering
 
         public int GeometryCapacity => _geometries.Length;
 
+        /// <summary>
+        /// The stored geometry registered in <paramref name="slot"/>, when that slot is live; false otherwise. For a
+        /// reader that goes over everything registered -- the GPU copy transferring again what is drawn after it grew.
+        /// </summary>
+        public bool TryGetLiveGeometryAt(int slot, out VpStoredGeometry geometry)
+        {
+            geometry = default;
+            if (slot < 0 || slot >= _geometries.Length || !_geometries[slot].live)
+            {
+                return false;
+            }
+
+            geometry = _geometries[slot].geometry;
+            return true;
+        }
+
         public int DisplayInstanceCapacity => _instances.Length;
 
         public int LiveGeometryCount { get; private set; }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using Zantetsu.Rendering;
@@ -1044,6 +1045,33 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// The same, with the GPU copy's first capacities given (DESIGN 4.5.4): not the CPU reservation, which is the
+        /// copy's limit (within the device's largest buffer) and not what it starts with.
+        /// </summary>
+        public static bool TryCreate(
+            VpCpuGeometryStorage storage,
+            VpGeometryReferenceTable table,
+            LogicalCutLedger ledger,
+            IReadOnlyDictionary<int, Material> materialsBySourceIndex,
+            Material shadowMaterial,
+            Material provisionalShadowMaterial,
+            int commandCapacity,
+            int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
+            VpStencilSettings stencilSettings,
+            int gpuVertexInitialCapacity,
+            int gpuIndexInitialCapacity,
+            out VpLogicalCutDisplay display)
+        {
+            return TryCreateCore(
+                storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth, stencilSettings, null,
+                gpuVertexInitialCapacity, gpuIndexInitialCapacity, out display);
+        }
+
+        /// <summary>
         /// The same, with the frame counter given by the caller instead of taken from the engine. It exists for tests,
         /// which have no frame loop to advance.
         /// </summary>
@@ -1063,8 +1091,45 @@ namespace Zantetsu.MeshCut
             Func<int> frameSource,
             out VpLogicalCutDisplay display)
         {
+            // Without a GPU first capacity of its own, the copy starts at what the storage committed first -- for the
+            // fixed-size storage, its whole capacity, as it always did.
+            return TryCreateCore(
+                storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth, stencilSettings, frameSource,
+                storage != null ? storage.CommittedVertexCapacity : 0, storage != null ? storage.CommittedIndexCapacity : 0,
+                out display);
+        }
+
+        internal static bool TryCreateCore(
+            VpCpuGeometryStorage storage,
+            VpGeometryReferenceTable table,
+            LogicalCutLedger ledger,
+            IReadOnlyDictionary<int, Material> materialsBySourceIndex,
+            Material shadowMaterial,
+            Material provisionalShadowMaterial,
+            int commandCapacity,
+            int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
+            VpStencilSettings stencilSettings,
+            Func<int> frameSource,
+            int gpuVertexInitialCapacity,
+            int gpuIndexInitialCapacity,
+            out VpLogicalCutDisplay display)
+        {
             display = null;
             if (storage == null || table == null || ledger == null || materialsBySourceIndex == null)
+            {
+                return false;
+            }
+
+            // The GPU copy's limit: the CPU reservation, and never past the device's largest buffer.
+            long deviceBytes = SystemInfo.maxGraphicsBufferSize;
+            int gpuVertexLimit = (int)Math.Min(storage.VertexCapacity, deviceBytes / VpRenderVertex.Stride);
+            int gpuIndexLimit = (int)Math.Min(storage.IndexCapacity, deviceBytes / VpGpuIndexedGeometryBuffers.IndexStride);
+            if (gpuVertexInitialCapacity <= 0 || gpuIndexInitialCapacity <= 0
+                || gpuVertexInitialCapacity > gpuVertexLimit || gpuIndexInitialCapacity > gpuIndexLimit)
             {
                 return false;
             }
@@ -1102,7 +1167,7 @@ namespace Zantetsu.MeshCut
                 var building = new VpMultiCutSnapshot(snapshotCapacities);
                 var capJobs = new VpCapJobClassification(snapshotCapacities);
 
-                buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
+                buffers = new VpGpuIndexedGeometryBuffers(gpuVertexInitialCapacity, gpuIndexInitialCapacity, gpuVertexLimit, gpuIndexLimit);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
 
                 // One material set for every camera; the stencil batches themselves come with the cameras.
@@ -1699,6 +1764,151 @@ namespace Zantetsu.MeshCut
         /// this spelling: the whole lineage is in the geometry's own frame (the identity mapping) and the geometry
         /// reflects no boundary. It is the other <c>TryShow</c> with those two stated, nothing more.
         /// </summary>
+        /// <summary>The GPU copy's room, in words. Log text only.</summary>
+        public string DescribeGpuRoom() => _buffers.DescribeRoom();
+
+        /// <summary>The GPU copy's current capacities and how often it has grown, for observation.</summary>
+        public int GpuVertexCapacity => _buffers.VertexCapacity;
+
+        public int GpuIndexCapacity => _buffers.IndexCapacity;
+
+        public int GpuGrowthCount => _buffers.GrowthCount;
+
+        /// <summary>The GPU copy itself, for a test that reads back what was transferred.</summary>
+        internal VpGpuIndexedGeometryBuffers Buffers => _buffers;
+
+        /// <summary>
+        /// Told once, on the main thread, when the GPU copy cannot be given the room a transfer needs -- past its limit,
+        /// or a buffer that cannot be made (DESIGN 4.5.4). The owner turns that into the common termination; the
+        /// transfer's registration is refused.
+        /// </summary>
+        public Action<string> BackingFailureHandler { get; set; }
+
+        private bool _gpuBackingFailed;
+
+        /// <summary>
+        /// Makes the GPU copy hold vertices [0, <paramref name="vertexEnd"/>) and indices [0, <paramref name="indexEnd"/>)
+        /// before a transfer into them. When a buffer is replaced, everything the reference table holds is transferred
+        /// into the new one from the CPU copy -- each live geometry's vertex blocks (merged where they touch, so that
+        /// nothing unpublished is read) and its index range -- before this returns, and so before anything is drawn
+        /// from it. False when the room cannot be made; the handler has then been told.
+        /// </summary>
+        private bool TryMakeGpuRoom(int vertexEnd, int indexEnd)
+        {
+            _buffers.ReleaseRetired();
+            if (vertexEnd <= _buffers.VertexCapacity && indexEnd <= _buffers.IndexCapacity)
+            {
+                return true;
+            }
+
+            if (_gpuBackingFailed)
+            {
+                return false;
+            }
+
+            if (!_buffers.TryGrow(vertexEnd, indexEnd, out bool vertexGrew, out bool indexGrew, out string failure))
+            {
+                FailGpuBacking(failure);
+                return false;
+            }
+
+            if (!TryTransferDrawnAgain(vertexGrew, indexGrew))
+            {
+                FailGpuBacking("what is drawn could not be transferred into the grown GPU copy");
+                return false;
+            }
+
+            return true;
+        }
+
+        private readonly List<(int start, int count)> _regrowRuns = new List<(int start, int count)>();
+
+        private bool TryTransferDrawnAgain(bool vertices, bool indices)
+        {
+            _regrowRuns.Clear();
+            for (int slot = 0; slot < _table.GeometryCapacity; slot++)
+            {
+                if (!_table.TryGetLiveGeometryAt(slot, out VpStoredGeometry geometry))
+                {
+                    continue;
+                }
+
+                if (indices && !VpStoredGeometryTransfer.TryUploadPublishedIndices(_storage, _buffers.IndexBuffer, geometry.indexRange, out _))
+                {
+                    return false;
+                }
+
+                if (vertices)
+                {
+                    if (!_storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out _))
+                    {
+                        return false;
+                    }
+
+                    for (int b = 0; b < blocks.Length; b++)
+                    {
+                        _regrowRuns.Add((blocks[b].vertexStart, blocks[b].vertexCount));
+                    }
+                }
+            }
+
+            if (!vertices || _regrowRuns.Count == 0)
+            {
+                return true;
+            }
+
+            // Blocks shared between geometries are transferred once: sorted, and runs that overlap or touch merged --
+            // every vertex in a merged run belongs to one of them, and all of them are published.
+            _regrowRuns.Sort((a, b) => a.start.CompareTo(b.start));
+            int runStart = _regrowRuns[0].start;
+            int runEnd = runStart + _regrowRuns[0].count;
+            for (int i = 1; i <= _regrowRuns.Count; i++)
+            {
+                if (i < _regrowRuns.Count && _regrowRuns[i].start <= runEnd)
+                {
+                    runEnd = Math.Max(runEnd, _regrowRuns[i].start + _regrowRuns[i].count);
+                    continue;
+                }
+
+                if (runEnd > runStart
+                    && !VpStoredGeometryTransfer.TryUploadCommittedVertices(_storage, _buffers.VertexBuffer, runStart, runEnd - runStart, out _))
+                {
+                    return false;
+                }
+
+                if (i < _regrowRuns.Count)
+                {
+                    runStart = _regrowRuns[i].start;
+                    runEnd = runStart + _regrowRuns[i].count;
+                }
+            }
+
+            return true;
+        }
+
+        private void FailGpuBacking(string failure)
+        {
+            if (_gpuBackingFailed)
+            {
+                return;
+            }
+
+            _gpuBackingFailed = true;
+            BackingFailureHandler?.Invoke("the GPU copy could not be given room: " + failure + " (" + _buffers.DescribeRoom() + ")");
+        }
+
+        private bool TryIndexEnd(VpIndexRangeHandle range, out int end)
+        {
+            end = 0;
+            if (!_storage.TryGetIndexState(range, out _, out int start, out int count))
+            {
+                return false;
+            }
+
+            end = start + count;
+            return true;
+        }
+
         public bool TryShow(LogicalFragmentId fragment, VpStoredGeometry geometry, Matrix4x4 objectToWorld)
         {
             return TryShow(fragment, geometry, objectToWorld, Matrix4x4.identity, Array.Empty<VpClipBoundary>());
@@ -1783,6 +1993,13 @@ namespace Zantetsu.MeshCut
             if (_commandCount + commands.Length > _commandCapacity
                 || CurrentInstanceCount() + (commands.Length * 2) > _instanceCapacity
                 || (prepared != null && _shown.Count == _shown.Capacity))
+            {
+                return false;
+            }
+
+            // The GPU copy's room for this geometry, before anything is consumed or transferred.
+            if (!TryIndexEnd(geometry.indexRange, out int shownIndexEnd)
+                || !TryMakeGpuRoom(geometry.vertexStart + geometry.vertexCount, shownIndexEnd))
             {
                 return false;
             }
@@ -2021,6 +2238,17 @@ namespace Zantetsu.MeshCut
             // One vertex transfer for what the cut appended -- both sides share it -- and one index transfer for the
             // two sides together, which is the one contiguous run they were written as.
             VpStoredGeometry appended = positive.IsProduced ? positive.geometry : negative.geometry;
+
+            // The GPU copy's room for both sides, before anything is transferred.
+            int positiveEnd = 0;
+            int negativeEnd = 0;
+            if ((positive.IsProduced && !TryIndexEnd(positive.geometry.indexRange, out positiveEnd))
+                || (negative.IsProduced && !TryIndexEnd(negative.geometry.indexRange, out negativeEnd))
+                || !TryMakeGpuRoom(appended.vertexStart + appended.vertexCount, Math.Max(positiveEnd, negativeEnd)))
+            {
+                return false;
+            }
+
             int vertices;
             int indices;
             try
@@ -2293,6 +2521,10 @@ namespace Zantetsu.MeshCut
             }
 
             int frame = CurrentFrame;
+
+            // Replaced GPU buffers the GPU is past go here as well as at drawing, so that a frame with no camera does not
+            // keep them.
+            _buffers.ReleaseRetired();
             if (_hasSnapshot && _settledFrame == frame)
             {
                 // Already settled from the latest state: collecting again would rewrite a frame for nothing.
@@ -2333,6 +2565,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public void Render(int layer, Camera camera)
         {
+            _buffers.ReleaseRetired();
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfHalted();

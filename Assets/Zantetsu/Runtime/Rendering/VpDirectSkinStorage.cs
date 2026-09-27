@@ -16,7 +16,7 @@ namespace Zantetsu.Rendering
             geometry = default;
             if (!input.IsAlive) return false;
             if (!TryTakeSpans(input.VertexCount, 1, 1, out int vertex, out int submesh, out int block)) return false;
-            if (!_indices.TryReserve(input.IndexCount, out var range))
+            if (!TryReserveIndices(input.IndexCount, out var range))
             {
                 GiveBackSpans(vertex, input.VertexCount, submesh, 1, block, 1);
                 return false;

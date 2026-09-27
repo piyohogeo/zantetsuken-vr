@@ -4,10 +4,12 @@ using Unity.Collections;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Fixed-capacity CPU VP index storage whose ranges are reserved, written, published, leased and reused through its
-    /// own <see cref="VpIndexRangeAllocator"/> (DESIGN 4.5.3). Stored values are indices already resolved to the global
-    /// CPU VP vertex numbers; the storage neither rebases, interprets nor checks them, and it does not clear reused
-    /// space. It does not grow.
+    /// CPU VP index storage whose ranges are reserved, written, published, leased and reused through its own
+    /// <see cref="VpIndexRangeAllocator"/> (DESIGN 4.5.3), in one linear array in a reserved address range
+    /// (<see cref="VpVirtualArray{T}"/>, DESIGN 4.5.4). <see cref="IndexCapacity"/> is the reservation, the absolute
+    /// limit; the pages a range lies in are committed when it is reserved, before any view of it is given, and nothing
+    /// moves when more are committed. Stored values are indices already resolved to the global CPU VP vertex numbers;
+    /// the storage neither rebases, interprets nor checks them, and it does not clear reused space.
     /// <para>
     /// Views are windows into the one index array and cannot be revoked once handed out, so their use is bounded by
     /// contract, not detected. A write view may be used only while its range is Reserved; a read view only while its
@@ -20,27 +22,88 @@ namespace Zantetsu.Rendering
     public sealed class VpCpuIndexStorage : IDisposable
     {
         private readonly VpIndexRangeAllocator _allocator;
+        private readonly VpVirtualArray<uint> _memory;
         private NativeArray<uint> _indices;
         private bool _disposed;
 
+        /// <summary>
+        /// A storage whose reservation and first commit are both <paramref name="indexCapacity"/>, on the product's page
+        /// backing. The allocator is not used for the indices.
+        /// </summary>
         public VpCpuIndexStorage(int indexCapacity, int descriptorCapacity, Allocator allocator)
+            : this(VpWindowsPageBacking.Instance, indexCapacity, indexCapacity, descriptorCapacity)
         {
-            _allocator = new VpIndexRangeAllocator(indexCapacity, descriptorCapacity);
-            _indices = new NativeArray<uint>(indexCapacity, allocator);
         }
 
+        /// <summary>
+        /// Reserves <paramref name="reservedIndices"/> and commits the first <paramref name="initialCommittedIndices"/>.
+        /// Throws <see cref="InvalidOperationException"/> when the backing refuses either.
+        /// </summary>
+        public VpCpuIndexStorage(IVpPageBacking backing, int reservedIndices, int initialCommittedIndices, int descriptorCapacity)
+        {
+            _allocator = new VpIndexRangeAllocator(reservedIndices, descriptorCapacity);
+            if (!VpVirtualArray<uint>.TryCreate(backing, reservedIndices, initialCommittedIndices, out _memory, out string failure))
+            {
+                throw new InvalidOperationException("the index storage's backing could not be established: " + failure);
+            }
+
+            _indices = _memory.View;
+        }
+
+        /// <summary>The reservation: the most indices this storage can ever hold.</summary>
         public int IndexCapacity => _allocator.IndexCapacity;
+
+        /// <summary>How many indices from 0 are committed now.</summary>
+        public int CommittedCapacity => _memory.CommittedLength;
+
+        public long ReservedBytes => _memory.ReservedBytes;
+
+        public long CommittedBytes => _memory.CommittedBytes;
 
         public int DescriptorCapacity => _allocator.DescriptorCapacity;
 
         /// <summary>How many indices are free for a reservation, over all free ranges.</summary>
         public int FreeIndexRoom => _allocator.FreeIndexRoom;
 
+        internal int LargestFreeRange => _allocator.LargestFreeRange;
+
+        internal int FreeRangeCount => _allocator.FreeRangeCount;
+
+        internal int DescriptorsIn(VpIndexRangeState state) => _allocator.DescriptorsIn(state);
+
+        internal long IndicesIn(VpIndexRangeState state) => _allocator.IndicesIn(state);
+
         /// <inheritdoc cref="VpIndexRangeAllocator.TryReserve"/>
         public bool TryReserve(int indexCount, out VpIndexRangeHandle handle)
         {
+            return TryReserve(indexCount, out handle, out _);
+        }
+
+        /// <summary>
+        /// Reserves a range and commits the pages it lies in. When the allocator has no room, false with no backing
+        /// failure; when it has room but the pages cannot be committed, the reservation is cancelled at once and false
+        /// is returned with <paramref name="backingFailure"/> saying why -- the backing did not hold, which is not a
+        /// shortage of room.
+        /// </summary>
+        internal bool TryReserve(int indexCount, out VpIndexRangeHandle handle, out string backingFailure)
+        {
             ThrowIfDisposed();
-            return _allocator.TryReserve(indexCount, out handle);
+            backingFailure = null;
+            if (!_allocator.TryReserve(indexCount, out handle))
+            {
+                return false;
+            }
+
+            if (!_allocator.TryGetState(handle, out _, out int start, out int count)
+                || !_memory.TryCommitTo(start + count, out backingFailure))
+            {
+                backingFailure ??= "the reserved range could not be read back";
+                _allocator.TryCancelReservation(handle);
+                handle = default;
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -239,7 +302,8 @@ namespace Zantetsu.Rendering
             }
 
             _disposed = true;
-            _indices.Dispose();
+            _indices = default;
+            _memory.Dispose();
         }
 
         private NativeArray<uint>.ReadOnly PublishedView(VpIndexRangeHandle handle)

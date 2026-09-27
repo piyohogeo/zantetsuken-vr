@@ -7,7 +7,11 @@ using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
 {
-    public enum VpCharacterCutOutcome { Unavailable, EmptySide, Full, Failed, Requested }
+    /// <summary>
+    /// Held: before acceptance, the display input could not be given room that will come back; the request is kept and
+    /// the driver's update takes it up later (see <see cref="ProvisionalCutAcceptance.Held"/>).
+    /// </summary>
+    public enum VpCharacterCutOutcome { Unavailable, EmptySide, Full, Failed, Requested, Held }
 
     /// <summary>Requested means the ordinary driver was called; inspect Acceptance, which can include Abort.</summary>
     public readonly struct VpCharacterCutResult
@@ -151,6 +155,64 @@ namespace Zantetsu.PhysicsCut
                 || !float.IsFinite(negativeSeparationImpulse) || negativeSeparationImpulse<0)
                 return Result(VpCharacterCutOutcome.Failed);
             if (!world.BeginPreparedCharacterCall()) return Result(VpCharacterCutOutcome.Unavailable);
+            return Run(plane,renderAnchor,positiveSeparationImpulse,negativeSeparationImpulse,true);
+        }
+
+        // ----- a request held before acceptance (ProvisionalCutAcceptance.Held) -----------------------------------------
+        // The boundary is the ledger's admission in RequestPreparedCut. Before it, a hit whose display input cannot be
+        // given room that others hold and will return keeps: the character's fragment (issued by the hit), the pose the
+        // hit met in the renderer's frame (boneToOwner for the physics, the display input's own matrices for the display),
+        // the plane in that same frame, the anchor and the two impulses. It does not keep the fresh-cut lease, which is
+        // one frame's capability: a resume poses the physics again from the kept pose and takes a new lease. Where the
+        // character stands and how it moves are read at the resume, as a Pending publication reads them. While held the
+        // character is no hit target, so no other hit can take it and nothing is accepted twice.
+        bool held;
+        float4 heldPlane;
+        float3 heldAnchor;
+        float heldPositive, heldNegative;
+
+        /// <summary>Whether a request of this character is held before acceptance.</summary>
+        public bool IsHeld => held;
+
+        void Hold(float4 plane, float3 renderAnchor, float positiveSeparationImpulse, float negativeSeparationImpulse)
+        {
+            held=true; terminal=false;
+            heldPlane=plane; heldAnchor=renderAnchor; heldPositive=positiveSeparationImpulse; heldNegative=negativeSeparationImpulse;
+            world.Driver.HoldCharacterCut(this);
+        }
+
+        /// <summary>
+        /// The driver's update takes the held request up once: the same request, from the pose the hit met, into the
+        /// ordinary acceptance. Held again when the room is still to come back; ended with the handle when the
+        /// character or the world is gone.
+        /// </summary>
+        internal VpCharacterCutResult ResumeHeld()
+        {
+            if (!held) return Result(VpCharacterCutOutcome.Unavailable);
+            if (disposed || disposeRequested || !Usable(world) || !sharedCold.IsPrepared || slot==null || slot.IsDisposed || slot.IsConsumed
+                || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn || motionBody==null
+                || actor==null || actorBody==null || renderer==null)
+            {
+                EndHold();
+                return Result(VpCharacterCutOutcome.Unavailable);
+            }
+
+            if (!world.BeginPreparedCharacterCall()) return Result(VpCharacterCutOutcome.Held);
+            held=false;
+            return Run(heldPlane,heldAnchor,heldPositive,heldNegative,false);
+        }
+
+        /// <summary>Ends a held request with its handle: its fragment goes as an identified character's does, and nothing is kept.</summary>
+        internal void EndHold()
+        {
+            if (!held) return;
+            held=false; terminal=true;
+            Dispose();
+        }
+
+        VpCharacterCutResult Run(float4 plane, float3 renderAnchor, float positiveSeparationImpulse, float negativeSeparationImpulse,
+            bool fromHit)
+        {
             busy=true; terminal=true;
             ProvisionalCutDriver.PreparedCutLease lease=null;
             PhysicsOwnerShape taken=null;
@@ -160,10 +222,15 @@ namespace Zantetsu.PhysicsCut
                 Matrix4x4 inverse=renderer.transform.worldToLocalMatrix;
                 float mass=motionBody.mass;
                 var poseScope=s_pose.Auto();
-                for(int i=0;i<convexBones.Length;i++)
+                if(fromHit)
                 {
-                    if(convexBones[i]==null){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
-                    boneToOwner[i]=inverse*convexBones[i].localToWorldMatrix;
+                    // The pose the hit met, taken once: the physics' and the display's, both in the renderer's frame.
+                    for(int i=0;i<convexBones.Length;i++)
+                    {
+                        if(convexBones[i]==null){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
+                        boneToOwner[i]=inverse*convexBones[i].localToWorldMatrix;
+                    }
+                    if(!direct.TryCapturePose()){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
                 }
                 bool posed=physics.TryPose(boneToOwner,out _);
                 poseScope.Dispose();
@@ -178,14 +245,39 @@ namespace Zantetsu.PhysicsCut
                 {
                     lease.Dispose();lease=null;
                     if(!physics.TryRearmAfterRefusal())return Result(VpCharacterCutOutcome.Failed);
+                    if(!fromHit && eligible==ProvisionalCutDriver.FreshCutEligibility.Full)
+                    {
+                        // A held request meeting a full budget stays held: the budget returns as cuts complete.
+                        Hold(plane,renderAnchor,positiveSeparationImpulse,negativeSeparationImpulse);
+                        return Result(VpCharacterCutOutcome.Held);
+                    }
                     terminal=false;
                     return Result(eligible==ProvisionalCutDriver.FreshCutEligibility.EmptySide?VpCharacterCutOutcome.EmptySide:VpCharacterCutOutcome.Full);
                 }
                 if(eligible!=ProvisionalCutDriver.FreshCutEligibility.Ready)return Result(VpCharacterCutOutcome.Failed);
                 var displayScope=s_displayInput.Auto();
-                bool appended=direct.TryAppendForDisplay(world.Storage,out var output);
+                int refusalsBefore=world.Storage.RoomRefusalCount;
+                bool appended=direct.TryAppendCapturedForDisplay(world.Storage,out var output);
                 displayScope.Dispose();
-                if(!appended)return Result(VpCharacterCutOutcome.Failed);
+                if(!appended)
+                {
+                    if(world.Storage.RoomRefusalCount!=refusalsBefore)
+                    {
+                        // Room the storage refused for the display input. Room others hold and will give back is
+                        // waited for: the request is held, before acceptance, and taken up again by a later update. Room
+                        // that cannot come back -- past the reservation, a management area nobody returns -- and pages
+                        // the backing would not commit are the common termination (DESIGN 4.5.4).
+                        if(world.Storage.BackingFailure==null && world.Storage.LastRefusalIsTemporary)
+                        {
+                            lease.Dispose();lease=null;
+                            if(!physics.TryRearmAfterRefusal())return Result(VpCharacterCutOutcome.Failed);
+                            Hold(plane,renderAnchor,positiveSeparationImpulse,negativeSeparationImpulse);
+                            return Result(VpCharacterCutOutcome.Held);
+                        }
+                        world.RequestTermination("the display input of a hit character could not be given room: "+world.Storage.DescribeRoom());
+                    }
+                    return Result(VpCharacterCutOutcome.Failed);
+                }
                 var actorScope=s_actor.Auto();
                 try
                 {

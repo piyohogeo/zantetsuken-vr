@@ -4,9 +4,12 @@ using Unity.Collections;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Fixed-capacity CPU VP vertex storage (DESIGN 4.5.3). Room is given out as spans by the geometry storage's own
-    /// allocator, and a writer fills the span it holds; a span becomes visible when it is published. Published vertices
-    /// are never moved while the storage lives, and they have no read lease in Phase 0.93.
+    /// CPU VP vertex storage (DESIGN 4.5.3, 4.5.4): one linear array in a reserved address range whose pages are
+    /// committed as room is given out (<see cref="VpVirtualArray{T}"/>). <see cref="Capacity"/> is the reservation, the
+    /// absolute limit; <see cref="CommittedCapacity"/> is what may be used now, and it grows without moving anything.
+    /// Room is given out as spans by the geometry storage's own allocator, which commits a span before a writer gets
+    /// it; a writer fills the span it holds; a span becomes visible when it is published. Published vertices are never
+    /// moved while the storage lives, and they have no read lease in Phase 0.93.
     /// <para>
     /// <see cref="Count"/> is how far publishing has reached, not how many vertices are live: several spans may be
     /// open at once and publish in any order, so a slot below it may be one nobody has published, or one that was
@@ -18,21 +21,56 @@ namespace Zantetsu.Rendering
     /// </summary>
     public sealed class VpCpuVertexStorage : IDisposable
     {
+        private readonly VpVirtualArray<VpRenderVertex> _memory;
         private NativeArray<VpRenderVertex> _vertices;
         private bool _disposed;
 
+        /// <summary>
+        /// A storage whose reservation and first commit are both <paramref name="vertexCapacity"/>: the fixed-size
+        /// storage it used to be, on the product's page backing. The allocator is not used for the vertices.
+        /// </summary>
         public VpCpuVertexStorage(int vertexCapacity, Allocator allocator)
+            : this(VpWindowsPageBacking.Instance, vertexCapacity, vertexCapacity)
         {
-            if (vertexCapacity < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(vertexCapacity), vertexCapacity, "Must not be negative.");
-            }
-
-            _vertices = new NativeArray<VpRenderVertex>(vertexCapacity, allocator);
-            Capacity = vertexCapacity;
         }
 
+        /// <summary>
+        /// Reserves <paramref name="reservedVertices"/> and commits the first <paramref name="initialCommittedVertices"/>.
+        /// Throws <see cref="InvalidOperationException"/> when the backing refuses either: the caller turns that into
+        /// the common termination.
+        /// </summary>
+        public VpCpuVertexStorage(IVpPageBacking backing, int reservedVertices, int initialCommittedVertices)
+        {
+            if (reservedVertices < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reservedVertices), reservedVertices, "Must not be negative.");
+            }
+
+            if (!VpVirtualArray<VpRenderVertex>.TryCreate(backing, reservedVertices, initialCommittedVertices, out _memory, out string failure))
+            {
+                throw new InvalidOperationException("the vertex storage's backing could not be established: " + failure);
+            }
+
+            _vertices = _memory.View;
+            Capacity = reservedVertices;
+        }
+
+        /// <summary>The reservation: the most vertices this storage can ever hold.</summary>
         public int Capacity { get; }
+
+        /// <summary>How many vertices from 0 are committed and may be given out now.</summary>
+        public int CommittedCapacity => _memory.CommittedLength;
+
+        public long ReservedBytes => _memory.ReservedBytes;
+
+        public long CommittedBytes => _memory.CommittedBytes;
+
+        /// <summary>Commits [0, end) if it is not; see <see cref="VpVirtualArray{T}.TryCommitTo"/>.</summary>
+        internal bool TryCommitTo(int end, out string failure)
+        {
+            ThrowIfDisposed();
+            return _memory.TryCommitTo(end, out failure);
+        }
 
         /// <summary>How far publishing has reached: every published vertex lies below this.</summary>
         public int Count { get; private set; }
@@ -58,6 +96,7 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             ThrowIfOutsideCapacity(start, count);
+            ThrowIfUncommitted(start, count);
             return _vertices.GetSubArray(start, count);
         }
 
@@ -100,7 +139,18 @@ namespace Zantetsu.Rendering
             }
 
             _disposed = true;
-            _vertices.Dispose();
+            _vertices = default;
+            _memory.Dispose();
+        }
+
+        // A span handed out must lie in committed pages: the geometry storage commits before it gives room.
+        private void ThrowIfUncommitted(int start, int count)
+        {
+            if ((long)start + count > _memory.CommittedLength)
+            {
+                throw new InvalidOperationException(
+                    "A span lies within the committed vertices: " + count + " from " + start + " of " + _memory.CommittedLength + " committed.");
+            }
         }
 
         private void ThrowIfOutsideCapacity(int start, int count)

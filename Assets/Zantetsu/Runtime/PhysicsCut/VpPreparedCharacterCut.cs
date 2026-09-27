@@ -55,7 +55,7 @@ namespace Zantetsu.PhysicsCut
             && !world.IsEnding && !world.IsReleased && !world.TerminationRequested;
 
         /// <summary>Cold lifetime readiness only, not admission or storage capacity. Does not advance preparation.</summary>
-        public bool IsReady => !disposed && !busy && !terminal && !disposeRequested && Usable(world) && sharedCold.IsPrepared
+        public bool IsReady => !disposed && !busy && !terminal && !held && !disposeRequested && Usable(world) && sharedCold.IsPrepared
             && slot != null && !slot.IsDisposed && !slot.IsConsumed;
         public bool IsDisposed => disposed;
 
@@ -110,6 +110,8 @@ namespace Zantetsu.PhysicsCut
             if (disposed) return;
             if (busy) { disposeRequested = true; return; }
             disposed = true;
+            // A request held before acceptance ends with its handle, and the driver keeps nothing of it.
+            if (held) { held = false; world?.Driver?.ForgetHeldCharacterCut(this); }
             // A character identified by a hit but never cut leaves with this handle: its fragment ends here. Once its
             // cut registered an owner, the fragment is the owner's and the ledger's, not this handle's.
             if (Source.IsSet && !actorTransferred && Usable(world) && world.Ledger.IsCurrentTarget(Source))
