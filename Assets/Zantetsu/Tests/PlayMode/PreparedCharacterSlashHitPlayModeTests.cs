@@ -234,6 +234,22 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// character is identified as its fragment at its first real hit, a No-op is not retried by that Slash, its cut
     /// consumes the whole lineage for that Slash, and another Slash cuts a child.
     /// </summary>
+    // A stand-in for the update that poses a character's bones: it counts its own updates.
+    public sealed class WithdrawalPoseStandIn : MonoBehaviour
+    {
+        public int Updates;
+
+        private void Update() => Updates++;
+    }
+
+    // A component with an OnDisable of its own, which a withdrawal of parts would not run.
+    public sealed class WithdrawalDisableListener : MonoBehaviour
+    {
+        public int Disabled;
+
+        private void OnDisable() => Disabled++;
+    }
+
     public unsafe partial class ProvisionalMassFlagActivationPlayModeTests
     {
         private static readonly SlashHitSettings k_characterHitSettings = default;
@@ -255,7 +271,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         // A character whose bone is its own Transform under the root, apart from the renderer, so a pose moves the
         // convex without moving the renderer's frame.
-        private VpPreparedCharacterCut PrepareBonedCharacter(out Transform bone, out GameObject root)
+        private VpPreparedCharacterCut PrepareBonedCharacter(out Transform bone, out GameObject root, bool motionOnItsOwn = false)
         {
             root = ColdTrack(new GameObject("U8 character root"));
             var rendererObject = new GameObject("U8 character renderer");
@@ -274,7 +290,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 boneWeights = Enumerable.Repeat(new BoneWeight { weight0 = 1 }, 4).ToArray(),
             });
             r.bones = new[] { bone };
-            var motion = root.AddComponent<Rigidbody>();
+            Rigidbody motion;
+            if (motionOnItsOwn)
+            {
+                var motionObject = new GameObject("U8 character motion body");
+                motionObject.transform.SetParent(root.transform, false);
+                motion = motionObject.AddComponent<Rigidbody>();
+            }
+            else
+            {
+                motion = root.AddComponent<Rigidbody>();
+            }
+
             motion.isKinematic = true;
             motion.useGravity = false;
             motion.mass = 12;
@@ -378,6 +405,88 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             yield return UntilCommitted(children[0].Operation);
             yield return UntilCommitted(children[1].Operation);
+        }
+
+        [UnityTest]
+        public IEnumerator Withdrawal_OfParts_StopsTheDrawingThePoseAndTheBody_AtThePublication_AndTheCutsGoOn()
+        {
+            ColdWorld();
+            coldWarm = new VpPhysicsColdPreparation();
+            var handle = PrepareBonedCharacter(out Transform _, out GameObject root, motionOnItsOwn: true);
+            var pose = root.AddComponent<WithdrawalPoseStandIn>();
+            SkinnedMeshRenderer renderer = root.GetComponentInChildren<SkinnedMeshRenderer>();
+            Rigidbody motion = root.GetComponentInChildren<Rigidbody>();
+            Assert.That(handle.TryWithdrawParts(new Behaviour[] { pose }, out string whyNot), Is.True, whyNot);
+            Assert.That(handle.WithdrawsParts, Is.True);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True);
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+
+            List<SlashHitConfirmed> cut = Evaluate(detector, CharacterLevel(1, 0.3f, -3f, 3f), 1);
+            Assert.That(cut.Count, Is.EqualTo(1));
+            Assert.That(cut[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
+            // In the frame of the publication: not drawn, not a hit target, not posed, its body out of the physics.
+            Assert.That(renderer.enabled, Is.False, "not drawn");
+            Assert.That(pose.enabled, Is.False, "not posed");
+            Assert.That(motion.gameObject.activeInHierarchy, Is.False, "its motion body left the physics");
+            Assert.That(handle.IsDisposed || !handle.IsHitTarget, Is.True, "not a hit target");
+            Assert.That(root.activeInHierarchy, Is.True, "the hierarchy itself stays: only its parts left");
+            Assert.That(renderer.sharedMesh, Is.Not.Null, "nothing it held was given back");
+            int updates = pose.Updates;
+            yield return null;
+            yield return null;
+            Assert.That(pose.Updates, Is.EqualTo(updates), "its pose is not updated again");
+
+            // Provisional, Final and Geometry go on; another Slash cuts each child.
+            yield return UntilCommitted(cut[0].Operation);
+            List<SlashHitConfirmed> children = Evaluate(detector, CharacterUpright(3, 0.2f), 3);
+            Assert.That(children.Count, Is.EqualTo(2), "another Slash hits each child");
+            foreach (SlashHitConfirmed child in children)
+            {
+                Assert.That(child.Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
+            }
+
+            yield return UntilCommitted(children[0].Operation);
+            yield return UntilCommitted(children[1].Operation);
+        }
+
+        [UnityTest]
+        public IEnumerator Withdrawal_KeepsTheWholeRoot_WhenTheCharacterHoldsAnythingElseLive()
+        {
+            ColdWorld();
+            coldWarm = new VpPhysicsColdPreparation();
+            var handle = PrepareBonedCharacter(out Transform _, out GameObject root, motionOnItsOwn: true);
+            var pose = root.AddComponent<WithdrawalPoseStandIn>();
+            var extra = new GameObject("another drawing");
+            extra.transform.SetParent(root.transform, false);
+            extra.AddComponent<MeshFilter>();
+            extra.AddComponent<MeshRenderer>();
+            Assert.That(handle.TryWithdrawParts(new Behaviour[] { pose }, out string whyNot), Is.False);
+            Assert.That(whyNot, Does.Contain("renderer"));
+            Assert.That(handle.WithdrawsParts, Is.False, "the whole root is kept");
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True);
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            List<SlashHitConfirmed> cut = Evaluate(detector, CharacterLevel(1, 0.3f, -3f, 3f), 1);
+            Assert.That(cut.Count, Is.EqualTo(1));
+            Assert.That(root.activeInHierarchy, Is.False, "the whole root left, as before");
+            yield return UntilCommitted(cut[0].Operation);
+        }
+
+        [UnityTest]
+        public IEnumerator Withdrawal_KeepsTheWholeRoot_WhenAComponentHasAnOnDisableOfItsOwn()
+        {
+            ColdWorld();
+            coldWarm = new VpPhysicsColdPreparation();
+            var handle = PrepareBonedCharacter(out Transform _, out GameObject root, motionOnItsOwn: true);
+            var pose = root.AddComponent<WithdrawalPoseStandIn>();
+            var listener = root.AddComponent<WithdrawalDisableListener>();
+            listener.enabled = false;
+            Assert.That(handle.TryWithdrawParts(new Behaviour[] { pose }, out string whyNot), Is.False);
+            Assert.That(whyNot, Does.Contain("OnDisable"));
+            yield return null;
         }
 
         [UnityTest]

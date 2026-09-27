@@ -81,7 +81,29 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>Whether a hit may test this character now: ready, and its character still in the scene.</summary>
-        internal bool IsHitTarget => IsReady && characterRoot != null && characterRoot.activeInHierarchy && renderer != null;
+        internal bool IsHitTarget => IsReady && characterRoot != null && characterRoot.activeInHierarchy && renderer != null
+            && (withdrawal == null || !withdrawal.IsWithdrawn);
+
+        // How the character's own hierarchy leaves at its first cut's publication (the whole root unless the parts are
+        // confirmed, see PreparedCharacterWithdrawal).
+        PreparedCharacterWithdrawal withdrawal;
+
+        /// <summary>
+        /// Asks for the character's parts, not its whole root, to be withdrawn at its first cut's publication: the renderer
+        /// drawing it, <paramref name="updates"/> (the updates posing its bones) and its motion body. The hierarchy is
+        /// confirmed to hold nothing else live, once, here; if it does, the whole root is kept and the reason is given.
+        /// </summary>
+        internal bool TryWithdrawParts(System.Collections.Generic.IReadOnlyList<Behaviour> updates, out string whyNot)
+        {
+            if (withdrawal == null) { whyNot = "not bound"; return false; }
+            return withdrawal.TryUseParts(updates, out whyNot);
+        }
+
+        /// <summary>Whether the parts, not the whole root, will be withdrawn.</summary>
+        internal bool WithdrawsParts => withdrawal != null && withdrawal.UsesParts;
+
+        /// <summary>Whether the character has been withdrawn.</summary>
+        internal bool IsWithdrawn => withdrawal != null && withdrawal.IsWithdrawn;
 
         /// <summary>The bone-local convexes a hit reads, and the bone that places each.</summary>
         internal VpCharacterHitShape HitShape => hitShape;
@@ -94,6 +116,7 @@ namespace Zantetsu.PhysicsCut
         internal void BindSource(GameObject root, Rigidbody motion)
         {
             characterRoot=root; motionBody=motion;
+            withdrawal=new PreparedCharacterWithdrawal(root,renderer,motion);
             actor=new GameObject("Prepared character cut source"); actor.SetActive(false);
             actorBody=actor.AddComponent<Rigidbody>(); actorBody.useGravity=false; actorBody.detectCollisions=false;
             actorBody.automaticCenterOfMass=actorBody.automaticInertiaTensor=false;
@@ -110,10 +133,18 @@ namespace Zantetsu.PhysicsCut
         /// pose; after append begins the handle is terminal. Exceptions propagate, with transferred ownership kept.
         /// A Failed result or exception after partial registration is NOT permission to continue/retry that handle.
         /// </summary>
+        // The stages of a character's cut, apart from each other (all inside the hit's acceptance).
+        static readonly Unity.Profiling.ProfilerMarker s_pose=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Pose");
+        static readonly Unity.Profiling.ProfilerMarker s_prepare=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare");
+        static readonly Unity.Profiling.ProfilerMarker s_displayInput=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.DisplayInput");
+        static readonly Unity.Profiling.ProfilerMarker s_actor=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Actor");
+        static readonly Unity.Profiling.ProfilerMarker s_request=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Request");
+        static readonly Unity.Profiling.ProfilerMarker s_end=new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.End");
+
         public VpCharacterCutResult TryCut(float4 plane, float3 renderAnchor,
             float positiveSeparationImpulse=0, float negativeSeparationImpulse=0)
         {
-            if (!IsReady || characterRoot==null || !characterRoot.activeInHierarchy || motionBody==null
+            if (!IsReady || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn || motionBody==null
                 || actor==null || actorBody==null || renderer==null) return Result(VpCharacterCutOutcome.Unavailable);
             if (!math.all(math.isfinite(plane)) || math.lengthsq(plane.xyz)<=0 || !math.all(math.isfinite(renderAnchor))
                 || !float.IsFinite(positiveSeparationImpulse) || positiveSeparationImpulse<0
@@ -127,15 +158,22 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 Matrix4x4 inverse=renderer.transform.worldToLocalMatrix;
+                float mass=motionBody.mass;
+                var poseScope=s_pose.Auto();
                 for(int i=0;i<convexBones.Length;i++)
                 {
-                    if(convexBones[i]==null)return Result(VpCharacterCutOutcome.Failed);
+                    if(convexBones[i]==null){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
                     boneToOwner[i]=inverse*convexBones[i].localToWorldMatrix;
                 }
-                float mass=motionBody.mass;
-                if(!physics.TryPose(boneToOwner,out _) || !world.Driver.TryPrepareFreshCut(physics,plane,mass,out lease))
-                    return Result(VpCharacterCutOutcome.Failed);
-                var eligible=world.Driver.AssessFreshCut(lease);
+                bool posed=physics.TryPose(boneToOwner,out _);
+                poseScope.Dispose();
+                ProvisionalCutDriver.FreshCutEligibility eligible;
+                using(s_prepare.Auto())
+                {
+                    if(!posed || !world.Driver.TryPrepareFreshCut(physics,plane,mass,out lease))
+                        return Result(VpCharacterCutOutcome.Failed);
+                    eligible=world.Driver.AssessFreshCut(lease);
+                }
                 if(eligible==ProvisionalCutDriver.FreshCutEligibility.EmptySide || eligible==ProvisionalCutDriver.FreshCutEligibility.Full)
                 {
                     lease.Dispose();lease=null;
@@ -144,7 +182,13 @@ namespace Zantetsu.PhysicsCut
                     return Result(eligible==ProvisionalCutDriver.FreshCutEligibility.EmptySide?VpCharacterCutOutcome.EmptySide:VpCharacterCutOutcome.Full);
                 }
                 if(eligible!=ProvisionalCutDriver.FreshCutEligibility.Ready)return Result(VpCharacterCutOutcome.Failed);
-                if(!direct.TryAppendForDisplay(world.Storage,out var output))return Result(VpCharacterCutOutcome.Failed);
+                var displayScope=s_displayInput.Auto();
+                bool appended=direct.TryAppendForDisplay(world.Storage,out var output);
+                displayScope.Dispose();
+                if(!appended)return Result(VpCharacterCutOutcome.Failed);
+                var actorScope=s_actor.Auto();
+                try
+                {
                 actor.transform.SetPositionAndRotation(renderer.transform.position,renderer.transform.rotation);
                 actor.SetActive(true);
                 actorBody.mass=mass;
@@ -166,13 +210,16 @@ namespace Zantetsu.PhysicsCut
                     actorTransferred=registered;
                 }
                 world.Geometry.RegisterBaseGeometry(Source,output.Geometry,Matrix4x4.identity);
-                owner.PreparedCharacterRoot=characterRoot;
+                owner.PreparedCharacterWithdrawal=withdrawal;
+                }
+                finally { actorScope.Dispose(); }
                 var ask=new ProvisionalCutAsk{source=Source,plane=plane,renderAnchor=renderAnchor,
                     positiveSeparationImpulse=positiveSeparationImpulse,negativeSeparationImpulse=negativeSeparationImpulse};
                 ProvisionalCutTransaction transaction=null;
                 try
                 {
-                    var accepted=world.Driver.RequestPreparedCut(ask,lease,out transaction,out _);
+                    ProvisionalCutAcceptance accepted;
+                    using(s_request.Auto()) accepted=world.Driver.RequestPreparedCut(ask,lease,out transaction,out _);
                     if(transaction!=null)Operation=transaction.Operation;
                     return Result(VpCharacterCutOutcome.Requested,accepted);
                 }
@@ -180,6 +227,7 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
+                using var endScope=s_end.Auto();
                 try { lease?.Dispose(); }
                 finally
                 {

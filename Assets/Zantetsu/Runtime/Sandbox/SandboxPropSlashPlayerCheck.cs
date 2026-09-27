@@ -3,11 +3,14 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Zantetsu.Core.Animation;
 using Zantetsu.Core.Input;
+using Zantetsu.Core.Slash;
 using Zantetsu.MeshCut;
 using Zantetsu.Observability;
 using Zantetsu.PhysicsCut;
@@ -54,6 +57,16 @@ namespace Zantetsu.Sandbox
     /// was withdrawn.
     /// </para>
     /// <para>
+    /// **Measurement** (for performance observation; the Gameplay, input, drawing, Pose and physics are the same). Every
+    /// run keeps a frame timeline in memory -- real and recorded time, StepId, the unsimulated time, sweeps and hits,
+    /// and the frame's product, engine and check markers -- and writes it (frames.csv) after the world has ended.
+    /// <see cref="LightArgument"/> leaves out what only observes: the check's own view camera and its pictures, the
+    /// pieces' rows and the observation period, the per-frame fast-piece scan; its log lines are kept in memory and
+    /// written after the run. <see cref="IterationsArgument"/> runs the scenario that many times in one process, each on
+    /// the scene loaded anew (a new, uncut character and world), into iter-NN directories; the process ends with the
+    /// worst code.
+    /// </para>
+    /// <para>
     /// **Trace** (<see cref="TraceArgument"/>): this check composes one trace run of its own -- one main-thread lane
     /// carrying <see cref="TraceEventType.SlashHitConfirmed"/>, a paged history, drained every frame -- and gives the
     /// lane to the hit detector. At the end the lane is taken back, the run is finished and saved, read back, and every
@@ -67,6 +80,16 @@ namespace Zantetsu.Sandbox
         public const string DebugColoursArgument = "-zantetsuPropDebugColours";
         public const string FrameRateArgument = "-zantetsuPropFrameRate";
         public const string TraceArgument = "-zantetsuPropTrace";
+        public const string LightArgument = "-zantetsuPropLight";
+        public const string IterationsArgument = "-zantetsuPropIterations";
+        public const string MarkersArgument = "-zantetsuPropMarkers";
+        public const string UiArgument = "-zantetsuPropUi";
+
+        /// <summary>
+        /// Measurement only: the character's withdrawal per iteration, a string of A (the whole root) and B (its parts)
+        /// used in turn (iteration i takes character i mod its length). Without it, the registration's own choice holds.
+        /// </summary>
+        public const string WithdrawalArgument = "-zantetsuPropWithdrawal";
         public const string Prefix = "PROP SLASH: ";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -78,17 +101,70 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // A check Player keeps running when its window is not in focus (the project setting stays as it is).
+            Application.runInBackground = true;
             var host = new GameObject("Prop slash player check");
             UnityEngine.Object.DontDestroyOnLoad(host);
-            Walk walk = host.AddComponent<Walk>();
-            walk.directory = directory;
-            walk.input = Value(SandboxSlashReplayPlayerCheck.InputArgument);
-            walk.start = int.TryParse(Value(SandboxSlashReplayPlayerCheck.StartArgument), NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out int s) ? s : 1336;
-            walk.debugColours = Has(DebugColoursArgument);
-            walk.trace = Has(TraceArgument);
-            walk.frameRate = int.TryParse(Value(FrameRateArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
-                out int rate) ? rate : 90;
+            Runner runner = host.AddComponent<Runner>();
+            runner.directory = directory;
+            runner.iterations = int.TryParse(Value(IterationsArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                out int n) && n > 1 ? n : 1;
+        }
+
+        // Runs the check once, or the given number of times in this process, each time on the scene loaded anew.
+        private sealed class Runner : MonoBehaviour
+        {
+            internal string directory;
+            internal int iterations;
+
+            private IEnumerator Start()
+            {
+                int worst = 0;
+                string scene = SceneManager.GetActiveScene().path;
+                for (int i = 0; i < iterations; i++)
+                {
+                    if (i > 0)
+                    {
+                        SceneManager.LoadScene(scene, LoadSceneMode.Single);
+                        yield return null;
+                    }
+
+                    string order = Value(WithdrawalArgument);
+                    string mode = string.IsNullOrEmpty(order) ? "registration" : order[i % order.Length].ToString();
+                    PhysicsCut.PreparedCharacterWithdrawal.CompareWholeRoot = mode == "A";
+                    Walk walk = gameObject.AddComponent<Walk>();
+                    walk.withdrawalMode = mode;
+                    walk.directory = iterations > 1 ? Path.Combine(directory, "iter-" + i.ToString("D2", CultureInfo.InvariantCulture)) : directory;
+                    walk.iteration = i;
+                    walk.input = Value(SandboxSlashReplayPlayerCheck.InputArgument);
+                    walk.start = int.TryParse(Value(SandboxSlashReplayPlayerCheck.StartArgument), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out int s) ? s : 1336;
+                    walk.debugColours = Has(DebugColoursArgument);
+                    walk.trace = Has(TraceArgument);
+                    walk.light = Has(LightArgument);
+                    walk.extraMarkers = Value(MarkersArgument);
+                    walk.showUi = Has(UiArgument);
+                    walk.frameRate = int.TryParse(Value(FrameRateArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out int rate) ? rate : 90;
+                    while (!walk.Done)
+                    {
+                        yield return null;
+                    }
+
+                    worst = Math.Max(worst, walk.Code);
+                    Log("iteration " + i + " of " + iterations + " finished with code " + walk.Code);
+                    Destroy(walk);
+                    yield return null;
+                    if (walk.Code == 13 || walk.Code == 15)
+                    {
+                        break;
+                    }
+                }
+
+                Log("all iterations finished with code " + worst);
+                yield return null;
+                Application.Quit(worst);
+            }
         }
 
         private static string Value(string name)
@@ -118,9 +194,31 @@ namespace Zantetsu.Sandbox
             return false;
         }
 
+        // Kept in memory while a light run is being measured, and written after it.
+        private static List<string> s_heldLog;
+
         private static void Log(string line)
         {
+            if (s_heldLog != null)
+            {
+                s_heldLog.Add(line);
+                return;
+            }
+
             Debug.Log(Prefix + line);
+        }
+
+        private static void ReleaseLog()
+        {
+            List<string> held = s_heldLog;
+            s_heldLog = null;
+            if (held != null)
+            {
+                foreach (string line in held)
+                {
+                    Debug.Log(Prefix + line);
+                }
+            }
         }
 
         // After the driver's late update (-100), so what it reads is what this frame will draw: nothing of a cut's
@@ -133,7 +231,65 @@ namespace Zantetsu.Sandbox
             internal int start;
             internal bool debugColours;
             internal bool trace;
+            internal bool light;
+            internal string extraMarkers;
+            internal bool showUi;
+            internal string withdrawalMode;
+            internal int iteration;
             internal int frameRate;
+
+            internal bool Done { get; private set; }
+
+            internal int Code { get; private set; }
+
+            private static readonly ProfilerMarker s_checkLate = new ProfilerMarker("Zantetsu.Check.LateUpdate");
+            private static readonly ProfilerMarker s_checkPicture = new ProfilerMarker("Zantetsu.Check.Picture");
+
+            // The frame timeline: one row per frame from the replay's start to the end of the run, its markers filled in
+            // the frame after (a recorder's last value is the frame before the one it is read in).
+            private static readonly (ProfilerCategory category, string name)[] TimelineMarkers =
+            {
+                (ProfilerCategory.Internal, "PlayerLoop"),
+                (ProfilerCategory.Internal, "WaitForTargetFPS"),
+                (ProfilerCategory.Internal, "Gfx.WaitForPresentOnGfxThread"),
+                (ProfilerCategory.Internal, "Main Thread"),
+                (ProfilerCategory.Memory, "GC Allocated In Frame"),
+                (ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate"),
+                (ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply"),
+                (ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate"),
+                (ProfilerCategory.Scripts, "Zantetsu.Driver.Update"),
+                (ProfilerCategory.Scripts, "Zantetsu.Driver.LateUpdate"),
+                (ProfilerCategory.Scripts, "Zantetsu.Driver.AfterRendering"),
+                (ProfilerCategory.Scripts, "Zantetsu.CutPhysicsStep.Simulate"),
+                (ProfilerCategory.Scripts, "Zantetsu.CutPhysicsStep.Collect"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.LateUpdate"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Picture"),
+            };
+
+            private (ProfilerCategory category, string name)[] _timelineMarkers;
+            private ProfilerRecorder[] _timelineRecorders;
+            private readonly List<FrameRow> _timeline = new List<FrameRow>(1024);
+            private readonly Dictionary<int, int> _timelineRowOf = new Dictionary<int, int>();
+            private bool _timing;
+            private string _phase = "replay";
+            private int _picturesAsked;
+
+            private sealed class FrameRow
+            {
+                public int frame;
+                public string phase;
+                public double real;
+                public float delta;
+                public int fed;
+                public double recorded;
+                public long stepId;
+                public double unsimulated;
+                public int sweeps;
+                public int waves;
+                public int hits;
+                public int pictures;
+                public long[] markers;
+            }
 
             private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
             private readonly List<double> _rowTimes = new List<double>();
@@ -197,6 +353,14 @@ namespace Zantetsu.Sandbox
             private int _npcRootCuts, _npcChildCuts, _boxRootCuts, _boxChildCuts;
             private int _npcRootAcceptedFrame = -1;
             private int _npcWithdrawnFrame = -1;
+            private int _npcPoseFrameAtWithdrawal = -1;
+
+            private bool NpcDrawn() => _npc.Renderer != null && _npc.Renderer.enabled && _npc.Renderer.gameObject.activeInHierarchy;
+
+            private bool MotionInScene() => _npc.MotionBody != null && _npc.MotionBody.gameObject.activeInHierarchy;
+
+            // Left: not drawn, and not a target of the detector (its handle ends with its cut, or says it is none).
+            private bool NpcLeft() => !NpcDrawn() && (_npc.Handle == null || _npc.Handle.IsDisposed || !_npc.Handle.IsHitTarget);
 
             // Observation only: the Pose Table's and the hit detector's markers, frame by frame (a recorder's last value
             // is the frame before the one it is read in).
@@ -237,7 +401,7 @@ namespace Zantetsu.Sandbox
                     || _probe == null || !_probe.Body.IsSet || _view == null || string.IsNullOrEmpty(input) || !File.Exists(input))
                 {
                     Log("FAILED: the scene is not wired (world, katana, recorder, detector, box, view) or no input: " + input);
-                    Application.Quit(13);
+                    Finish(13);
                     yield break;
                 }
 
@@ -245,12 +409,28 @@ namespace Zantetsu.Sandbox
                 QualitySettings.vSyncCount = 0;
                 Application.targetFrameRate = frameRate;
                 VpCutSurfaceColour.SetDebugEnabled(debugColours);
-                _target = new RenderTexture(960, 600, 24);
-                _target.Create();
-                _view.targetTexture = _target;
-                _view.enabled = true;
+                if (!light)
+                {
+                    _target = new RenderTexture(960, 600, 24);
+                    _target.Create();
+                    _view.targetTexture = _target;
+                    _view.enabled = true;
+                }
+
+                // The sandbox's adjustment and diagnostics IMGUI is not drawn unless asked for (UiArgument); the
+                // recorder, capture, gesture and waves go on as they are, and so does everything else drawn.
+                foreach (SandboxSlashPoseRecorder recorderUi in FindObjectsByType<SandboxSlashPoseRecorder>(FindObjectsSortMode.None))
+                {
+                    recorderUi.ShowControls = showUi;
+                }
+
+                foreach (SandboxSlashDiagnosticsOverlay overlay in FindObjectsByType<SandboxSlashDiagnosticsOverlay>(FindObjectsSortMode.None))
+                {
+                    overlay.Visible = showUi;
+                }
 
                 WriteEnvironment();
+                Log("sandbox IMGUI (recorder controls, diagnostics overlay): " + (showUi ? "shown" : "hidden"));
                 Log("separation impulse given to every accepted cut (box and character): "
                     + (hit != null ? hit.SeparationImpulse.ToString("R", Inv) : "none") + " N·s");
                 _npc = FindAnyObjectByType<SandboxNpcCharacter>();
@@ -273,10 +453,14 @@ namespace Zantetsu.Sandbox
                             + " bones=" + table.BoneCount + " resolved=" + _npcPose.ResolvedBoneCount + " unresolved=" + _npcPose.UnresolvedBoneCount
                             + " requiresBones=" + _npcPose.RequiresBones + " bonesConfirmed=" + _npcPose.BonesConfirmed : "none (" + (_npcPose != null ? _npcPose.BindError : "no player") + ")")
                         + " root=" + (_npc.CharacterRoot != null ? _npc.CharacterRoot.transform.position.ToString("F4") : "none"));
+                    LogCharacterInventory();
+                    Log("npc withdrawal: registration asks for " + (_npc.WithdrawsParts ? "its parts" : "the whole root (" + _npc.WholeRootReason + ")")
+                        + "; this run: " + withdrawalMode + (withdrawalMode == "A" ? " (whole root, for comparison)" : "")
+                        + "; the parts' check at preparation took " + (_npc.ConfirmSeconds * 1000.0).ToString("F3", Inv) + " ms");
                     if (!_npc.IsTarget || table == null)
                     {
                         Log("FAILED: the character did not become a hit target with a Pose Table");
-                        Application.Quit(15);
+                        Finish(15);
                         yield break;
                     }
                 }
@@ -308,6 +492,12 @@ namespace Zantetsu.Sandbox
                 }
 
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
+                if (light)
+                {
+                    s_heldLog = new List<string>(512);
+                }
+
+                StartTimeline();
                 _clockStart = Time.unscaledTimeAsDouble;
                 _replaying = _recorder.TryBeginReplay(_clockStart);
                 _npcPose?.Restart();
@@ -322,7 +512,7 @@ namespace Zantetsu.Sandbox
                     + " unsimulatedAtStart=" + (clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "none")
                     + " stepId=" + (clock != null ? clock.StepId : -1)
                     + " box=" + _probe.Actor.transform.position.ToString("F4") + " targetFrameRate=" + frameRate
-                    + " debugColours=" + debugColours);
+                    + " debugColours=" + debugColours + " light=" + light + " iteration=" + iteration);
                 RequestPicture("0-start");
 
                 float deadline = Time.realtimeSinceStartup + 120f;
@@ -344,15 +534,18 @@ namespace Zantetsu.Sandbox
                     + " realSinceStart=" + (Time.unscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
                     + " stepId=" + (stepClock != null ? stepClock.StepId : -1));
                 RequestPicture("8-cuts-complete");
+                WriteTimeline(false);
 
                 // The observation period, apart from the cuts' completion: the ordinary Steps go on for a fixed physics
-                // time, nothing is simulated, synchronised or placed by the check, and every piece is followed.
-                _observing = true;
+                // time, nothing is simulated, synchronised or placed by the check, and every piece is followed. A light
+                // run has none: it goes on to the ending.
+                _phase = "observe";
+                _observing = !light;
                 long observeFrom = stepClock != null ? stepClock.StepId : 0;
                 long observeSteps = stepClock != null ? (long)Math.Round(ObservationPhysicsSeconds * stepClock.FrequencyHz) : 0;
                 int observeFrame = Time.frameCount;
                 float observeBy = Time.realtimeSinceStartup + 10f;
-                while (stepClock != null && stepClock.StepId < observeFrom + observeSteps && Time.realtimeSinceStartup < observeBy)
+                while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Time.realtimeSinceStartup < observeBy)
                 {
                     yield return null;
                 }
@@ -373,6 +566,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 // The ordinary ending, carried by the ordinary frames.
+                _phase = "ending";
                 float endBy = Time.realtimeSinceStartup + 15f;
                 _world.Shutdown();
                 while (!_world.IsReleased && Time.realtimeSinceStartup < endBy)
@@ -385,12 +579,162 @@ namespace Zantetsu.Sandbox
                 int code = _failures == 0 ? 0 : 14;
                 Log("finished with code " + code);
                 yield return null;
-                Application.Quit(code);
+                Finish(code);
+            }
+
+            // The end of this run: the timeline and the held log are written now, after the world has ended.
+            private void Finish(int code)
+            {
+                _timing = false;
+                WriteTimeline(true);
+                ReleaseLog();
+                if (_target != null)
+                {
+                    if (_view != null) _view.targetTexture = null;
+                    _target.Release();
+                    Destroy(_target);
+                    _target = null;
+                }
+
+                Code = code;
+                Done = true;
+            }
+
+            // The fixed markers, and any the run names after MarkersArgument (separated by ';', each "Category:Name" or
+            // a name in Internal), so that what a
+            // measurement looks at is chosen without building again.
+            private void StartTimeline()
+            {
+                var markers = new List<(ProfilerCategory, string)>(TimelineMarkers);
+                foreach (string entry in (extraMarkers ?? string.Empty).Split(';'))
+                {
+                    // "Category:Name" (a ProfilerCategory property, such as Render or Scripts), or a name in Internal.
+                    string text = entry.Trim();
+                    if (text.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    int colon = text.IndexOf(':');
+                    ProfilerCategory category = ProfilerCategory.Internal;
+                    if (colon > 0)
+                    {
+                        System.Reflection.PropertyInfo named = typeof(ProfilerCategory).GetProperty(text.Substring(0, colon),
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        if (named != null && named.PropertyType == typeof(ProfilerCategory))
+                        {
+                            category = (ProfilerCategory)named.GetValue(null);
+                            text = text.Substring(colon + 1);
+                        }
+                    }
+
+                    markers.Add((category, text));
+                }
+
+                _timelineMarkers = markers.ToArray();
+                _timelineRecorders = new ProfilerRecorder[_timelineMarkers.Length];
+                for (int i = 0; i < _timelineMarkers.Length; i++)
+                {
+                    _timelineRecorders[i] = ProfilerRecorder.StartNew(_timelineMarkers[i].category, _timelineMarkers[i].name);
+                }
+
+                _timing = true;
+            }
+
+            // One row for this frame, and the markers of the frame before into that frame's row.
+            private void RecordFrame()
+            {
+                int frame = Time.frameCount;
+                if (_timelineRowOf.TryGetValue(frame - 1, out int before))
+                {
+                    FrameRow previous = _timeline[before];
+                    previous.markers = new long[_timelineRecorders.Length];
+                    for (int i = 0; i < _timelineRecorders.Length; i++)
+                    {
+                        previous.markers[i] = _timelineRecorders[i].Valid ? _timelineRecorders[i].LastValue : -1;
+                    }
+                }
+
+                ManualPhysicsClock clock = CutPhysicsStep.Clock;
+                int fed = _recorder != null ? _recorder.ReplayIndex : 0;
+                SlashWaveCore core = _katana != null ? _katana.Core : null;
+                _timelineRowOf[frame] = _timeline.Count;
+                _timeline.Add(new FrameRow
+                {
+                    frame = frame,
+                    phase = _phase,
+                    real = Time.unscaledTimeAsDouble - _clockStart,
+                    delta = Time.unscaledDeltaTime,
+                    fed = fed,
+                    recorded = fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN,
+                    stepId = clock != null ? clock.StepId : -1,
+                    unsimulated = clock != null ? clock.UnsimulatedSeconds : double.NaN,
+                    sweeps = core != null ? core.SweepCount : -1,
+                    waves = _katana != null ? _katana.WaveCount : -1,
+                    hits = _detector != null && _replaying ? _detector.HitCount : 0,
+                    pictures = _picturesAsked,
+                });
+                _picturesAsked = 0;
+            }
+
+            // Written at the cuts' completion (so far) and at the end (all of it, and the recorders go back): at a
+            // boundary of the run, never within the replay.
+            private void WriteTimeline(bool final)
+            {
+                if (_timelineRecorders == null)
+                {
+                    return;
+                }
+
+                var text = new StringBuilder(_timeline.Count * 160);
+                text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
+                foreach ((ProfilerCategory _, string name) in _timelineMarkers)
+                {
+                    text.Append(',').Append(name);
+                }
+
+                text.Append('\n');
+                foreach (FrameRow r in _timeline)
+                {
+                    text.Append(r.frame).Append(',').Append(r.phase).Append(',').Append(r.real.ToString("R", Inv)).Append(',')
+                        .Append(r.delta.ToString("R", Inv)).Append(',').Append(r.fed).Append(',').Append(r.recorded.ToString("R", Inv)).Append(',')
+                        .Append((r.real - r.recorded).ToString("R", Inv)).Append(',').Append(r.stepId).Append(',')
+                        .Append(r.unsimulated.ToString("R", Inv)).Append(',').Append(r.sweeps).Append(',').Append(r.waves).Append(',')
+                        .Append(r.hits).Append(',').Append(r.pictures);
+                    for (int i = 0; i < _timelineMarkers.Length; i++)
+                    {
+                        text.Append(',').Append(r.markers != null ? r.markers[i] : -1);
+                    }
+
+                    text.Append('\n');
+                }
+
+                File.WriteAllText(Path.Combine(directory, final ? "frames.csv" : "frames-at-cuts-complete.csv"), text.ToString());
+                if (!final)
+                {
+                    return;
+                }
+
+                var valid = new StringBuilder();
+                for (int i = 0; i < _timelineMarkers.Length; i++)
+                {
+                    valid.Append(_timelineMarkers[i].name).Append('=').Append(_timelineRecorders[i].Valid).Append(' ');
+                    _timelineRecorders[i].Dispose();
+                }
+
+                _timelineRecorders = null;
+                Log("timeline: " + _timeline.Count + " frames written to frames.csv; recorders " + valid);
             }
 
             // A run left behind by a check that ended early goes back with it.
             private void OnDestroy()
             {
+                if (_timelineRecorders != null)
+                {
+                    foreach (ProfilerRecorder recorder in _timelineRecorders) recorder.Dispose();
+                    _timelineRecorders = null;
+                }
+
                 _pieceRows?.Dispose();
                 _poseEvaluateNs.Dispose();
                 _poseApplyNs.Dispose();
@@ -401,7 +745,20 @@ namespace Zantetsu.Sandbox
 
             private void LateUpdate()
             {
-                if ((_replaying || _observing) && _world != null && !_world.IsEnding)
+                using (s_checkLate.Auto())
+                {
+                    LateUpdateObserved();
+                }
+            }
+
+            private void LateUpdateObserved()
+            {
+                if (_timing)
+                {
+                    RecordFrame();
+                }
+
+                if (!light && (_replaying || _observing) && _world != null && !_world.IsEnding)
                 {
                     TrackPieces();
                 }
@@ -432,8 +789,8 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                // Any piece moving faster than 20 m/s, the first time it does: which, how heavy, where.
-                for (int id = 1; id < 256; id++)
+                // Any piece moving faster than 20 m/s, the first time it does: which, how heavy, where (not in a light run).
+                for (int id = 1; !light && id < 256; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
@@ -452,10 +809,15 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                if (_npc != null && _npcWithdrawnFrame < 0 && _npc.CharacterRoot != null && !_npc.CharacterRoot.activeInHierarchy)
+                // The character's withdrawal, as seen from outside: it is no longer drawn and no longer a hit target (the
+                // same frame), its pose is not applied again, and its motion body takes no part in the physics.
+                if (_npc != null && _npcWithdrawnFrame < 0 && NpcLeft())
                 {
                     _npcWithdrawnFrame = frame;
-                    Log("npc root withdrawn: frame=" + frame + " (its first cut accepted at frame " + _npcRootAcceptedFrame + ")");
+                    _npcPoseFrameAtWithdrawal = _npcPose != null ? _npcPose.AppliedFrame : -1;
+                    Log("npc withdrawn: frame=" + frame + " renderer drawn=" + NpcDrawn() + " hit target=" + (_npc.Handle != null && !_npc.Handle.IsDisposed && _npc.Handle.IsHitTarget)
+                        + " root active=" + _npc.CharacterRoot.activeInHierarchy + " motion body in the scene=" + MotionInScene()
+                        + " pose last applied at frame " + _npcPoseFrameAtWithdrawal);
                 }
 
                 for (int i = 0; i < _detector.HitCount; i++)
@@ -762,6 +1124,68 @@ namespace Zantetsu.Sandbox
                 return at == _probe.Body ? "box" : "other";
             }
 
+            // What the character's hierarchy holds when it becomes a target: what a withdrawal of it has to stop.
+            private void LogCharacterInventory()
+            {
+                if (_npc == null || _npc.CharacterRoot == null)
+                {
+                    return;
+                }
+
+                var byType = new SortedDictionary<string, int>();
+                var live = new List<string>();
+                var onDisable = new SortedSet<string>();
+                foreach (Component component in _npc.CharacterRoot.GetComponentsInChildren<Component>(true))
+                {
+                    if (component == null)
+                    {
+                        continue;
+                    }
+
+                    string type = component.GetType().Name;
+                    byType.TryGetValue(type, out int n);
+                    byType[type] = n + 1;
+                    bool active = component.gameObject.activeInHierarchy;
+                    if (component is Renderer r && r.enabled && active)
+                    {
+                        live.Add("renderer " + r.name + " (" + type + ")");
+                    }
+                    else if (component is Behaviour b && b.enabled && active && !(component is Renderer))
+                    {
+                        live.Add("behaviour " + b.name + " (" + type + ")");
+                    }
+                    else if (component is Rigidbody body)
+                    {
+                        live.Add("rigidbody " + body.name + " kinematic=" + body.isKinematic + " detectCollisions=" + body.detectCollisions
+                            + " colliders=" + body.GetComponentsInChildren<Collider>(true).Length + " active=" + active);
+                    }
+                    else if (component is Collider c)
+                    {
+                        live.Add("collider " + c.name + " (" + type + ") enabled=" + c.enabled + " active=" + active);
+                    }
+                    else if (component is Joint j)
+                    {
+                        live.Add("joint " + j.name + " (" + type + ")");
+                    }
+
+                    if (component is MonoBehaviour && component.GetType().GetMethod("OnDisable",
+                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic) != null)
+                    {
+                        onDisable.Add(type);
+                    }
+                }
+
+                var text = new StringBuilder("npc hierarchy: ");
+                foreach (KeyValuePair<string, int> entry in byType)
+                {
+                    text.Append(entry.Key).Append('=').Append(entry.Value).Append(' ');
+                }
+
+                Log(text.ToString());
+                Log("npc hierarchy live parts: " + string.Join("; ", live));
+                Log("npc hierarchy MonoBehaviours with OnDisable: " + (onDisable.Count > 0 ? string.Join(", ", onDisable) : "none"));
+            }
+
             private void WriteEnvironment()
             {
                 Transform space = GameObject.Find("XR Origin")?.transform.Find("Camera Offset");
@@ -803,7 +1227,10 @@ namespace Zantetsu.Sandbox
                     Expect(_npcRootCuts == 1, "the walking character was cut once, from the pose its hit met");
                     Expect(_npcChildCuts >= 1, "a surviving child of the character was cut by a real hit of another Slash");
                     Expect(_npcWithdrawnFrame == _npcRootAcceptedFrame,
-                        "the character's root (its pose playback and skinned drawing) left in the frame its cut was published");
+                        "the character stopped being drawn and being a hit target in the frame its cut was published");
+                    Expect(_npcPose == null || (_npcPoseFrameAtWithdrawal >= 0 && _npcPose.AppliedFrame == _npcPoseFrameAtWithdrawal),
+                        "its pose was not applied again after it left (last at frame " + (_npcPose != null ? _npcPose.AppliedFrame : -1) + ")");
+                    Expect(!MotionInScene(), "its motion body takes no part in the physics after it left");
                 }
                 Expect(_accepted.TrueForAll(a => a.publishedFrame >= 0 && a.committedFrame >= 0),
                     "every accepted cut was published and its geometry committed");
@@ -842,7 +1269,10 @@ namespace Zantetsu.Sandbox
                     Log("piece " + id + " lowest own vertex at this moment " + (lowest > -0.02f ? "at or above" : "BELOW") + " floor -0.02 (diagnostic)");
                 }
 
-                SummariseObservation();
+                if (!light)
+                {
+                    SummariseObservation();
+                }
             }
 
             // One row per live piece per frame, and where each stands when the observation starts and ends.
@@ -1045,6 +1475,12 @@ namespace Zantetsu.Sandbox
 
             private void RequestPicture(string name)
             {
+                if (light)
+                {
+                    return;
+                }
+
+                _picturesAsked++;
                 _pictures.Add(name + "@" + Time.frameCount);
                 StartCoroutine(Picture(name));
             }
@@ -1053,6 +1489,7 @@ namespace Zantetsu.Sandbox
             {
                 int frame = Time.frameCount;
                 yield return new WaitForEndOfFrame();
+                using ProfilerMarker.AutoScope scope = s_checkPicture.Auto();
                 string file = Path.Combine(directory, name + "-f" + frame + ".png");
                 var picture = new Texture2D(_target.width, _target.height, TextureFormat.RGB24, false);
                 RenderTexture previous = RenderTexture.active;
