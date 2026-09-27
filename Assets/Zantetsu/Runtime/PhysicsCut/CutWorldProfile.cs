@@ -18,8 +18,9 @@ namespace Zantetsu.PhysicsCut
     /// the reservation within the device's largest buffer. None of them is a memory budget.
     /// </para>
     /// <para>
-    /// **What it does not decide.** The separation impulses of a cut are the caller's own two values (DESIGN 7.2) and
-    /// are not here; neither is what a hit is, nor anything of Character or XR. Which body is a building is not here
+    /// **What it does not decide.** Neither what a hit is, nor anything of Character or XR. The separation impulse is
+    /// here only as the switch and the coefficient of its provisional mass-only strength (DESIGN 7.2): switched off, a
+    /// cut's impulses are the caller's own values. Which body is a building is not here
     /// either: that is said when the body is registered. What is here of the building constraint is its three
     /// settings and the system constraint capacity (DESIGN 7.2.2, O-048).
     /// </para>
@@ -117,6 +118,20 @@ namespace Zantetsu.PhysicsCut
         [SerializeField]
         private int maxIncompleteCuts = 32;
 
+        [Header("Separation impulse (DESIGN 7.2; provisional, mass only)")]
+        [Tooltip(
+            "Whether each free child's separation impulse is decided from its mass (J = k × mass, below). Off, the "
+            + "callers' own values are used.")]
+        [SerializeField]
+        private bool separationImpulseByMass;
+
+        [Tooltip(
+            "k, in N·s per kg, used when the switch above is on: each free child is given J = k × its mass at the first "
+            + "application, along the adopted normal, whatever the plane's orientation. 0 is a valid value and gives no "
+            + "separation impulse. The direction input of DESIGN 7.2 is not implemented.")]
+        [SerializeField]
+        private float separationImpulsePerKg;
+
         [Header("Building World D6 (DESIGN 7.2.2; provisional values, O-048)")]
         [Tooltip("L1: the horizontal distance limit of a first-split building child, in metres.")]
         [SerializeField]
@@ -210,6 +225,30 @@ namespace Zantetsu.PhysicsCut
 
         public int ShutdownTimeoutMilliseconds => shutdownTimeoutMilliseconds;
 
+        /// <summary>Whether the separation impulse is decided from each child's mass (J = k × mass).</summary>
+        public bool SeparationImpulseByMass => separationImpulseByMass;
+
+        /// <summary>k of the provisional strength J = k × mass, in N·s per kg. 0 is a valid value: no impulse.</summary>
+        public float SeparationImpulsePerKg => separationImpulsePerKg;
+
+        /// <summary>
+        /// The strength a world gives its driver: J = k × mass when the switch is on (k may be 0), null when it is off,
+        /// which leaves the callers' own values.
+        /// </summary>
+        public SeparationImpulseStrength SeparationStrength
+        {
+            get
+            {
+                if (!separationImpulseByMass)
+                {
+                    return null;
+                }
+
+                float perKg = separationImpulsePerKg;
+                return mass => (float)(perKg * mass);
+            }
+        }
+
         /// <summary>The cap stencil settings of DESIGN 5.6, made from the values above.</summary>
         public VpStencilSettings StencilSettings =>
             new VpStencilSettings(
@@ -273,6 +312,10 @@ namespace Zantetsu.PhysicsCut
             else if (shutdownTimeoutMilliseconds < 0)
             {
                 reason = "the shutdown deadline cannot be negative";
+            }
+            else if (!(separationImpulsePerKg >= 0f) || float.IsInfinity(separationImpulsePerKg))
+            {
+                reason = "the separation impulse per kg must be finite and not negative";
             }
 
             return reason == null;
