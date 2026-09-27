@@ -312,7 +312,8 @@ namespace Zantetsu.PhysicsCut.Tests
             float3 renderAnchor = default,
             float separationImpulse = 0f,
             PhysicsOwnerShape cutFrom = null,
-            LogicalFragmentId? source = null)
+            LogicalFragmentId? source = null,
+            SeparationImpulseStrength strength = null)
         {
             var input = new FinalPhysicsPublicationInput
             {
@@ -325,6 +326,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 cutFrom = cutFrom ?? w.SourceOwner?.Shape,
                 renderAnchor = renderAnchor,
                 separationImpulse = separationImpulse,
+                separationStrength = strength,
             };
             return FinalPhysicsPublication.TryPublish(in input, out positive, out negative, out ledgerOutcome);
         }

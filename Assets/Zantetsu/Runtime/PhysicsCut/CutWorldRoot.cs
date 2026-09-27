@@ -363,6 +363,10 @@ namespace Zantetsu.PhysicsCut
                 Ledger, Owners, Cook, Frame, Display, profile.SupportEpsilon, profile.AnchorEpsilon,
                 profile.VertexLimit, null, Geometry, this);
             Driver.ConfigureConstraints(profile.BuildingWorld, profile.SystemConstraintCapacity);
+
+            // The separation impulse's strength (DESIGN 7.2), provisional and mass only: J = k × mass per free child
+            // when the profile switches it on (k may be 0: no impulse); off, every cut keeps the caller's own values.
+            Driver.SeparationStrength = profile.SeparationStrength;
             MakeColliderTemplate();
 
             IsReady = true;

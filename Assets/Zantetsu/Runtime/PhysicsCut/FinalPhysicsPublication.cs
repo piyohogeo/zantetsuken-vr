@@ -83,6 +83,14 @@ namespace Zantetsu.PhysicsCut
         /// should use is not decided here and is not this number.
         /// </summary>
         public float separationImpulse;
+
+        /// <summary>
+        /// When set, each free side's impulse is what this returns for that side's own Final mass, in place of the
+        /// value above, decided once this call's checks have passed and before anything is made or moved. A value
+        /// that is not finite and non-negative is a physics failure of this publication. Unset, the value above is
+        /// used for both sides.
+        /// </summary>
+        public SeparationImpulseStrength separationStrength;
     }
 
     /// <summary>
@@ -219,6 +227,24 @@ namespace Zantetsu.PhysicsCut
                     return Failed(in input, ref ledgerOutcome);
                 }
 
+                // The impulse each side is given, settled before anything is made or moved: the caller's one value,
+                // or the strength for that side's own Final mass (0 for a side the anchors fix, whose function is not
+                // asked). A strength that cannot be used is this publication's physics failure, like a missing owner.
+                float positiveImpulse = input.separationImpulse;
+                float negativeImpulse = input.separationImpulse;
+                if (input.separationStrength != null)
+                {
+                    positiveImpulse = input.candidate.Positive.FixedByAnchors
+                        ? 0f : input.separationStrength(input.candidate.Positive.Mass);
+                    negativeImpulse = input.candidate.Negative.FixedByAnchors
+                        ? 0f : input.separationStrength(input.candidate.Negative.Mass);
+                    if (!(positiveImpulse >= 0f) || !math.isfinite(positiveImpulse)
+                        || !(negativeImpulse >= 0f) || !math.isfinite(negativeImpulse))
+                    {
+                        return Failed(in input, ref ledgerOutcome);
+                    }
+                }
+
                 try
                 {
                     positiveShape = PhysicsOwnerShape.OfSide(sourceOwner.Shape, input.products, productsSource, true);
@@ -253,7 +279,7 @@ namespace Zantetsu.PhysicsCut
                 // ---- one main-thread update from here: nothing steps, admits, resolves or collects in between ----
                 try
                 {
-                    input.candidate.Reposition(placement, in motion, planeNormal, input.separationImpulse);
+                    input.candidate.Reposition(placement, in motion, planeNormal, positiveImpulse, negativeImpulse);
                     if (!Establish(input.candidate))
                     {
                         Withdraw(input.candidate);
