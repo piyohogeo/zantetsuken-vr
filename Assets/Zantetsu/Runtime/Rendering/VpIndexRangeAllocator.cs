@@ -50,6 +50,30 @@ namespace Zantetsu.Rendering
 
         public int DescriptorCapacity => _table.DescriptorCapacity;
 
+        /// <summary>The largest single range a reservation could take now. For the storage's room description.</summary>
+        internal int LargestFreeRange
+        {
+            get
+            {
+                int largest = 0;
+                for (int i = 0; i < _freeRangeCount; i++)
+                {
+                    largest = Math.Max(largest, _freeCounts[i]);
+                }
+
+                return largest;
+            }
+        }
+
+        /// <summary>How many separate free ranges there are.</summary>
+        internal int FreeRangeCount => _freeRangeCount;
+
+        /// <summary>How many indices the ranges in <paramref name="state"/> hold.</summary>
+        internal long IndicesIn(VpIndexRangeState state) => _table.IndicesInState(state);
+
+        /// <summary>How many descriptors are in <paramref name="state"/>.</summary>
+        internal int DescriptorsIn(VpIndexRangeState state) => _table.CountInState(state);
+
         /// <summary>How many indices are free, over all free ranges, which is the room left for reservations.</summary>
         public int FreeIndexRoom
         {

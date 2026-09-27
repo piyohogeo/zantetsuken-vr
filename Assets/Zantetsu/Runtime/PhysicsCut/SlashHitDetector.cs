@@ -377,15 +377,22 @@ namespace Zantetsu.PhysicsCut
                     acceptance = ProvisionalCutAcceptance.NotAccepted;
                     admission = LogicalCutAdmission.SourceNotLive;
                     break;
+                case VpCharacterCutOutcome.Held:
+                    // Not admitted: the ledger was not asked. The request is the driver's to take up later.
+                    acceptance = ProvisionalCutAcceptance.Held;
+                    admission = LogicalCutAdmission.NoOp;
+                    break;
                 default:
                     acceptance = ProvisionalCutAcceptance.InvalidRequest;
                     admission = LogicalCutAdmission.NoOp;
                     break;
             }
 
-            if (hit.character.IsDisposed || result.Outcome == VpCharacterCutOutcome.Requested)
+            if (hit.character.IsDisposed || result.Outcome == VpCharacterCutOutcome.Requested
+                || result.Outcome == VpCharacterCutOutcome.Held)
             {
-                // Its cut is done with it: from here the character is its fragment's owner, or nothing.
+                // Its cut is done with it: from here the character is its fragment's owner, or nothing. A held request is
+                // the driver's now, and the character is never a hit target again.
                 RemoveCharacter(hit.character);
             }
 

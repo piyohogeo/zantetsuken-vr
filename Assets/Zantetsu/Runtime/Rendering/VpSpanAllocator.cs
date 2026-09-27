@@ -26,11 +26,23 @@ namespace Zantetsu.Rendering
     public sealed class VpSpanAllocator
     {
         // Free spans by ascending start, none empty and none adjacent.
-        private readonly int[] _freeStarts;
-        private readonly int[] _freeCounts;
+        private int[] _freeStarts;
+        private int[] _freeCounts;
         private int _freeSpanCount;
+        private readonly int _maxFreeSpans;
 
         public VpSpanAllocator(int capacity)
+            : this(capacity, int.MaxValue)
+        {
+        }
+
+        /// <summary>
+        /// The same allocator whose free span list starts at <paramref name="initialFreeSpanRoom"/> entries and doubles
+        /// when a give-back needs more, up to the bound the capacity sets. For a capacity that is a large reservation
+        /// (the vertices, DESIGN 4.5.4), where a list sized to that bound up front would itself be large; a new
+        /// fragmentation high costs one managed allocation on the main thread, and nothing else does.
+        /// </summary>
+        public VpSpanAllocator(int capacity, int initialFreeSpanRoom)
         {
             if (capacity < 0)
             {
@@ -43,8 +55,10 @@ namespace Zantetsu.Rendering
             // free spans. Worked out in 64 bits: at a capacity near int.MaxValue the same expression in ints wraps
             // negative, and a bound that wrapped would not be one.
             int maxFreeSpans = (int)Math.Min(int.MaxValue, ((long)capacity + 1) / 2 + 1);
-            _freeStarts = new int[maxFreeSpans];
-            _freeCounts = new int[maxFreeSpans];
+            _maxFreeSpans = maxFreeSpans;
+            int initial = Math.Max(1, Math.Min(maxFreeSpans, initialFreeSpanRoom));
+            _freeStarts = new int[initial];
+            _freeCounts = new int[initial];
             if (capacity > 0)
             {
                 _freeStarts[0] = 0;
@@ -211,9 +225,16 @@ namespace Zantetsu.Rendering
 
             if (_freeSpanCount == _freeStarts.Length)
             {
-                // Between any two free spans lies a slot in use, so this cannot happen for a caller giving back what
-                // it holds. Reaching it means the bookkeeping is wrong, not that the storage is full.
-                throw new InvalidOperationException("the free span list is full, which its bound says cannot happen.");
+                if (_freeStarts.Length >= _maxFreeSpans)
+                {
+                    // Between any two free spans lies a slot in use, so this cannot happen for a caller giving back what
+                    // it holds. Reaching it means the bookkeeping is wrong, not that the storage is full.
+                    throw new InvalidOperationException("the free span list is full, which its bound says cannot happen.");
+                }
+
+                int grown = (int)Math.Min(_maxFreeSpans, (long)_freeStarts.Length * 2);
+                Array.Resize(ref _freeStarts, grown);
+                Array.Resize(ref _freeCounts, grown);
             }
 
             for (int i = _freeSpanCount; i > at; i--)

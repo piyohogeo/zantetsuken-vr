@@ -14,7 +14,12 @@ namespace Zantetsu.MeshCut
         /// <summary>The adapter, the geometry or the kernel refused the input; nothing was reserved or published.</summary>
         InvalidInput = 1,
 
-        /// <summary>The storage could not hold the output: index space, a descriptor, vertices or metadata room.</summary>
+        /// <summary>
+        /// The storage could not hold the output: no room within a reservation's absolute limit (index space, vertices),
+        /// no descriptor or metadata room, or pages the backing would not commit (DESIGN 4.5.4; the storage then reports
+        /// its backing failure). Not a reservation too small for the input, which is <see cref="CapacityRetry"/> or a
+        /// reservation taken again, and not room another work holds for now, which the asynchronous runner waits for.
+        /// </summary>
         StorageCapacity = 2,
 
         /// <summary>

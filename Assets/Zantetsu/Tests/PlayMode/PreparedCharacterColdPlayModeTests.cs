@@ -83,11 +83,13 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return null;
             if(coldWarm!=null){Assert.That(coldWarm.TryFinish(),Is.True);coldWarm.Dispose();coldWarm=null;}
             yield return null;
-            if(coldWorld!=null)
+            // A case that meant the Player's termination leaves the world as the termination left it: no ending (DESIGN 4).
+            if(coldWorld!=null&&!coldTerminationExpected)
             {
                 for(int i=0;i<120&&!coldWorld.Shutdown();i++)yield return null;
                 Assert.That(coldWorld.IsReleased,Is.True,"do not destroy resources while workers still hold them");
             }
+            coldTerminationExpected=false;
             for(int i=coldObjects.Count-1;i>=0;i--)if(coldObjects[i]!=null)UnityEngine.Object.Destroy(coldObjects[i]);
             coldObjects.Clear();coldWorld=null;
             yield return null;

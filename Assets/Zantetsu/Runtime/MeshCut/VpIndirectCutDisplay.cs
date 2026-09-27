@@ -348,8 +348,10 @@ namespace Zantetsu.MeshCut
             bool taken = false;
             try
             {
-                // The buffers are the storage's shape, which is what makes every position mean the same on both sides.
-                buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
+                // The buffers are the storage's shape, which is what makes every position mean the same on both sides:
+                // what it committed first, which for the fixed-size storage is its whole capacity. This display does not
+                // grow them (the product display, VpLogicalCutDisplay, does).
+                buffers = new VpGpuIndexedGeometryBuffers(storage.CommittedVertexCapacity, storage.CommittedIndexCapacity);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
 
                 var built = new VpIndirectCutDisplay(storage, table, materialsBySourceIndex, shadowMaterial, buffers, batch, frameSource);
