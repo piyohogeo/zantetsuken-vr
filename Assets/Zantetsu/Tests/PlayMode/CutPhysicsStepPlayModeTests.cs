@@ -136,7 +136,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(stepsTaken, Is.GreaterThan(0));
             Assert.That(recorded, Is.EqualTo(stepsTaken).Within(2),
                 "each real simulation is one sample of the profiler marker (the last frames may not be collected yet)");
-            Assert.That(CutPhysicsStep.LastSimulateSeconds, Is.GreaterThan(0.0), "and its duration is kept for the next decision");
+            Assert.That(CutPhysicsStep.LastSimulateSeconds, Is.GreaterThan(0.0), "and its duration is kept as the latest sample");
+            Assert.That(CutPhysicsStep.ExpectedSimulateSeconds, Is.GreaterThan(0.0), "and the next decision's prediction is taken from the real ones");
 
             Assert.That(late.seen.Count, Is.GreaterThan(30));
             foreach (var (frame, decided, _) in late.seen)

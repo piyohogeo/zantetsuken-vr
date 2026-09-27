@@ -29,7 +29,11 @@ namespace Zantetsu.PhysicsCut
     /// here, so nothing is ever stepped twice; the collection still happens.
     /// </para>
     /// <para>
-    /// **The expected cost** is the last measured duration of a simulation, recorded on the profiler marker below. The
+    /// **The expected cost** is the median of the last five measured durations of a real simulation
+    /// (<see cref="SimulateCostHistory"/>), each also recorded on the profiler marker below: one long simulation among
+    /// short ones does not hold the steps back on its own. It is not a promise of resuming: a long first simulation, or
+    /// long ones making up most of the last five, still give a prediction that may never fit, and a frame that does not
+    /// simulate adds no sample. The
     /// Main budget is a time, distinct from the dispatcher's count budget, and "what is left" is that time minus what
     /// the frame has already spent since its player loop began. Neither is a guarantee: a prediction can be wrong and a
     /// frame can go over, and DESIGN 4.4 accepts both. A frame whose budget is gone simply does not simulate, and the
@@ -58,6 +62,7 @@ namespace Zantetsu.PhysicsCut
         private static readonly List<ProvisionalCutDriver> s_collectors = new List<ProvisionalCutDriver>(2);
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
+        private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
         private static double s_mainBudgetSeconds = DefaultMainBudgetSeconds;
         private static long s_frameStart;
         private static bool s_gamePaused;
@@ -70,8 +75,20 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The frame's Main budget the decision compares with, in seconds.</summary>
         public static double MainBudgetSeconds => s_mainBudgetSeconds;
 
-        /// <summary>The duration of the last real simulation, in seconds: the expected cost of the next one.</summary>
+        /// <summary>The duration of the last real simulation, in seconds (the latest sample, not the prediction).</summary>
         public static double LastSimulateSeconds { get; private set; }
+
+        /// <summary>The expected cost of the next simulation: the median of the last five real ones, 0 before any.</summary>
+        public static double ExpectedSimulateSeconds => s_costs.ExpectedSeconds;
+
+        /// <summary>The expected cost the last decision compared, in seconds. For tests and observation.</summary>
+        public static double LastDecisionExpectedSeconds { get; private set; }
+
+        /// <summary>What was left of the Main budget at the last decision, in seconds. For tests and observation.</summary>
+        public static double LastDecisionRemainingSeconds { get; private set; }
+
+        /// <summary>Whether the last decision simulated. For tests and observation.</summary>
+        public static bool LastDecisionStepped { get; private set; }
 
         /// <summary>The frame of the last real simulation, or <see cref="int.MinValue"/>. For tests and observation.</summary>
         public static int LastSimulatedFrame { get; private set; } = int.MinValue;
@@ -121,6 +138,10 @@ namespace Zantetsu.PhysicsCut
             s_pauseListener = null;
             s_collectors.Clear();
             LastSimulateSeconds = 0.0;
+            s_costs.Clear();
+            LastDecisionExpectedSeconds = 0.0;
+            LastDecisionRemainingSeconds = 0.0;
+            LastDecisionStepped = false;
             LastSimulatedFrame = int.MinValue;
             LastDecidedFrame = int.MinValue;
         }
@@ -183,7 +204,12 @@ namespace Zantetsu.PhysicsCut
             // A frame that began before the system was installed has no start of its own: it is taken as beginning now.
             long frameStart = s_frameStart != 0 ? s_frameStart : now;
             double remaining = s_mainBudgetSeconds - ((double)(now - frameStart) / Stopwatch.Frequency);
-            if (Physics.simulationMode == SimulationMode.Script && s_clock.ShouldStep(LastSimulateSeconds, remaining))
+            double expected = s_costs.ExpectedSeconds;
+            bool step = Physics.simulationMode == SimulationMode.Script && s_clock.ShouldStep(expected, remaining);
+            LastDecisionExpectedSeconds = expected;
+            LastDecisionRemainingSeconds = remaining;
+            LastDecisionStepped = step;
+            if (step)
             {
                 long begin = Stopwatch.GetTimestamp();
                 using (s_simulate.Auto())
@@ -192,6 +218,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;
+                s_costs.Add(LastSimulateSeconds);
                 s_clock.Stepped();
                 LastSimulatedFrame = Time.frameCount;
             }
