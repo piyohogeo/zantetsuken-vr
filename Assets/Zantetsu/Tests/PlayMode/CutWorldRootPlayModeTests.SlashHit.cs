@@ -338,6 +338,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // Where this case runs: the scenes loaded when it starts, and what in them has a collider.
             UnityEngine.Debug.Log("SLASH HIT MOVED: scenes at start: " + DescribeLoadedScenes());
             CutWorldRoot root = NewWorld(out Shader _);
+            // This tests current-shape hit coordinates, with enough budget for same-frame publication.
+            root.Driver.RemainingMainSeconds = () => 1;
             LogicalFragmentId body = AddBody(root, Vector3.zero);
             Assert.That(root.Owners.TryGet(body, out PhysicsFragmentOwner owner), Is.True);
             ContactLog contacts = owner.Root.AddComponent<ContactLog>();
@@ -372,6 +374,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         public IEnumerator ABodyMovedAndTurnedByItsTransform_IsHitWhereItStandsNow_BeforeAnyStep()
         {
             CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1;
             LogicalFragmentId body = AddBody(root, Vector3.zero);
             yield return null;
             Assert.That(root.Owners.TryGet(body, out PhysicsFragmentOwner owner), Is.True);

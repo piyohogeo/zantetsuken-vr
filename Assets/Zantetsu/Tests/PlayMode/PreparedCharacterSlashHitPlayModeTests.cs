@@ -331,6 +331,66 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         [UnityTest]
+        public IEnumerator BudgetPending_LiveMainClockDefersAndProductUpdatesResume()
+        {
+            ColdWorld();
+            coldWarm = new VpPhysicsColdPreparation();
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True);
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            bone.localPosition = new Vector3(0, 0, 5);
+            // Deliberately exhaust this real frame in the test, without a budget override or loop re-entry.
+            System.Threading.Thread.Sleep((int)(CutPhysicsStep.MainBudgetSeconds * 1000) + 2);
+            Assert.That(CutPhysicsStep.RemainingMainSeconds, Is.LessThanOrEqualTo(0));
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Pending));
+            var pending = coldWorld.Driver.TransactionOf(hits[0].Operation);
+            Assert.That(pending.Candidate, Is.Null);
+            Assert.That(root.activeInHierarchy, Is.True);
+            yield return UntilCommitted(hits[0].Operation);
+            Assert.That(root.activeInHierarchy, Is.False);
+            Assert.That(pending.HoldsInput, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator BudgetPending_CharacterHitResumesThroughDriverUpdates_AfterHandleDisposal()
+        {
+            ColdWorld();
+            coldWarm = new VpPhysicsColdPreparation();
+            var handle = PrepareBonedCharacter(out Transform bone, out GameObject root);
+            yield return null;
+            Assert.That(handle.TryFinishPreparation(), Is.True);
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(handle);
+            coldWorld.Driver.RemainingMainSeconds = () => 0;
+            bone.localPosition = new Vector3(0, 0, 5);
+            var hits = Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1);
+            Assert.That(hits.Count, Is.EqualTo(1));
+            Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Pending));
+            var pending = coldWorld.Driver.TransactionOf(hits[0].Operation);
+            Assert.That(handle.IsDisposed, Is.True, "the normal character request finishes its handle");
+            Assert.That(pending.HoldsInput, Is.True, "the admitted transaction, not the handle, holds the input");
+            Assert.That(root.activeInHierarchy, Is.True, "withdrawal waits for publication");
+            yield return null;
+            yield return null;
+            Assert.That(pending.Phase, Is.EqualTo(ProvisionalCutPhase.Accepted));
+            Assert.That(pending.InputShape.IsFreed, Is.False);
+            Assert.That(coldWorld.Display.RenderFragmentCount, Is.GreaterThan(0), "the accepted cut input supplies the pending display");
+            Assert.That(root.GetComponentInChildren<SkinnedMeshRenderer>().enabled, Is.False, "the original renderer must not duplicate the cut input");
+            Assert.That(Evaluate(detector, CharacterLevel(1, 0.3f, 2f, 8f), 1), Is.Empty, "no second acceptance");
+            coldWorld.Driver.RemainingMainSeconds = () => 1;
+            // No direct Advance or RequestCut here: the product Update/LateUpdate/after-rendering path resumes it.
+            yield return UntilCommitted(hits[0].Operation);
+            Assert.That(root.activeInHierarchy, Is.False);
+            Assert.That(pending.Phase, Is.EqualTo(ProvisionalCutPhase.HandedOff));
+            Assert.That(pending.HoldsInput, Is.False);
+            yield return null;
+            Assert.That(coldWorld.Display.RenderFragmentCount, Is.GreaterThan(0), "published children replace the original renderer");
+        }
+
+        [UnityTest]
         public IEnumerator U8_ACharacterIsHitAndCutWhereItsBonesStandWhenTheWaveArrives()
         {
             ColdWorld();
