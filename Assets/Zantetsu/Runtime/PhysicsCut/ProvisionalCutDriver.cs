@@ -174,6 +174,13 @@ namespace Zantetsu.PhysicsCut
 
         // The product reads the same live Main clock as Physics.Simulate. Tests may supply a deterministic remainder.
         internal Func<double> RemainingMainSeconds;
+
+        /// <summary>
+        /// The separation impulse's magnitude per child owner from its mass (DESIGN 7.2), used by every Provisional
+        /// publication in place of the ask's two values when set: the hit gives the plane, and the strength is decided
+        /// where the children's masses are. Unset, the ask's values are used. The world connects it from its profile.
+        /// </summary>
+        public SeparationImpulseStrength SeparationStrength { get; set; }
         private readonly SimulateCostHistory _buildCosts = new SimulateCostHistory();
         private readonly SimulateCostHistory _publishCosts = new SimulateCostHistory();
 
@@ -867,6 +874,7 @@ namespace Zantetsu.PhysicsCut
                 renderAnchor = ask.renderAnchor,
                 positiveSeparationImpulse = ask.positiveSeparationImpulse,
                 negativeSeparationImpulse = ask.negativeSeparationImpulse,
+                separationStrength = SeparationStrength,
             };
 
             PhysicsPublicationOutcome published;

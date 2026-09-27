@@ -666,8 +666,16 @@ namespace Zantetsu.PhysicsCut
         internal void Reposition(
             PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
         {
-            Positive.Reposition(placement, in motion, planeNormalWorld, separationImpulse);
-            Negative.Reposition(placement, in motion, planeNormalWorld, separationImpulse);
+            Reposition(placement, in motion, planeNormalWorld, separationImpulse, separationImpulse);
+        }
+
+        /// <summary>The same, with each side's own separation impulse.</summary>
+        internal void Reposition(
+            PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld,
+            float positiveSeparationImpulse, float negativeSeparationImpulse)
+        {
+            Positive.Reposition(placement, in motion, planeNormalWorld, positiveSeparationImpulse);
+            Negative.Reposition(placement, in motion, planeNormalWorld, negativeSeparationImpulse);
         }
 
         /// <summary>Destroys the two owners. The meshes they used are not this call's and are left as they were.</summary>

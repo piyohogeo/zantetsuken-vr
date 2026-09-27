@@ -5,6 +5,18 @@ using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
 {
+    /// <summary>
+    /// The magnitude of the separation impulse for one child owner, in newton-seconds, from that owner's mass at the
+    /// first application (DESIGN 7.2): its temporary mass on the Provisional path, its Final mass on the direct Final
+    /// path. It returns an impulse, not a change of velocity, and it does not choose the direction: that stays along
+    /// the adopted plane's normal, each side outward. It is not asked for a side fixed by anchors, which is given 0.
+    /// <para>
+    /// **Mass only, for now.** DESIGN 7.2 also names a direction input whose subject is not yet specified; it is not
+    /// part of this signature, and this is not the implementation of it.
+    /// </para>
+    /// </summary>
+    public delegate float SeparationImpulseStrength(double mass);
+
     /// <summary>What one Provisional publication was asked for.</summary>
     public struct ProvisionalPhysicsPublicationInput
     {
@@ -52,6 +64,14 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The negative side's, by the same rule.</summary>
         public float negativeSeparationImpulse;
+
+        /// <summary>
+        /// When set, each free side's impulse is what this returns for that side's own temporary mass, in place of the
+        /// two values above, decided once the publication's own checks have passed and before any actor is written.
+        /// A value that is not finite and non-negative is a physics failure of this publication. Unset, the two values
+        /// are used as they are.
+        /// </summary>
+        public SeparationImpulseStrength separationStrength;
     }
 
     /// <summary>
@@ -197,10 +217,19 @@ namespace Zantetsu.PhysicsCut
 
             float3 planeNormal = math.mul(placement.rotation, math.normalizesafe(record.plane.xyz));
 
+            // The impulse each side is given, settled here -- after this call's own checks, before any actor is
+            // written: the caller's value, or the strength for that side's own temporary mass (0 for a side the
+            // anchors fix, whose function is not asked). A strength that cannot be used is this publication's physics
+            // failure, and nothing of either side has been touched yet.
+            if (!TryDecideImpulses(in input, positive, negative, out float positiveImpulse, out float negativeImpulse))
+            {
+                return Failed(in input);
+            }
+
             // Each side with its own impulse, and each one's own mass turning that into its first velocity. The
             // direction is the existing one and is not decided here.
-            positive.Reposition(placement, in motion, planeNormal, input.positiveSeparationImpulse);
-            negative.Reposition(placement, in motion, planeNormal, input.negativeSeparationImpulse);
+            positive.Reposition(placement, in motion, planeNormal, positiveImpulse);
+            negative.Reposition(placement, in motion, planeNormal, negativeImpulse);
 
             // The record the correspondence will hold, and the room for it, made before the switch rather than after
             // it, so that what is left afterwards is the switch itself and nothing more. Both sides are given the
@@ -309,6 +338,22 @@ namespace Zantetsu.PhysicsCut
         private static bool Usable(float impulse)
         {
             return impulse >= 0f && math.isfinite(impulse);
+        }
+
+        private static bool TryDecideImpulses(
+            in ProvisionalPhysicsPublicationInput input, PhysicsOwnerSide positive, PhysicsOwnerSide negative,
+            out float positiveImpulse, out float negativeImpulse)
+        {
+            positiveImpulse = input.positiveSeparationImpulse;
+            negativeImpulse = input.negativeSeparationImpulse;
+            if (input.separationStrength == null)
+            {
+                return true;
+            }
+
+            positiveImpulse = positive.FixedByAnchors ? 0f : input.separationStrength(positive.Mass);
+            negativeImpulse = negative.FixedByAnchors ? 0f : input.separationStrength(negative.Mass);
+            return Usable(positiveImpulse) && Usable(negativeImpulse);
         }
     }
 }

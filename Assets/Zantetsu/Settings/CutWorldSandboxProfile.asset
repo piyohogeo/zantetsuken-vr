@@ -40,4 +40,6 @@ MonoBehaviour:
   capNdcMargin: {x: 0.01, y: 0.01}
   stencilCameraCapacity: 4
   maxIncompleteCuts: 32
+  separationImpulseByMass: 1
+  separationImpulsePerKg: 1
   shutdownTimeoutMilliseconds: 5000
