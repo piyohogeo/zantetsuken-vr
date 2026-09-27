@@ -548,7 +548,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     ? new UnityJobWorkExecutor(4)
                     : destination == WorkDestination.GeometryPool
                         ? WorkerPoolExecutor.GeometryPool(1)
-                        : WorkerPoolExecutor.BackgroundPool(1);
+                        : destination == WorkDestination.PlanningPool
+                            ? WorkerPoolExecutor.PlanningPool()
+                            : WorkerPoolExecutor.BackgroundPool(1);
                 var held = new HoldingExecutor(inner);
                 _holding.Add(held);
                 return held;
