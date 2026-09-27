@@ -67,6 +67,9 @@ namespace Zantetsu.PhysicsCut
         /// stale cut retires no fragment.
         /// </summary>
         Stale = 6,
+
+        /// <summary>Admitted once; input and any unpublished candidate are held until frame budget permits publication.</summary>
+        Pending = 7,
     }
 
     /// <summary>What a caller asks for when it asks for a cut.</summary>
@@ -94,16 +97,16 @@ namespace Zantetsu.PhysicsCut
 
     /// <summary>
     /// The one product caller of the Provisional path: it takes an asked-for cut, accepts it, builds the pair and puts
-    /// it into the physics scene, then lets the shared frame carry the rest as far as its budget allows — all in the
-    /// update it was asked in (DESIGN 7.1.1, 14 T-091).
+    /// it into the physics scene when budget permits, normally in the same update (DESIGN 7.1.1, 14 T-091).
+    /// Budget exhaustion preserves the admission for a later safe opportunity.
     /// <para>
     /// **It is bound, not built.** The ledger, the correspondence, the cut cook, the shared frame and the display are
     /// given to it (<see cref="Bind"/>); it creates none of them and owns none of them. It is not a composition root
     /// and has no scheduler: the only thing it keeps is what each accepted cut owns
-    /// (<see cref="ProvisionalCutTransaction"/>), and asking for a cut is a call, not a queue.
+    /// (<see cref="ProvisionalCutTransaction"/>). Deferred admissions stay there, not in a retry queue.
     /// </para>
     /// <para>
-    /// **The order in one frame.** In <c>Update</c>: classify the source's shape against the plane, accept the cut,
+    /// **The normal order, when budget permits.** In <c>Update</c>: classify the source's shape against the plane, accept the cut,
     /// prepare its anchors, build the unpublished pair, publish it — and then, in the same call, submit the final cut
     /// and let <see cref="SharedWorkFrame.Update"/> collect and submit what the frame's remaining budget allows. In
     /// <c>LateUpdate</c>: one more turn of the same frame, which may publish too. Then, after every late update,
@@ -159,6 +162,33 @@ namespace Zantetsu.PhysicsCut
         private ProvisionalCutRecovery _recovery;
         private CutDag _dag;
         private ICutTerminationLatch _latch;
+
+        // The product reads the same live Main clock as Physics.Simulate. Tests may supply a deterministic remainder.
+        internal Func<double> RemainingMainSeconds;
+        private readonly SimulateCostHistory _buildCosts = new SimulateCostHistory();
+        private readonly SimulateCostHistory _publishCosts = new SimulateCostHistory();
+
+        private bool FitsMain(double expected)
+        {
+            double remaining = RemainingMainSeconds != null ? RemainingMainSeconds() : CutPhysicsStep.RemainingMainSeconds;
+            return _frame.Dispatcher.RemainingBudget > 0 && remaining > 0 && expected <= remaining;
+        }
+
+        private int? RemainingConstraintRoom()
+        {
+            if (!_constraintCapacity.HasValue) return null;
+            int used = _registry.SystemConstraintCount;
+            // A budget-deferred candidate is not in the registry yet, but already owns its constraints.
+            foreach (ProvisionalCutTransaction transaction in _transactions)
+            {
+                ProvisionalOwnerCandidate candidate = transaction.Candidate;
+                if (candidate == null || candidate.IsDisposed || candidate.IsDetached) continue;
+                used += (candidate.Separation != null ? 1 : 0)
+                    + (candidate.Positive.BuildingWorld != null ? 1 : 0)
+                    + (candidate.Negative.BuildingWorld != null ? 1 : 0);
+            }
+            return Math.Max(0, _constraintCapacity.Value - used);
+        }
 
         /// <summary>
         /// The frame this driver counts by: the engine's, or whatever the caller counts with instead. A display created
@@ -279,9 +309,9 @@ namespace Zantetsu.PhysicsCut
         public CutDag Geometry => _dag;
 
         /// <summary>
-        /// Asks for one cut. Everything from the classification to the publication happens **in this call**, on the
-        /// main thread, outside any physics step; what the cut itself needs afterwards is carried by
-        /// <see cref="Advance"/> and the shared frame.
+        /// Asks for one cut. With sufficient budget, classification, construction and publication happen in this
+        /// call on the main thread, outside any physics step. Otherwise the accepted transaction retains its input
+        /// and resumes through <see cref="Advance"/> without another request or classification.
         /// <para>
         /// It is the only entrance. Where the ask comes from -- a weapon, a test, a tool -- is not this driver's
         /// concern, and nothing of what follows it happens anywhere but here.
@@ -400,6 +430,8 @@ namespace Zantetsu.PhysicsCut
                 _transactions.Add(made);
                 ownedByTransaction = true;
                 transaction = made;
+                made.HoldInput(owner.Shape);
+                _frame.Dispatcher.BeginFrame(CurrentFrame);
                 return TryEstablish(made, owner);
             }
             finally
@@ -409,13 +441,13 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Everything from the anchor distribution to the publication, for a record the ledger has just accepted: the
-        /// distribution settled, the pair built from the one classification, the pair published, and the final cut
-        /// submitted after it. It is the one place those steps happen, and each accepted cut goes through it once —
-        /// nothing comes back to it later.
+        /// Resumes an existing admission. Anchors are cached by the ledger, input and classification are retained,
+        /// and an inactive pair is built at most once. Budget exhaustion leaves these intact; publication and final
+        /// submission happen once at a later opportunity without another admission.
         /// </summary>
         private ProvisionalCutAcceptance TryEstablish(ProvisionalCutTransaction transaction, PhysicsFragmentOwner owner)
         {
+            if (_latch != null && _latch.TerminationRequested) return ProvisionalCutAcceptance.Pending;
             AnchorPreparationOutcome prepared = _ledger.PrepareAnchorDistribution(
                 transaction.Operation, _anchorEpsilon, out AnchorDistributionResult anchors);
             if (prepared != AnchorPreparationOutcome.Prepared)
@@ -437,6 +469,22 @@ namespace Zantetsu.PhysicsCut
                 transaction.GiveUpUnpublished();
                 return ProvisionalCutAcceptance.AnchorsRefused;
             }
+
+            // Authority is rechecked before allocating, including when the source was retired while Pending.
+            LogicalCutResultOutcome authority = _ledger.PreparePublication(transaction.Operation);
+            if (authority != LogicalCutResultOutcome.Applied)
+            {
+                Give(transaction);
+                return authority == LogicalCutResultOutcome.Stale ? ProvisionalCutAcceptance.Stale : ProvisionalCutAcceptance.NotAccepted;
+            }
+            if (owner == null || owner.IsWithdrawn || !ReferenceEquals(owner.Shape, transaction.InputShape))
+            {
+                Give(transaction);
+                return ProvisionalCutAcceptance.NotAccepted;
+            }
+            double expected = transaction.Candidate == null
+                ? _buildCosts.ExpectedSeconds + _publishCosts.ExpectedSeconds : _publishCosts.ExpectedSeconds;
+            if (!FitsMain(expected)) return ProvisionalCutAcceptance.Pending;
 
             ProvisionalCutAcceptance established = TryBuildAndPublish(transaction, owner, anchors);
             if (established != ProvisionalCutAcceptance.Published)
@@ -486,6 +534,18 @@ namespace Zantetsu.PhysicsCut
             }
 
             var progress = default(SharedWorkFrameProgress);
+            _frame.Dispatcher.BeginFrame(frameId);
+            // Resume existing admissions, not asks. Each is visited once; no busy polling when budget is exhausted.
+            for (int i = 0; i < _transactions.Count;)
+            {
+                ProvisionalCutTransaction pending = _transactions[i];
+                if (pending.Phase == ProvisionalCutPhase.Accepted && !pending.IsEnding)
+                {
+                    _registry.TryGet(pending.Source, out PhysicsFragmentOwner owner);
+                    TryEstablish(pending, owner);
+                }
+                if (i < _transactions.Count && ReferenceEquals(_transactions[i], pending)) i++;
+            }
             while (true)
             {
                 progress = progress.Plus(_frame.Update(frameId));
@@ -549,8 +609,8 @@ namespace Zantetsu.PhysicsCut
         /// update, an editor tool, a test. A caller already in the update phase may call
         /// <see cref="RequestCut"/> itself and get its answer at once; both are the same path through this driver.
         /// <para>
-        /// Nothing is scheduled by this: the asks noted before an update are taken up **in that update**, in the order
-        /// they were made, and the list is empty again afterwards. Nothing is carried to a later frame here.
+        /// The asks noted before an update are admitted in that update, in order, and this list is emptied.
+        /// Accepted transactions can remain Pending across frames when construction or publication lacks budget.
         /// </para>
         /// </summary>
         public void Ask(in ProvisionalCutAsk ask)
@@ -721,60 +781,68 @@ namespace Zantetsu.PhysicsCut
             AnchorDistributionResult anchors)
         {
             ProvisionalCutAsk ask = transaction.Ask;
-            var build = new ProvisionalOwnerBuildInput
+            ProvisionalOwnerCandidate candidate = transaction.Candidate;
+            if (candidate == null)
             {
-                sourceShape = owner.Shape,
-                sides = transaction.Classification.Sides,
-                planeLocal = ask.plane,
-                placement = owner.ReadPlacement(),
-                sourceMotion = owner.ReadMotion(ask.renderAnchor),
-                anchors = anchors,
-                parentMass = transaction.ParentMass,
-                sourceInertia = owner.Body.inertiaTensor,
-                sourceInertiaRotation = owner.Body.inertiaTensorRotation,
-                cooking = _cook.Cooking,
-                colliderTemplate = ColliderTemplate,
-
-                // The children's lineage, planned now, before anything is built (DESIGN 7.2.2): the pair and the
-                // children are published with this one value.
-                childLineage = owner.Building.ChildOfSplit(),
-                buildingWorld = _buildingWorld,
-                constraintRoom = _constraintCapacity.HasValue
-                    ? Math.Max(0, _constraintCapacity.Value - _registry.SystemConstraintCount)
-                    : (int?)null,
-                name = owner.Root != null ? owner.Root.name : "Provisional",
-            };
-
-            ProvisionalOwnerCandidate candidate;
-            PhysicsOwnerBuildOutcome built;
-            try
-            {
-                bool builtOk;
-                using (s_build.Auto())
+                var build = new ProvisionalOwnerBuildInput
                 {
-                    builtOk = ProvisionalOwnerBuilder.TryBuild(in build, out candidate, out built);
+                    sourceShape = owner.Shape,
+                    sides = transaction.Classification.Sides,
+                    planeLocal = ask.plane,
+                    placement = owner.ReadPlacement(),
+                    sourceMotion = owner.ReadMotion(ask.renderAnchor),
+                    anchors = anchors,
+                    parentMass = transaction.ParentMass,
+                    sourceInertia = owner.Body.inertiaTensor,
+                    sourceInertiaRotation = owner.Body.inertiaTensorRotation,
+                    cooking = _cook.Cooking,
+                    colliderTemplate = ColliderTemplate,
+
+                    // The children's lineage, planned now, before anything is built (DESIGN 7.2.2): the pair and the
+                    // children are published with this one value.
+                    childLineage = owner.Building.ChildOfSplit(),
+                    buildingWorld = _buildingWorld,
+                    constraintRoom = RemainingConstraintRoom(),
+                    name = owner.Root != null ? owner.Root.name : "Provisional",
+                };
+
+                PhysicsOwnerBuildOutcome built;
+                long buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    bool builtOk;
+                    using (s_build.Auto())
+                    {
+                        builtOk = ProvisionalOwnerBuilder.TryBuild(in build, out candidate, out built);
+                    }
+
+                    if (!builtOk)
+                    {
+                        // Nothing was built, so there is nothing of it to give back. The cut cannot be established
+                        // (DESIGN 7.1.1): it is aborted, and the source retired unless the ledger finds it stale.
+                        Abort(transaction);
+                        return ProvisionalCutAcceptance.Aborted;
+                    }
+                }
+                catch (Exception)
+                {
+                    // Before the switch, so nothing of the pair is in the scene and the source is untouched. What this
+                    // record made goes back and the error is passed on -- it is not read as a physics failure, and an
+                    // exception is not an infeasibility to declare, so the cut is not aborted for one. **The record
+                    // stays**: the ledger still has the acceptance and its budget unit, and this record is what the ending
+                    // entrance closes them through.
+                    transaction.GiveUpUnpublished();
+                    throw;
+                }
+                finally
+                {
+                    _buildCosts.Add((System.Diagnostics.Stopwatch.GetTimestamp() - buildStarted) / (double)System.Diagnostics.Stopwatch.Frequency);
                 }
 
-                if (!builtOk)
-                {
-                    // Nothing was built, so there is nothing of it to give back. The cut cannot be established
-                    // (DESIGN 7.1.1): it is aborted, and the source retired unless the ledger finds it stale.
-                    Abort(transaction);
-                    return ProvisionalCutAcceptance.Aborted;
-                }
+                transaction.Took(candidate);
             }
-            catch (Exception)
-            {
-                // Before the switch, so nothing of the pair is in the scene and the source is untouched. What this
-                // record made goes back and the error is passed on -- it is not read as a physics failure, and an
-                // exception is not an infeasibility to declare, so the cut is not aborted for one. **The record
-                // stays**: the ledger still has the acceptance and its budget unit, and this record is what the ending
-                // entrance closes them through.
-                transaction.GiveUpUnpublished();
-                throw;
-            }
-
-            transaction.Took(candidate);
+            // A build can consume the remainder. Keep both inactive sides, never rebuild or publish half a pair.
+            if (!FitsMain(_publishCosts.ExpectedSeconds)) return ProvisionalCutAcceptance.Pending;
             var publication = new ProvisionalPhysicsPublicationInput
             {
                 ledger = _ledger,
@@ -791,6 +859,7 @@ namespace Zantetsu.PhysicsCut
             PhysicsPublicationOutcome published;
             ProvisionalOwnerPair pair;
             LogicalCutResultOutcome ledgerOutcome;
+            long publishStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 using (s_publish.Auto())
@@ -817,6 +886,10 @@ namespace Zantetsu.PhysicsCut
                 // The resources go back; the record stays to be ended.
                 transaction.GiveUpUnpublished();
                 throw;
+            }
+            finally
+            {
+                _publishCosts.Add((System.Diagnostics.Stopwatch.GetTimestamp() - publishStarted) / (double)System.Diagnostics.Stopwatch.Frequency);
             }
 
             if (published == PhysicsPublicationOutcome.Published)

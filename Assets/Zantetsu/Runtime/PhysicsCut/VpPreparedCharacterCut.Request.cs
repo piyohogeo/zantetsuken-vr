@@ -221,6 +221,7 @@ namespace Zantetsu.PhysicsCut
                     ProvisionalCutAcceptance accepted;
                     using(s_request.Auto()) accepted=world.Driver.RequestPreparedCut(ask,lease,out transaction,out _);
                     if(transaction!=null)Operation=transaction.Operation;
+                    if(accepted==ProvisionalCutAcceptance.Pending)withdrawal.BeginCutDisplay();
                     return Result(VpCharacterCutOutcome.Requested,accepted);
                 }
                 finally { if(transaction!=null)Operation=transaction.Operation; }
