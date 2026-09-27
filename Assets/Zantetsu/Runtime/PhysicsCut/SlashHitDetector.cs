@@ -117,6 +117,10 @@ namespace Zantetsu.PhysicsCut
     {
         private static readonly ProfilerMarker s_evaluate = new ProfilerMarker("Zantetsu.SlashHit.Evaluate");
 
+        // Inside Evaluate, apart from each other: the enumeration, and a character's acceptance.
+        private static readonly ProfilerMarker s_find = new ProfilerMarker("Zantetsu.SlashHit.Find");
+        private static readonly ProfilerMarker s_acceptCharacter = new ProfilerMarker("Zantetsu.SlashHit.AcceptCharacter");
+
         private readonly PhysicsOwnerRegistry _registry;
         private readonly LogicalCutLedger _ledger;
         private readonly ProvisionalCutDriver _driver;
@@ -256,20 +260,23 @@ namespace Zantetsu.PhysicsCut
 
             // What the fragments are made of now, read once: every sweep of this update is tested against the same
             // present state, and the acceptances below change the correspondence, not this list.
-            _registry.CollectCurrentShapes(_shapes);
-            _characterTargets.Clear();
-            for (int c = 0; c < _characters.Count; c++)
+            using (s_find.Auto())
             {
-                if (_characters[c] != null && _characters[c].IsHitTarget)
+                _registry.CollectCurrentShapes(_shapes);
+                _characterTargets.Clear();
+                for (int c = 0; c < _characters.Count; c++)
                 {
-                    _characterTargets.Add(_characters[c]);
+                    if (_characters[c] != null && _characters[c].IsHitTarget)
+                    {
+                        _characterTargets.Add(_characters[c]);
+                    }
                 }
-            }
 
-            for (int s = 0; s < sweeps.Length; s++)
-            {
-                Find(in sweeps[s]);
-                FindCharacters(in sweeps[s]);
+                for (int s = 0; s < sweeps.Length; s++)
+                {
+                    Find(in sweeps[s]);
+                    FindCharacters(in sweeps[s]);
+                }
             }
 
             for (int i = 0; i < _pending.Count; i++)
@@ -303,8 +310,12 @@ namespace Zantetsu.PhysicsCut
         // A character's own acceptance: the prepared cut classifies, admits and publishes through the same driver.
         private void AcceptCharacter(in Pending hit)
         {
-            VpCharacterCutResult result = hit.character.TryCut(
-                hit.plane, hit.renderAnchor, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse);
+            VpCharacterCutResult result;
+            using (s_acceptCharacter.Auto())
+            {
+                result = hit.character.TryCut(
+                    hit.plane, hit.renderAnchor, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse);
+            }
             ProvisionalCutAcceptance acceptance;
             LogicalCutAdmission admission;
             switch (result.Outcome)

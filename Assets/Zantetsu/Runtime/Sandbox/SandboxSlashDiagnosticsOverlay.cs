@@ -23,6 +23,13 @@ namespace Zantetsu.Sandbox
 
         [SerializeField] private bool visible = true;
 
+        /// <summary>Whether the overlay is drawn.</summary>
+        public bool Visible
+        {
+            get => visible;
+            set => visible = value;
+        }
+
         // Reused across draws: OnGUI runs more than once per frame.
         private readonly StringBuilder text = new StringBuilder(768);
         private GUIStyle style;

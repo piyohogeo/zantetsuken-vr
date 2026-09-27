@@ -63,6 +63,17 @@ namespace Zantetsu.Sandbox
 
         public GameObject CharacterRoot => characterRoot;
 
+        /// <summary>The character's motion body.</summary>
+        public Rigidbody MotionBody => motionBody;
+
+        /// <summary>Whether its parts (not the whole root) are withdrawn at its first cut, and why not if not.</summary>
+        public bool WithdrawsParts { get; private set; }
+
+        public string WholeRootReason { get; private set; }
+
+        /// <summary>The seconds the preparation's check of the parts took (once, before any cut).</summary>
+        public double ConfirmSeconds { get; private set; }
+
         /// <summary>Whether the preparation has finished and the character is a hit target.</summary>
         public bool IsTarget { get; private set; }
 
@@ -252,6 +263,13 @@ namespace Zantetsu.Sandbox
             }
 
             Handle = handle;
+
+            // Its withdrawal at the first cut: the renderer, the Pose Table's update and the motion body, if the hierarchy
+            // is confirmed to hold nothing else live; the whole root otherwise.
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            WithdrawsParts = handle.TryWithdrawParts(new Behaviour[] { _pose }, out string whyNot);
+            ConfirmSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+            WholeRootReason = whyNot;
         }
 
         private static void BuildEdges(int[] offsets, int[] indices, out int[] faceEdges, out BrepEdge[] edges)

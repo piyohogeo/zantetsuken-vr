@@ -54,6 +54,7 @@ namespace Zantetsu.PhysicsCut
         public const string FrequencyArgument = "-zantetsuPhysicsHz";
 
         private static readonly ProfilerMarker s_simulate = new ProfilerMarker("Zantetsu.CutPhysicsStep.Simulate");
+        private static readonly ProfilerMarker s_collect = new ProfilerMarker("Zantetsu.CutPhysicsStep.Collect");
         private static readonly List<ProvisionalCutDriver> s_collectors = new List<ProvisionalCutDriver>(2);
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
@@ -196,11 +197,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             // Backwards and bounds-checked: a collection may end a driver (the termination latch), which leaves.
-            for (int i = s_collectors.Count - 1; i >= 0; i--)
+            using (s_collect.Auto())
             {
-                if (i < s_collectors.Count)
+                for (int i = s_collectors.Count - 1; i >= 0; i--)
                 {
-                    s_collectors[i].CollectSnapshot();
+                    if (i < s_collectors.Count)
+                    {
+                        s_collectors[i].CollectSnapshot();
+                    }
                 }
             }
         }
