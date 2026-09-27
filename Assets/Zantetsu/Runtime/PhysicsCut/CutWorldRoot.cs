@@ -82,6 +82,7 @@ namespace Zantetsu.PhysicsCut
         private IWorkExecutor _unityJob;
         private IWorkExecutor _geometryPool;
         private IWorkExecutor _backgroundPool;
+        private IWorkExecutor _planningPool;
         private TerminatingGeometryFault _fault;
         private bool _ending;
         private bool _released;
@@ -334,9 +335,10 @@ namespace Zantetsu.PhysicsCut
                             ?? WorkerPoolExecutor.GeometryPool(profile.GeometryWorkerCount);
             _backgroundPool = destinations?.Invoke(WorkDestination.BackgroundPool)
                               ?? WorkerPoolExecutor.BackgroundPool(profile.BackgroundWorkerCount);
+            _planningPool = destinations?.Invoke(WorkDestination.PlanningPool) ?? WorkerPoolExecutor.PlanningPool();
             Dispatcher = new SharedWorkDispatcher(
                 profile.WaitingCapacity, profile.ReservedForUrgent, profile.FrameBudget, _unityJob, _geometryPool,
-                _backgroundPool);
+                _backgroundPool, _planningPool);
 
             Cook = new PhysicsCutCook(Dispatcher, profile.ConcurrentCookReservations);
             Frame = new SharedWorkFrame(Dispatcher);
@@ -641,6 +643,7 @@ namespace Zantetsu.PhysicsCut
             Storage?.Dispose();
             (_geometryPool as IDisposable)?.Dispose();
             (_backgroundPool as IDisposable)?.Dispose();
+            (_planningPool as IDisposable)?.Dispose();
             (_unityJob as IDisposable)?.Dispose();
             _released = true;
         }

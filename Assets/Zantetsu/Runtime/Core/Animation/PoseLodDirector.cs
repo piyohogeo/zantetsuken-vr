@@ -445,6 +445,7 @@ namespace Zantetsu.Core.Animation
             var text = new System.Text.StringBuilder(8 * player.BoneCount);
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             text.Append(player.TableAsset.GetInstanceID()).Append('|').Append(player.BoneCount).Append('|');
+            if (player.TableBank != null) text.Append(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(player.TableBank)).Append('|');
             for (int i = 0; i < player.BoneCount; i++)
             {
                 Transform bone = player.BoneAt(i);
@@ -526,6 +527,8 @@ namespace Zantetsu.Core.Animation
         private static Bounds RangeOf(PoseTablePlayer player, Dictionary<Transform, int> index,
             IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, float margin, out float largest)
         {
+            if (player.TableBank != null && player.TableBank.Count > 1)
+                return BankRange(player, index, hitBoxes, margin, out largest);
             Transform root = player.transform;
             PoseTable table = player.Table;
             int samples = table.SampleCount;
@@ -642,6 +645,29 @@ namespace Zantetsu.Core.Animation
 
             range.Expand(2f * margin);
             return range;
+        }
+
+        // Rotation-independent bound of every clip, including interpolation. Built once per shared bank/rig.
+        private static Bounds BankRange(PoseTablePlayer player, Dictionary<Transform, int> index,
+            IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, float margin, out float largest)
+        {
+            var lengths = new float[player.BoneCount];
+            foreach (var table in player.TableBank)
+                for (int i = 0; i < lengths.Length; i++)
+                    for (int s = 0; s < table.SampleCount; s++)
+                        lengths[i] = Mathf.Max(lengths[i], table.SampleLocalPosition(s, i).magnitude);
+            float radius = 0;
+            Matrix4x4 inverse = player.transform.worldToLocalMatrix;
+            foreach (var hit in hitBoxes)
+            {
+                float reach = (hit.box.center.magnitude + hit.box.extents.magnitude) * MaxScale(inverse * hit.bone.localToWorldMatrix);
+                for (Transform t = hit.bone; t != null && t != player.transform; t = t.parent)
+                    reach += (index.TryGetValue(t, out int i) ? lengths[i] : t.localPosition.magnitude)
+                        * MaxScale(t.parent != null ? inverse * t.parent.localToWorldMatrix : inverse);
+                radius = Mathf.Max(radius, reach);
+            }
+            largest = radius;
+            return new Bounds(Vector3.zero, Vector3.one * (2 * (radius + margin)));
         }
 
         private static float MaxScale(Matrix4x4 m)

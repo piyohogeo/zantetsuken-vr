@@ -203,7 +203,23 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            if (!_pose.TryRequireBones(original.bones, out string missing))
+            var requiredBones = new HashSet<Transform>();
+            var drivenBones = new HashSet<Transform>();
+            for (int i = 0; i < _pose.BoneCount; i++) if (_pose.BoneAt(i) != null) drivenBones.Add(_pose.BoneAt(i));
+            void Require(Transform t)
+            {
+                if (t == null || t == _pose.ModelRoot) return;
+                requiredBones.Add(t);
+                for (t = t.parent; t != null && t != _pose.ModelRoot; t = t.parent)
+                    if (drivenBones.Contains(t)) requiredBones.Add(t);
+            }
+            using (var weights = original.sharedMesh.GetAllBoneWeights())
+                foreach (var weight in weights) if (weight.weight > 0) Require(original.bones[weight.boneIndex]);
+            // A constant renderer/container need not be animated. If the table drives it, retain its channel.
+            if (drivenBones.Contains(original.transform)) Require(original.transform);
+            if (original.rootBone != null && drivenBones.Contains(original.rootBone)) Require(original.rootBone);
+            foreach (var hull in fixture.hulls) Require(original.bones.First(b => b != null && b.name == hull.boneName));
+            if (!_pose.TryRequireBones(requiredBones.ToArray(), out string missing))
             {
                 Failure = "the Pose Table does not drive the character's bones: " + missing;
                 return;

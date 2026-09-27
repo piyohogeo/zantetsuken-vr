@@ -20,6 +20,9 @@ namespace Zantetsu.MeshCut
 
         /// <summary>The always-on Background pool, for speculative and deferrable numeric work.</summary>
         BackgroundPool = 2,
+
+        /// <summary>Dedicated locomotion planning worker.</summary>
+        PlanningPool = 3,
     }
 
     /// <summary>
@@ -43,6 +46,8 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Maintenance and optional quality.</summary>
         Maintenance = 4,
+
+        MobPlanning = 5,
     }
 
     /// <summary>Which destination a purpose names, and which purposes are urgent (DESIGN 4.3).</summary>
@@ -51,7 +56,7 @@ namespace Zantetsu.MeshCut
         /// <summary>Whether this is one of the defined purposes.</summary>
         public static bool IsDefined(WorkPurpose purpose)
         {
-            return purpose >= WorkPurpose.CurrentStatePhysicsSafety && purpose <= WorkPurpose.Maintenance;
+            return purpose >= WorkPurpose.CurrentStatePhysicsSafety && purpose <= WorkPurpose.MobPlanning;
         }
 
         /// <summary>
@@ -67,6 +72,8 @@ namespace Zantetsu.MeshCut
                     return WorkDestination.UnityJob;
                 case WorkPurpose.AdmittedGeometry:
                     return WorkDestination.GeometryPool;
+                case WorkPurpose.MobPlanning:
+                    return WorkDestination.PlanningPool;
                 case WorkPurpose.Speculative:
                 case WorkPurpose.Maintenance:
                     return WorkDestination.BackgroundPool;
@@ -427,13 +434,14 @@ namespace Zantetsu.MeshCut
         private static readonly WorkDestination[] Order =
         {
             WorkDestination.UnityJob,
+            WorkDestination.PlanningPool,
             WorkDestination.GeometryPool,
             WorkDestination.BackgroundPool,
         };
 
         private readonly List<Entry> _waiting = new List<Entry>();
         private readonly List<Entry> _submitted = new List<Entry>();
-        private readonly IWorkExecutor[] _executors = new IWorkExecutor[3];
+        private readonly IWorkExecutor[] _executors = new IWorkExecutor[4];
 
         private int _lastTicket;
         private int _lastSequence;
@@ -459,7 +467,8 @@ namespace Zantetsu.MeshCut
             int frameBudget,
             IWorkExecutor unityJob,
             IWorkExecutor geometryPool,
-            IWorkExecutor backgroundPool)
+            IWorkExecutor backgroundPool,
+            IWorkExecutor planningPool = null)
         {
             if (waitingCapacity <= 0)
             {
@@ -480,7 +489,9 @@ namespace Zantetsu.MeshCut
             Take(unityJob, WorkDestination.UnityJob, nameof(unityJob));
             Take(geometryPool, WorkDestination.GeometryPool, nameof(geometryPool));
             Take(backgroundPool, WorkDestination.BackgroundPool, nameof(backgroundPool));
+            if (planningPool != null) Take(planningPool, WorkDestination.PlanningPool, nameof(planningPool));
 
+            ReservedForPlanning = planningPool != null && waitingCapacity - reservedForUrgent > 1 ? 1 : 0;
             WaitingCapacity = waitingCapacity;
             ReservedForUrgent = reservedForUrgent;
             FrameBudget = frameBudget;
@@ -516,6 +527,7 @@ namespace Zantetsu.MeshCut
 
         public int WaitingCapacity { get; }
         public int ReservedForUrgent { get; }
+        public int ReservedForPlanning { get; }
         public int FrameBudget { get; }
 
         /// <summary>What is left of this frame's budget. Zero until the first <see cref="BeginFrame"/>.</summary>
@@ -618,7 +630,7 @@ namespace Zantetsu.MeshCut
             }
 
             ticket = default;
-            if (IsClosed || !HasPlaceFor(purpose))
+            if (IsClosed || _executors[(int)WorkPurposes.DestinationOf(purpose)] == null || !HasPlaceFor(purpose))
             {
                 return false;
             }
@@ -687,14 +699,8 @@ namespace Zantetsu.MeshCut
 
                 Entry entry = _waiting[i];
 
-                // Leaving urgent for something below it must not park a non-urgent work in a place kept for urgent
-                // work. This entry is urgent, so it is not one of the ones counted here.
-                if (WorkPurposes.IsUrgent(entry.purpose)
-                    && !WorkPurposes.IsUrgent(purpose)
-                    && CountNonUrgentWaiting() >= WaitingCapacity - ReservedForUrgent)
-                {
+                if (_executors[(int)WorkPurposes.DestinationOf(purpose)] == null || !HasPlaceFor(purpose, ticket))
                     return false;
-                }
 
                 entry.purpose = purpose;
                 entry.destination = WorkPurposes.DestinationOf(purpose);
@@ -777,6 +783,7 @@ namespace Zantetsu.MeshCut
                 for (int d = 0; _submitted.Count > 0 && d < Order.Length && RemainingBudget > 0; d++)
                 {
                     IWorkExecutor executor = _executors[(int)Order[d]];
+                    if (executor == null) continue;
                     while (RemainingBudget > 0
                         && executor.TryTakeFinished(out IDispatchWork work, out WorkCompletion completion))
                     {
@@ -800,6 +807,7 @@ namespace Zantetsu.MeshCut
                 {
                     WorkDestination destination = Order[d];
                     IWorkExecutor executor = _executors[(int)destination];
+                    if (executor == null) continue;
                     while (RemainingBudget > 0 && executor.CanAccept && TryTakeNextWaiting(destination, out Entry next))
                     {
                         // Acceptance first, and nothing is charged or moved until it is decided. A destination that
@@ -870,7 +878,7 @@ namespace Zantetsu.MeshCut
                 IsClosed = true;
                 for (int d = 0; d < Order.Length; d++)
                 {
-                    _executors[(int)Order[d]].CloseForNewWork();
+                    _executors[(int)Order[d]]?.CloseForNewWork();
                 }
 
                 // Work that never left this queue never began: one terminal handling each, and then it is gone.
@@ -888,13 +896,14 @@ namespace Zantetsu.MeshCut
                 bool stopped = true;
                 for (int d = 0; d < Order.Length; d++)
                 {
-                    stopped &= _executors[(int)Order[d]].StopAndConfirm(timeoutMilliseconds);
+                    stopped &= _executors[(int)Order[d]]?.StopAndConfirm(timeoutMilliseconds) ?? true;
                 }
 
                 int collected = 0;
                 for (int d = 0; d < Order.Length; d++)
                 {
                     IWorkExecutor executor = _executors[(int)Order[d]];
+                    if (executor == null) continue;
                     while (executor.TryTakeFinished(out IDispatchWork work, out WorkCompletion completion))
                     {
                         Forget(work);
@@ -967,33 +976,22 @@ namespace Zantetsu.MeshCut
         }
 
         // Urgent work may take any free place; everything else must leave the reserved ones alone.
-        private bool HasPlaceFor(WorkPurpose purpose)
+        private bool HasPlaceFor(WorkPurpose purpose, WorkTicket excluding = default)
         {
-            if (_waiting.Count >= WaitingCapacity)
+            int total = 0, nonUrgent = 0, planning = 0;
+            foreach (var entry in _waiting)
             {
-                return false;
+                if (excluding.IsSet && entry.ticket == excluding) continue;
+                total++;
+                if (!WorkPurposes.IsUrgent(entry.purpose)) nonUrgent++;
+                if (entry.purpose == WorkPurpose.MobPlanning) planning++;
             }
-
-            if (WorkPurposes.IsUrgent(purpose))
-            {
-                return true;
-            }
-
-            return CountNonUrgentWaiting() < WaitingCapacity - ReservedForUrgent;
+            if (total >= WaitingCapacity) return false;
+            if (WorkPurposes.IsUrgent(purpose)) return true;
+            if (nonUrgent >= WaitingCapacity - ReservedForUrgent) return false;
+            if (purpose == WorkPurpose.MobPlanning) return true;
+            return nonUrgent - planning < WaitingCapacity - ReservedForUrgent - ReservedForPlanning;
         }
 
-        private int CountNonUrgentWaiting()
-        {
-            int count = 0;
-            for (int i = 0; i < _waiting.Count; i++)
-            {
-                if (!WorkPurposes.IsUrgent(_waiting[i].purpose))
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
     }
 }

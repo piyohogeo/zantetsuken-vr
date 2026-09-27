@@ -18,11 +18,11 @@ namespace Zantetsu.Core.Animation
     /// not hold together, gives no pose at all.
     /// </para>
     /// <para>
-    /// The root track the table also carries is kept but not evaluated here: where the character stands is its scene's
-    /// placement, and applying the root motion is not part of the Current bone pose.
+    /// A root track, when present, is evaluated separately by TryEvaluateRoot. MobPlan owns its placement;
+    /// bone-only playback can still use a table with an empty root track.
     /// </para>
     /// </summary>
-    public sealed class PoseTable
+    public sealed partial class PoseTable
     {
         private const string MagicV3 = "ZPTAB003";
         private const string MagicV2 = "ZPTAB002";
@@ -119,7 +119,14 @@ namespace Zantetsu.Core.Animation
                     for (int i = 0; i < made._localRotations.Length; i++)
                         made._localRotations[i] = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
 
-                    // The root track and the contact tail follow; neither is part of the Current bone pose.
+                    made._rootPositions = new Vector3[Count(reader)];
+                    for (int i = 0; i < made._rootPositions.Length; i++) made._rootPositions[i] = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    made._rootRotations = new Quaternion[Count(reader)];
+                    for (int i = 0; i < made._rootRotations.Length; i++) made._rootRotations[i] = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    if ((made._rootPositions.Length != 0 || made._rootRotations.Length != 0)
+                        && (made._rootPositions.Length != made.SampleCount || made._rootRotations.Length != made.SampleCount))
+                    { error = "inconsistent root track"; return false; }
+                    if (magic == MagicV3) { reader.ReadString(); Skip(reader, 4); Skip(reader, 4); }
                     if (!made.HoldsTogether(out error))
                     {
                         return false;

@@ -107,7 +107,13 @@ namespace Zantetsu.PhysicsCut
         internal bool WithdrawsParts => withdrawal != null && withdrawal.UsesParts;
 
         /// <summary>Whether the character has been withdrawn.</summary>
-        internal bool IsWithdrawn => withdrawal != null && withdrawal.IsWithdrawn;
+        public string LastFailure { get; private set; }
+        private bool hasPlannedMotion;
+        private Vector3 plannedVelocity, plannedAngularVelocity;
+        public void SetPlannedMotion(Vector3 velocity, Vector3 angularVelocity)
+        { hasPlannedMotion = true; plannedVelocity = velocity; plannedAngularVelocity = angularVelocity; }
+
+        public bool IsWithdrawn => withdrawal != null && withdrawal.IsWithdrawn;
 
         /// <summary>The bone-local convexes a hit reads, and the bone that places each.</summary>
         internal VpCharacterHitShape HitShape => hitShape;
@@ -230,7 +236,7 @@ namespace Zantetsu.PhysicsCut
                         if(convexBones[i]==null){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
                         boneToOwner[i]=inverse*convexBones[i].localToWorldMatrix;
                     }
-                    if(!direct.TryCapturePose()){poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
+                    if(!direct.TryCapturePose()){LastFailure="capture pose";poseScope.Dispose();return Result(VpCharacterCutOutcome.Failed);}
                 }
                 bool posed=physics.TryPose(boneToOwner,out _);
                 poseScope.Dispose();
@@ -238,7 +244,7 @@ namespace Zantetsu.PhysicsCut
                 using(s_prepare.Auto())
                 {
                     if(!posed || !world.Driver.TryPrepareFreshCut(physics,plane,mass,out lease))
-                        return Result(VpCharacterCutOutcome.Failed);
+                    { LastFailure = !posed ? "pose physics" : "prepare fresh cut"; return Result(VpCharacterCutOutcome.Failed); }
                     eligible=world.Driver.AssessFreshCut(lease);
                 }
                 if(eligible==ProvisionalCutDriver.FreshCutEligibility.EmptySide || eligible==ProvisionalCutDriver.FreshCutEligibility.Full)
@@ -254,7 +260,7 @@ namespace Zantetsu.PhysicsCut
                     terminal=false;
                     return Result(eligible==ProvisionalCutDriver.FreshCutEligibility.EmptySide?VpCharacterCutOutcome.EmptySide:VpCharacterCutOutcome.Full);
                 }
-                if(eligible!=ProvisionalCutDriver.FreshCutEligibility.Ready)return Result(VpCharacterCutOutcome.Failed);
+                if(eligible!=ProvisionalCutDriver.FreshCutEligibility.Ready){LastFailure="fresh cut eligibility: "+eligible;return Result(VpCharacterCutOutcome.Failed);}
                 var displayScope=s_displayInput.Auto();
                 int refusalsBefore=world.Storage.RoomRefusalCount;
                 bool appended=direct.TryAppendCapturedForDisplay(world.Storage,out var output);
@@ -276,6 +282,7 @@ namespace Zantetsu.PhysicsCut
                         }
                         world.RequestTermination("the display input of a hit character could not be given room: "+world.Storage.DescribeRoom());
                     }
+                    LastFailure="append display: "+world.Storage.DescribeRoom();
                     return Result(VpCharacterCutOutcome.Failed);
                 }
                 var actorScope=s_actor.Auto();
@@ -287,11 +294,11 @@ namespace Zantetsu.PhysicsCut
                 actorBody.centerOfMass=inverse.MultiplyPoint3x4(motionBody.worldCenterOfMass);
                 actorBody.inertiaTensor=motionBody.inertiaTensor;
                 actorBody.inertiaTensorRotation=Quaternion.Inverse(renderer.transform.rotation)*motionBody.rotation*motionBody.inertiaTensorRotation;
-                actorBody.linearVelocity=motionBody.linearVelocity;actorBody.angularVelocity=motionBody.angularVelocity;
+                actorBody.linearVelocity=hasPlannedMotion ? plannedVelocity : motionBody.linearVelocity;actorBody.angularVelocity=hasPlannedMotion ? plannedAngularVelocity : motionBody.angularVelocity;
                 // Issued here unless a hit already identified this character; either way the cut names that fragment.
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))
-                    return Result(VpCharacterCutOutcome.Failed);
+                { LastFailure="show prepared root"; return Result(VpCharacterCutOutcome.Failed); }
                 taken=physics.TakeShape();
                 PhysicsFragmentOwner owner;
                 try { owner=world.Owners.RegisterAuthored(Source,actor,actorBody,taken,false,Matrix4x4.identity); }
