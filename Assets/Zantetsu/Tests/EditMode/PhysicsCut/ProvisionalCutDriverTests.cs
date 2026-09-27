@@ -1363,6 +1363,52 @@ namespace Zantetsu.PhysicsCut.Tests
             }
         }
 
+        /// <summary>
+        /// **The collection tells the display its stereo condition.** The product's one collection
+        /// (<see cref="ProvisionalCutDriver.CollectSnapshot"/>) sets the display's Single Pass Instanced flag from the
+        /// frame's XR state before it collects, so what is uploaded follows the frame and not whatever the display was left
+        /// with. Without an XR device -- this EditMode run -- a display left set for Single Pass Instanced is collected
+        /// with one instance per body, as before the fix.
+        /// </summary>
+        [Test]
+        public void TheCollection_SetsTheDisplaysStereoCondition_OneInstancePerBodyWithoutAnXrDevice()
+        {
+            Assume.That(UnityEngine.XR.XRSettings.isDeviceActive, Is.False, "an EditMode run has no XR device");
+            using (World w = NewWorld())
+            using (var storage = new VpCpuGeometryStorage(2048, 8192, 32, 128, 128, Allocator.Persistent))
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry geometry = AppendCube(storage);
+                Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+                var material = new Material(shader) { name = "stereo body", hideFlags = HideFlags.HideAndDontSave };
+                _materials.Add(material);
+                int frame = 7;
+                int FrameSource() => frame;
+                Assert.That(
+                    VpLogicalCutDisplay.TryCreate(
+                        storage, table, w.ledger, new Dictionary<int, Material> { { 0, material } }, null, null, 16, 16,
+                        VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates,
+                        VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(), FrameSource,
+                        out VpLogicalCutDisplay display),
+                    Is.True);
+                using (display)
+                {
+                    display.Placement = w.lookup;
+                    Assert.That(display.TryShow(w.source, geometry, w.root.transform.localToWorldMatrix * k_geometryLocalToOwner), Is.True);
+                    w.driver.Bind(
+                        w.ledger, w.registry, w.cook, w.frame, display, SupportEpsilon, AnchorEpsilon, VertexLimit,
+                        FrameSource);
+
+                    // Left set for Single Pass Instanced, as a previous frame could have left it.
+                    display.SinglePassInstanced = true;
+                    Assert.That(w.driver.CollectSnapshot(), Is.True, "the display opened this frame");
+                    Assert.That(display.SinglePassInstanced, Is.False, "the collection set the frame's own condition");
+                    Assert.That(display.DrawsSinglePassInstanced, Is.False, "and the upload holds one instance per body");
+                    Assert.That(display.CommandCount, Is.GreaterThan(0), "something was uploaded");
+                }
+            }
+        }
+
         /// <summary>One cube in the storage, for the display to be shown. Wound outward.</summary>
         private static VpStoredGeometry AppendCube(VpCpuGeometryStorage storage)
         {

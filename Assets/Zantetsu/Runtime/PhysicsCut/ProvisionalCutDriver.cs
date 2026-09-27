@@ -612,7 +612,26 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool CollectSnapshot()
         {
-            return _display != null && _display.TryBeginFrame();
+            if (_display == null)
+            {
+                return false;
+            }
+
+            // The upload is made for the stereo mode this frame renders in: under Single Pass Instanced one issue carries
+            // two instances per body, one per eye, and the display is told so here, the one place it collects. A camera
+            // that draws a single view in the same frame drops the second copy itself (the shader's own rule).
+            _display.SinglePassInstanced = RendersSinglePassInstanced(
+                UnityEngine.XR.XRSettings.isDeviceActive, UnityEngine.XR.XRSettings.stereoRenderingMode);
+            return _display.TryBeginFrame();
+        }
+
+        /// <summary>
+        /// Whether a frame renders Single Pass Instanced stereo: an XR device is active and its stereo mode is that one.
+        /// Every other case -- no device, multi pass, any other mode -- draws one instance per body.
+        /// </summary>
+        internal static bool RendersSinglePassInstanced(bool xrDeviceActive, UnityEngine.XR.XRSettings.StereoRenderingMode mode)
+        {
+            return xrDeviceActive && mode == UnityEngine.XR.XRSettings.StereoRenderingMode.SinglePassInstanced;
         }
 
         private void Update()
