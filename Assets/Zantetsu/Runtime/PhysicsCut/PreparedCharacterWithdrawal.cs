@@ -6,7 +6,7 @@ namespace Zantetsu.PhysicsCut
 {
     /// <summary>
     /// How a prepared character's own hierarchy leaves at its first cut's publication (DESIGN 19.1.9): its drawing, the
-    /// update that poses its bones, its motion body and its being a hit target end there, once, and nothing it holds -- the
+    /// update that poses its bones and its motion body end there, once, and nothing it holds -- the
     /// bones, the meshes, the display input -- is given back.
     /// <para>
     /// By default the whole character root is deactivated. A registration that names the updates posing its bones may
@@ -15,6 +15,8 @@ namespace Zantetsu.PhysicsCut
     /// collider, joint, other body, or MonoBehaviour with an OnDisable of its own -- and if it holds anything more, the
     /// whole root is kept. Withdrawing the parts then turns off the renderer and those updates and deactivates the
     /// motion body's own object, and the character is no longer a hit target.
+    /// If publication is Pending, the admitted cut display replaces the original mesh drawing earlier through
+    /// <see cref="BeginCutDisplay"/>; posing and motion still leave at the publication boundary.
     /// </para>
     /// </summary>
     internal sealed class PreparedCharacterWithdrawal
@@ -117,6 +119,15 @@ namespace Zantetsu.PhysicsCut
                 for (int i = 0; i < updates.Count; i++) _updates[i] = updates[i];
                 return true;
             }
+        }
+
+        /// <summary>
+        /// An admitted cut already has its frozen display input registered. While physics publication is Pending,
+        /// that display owns the mesh drawing; keep posing and motion alive until the normal withdrawal boundary.
+        /// </summary>
+        internal void BeginCutDisplay()
+        {
+            if (_renderer != null) _renderer.enabled = false;
         }
 
         /// <summary>The withdrawal, once: the parts, or the whole root.</summary>

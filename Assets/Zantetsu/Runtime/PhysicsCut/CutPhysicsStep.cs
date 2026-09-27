@@ -75,6 +75,11 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The frame's Main budget the decision compares with, in seconds.</summary>
         public static double MainBudgetSeconds => s_mainBudgetSeconds;
 
+        /// <summary>Live remaining Main time, shared by publication and simulation; querying never refills it.</summary>
+        internal static double RemainingMainSeconds => !Application.isPlaying || s_frameStart == 0
+            ? double.PositiveInfinity
+            : s_mainBudgetSeconds - (Stopwatch.GetTimestamp() - s_frameStart) / (double)Stopwatch.Frequency;
+
         /// <summary>The duration of the last real simulation, in seconds (the latest sample, not the prediction).</summary>
         public static double LastSimulateSeconds { get; private set; }
 

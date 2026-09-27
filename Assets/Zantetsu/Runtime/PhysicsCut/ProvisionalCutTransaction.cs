@@ -46,7 +46,7 @@ namespace Zantetsu.PhysicsCut
     /// <para>
     /// **The hold on the input shape is the subtle one.** A finished cut's products name borrowed convexes, which are
     /// ranges in the **input** shape's bank and meshes the input shape holds. Whoever later builds a final side reads
-    /// them from there (<see cref="PhysicsOwnerShape.OfSide"/>). So the hold is taken when the cut is submitted and
+    /// them from there (<see cref="PhysicsOwnerShape.OfSide"/>). So the hold is taken at admission, before any wait, and
     /// let go when this record stops holding the products -- not when the numerical job finished, not when the
     /// request ended, and not because a publication is still waiting. The source's own owner may be retired long
     /// before that; the hold is what keeps the bank and the meshes alive across it.
@@ -123,7 +123,7 @@ namespace Zantetsu.PhysicsCut
         /// What was asked for: the plane, the two impulses and the render anchor. It is kept because the steps after
         /// the acceptance read it — the plane the pair is allocated by, the impulses each side is given, the anchor the
         /// first velocity is about — and because it is what this record was accepted for, which is worth being able to
-        /// read afterwards. Nothing takes a cut up again from here: there is no resumption.
+        /// read afterwards and used when the admitted transaction resumes after a budget wait.
         /// </summary>
         public ProvisionalCutAsk Ask { get; private set; }
 
@@ -143,6 +143,15 @@ namespace Zantetsu.PhysicsCut
         {
             Ask = ask;
             ParentMass = parentMass;
+        }
+
+        // Admission owns the input even when building is deferred. Submission reuses this hold.
+        internal void HoldInput(PhysicsOwnerShape shape)
+        {
+            if (_holdsInput) return;
+            shape.AcquireForWork();
+            _inputShape = shape;
+            _holdsInput = true;
         }
 
         internal void Took(ProvisionalOwnerCandidate candidate)
@@ -193,6 +202,12 @@ namespace Zantetsu.PhysicsCut
             Candidate = null;
             Classification?.Dispose();
             Classification = null;
+            if (_holdsInput)
+            {
+                _holdsInput = false;
+                _inputShape.ReleaseFromWork();
+                _inputShape = null;
+            }
             Phase = ProvisionalCutPhase.Unestablished;
         }
 
@@ -238,9 +253,7 @@ namespace Zantetsu.PhysicsCut
         internal void Submitted(PhysicsCutRequest request, PhysicsOwnerShape inputShape)
         {
             Cut = request;
-            _inputShape = inputShape;
-            inputShape.AcquireForWork();
-            _holdsInput = true;
+            HoldInput(inputShape);
         }
 
         /// <summary>

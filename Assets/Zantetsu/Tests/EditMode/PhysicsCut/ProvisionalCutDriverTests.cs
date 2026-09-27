@@ -467,6 +467,155 @@ namespace Zantetsu.PhysicsCut.Tests
             };
         }
 
+        [Test]
+        public void ExhaustedMainBudget_KeepsOneAdmissionAndInput_ThenResumesWithoutAnotherAsk()
+        {
+            int frame = 20;
+            using (World w = NewWorld(frameSource: () => frame))
+            {
+                w.job.HoldEverything = true;
+                double remaining = 0;
+                w.driver.RemainingMainSeconds = () => remaining;
+                var ask = Ask(w);
+                Assert.That(w.driver.RequestCut(ask, out var pending, out var admission), Is.EqualTo(ProvisionalCutAcceptance.Pending));
+                Assert.That(admission, Is.EqualTo(LogicalCutAdmission.Admitted));
+                Assert.That(pending.HoldsInput, Is.True);
+                Assert.That(pending.Candidate, Is.Null);
+                Assert.That(pending.Cut, Is.Null);
+                Assert.That(w.SourceOwner.IsWithdrawn, Is.False);
+                var operation = pending.Operation;
+                w.driver.Advance(frame);
+                Assert.That(pending.Phase, Is.EqualTo(ProvisionalCutPhase.Accepted));
+                Assert.That(w.driver.RequestCut(ask, out _, out admission), Is.EqualTo(ProvisionalCutAcceptance.NotAccepted));
+                Assert.That(admission, Is.EqualTo(LogicalCutAdmission.SourceActive));
+                remaining = 1;
+                frame++;
+                w.driver.Advance(frame);
+                Assert.That(pending.Operation, Is.EqualTo(operation));
+                Assert.That(pending.Phase, Is.EqualTo(ProvisionalCutPhase.Published));
+                Assert.That(pending.PublishedFrame, Is.EqualTo(frame));
+                Assert.That(w.SourceOwner.IsWithdrawn, Is.True);
+                Assert.That(w.driver.Transactions.Count, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void BudgetEndingDuringBuild_HoldsTheInactivePair_AndPublishesItOnlyOnce()
+        {
+            int frame = 30;
+            using (World w = NewWorld(frameSource: () => frame))
+            {
+                w.job.HoldEverything = true;
+                int checks = 0;
+                w.driver.RemainingMainSeconds = () => ++checks == 1 ? 1 : 0;
+                var ask = Ask(w);
+                Assert.That(w.driver.RequestCut(ask, out var pending, out _), Is.EqualTo(ProvisionalCutAcceptance.Pending));
+                var candidate = pending.Candidate;
+                Assert.That(candidate, Is.Not.Null);
+                var positive = candidate.Positive.Root;
+                Assert.That(positive.activeInHierarchy, Is.False);
+                Assert.That(candidate.Negative.Root.activeInHierarchy, Is.False);
+                Assert.That(w.SourceOwner.IsWithdrawn, Is.False);
+                w.driver.Advance(frame);
+                Assert.That(pending.Candidate, Is.SameAs(candidate));
+                w.SourceOwner.Root.transform.position = new Vector3(7, 2, 3);
+                w.driver.RemainingMainSeconds = () => 1;
+                w.driver.Advance(++frame);
+                Assert.That(pending.Pair.Positive.Root, Is.SameAs(positive));
+                Assert.That(positive.transform.position, Is.EqualTo(new Vector3(7, 2, 3)), "publication reads the current source placement");
+                Assert.That(w.registry.ProvisionalPairCount, Is.EqualTo(1));
+                w.driver.Advance(frame);
+                Assert.That(w.registry.ProvisionalPairCount, Is.EqualTo(1));
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void EndingPending_ReleasesInputClassificationAndAnyCandidate(bool afterBuild)
+        {
+            using (World w = NewWorld())
+            {
+                int reads = 0;
+                w.driver.RemainingMainSeconds = () => afterBuild && ++reads == 1 ? 1 : 0;
+                Assert.That(w.driver.RequestCut(Ask(w), out var pending, out _), Is.EqualTo(ProvisionalCutAcceptance.Pending));
+                var candidate = pending.Candidate;
+                Assert.That(candidate != null, Is.EqualTo(afterBuild));
+                Assert.That(w.driver.EndCut(pending.Operation), Is.True);
+                Assert.That(pending.HoldsInput, Is.False);
+                Assert.That(pending.Classification, Is.Null);
+                Assert.That(pending.Phase, Is.EqualTo(ProvisionalCutPhase.Recovered));
+                if (candidate != null) Assert.That(candidate.IsDisposed, Is.True);
+            }
+        }
+
+        [Test]
+        public void PendingCandidate_UsesConstraintCapacityBeforePublication()
+        {
+            using (World w = NewWorld())
+            {
+                w.driver.ConfigureConstraints(k_building, 1);
+                var first = Publish(w);
+                RunUntil(w, 810, () => first.Phase == ProvisionalCutPhase.HandedOff, "first children published");
+                Assert.That(w.ledger.TryGetOperation(first.Operation, out var children), Is.True);
+                var ask = new ProvisionalCutAsk { source = children.positive, plane = new float4(1, 0, 0, 0) };
+                int checks = 0;
+                w.driver.RemainingMainSeconds = () => ++checks == 1 ? 1 : 0;
+                Assert.That(w.driver.RequestCut(ask, out var pending, out _), Is.EqualTo(ProvisionalCutAcceptance.Pending));
+                Assert.That(pending.Candidate.Separation, Is.Not.Null);
+                Assert.That(w.registry.SystemConstraintCount, Is.Zero, "the candidate is not published");
+                ask.source = children.negative;
+                w.driver.RemainingMainSeconds = () => 1;
+                Assert.That(w.driver.RequestCut(ask, out var refused, out _), Is.EqualTo(ProvisionalCutAcceptance.Aborted), "held constraint consumes the only slot");
+                Assert.That(refused.Candidate, Is.Null);
+                Assert.That(pending.Candidate.IsDisposed, Is.False, "the other accepted request is untouched");
+            }
+        }
+
+        private sealed class BudgetWork : IDispatchWork
+        {
+            public bool IsComplete => true;
+            public void Begin() { }
+            public void Collect(WorkCompletion completion) { }
+        }
+
+        [Test]
+        public void DispatchBudgetExhausted_RequestAndRepeatedAdvanceCannotRefillTheSameFrame()
+        {
+            int frame = 50;
+            using (World w = NewWorld(frameBudget: 1, frameSource: () => frame))
+            {
+                w.driver.RemainingMainSeconds = () => 1;
+                w.dispatcher.BeginFrame(frame);
+                Assert.That(w.dispatcher.TryEnqueue(WorkPurpose.AdmittedPhysics, new BudgetWork(), out _), Is.True);
+                w.dispatcher.Dispatch();
+                Assert.That(w.dispatcher.RemainingBudget, Is.Zero);
+                Assert.That(w.driver.RequestCut(Ask(w), out var pending, out _), Is.EqualTo(ProvisionalCutAcceptance.Pending));
+                w.driver.Advance(frame);
+                w.driver.Advance(frame);
+                Assert.That(w.dispatcher.RemainingBudget, Is.Zero);
+                Assert.That(pending.Candidate, Is.Null);
+                w.driver.Advance(++frame);
+                Assert.That(pending.Pair, Is.Not.Null);
+                Assert.That(w.SourceOwner.IsWithdrawn, Is.True);
+            }
+        }
+
+        [Test]
+        public void SourceRetiredWhilePending_IsNotBuiltAtTheNextOpportunity()
+        {
+            using (World w = NewWorld())
+            {
+                w.driver.RemainingMainSeconds = () => 0;
+                w.driver.RequestCut(Ask(w), out var pending, out _);
+                w.ledger.Retire(w.source);
+                w.driver.RemainingMainSeconds = () => 1;
+                w.driver.Advance(100);
+                Assert.That(pending.Candidate, Is.Null);
+                Assert.That(pending.HoldsInput, Is.False);
+                Assert.That(w.registry.ProvisionalPairCount, Is.Zero);
+            }
+        }
+
         private static ProvisionalCutTransaction Publish(World w, float positiveImpulse = 0f, float negativeImpulse = 0f)
         {
             ProvisionalCutAsk ask = Ask(w, positiveImpulse, negativeImpulse);
