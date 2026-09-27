@@ -97,5 +97,73 @@ Shader "Zantetsu/VP Mesh Surface"
             }
             ENDHLSL
         }
+
+        // The shadow of the uncut body: a closed, Stable mesh, so one-sided (DESIGN 5.4: the Unity renderer path casts
+        // with ShadowCastingMode.On and Cull Back). Nothing is clipped here -- a mesh has no cut. The normal bias and the
+        // light directions are the VP casters' (VpIndexedIndirectShadowCaster.shader).
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex ShadowVertex
+            #pragma fragment ShadowFragment
+            #pragma multi_compile_instancing
+            #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+
+            // The forward pass's material buffer, unchanged, so that both passes stay SRP-batcher compatible.
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                float _VpUsePaletteAtlas;
+            CBUFFER_END
+
+            // Set by URP's shadow caster setup for the light being rendered.
+            float3 _LightDirection;
+            float3 _LightPosition;
+
+            struct ShadowAttributes
+            {
+                float3 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct ShadowVaryings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            ShadowVaryings ShadowVertex(ShadowAttributes input)
+            {
+                ShadowVaryings output = (ShadowVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                float3 positionWS = TransformObjectToWorld(input.positionOS);
+                float3 normalWS = normalize(mul((float3x3)GetObjectToWorldMatrix(), input.normalOS));
+            #if _CASTING_PUNCTUAL_LIGHT_SHADOW
+                float3 lightDirectionWS = normalize(_LightPosition - positionWS);
+            #else
+                float3 lightDirectionWS = _LightDirection;
+            #endif
+                output.positionCS = ApplyShadowClamping(TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS)));
+                return output;
+            }
+
+            half4 ShadowFragment(ShadowVaryings input) : SV_Target
+            {
+                return 0;
+            }
+            ENDHLSL
+        }
     }
 }
