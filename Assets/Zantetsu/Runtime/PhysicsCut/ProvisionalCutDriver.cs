@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Unity.Profiling;
 using UnityEngine;
 using Zantetsu.MeshCut;
 
@@ -124,6 +125,15 @@ namespace Zantetsu.PhysicsCut
     [DefaultExecutionOrder(-100)]
     public sealed partial class ProvisionalCutDriver : MonoBehaviour
     {
+        // The driver's three turns of a frame, each whole and none inside another.
+        private static readonly ProfilerMarker s_update = new ProfilerMarker("Zantetsu.Driver.Update");
+        private static readonly ProfilerMarker s_lateUpdate = new ProfilerMarker("Zantetsu.Driver.LateUpdate");
+        private static readonly ProfilerMarker s_afterRenderingTurn = new ProfilerMarker("Zantetsu.Driver.AfterRendering");
+
+        // A cut's acceptance, apart from each other: the Provisional pair's build and its publication.
+        private static readonly ProfilerMarker s_build = new ProfilerMarker("Zantetsu.Request.Build");
+        private static readonly ProfilerMarker s_publish = new ProfilerMarker("Zantetsu.Request.Publish");
+
         private readonly List<ProvisionalCutTransaction> _transactions = new List<ProvisionalCutTransaction>(4);
         private readonly List<ProvisionalCutAsk> _asked = new List<ProvisionalCutAsk>(4);
         private LogicalCutLedger _ledger;
@@ -607,12 +617,18 @@ namespace Zantetsu.PhysicsCut
 
         private void Update()
         {
-            DriveUpdate();
+            using (s_update.Auto())
+            {
+                DriveUpdate();
+            }
         }
 
         private void LateUpdate()
         {
-            DriveLateUpdate();
+            using (s_lateUpdate.Auto())
+            {
+                DriveLateUpdate();
+            }
         }
 
         /// <summary>
@@ -714,7 +730,13 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerBuildOutcome built;
             try
             {
-                if (!ProvisionalOwnerBuilder.TryBuild(in build, out candidate, out built))
+                bool builtOk;
+                using (s_build.Auto())
+                {
+                    builtOk = ProvisionalOwnerBuilder.TryBuild(in build, out candidate, out built);
+                }
+
+                if (!builtOk)
                 {
                     // Nothing was built, so there is nothing of it to give back. The cut cannot be established
                     // (DESIGN 7.1.1): it is aborted, and the source retired unless the ledger finds it stale.
@@ -752,7 +774,10 @@ namespace Zantetsu.PhysicsCut
             LogicalCutResultOutcome ledgerOutcome;
             try
             {
-                published = ProvisionalPhysicsPublication.TryPublish(in publication, out pair, out ledgerOutcome);
+                using (s_publish.Auto())
+                {
+                    published = ProvisionalPhysicsPublication.TryPublish(in publication, out pair, out ledgerOutcome);
+                }
             }
             catch (Exception)
             {

@@ -91,6 +91,16 @@ namespace Zantetsu.Sandbox
         [Tooltip("The katana whose grip samples are recorded and replayed.")]
         [SerializeField] private SandboxRightHandKatana katana;
 
+        [Tooltip("Whether the recorder's own controls are drawn (IMGUI). Recording, replay and capture go on either way.")]
+        [SerializeField] private bool showControls = true;
+
+        /// <summary>Whether the recorder's IMGUI controls are drawn; only the drawing, never the recording or replay.</summary>
+        public bool ShowControls
+        {
+            get => showControls;
+            set => showControls = value;
+        }
+
         // Samples as they came, except that TimestampSeconds holds the offset
         // from the first recorded sample. Allocated once.
         private readonly BladePoseSample[] samples = new BladePoseSample[Capacity];
@@ -1122,6 +1132,11 @@ namespace Zantetsu.Sandbox
 
         private void OnGUI()
         {
+            if (!showControls)
+            {
+                return;
+            }
+
             const float Width = 560f;
             GUILayout.BeginArea(new Rect(Mathf.Max(0f, Screen.width - Width - 10f), 10f, Width, Mathf.Max(0f, Screen.height - 20f)));
             GUILayout.BeginVertical(GUI.skin.box);

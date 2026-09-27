@@ -91,7 +91,11 @@ namespace Zantetsu.PhysicsCut
         public bool IsWithdrawn { get; private set; }
 
         // Dedicated first-cut bridge. Borrowed character hierarchy is stopped, never destroyed by this owner.
-        internal GameObject PreparedCharacterRoot;
+        internal PreparedCharacterWithdrawal PreparedCharacterWithdrawal;
+
+        // The prepared character's own hierarchy leaving at its first cut's publication (inside that publication).
+        private static readonly Unity.Profiling.ProfilerMarker s_withdrawPreparedRoot =
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Owner.WithdrawPreparedRoot");
 
         /// <summary>Whether its objects have been destroyed and its shape given up.</summary>
         public bool IsReleased { get; private set; }
@@ -135,9 +139,12 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsWithdrawn = true;
-            if (PreparedCharacterRoot != null)
+            if (PreparedCharacterWithdrawal != null)
             {
-                PreparedCharacterRoot.SetActive(false);
+                using (s_withdrawPreparedRoot.Auto())
+                {
+                    PreparedCharacterWithdrawal.Withdraw();
+                }
             }
             if (Root != null)
             {

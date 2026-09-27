@@ -80,7 +80,10 @@ namespace Zantetsu.PhysicsCut
 
             _afterRenderingFrame = frame;
             AfterRenderingTurns++;
-            Advance(frame);
+            using (s_afterRenderingTurn.Auto())
+            {
+                Advance(frame);
+            }
         }
 
         /// <summary>What the player loop runs after rendering: each driving driver's turn.</summary>
