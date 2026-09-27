@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
@@ -11,8 +12,10 @@ namespace Zantetsu.PhysicsCut
     /// carried over silently.
     /// <para>
     /// **Every number here is a count, not a size in bytes.** They say how many vertices, indices, descriptors,
-    /// commands or cameras there may be; what that costs in memory is the storage's own business and is not what these
-    /// limit. A profile is not a memory budget and does not stand in for one.
+    /// commands or cameras there may be. The vertex and index counts are three different things (DESIGN 4.5.4): a CPU
+    /// reservation of address space, which is their absolute limit and costs no memory by itself; a first commit, which
+    /// is the memory taken at once and grows as room is given out; and the GPU copy's first capacity, which grows up to
+    /// the reservation within the device's largest buffer. None of them is a memory budget.
     /// </para>
     /// <para>
     /// **What it does not decide.** The separation impulses of a cut are the caller's own two values (DESIGN 7.2) and
@@ -45,8 +48,34 @@ namespace Zantetsu.PhysicsCut
         private float anchorEpsilon = 1e-5f;
 
         [Header("Geometry storage (counts)")]
-        [SerializeField] private int vertexCapacity = 65536;
-        [SerializeField] private int indexCapacity = 262144;
+        [Tooltip(
+            "The CPU vertex reservation (DESIGN 4.5.4): address space for this many vertices (16 bytes each) and their "
+            + "topology entries (4 bytes each) is reserved once, and this is the vertices' absolute limit. Address space "
+            + "only: memory is what is committed. 67108864 = 1 GiB of vertices.")]
+        [SerializeField] private int vertexReserve = 67108864;
+
+        [Tooltip("How many vertices are committed at once; more are committed as room is given out, up to the reservation.")]
+        [FormerlySerializedAs("vertexCapacity")]
+        [SerializeField] private int vertexInitialCommit = 65536;
+
+        [Tooltip(
+            "The CPU index reservation (DESIGN 4.5.4): address space for this many 32-bit indices, the indices' absolute "
+            + "limit. 268435456 = 1 GiB of indices.")]
+        [SerializeField] private int indexReserve = 268435456;
+
+        [Tooltip("How many indices are committed at once; more are committed as ranges are reserved, up to the reservation.")]
+        [FormerlySerializedAs("indexCapacity")]
+        [SerializeField] private int indexInitialCommit = 262144;
+
+        [Tooltip(
+            "The GPU copy's first capacity in vertices (DESIGN 4.5.4). When a transfer needs more, a larger buffer is made, "
+            + "what is drawn is transferred into it and it replaces the old one at a drawing boundary; never more than the "
+            + "CPU reservation or the device's largest buffer.")]
+        [SerializeField] private int gpuVertexInitialCapacity = 65536;
+
+        [Tooltip("The GPU copy's first capacity in indices, by the same rule.")]
+        [SerializeField] private int gpuIndexInitialCapacity = 262144;
+
         [SerializeField] private int geometryDescriptorCapacity = 512;
         [SerializeField] private int submeshCapacity = 2048;
         [SerializeField] private int vertexBlockCapacity = 2048;
@@ -122,9 +151,23 @@ namespace Zantetsu.PhysicsCut
 
         public float AnchorEpsilon => anchorEpsilon;
 
-        public int VertexCapacity => vertexCapacity;
+        /// <summary>The CPU vertex reservation: the vertices' absolute limit, in vertices.</summary>
+        public int VertexReserve => vertexReserve;
 
-        public int IndexCapacity => indexCapacity;
+        /// <summary>The vertices committed at once.</summary>
+        public int VertexInitialCommit => vertexInitialCommit;
+
+        /// <summary>The CPU index reservation: the indices' absolute limit, in indices.</summary>
+        public int IndexReserve => indexReserve;
+
+        /// <summary>The indices committed at once.</summary>
+        public int IndexInitialCommit => indexInitialCommit;
+
+        /// <summary>The GPU copy's first vertex capacity.</summary>
+        public int GpuVertexInitialCapacity => gpuVertexInitialCapacity;
+
+        /// <summary>The GPU copy's first index capacity.</summary>
+        public int GpuIndexInitialCapacity => gpuIndexInitialCapacity;
 
         public int GeometryDescriptorCapacity => geometryDescriptorCapacity;
 
@@ -193,10 +236,19 @@ namespace Zantetsu.PhysicsCut
             {
                 reason = "the epsilons must be finite and not negative";
             }
-            else if (vertexCapacity <= 0 || indexCapacity <= 0 || geometryDescriptorCapacity <= 0
+            else if (vertexInitialCommit <= 0 || indexInitialCommit <= 0 || geometryDescriptorCapacity <= 0
                      || submeshCapacity <= 0 || vertexBlockCapacity <= 0)
             {
                 reason = "the storage counts must be positive";
+            }
+            else if (vertexReserve < vertexInitialCommit || indexReserve < indexInitialCommit)
+            {
+                reason = "a reservation must hold at least what is committed at once";
+            }
+            else if (gpuVertexInitialCapacity <= 0 || gpuIndexInitialCapacity <= 0
+                     || gpuVertexInitialCapacity > vertexReserve || gpuIndexInitialCapacity > indexReserve)
+            {
+                reason = "the GPU's first capacities must be positive and within the CPU reservations";
             }
             else if (waitingCapacity <= 0 || reservedForUrgent < 0 || reservedForUrgent >= waitingCapacity
                      || frameBudget <= 0 || unityJobCapacity <= 0 || geometryWorkerCount <= 0

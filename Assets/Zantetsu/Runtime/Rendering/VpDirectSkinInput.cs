@@ -215,9 +215,22 @@ namespace Zantetsu.Rendering
         /// </summary>
         public bool TryAppendTo(VpCpuGeometryStorage storage, out VpStoredGeometry geometry)
         {
-            if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
-            if (storage == null) throw new ArgumentNullException(nameof(storage));
             geometry = default;
+            return TryCapturePose() && TryAppendCaptured(storage, out geometry);
+        }
+
+        // Whether the matrices hold a pose taken by TryCapturePose that no append has used yet.
+        bool captured;
+
+        /// <summary>
+        /// Takes the current bone transforms into this input's private matrices, renderer-local, and nothing else: the
+        /// pose a later <see cref="TryAppendCapturedForDisplay"/> skins, however the bones have moved by then. False,
+        /// with no pose taken, for the same reasons <see cref="TryAppendTo"/> gives for its first half.
+        /// </summary>
+        public bool TryCapturePose()
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
+            captured = false;
             if (renderer == null || mesh == null || renderer.sharedMesh != mesh
                 || !FourWeights(renderer) || !Rigid(renderer.transform)) return false;
             Matrix4x4 inverse = renderer.transform.worldToLocalMatrix;
@@ -230,7 +243,32 @@ namespace Zantetsu.Rendering
                     || !math.all(math.isfinite(value.c2)) || !math.all(math.isfinite(value.c3))) return false;
                 matrices[i] = value;
             }
-            return storage.TryAppendDirectSkin(this, out geometry);
+
+            captured = true;
+            return true;
+        }
+
+        private bool TryAppendCaptured(VpCpuGeometryStorage storage, out VpStoredGeometry geometry)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(VpDirectSkinInput));
+            if (storage == null) throw new ArgumentNullException(nameof(storage));
+            geometry = default;
+            if (!captured) return false;
+            if (!storage.TryAppendDirectSkin(this, out geometry)) return false;
+            captured = false;
+            return true;
+        }
+
+        /// <summary>
+        /// Appends the pose <see cref="TryCapturePose"/> took, with the receipt <see cref="TryAppendForDisplay"/> gives.
+        /// A refusal leaves the pose taken, so the same pose can be appended at a later opportunity.
+        /// </summary>
+        public bool TryAppendCapturedForDisplay(VpCpuGeometryStorage storage, out VpDirectSkinOutput output)
+        {
+            output = default;
+            if (!TryAppendCaptured(storage, out var geometry)) return false;
+            output = new VpDirectSkinOutput(this, storage, geometry);
+            return true;
         }
 
         public bool IsDisposed => disposed;
