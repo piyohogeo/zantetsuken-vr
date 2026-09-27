@@ -172,13 +172,20 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             "{\"hulls\":[{\"boneName\":\"b\",\"rendererBindVertices\":[0,0,0],\"faceOffsets\":[0],\"faceIndices\":[]}]}";
 
         // A character on the rig, its renderer skinned to the given bones, prepared at its Start.
-        private Zantetsu.Sandbox.SandboxNpcCharacter Character(GameObject root, Transform[] bones)
+        private Zantetsu.Sandbox.SandboxNpcCharacter Character(GameObject root, Transform[] bones, int weightedCount = -1)
         {
             var rendererObject = new GameObject("renderer");
             rendererObject.transform.SetParent(root.transform, false);
             var skin = rendererObject.AddComponent<SkinnedMeshRenderer>();
             var mesh = new Mesh { name = "U8 bone check mesh" };
             _made.Add(mesh);
+            int count = weightedCount < 0 ? bones.Length : weightedCount;
+            mesh.vertices = new Vector3[count];
+            var weights = new BoneWeight[count];
+            var binds = new Matrix4x4[bones.Length];
+            for (int i = 0; i < count; i++) weights[i] = new BoneWeight { boneIndex0 = i, weight0 = 1 };
+            for (int i = 0; i < binds.Length; i++) binds[i] = Matrix4x4.identity;
+            mesh.boneWeights = weights; mesh.bindposes = binds;
             skin.sharedMesh = mesh;
             skin.bones = bones;
             var intake = new TextAsset(IntakeJson);
@@ -210,6 +217,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(character.Handle, Is.Null, "nothing was prepared");
             Assert.That(character.IsTarget, Is.False, "never a hit target");
             Assert.That(player.AppliedFrame, Is.EqualTo(-1), "and no pose was applied");
+        }
+
+        [UnityTest]
+        public IEnumerator MissingZeroWeightRendererBone_DoesNotRequireATableChannel()
+        {
+            GameObject root = Rig(out Transform a, out Transform b, out Transform c);
+            PoseTablePlayer player = Player(root, true, "a", "a/b");
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("not prepared: needs a built world"));
+            Character(root, new[] { a, b, c }, 2);
+            yield return null;
+            Assert.That(player.BonesConfirmed, Is.True);
         }
 
         [UnityTest]

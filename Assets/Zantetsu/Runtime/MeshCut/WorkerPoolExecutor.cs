@@ -200,7 +200,7 @@ namespace Zantetsu.MeshCut
             Action<Thread> startWorker,
             Action onWorkerStarting)
         {
-            if (destination != WorkDestination.GeometryPool && destination != WorkDestination.BackgroundPool)
+            if (destination != WorkDestination.GeometryPool && destination != WorkDestination.BackgroundPool && destination != WorkDestination.PlanningPool)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(destination), destination, "a pool is the Geometry or the Background destination");
@@ -289,6 +289,12 @@ namespace Zantetsu.MeshCut
                 ThreadPriority.BelowNormal,
                 capacity,
                 prepareOnThisThread);
+        }
+
+        /// <summary>Locomotion planning: one Normal priority thread, separately bounded from speculative work.</summary>
+        public static WorkerPoolExecutor PlanningPool(int capacity = 2)
+        {
+            return new WorkerPoolExecutor(WorkDestination.PlanningPool, 1, ThreadPriority.Normal, capacity);
         }
 
         /// <summary>The Background pool of DESIGN 4.3: Lowest, <see cref="DefaultBackgroundWorkerCount"/> threads.</summary>
