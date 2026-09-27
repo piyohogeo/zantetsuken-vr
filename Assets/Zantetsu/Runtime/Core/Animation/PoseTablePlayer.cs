@@ -51,6 +51,10 @@ namespace Zantetsu.Core.Animation
         [Tooltip("Plays nothing until the character has confirmed, through TryRequireBones, that the table drives every bone it needs.")]
         [SerializeField] private bool requiresBones;
 
+        // Set once when a bank with an identical ordered rig layout is installed.
+        public FuncPoseSource PlanSource { get; set; }
+        public delegate bool FuncPoseSource(double target, out PoseTable pose, out double source);
+        public System.Collections.Generic.IReadOnlyList<PoseTable> TableBank { get; set; }
         private PoseTable _table;
         private Transform[] _bones;
         private Vector3[] _positions;
@@ -246,6 +250,12 @@ namespace Zantetsu.Core.Animation
 
             double target = Time.timeAsDouble - _startTime;
             double source = _table.ResolveSourceTime(target + sourceTimeOffset);
+            if (PlanSource != null)
+            {
+                target = Time.timeAsDouble;
+                if (!PlanSource(target, out var planned, out source)) return false;
+                _table = planned;
+            }
             bool evaluated;
             using (s_evaluate.Auto())
             {

@@ -179,13 +179,14 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ### 4.3 バックグラウンド実行モデル
 
-自前の非同期CPU Workは、標準Unity Job SystemとOS優先度を下げた二つの常設スレッドプールへ分担する。Workは論理作業単位、JobとPoolは実行先であり、分類・依存解消・投入・完了回収・採否・Commitは既存のMain側DAGと各Subsystemに残す。C# Taskの大量発行をCPU計算の標準にしない。
+自前の非同期CPU Workは、標準Unity Job System、OS優先度を下げたGeometry／Background Pool、およびNormal優先度の計画専用Planning Poolへ分担する。Workは論理作業単位、JobとPoolは実行先であり、分類・依存解消・投入・完了回収・採否・Commitは既存のMain側DAGと各Subsystemに残す。C# Taskの大量発行をCPU計算の標準にしない。
 
 | 新規投入先 | 用途 | 初期設定 |
 | --- | --- | --- |
 | Unity Job System | 現在状態の物理安全、受付済みPhysicsSplitTransactionのConvex数値処理・Physics.BakeMesh等、Final Physics／Logical Publicationに必要なurgent Work | Unity worker数・OS優先度は変更しない |
 | Geometry Pool | 受付済み切断の共用Geometry切断・Cap・属性処理等の数値Work | BelowNormal、G=8 |
-| Background Pool | 命中前の投機Geometry／Convex、未来Pose・VP入力準備、Mob計画、任意追加分割等の遅延可能な数値Workと必要なPhysics.BakeMesh | Lowest、B=2 |
+| Background Pool | 命中前の投機Geometry／Convex、未来Pose・VP入力準備、任意追加分割等の遅延可能な数値Workと必要なPhysics.BakeMesh | Lowest、B=2 |
+| Planning Pool | MobPlanの探索、PlayerFlow、goal field構築。投機切断・任意maintenanceから分離する | 初期1 thread、Normal、affinity指定なし。2026-09-28採用 |
 
 この分類は自前の新規投入に適用し、Unity内部Jobの専有・再分類を意味しない。命中前から投入済みのWorkの継続と、命中後の未投入・後続Workの分類は4.4に従う。G/Bは起動時の実装設定でよく、8／2は暫定初期値とする。実ゲームのMain／描画／Physics／urgent時間、下位処理量と滞留を測ってO-035で調整し、実行時の自動伸縮・最適化を要求しない。Unity内部を含む合計thread数がコア数を超えることを許容するが、本数と資源容量は有限に保つ。
 
@@ -772,7 +773,9 @@ Runtime本体と既知Constraintの識別境界は、ロードマップ上の独
 
 #### 7.2.3 プレイヤー非接触Locomotion
 
-Player Body／Handとプロップ／破片のPhysX Layer接触を無効化し、刀Gestureから生成したSlashWave Segmentの論理SweepでInteractionする。人工移動は、Level初期化時に確定する固定`PlayerLocomotionOccupancy`への候補次姿勢Queryで扱う。
+Player Body／Handとプロップ／破片のPhysX Layer接触を無効化し、刀Gestureから生成したSlashWave Segmentの論理SweepでInteractionする。2026-09-28のprobe採用判断により、人工移動とMobPlanのNPCは固定polygon／clearance mapを共有する。以下の旧Primitive/Capsule方式は既存Sandbox Fixtureの互換経路として残し、MobPlanシーンには適用しない。
+
+MobPlanシーンではPlayerをXZ円（初期半径1.5 m）、NPCを半径0.35 mとする。人工移動は候補XZ全体、Xのみ、Zのみの順にclearanceを判定し、全て不可なら位置を保持する。旋回は移動可否から独立させる。HMD位置で人工移動をRejectせず、実空間HMD・Controller追跡poseをClampしない。反復押出しを追加せず、spawn/reset先は呼出側が静的clearanceを確保する。mapは切断・倒壊・退役・GCへ追従しない。D-131／D-166、T-088、Phase 4.2および用語集の旧「要求全体Reject」は、この採用経路では本段落の円判定・軸別slideへ更新する。旧Fixtureの試験は互換経路の回帰として維持し、MobPlanのT-088では全XZ許可、Xのみ、Zのみ、両軸不可と独立旋回を確認する。
 
 - OccupancyはLevel／Asset authoringで選んだ建物壁板、固定大型プロップ、Level境界等のOBB／Box／Capsuleによる低複雑度Primitive集合とする。初期化後はworld-space位置・回転・寸法と集合を変更せず、現在の物理所有者、Pending、切断、Geometry／Physics Commit、Fragmentの生成・移動・分裂・退役、物理GCへ追従しない。RuntimeのBounds・名前・Material等から登録対象を推定せず、元Objectへの所有参照を維持する必要はない。
 
@@ -2072,9 +2075,9 @@ Mesh Workとは独立した基底Geometryの保守的local Boundsの8 cornerを�
 
 ### 20.1 方針と採用判断
 
-モブの軌道生成、Animation選択・時刻進行、計画の保持・更新、AI LODの具体方式は、先行独立研究の今後の結果を踏まえて本体導入時に決定する。現在のDESIGNは特定の移動Kernel、計画アルゴリズム、データ構造、補充方式を既定方式にしない。未採用方式の仮の製品実装や交換基盤を要求しない。
+2026-09-28の人間承認により、animation probeのRoot Motion Clip接続グラフ探索と複数NPC候補選択を採用する。初期設定はINERTIAL／ITHappy_f_1／C0 Optimized／20体／PlayerFlowとし、画像presetを`MobPlanPreset`へ固定する。C0後のTableは実Rigの必要66本へ縮小し、Root／時刻／接続graphを保持する。具体的な取り込み・検証記録は`docs/diagnostics/mobplan-probe-intake-implementation-2026-09-28.md`を参照する。
 
-移動とAnimationのどちらを先に決めるか、共同計画にするか、実装をいくつの処理へ分けるかは未決とする。ゲーム側がRoot姿勢とAnimation入力の正本を所有し、同じ対象時刻の両者を整合させる。オンラインAnimator内部Stateの読戻しとRootの二重更新を行わない。オフライン取得したRoot Motionを計画データに利用することは禁止せず、その採用も本改訂では決めない。
+Clip列とそのRoot軌道を共同計画し、ゲーム側がRoot姿勢とAnimation入力の正本を所有する。同じ明示時刻で公開計画のsegment、Source Time、Root配置を解決し、Current／Futureで同じTable評価を使用する。オンラインAnimator内部Stateの読戻しとRootの二重更新を行わない。PlayerFlowの通過点・遠方goalと見えない位置でのrecycleを採用し、切断済み個体の補充は別の新個体として行う。
 
 Mob計画固有の起動時全量Native確保・Runtime成長禁止・無割当保証は要求せず、Managed allocationとそれに伴うGC停止を許容する。有限容量・フレーム予算は4.4に従い、他SubsystemのNative制約、Trace Writer、VP資源契約は変更しない。
 
@@ -2094,7 +2097,7 @@ Mob計画固有の起動時全量Native確保・Runtime成長禁止・無割当�
 
 プレイヤーが介入しやすい対象の応答を優先し、猶予のある対象では計画の再利用により費用を抑える。具体的なTier構成、判定指標、計画期間、更新頻度、枯渇時の動作は研究と本体実測から決定する。品質・更新頻度の切替だけでRootとAnimationの意味を変更しない。
 
-計画Workは4.3のBackground Poolと4.4の有限投入・Main予算へ接続する。専用Schedulerや同期救済を追加せず、具体的な負荷・メモリ・再利用状況は既存Profiler／Traceで確認する。
+計画Workは4.3のPlanning Poolと4.4の共通Dispatcher・有限投入・Main予算へ接続する。2026-09-28の採用判断により共有Background Poolから分離する。専用Schedulerや同期救済を追加せず、同じ集団の周期要求を蓄積しない。探索中の入力は変更せず、世代変更・退役・期限超過時は相互依存する集団の結果を不採用とする。要求→開始、実行、完了→公開を分けて計測する。初期800 msは探索の壁時計上限であり、queue・goal field構築も残る公開猶予を消費する。全域clearanceはロード中、Runtimeのgoal fieldは計画workerで生成する。
 
 多少のMob重なり、遠方Mobの短時間停止、単一Clip切替のPose popという既存の品質許容は維持する。現在／未来の整合を、完全な衝突回避や速度連続性の新しい保証へ読み替えず、特定の縮退アルゴリズムも固定しない。
 

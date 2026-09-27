@@ -103,6 +103,12 @@ namespace Zantetsu.Core
         [SerializeField] private PlayerCapsuleAuthoring hmdCapsule =
             new PlayerCapsuleAuthoring(new Vector3(0f, -0.05f, -0.05f), Vector3.zero, 0.15f, 0.4f);
 
+        private MobPlan.WalkableMap _map;
+        private Vector3 _mapOffset;
+        private float _circleRadius = 1.5f;
+        public void ConfigureMap(MobPlan.WalkableMap map, Vector3 offset, float radius = 1.5f)
+        { _map = map; _mapOffset = offset; _circleRadius = radius; }
+
         private PlayerLocomotionBody _body;
         private bool _initialised;
 
@@ -169,6 +175,17 @@ namespace Zantetsu.Core
         /// </summary>
         public LocomotionVerdict TryRequest(Pose candidateRoot, Pose hmdInRoot)
         {
+            if (_map != null)
+            {
+                Vector3 from = transform.position - _mapOffset;
+                Vector3 to = candidateRoot.position - _mapOffset;
+                var position = MobPlan.CircleLocomotion.Move(_map, _circleRadius, from.x, from.z, to.x, to.z);
+                bool moved = position.X != from.x || position.Z != from.z;
+                transform.SetPositionAndRotation(new Vector3(position.X + _mapOffset.x, transform.position.y, position.Z + _mapOffset.z), candidateRoot.rotation);
+                LastVerdict = moved || (to.x == from.x && to.z == from.z) ? LocomotionVerdict.Allowed : LocomotionVerdict.RejectedRoot;
+                if (LastVerdict == LocomotionVerdict.Allowed) AllowedCount++; else RejectedCount++;
+                return LastVerdict;
+            }
             EnsureInitialised();
             LocomotionVerdict verdict = Judge(Occupancy, _body, candidateRoot, hmdInRoot);
             LastVerdict = verdict;
