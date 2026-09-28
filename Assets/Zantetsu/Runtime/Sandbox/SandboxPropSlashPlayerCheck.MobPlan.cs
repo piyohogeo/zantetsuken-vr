@@ -318,6 +318,7 @@ namespace Zantetsu.Sandbox
                 _mpActors.WriteLine("frame,t,name,id,replacement,x,z,yaw,distance,target,withdrawn,drawn");
                 MultiStorage("before replay");
                 MobPlanLifetimeBegin();
+                MobPlanHitRegistryBegin();
                 Vector3 player = _mpInput.player.transform.position;
                 Log("mobplan begin: frame=" + Time.frameCount + " live=" + _mpLiveAtBegin + " published=" + _mpPublishedAtBegin
                     + " player=" + player.ToString("F3") + " yaw=" + _mpInput.player.transform.eulerAngles.y.ToString("F1", Inv)
@@ -412,6 +413,8 @@ namespace Zantetsu.Sandbox
                             d.ToString("F3", Inv), c.IsTarget ? 1 : 0, retired ? 1 : 0, drawn ? 1 : 0));
                     }
                 }
+
+                MobPlanHitRegistryFrame(frame);
             }
 
             // One chunk of the saved grip rows, through the recorder's own recording and replay (the katana's entrance).
@@ -452,7 +455,11 @@ namespace Zantetsu.Sandbox
                 string of = LineageOf(hit.Fragment);
                 SandboxNpcCharacter c = _npcs.FirstOrDefault(x => x != null && "npc-" + Model(x) == of);
                 if (c == null || !_mpActorOf.TryGetValue(c, out (int id, bool replacement, int addedFrame) a)) return;
-                if (!_world.Ledger.TryGetOrigin(hit.Fragment, out _, out _)) MobPlanTrackHit(hit, c, frame);
+                if (!_world.Ledger.TryGetOrigin(hit.Fragment, out _, out _))
+                {
+                    MobPlanTrackHit(hit, c, frame);
+                    MobPlanHitRegistryAtHit(c, frame);
+                }
                 PoseTablePlayer pose = c.CharacterRoot != null ? c.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
                 bool planned = _crowd.TryEvaluate(a.id, Time.timeAsDouble, out PoseTable table, out double source, out Pose root);
                 string plannedClip = planned && table != null ? table.ClipName : "none";
@@ -498,6 +505,7 @@ namespace Zantetsu.Sandbox
                 _mpFrames?.Dispose();
                 _mpFrames = null;
                 MobPlanLifetimeClose();
+                MobPlanHitRegistryClose();
                 _mpActors?.Dispose();
                 _mpActors = null;
                 _mpEvents?.Dispose();
@@ -619,6 +627,7 @@ namespace Zantetsu.Sandbox
                 foreach (string reuse in _mpReuses) Log("mobplan reuse: " + reuse);
                 MobPlanLifetimeEnd();
                 Log("mobplan hit detector: candidates at the end=" + _detector.CharacterCount + " max=" + _mpDetectorMax);
+                MobPlanHitRegistryEnd();
                 Expect(_mpDetectorMax <= _mpSlotsAtBegin, "[scenario] the hit detector's candidates did not grow past the slots (max " + _mpDetectorMax + ")");
                 Expect(_crowd.SlotCount == _mpSlotsAtBegin, "[scenario] the slots stayed a fixed set (" + _mpSlotsAtBegin + " -> " + _crowd.SlotCount + ")");
                 Expect(SandboxNpcCharacter.FullPreparations == _mpFullPreparationsAtBegin, "[scenario] nothing was prepared in full after the start (every replacement took a prepared slot)");
