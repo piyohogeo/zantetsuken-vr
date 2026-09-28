@@ -358,6 +358,20 @@ namespace Zantetsu.PhysicsCut
         /// <summary>How many records are still waiting for their work to come back.</summary>
         public int Count => _ending.Count;
 
+        /// <summary>Whether a record of this operation is still waiting here for its work to come back.</summary>
+        public bool Holds(CutOperationId operation)
+        {
+            for (int i = 0; i < _ending.Count; i++)
+            {
+                if (_ending[i].Operation.Equals(operation))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Takes one record that has been asked to end and could not finish at once. A record that is already finished
         /// is not kept, and one that is already here is not kept twice.

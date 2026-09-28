@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
+using Zantetsu.ConvexCut;
 using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
@@ -245,6 +246,93 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>How many limited runs past the budget this driver has taken.</summary>
         public int BudgetOverrunCount { get; private set; }
+
+        /// <summary>
+        /// One cut whose physics came back without products and was therefore aborted (DESIGN 7.1.1): its operation, how
+        /// the cut ended, and -- for a kernel failure -- the kernel's status, its clip status and the convex it failed on.
+        /// </summary>
+        public struct CutFailure
+        {
+            public CutOperationId operation;
+            public PhysicsCutOutcomeKind outcome;
+            public ConvexCutOwnerStatus kernelStatus;
+            public int cutStatus, failedConvex, frame;
+        }
+
+        /// <summary>Raised once per failed cut, when its record takes the ended cut in (never again for the same cut).</summary>
+        public event Action<CutFailure> CutFailed;
+
+        /// <summary>Cuts that came back without products and were aborted, and of those the kernel failures.</summary>
+        public int FailedCutCount { get; private set; }
+
+        public int KernelFailedCount { get; private set; }
+
+        private readonly int[] _kernelFailuresByCutStatus = new int[32];
+
+        /// <summary>Kernel failures whose clip ended with the given <c>CutStatus</c> value.</summary>
+        public int KernelFailuresWithCutStatus(int cutStatus) => cutStatus >= 0 && cutStatus < _kernelFailuresByCutStatus.Length ? _kernelFailuresByCutStatus[cutStatus] : 0;
+
+        /// <summary>
+        /// The first failed cuts, kept to identify them (at most <see cref="KeptFailures"/>; no more are kept). This is
+        /// which cut failed and how -- not enough to reproduce it: the plane and the input shape are not kept.
+        /// </summary>
+        public const int KeptFailures = 8;
+
+        private readonly CutFailure[] _firstFailures = new CutFailure[KeptFailures];
+
+        public int KeptFailureCount { get; private set; }
+
+        public CutFailure KeptFailure(int i) => _firstFailures[i];
+
+        private void CountFailure(ProvisionalCutTransaction at, PhysicsCutRequest request)
+        {
+            var failure = new CutFailure
+            {
+                operation = at.Operation, outcome = request.Outcome, kernelStatus = request.KernelStatus,
+                cutStatus = request.cut.kernel.cutStatus, failedConvex = request.cut.kernel.failedConvex, frame = CurrentFrame,
+            };
+            FailedCutCount++;
+            if (failure.outcome == PhysicsCutOutcomeKind.KernelFailed)
+            {
+                KernelFailedCount++;
+                if (failure.cutStatus >= 0 && failure.cutStatus < _kernelFailuresByCutStatus.Length) _kernelFailuresByCutStatus[failure.cutStatus]++;
+            }
+
+            if (KeptFailureCount < KeptFailures) _firstFailures[KeptFailureCount++] = failure;
+            CutFailed?.Invoke(failure);
+        }
+
+        /// <summary>
+        /// One line for the end of a world: the failed cuts, the kernel failures by clip status, and the ones kept.
+        /// </summary>
+        public string FailureSummary()
+        {
+            var text = new System.Text.StringBuilder();
+            text.Append("failed cuts ").Append(FailedCutCount).Append(", KernelFailed ").Append(KernelFailedCount).Append(" [");
+            bool first = true;
+            for (int s = 0; s < _kernelFailuresByCutStatus.Length; s++)
+            {
+                if (_kernelFailuresByCutStatus[s] == 0) continue;
+                text.Append(first ? "" : ", ").Append((CutStatus)s).Append(' ').Append(_kernelFailuresByCutStatus[s]);
+                first = false;
+            }
+
+            text.Append("], kept ").Append(KeptFailureCount);
+            for (int i = 0; i < KeptFailureCount; i++)
+            {
+                CutFailure f = _firstFailures[i];
+                text.Append("; operation ").Append(f.operation.value).Append(" frame ").Append(f.frame).Append(' ').Append(f.outcome)
+                    .Append(" kernel ").Append(f.kernelStatus).Append(" clip ").Append((CutStatus)f.cutStatus).Append(" convex ").Append(f.failedConvex);
+            }
+
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// Whether this driver is done with an operation: it holds no record of it, neither a live one nor one whose work
+        /// is still coming back (the recovery). A cut the driver aborted is settled only once its work has come back.
+        /// </summary>
+        public bool IsSettled(CutOperationId operation) => TransactionOf(operation) == null && (_recovery == null || !_recovery.Holds(operation));
 
         /// <summary>
         /// The separation impulse's magnitude per child owner from its mass (DESIGN 7.2), used by every Provisional
@@ -1237,7 +1325,9 @@ namespace Zantetsu.PhysicsCut
                 // left here is a cut nobody has ended.
                 // The cut produced nothing, so there is no final set to hand over and never will be: the cut cannot be
                 // established. It ends the ordinary way -- the pair out of the scene, the ledger's abort, the source
-                // retired unless the ledger finds it stale -- and not merely as a record this driver forgets.
+                // retired unless the ledger finds it stale -- and not merely as a record this driver forgets. It is
+                // counted here, once: a record takes its ended cut in only once.
+                CountFailure(at, request);
                 Abort(at);
             }
 
