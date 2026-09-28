@@ -313,7 +313,7 @@ namespace Zantetsu.Sandbox
                 Log("mobplan pool: slots=" + _crowd.SlotCount + " free=" + _crowd.FreeSlots + " broken=" + _crowd.BrokenSlots
                     + " prepared in " + _crowd.PoolPrepareSeconds.ToString("F3", Inv) + " s, allocated +" + (_crowd.PoolAllocatedBytes / 1048576.0).ToString("F1", Inv)
                     + " MB, mono +" + (_crowd.PoolMonoBytes / 1048576.0).ToString("F1", Inv) + " MB, full preparations " + SandboxNpcCharacter.FullPreparations
-                    + ", shared reads " + _crowd.SlotShareInUse.SharedReads);
+                    + ", shared reads " + _crowd.SharedReads + ", models " + _crowd.SlotShareCount);
                 _mpActors = new StreamWriter(Path.Combine(directory, "mobplan-actors.csv"));
                 _mpActors.WriteLine("frame,t,name,id,replacement,x,z,yaw,distance,target,withdrawn,drawn");
                 MultiStorage("before replay");

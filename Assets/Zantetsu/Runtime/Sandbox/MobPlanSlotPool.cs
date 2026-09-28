@@ -32,6 +32,7 @@ namespace Zantetsu.Sandbox
         private readonly List<TSlot> _returning = new List<TSlot>();
         private readonly List<TSlot> _preparing = new List<TSlot>();
         private readonly List<TSlot> _broken = new List<TSlot>();
+        private bool _ordered;
 
         public IReadOnlyList<TSlot> Slots => _slots;
         public IReadOnlyList<TSlot> Broken => _broken;
@@ -58,8 +59,10 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>
-        /// Prepared slots become free (in the slots' own order when the first preparation of all of them ends); with
-        /// <paramref name="prepareAgain"/>, the first returning slot that is let go is prepared again.
+        /// Prepared slots become free (in the slots' own order when the first preparation of all of them ends, once;
+        /// after that a slot prepared again joins the end of the free ones, so a slot that has waited is taken before one
+        /// that just came back); with <paramref name="prepareAgain"/>, the first returning slot that is let go is prepared
+        /// again.
         /// </summary>
         public void Advance(bool prepareAgain)
         {
@@ -71,9 +74,10 @@ namespace Zantetsu.Sandbox
                 else if (slot.Failure != null) { _preparing.RemoveAt(i--); _broken.Add(slot); }
             }
 
-            if (wasPreparing && _preparing.Count == 0)
+            if (!_ordered && wasPreparing && _preparing.Count == 0)
             {
                 _free.Sort((a, b) => _slots.IndexOf(a).CompareTo(_slots.IndexOf(b)));
+                _ordered = true;
             }
 
             if (!prepareAgain)
