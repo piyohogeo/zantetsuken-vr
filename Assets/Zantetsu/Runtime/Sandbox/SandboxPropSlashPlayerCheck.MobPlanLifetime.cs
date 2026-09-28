@@ -109,7 +109,8 @@ namespace Zantetsu.Sandbox
                 _mpLifetime = new StreamWriter(Path.Combine(directory, "mobplan-lifetime.csv")) { AutoFlush = true };
                 _mpLifetime.WriteLine("frame,t,owners,targets,retired,refused,examined,candidates,passedUnusable,passedNear,passedSeen,farthestM,budgetSkips,rounds,stepMs,retireMs,maxStepMs,"
                                       + "shown,renderFragments,hitShapes,liveGeometryRefs,liveDisplayInstances,dagTracked,"
-                                      + "committedVertexCapacity,committedIndexCapacity,gpuVertexCapacity,gpuIndexCapacity");
+                                      + "committedVertexCapacity,committedIndexCapacity,gpuVertexCapacity,gpuIndexCapacity,"
+                                      + "freeVertexRoom,vertexGroups,vertexGroupsReleased,verticesReleased");
             }
 
             private void MobPlanLifetimeFrame(int frame, double t)
@@ -133,7 +134,8 @@ namespace Zantetsu.Sandbox
                     (lifetime.MaxStepSeconds * 1000.0).ToString("F4", Inv), _world.Display.ShownCount, _world.Display.RenderFragmentCount,
                     _mpLifetimeShapes.Count, _world.References.LiveGeometryCount, _world.References.LiveDisplayInstanceCount,
                     _world.Geometry.TrackedFragmentCount, _world.Storage.CommittedVertexCapacity, _world.Storage.CommittedIndexCapacity,
-                    _world.Display.GpuVertexCapacity, _world.Display.GpuIndexCapacity));
+                    _world.Display.GpuVertexCapacity, _world.Display.GpuIndexCapacity, _world.Storage.FreeVertexRoom,
+                    _world.Storage.VertexGroupCount, _world.Storage.VertexGroupsReleased, _world.Storage.VerticesReleased));
             }
 
             private void MobPlanLifetimeEnd()
