@@ -12,7 +12,14 @@ namespace Zantetsu.PhysicsCut.Tests
     /// </summary>
     public unsafe partial class ProvisionalCutDriverTests
     {
-        private static readonly BuildingWorldD6Settings k_building = BuildingWorldD6Settings.Provisional;
+        private static readonly BuildingWorldD6Settings k_building = BuildingWorldD6Settings.Adopted;
+
+        /// <summary>
+        /// The swing (joint Y, Z) limit the current engine keeps at least, whatever is asked (DESIGN 7.2.2; Unity
+        /// 6000.3 / PhysX, confirmed 2026-09-28). The engine's, not the product's: the product asks for A(d) on every
+        /// axis. If the engine changes it, DESIGN 7.2.2 asks for the request, the read-back and the motion again.
+        /// </summary>
+        private const float k_engineSwingMinimumDegrees = 3f;
 
         private const float k_near = 1e-4f;
 
@@ -36,12 +43,15 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(joint.angularYMotion, Is.EqualTo(ConfigurableJointMotion.Limited), what);
             Assert.That(joint.angularZMotion, Is.EqualTo(ConfigurableJointMotion.Limited), what);
 
-            // The depth's limits: one distance, one symmetric angle.
+            // The depth's limits: one distance and one requested symmetric angle, A(d). As the joint reports them back,
+            // twist (X) is the request and swing (Y, Z) is the request or the engine's minimum, whichever is larger.
+            float requested = k_building.AngleDegrees(depth);
+            float swing = Mathf.Max(k_engineSwingMinimumDegrees, requested);
             Assert.That(joint.linearLimit.limit, Is.EqualTo(k_building.LimitMetres(depth)), what + ": L(d)");
-            Assert.That(joint.lowAngularXLimit.limit, Is.EqualTo(-k_building.AngleDegrees(depth)), what + ": A(d)");
-            Assert.That(joint.highAngularXLimit.limit, Is.EqualTo(k_building.AngleDegrees(depth)), what);
-            Assert.That(joint.angularYLimit.limit, Is.EqualTo(k_building.AngleDegrees(depth)), what);
-            Assert.That(joint.angularZLimit.limit, Is.EqualTo(k_building.AngleDegrees(depth)), what);
+            Assert.That(joint.lowAngularXLimit.limit, Is.EqualTo(-requested), what + ": twist -A(d)");
+            Assert.That(joint.highAngularXLimit.limit, Is.EqualTo(requested), what + ": twist +A(d)");
+            Assert.That(joint.angularYLimit.limit, Is.EqualTo(swing), what + ": swing Y as the engine reports it");
+            Assert.That(joint.angularZLimit.limit, Is.EqualTo(swing), what + ": swing Z as the engine reports it");
 
             // Nothing that restores, snaps or breaks it.
             Assert.That(joint.xDrive.positionSpring + joint.yDrive.positionSpring + joint.zDrive.positionSpring, Is.Zero, what);
@@ -64,6 +74,53 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(Vector3.Distance(actor.TransformPoint(joint.anchor), actor.position), Is.LessThan(k_near), what);
             Assert.That(Vector3.Angle(actor.rotation * joint.axis, Vector3.right), Is.LessThan(0.01f), what + ": joint X is world X");
             Assert.That(Vector3.Angle(actor.rotation * joint.secondaryAxis, Vector3.up), Is.LessThan(0.01f), what + ": joint Y is world Y");
+        }
+
+        /// <summary>
+        /// A real joint made as the product makes it, at depths 4 and 5 of the adopted values: the product asks A(d) on
+        /// every axis; read back right after it is made and after a physics step, twist keeps -A(d)..+A(d), and swing
+        /// is A(d) where that is at least the engine's minimum (depth 4, 3.75 degrees) and the minimum below it (depth 5,
+        /// 1.875 asked, 3 read back). How far a body then turns is not asserted here.
+        /// </summary>
+        [TestCase(4, 3.75f, 3.75f)]
+        [TestCase(5, 1.875f, 3f)]
+        public void AtDepthsFourAndFive_TwistIsTheRequest_AndSwingReadsBackTheEnginesMinimum(int depth, float requested, float swing)
+        {
+            Assert.That(k_building.AngleDegrees(depth), Is.EqualTo(requested), "A(d) of the adopted values, asked as it is");
+            var actor = new GameObject("Building World D6 at depth " + depth);
+            _objects.Add(actor);
+            actor.SetActive(false);
+            actor.transform.SetPositionAndRotation(new Vector3(1.5f, 2f, -3f), Quaternion.Euler(10f, 35f, -5f));
+            var body = actor.AddComponent<Rigidbody>();
+            body.useGravity = false;
+            ConfigurableJoint joint = BuildingWorldD6.Create(new PhysicsOwnerSide(true, actor, actor, body), in k_building, depth);
+
+            void Read(string when)
+            {
+                Assert.That(joint.lowAngularXLimit.limit, Is.EqualTo(-requested), when + ": twist lower");
+                Assert.That(joint.highAngularXLimit.limit, Is.EqualTo(requested), when + ": twist upper");
+                Assert.That(joint.angularYLimit.limit, Is.EqualTo(swing), when + ": swing Y");
+                Assert.That(joint.angularZLimit.limit, Is.EqualTo(swing), when + ": swing Z");
+                Assert.That(joint.linearLimit.limit, Is.EqualTo(k_building.LimitMetres(depth)), when + ": L(d)");
+            }
+
+            Read("made");
+            AssertBuildingWorld(joint, actor, depth, "made");
+            AssertReferenceIsTheActorsPose(joint, "made");
+
+            SimulationMode mode = Physics.simulationMode;
+            try
+            {
+                Physics.simulationMode = SimulationMode.Script;
+                actor.SetActive(true);
+                Physics.Simulate(1f / 45f);
+            }
+            finally
+            {
+                Physics.simulationMode = mode;
+            }
+
+            Read("after a step");
         }
 
         [Test]

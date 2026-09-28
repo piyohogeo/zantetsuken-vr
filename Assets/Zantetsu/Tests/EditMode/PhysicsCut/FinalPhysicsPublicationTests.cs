@@ -291,7 +291,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 parentMass = owner.Mass,
                 inheritedMeshes = owner.Shape.Meshes,
                 childLineage = childLineage,
-                buildingWorld = BuildingWorldD6Settings.Provisional,
+                buildingWorld = BuildingWorldD6Settings.Adopted,
                 name = "Child",
             };
             Assert.That(

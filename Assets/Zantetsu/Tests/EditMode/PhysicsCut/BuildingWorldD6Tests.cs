@@ -72,7 +72,41 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(new BuildingWorldD6Settings(0.25f, float.PositiveInfinity, 0.5f).IsValid, Is.False);
             Assert.That(default(BuildingWorldD6Settings).IsValid, Is.False, "a settings value never given is not usable");
 
-            Assert.Throws<System.ArgumentOutOfRangeException>(() => BuildingWorldD6Settings.Provisional.LimitMetres(0));
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => BuildingWorldD6Settings.Adopted.LimitMetres(0));
+        }
+
+        /// <summary>
+        /// The adopted values (DESIGN 7.2.2, 2026-09-28) everywhere a default comes from: the driver's settings until a
+        /// world configures them, a profile's field defaults, and the shared sandbox profile, which stores the three
+        /// itself rather than taking the field defaults.
+        /// </summary>
+        [Test]
+        public void TheDefaultsAndTheSharedProfile_AreTheAdoptedValues()
+        {
+            void Adopted(BuildingWorldD6Settings s, string where)
+            {
+                Assert.That(s.firstLimitMetres, Is.EqualTo(1f), where + ": L1 = 1 m");
+                Assert.That(s.firstAngleDegrees, Is.EqualTo(30f), where + ": A1 = 30 degrees");
+                Assert.That(s.ratio, Is.EqualTo(0.5f), where + ": r = 0.5");
+            }
+
+            Adopted(BuildingWorldD6Settings.Adopted, "the driver's default");
+            var fresh = ScriptableObject.CreateInstance<CutWorldProfile>();
+            try
+            {
+                Adopted(fresh.BuildingWorld, "a profile's field defaults");
+            }
+            finally
+            {
+                Object.DestroyImmediate(fresh);
+            }
+
+            const string shared = "Assets/Zantetsu/Settings/CutWorldSandboxProfile.asset";
+            Adopted(UnityEditor.AssetDatabase.LoadAssetAtPath<CutWorldProfile>(shared).BuildingWorld, "the shared profile");
+            string text = System.IO.File.ReadAllText(shared);
+            StringAssert.Contains("buildingWorldFirstLimitMetres: 1\n", text.Replace("\r\n", "\n"), "stored in the shared profile, not taken from the defaults");
+            StringAssert.Contains("buildingWorldFirstAngleDegrees: 30\n", text.Replace("\r\n", "\n"));
+            StringAssert.Contains("buildingWorldRatio: 0.5\n", text.Replace("\r\n", "\n"));
         }
 
         [Test]

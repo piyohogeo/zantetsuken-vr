@@ -132,14 +132,19 @@ namespace Zantetsu.PhysicsCut
         [SerializeField]
         private float separationImpulsePerKg;
 
-        [Header("Building World D6 (DESIGN 7.2.2; provisional values, O-048)")]
+        // The adopted values (DESIGN 7.2.2, 2026-09-28). A profile that stores no value of its own takes these, so a
+        // change of them reaches every scene whose profile does not store the three; the shared sandbox profile stores
+        // them explicitly.
+        [Header("Building World D6 (DESIGN 7.2.2)")]
         [Tooltip("L1: the horizontal distance limit of a first-split building child, in metres.")]
         [SerializeField]
-        private float buildingWorldFirstLimitMetres = 0.25f;
+        private float buildingWorldFirstLimitMetres = 1f;
 
-        [Tooltip("A1: the symmetric angle limit of a first-split building child, in degrees (0 to 180).")]
+        [Tooltip(
+            "A1: the requested symmetric angle limit of a first-split building child, in degrees (0 to 180). The "
+            + "current engine keeps a swing (Y, Z) limit at 3 degrees at least; twist (X) keeps the request (DESIGN 7.2.2).")]
         [SerializeField]
-        private float buildingWorldFirstAngleDegrees = 15f;
+        private float buildingWorldFirstAngleDegrees = 30f;
 
         [Tooltip("r: the common ratio both limits shrink by per split depth, strictly between 0 and 1.")]
         [SerializeField]

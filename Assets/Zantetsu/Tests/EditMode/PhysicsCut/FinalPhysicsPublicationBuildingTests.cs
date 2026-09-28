@@ -51,7 +51,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(Vector3.Angle(actor.rotation * positiveJoint.axis, Vector3.right), Is.LessThan(0.01f));
                 Assert.That(Vector3.Angle(actor.rotation * positiveJoint.secondaryAxis, Vector3.up), Is.LessThan(0.01f));
                 Assert.That(positiveJoint.yMotion, Is.EqualTo(ConfigurableJointMotion.Free));
-                Assert.That(positiveJoint.linearLimit.limit, Is.EqualTo(BuildingWorldD6Settings.Provisional.LimitMetres(1)));
+                Assert.That(positiveJoint.linearLimit.limit, Is.EqualTo(BuildingWorldD6Settings.Adopted.LimitMetres(1)));
                 Assert.That(w.registry.SystemConstraintCount, Is.EqualTo(2));
                 candidate.Dispose();
             }
@@ -80,7 +80,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     parentMass = owner.Mass,
                     inheritedMeshes = owner.Shape.Meshes,
                     childLineage = owner.Building.ChildOfSplit(),
-                    buildingWorld = BuildingWorldD6Settings.Provisional,
+                    buildingWorld = BuildingWorldD6Settings.Adopted,
                     constraintRoom = 1,
                     name = "Unbuilt",
                 };

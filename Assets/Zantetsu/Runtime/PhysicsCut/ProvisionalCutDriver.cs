@@ -163,8 +163,8 @@ namespace Zantetsu.PhysicsCut
         private float _anchorEpsilon;
 
         // The building World D6 settings and the system constraint capacity (DESIGN 7.2.2, O-048). Until the world
-        // configures them: the provisional settings, and no capacity counted.
-        private BuildingWorldD6Settings _buildingWorld = BuildingWorldD6Settings.Provisional;
+        // configures them: the adopted settings, and no capacity counted.
+        private BuildingWorldD6Settings _buildingWorld = BuildingWorldD6Settings.Adopted;
         private int? _constraintCapacity;
         private int _vertexLimit;
         private Func<int> _frameSource;
