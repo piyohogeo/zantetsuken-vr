@@ -63,6 +63,14 @@ namespace Zantetsu.Sandbox
             // happens is written, as it happens (mobplan-record.txt and the csv files are flushed line by line), so a
             // session ended by closing the Player keeps every hit.
             private bool MobPlanLive => mobPlan == "live";
+
+            // "-zantetsuMobPlanDetail": the frame-by-frame detail files (hit registration, display tracking, piece lifetime,
+            // view) are written, for a diagnosis. Without it -- a performance run -- those rows are neither built nor written;
+            // the scenario judgements, the counts, the first failures and the summaries at the end are kept as before. Files
+            // are flushed line by line only in the live mode; otherwise the ordinary close (at the end, or at quitting) writes
+            // them out.
+            private bool MobPlanDetail => Environment.GetCommandLineArgs().Contains("-zantetsuMobPlanDetail");
+            private bool _mpDetail;
             private StreamWriter _mpRecord;
 
             private void MobPlanRecord(string line)
@@ -71,7 +79,7 @@ namespace Zantetsu.Sandbox
                 if (_mpRecord == null)
                 {
                     Directory.CreateDirectory(directory);
-                    _mpRecord = new StreamWriter(Path.Combine(directory, "mobplan-record.txt")) { AutoFlush = true };
+                    _mpRecord = new StreamWriter(Path.Combine(directory, "mobplan-record.txt")) { AutoFlush = MobPlanLive };
                 }
 
                 _mpRecord.WriteLine(line);
@@ -176,7 +184,7 @@ namespace Zantetsu.Sandbox
                     _mpStick.command = MobPlanCommand;
                 }
 
-                _mpEvents = new StreamWriter(Path.Combine(directory, "mobplan-events.csv")) { AutoFlush = true };
+                _mpEvents = new StreamWriter(Path.Combine(directory, "mobplan-events.csv")) { AutoFlush = MobPlanLive };
                 _mpEvents.WriteLine("frame,t,event,id,name,detail");
                 Log("mobplan: script moves=" + _mpMoves.Count + " slashes=" + _mpSlashes.Count + " end=" + _mpEnd.ToString("R", Inv)
                     + " input=" + input + " (" + _mpInputLines.Length + " lines); live stick off, scripted stick at order -100"
@@ -228,6 +236,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
+                MobPlanModelsAdded(name, c, carried.Count > 0);
                 carried.Add(name);
                 s_mobPlanNames[c] = name;
                 _mpActorOf[c] = (id, replacement, Time.frameCount);
@@ -302,7 +311,7 @@ namespace Zantetsu.Sandbox
                 _mpReplacementsAtBegin = _crowd.ReplacementsAdded;
                 _mpPreviousPlayer = _mpInput.player.transform.position;
                 _multiRows = new StreamWriter(Path.Combine(directory, "multi.csv"));
-                _multiHits = new StreamWriter(Path.Combine(directory, "multi-hits.csv")) { AutoFlush = true };
+                _multiHits = new StreamWriter(Path.Combine(directory, "multi-hits.csv")) { AutoFlush = MobPlanLive };
                 _multiHits.WriteLine("frame,slashId,of,child,fragment,acceptance,admission,operation");
                 _multiRows.WriteLine("frame,real,waves,uncutNpcs,liveFragments,livePieces,liveConvexes,acceptedOps,pendingOps,incompleteOps,acceptedThisFrame,provisionalThisFrame,finalThisFrame,committedThisFrame,unsimulated,stepId");
                 _mpFrames = new StreamWriter(Path.Combine(directory, "mobplan-frames.csv"));
@@ -317,8 +326,14 @@ namespace Zantetsu.Sandbox
                 _mpActors = new StreamWriter(Path.Combine(directory, "mobplan-actors.csv"));
                 _mpActors.WriteLine("frame,t,name,id,replacement,x,z,yaw,distance,target,withdrawn,drawn");
                 MultiStorage("before replay");
+                _mpDetail = MobPlanDetail;
+                Log("mobplan detail files: " + (_mpDetail ? "written (-zantetsuMobPlanDetail)" : "off (a performance run)")
+                    + ", flushed line by line: " + MobPlanLive);
                 MobPlanLifetimeBegin();
                 MobPlanHitRegistryBegin();
+                MobPlanEyeViewBegin();
+                MobPlanAllocStagesBegin();
+                MobPlanCloseupsBegin();
                 Vector3 player = _mpInput.player.transform.position;
                 Log("mobplan begin: frame=" + Time.frameCount + " live=" + _mpLiveAtBegin + " published=" + _mpPublishedAtBegin
                     + " player=" + player.ToString("F3") + " yaw=" + _mpInput.player.transform.eulerAngles.y.ToString("F1", Inv)
@@ -341,9 +356,27 @@ namespace Zantetsu.Sandbox
 
             // Every frame of the replay: the next chunk when due, the frame row, the NPCs a few times a second, and what the
             // retired characters show.
+            // Diagnosis (re-preparation allocation unit): the parts of the check's own frame, on markers of their own.
+            private static readonly Unity.Profiling.ProfilerMarker s_mpFrameMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Check.MobPlanFrame");
+            private static readonly Unity.Profiling.ProfilerMarker s_mpDisplayMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Check.MobPlanDisplay");
+            private static readonly Unity.Profiling.ProfilerMarker s_mpLifetimeMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Check.MobPlanLifetime");
+            private static readonly Unity.Profiling.ProfilerMarker s_mpRegistryMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Check.MobPlanHitRegistry");
+
             private void MobPlanFrame(int frame)
             {
-                MobPlanDisplayFrame(frame);
+                long before = s_allocStages != null ? GC.GetTotalMemory(false) : 0;
+                int collections = s_allocStages != null ? GC.CollectionCount(0) : 0;
+                using (s_mpFrameMarker.Auto())
+                {
+                    MobPlanFrameObserved(frame);
+                }
+
+                s_allocStages?.NoteMobPlanFrame(GC.GetTotalMemory(false) - before, GC.CollectionCount(0) - collections);
+            }
+
+            private void MobPlanFrameObserved(int frame)
+            {
+                using (s_mpDisplayMarker.Auto()) MobPlanDisplayFrame(frame);
                 double t = MobPlanNow;
                 if (_mpNextSlash < _mpSlashes.Count && t >= _mpSlashes[_mpNextSlash].at && t < _mpEnd
                     && !_recorder.IsReplaying && _katana.WaveCount == 0)
@@ -359,7 +392,7 @@ namespace Zantetsu.Sandbox
                     player.position.x.ToString("F3", Inv), player.position.z.ToString("F3", Inv), player.eulerAngles.y.ToString("F1", Inv),
                     _katana.WaveCount, _recorder.IsReplaying ? 1 : 0, _mpChunk, _recorder.ReplayIndex, _mpLod != null ? _mpLod.CharacterCount : -1,
                     _crowd.SlotCount, _crowd.FreeSlots, _crowd.ReturningSlots, _crowd.PreparingSlots, _crowd.WaitedForSlot));
-                MobPlanLifetimeFrame(frame, t);
+                using (s_mpLifetimeMarker.Auto()) MobPlanLifetimeFrame(frame, t);
                 _mpFreeMin = Math.Min(_mpFreeMin, _crowd.FreeSlots);
                 _mpDetectorMax = Math.Max(_mpDetectorMax, _detector.CharacterCount);
                 _mpReturningMax = Math.Max(_mpReturningMax, _crowd.ReturningSlots);
@@ -414,7 +447,10 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                MobPlanHitRegistryFrame(frame);
+                using (s_mpRegistryMarker.Auto()) MobPlanHitRegistryFrame(frame);
+                MobPlanModelsFrame(frame);
+                MobPlanCloseupsFrame(frame);
+                MobPlanLevelEye();
             }
 
             // One chunk of the saved grip rows, through the recorder's own recording and replay (the katana's entrance).
@@ -459,6 +495,7 @@ namespace Zantetsu.Sandbox
                 {
                     MobPlanTrackHit(hit, c, frame);
                     MobPlanHitRegistryAtHit(c, frame);
+                    MobPlanCloseupsHit(c, frame);
                 }
                 PoseTablePlayer pose = c.CharacterRoot != null ? c.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
                 bool planned = _crowd.TryEvaluate(a.id, Time.timeAsDouble, out PoseTable table, out double source, out Pose root);
@@ -506,6 +543,8 @@ namespace Zantetsu.Sandbox
                 _mpFrames = null;
                 MobPlanLifetimeClose();
                 MobPlanHitRegistryClose();
+                MobPlanEyeViewClose();
+                MobPlanCloseupsClose();
                 _mpActors?.Dispose();
                 _mpActors = null;
                 _mpEvents?.Dispose();
@@ -628,6 +667,9 @@ namespace Zantetsu.Sandbox
                 MobPlanLifetimeEnd();
                 Log("mobplan hit detector: candidates at the end=" + _detector.CharacterCount + " max=" + _mpDetectorMax);
                 MobPlanHitRegistryEnd();
+                MobPlanModelsEnd();
+                MobPlanEyeViewEnd();
+                MobPlanAllocStagesEnd();
                 Expect(_mpDetectorMax <= _mpSlotsAtBegin, "[scenario] the hit detector's candidates did not grow past the slots (max " + _mpDetectorMax + ")");
                 Expect(_crowd.SlotCount == _mpSlotsAtBegin, "[scenario] the slots stayed a fixed set (" + _mpSlotsAtBegin + " -> " + _crowd.SlotCount + ")");
                 Expect(SandboxNpcCharacter.FullPreparations == _mpFullPreparationsAtBegin, "[scenario] nothing was prepared in full after the start (every replacement took a prepared slot)");

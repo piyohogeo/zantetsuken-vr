@@ -19,6 +19,7 @@ namespace Zantetsu.Sandbox
         private sealed partial class Walk
         {
             private StreamWriter _mpHitReg, _mpHitRegFrames;
+            private bool _mpHitRegOn;
             private readonly Dictionary<VpPreparedCharacterCut, int> _mpHandleSerial = new Dictionary<VpPreparedCharacterCut, int>();
             private readonly Dictionary<SandboxNpcCharacter, string> _mpHitRegState = new Dictionary<SandboxNpcCharacter, string>();
             private readonly Dictionary<SandboxNpcCharacter, (int since, string name, int serial)> _mpHitOut =
@@ -53,7 +54,9 @@ namespace Zantetsu.Sandbox
 
             private void MobPlanHitRegistryBegin()
             {
-                _mpHitReg = new StreamWriter(Path.Combine(directory, "mobplan-hit-registry.csv")) { AutoFlush = true };
+                _mpHitRegOn = true;
+                if (!_mpDetail) return;
+                _mpHitReg = new StreamWriter(Path.Combine(directory, "mobplan-hit-registry.csv")) { AutoFlush = MobPlanLive };
                 _mpHitReg.WriteLine("frame,slot,activations,id,name,handle,state,inDetector,planned,drawn,lod,cut");
                 _mpHitRegFrames = new StreamWriter(Path.Combine(directory, "mobplan-hit-registry-frames.csv"));
                 _mpHitRegFrames.WriteLine("frame,live,lodRegistered,detector,active,activeInDetector,cutTakenOut,unregistered,inactiveInDetector,takenInDetector,stale");
@@ -79,7 +82,7 @@ namespace Zantetsu.Sandbox
 
             private void MobPlanHitRegistryFrame(int frame)
             {
-                if (_mpHitReg == null) return;
+                if (!_mpHitRegOn) return;
                 int active = 0, activeIn = 0, cutOut = 0, unregistered = 0, inactiveIn = 0, takenIn = 0, matched = 0;
                 IReadOnlyList<SandboxNpcCharacter> slots = _crowd.Slots;
                 for (int s = 0; s < slots.Count; s++)
@@ -119,9 +122,11 @@ namespace Zantetsu.Sandbox
                         }
                     }
 
+                    int serial = HandleSerial(c.Handle);   // every handle counted, with or without the detail rows
+                    if (_mpHitReg == null) continue;
                     bool planned = now.id >= 0 && _crowd.TryGetPlan(now.id, out _);
                     bool drawn = c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy;
-                    string row = string.Join(",", s, c.Activations, now.id, now.name, HandleSerial(c.Handle), now.state, now.inDetector ? 1 : 0,
+                    string row = string.Join(",", s, c.Activations, now.id, now.name, serial, now.state, now.inDetector ? 1 : 0,
                         planned ? 1 : 0, drawn ? 1 : 0, c.Lod != null ? 1 : 0, CutState(c.Handle));
                     if (!_mpHitRegState.TryGetValue(c, out string last) || last != row)
                     {
@@ -144,7 +149,7 @@ namespace Zantetsu.Sandbox
                     _mpHitRegViolations.Add("the detector held " + stale + " candidate(s) that are no slot's current handle, first at frame " + frame);
                 }
 
-                _mpHitRegFrames.WriteLine(string.Join(",", frame, _crowd.LiveCount, _mpLod != null ? _mpLod.CharacterCount : -1, _detector.CharacterCount,
+                _mpHitRegFrames?.WriteLine(string.Join(",", frame, _crowd.LiveCount, _mpLod != null ? _mpLod.CharacterCount : -1, _detector.CharacterCount,
                     active, activeIn, cutOut, unregistered, inactiveIn, takenIn, stale));
             }
 
@@ -169,7 +174,7 @@ namespace Zantetsu.Sandbox
 
             private void MobPlanHitRegistryEnd()
             {
-                if (_mpHitReg == null) return;
+                if (!_mpHitRegOn) return;
                 int frame = Time.frameCount;
                 foreach (KeyValuePair<SandboxNpcCharacter, (int since, string name, int serial)> open in _mpHitOut)
                 {

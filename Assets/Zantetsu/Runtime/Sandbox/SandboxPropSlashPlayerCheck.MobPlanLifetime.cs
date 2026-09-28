@@ -19,6 +19,7 @@ namespace Zantetsu.Sandbox
             private StreamWriter _mpLifetime;
             private readonly List<CurrentShape> _mpLifetimeShapes = new List<CurrentShape>();
             private int _mpLifetimeTargetMax, _mpLifetimeOwnersMax, _mpLifetimeShownMax;
+            private bool _mpLifetimeOn;
 
             // "-zantetsuEyeHeight <metres>": the view condition of a measurement series. The XR Origin's Camera Offset --
             // the tracking space, which carries the head and the katana alike -- is moved up or down every frame from the
@@ -106,7 +107,9 @@ namespace Zantetsu.Sandbox
                               + (s.maxStepSeconds * 1000.0).ToString("F2", Inv) + " ms view=" + (view != null ? view.name + (view.stereoEnabled ? " (stereo)" : " (mono)") : "none");
                 Log(line);
                 MobPlanRecord(line);
-                _mpLifetime = new StreamWriter(Path.Combine(directory, "mobplan-lifetime.csv")) { AutoFlush = true };
+                _mpLifetimeOn = true;
+                if (!_mpDetail) return;
+                _mpLifetime = new StreamWriter(Path.Combine(directory, "mobplan-lifetime.csv")) { AutoFlush = MobPlanLive };
                 _mpLifetime.WriteLine("frame,t,owners,targets,retired,refused,examined,candidates,passedUnusable,passedNear,passedSeen,farthestM,budgetSkips,rounds,stepMs,retireMs,maxStepMs,"
                                       + "shown,renderFragments,hitShapes,liveGeometryRefs,liveDisplayInstances,dagTracked,"
                                       + "committedVertexCapacity,committedIndexCapacity,gpuVertexCapacity,gpuIndexCapacity,"
@@ -115,18 +118,23 @@ namespace Zantetsu.Sandbox
 
             private void MobPlanLifetimeFrame(int frame, double t)
             {
-                if (_mpLifetime == null)
+                if (!_mpLifetimeOn)
                 {
                     return;
                 }
 
                 MobPlanHoldEyeHeight();
                 CutFragmentLifetime lifetime = _world.Lifetime;
-                _mpLifetimeShapes.Clear();
-                _world.Owners.CollectCurrentShapes(_mpLifetimeShapes);
                 _mpLifetimeTargetMax = Math.Max(_mpLifetimeTargetMax, lifetime.TargetCount);
                 _mpLifetimeOwnersMax = Math.Max(_mpLifetimeOwnersMax, _world.Owners.Count);
                 _mpLifetimeShownMax = Math.Max(_mpLifetimeShownMax, _world.Display.ShownCount);
+                if (_mpLifetime == null)
+                {
+                    return;
+                }
+
+                _mpLifetimeShapes.Clear();
+                _world.Owners.CollectCurrentShapes(_mpLifetimeShapes);
                 _mpLifetime.WriteLine(string.Join(",", frame, t.ToString("F4", Inv), _world.Owners.Count, lifetime.TargetCount, lifetime.Retired,
                     lifetime.Refused, lifetime.Examined, lifetime.Candidates, lifetime.PassedUnusable, lifetime.PassedNear, lifetime.PassedSeen,
                     lifetime.FarthestExamined.ToString("F2", Inv), lifetime.BudgetSkips, lifetime.Rounds,

@@ -45,9 +45,9 @@ namespace Zantetsu.Sandbox
             {
                 if (hit.Acceptance != ProvisionalCutAcceptance.Published && hit.Acceptance != ProvisionalCutAcceptance.Pending
                     && hit.Acceptance != ProvisionalCutAcceptance.Held) return;
-                if (_mpDisplayRows == null)
+                if (_mpDisplayRows == null && _mpDetail)
                 {
-                    _mpDisplayRows = new StreamWriter(Path.Combine(directory, "mobplan-display.csv")) { AutoFlush = true };
+                    _mpDisplayRows = new StreamWriter(Path.Combine(directory, "mobplan-display.csv")) { AutoFlush = MobPlanLive };
                     _mpDisplayRows.WriteLine("frame,op,name,slot,activations,role,fragment,state,drawn,registration,inView,centreX,centreY,centreZ,extent,ownerX,ownerY,ownerZ,ownerActive,ownerWithdrawn,vertexStart,vertexCount,shown,drawCommands");
                 }
 
@@ -161,6 +161,7 @@ namespace Zantetsu.Sandbox
                 live = state == LogicalFragmentState.Live;
                 bool drawn = _mpDrawn.TryGetValue(fragment, out (Bounds world, int registration) d);
                 inView = drawn && haveView && GeometryUtility.TestPlanesAABB(_mpFrustum, d.world);
+                if (_mpDisplayRows == null) return drawn;
                 bool owned = _world.Owners.TryGet(fragment, out PhysicsFragmentOwner owner) && owner.Root != null;
                 Vector3 o = owned ? owner.Root.transform.position : Vector3.zero;
                 bool geometry = _world.Geometry.TryGetGeometry(fragment, out VpStoredGeometry g);
