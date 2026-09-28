@@ -153,6 +153,15 @@ namespace Zantetsu.Sandbox
         public int DirectCreations { get; private set; }
         private static readonly ProfilerMarker s_reprepare = new ProfilerMarker("Zantetsu.Npc.Reprepare");
 
+        /// <summary>
+        /// Which crowd share this slot reads from: slots of one model (the same intake, hull fixture and family) share one;
+        /// a crowd of several models keeps one share per key.
+        /// </summary>
+        public string SlotShareKey => family + "|" + (intake != null ? intake.name : "") + "|" + (hulls != null ? hulls.name : "");
+
+        /// <summary>The character's model family in its intake (observation; the crowd's share key is built from it).</summary>
+        public string Family => family;
+
         /// <summary>Makes this character a slot of a crowd. Before its Start only.</summary>
         public void PrepareAsSlot(SlotShare share)
         {
@@ -323,6 +332,13 @@ namespace Zantetsu.Sandbox
             HullFile fixture;
             using (s_prepareRead.Auto())
             {
+                if (Pooled && _share.entry != null && _share.entry.family != family)
+                {
+                    // A share is one model's: another model's intake and hulls are never read for this character.
+                    Failure = "the slot share holds " + _share.entry.family + ", not " + family;
+                    return;
+                }
+
                 if (Pooled && _share.entry != null)
                 {
                     entry = _share.entry;

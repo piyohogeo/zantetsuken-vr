@@ -1,3 +1,4 @@
+using System.Linq;
 using NUnit.Framework;
 using Zantetsu.Sandbox;
 
@@ -115,6 +116,37 @@ namespace Zantetsu.Core.Tests
             Assert.That(held.Reprepares, Is.Zero, "the slot not let go was never prepared again");
             Assert.That(pool.ReturningCount, Is.EqualTo(1), "and still waits");
             Assert.That(pool.Reprepared, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void ASlotPreparedAgain_JoinsTheEndOfTheFreeOnes_SoTheSlotsBehindAreTakenFirst()
+        {
+            var pool = new MobPlanSlotPool<Slot>();
+            Slot[] s = AddPrepared(pool, 5);
+            // Two are live; three wait behind them, in the slots' own order.
+            Assert.That(pool.TryTake(out Slot first), Is.True);
+            Assert.That(pool.TryTake(out Slot second), Is.True);
+            Assert.That(first, Is.SameAs(s[0]));
+            Assert.That(second, Is.SameAs(s[1]));
+
+            // The front slots come back again and again; each one prepared again joins the end.
+            var taken = new System.Collections.Generic.List<Slot>();
+            Slot live = first;
+            for (int round = 0; round < 6; round++)
+            {
+                pool.Return(live);
+                live.IsReturnReady = true;
+                pool.Advance(true);
+                live.IsPrepared = true;
+                pool.Advance(true);
+                Assert.That(pool.TryTake(out live), Is.True);
+                taken.Add(live);
+            }
+
+            Assert.That(taken.Take(3), Is.EqualTo(new[] { s[2], s[3], s[4] }), "the slots that waited are taken before the one that just came back");
+            Assert.That(taken.Skip(3), Is.EqualTo(new[] { s[0], s[2], s[3] }), "and the returned ones follow in the order they came back");
+            Assert.That(pool.FreeCount, Is.EqualTo(3), "s4, s0, s2 wait; s1 and s3 are live");
+            Assert.That(pool.SlotCount, Is.EqualTo(5), "no slot is made");
         }
 
         [Test]

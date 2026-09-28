@@ -25,7 +25,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         // Bones at the given paths ("a" and "a/b" when none are given), three samples at 2 Hz over one looping second:
         // bone i at sample k is at (k, i, 0).
-        private static byte[] Table(params string[] paths)
+        internal static byte[] Table(params string[] paths)
         {
             if (paths.Length == 0) paths = new[] { "a", "a/b" };
             int n = paths.Length;

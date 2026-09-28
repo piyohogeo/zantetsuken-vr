@@ -66,7 +66,9 @@ namespace Zantetsu.Sandbox
         // after that (one a frame), and is free again. With no free slot a replacement waits -- the crowd is short for a
         // while -- and nothing is made or waited for on the spot.
         private readonly MobPlanSlotPool<SandboxNpcCharacter> pool = new MobPlanSlotPool<SandboxNpcCharacter>();
-        private readonly SandboxNpcCharacter.SlotShare slotShare = new SandboxNpcCharacter.SlotShare();
+        // One share per model (SandboxNpcCharacter.SlotShareKey): the parsed intake and hulls and the fixed-scale mesh of
+        // one model are shared by that model's slots only.
+        private readonly Dictionary<string, SandboxNpcCharacter.SlotShare> slotShares = new Dictionary<string, SandboxNpcCharacter.SlotShare>();
         private bool poolStarted, poolPrepared, loaded;
         private double poolStartSeconds;
         private long poolStartAllocated, poolStartMono;
@@ -84,7 +86,9 @@ namespace Zantetsu.Sandbox
         public double PoolPrepareSeconds { get; private set; }
         public long PoolAllocatedBytes { get; private set; }
         public long PoolMonoBytes { get; private set; }
-        public SandboxNpcCharacter.SlotShare SlotShareInUse => slotShare;
+        /// <summary>Reads of a model's parsed intake and hulls from its share, over every model; and how many shares (models).</summary>
+        public int SharedReads => slotShares.Values.Sum(s => s.SharedReads);
+        public int SlotShareCount => slotShares.Count;
         private static readonly ProfilerMarker s_pool = new ProfilerMarker("Zantetsu.MobPlan.Pool");
 
         private static readonly ProfilerMarker s_update = new ProfilerMarker("Zantetsu.MobPlan.Update");
@@ -240,7 +244,9 @@ namespace Zantetsu.Sandbox
         {
             var pose = npc.CharacterRoot.GetComponent<PoseTablePlayer>();
             pose.Configure(assets.initialPose, pose.ModelRoot, 0, true);
-            npc.PrepareAsSlot(slotShare);
+            string key = npc.SlotShareKey;
+            if (!slotShares.TryGetValue(key, out SandboxNpcCharacter.SlotShare share)) slotShares[key] = share = new SandboxNpcCharacter.SlotShare();
+            npc.PrepareAsSlot(share);
             npc.CharacterRoot.SetActive(true);
             if (holder != null) holder.SetActive(true);
             npc.enabled = true;
@@ -259,7 +265,7 @@ namespace Zantetsu.Sandbox
             PoolMonoBytes = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() - poolStartMono;
             Debug.Log($"MOBPLAN POOL prepared: slots={pool.SlotCount} free={pool.FreeCount} broken={pool.BrokenCount} seconds={PoolPrepareSeconds:F3} "
                 + $"allocatedDeltaMB={PoolAllocatedBytes / 1048576.0:F1} monoDeltaMB={PoolMonoBytes / 1048576.0:F1} "
-                + $"fullPreparations={SandboxNpcCharacter.FullPreparations} sharedReads={slotShare.SharedReads}");
+                + $"fullPreparations={SandboxNpcCharacter.FullPreparations} sharedReads={SharedReads} models={SlotShareCount}");
         }
 
         // After the scenario began: a returned slot (its cut refers to nothing of it any more) is prepared again, one a
