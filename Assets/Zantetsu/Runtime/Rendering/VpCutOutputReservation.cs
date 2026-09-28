@@ -35,6 +35,9 @@ namespace Zantetsu.Rendering
         internal readonly int vertexBlockCapacity;
         internal bool closed;
 
+        /// <summary>The vertex group of the parent this was reserved on, or -1 (VpCpuGeometryStorage.VertexGroups.cs).</summary>
+        internal int vertexGroup = -1;
+
         internal VpCutOutputReservation(
             VpStoredGeometry parent,
             VpIndexRangeHandle indexRange,

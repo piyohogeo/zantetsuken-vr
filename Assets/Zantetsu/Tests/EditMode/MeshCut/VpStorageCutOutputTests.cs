@@ -17,7 +17,7 @@ namespace Zantetsu.MeshCut.Tests
     /// index ranges separately (DESIGN 4.5.6). The cut output is checked with the existing verifier, over a copy of the
     /// storage's arrays that this test assembles; the product path itself verifies nothing.
     /// </summary>
-    public unsafe class VpStorageCutOutputTests
+    public unsafe partial class VpStorageCutOutputTests
     {
         // An asymmetric closed hexahedron: 8 control points, one set of render vertices per face (so every edge is an
         // attribute seam), two submeshes whose material indices are not their ordinals.

@@ -1507,11 +1507,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>One body in the world: its actor, its physics shape and its display geometry, all tied together.</summary>
-        private LogicalFragmentId AddBody(CutWorldRoot root, Vector3 at, bool building = false)
+        private LogicalFragmentId AddBody(CutWorldRoot root, Vector3 at, bool building = false, Vector3 geometryOffset = default)
         {
             PhysicsOwnerShape shape = NewBoxShape(out Mesh _);
             _disposables.Add(shape);
-            VpStoredGeometry geometry = AppendBoxGeometry(root.Storage, Vector3.zero);
+            // The displayed box's own vertices, offset in its local frame when a case needs content that differs.
+            VpStoredGeometry geometry = AppendBoxGeometry(root.Storage, geometryOffset);
 
             var actor = TrackActor(new GameObject("Body"));
             actor.transform.position = at;
