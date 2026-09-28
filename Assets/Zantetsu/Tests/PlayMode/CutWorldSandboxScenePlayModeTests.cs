@@ -910,6 +910,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         public IEnumerator EndingTheWorldFromTheScene_StopsTheDrawing_AndGivesEverythingBack()
         {
             yield return LoadScene();
+            // This case is about ending a world while a pair is out, and reads the pair in the frame it was asked for. In
+            // the Editor's frames the build alone can take the whole remainder, and the publication is then carried over
+            // by the Main budget (the Pending of DESIGN 7.1.1); so the remainder is made deterministic here, as the
+            // Pending cases themselves do. They run unchanged beside this one.
+            _world.Driver.RemainingMainSeconds = () => 1.0;
             Assert.That(_probe.AskCut(_probe.Body, new Vector4(0f, 1f, 0f, 0f)), Is.True);
             yield return null;
             Assert.That(_world.Owners.ProvisionalPairCount, Is.EqualTo(1), "a cut is under way");
