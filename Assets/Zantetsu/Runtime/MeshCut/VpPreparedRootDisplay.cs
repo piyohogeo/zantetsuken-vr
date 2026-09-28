@@ -77,6 +77,9 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>Asked before a prepared root is shown; true refuses it early, taking nothing in. For tests only; null otherwise.</summary>
+        internal Func<bool> RefusePreparedRootShowForTest { get; set; }
+
         /// <summary>
         /// Explicit, synchronous root registration. No global arm or caller-supplied "verified" flag.
         /// Early refusal leaves the slot ready. Once GPU transfer starts it is consumed, even on refusal/exception.
@@ -87,6 +90,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed(); ThrowIfBroken(); ThrowIfPreparing();
             if (slot == null || !ReferenceEquals(slot.owner, this) || !output.IsFrom(slot.producer, _storage)) return false;
+            if (RefusePreparedRootShowForTest != null && RefusePreparedRootShowForTest()) return false;
             return TryShowCore(fragment, output.Geometry, objectToWorld, lineageToGeometryLocal,
                 Array.Empty<VpClipBoundary>(), slot);
         }

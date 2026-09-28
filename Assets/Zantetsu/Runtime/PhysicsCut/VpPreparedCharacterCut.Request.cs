@@ -307,7 +307,13 @@ namespace Zantetsu.PhysicsCut
                 // Issued here unless a hit already identified this character; either way the cut names that fragment.
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))
-                { LastFailure="show prepared root"; return Result(VpCharacterCutOutcome.Failed); }
+                {
+                    // A refused show took nothing in: the display registers a geometry only as its last step, and every
+                    // refusal comes before it. The appended root is still this request's, so its range is retired here,
+                    // once, and the lineage's vertex room goes back through the ordinary reclamation (DESIGN 4.5.3).
+                    world.Storage.TryRetireIndices(output.Geometry.indexRange);
+                    LastFailure="show prepared root"; return Result(VpCharacterCutOutcome.Failed);
+                }
                 // The pieces this character's cuts leave are the lifetime's (DESIGN 7.10); the character itself never is.
                 world.Lifetime?.MarkLineage(Source);
                 taken=physics.TakeShape();

@@ -225,12 +225,22 @@ namespace Zantetsu.PhysicsCut
             // Before the frame's collection: a piece retired here leaves the physics and the drawing in the same frame.
             if (IsReady && !_ending && !TerminationRequested)
             {
+                // Vertex room of lineages that have ended goes back first (DESIGN 4.5.3), whatever the piece lifetime's
+                // settings: it is the common end of every retirement.
+                using (s_vertexReclaimMarker.Auto())
+                {
+                    Geometry?.ReclaimVertexRoom();
+                }
+
                 using (s_lifetimeMarker.Auto())
                 {
                     Lifetime?.Step();
                 }
             }
         }
+
+        private static readonly Unity.Profiling.ProfilerMarker s_vertexReclaimMarker =
+            new Unity.Profiling.ProfilerMarker("Zantetsu.VertexRoom.Reclaim");
 
         private static readonly Unity.Profiling.ProfilerMarker s_lifetimeMarker =
             new Unity.Profiling.ProfilerMarker("Zantetsu.PieceLifetime.Step");

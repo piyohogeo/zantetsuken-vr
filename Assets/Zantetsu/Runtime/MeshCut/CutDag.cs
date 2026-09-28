@@ -195,6 +195,12 @@ namespace Zantetsu.MeshCut
         private readonly VpCpuGeometryStorage _storage;
         private readonly VpAsyncStorageCut _cuts;
         private readonly List<Node> _nodes = new List<Node>();
+        // Vertex room by lineage (DESIGN 4.5.3): the root of each vertex group, and the groups to look at again.
+        private readonly Dictionary<int, LogicalFragmentId> _rootOfVertexGroup = new Dictionary<int, LogicalFragmentId>();
+        private readonly HashSet<int> _vertexGroupsToLook = new HashSet<int>();
+        private readonly List<int> _vertexGroupScratch = new List<int>();
+        private long _vertexGroupsLookedAtRevision = -1;
+
         private readonly Dictionary<LogicalFragmentId, VpStoredGeometry> _geometryOf =
             new Dictionary<LogicalFragmentId, VpStoredGeometry>();
         private readonly Dictionary<LogicalFragmentId, Matrix4x4> _frameOf =
@@ -264,6 +270,13 @@ namespace Zantetsu.MeshCut
             _geometryOf[fragment] = geometry;
             _frameOf[fragment] = lineageToGeometryLocal;
             _withoutGeometry.Remove(fragment);
+
+            // The lineage this base geometry roots: its vertex room is kept until no fragment of it is live
+            // (ReclaimVertexRoom).
+            if (_storage.TryGetVertexGroup(geometry, out int group) && !_rootOfVertexGroup.ContainsKey(group))
+            {
+                _rootOfVertexGroup[group] = fragment;
+            }
         }
 
         /// <summary>
@@ -284,6 +297,62 @@ namespace Zantetsu.MeshCut
         {
             return _frameOf.TryGetValue(fragment, out lineageToGeometryLocal);
         }
+
+        /// <summary>
+        /// Gives back the vertex room of every lineage that has ended (DESIGN 4.5.3): a vertex group the storage finds
+        /// quiet -- no reservation open on it, every index range it published Free, so no draw, work or lease reads it --
+        /// whose root has no live fragment left (<see cref="BranchHasAReader"/>: a live fragment, or a replaced one with a
+        /// live descendant). A group of a root this DAG was never given is released once quiet. The storage marks a group
+        /// when one of its ranges is let go or a reservation on it closes; a quiet group whose lineage is still live is
+        /// looked at again when the ledger changes. It waits for nothing and runs whether or not anything retires pieces
+        /// on purpose: the retirements of cuts, aborts and the piece lifetime all end here.
+        /// </summary>
+        public void ReclaimVertexRoom()
+        {
+            _vertexGroupScratch.Clear();
+            _storage.TakeChangedVertexGroups(_vertexGroupScratch);
+            foreach (int group in _vertexGroupScratch)
+            {
+                _vertexGroupsToLook.Add(group);
+            }
+
+            long revision = _ledger.Revision;
+            if (_vertexGroupScratch.Count == 0 && revision == _vertexGroupsLookedAtRevision)
+            {
+                return;
+            }
+
+            _vertexGroupsLookedAtRevision = revision;
+            _vertexGroupScratch.Clear();
+            _vertexGroupScratch.AddRange(_vertexGroupsToLook);
+            foreach (int group in _vertexGroupScratch)
+            {
+                if (!_storage.IsVertexGroupQuiet(group))
+                {
+                    // Not yet: the storage marks it again when the last range is let go or the reservation closes.
+                    _vertexGroupsToLook.Remove(group);
+                    continue;
+                }
+
+                if (_rootOfVertexGroup.TryGetValue(group, out LogicalFragmentId root) && BranchHasAReader(root))
+                {
+                    continue;
+                }
+
+                if (_storage.TryReleaseVertexGroup(group))
+                {
+                    VertexGroupsReleased++;
+                }
+
+                _vertexGroupsToLook.Remove(group);
+                _rootOfVertexGroup.Remove(group);
+            }
+        }
+
+        /// <summary>Vertex groups this DAG gave back, and those it is still looking at.</summary>
+        public int VertexGroupsReleased { get; private set; }
+
+        public int VertexGroupsWaiting => _vertexGroupsToLook.Count;
 
         /// <summary>
         /// Forgets what a retired fragment would be cut from next (DESIGN 7.10): its geometry, its frame and its

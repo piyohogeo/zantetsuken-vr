@@ -3044,7 +3044,11 @@ namespace Zantetsu.MeshCut
             {
                 Shown entry = _shown[g];
                 bool known = _ledger.TryGetFragmentState(entry.fragment, out LogicalFragmentState state);
-                entry.dropping = !known || state == LogicalFragmentState.Retired;
+                // Let go when retired, or when replaced by cuts whose every piece has been retired before a geometry
+                // commit took the registration over (DESIGN 4.5.3, 7.10): nothing of it can be drawn or cut again, and
+                // holding it would hold its lineage's room for good. One whose pieces still live is kept, as before.
+                entry.dropping = !known || state == LogicalFragmentState.Retired
+                    || (state == LogicalFragmentState.Replaced && !HasLiveDescendant(entry.fragment));
                 entry.awaiting = known && state == LogicalFragmentState.Live
                     && _ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active)
                     && !_ledger.TryGetPreparedAnchorDistribution(active, out _);
@@ -4138,6 +4142,31 @@ namespace Zantetsu.MeshCut
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Whether a replaced fragment has a live fragment below it: through the cut that replaced it, either child,
+        /// recursively. Reads the ledger only.
+        /// </summary>
+        private bool HasLiveDescendant(LogicalFragmentId fragment)
+        {
+            if (!_ledger.TryGetReplacingOperation(fragment, out CutOperationId replacing)
+                || !_ledger.TryGetOperation(replacing, out LogicalCutOperation cut))
+            {
+                return false;
+            }
+
+            return IsLiveOrHasLiveDescendant(cut.positive) || IsLiveOrHasLiveDescendant(cut.negative);
+        }
+
+        private bool IsLiveOrHasLiveDescendant(LogicalFragmentId fragment)
+        {
+            if (!fragment.IsSet || !_ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
+            {
+                return false;
+            }
+
+            return state == LogicalFragmentState.Live || (state == LogicalFragmentState.Replaced && HasLiveDescendant(fragment));
         }
 
         private bool IsAdoptedBranch(LogicalFragmentId fragment)

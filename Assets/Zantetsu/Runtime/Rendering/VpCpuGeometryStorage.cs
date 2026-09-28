@@ -39,10 +39,11 @@ namespace Zantetsu.Rendering
     /// the other untouched, and a child stays readable after its parent has been retired.
     /// </para>
     /// <para>
-    /// Committed vertices, mapping entries, blocks and submesh descriptors are never moved or overwritten while the
-    /// storage lives, and they have no read lease: the metadata is append-only and never reused, so a geometry's
-    /// metadata stays readable while its own index range is Published or Retiring, and is refused once that range is
-    /// Free or its descriptor has been registered again. Index ranges themselves are read only through read leases,
+    /// Committed vertices, mapping entries, blocks and submesh descriptors are never moved or overwritten while a
+    /// geometry of theirs can be read, and they have no read lease: a geometry's metadata stays readable while its own
+    /// index range is Published or Retiring, and is refused once that range is Free or its descriptor has been
+    /// registered again. They are given back only by lineage, all at once, when no range of that lineage can be read any
+    /// more (DESIGN 4.5.3; see VpCpuGeometryStorage.VertexGroups.cs). Index ranges themselves are read only through read leases,
     /// then retired and reused, under the view contracts of <see cref="VpCpuIndexStorage"/>. Only the main thread calls
     /// the storage. After <see cref="Dispose"/>, the views and every operation throw ObjectDisposedException; disposing
     /// again does nothing.
@@ -68,6 +69,9 @@ namespace Zantetsu.Rendering
             public int blockStart;
             public int blockCount;
             public bool cutInputAccepted;
+
+            /// <summary>The vertex group the geometry joined, plus one; 0 for none.</summary>
+            public int vertexGroup;
 
             /// <summary>
             /// Recorded with the geometry by its producer: the span of vertex indices its indices name and the
@@ -263,7 +267,8 @@ namespace Zantetsu.Rendering
         /// <summary>
         /// How many vertex slots are free: neither held by an open reservation nor taken by something published. It
         /// is what a further reservation may be given, and it comes back when a reservation is cancelled or commits
-        /// less than it took. Retiring a geometry does not return its vertices, which is unchanged by this.
+        /// less than it took, or when a lineage's vertex group is released (<see cref="TryReleaseVertexGroup"/>);
+        /// retiring one geometry alone does not return its vertices.
         /// </summary>
         public int FreeVertexRoom => _vertexSpans.Capacity - _vertexSpans.Used;
 
@@ -391,6 +396,7 @@ namespace Zantetsu.Rendering
                 }
 
                 PublishSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
+                OpenVertexGroup(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
                 geometry = new VpStoredGeometry(vertexStart, vertexCount, indexRange, false, 0, submeshStart, submeshCount, blockStart, 1);
                 RecordAppend(indexRange, geometry);
                 RecordExtentByMeasuring(geometry);
@@ -565,6 +571,7 @@ namespace Zantetsu.Rendering
             }
 
             PublishSpans(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
+            OpenVertexGroup(vertexStart, vertexCount, submeshStart, submeshCount, blockStart, 1);
             geometry = new VpStoredGeometry(
                 vertexStart, vertexCount, indexRange, true, topologyVertexCount, submeshStart, submeshCount, blockStart, 1, cutInputAccepted);
             RecordAppend(indexRange, geometry);
@@ -831,6 +838,7 @@ namespace Zantetsu.Rendering
             }
 
             _openCutOutputs.Add(reservation);
+            reservation.vertexGroup = OpenReservationOnGroup(parent);
             return true;
         }
 
@@ -850,6 +858,7 @@ namespace Zantetsu.Rendering
 
             reservation.closed = true;
             _openCutOutputs.Remove(reservation);
+            CloseReservationOnGroup(reservation.vertexGroup);
             GiveBackSpans(
                 reservation.vertexStart, reservation.NewVertexCapacity,
                 reservation.submeshStart, reservation.submeshCapacity,
@@ -975,6 +984,8 @@ namespace Zantetsu.Rendering
                 reservation.vertexStart, newVertexCount,
                 submeshStart, submeshCount,
                 blockStart, blockCount);
+            AddToVertexGroup(reservation.vertexGroup, reservation.vertexStart, newVertexCount, submeshStart, submeshCount, blockStart, blockCount);
+            CloseReservationOnGroup(reservation.vertexGroup);
             GiveBackSpans(
                 reservation.vertexStart + newVertexCount, reservation.NewVertexCapacity - newVertexCount,
                 submeshStart + submeshCount, reservation.submeshCapacity - submeshCount,
@@ -1088,14 +1099,26 @@ namespace Zantetsu.Rendering
         public bool TryRetireIndices(VpIndexRangeHandle indexRange)
         {
             ThrowIfDisposed();
-            return _indices.TryRetire(indexRange);
+            bool retired = _indices.TryRetire(indexRange);
+            if (retired)
+            {
+                NoteRangeLetGo(indexRange);
+            }
+
+            return retired;
         }
 
         /// <inheritdoc cref="VpCpuIndexStorage.TryReleaseReadLease"/>
         public bool TryReleaseIndexReadLease(VpIndexReadLease lease)
         {
             ThrowIfDisposed();
-            return _indices.TryReleaseReadLease(lease);
+            bool released = _indices.TryReleaseReadLease(lease);
+            if (released)
+            {
+                NoteRangeLetGo(lease.range);
+            }
+
+            return released;
         }
 
         /// <inheritdoc cref="VpCpuIndexStorage.TryGetState"/>
@@ -1268,6 +1291,7 @@ namespace Zantetsu.Rendering
                 blockCount = geometry.blockCount,
                 cutInputAccepted = geometry.cutInputAccepted,
             };
+            _appendOfDescriptor[indexRange.descriptor].vertexGroup = JoinVertexGroup(indexRange, geometry) + 1;
         }
 
         /// <summary>Metadata is readable while the geometry's own index range is Published or Retiring in this storage.</summary>
@@ -1416,6 +1440,7 @@ namespace Zantetsu.Rendering
                    + " retiring " + _indices.DescriptorsIn(VpIndexRangeState.Retiring) + " free " + _indices.DescriptorsIn(VpIndexRangeState.Free) + " of " + _indices.DescriptorCapacity
                    + "; submeshes used " + _submeshSpans.Used + " of " + _submeshSpans.Capacity
                    + "; vertex blocks used " + _vertexBlockSpans.Used + " of " + _vertexBlockSpans.Capacity
+                   + "; " + DescribeVertexGroups()
                    + "; open cut reservations " + _openCutOutputs.Count
                    + "; bytes reserved " + ReservedBytes + " committed " + CommittedBytes
                    + (BackingFailure != null ? "; backing failure: " + BackingFailure : "")

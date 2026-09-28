@@ -34,6 +34,7 @@ namespace Zantetsu.Rendering
                 if (!_indices.TryPublish(range)) return false;
                 published = true;
                 PublishSpans(vertex, input.VertexCount, submesh, 1, block, 1);
+                OpenVertexGroup(vertex, input.VertexCount, submesh, 1, block, 1);
                 geometry = new VpStoredGeometry(vertex, input.VertexCount, range, true,
                     input.TopologyCount, submesh, 1, block, 1, true);
                 RecordAppend(range, geometry);
