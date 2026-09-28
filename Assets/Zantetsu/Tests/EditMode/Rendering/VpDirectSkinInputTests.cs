@@ -503,6 +503,30 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(VpDirectSkinInput.TryCreate(renderer, Topology, 4, out _), Is.False);
         }
 
+        [Test] public void AVerifiedConnectivityIsReused_AndEachRenderersOwnValuesAreStillChecked()
+        {
+            var verified = new VpCutInputConnectivity();
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, Topology, 4, verified, out var first), Is.True);
+            using (first)
+            {
+                Assert.That(verified.Kept, Is.EqualTo(1));
+                Assert.That(verified.Reused, Is.Zero);
+                Assert.That(VpDirectSkinInput.TryCreate(renderer, (int[])Topology.Clone(), 4, verified, out var second), Is.True);
+                using (second)
+                {
+                    Assert.That(verified.Reused, Is.EqualTo(1), "the same mesh again: its edges and fans are not checked again");
+                }
+            }
+
+            // Another renderer's copy of the mesh, the same connectivity, one normal not finite: refused as before.
+            var copy = Own(Object.Instantiate(mesh));
+            var n = copy.normals; n[2] = new Vector3(float.NaN, 0f, 0f); copy.normals = n;
+            renderer.sharedMesh = copy;
+            Assert.That(VpDirectSkinInput.TryCreate(renderer, Topology, 4, verified, out var refused), Is.False);
+            Assert.That(refused, Is.Null);
+            Assert.That(verified.Reused, Is.EqualTo(1), "refused before the connectivity was reached");
+        }
+
         [Test] public void TopologyIsCopiedCold_AndSourceChangeRequiresRecreation()
         {
             var topology = (int[])Topology.Clone();

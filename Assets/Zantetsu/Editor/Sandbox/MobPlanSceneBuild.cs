@@ -14,6 +14,9 @@ namespace Zantetsu.Sandbox.Editor
     public static class MobPlanSceneBuild
     {
         public const string ScenePath = "Assets/Licensed/MobPlan/MobPlanCity.unity";
+        public const string FloorName = "MobPlan Floor";
+        // The map window MobPlanCrowd loads (PolygonWalkable.Read(polygons, -220, -170, 300, 300)), in plan coordinates.
+        private const float MapCentreX = -220f, MapCentreZ = -170f, MapWindowMeters = 300f, FloorThickness = 1f;
         [MenuItem("Zantetsu/MobPlan/Build imported city scene")]
         public static void Build()
         {
@@ -74,6 +77,14 @@ namespace Zantetsu.Sandbox.Editor
             var manual = crowd.gameObject.AddComponent<MobPlanPlayerInput>();
             manual.crowd = crowd;
             manual.player = UnityEngine.Object.FindFirstObjectByType<PlayerLocomotion>();
+            // The source city's floor covers only its own walking area near the origin, and its road tiles have no
+            // colliders: the plan's area gets one flat static floor at the height the plan stands the NPCs on (its offset's
+            // y), over the map's window. Nothing is drawn with it; the plan's map, not this collider, bounds movement.
+            Vector3 offset = serialized.FindProperty("mapOffset").vector3Value;
+            var floor = new GameObject(FloorName);
+            floor.transform.position = new Vector3(MapCentreX + offset.x, offset.y - FloorThickness / 2f, MapCentreZ + offset.z);
+            floor.isStatic = true;
+            floor.AddComponent<BoxCollider>().size = new Vector3(MapWindowMeters, FloorThickness, MapWindowMeters);
             EditorSceneManager.SaveScene(scene, ScenePath);
             AssetDatabase.SaveAssets();
             Debug.Log("MOBPLAN scene built: " + ScenePath);
@@ -82,6 +93,29 @@ namespace Zantetsu.Sandbox.Editor
         {
             try { Build(); EditorApplication.Exit(0); }
             catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
+        }
+
+        // The XR Player of the built city (-zantetsuPlayerOut <dir>), through the sandbox's own Player build. The frame
+        // timing statistics are on for this build only, as the XR Simulator city's measurement Player has them.
+        public static void BuildPlayerFromCommandLine()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            int at = Array.IndexOf(args, "-zantetsuPlayerOut");
+            string directory = at >= 0 && at + 1 < args.Length ? args[at + 1] : null;
+            bool before = PlayerSettings.enableFrameTimingStats;
+            bool built = false;
+            try
+            {
+                PlayerSettings.enableFrameTimingStats = true;
+                built = !string.IsNullOrEmpty(directory) && Zantetsu.EditorTools.Sandbox.CutWorldSandboxPlayerBuild.Build(directory, ScenePath);
+            }
+            catch (Exception e) { Debug.LogException(e); }
+            finally
+            {
+                PlayerSettings.enableFrameTimingStats = before;
+                AssetDatabase.SaveAssets();
+            }
+            EditorApplication.Exit(built ? 0 : 1);
         }
     }
 }

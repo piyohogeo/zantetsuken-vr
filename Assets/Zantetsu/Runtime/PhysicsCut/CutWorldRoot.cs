@@ -141,6 +141,13 @@ namespace Zantetsu.PhysicsCut
         /// <summary>What is shown, and where a geometry commit really happens.</summary>
         public VpLogicalCutDisplay Display { get; private set; }
 
+        /// <summary>
+        /// The input connectivity the characters prepared in this world have passed (DESIGN 6.2's edge and fan checks), so
+        /// that another character of the same model -- a replacement -- is not checked again for it; each character's own
+        /// values are still checked. Kept for this world's lifetime and let go at its release.
+        /// </summary>
+        public VpCutInputConnectivity CutInputConnectivity { get; } = new VpCutInputConnectivity();
+
         public SharedWorkDispatcher Dispatcher { get; private set; }
 
         /// <summary>The frame every participant is carried by: the cook, the DAG, and the driver's endings.</summary>
@@ -642,6 +649,7 @@ namespace Zantetsu.PhysicsCut
 
             Owners?.Dispose();
             Display?.Dispose();
+            CutInputConnectivity.Clear();
             if (_ownsPaletteBinding)
             {
                 // Never clear a replacement installed by a different caller. Texture assets remain caller-owned.

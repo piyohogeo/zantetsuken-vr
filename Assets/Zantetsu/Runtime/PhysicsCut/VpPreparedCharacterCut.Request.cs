@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Zantetsu.ConvexCut;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -48,13 +49,21 @@ namespace Zantetsu.PhysicsCut
             ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
             VpPhysicsColdPreparation sharedCold, GameObject characterRoot, Rigidbody motionBody,
             out VpPreparedCharacterCut prepared)
+            => TryPrepareCharacterCut(renderer, topology, topologyCount, bank, convexes, convexBones, sharedCold, null,
+                characterRoot, motionBody, out prepared);
+
+        /// <summary>The same, borrowing the caller's direct skin input for this handle's life (see the overload above).</summary>
+        public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
+            ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
+            VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, GameObject characterRoot, Rigidbody motionBody,
+            out VpPreparedCharacterCut prepared)
         {
             prepared = null;
             if (renderer == null || characterRoot == null || motionBody == null
                 || !renderer.transform.IsChildOf(characterRoot.transform)
                 || !motionBody.transform.IsChildOf(characterRoot.transform)
                 || transform.IsChildOf(characterRoot.transform)) return false;
-            if (!TryPrepareCharacterCut(renderer,topology,topologyCount,bank,convexes,convexBones,sharedCold,out var made)) return false;
+            if (!TryPrepareCharacterCut(renderer,topology,topologyCount,bank,convexes,convexBones,sharedCold,lentDirect,out var made)) return false;
             try { made.BindSource(characterRoot,motionBody); prepared=made; return true; }
             catch { made.Dispose(); throw; }
         }

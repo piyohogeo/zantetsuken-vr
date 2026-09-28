@@ -218,6 +218,11 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>Whether a prepared character is a candidate now, and how many are (observation).</summary>
+        public bool HasCharacter(VpPreparedCharacterCut character) => character != null && _characters.Contains(character);
+
+        public int CharacterCount => _characters.Count;
+
         public void RemoveCharacter(VpPreparedCharacterCut character)
         {
             int at = _characters.IndexOf(character);

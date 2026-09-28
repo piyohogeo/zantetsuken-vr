@@ -21,7 +21,20 @@ namespace Zantetsu.PhysicsCut
             IReadOnlyList<Transform> convexBones, VpPhysicsColdPreparation sharedCold,
             out VpPreparedCharacterCut prepared)
             => VpPreparedCharacterCut.TryCreate(this, renderer, topology, topologyCount, boneLocalBank,
-                convexes, convexBones, sharedCold, out prepared);
+                convexes, convexBones, sharedCold, null, out prepared);
+
+        /// <summary>
+        /// The same, borrowing a direct skin input its caller owns for the character's life (a crowd's prepared slot)
+        /// instead of making one: the handle takes the loan, forgets any pose taken before, and gives it back -- never
+        /// disposes it -- when it ends. False, lending nothing, when the input is disposed, lent already, or not made from
+        /// this renderer and topology count.
+        /// </summary>
+        public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
+            ConvexBrepBank boneLocalBank, IReadOnlyList<ConvexBrepRange> convexes,
+            IReadOnlyList<Transform> convexBones, VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect,
+            out VpPreparedCharacterCut prepared)
+            => VpPreparedCharacterCut.TryCreate(this, renderer, topology, topologyCount, boneLocalBank,
+                convexes, convexBones, sharedCold, lentDirect, out prepared);
     }
 
     /// <summary>
@@ -39,6 +52,8 @@ namespace Zantetsu.PhysicsCut
         readonly Transform[] convexBones;
         readonly float4x4[] boneToOwner;
         VpDirectSkinInput direct;
+        // False when the direct skin input is lent by the character's owner: then it goes back, not away, at the end.
+        bool ownsDirect = true;
         VpPreparedPhysicsInput physics;
         VpLogicalCutDisplay.PreparedRoot slot;
         VpCharacterHitShape hitShape;
@@ -50,6 +65,13 @@ namespace Zantetsu.PhysicsCut
             this.world = world; this.renderer = renderer; this.sharedCold = sharedCold;
             convexBones = bones; boneToOwner = new float4x4[bones.Length];
         }
+
+        // The cold preparation's main-thread stages, for measurement.
+        static readonly Unity.Profiling.ProfilerMarker s_prepareDirect = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.DirectSkin");
+        static readonly Unity.Profiling.ProfilerMarker s_prepareSlot = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.DisplaySlot");
+        static readonly Unity.Profiling.ProfilerMarker s_preparePhysics = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.Physics");
+        static readonly Unity.Profiling.ProfilerMarker s_prepareHitShape = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.HitShape");
+        static readonly Unity.Profiling.ProfilerMarker s_prepareCold = new Unity.Profiling.ProfilerMarker("Zantetsu.CharacterCut.Prepare.Cold");
 
         static bool Usable(CutWorldRoot world) => world != null && world.IsReady
             && !world.IsEnding && !world.IsReleased && !world.TerminationRequested;
@@ -72,7 +94,8 @@ namespace Zantetsu.PhysicsCut
 
         internal static bool TryCreate(CutWorldRoot world, SkinnedMeshRenderer renderer, int[] topology,
             int topologyCount, ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes,
-            IReadOnlyList<Transform> bones, VpPhysicsColdPreparation sharedCold, out VpPreparedCharacterCut prepared)
+            IReadOnlyList<Transform> bones, VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect,
+            out VpPreparedCharacterCut prepared)
         {
             prepared = null;
             if (!Usable(world) || sharedCold == null || convexes == null || convexes.Count == 0
@@ -87,13 +110,30 @@ namespace Zantetsu.PhysicsCut
             bool complete = false;
             try
             {
-                if (!VpDirectSkinInput.TryCreate(renderer, topology, topologyCount, out made.direct)) return false;
+                bool direct;
+                if (lentDirect != null)
+                {
+                    // The owner's input, for this handle's life only.
+                    if (lentDirect.IsDisposed || !ReferenceEquals(lentDirect.SourceRenderer, renderer) || lentDirect.SourceMesh != renderer.sharedMesh
+                        || lentDirect.TopologyCount != topologyCount || !lentDirect.TryLend(made)) return false;
+                    made.direct = lentDirect;
+                    made.ownsDirect = false;
+                    direct = true;
+                }
+                else
+                {
+                    using (s_prepareDirect.Auto()) direct = VpDirectSkinInput.TryCreate(renderer, topology, topologyCount, world.CutInputConnectivity, out made.direct);
+                }
+
+                if (!direct) return false;
                 // Reserve the cold display allocations before creating/cooking per-instance physics meshes.
-                if (!world.Display.TryPrepareRoot(made.direct, out made.slot)) return false;
-                made.physics = new VpPreparedPhysicsInput(bank, convexes);
+                bool slot;
+                using (s_prepareSlot.Auto()) slot = world.Display.TryPrepareRoot(made.direct, out made.slot);
+                if (!slot) return false;
+                using (s_preparePhysics.Auto()) made.physics = new VpPreparedPhysicsInput(bank, convexes);
                 // The bone-local copy a hit reads (DESIGN 19.1.7): made here, once, from the same authored bank.
-                made.hitShape = new VpCharacterHitShape(bank, convexes);
-                sharedCold.Prepare(made.physics);
+                using (s_prepareHitShape.Auto()) made.hitShape = new VpCharacterHitShape(bank, convexes);
+                using (s_prepareCold.Auto()) sharedCold.Prepare(made.physics);
                 prepared = made; complete = true;
                 return true; // PlayMode may still be pending; IsReady stays false until bootstrap finishes D5.
             }
@@ -126,7 +166,12 @@ namespace Zantetsu.PhysicsCut
                 finally
                 {
                     physics = null;
-                    try { direct?.Dispose(); }
+                    try
+                    {
+                        // A lent input goes back to its owner, its pose forgotten; an input of this handle's own goes away.
+                        if (ownsDirect) direct?.Dispose();
+                        else direct?.Return(this);
+                    }
                     finally
                     {
                         direct = null;
