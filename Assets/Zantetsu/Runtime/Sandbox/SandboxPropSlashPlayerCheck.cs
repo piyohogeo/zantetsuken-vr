@@ -8,6 +8,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Zantetsu.ConvexCut;
 using Zantetsu.Core.Animation;
 using Zantetsu.Core.Input;
 using Zantetsu.Core.Slash;
@@ -74,7 +75,7 @@ namespace Zantetsu.Sandbox
     /// and pictures are the same path.
     /// </para>
     /// </summary>
-    public static class SandboxPropSlashPlayerCheck
+    public static partial class SandboxPropSlashPlayerCheck
     {
         public const string Argument = "-zantetsuPropSlash";
         public const string DebugColoursArgument = "-zantetsuPropDebugColours";
@@ -90,6 +91,98 @@ namespace Zantetsu.Sandbox
         /// used in turn (iteration i takes character i mod its length). Without it, the registration's own choice holds.
         /// </summary>
         public const string WithdrawalArgument = "-zantetsuPropWithdrawal";
+
+        // Measurement (XR Simulator city): list the available frame / render / XR / wait recorders once.
+        public const string ListMarkersArgument = "-zantetsuPropListMarkers";
+
+        /// <summary>Measurement: raised on the frame the replay and the target's Pose Table start, for scene-side walkers.</summary>
+        public static event Action ReplayBegun;
+
+        /// <summary>Image evidence: raised where the check logs a hit, with its lineage ("npc", "box", ...) and frame.</summary>
+        public static event Action<string, int> HitLogged;
+
+        // Image evidence (XR Temporary): hold the geometry pool's finished work for N frames after the first hit.
+        public const string HoldGeometryArgument = "-zantetsuPropHoldGeometry";
+
+        // Measurement (re-cut miss): pieces and sweeps recorded in a light run too.
+        public const string TraceMissArgument = "-zantetsuPropTraceMiss";
+
+        // Measurement (the moving VRS): after the preparation, the replay begins when the XR head leaves its pose.
+        public const string StartOnHeadMoveArgument = "-zantetsuPropStartOnHeadMove";
+
+        // Measurement (image runs): a longer head wait, a hold before the ending, and the updated characters per frame.
+        public const string HeadWaitSecondsArgument = "-zantetsuPropHeadWaitSeconds";
+        public const string EndHoldSecondsArgument = "-zantetsuPropEndHoldSeconds";
+
+        // How many input rows are replayed from the start row (at most the recorder's capacity, which is also the default).
+        public const string RowsArgument = "-zantetsuSlashRows";
+        public const string LodPhasesArgument = "-zantetsuPropLodPhases";
+        public const string ViewTurnArgument = "-zantetsuPropViewTurn";
+
+        // Measurement (the cost of the added shadows): the characters' and the cut pieces' shadows off, the city's kept.
+        public const string AddedShadowsOffArgument = "-zantetsuAddedShadowsOff";
+        private static HeldGeometryPool s_heldGeometry;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void InstallGeometryHold()
+        {
+            if (Value(HoldGeometryArgument) == null)
+            {
+                return;
+            }
+
+            CutWorldRoot.nextWorldExecutors = destination => destination == WorkDestination.GeometryPool
+                ? s_heldGeometry = new HeldGeometryPool(WorkerPoolExecutor.GeometryPool(4))
+                : null;
+        }
+
+        // CutWorldRootPlayModeTests.HoldingExecutor's hold, in the Player: finished work is taken from the destination
+        // and kept from the collection while HoldEverything, then handed on first, as it came back.
+        private sealed class HeldGeometryPool : IWorkExecutor, IDisposable
+        {
+            private readonly IWorkExecutor _inner;
+            private readonly List<(IDispatchWork work, WorkCompletion completion)> _held = new List<(IDispatchWork, WorkCompletion)>();
+
+            internal HeldGeometryPool(IWorkExecutor inner) { _inner = inner; }
+
+            internal bool HoldEverything { get; set; } = true;
+            internal int HoldingCount => _held.Count;
+            public WorkDestination Destination => _inner.Destination;
+            public int Capacity => _inner.Capacity;
+            public int Held => _inner.Held;
+            public bool CanAccept => _inner.CanAccept;
+            public bool TryAccept(IDispatchWork work) => _inner.TryAccept(work);
+            public void BeginAccepted(IDispatchWork work) => _inner.BeginAccepted(work);
+
+            public bool TryTakeFinished(out IDispatchWork work, out WorkCompletion completion)
+            {
+                if (!HoldEverything && _held.Count > 0)
+                {
+                    (work, completion) = _held[0];
+                    _held.RemoveAt(0);
+                    return true;
+                }
+
+                if (!_inner.TryTakeFinished(out work, out completion))
+                {
+                    return false;
+                }
+
+                if (!HoldEverything)
+                {
+                    return true;
+                }
+
+                _held.Add((work, completion));
+                work = null;
+                completion = default;
+                return false;
+            }
+
+            public void CloseForNewWork() => _inner.CloseForNewWork();
+            public bool StopAndConfirm(int timeoutMilliseconds) => _inner.StopAndConfirm(timeoutMilliseconds) && _held.Count == 0;
+            public void Dispose() => (_inner as IDisposable)?.Dispose();
+        }
         public const string Prefix = "PROP SLASH: ";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -125,6 +218,7 @@ namespace Zantetsu.Sandbox
                 {
                     if (i > 0)
                     {
+                        InstallGeometryHold();
                         SceneManager.LoadScene(scene, LoadSceneMode.Single);
                         yield return null;
                     }
@@ -144,6 +238,26 @@ namespace Zantetsu.Sandbox
                     walk.light = Has(LightArgument);
                     walk.extraMarkers = Value(MarkersArgument);
                     walk.showUi = Has(UiArgument);
+                    walk.listMarkers = Has(ListMarkersArgument) && i == 0;
+                    walk.traceMiss = Has(TraceMissArgument);
+                    walk.startOnHeadMove = float.TryParse(Value(StartOnHeadMoveArgument), NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out float move) ? move : 0f;
+                    walk.headWaitSeconds = double.TryParse(Value(HeadWaitSecondsArgument), NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out double wait) ? wait : 60.0;
+                    walk.endHoldSeconds = float.TryParse(Value(EndHoldSecondsArgument), NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out float hold) ? hold : 0f;
+                    walk.lodPhases = Has(LodPhasesArgument);
+                    walk.multiNpc = Has(MultiNpcArgument);
+                    walk.mobPlan = Value(MobPlanArgument);
+                    walk.rows = int.TryParse(Value(RowsArgument), NumberStyles.Integer, CultureInfo.InvariantCulture, out int rowLimit) && rowLimit > 0
+                        ? Math.Min(rowLimit, SandboxSlashPoseRecorder.Capacity) : SandboxSlashPoseRecorder.Capacity;
+                    string[] turn = (Value(ViewTurnArgument) ?? "").Split(',');
+                    if (turn.Length == 4 && int.TryParse(turn[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int turnIteration) && turnIteration == i)
+                    {
+                        walk.viewTurnStart = double.Parse(turn[1], CultureInfo.InvariantCulture);
+                        walk.viewTurnSeconds = double.Parse(turn[2], CultureInfo.InvariantCulture);
+                        walk.viewTurnDegrees = float.Parse(turn[3], CultureInfo.InvariantCulture);
+                    }
                     walk.frameRate = int.TryParse(Value(FrameRateArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
                         out int rate) ? rate : 90;
                     while (!walk.Done)
@@ -224,16 +338,31 @@ namespace Zantetsu.Sandbox
         // After the driver's late update (-100), so what it reads is what this frame will draw: nothing of a cut's
         // state changes after the late updates.
         [DefaultExecutionOrder(400)]
-        private sealed class Walk : MonoBehaviour
+        private sealed partial class Walk : MonoBehaviour
         {
             internal string directory;
             internal string input;
             internal int start;
+            internal int rows;
             internal bool debugColours;
             internal bool trace;
             internal bool light;
             internal string extraMarkers;
             internal bool showUi;
+            internal bool listMarkers;
+            internal bool traceMiss;
+            internal float startOnHeadMove;
+            internal double headWaitSeconds = 60.0;
+            internal float endHoldSeconds;
+            internal bool lodPhases;
+            internal double viewTurnStart = -1.0, viewTurnSeconds;
+            internal float viewTurnDegrees;
+            private Transform _viewTurn;
+            private bool _viewTurned;
+            private StreamWriter _sweepRows;
+            private StreamWriter _pairRows, _pairVertices;
+            private readonly List<CurrentShape> _pairShapes = new List<CurrentShape>();
+            private float3[] _pairSection = new float3[64];
             internal string withdrawalMode;
             internal int iteration;
             internal int frameRate;
@@ -289,7 +418,26 @@ namespace Zantetsu.Sandbox
                 public int hits;
                 public int pictures;
                 public long[] markers;
+                public double ftCpu = double.NaN, ftMain = double.NaN, ftMainPresentWait = double.NaN, ftRender = double.NaN, ftGpu = double.NaN;
+                public double xrGpu = double.NaN, xrCompositorGpu = double.NaN;
+                public int xrDropped = -1;
+                public Vector3 viewPosition;
+                public float viewYaw, viewPitch;
+                public int decisionFrame = -1;
+                public double lastSimulateMs = double.NaN, expectedMs = double.NaN, remainingMs = double.NaN;
+                public int stepped = -1;
+                public int lodL0 = -1, lodL1 = -1, lodL2 = -1, lodL3 = -1, lodUpdated = -1, lodForced = -1, lodTarget = -1;
+                public string lodPhases;
             }
+
+            private PoseLodDirector _lodDirector;
+            private bool _lodLooked;
+
+            private readonly FrameTiming[] _frameTimings = new FrameTiming[1];
+            private int _firstHitFrame = -1;
+            private bool _holdReleased;
+            private UnityEngine.XR.XRDisplaySubsystem _xrDisplay;
+            private readonly List<SandboxNpcCharacter> _npcs = new List<SandboxNpcCharacter>();
 
             private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
             private readonly List<double> _rowTimes = new List<double>();
@@ -328,6 +476,9 @@ namespace Zantetsu.Sandbox
             private readonly List<(long slash, LogicalFragmentId fragment)> _confirmed = new List<(long, LogicalFragmentId)>();
             private readonly List<string> _pictures = new List<string>();
             private readonly List<SlashHitConfirmed> _seenHits = new List<SlashHitConfirmed>();
+            // The input time of the last hit list read, and the frames that still showed an evaluation already read.
+            private double _lastHitListAt = double.NaN;
+            private readonly List<(int frame, double at, int count, int fed)> _hitListRereads = new List<(int, double, int, int)>();
             private TraceLaneSet _traceLanes;
             private TracePagedHistory _traceHistory;
             private TraceLaneDrainer _traceDrainer;
@@ -378,11 +529,20 @@ namespace Zantetsu.Sandbox
                 public int publishedFrame = -1;
                 public int committedFrame = -1;
                 public string name;
+
+                // The multi-NPC mode: whether it was accepted as Pending, the frame its Provisional pair was published
+                // (the acceptance's own frame when Published), the stages' real times, and how a Pending one ended if
+                // it did without being published.
+                public bool pending;
+                public int provisionalFrame = -1;
+                public double acceptedTime = double.NaN, provisionalTime = double.NaN, finalTime = double.NaN, committedTime = double.NaN;
+                public string pendingEnd;
             }
 
             private IEnumerator Start()
             {
                 Directory.CreateDirectory(directory);
+                Application.quitting += MultiQuitting;
                 yield return null;
 
                 foreach (CutWorldRoot candidate in FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
@@ -398,7 +558,7 @@ namespace Zantetsu.Sandbox
                 GameObject viewObject = GameObject.Find("Prop Check View");
                 _view = viewObject != null ? viewObject.GetComponent<Camera>() : null;
                 if (_world == null || !_world.IsReady || _katana == null || _recorder == null || _detector == null
-                    || _probe == null || !_probe.Body.IsSet || _view == null || string.IsNullOrEmpty(input) || !File.Exists(input))
+                    || (!multiNpc && !MobPlanMode && (_probe == null || !_probe.Body.IsSet)) || _view == null || (!MobPlanLive && (string.IsNullOrEmpty(input) || !File.Exists(input))))
                 {
                     Log("FAILED: the scene is not wired (world, katana, recorder, detector, box, view) or no input: " + input);
                     Finish(13);
@@ -433,16 +593,63 @@ namespace Zantetsu.Sandbox
                 Log("sandbox IMGUI (recorder controls, diagnostics overlay): " + (showUi ? "shown" : "hidden"));
                 Log("separation impulse given to every accepted cut (box and character): "
                     + (hit != null ? hit.SeparationImpulse.ToString("R", Inv) : "none") + " N·s");
-                _npc = FindAnyObjectByType<SandboxNpcCharacter>();
+                if (Has(AddedShadowsOffArgument))
+                {
+                    TurnAddedShadowsOff();
+                }
+
+                Log("added shadows: characters' surface renderers casting=" + CountSurfaceCasters()
+                    + " cut display casters=" + DisplayCasters());
+                Log("separation strength from the world's profile: byMass=" + _world.Profile.SeparationImpulseByMass
+                    + " k=" + _world.Profile.SeparationImpulsePerKg.ToString("R", Inv)
+                    + " N·s per kg of each free child's mass (byMass off: the fixed value above is used); strength connected="
+                    + (_world.Driver.SeparationStrength != null));
+                // The MobPlan city: the script and the crowd first; its NPCs are enabled when its plan is loaded.
+                if (MobPlanMode)
+                {
+                    yield return MobPlanWaitReady();
+                    if (_crowd == null || !_crowd.IsReady)
+                    {
+                        Log("FAILED: the MobPlan crowd did not become ready");
+                        Finish(15);
+                        yield break;
+                    }
+                }
+
+                // Several NPCs (the XR Simulator city): the target is "NPC Casual"; every active one is waited for.
+                foreach (SandboxNpcCharacter found in FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None))
+                {
+                    if (!_npcs.Contains(found)) _npcs.Add(found);
+                }
+
+                _npcs.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+                _npc = _npcs.Find(c => c.CharacterRoot != null && c.CharacterRoot.name == "NPC Casual") ?? (_npcs.Count > 0 ? _npcs[0] : null);
                 if (_npc != null)
                 {
-                    // The character's loading frames: its cold preparation finishes, then it is a target. Bounded; a
-                    // character that does not become one ends the check.
-                    int until = Time.frameCount + 600;
-                    while (!_npc.IsTarget && _npc.Failure == null && Time.frameCount < until)
+                    // The characters' loading frames: each cold preparation finishes, then it is a target. Bounded; a
+                    // target character that does not become one ends the check.
+                    int until = Time.frameCount + 1200;
+                    // A dormant prepared slot (the MobPlan crowd's spares) is ready without being a target.
+                    while (_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null) && Time.frameCount < until)
                     {
                         yield return null;
                     }
+
+                    var prepFrames = new List<int>();
+                    var confirmMs = new List<double>();
+                    int prepared = 0, failed = 0;
+                    foreach (SandboxNpcCharacter c in _npcs)
+                    {
+                        if (c.IsTarget) { prepared++; prepFrames.Add(c.PreparationFrames); confirmMs.Add(c.ConfirmSeconds * 1000.0); }
+                        if (c.Failure != null) failed++;
+                    }
+
+                    prepFrames.Sort();
+                    confirmMs.Sort();
+                    Log("npcs: active=" + _npcs.Count + " prepared=" + prepared + " failed=" + failed + " target=" + (_npc.CharacterRoot != null ? _npc.CharacterRoot.name : "none")
+                        + (prepared > 0 ? " preparationFrames median=" + prepFrames[prepFrames.Count / 2] + " max=" + prepFrames[prepFrames.Count - 1]
+                            + " partsCheck ms median=" + confirmMs[confirmMs.Count / 2].ToString("F3", Inv) + " max=" + confirmMs[confirmMs.Count - 1].ToString("F3", Inv) : "")
+                        + " prepared by frame " + Time.frameCount);
 
                     _npcPose = _npc.CharacterRoot != null ? _npc.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
                     PoseTable table = _npcPose != null ? _npcPose.Table : null;
@@ -470,9 +677,9 @@ namespace Zantetsu.Sandbox
                     BeginTrace();
                 }
 
-                string[] lines = File.ReadAllLines(input);
-                _recorder.BeginRecording();
-                for (int i = start + 1; i < lines.Length && _loaded < SandboxSlashPoseRecorder.Capacity; i++, _loaded++)
+                string[] lines = MobPlanMode ? new string[0] : File.ReadAllLines(input);
+                if (!MobPlanMode) _recorder.BeginRecording();
+                for (int i = start + 1; i < lines.Length && _loaded < rows; i++, _loaded++)
                 {
                     string[] c = lines[i].Split(',');
                     float F(int k) => float.Parse(c[k], Inv);
@@ -497,28 +704,103 @@ namespace Zantetsu.Sandbox
                     s_heldLog = new List<string>(512);
                 }
 
+                if (startOnHeadMove > 0f)
+                {
+                    Camera head = Camera.main;
+                    if (head == null)
+                    {
+                        Log("FAILED: no XR head camera to wait on");
+                        Finish(16);
+                        yield break;
+                    }
+
+                    int readyFrame = Time.frameCount;
+                    double readyTime = Time.unscaledTimeAsDouble;
+                    Vector3 readyPosition = head.transform.position;
+                    Quaternion readyRotation = head.transform.rotation;
+                    Log("head wait: ready frame=" + readyFrame + " time=" + readyTime.ToString("F4", Inv) + " head=" + readyPosition.ToString("F4")
+                        + " yaw=" + readyRotation.eulerAngles.y.ToString("F2", Inv) + " pitch=" + readyRotation.eulerAngles.x.ToString("F2", Inv)
+                        + " unsimulated=" + (clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "none")
+                        + " threshold=" + startOnHeadMove.ToString("R", Inv) + " m or 0.5 deg");
+                    var wait = new StringBuilder("frame,time,x,y,z,yaw,pitch,unsimulated,stepId\n");
+                    bool moved = false;
+                    int looks = 0;
+                    while (Time.unscaledTimeAsDouble < readyTime + headWaitSeconds)
+                    {
+                        Vector3 at = head.transform.position;
+                        Vector3 e = head.transform.eulerAngles;
+                        wait.Append(Time.frameCount).Append(',').Append(Time.unscaledTimeAsDouble.ToString("R", Inv)).Append(',')
+                            .Append(at.x.ToString("R", Inv)).Append(',').Append(at.y.ToString("R", Inv)).Append(',').Append(at.z.ToString("R", Inv)).Append(',')
+                            .Append(e.y.ToString("R", Inv)).Append(',').Append(e.x.ToString("R", Inv)).Append(',')
+                            .Append(clock != null ? clock.UnsimulatedSeconds.ToString("R", Inv) : "").Append(',').Append(clock != null ? clock.StepId : -1).Append('\n');
+                        looks++;
+                        if (Vector3.Distance(at, readyPosition) > startOnHeadMove || Quaternion.Angle(head.transform.rotation, readyRotation) > 0.5f)
+                        {
+                            moved = true;
+                            break;
+                        }
+
+                        yield return null;
+                    }
+
+                    File.WriteAllText(Path.Combine(directory, "head-wait.csv"), wait.ToString());
+                    // Moved already at the second look (one frame after ready): the replay was under way before the check was
+                    // ready, so the run is not under the comparison's condition. It goes on, and is written down as such.
+                    _replayBeforeReady = moved && looks <= 2;
+                    if (_replayBeforeReady)
+                    {
+                        Log("[condition] head wait: the head was already moving " + looks + " look(s) after ready: the VRS replay began before the check was ready");
+                    }
+                    Log("head wait: " + (moved ? "moved" : "did not move") + " at frame=" + Time.frameCount + " time=" + Time.unscaledTimeAsDouble.ToString("F4", Inv)
+                        + " (" + (Time.unscaledTimeAsDouble - readyTime).ToString("F4", Inv) + " s after ready) head=" + head.transform.position.ToString("F4")
+                        + " unsimulated=" + (clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "none"));
+                    if (!moved)
+                    {
+                        Log("FAILED: the XR head did not move within " + headWaitSeconds.ToString("R", Inv) + " s of the preparation");
+                        Finish(16);
+                        yield break;
+                    }
+                }
+
                 StartTimeline();
                 _clockStart = Time.unscaledTimeAsDouble;
-                _replaying = _recorder.TryBeginReplay(_clockStart);
-                _npcPose?.Restart();
+                _replaying = MobPlanMode || _recorder.TryBeginReplay(_clockStart);
+                if (!MobPlanMode) _npcPose?.Restart();
+                if (MobPlanMode)
+                {
+                    MobPlanBegin();
+                }
+
+                if (multiNpc)
+                {
+                    MultiBegin();
+                }
+
+                ReplayBegun?.Invoke();
                 _poseEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate");
                 _poseApplyNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply");
                 _hitEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate");
                 Log("start: frame=" + Time.frameCount + " rows " + start + ".." + (start + _loaded - 1) + " replayed=" + _rowTimes.Count
                     + " refusedByRecorder=[" + string.Join(",", _refusedRows) + "]"
                     + " replay begun=" + _replaying + " clock start=" + _clockStart.ToString("F4", Inv)
-                    + " (a row's replay time = clock start + its recorded time - " + _rowTimes[0].ToString("R", Inv) + ")"
+                    + " (a row's replay time = clock start + its recorded time - " + (_rowTimes.Count > 0 ? _rowTimes[0].ToString("R", Inv) : "none") + ")"
                     + " physicsHz=" + (clock != null ? clock.FrequencyHz : 0)
                     + " unsimulatedAtStart=" + (clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "none")
                     + " stepId=" + (clock != null ? clock.StepId : -1)
-                    + " box=" + _probe.Actor.transform.position.ToString("F4") + " targetFrameRate=" + frameRate
+                    + " box=" + (_probe != null && _probe.Actor != null ? _probe.Actor.transform.position.ToString("F4") : "none") + " targetFrameRate=" + frameRate
                     + " debugColours=" + debugColours + " light=" + light + " iteration=" + iteration);
                 RequestPicture("0-start");
 
-                float deadline = Time.realtimeSinceStartup + 120f;
+                float deadline = Time.realtimeSinceStartup + (MobPlanMode ? (float)_mpEnd + 30f : 120f);
                 while (Time.realtimeSinceStartup < deadline)
                 {
                     yield return null;
+                    if (MobPlanMode)
+                    {
+                        if (MobPlanFinished()) break;
+                        continue;
+                    }
+
                     bool fedThrough = !_recorder.IsReplaying && _recorder.ReplayIndex >= _rowTimes.Count;
                     // Every accepted cut's geometry committed: the end of the cuts, not a physical rest of the pieces.
                     bool allGeometryCommitted = _accepted.TrueForAll(a => a.committedFrame >= 0);
@@ -542,9 +824,11 @@ namespace Zantetsu.Sandbox
                 _phase = "observe";
                 _observing = !light;
                 long observeFrom = stepClock != null ? stepClock.StepId : 0;
-                long observeSteps = stepClock != null ? (long)Math.Round(ObservationPhysicsSeconds * stepClock.FrequencyHz) : 0;
+                float observeSeconds = ObservationPhysicsSeconds;
+                float observeCap = 10f;
+                long observeSteps = stepClock != null ? (long)Math.Round(observeSeconds * stepClock.FrequencyHz) : 0;
                 int observeFrame = Time.frameCount;
-                float observeBy = Time.realtimeSinceStartup + 10f;
+                float observeBy = Time.realtimeSinceStartup + observeCap;
                 while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Time.realtimeSinceStartup < observeBy)
                 {
                     yield return null;
@@ -553,9 +837,20 @@ namespace Zantetsu.Sandbox
                 _observedSteps = (stepClock != null ? stepClock.StepId : 0) - observeFrom;
                 _askedSteps = observeSteps;
                 Log("observation: frames " + observeFrame + ".." + Time.frameCount + " steps " + observeFrom + ".." + (stepClock != null ? stepClock.StepId : -1)
-                    + " (asked " + observeSteps + " steps = " + ObservationPhysicsSeconds.ToString("R", Inv) + " s of physics; real cap 10 s)");
+                    + " (asked " + observeSteps + " steps = " + observeSeconds.ToString("R", Inv) + " s of physics; real cap " + observeCap.ToString("R", Inv) + " s)");
                 yield return null;
                 _observing = false;
+                if (endHoldSeconds > 0f)
+                {
+                    _phase = "hold";
+                    float holdUntil = Time.realtimeSinceStartup + endHoldSeconds;
+                    Log("hold: " + endHoldSeconds.ToString("R", Inv) + " s before the ending, from frame " + Time.frameCount);
+                    while (Time.realtimeSinceStartup < holdUntil)
+                    {
+                        yield return null;
+                    }
+                }
+
                 RequestPicture("9-end");
                 yield return null;
                 yield return null;
@@ -566,6 +861,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 // The ordinary ending, carried by the ordinary frames.
+                Log("added shadows at the end: frame=" + Time.frameCount + " " + DisplayCasters());
                 _phase = "ending";
                 float endBy = Time.realtimeSinceStartup + 15f;
                 _world.Shutdown();
@@ -576,7 +872,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 Expect(_world.IsReleased, "the world ended the ordinary way and gave everything back");
-                int code = _failures == 0 ? 0 : 14;
+                int code = _failures == 0 ? (_replayBeforeReady ? 18 : 0) : 14;
                 Log("finished with code " + code);
                 yield return null;
                 Finish(code);
@@ -585,7 +881,9 @@ namespace Zantetsu.Sandbox
             // The end of this run: the timeline and the held log are written now, after the world has ended.
             private void Finish(int code)
             {
+                Application.quitting -= MultiQuitting;
                 _timing = false;
+                MultiClose();
                 WriteTimeline(true);
                 ReleaseLog();
                 if (_target != null)
@@ -632,6 +930,61 @@ namespace Zantetsu.Sandbox
                 }
 
                 _timelineMarkers = markers.ToArray();
+                var displays = new List<UnityEngine.XR.XRDisplaySubsystem>();
+                SubsystemManager.GetSubsystems(displays);
+                _xrDisplay = displays.Find(d => d.running);
+                Log("frame timing: FrameTimingManager enabled=" + FrameTimingManager.IsFeatureEnabled()
+                    + " xr active=" + UnityEngine.XR.XRSettings.isDeviceActive + " device=" + UnityEngine.XR.XRSettings.loadedDeviceName
+                    + " stereo=" + UnityEngine.XR.XRSettings.stereoRenderingMode + " eyeTexture=" + UnityEngine.XR.XRSettings.eyeTextureWidth + "x" + UnityEngine.XR.XRSettings.eyeTextureHeight
+                    + " renderScale=" + UnityEngine.XR.XRSettings.eyeTextureResolutionScale.ToString("R", Inv)
+                    + " refreshRate=" + (_xrDisplay != null && _xrDisplay.TryGetDisplayRefreshRate(out float hz) ? hz.ToString("R", Inv) : "n/a")
+                    + " xrAppGpuTime=" + (_xrDisplay != null && _xrDisplay.TryGetAppGPUTimeLastFrame(out float g) ? "answers" : "no answer")
+                    + " xrCompositorGpuTime=" + (_xrDisplay != null && _xrDisplay.TryGetCompositorGPUTimeLastFrame(out float cg) ? "answers" : "no answer")
+                    + " xrDroppedFrames=" + (_xrDisplay != null && _xrDisplay.TryGetDroppedFrameCount(out int dr) ? "answers" : "no answer")
+                    + " graphics=" + SystemInfo.graphicsDeviceType + " gpu=" + SystemInfo.graphicsDeviceName + " cpu=" + SystemInfo.processorType
+                    + " screen=" + Screen.width + "x" + Screen.height + " quality=" + QualitySettings.names[QualitySettings.GetQualityLevel()]);
+                if (_xrDisplay != null)
+                {
+                    int passes = _xrDisplay.GetRenderPassCount();
+                    var views = new StringBuilder();
+                    for (int k = 0; k < passes; k++)
+                    {
+                        _xrDisplay.GetRenderPass(k, out UnityEngine.XR.XRDisplaySubsystem.XRRenderPass pass);
+                        views.Append(k == 0 ? "" : ",").Append(pass.GetRenderParameterCount());
+                    }
+
+                    Camera eyes = Camera.main;
+                    string separation = "n/a";
+                    if (eyes != null && eyes.stereoEnabled)
+                    {
+                        Vector3 left = eyes.GetStereoViewMatrix(Camera.StereoscopicEye.Left).inverse.GetColumn(3);
+                        Vector3 right = eyes.GetStereoViewMatrix(Camera.StereoscopicEye.Right).inverse.GetColumn(3);
+                        separation = (Vector3.Distance(left, right) * 1000f).ToString("F1", Inv) + " mm";
+                    }
+
+                    Log("stereo: xr render passes=" + passes + " views per pass=[" + views + "] camera stereoEnabled="
+                        + (eyes != null && eyes.stereoEnabled) + " eye separation=" + separation + " camera=" + (eyes != null ? eyes.name : "none"));
+                }
+
+                if (listMarkers)
+                {
+                    var handles = new List<Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle>();
+                    Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetAvailable(handles);
+                    var names = new List<string>();
+                    foreach (Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle h in handles)
+                    {
+                        Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderDescription d = Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetDescription(h);
+                        string n = d.Name;
+                        if (System.Text.RegularExpressions.Regex.IsMatch(n, "XR|Wait|Present|Gfx|GPU|Render Thread|Main Thread|FrameTime|Frame Time|Skin|Semaphore|Vsync|VSync"))
+                        {
+                            names.Add(d.Category.Name + ":" + n);
+                        }
+                    }
+
+                    names.Sort(string.CompareOrdinal);
+                    Log("available recorders (" + names.Count + " of " + handles.Count + "): " + string.Join(" | ", names));
+                }
+
                 _timelineRecorders = new ProfilerRecorder[_timelineMarkers.Length];
                 for (int i = 0; i < _timelineMarkers.Length; i++)
                 {
@@ -671,10 +1024,82 @@ namespace Zantetsu.Sandbox
                     unsimulated = clock != null ? clock.UnsimulatedSeconds : double.NaN,
                     sweeps = core != null ? core.SweepCount : -1,
                     waves = _katana != null ? _katana.WaveCount : -1,
-                    hits = _detector != null && _replaying ? _detector.HitCount : 0,
+                    hits = _replaying && HitListIsNew() ? _detector.HitCount : 0,
                     pictures = _picturesAsked,
                 });
                 _picturesAsked = 0;
+                FillExtras(_timeline[_timeline.Count - 1]);
+                ReleaseGeometryHoldWhenDue();
+            }
+
+            // The hold ends N frames after the first hit; the held work is then collected as it would have been.
+            private void ReleaseGeometryHoldWhenDue()
+            {
+                if (s_heldGeometry == null || _holdReleased || _firstHitFrame < 0
+                    || !int.TryParse(Value(HoldGeometryArgument), NumberStyles.Integer, Inv, out int frames)
+                    || Time.frameCount < _firstHitFrame + frames)
+                {
+                    return;
+                }
+
+                _holdReleased = true;
+                Log("geometry hold: released at frame " + Time.frameCount + " (" + frames + " frames after the first hit at "
+                    + _firstHitFrame + "), " + s_heldGeometry.HoldingCount + " finished works were held");
+                s_heldGeometry.HoldEverything = false;
+            }
+
+            // Measurement (XR Simulator city): the frame timing, the XR display's statistics and the view drawn.
+            private void FillExtras(FrameRow row)
+            {
+                FrameTimingManager.CaptureFrameTimings();
+                if (FrameTimingManager.GetLatestTimings(1, _frameTimings) > 0)
+                {
+                    row.ftCpu = _frameTimings[0].cpuFrameTime;
+                    row.ftMain = _frameTimings[0].cpuMainThreadFrameTime;
+                    row.ftMainPresentWait = _frameTimings[0].cpuMainThreadPresentWaitTime;
+                    row.ftRender = _frameTimings[0].cpuRenderThreadFrameTime;
+                    row.ftGpu = _frameTimings[0].gpuFrameTime;
+                }
+
+                if (_xrDisplay != null)
+                {
+                    if (_xrDisplay.TryGetAppGPUTimeLastFrame(out float xrGpu)) row.xrGpu = xrGpu;
+                    if (_xrDisplay.TryGetCompositorGPUTimeLastFrame(out float xrComp)) row.xrCompositorGpu = xrComp;
+                    if (_xrDisplay.TryGetDroppedFrameCount(out int dropped)) row.xrDropped = dropped;
+                }
+
+                row.decisionFrame = CutPhysicsStep.LastDecidedFrame;
+                row.lastSimulateMs = CutPhysicsStep.LastSimulateSeconds * 1000.0;
+                row.expectedMs = CutPhysicsStep.LastDecisionExpectedSeconds * 1000.0;
+                row.remainingMs = CutPhysicsStep.LastDecisionRemainingSeconds * 1000.0;
+                row.stepped = CutPhysicsStep.LastDecisionStepped ? 1 : 0;
+                if (!_lodLooked)
+                {
+                    _lodDirector = FindAnyObjectByType<PoseLodDirector>(FindObjectsInactive.Include);
+                    _lodLooked = true;
+                }
+
+                if (_lodDirector != null && _lodDirector.isActiveAndEnabled)
+                {
+                    row.lodL0 = row.lodL1 = row.lodL2 = row.lodL3 = row.lodForced = 0;
+                    row.lodUpdated = _lodDirector.UpdatedLastFrame;
+                    foreach (PoseLodCharacter c in _lodDirector.Characters)
+                    {
+                        row.lodForced += c.ForcedCount;
+                        if (_npcPose != null && c.Player == _npcPose) row.lodTarget = c.IsLive ? c.Level : -2;
+                        if (lodPhases && c.LastUpdateFrame == Time.frameCount) row.lodPhases = (row.lodPhases == null ? "" : row.lodPhases + ";") + c.Phase;
+                        if (!c.IsLive) continue;
+                        if (c.Level == 0) row.lodL0++; else if (c.Level == 1) row.lodL1++; else if (c.Level == 2) row.lodL2++; else row.lodL3++;
+                    }
+                }
+                Camera main = Camera.main;
+                if (main != null)
+                {
+                    row.viewPosition = main.transform.position;
+                    Vector3 e = main.transform.eulerAngles;
+                    row.viewYaw = e.y;
+                    row.viewPitch = e.x;
+                }
             }
 
             // Written at the cuts' completion (so far) and at the end (all of it, and the recorders go back): at a
@@ -688,6 +1113,7 @@ namespace Zantetsu.Sandbox
 
                 var text = new StringBuilder(_timeline.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
+                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases");
                 foreach ((ProfilerCategory _, string name) in _timelineMarkers)
                 {
                     text.Append(',').Append(name);
@@ -700,7 +1126,19 @@ namespace Zantetsu.Sandbox
                         .Append(r.delta.ToString("R", Inv)).Append(',').Append(r.fed).Append(',').Append(r.recorded.ToString("R", Inv)).Append(',')
                         .Append((r.real - r.recorded).ToString("R", Inv)).Append(',').Append(r.stepId).Append(',')
                         .Append(r.unsimulated.ToString("R", Inv)).Append(',').Append(r.sweeps).Append(',').Append(r.waves).Append(',')
-                        .Append(r.hits).Append(',').Append(r.pictures);
+                        .Append(r.hits).Append(',').Append(r.pictures)
+                        .Append(',').Append(r.ftCpu.ToString("R", Inv)).Append(',').Append(r.ftMain.ToString("R", Inv))
+                        .Append(',').Append(r.ftMainPresentWait.ToString("R", Inv)).Append(',').Append(r.ftRender.ToString("R", Inv))
+                        .Append(',').Append(r.ftGpu.ToString("R", Inv)).Append(',').Append(r.xrGpu.ToString("R", Inv)).Append(',').Append(r.xrCompositorGpu.ToString("R", Inv)).Append(',').Append(r.xrDropped)
+                        .Append(',').Append(r.viewPosition.x.ToString("R", Inv)).Append(',').Append(r.viewPosition.y.ToString("R", Inv))
+                        .Append(',').Append(r.viewPosition.z.ToString("R", Inv)).Append(',').Append(r.viewYaw.ToString("R", Inv))
+                        .Append(',').Append(r.viewPitch.ToString("R", Inv))
+                        .Append(',').Append(r.decisionFrame).Append(',').Append(r.lastSimulateMs.ToString("R", Inv))
+                        .Append(',').Append(r.expectedMs.ToString("R", Inv)).Append(',').Append(r.remainingMs.ToString("R", Inv))
+                        .Append(',').Append(r.stepped)
+                        .Append(',').Append(r.lodL0).Append(',').Append(r.lodL1).Append(',').Append(r.lodL2).Append(',').Append(r.lodL3)
+                        .Append(',').Append(r.lodUpdated).Append(',').Append(r.lodForced).Append(',').Append(r.lodTarget)
+                        .Append(',').Append(r.lodPhases ?? "");
                     for (int i = 0; i < _timelineMarkers.Length; i++)
                     {
                         text.Append(',').Append(r.markers != null ? r.markers[i] : -1);
@@ -736,11 +1174,45 @@ namespace Zantetsu.Sandbox
                 }
 
                 _pieceRows?.Dispose();
+                _sweepRows?.Dispose();
+                _pairRows?.Dispose();
+                _pairVertices?.Dispose();
                 _poseEvaluateNs.Dispose();
                 _poseApplyNs.Dispose();
                 _hitEvaluateNs.Dispose();
                 _traceHistory?.Dispose();
                 _traceLanes?.Dispose();
+            }
+
+            // The view turned by viewTurnDegrees about the vertical through the head while the replay time is inside the
+            // turn's window, straight otherwise; logged when it turns and when it comes back.
+            private void TurnView(double replayTime)
+            {
+                Camera eyes = Camera.main;
+                if (eyes == null || eyes.transform.parent == null)
+                {
+                    return;
+                }
+
+                if (_viewTurn == null)
+                {
+                    Transform offset = eyes.transform.parent;
+                    _viewTurn = new GameObject("Measurement View Turn").transform;
+                    _viewTurn.SetParent(offset, false);
+                    eyes.transform.SetParent(_viewTurn, false);
+                }
+
+                bool turned = replayTime >= viewTurnStart && replayTime < viewTurnStart + viewTurnSeconds;
+                Vector3 head = eyes.transform.localPosition;
+                Quaternion yaw = turned ? Quaternion.Euler(0f, viewTurnDegrees, 0f) : Quaternion.identity;
+                _viewTurn.localRotation = yaw;
+                _viewTurn.localPosition = head - yaw * head;
+                if (turned != _viewTurned)
+                {
+                    _viewTurned = turned;
+                    Log("view turn: " + (turned ? "turned " + viewTurnDegrees.ToString("R", Inv) + " deg" : "back") + " at frame " + Time.frameCount
+                        + " replay time " + replayTime.ToString("F4", Inv));
+                }
             }
 
             private void LateUpdate()
@@ -753,14 +1225,25 @@ namespace Zantetsu.Sandbox
 
             private void LateUpdateObserved()
             {
+                if (viewTurnStart >= 0.0 && _replaying)
+                {
+                    TurnView(Time.unscaledTimeAsDouble - _clockStart);
+                }
+
                 if (_timing)
                 {
                     RecordFrame();
                 }
 
-                if (!light && (_replaying || _observing) && _world != null && !_world.IsEnding)
+                if ((!light || traceMiss) && (_replaying || _observing) && _world != null && !_world.IsEnding)
                 {
                     TrackPieces();
+                }
+
+                if (traceMiss && _replaying)
+                {
+                    RecordSweeps();
+                    RecordHitPairs(3);
                 }
 
                 if (!_replaying || _world == null || _world.IsEnding)
@@ -820,11 +1303,22 @@ namespace Zantetsu.Sandbox
                         + " pose last applied at frame " + _npcPoseFrameAtWithdrawal);
                 }
 
-                for (int i = 0; i < _detector.HitCount; i++)
+                if (HitListIsNew())
                 {
-                    SlashHitConfirmed hit = _detector.HitAt(i);
-                    _seenHits.Add(hit);
-                    LogHit(hit, frame, update);
+                    _lastHitListAt = _detector.HitAt(0).At;
+                    for (int i = 0; i < _detector.HitCount; i++)
+                    {
+                        SlashHitConfirmed hit = _detector.HitAt(i);
+                        _seenHits.Add(hit);
+                        LogHit(hit, frame, update);
+                    }
+                }
+                else if (_detector.HitCount > 0)
+                {
+                    _hitListRereads.Add((frame, _detector.HitAt(0).At, _detector.HitCount, _recorder.ReplayIndex));
+                    Log("hit list not new: frame=" + frame + " the detector still holds the " + _detector.HitCount
+                        + " hit(s) of the evaluation at input time " + _detector.HitAt(0).At.ToString("R", Inv) + " (fed "
+                        + _recorder.ReplayIndex + "); not read again");
                 }
 
                 // The run's ordinary drain, once a frame, as the lane's consumer.
@@ -857,10 +1351,34 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
+                if (multiNpc || MobPlanMode)
+                {
+                    MultiFrame(frame);
+                }
+
+                if (MobPlanMode)
+                {
+                    MobPlanFrame(frame);
+                }
+
                 if (picture != null)
                 {
                     RequestPicture(picture);
                 }
+            }
+
+            // Whether the detector's hits are a list not read before. The detector keeps the last Evaluate's hits until it
+            // evaluates again, and it evaluates only when the recorder gives the core a sample: a replayed row, or a tick
+            // once the replay has been fed through. A frame with neither (the frame after the last row, before the ticks
+            // begin) still shows the list already read. Every hit of one Evaluate carries the input time of that core
+            // update (SlashHitConfirmed.At), and each update's time is later than the one before: the recorder refuses a
+            // row whose time does not advance, and a tick adds the frame's unscaled delta, which the ending judges was
+            // positive on every replay frame. So the input time names the evaluation, and a list with the time of the
+            // list last read is the same evaluation. Nothing is dropped per operation or per fragment: hits of another
+            // evaluation are read whatever they repeat.
+            private bool HitListIsNew()
+            {
+                return _detector != null && _detector.HitCount > 0 && _detector.HitAt(0).At != _lastHitListAt;
             }
 
             private void LogHit(in SlashHitConfirmed hit, int frame, int update)
@@ -909,6 +1427,16 @@ namespace Zantetsu.Sandbox
                         + ") atLatch=(" + (latched ? "frame " + atLatch.frame + ", source " + atLatch.source.ToString("F4", Inv) : "not seen") + ")";
                 }
 
+                // The MobPlan mode pictures only chosen root hits (the first few and the reused slots').
+                if (!MobPlanMode || MobPlanWantsPicture(hit))
+                {
+                    HitLogged?.Invoke(of, frame);
+                }
+                if (_firstHitFrame < 0)
+                {
+                    _firstHitFrame = frame;
+                }
+
                 Log("hit of=" + of + " slashId=" + hit.SlashId + " fragment=" + hit.Fragment.value + " side=" + hit.Side + pose
                     + " atLatch=" + hit.AtLatch + " acceptance=" + hit.Acceptance + " admission=" + hit.Admission
                     + " operation=" + hit.Operation.value + " lineage=" + lineage + " frame=" + frame
@@ -917,7 +1445,19 @@ namespace Zantetsu.Sandbox
                 bool bad = hit.Acceptance == ProvisionalCutAcceptance.InvalidRequest
                     || hit.Acceptance == ProvisionalCutAcceptance.Aborted || hit.Acceptance == ProvisionalCutAcceptance.Stale;
                 Expect(!bad, "hit " + _hitsLogged + " is an ordinary outcome of acceptance (" + hit.Acceptance + ")");
-                if (hit.Acceptance != ProvisionalCutAcceptance.Published)
+                if (multiNpc || MobPlanMode)
+                {
+                    MultiOnHit(hit, frame, hasOrigin);
+                }
+
+                if (MobPlanMode)
+                {
+                    MobPlanOnHit(hit, frame);
+                }
+
+                // The multi-NPC and MobPlan modes follow a Pending cut as they follow a Published one.
+                bool pendingCut = (multiNpc || MobPlanMode) && hit.Acceptance == ProvisionalCutAcceptance.Pending;
+                if (hit.Acceptance != ProvisionalCutAcceptance.Published && !pendingCut)
                 {
                     return;
                 }
@@ -951,6 +1491,8 @@ namespace Zantetsu.Sandbox
                     child = child,
                     acceptedFrame = frame,
                     name = "op" + hit.Operation.value + "-" + of + (child ? "-child" : "-root"),
+                    pending = pendingCut,
+                    provisionalFrame = pendingCut ? -1 : frame,
                 };
                 _accepted.Add(accepted);
                 if (_world.Ledger.TryGetOperation(hit.Operation, out LogicalCutOperation cut))
@@ -1116,9 +1658,27 @@ namespace Zantetsu.Sandbox
                     at = made.source;
                 }
 
+                if (multiNpc)
+                {
+                    return MultiLineageOf(at);
+                }
+
+                if (MobPlanMode)
+                {
+                    return MobPlanLineageOf(at);
+                }
+
                 if (_npc != null && _npc.Handle != null && _npc.Handle.Source.IsSet && at == _npc.Handle.Source)
                 {
                     return "npc";
+                }
+
+                foreach (SandboxNpcCharacter c in _npcs)
+                {
+                    if (c != _npc && c.Handle != null && c.Handle.Source.IsSet && at == c.Handle.Source)
+                    {
+                        return "crowd";
+                    }
                 }
 
                 return at == _probe.Body ? "box" : "other";
@@ -1220,9 +1780,23 @@ namespace Zantetsu.Sandbox
                 SummariseMarkers();
                 Log("summary by lineage: boxRoot=" + _boxRootCuts + " boxChild=" + _boxChildCuts + " npcRoot=" + _npcRootCuts
                     + " npcChild=" + _npcChildCuts + " npcWithdrawnFrame=" + _npcWithdrawnFrame + " npcRootAcceptedFrame=" + _npcRootAcceptedFrame);
-                Expect(_boxRootCuts >= 1, "the box was cut by a real hit");
-                Expect(_boxChildCuts >= 1, "a surviving child of the box was cut by a real hit of another Slash");
-                if (_npc != null)
+                if (multiNpc)
+                {
+                    MultiSummarise();
+                }
+
+                if (MobPlanMode)
+                {
+                    MobPlanSummarise();
+                }
+
+                if (!multiNpc && !MobPlanMode)
+                {
+                    Expect(_boxRootCuts >= 1, "the box was cut by a real hit");
+                    Expect(_boxChildCuts >= 1, "a surviving child of the box was cut by a real hit of another Slash");
+                }
+
+                if (_npc != null && !multiNpc && !MobPlanMode)
                 {
                     Expect(_npcRootCuts == 1, "the walking character was cut once, from the pose its hit met");
                     Expect(_npcChildCuts >= 1, "a surviving child of the character was cut by a real hit of another Slash");
@@ -1276,6 +1850,105 @@ namespace Zantetsu.Sandbox
             }
 
             // One row per live piece per frame, and where each stands when the observation starts and ends.
+            // Every sweep of this update, as the hit detector was given it (SlashWaveCore.SweepAt).
+            private void RecordSweeps()
+            {
+                SlashWaveCore core = _katana != null ? _katana.Core : null;
+                if (core == null)
+                {
+                    return;
+                }
+
+                if (_sweepRows == null)
+                {
+                    _sweepRows = new StreamWriter(Path.Combine(directory, "sweeps.csv"));
+                    _sweepRows.WriteLine("frame,slashId,at,latch,prevAX,prevAY,prevAZ,prevBX,prevBY,prevBZ,curAX,curAY,curAZ,curBX,curBY,curBZ,travelX,travelY,travelZ,planeNX,planeNY,planeNZ,planeD");
+                }
+
+                for (int i = 0; i < core.SweepCount; i++)
+                {
+                    SlashSweep w = core.SweepAt(i);
+                    _sweepRows.WriteLine(string.Join(",", Time.frameCount, w.SlashId, w.At.ToString("R", Inv), w.IsLatch,
+                        F(w.PreviousA.x), F(w.PreviousA.y), F(w.PreviousA.z), F(w.PreviousB.x), F(w.PreviousB.y), F(w.PreviousB.z),
+                        F(w.CurrentA.x), F(w.CurrentA.y), F(w.CurrentA.z), F(w.CurrentB.x), F(w.CurrentB.y), F(w.CurrentB.z),
+                        F(w.TravelAxis.x), F(w.TravelAxis.y), F(w.TravelAxis.z),
+                        F(w.SourceSlashPlane.normal.x), F(w.SourceSlashPlane.normal.y), F(w.SourceSlashPlane.normal.z), F(w.SourceSlashPlane.distance)));
+                }
+            }
+
+            // The detector's two stages for Slash `slashId`'s sweeps against the NPC lineage's current shapes.
+            private unsafe void RecordHitPairs(long slashId)
+            {
+                SlashWaveCore core = _katana != null ? _katana.Core : null;
+                if (core == null || _world == null || _detector == null)
+                {
+                    return;
+                }
+
+                if (_pairRows == null)
+                {
+                    _pairRows = new StreamWriter(Path.Combine(directory, "hitpair.csv"));
+                    _pairRows.WriteLine("frame,slashId,sweepIndex,fragment,side,convex,consumed,candidate,intersects,vertexCount");
+                    _pairVertices = new StreamWriter(Path.Combine(directory, "hitpair-vertices.csv"));
+                    _pairVertices.WriteLine("frame,sweepIndex,fragment,side,convex,vertex,x,y,z");
+                }
+
+                _world.Owners.CollectCurrentShapes(_pairShapes);
+                for (int i = 0; i < core.SweepCount; i++)
+                {
+                    SlashSweep sweep = core.SweepAt(i);
+                    if (sweep.SlashId != slashId)
+                    {
+                        continue;
+                    }
+
+                    float3 n = sweep.SourceSlashPlane.normal;
+                    var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
+                    foreach (CurrentShape current in _pairShapes)
+                    {
+                        if (current.Owner == null || current.Shape.IsFreed || LineageOf(current.Fragment) != "npc")
+                        {
+                            continue;
+                        }
+
+                        PhysicsOwnerShape shape = current.Shape;
+                        float4x4 shapeToWorld = math.mul((float4x4)current.Owner.localToWorldMatrix, shape.LocalToOwner);
+                        float4x4 worldToShape = math.inverse(shapeToWorld);
+                        float4 plane = math.mul(math.transpose(shapeToWorld), worldPlane);
+                        plane /= math.length(plane.xyz);
+                        float3 la0 = math.transform(worldToShape, (float3)sweep.PreviousA);
+                        float3 lb0 = math.transform(worldToShape, (float3)sweep.PreviousB);
+                        float3 la1 = math.transform(worldToShape, (float3)sweep.CurrentA);
+                        float3 lb1 = math.transform(worldToShape, (float3)sweep.CurrentB);
+                        float3 qlo = math.min(math.min(la0, lb0), math.min(la1, lb1));
+                        float3 qhi = math.max(math.max(la0, lb0), math.max(la1, lb1));
+                        bool consumed = _detector.Consumption.IsConsumed(slashId, current.Fragment);
+                        for (int k = 0; k < shape.ConvexCount; k++)
+                        {
+                            shape.ConvexBounds(k, out float3 lo, out float3 hi);
+                            bool candidate = !(math.any(qhi < lo) || math.any(hi < qlo));
+                            bool intersects = candidate && SlashSweepConvexQuery.Intersects(
+                                plane, la0, lb0, la1, lb1, shape.BankOf(k), shape.Convex(k), ref _pairSection);
+                            ConvexBrepRange range = shape.Convex(k);
+                            _pairRows.WriteLine(string.Join(",", Time.frameCount, slashId, i, current.Fragment.value, current.Side.ToString("R", Inv), k,
+                                consumed ? 1 : 0, candidate ? 1 : 0, intersects ? 1 : 0, range.vertexCount));
+                            if (!candidate)
+                            {
+                                continue;
+                            }
+
+                            ConvexBrepBank bank = shape.BankOf(k);
+                            for (int v = 0; v < range.vertexCount; v++)
+                            {
+                                float3 w = math.transform(shapeToWorld, bank.vertices[range.vertexBase + v]);
+                                _pairVertices.WriteLine(string.Join(",", Time.frameCount, i, current.Fragment.value, current.Side.ToString("R", Inv), k, v,
+                                    w.x.ToString("R", Inv), w.y.ToString("R", Inv), w.z.ToString("R", Inv)));
+                            }
+                        }
+                    }
+                }
+            }
+
             private void TrackPieces()
             {
                 if (_pieceRows == null)
@@ -1289,7 +1962,7 @@ namespace Zantetsu.Sandbox
                     _pieceRows = new StreamWriter(Path.Combine(directory, "pieces.csv"));
                     _pieceRows.WriteLine("frame,phase,stepId,unsimulated,fragment,of,mass,posX,posY,posZ,velX,velY,velZ,speed,sleeping,kinematic,detection,"
                         + "lowestVertexY,colliders,enabledColliders,attached,colliderMinY,colliderMaxY,overFloor,floorPenetration,floorTouch,"
-                        + "lowestX,lowestZ,centreX,centreY,centreZ,originOverFloor");
+                        + "lowestX,lowestZ,centreX,centreY,centreZ,originOverFloor,boundsMinX,boundsMinY,boundsMinZ,boundsMaxX,boundsMaxY,boundsMaxZ");
                 }
 
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
@@ -1316,6 +1989,8 @@ namespace Zantetsu.Sandbox
                     Vector3 centre = PieceCentre(owner);
                     int colliders = 0, enabled = 0, attached = 0;
                     float minY = float.PositiveInfinity, maxY = float.NegativeInfinity, penetration = 0f;
+                    Bounds all = default;
+                    bool anyBounds = false;
                     foreach (Collider collider in owner.Root.GetComponentsInChildren<Collider>(true))
                     {
                         colliders++;
@@ -1327,6 +2002,7 @@ namespace Zantetsu.Sandbox
                         enabled++;
                         attached += collider.attachedRigidbody == body ? 1 : 0;
                         Bounds b = collider.bounds;
+                        if (anyBounds) all.Encapsulate(b); else { all = b; anyBounds = true; }
                         minY = Math.Min(minY, b.min.y);
                         maxY = Math.Max(maxY, b.max.y);
                         if (_floor != null && Physics.ComputePenetration(collider, collider.transform.position, collider.transform.rotation,
@@ -1348,7 +2024,7 @@ namespace Zantetsu.Sandbox
                         id, LineageOf(fragment), body.mass.ToString("R", Inv), F(position.x), F(position.y), F(position.z), F(v.x), F(v.y), F(v.z),
                         F(v.magnitude), body.IsSleeping(), body.isKinematic, body.collisionDetectionMode, F(lowest), colliders, enabled, attached,
                         F(minY), F(maxY), overFloor, F(penetration), touch, F(lowestPoint.x), F(lowestPoint.z), F(centre.x), F(centre.y), F(centre.z),
-                        originOverFloor));
+                        originOverFloor, F(all.min.x), F(all.min.y), F(all.min.z), F(all.max.x), F(all.max.y), F(all.max.z)));
 
                     if (!_tracks.TryGetValue(id, out PieceTrack track))
                     {
@@ -1500,6 +2176,87 @@ namespace Zantetsu.Sandbox
                 File.WriteAllBytes(file, picture.EncodeToPNG());
                 Destroy(picture);
                 Log("picture " + name + " -> " + file + " frame=" + frame);
+            }
+
+            // The characters' shadows are those of the renderers drawn with the product mesh surface; the cut pieces'
+            // are the display's two casters. Only these are turned off: the city's renderers keep theirs.
+            private const string SurfaceShader = "Zantetsu/VP Mesh Surface";
+
+            private void TurnAddedShadowsOff()
+            {
+                int off = 0;
+                foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                {
+                    if (r.sharedMaterial != null && r.sharedMaterial.shader != null && r.sharedMaterial.shader.name == SurfaceShader
+                        && r.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.Off)
+                    {
+                        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                        off++;
+                    }
+                }
+
+                string how = "none";
+                Zantetsu.MeshCut.VpLogicalCutDisplay display = _world != null ? _world.Display : null;
+                if (display != null)
+                {
+                    var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                    System.Reflection.FieldInfo one = typeof(Zantetsu.MeshCut.VpLogicalCutDisplay).GetField("_shadowMaterial", flags);
+                    System.Reflection.FieldInfo two = typeof(Zantetsu.MeshCut.VpLogicalCutDisplay).GetField("_provisionalShadowMaterial", flags);
+                    Material oneMaterial = one?.GetValue(display) as Material;
+                    Material twoMaterial = two?.GetValue(display) as Material;
+                    try
+                    {
+                        one?.SetValue(display, null);
+                        two?.SetValue(display, null);
+                    }
+                    catch (Exception)
+                    {
+                    }
+
+                    if (one != null && one.GetValue(display) == null && two != null && two.GetValue(display) == null)
+                    {
+                        how = "casters cleared";
+                    }
+                    else
+                    {
+                        // Where a field cannot be written, the casters' pass is switched off instead: the calls remain.
+                        oneMaterial?.SetShaderPassEnabled("ShadowCaster", false);
+                        twoMaterial?.SetShaderPassEnabled("ShadowCaster", false);
+                        how = "caster pass disabled (calls still issued)";
+                    }
+                }
+
+                Log("added shadows OFF: " + off + " surface renderers set to cast no shadow; cut display: " + how);
+            }
+
+            private int CountSurfaceCasters()
+            {
+                int casting = 0;
+                foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                {
+                    if (r.sharedMaterial != null && r.sharedMaterial.shader != null && r.sharedMaterial.shader.name == SurfaceShader
+                        && r.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.Off)
+                    {
+                        casting++;
+                    }
+                }
+
+                return casting;
+            }
+
+            private string DisplayCasters()
+            {
+                Zantetsu.MeshCut.VpLogicalCutDisplay display = _world != null ? _world.Display : null;
+                if (display == null)
+                {
+                    return "no display";
+                }
+
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                object one = typeof(Zantetsu.MeshCut.VpLogicalCutDisplay).GetField("_shadowMaterial", flags)?.GetValue(display);
+                object two = typeof(Zantetsu.MeshCut.VpLogicalCutDisplay).GetField("_provisionalShadowMaterial", flags)?.GetValue(display);
+                return (one != null ? "stable set" : "stable none") + ", " + (two != null ? "immediate set" : "immediate none")
+                    + "; shadow calls so far one-sided=" + display.OneSidedShadowIssues + " two-sided=" + display.TwoSidedShadowIssues;
             }
 
             private void Expect(bool held, string what)
