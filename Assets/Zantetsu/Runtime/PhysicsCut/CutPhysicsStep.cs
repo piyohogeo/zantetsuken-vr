@@ -80,6 +80,12 @@ namespace Zantetsu.PhysicsCut
             ? double.PositiveInfinity
             : s_mainBudgetSeconds - (Stopwatch.GetTimestamp() - s_frameStart) / (double)Stopwatch.Frequency;
 
+        /// <summary>
+        /// What is left of this frame's Main budget now, in seconds (positive infinity outside Play or before the first
+        /// frame), for other Main work that must leave the frame's room to the simulation: read only, never refilled.
+        /// </summary>
+        public static double FrameRemainingMainSeconds => RemainingMainSeconds;
+
         /// <summary>The duration of the last real simulation, in seconds (the latest sample, not the prediction).</summary>
         public static double LastSimulateSeconds { get; private set; }
 

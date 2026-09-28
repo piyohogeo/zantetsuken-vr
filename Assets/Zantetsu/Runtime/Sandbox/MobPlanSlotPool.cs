@@ -16,6 +16,12 @@ namespace Zantetsu.Sandbox
 
         /// <summary>Prepares it again for a new individual; false when it could not be.</summary>
         bool TryReprepare();
+
+        /// <summary>Whether, before it is prepared again, what it keeps baked must be baked again (its input changed).</summary>
+        bool NeedsBake { get; }
+
+        /// <summary>Bakes that again, and only that; false when it could not be.</summary>
+        bool TryBake();
     }
 
     /// <summary>
@@ -80,11 +86,48 @@ namespace Zantetsu.Sandbox
                 _ordered = true;
             }
 
-            if (!prepareAgain)
+            if (prepareAgain)
             {
-                return;
+                PrepareOneAgain();
             }
+        }
 
+        /// <summary>Whether a returning slot has been let go and may be prepared again.</summary>
+        public bool HasReturnReady
+        {
+            get
+            {
+                foreach (TSlot slot in _returning) if (slot.IsReturnReady) return true;
+                return false;
+            }
+        }
+
+        /// <summary>The slot <see cref="PrepareOneAgain"/> took last (prepared again or broken), for its caller's records.</summary>
+        public TSlot LastPrepared { get; private set; }
+
+        /// <summary>Whether the slot <see cref="PrepareOneAgain"/> would take next must first be baked again.</summary>
+        public bool NextNeedsBake
+        {
+            get
+            {
+                foreach (TSlot slot in _returning) if (slot.IsReturnReady) return slot.NeedsBake;
+                return false;
+            }
+        }
+
+        /// <summary>Bakes again the slot <see cref="PrepareOneAgain"/> would take next; it stays returning. False when none or it failed.</summary>
+        public bool BakeNext()
+        {
+            foreach (TSlot slot in _returning) if (slot.IsReturnReady) return slot.TryBake();
+            return false;
+        }
+
+        /// <summary>
+        /// The first returning slot that is let go, prepared again (it becomes free at a later <see cref="Advance"/>
+        /// once prepared) or broken; false when none was let go or its preparation failed.
+        /// </summary>
+        public bool PrepareOneAgain()
+        {
             for (int i = 0; i < _returning.Count; i++)
             {
                 TSlot slot = _returning[i];
@@ -94,10 +137,13 @@ namespace Zantetsu.Sandbox
                 }
 
                 _returning.RemoveAt(i);
-                if (slot.TryReprepare()) { _preparing.Add(slot); Reprepared++; }
-                else _broken.Add(slot);
-                return;
+                LastPrepared = slot;
+                if (slot.TryReprepare()) { _preparing.Add(slot); Reprepared++; return true; }
+                _broken.Add(slot);
+                return false;
             }
+
+            return false;
         }
 
         /// <summary>The first free slot, taken; false, taking nothing, when there is none.</summary>

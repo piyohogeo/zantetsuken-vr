@@ -19,6 +19,15 @@ namespace Zantetsu.Core.Tests
             public bool IsReturnReady { get; set; }
             public bool ReprepareSucceeds = true;
             public int Reprepares;
+            public bool NeedsBake { get; set; }
+            public int Bakes;
+
+            public bool TryBake()
+            {
+                Bakes++;
+                NeedsBake = false;
+                return true;
+            }
 
             public bool TryReprepare()
             {
@@ -116,6 +125,37 @@ namespace Zantetsu.Core.Tests
             Assert.That(held.Reprepares, Is.Zero, "the slot not let go was never prepared again");
             Assert.That(pool.ReturningCount, Is.EqualTo(1), "and still waits");
             Assert.That(pool.Reprepared, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void PrepareOneAgain_IsTheRefillsStage_AndAdvanceWithoutItPreparesNothing()
+        {
+            var pool = new MobPlanSlotPool<Slot>();
+            AddPrepared(pool, 2);
+            Assert.That(pool.TryTake(out Slot a), Is.True);
+            Assert.That(pool.TryTake(out Slot b), Is.True);
+            pool.Return(a);
+            pool.Return(b);
+            Assert.That(pool.HasReturnReady, Is.False);
+            Assert.That(pool.PrepareOneAgain(), Is.False, "none let go: nothing prepared");
+            a.IsReturnReady = true;
+            b.IsReturnReady = true;
+            pool.Advance(false);
+            Assert.That(a.Reprepares + b.Reprepares, Is.Zero, "the pool's own advance leaves re-preparation to the refill");
+            Assert.That(pool.HasReturnReady, Is.True);
+            a.NeedsBake = true;
+            Assert.That(pool.NextNeedsBake, Is.True, "the next slot to prepare is the one that needs its bake");
+            Assert.That(pool.BakeNext(), Is.True);
+            Assert.That(a.Bakes, Is.EqualTo(1)); Assert.That(a.Reprepares, Is.Zero, "baked only; still returning");
+            Assert.That(pool.NextNeedsBake, Is.False);
+            Assert.That(pool.PrepareOneAgain(), Is.True);
+            Assert.That(pool.LastPrepared, Is.SameAs(a));
+            Assert.That(a.Reprepares, Is.EqualTo(1), "the first returned first");
+            Assert.That(b.Reprepares, Is.Zero, "one per call");
+            b.ReprepareSucceeds = false;
+            Assert.That(pool.PrepareOneAgain(), Is.False);
+            Assert.That(pool.BrokenCount, Is.EqualTo(1), "a failed preparation is set aside");
+            Assert.That(pool.HasReturnReady, Is.False);
         }
 
         [Test]

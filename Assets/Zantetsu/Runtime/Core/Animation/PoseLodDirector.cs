@@ -43,6 +43,42 @@ namespace Zantetsu.Core.Animation
     /// One character under <see cref="PoseLodDirector"/>: its bone sets per level, made once at registration, its range
     /// for a hit (<see cref="IPoseOnDemand"/>), and where its updates stand.
     /// </summary>
+    /// <summary>
+    /// A character's plan made ahead of its registration (<see cref="PoseLodDirector.Prepare"/>): its bone sets by level
+    /// and its range, for one player and the table bank it was made with. Read only.
+    /// </summary>
+    public sealed class PoseLodPlan
+    {
+        internal PoseLodPlan(PoseTablePlayer player, object tableBank, int[][] levelBones, Bounds range, float largest, int[] omittedHit,
+            bool shared, double rangeSeconds, double prepareSeconds)
+        {
+            Player = player;
+            TableBank = tableBank;
+            LevelBones = levelBones;
+            Range = range;
+            Largest = largest;
+            OmittedHit = omittedHit;
+            Shared = shared;
+            RangeSeconds = rangeSeconds;
+            PrepareSeconds = prepareSeconds;
+        }
+
+        public PoseTablePlayer Player { get; }
+        internal object TableBank { get; }
+        internal int[][] LevelBones { get; }
+        internal Bounds Range { get; }
+        internal float Largest { get; }
+        internal int[] OmittedHit { get; }
+
+        /// <summary>Whether the plan was one already made for the same inputs.</summary>
+        public bool Shared { get; }
+
+        public double RangeSeconds { get; }
+
+        /// <summary>How long the preparation took (the key, and the plan when it was not shared).</summary>
+        public double PrepareSeconds { get; }
+    }
+
     public sealed class PoseLodCharacter : IPoseOnDemand
     {
         private static readonly ProfilerMarker s_force = new ProfilerMarker("Zantetsu.PoseLod.Force");
@@ -297,7 +333,28 @@ namespace Zantetsu.Core.Animation
         /// box's own reach), and the distance its local position moves. No pose between samples is evaluated.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Registers a character: <see cref="Prepare"/> and then <see cref="Register(PoseLodPlan)"/> in one call.
+        /// </summary>
         public PoseLodCharacter Register(
+            PoseTablePlayer player, IReadOnlyList<Transform> references, IReadOnlyList<Transform>[] omitFrom,
+            IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, out string refused)
+        {
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            PoseLodPlan plan = Prepare(player, references, omitFrom, hitBoxes, out refused);
+            if (plan == null) return null;
+            PoseLodCharacter character = Register(plan);
+            if (character != null) character.RegisterSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+            return character;
+        }
+
+        /// <summary>
+        /// A character's plan -- its bone sets by level and its range -- made (or taken from the plans already made for
+        /// the same inputs) without registering it: the costly part of a registration, to be done ahead of time for a
+        /// character registered later (a crowd's slot before its scenario). The plan holds for this player while its
+        /// table bank is the one it was made with.
+        /// </summary>
+        public PoseLodPlan Prepare(
             PoseTablePlayer player, IReadOnlyList<Transform> references, IReadOnlyList<Transform>[] omitFrom,
             IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, out string refused)
         {
@@ -354,17 +411,8 @@ namespace Zantetsu.Core.Animation
             string key = ShareSameInputs ? PlanKey(player, index, needed, omitFrom, hitBoxes) : null;
             if (key != null && _plans.TryGetValue(key, out Plan shared))
             {
-                player.Managed = true;
-                var reused = new PoseLodCharacter(player, _characters.Count, shared.levelBones, shared.range, shared.omittedHit)
-                {
-                    RangeSeconds = 0.0,
-                    LargestBetweenSamples = shared.largest,
-                    SharedPlan = true,
-                };
-                reused.Apply(0);
-                _characters.Add(reused);
-                reused.RegisterSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
-                return reused;
+                return new PoseLodPlan(player, player.TableBank, shared.levelBones, shared.range, shared.largest, shared.omittedHit, true, 0.0,
+                    (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
             }
 
             var levelBones = new int[Levels][];
@@ -410,11 +458,29 @@ namespace Zantetsu.Core.Animation
                 _plans[key] = new Plan { levelBones = levelBones, range = range, largest = largest, omittedHit = omittedHit };
             }
 
-            player.Managed = true;
-            var character = new PoseLodCharacter(player, _characters.Count, levelBones, range, omittedHit)
+            return new PoseLodPlan(player, player.TableBank, levelBones, range, largest, omittedHit, false, rangeSeconds,
+                (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
+        }
+
+        /// <summary>
+        /// Registers the character a prepared plan is for: its bones applied at level 0 and the character scheduled. Null,
+        /// registering nothing, when the player's table bank is no longer the one the plan was made with (the caller
+        /// prepares again or registers in full).
+        /// </summary>
+        public PoseLodCharacter Register(PoseLodPlan plan)
+        {
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (plan == null || plan.Player == null || !ReferenceEquals(plan.Player.TableBank, plan.TableBank))
             {
-                RangeSeconds = rangeSeconds,
-                LargestBetweenSamples = largest,
+                return null;
+            }
+
+            plan.Player.Managed = true;
+            var character = new PoseLodCharacter(plan.Player, _characters.Count, plan.LevelBones, plan.Range, plan.OmittedHit)
+            {
+                RangeSeconds = plan.RangeSeconds,
+                LargestBetweenSamples = plan.Largest,
+                SharedPlan = plan.Shared,
             };
             character.Apply(0);
             _characters.Add(character);

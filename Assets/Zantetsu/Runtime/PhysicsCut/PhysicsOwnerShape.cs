@@ -28,6 +28,7 @@ namespace Zantetsu.PhysicsCut
     {
         private PhysicsCutProducts _products;
         private Mesh[] _preparedMeshes;
+        private PhysicsShapeSource _borrowed;
         private int _users;
         private bool _owns;
         private bool _released;
@@ -86,6 +87,18 @@ namespace Zantetsu.PhysicsCut
             return source;
         }
 
+        // A prepared input's own source over meshes baked earlier and kept (VpBakedConvexMeshes): owned and counted like
+        // OwnPreparedMeshes, holding one on the baked meshes' source from now until its own last user lets go, which gives
+        // that hold back instead of destroying anything.
+        internal static PhysicsShapeSource Borrowing(PhysicsShapeSource baked)
+        {
+            if (baked == null) throw new ArgumentNullException(nameof(baked));
+            baked.Acquire();
+            var source = new PhysicsShapeSource(null) { _borrowed = baked, _owns = true };
+            source.Acquire();
+            return source;
+        }
+
         /// <summary>How many owners and pieces of work are holding this.</summary>
         public int Users => _users;
 
@@ -129,6 +142,13 @@ namespace Zantetsu.PhysicsCut
             _released = true;
             _products?.Dispose();
             _products = null;
+            if (_borrowed != null)
+            {
+                PhysicsShapeSource borrowed = _borrowed;
+                _borrowed = null;
+                borrowed.Release();
+            }
+
             if (_preparedMeshes != null)
             {
                 foreach (Mesh mesh in _preparedMeshes) PhysicsCutCook.DestroyMesh(mesh);
