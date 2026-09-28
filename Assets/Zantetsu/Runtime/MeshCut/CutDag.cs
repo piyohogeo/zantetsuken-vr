@@ -285,6 +285,26 @@ namespace Zantetsu.MeshCut
             return _frameOf.TryGetValue(fragment, out lineageToGeometryLocal);
         }
 
+        /// <summary>
+        /// Forgets what a retired fragment would be cut from next (DESIGN 7.10): its geometry, its frame and its
+        /// being without geometry. Nothing is given back here -- the geometry belongs to the display's references, which
+        /// let it go at their own collection -- and a fragment that is not retired is left as it is.
+        /// </summary>
+        public void Forget(LogicalFragmentId fragment)
+        {
+            if (!_ledger.TryGetFragmentState(fragment, out LogicalFragmentState state) || state != LogicalFragmentState.Retired)
+            {
+                return;
+            }
+
+            _geometryOf.Remove(fragment);
+            _frameOf.Remove(fragment);
+            _withoutGeometry.Remove(fragment);
+        }
+
+        /// <summary>How many fragments this DAG keeps a geometry, a frame or an empty side for. For tests and records.</summary>
+        public int TrackedFragmentCount => Math.Max(_frameOf.Count, _geometryOf.Count + _withoutGeometry.Count);
+
         /// <summary>The geometry a fragment is cut from now, if it has one.</summary>
         public bool TryGetGeometry(LogicalFragmentId fragment, out VpStoredGeometry geometry)
         {
@@ -725,6 +745,14 @@ namespace Zantetsu.MeshCut
         {
             if (!fragment.IsSet)
             {
+                return;
+            }
+
+            // A side retired before its geometry arrived (DESIGN 7.10) reads nothing from here on: nothing is kept for
+            // it, and the result does not bring it back.
+            if (_ledger.TryGetFragmentState(fragment, out LogicalFragmentState state) && state == LogicalFragmentState.Retired)
+            {
+                Forget(fragment);
                 return;
             }
 

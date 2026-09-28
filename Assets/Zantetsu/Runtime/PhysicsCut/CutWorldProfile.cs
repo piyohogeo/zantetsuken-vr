@@ -125,6 +125,24 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private Vector2 capNdcMargin = new Vector2(0.01f, 0.01f);
         [SerializeField] private int stencilCameraCapacity = 4;
 
+        [Header("Piece lifetime (DESIGN 7.10, provisional)")]
+        [Tooltip("Retire far, unseen pieces of characters' cuts once more than the threshold are alive. Off: nothing new is started.")]
+        [SerializeField] private bool pieceLifetimeEnabled = true;
+
+        [Tooltip("Live character pieces above which retirements start.")]
+        [SerializeField] private int pieceLifetimeThreshold = 256;
+
+        [Tooltip("A candidate's bounds are at least this far from the viewer, in metres, and outside both eyes' views.")]
+        [SerializeField] private float pieceLifetimeDistance = 20f;
+
+        [Tooltip("Candidates looked at, and retirements started, per frame at most.")]
+        [SerializeField] private int pieceLifetimeExaminePerFrame = 16;
+        [SerializeField] private int pieceLifetimeRetirePerFrame = 4;
+
+        [Tooltip("A frame with less Main budget left than this, in seconds, looks at nothing; a step stops after the other.")]
+        [SerializeField] private float pieceLifetimeMinRemainingMainSeconds = 0.004f;
+        [SerializeField] private float pieceLifetimeMaxStepSeconds = 0.0005f;
+
         [Header("Ledger")]
         [Tooltip("How many accepted cuts may be incomplete at once (DESIGN 7.1's incomplete budget).")]
         [SerializeField]
@@ -235,6 +253,12 @@ namespace Zantetsu.PhysicsCut
 
         public int DisplayInstanceCapacityLimit => displayInstanceCapacityLimit;
 
+        /// <summary>The piece lifetime's settings (DESIGN 7.10), from the provisional values above.</summary>
+        public CutFragmentLifetimeSettings PieceLifetime =>
+            new CutFragmentLifetimeSettings(
+                pieceLifetimeEnabled, pieceLifetimeThreshold, pieceLifetimeDistance, pieceLifetimeExaminePerFrame,
+                pieceLifetimeRetirePerFrame, pieceLifetimeMinRemainingMainSeconds, pieceLifetimeMaxStepSeconds);
+
         /// <summary>How far the display's counts may grow, from the limits above.</summary>
         public VpLogicalCutDisplayLimits DisplayLimits =>
             new VpLogicalCutDisplayLimits(
@@ -333,6 +357,10 @@ namespace Zantetsu.PhysicsCut
                      || candidateCapacityLimit < candidateCapacity)
             {
                 reason = "a display count's limit must be at least its first capacity";
+            }
+            else if (!PieceLifetime.IsValid)
+            {
+                reason = "the piece lifetime's counts and times must be positive and its threshold and distance not negative";
             }
             else if (maxStencilColours <= 0 || stencilCameraCapacity <= 0)
             {
