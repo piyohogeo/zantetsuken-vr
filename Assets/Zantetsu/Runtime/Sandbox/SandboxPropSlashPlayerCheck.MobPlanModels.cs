@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using UnityEngine;
 using Zantetsu.Core.Animation;
+using Zantetsu.MeshCut;
+using Zantetsu.PhysicsCut;
 
 namespace Zantetsu.Sandbox
 {
@@ -21,11 +23,24 @@ namespace Zantetsu.Sandbox
                 public int slots, brokenSlots, individuals, reusedIndividuals, directCreations;
                 public bool drawn, posed, hitTarget;
                 public int rootAccepted, rootPublished, rootCommitted, reusedRootCommitted, childCommitted;
+                public int rootFailed, childAccepted, childFailed;
+                public readonly Dictionary<string, int> failureKinds = new Dictionary<string, int>();
                 public readonly List<string> failures = new List<string>();
                 public string size;
             }
 
             private readonly Dictionary<string, ModelTally> _mpModels = new Dictionary<string, ModelTally>();
+
+            // The cuts whose physics failed and were aborted, as the world's driver reports each once, read at the end
+            // against the accepted cuts by model and root / child (MobPlanCutFailureTally; the per-model counts exist only
+            // where this check runs -- the world's own end line has the totals).
+            private readonly MobPlanCutFailureTally _mpFailures = new MobPlanCutFailureTally();
+
+            private void MobPlanFailuresBegin() => _mpFailures.Attach(_world.Driver);
+
+            private void MobPlanFailuresClose() => _mpFailures.Detach();
+
+            private bool FailedBefore(CutOperationId operation, int frame) => _mpFailures.FailedBefore(operation, frame);
             private readonly Dictionary<string, (string family, bool reused)> _mpModelOfName = new Dictionary<string, (string, bool)>();
             // Which model activated or was prepared again in which frame (joined with frames.csv afterwards), and each slot's
             // counts as last seen.
@@ -100,12 +115,14 @@ namespace Zantetsu.Sandbox
                     if (c.Failure != null) { tally.brokenSlots++; tally.failures.Add(c.CharacterRoot != null ? c.CharacterRoot.name + ": " + c.Failure : c.Failure); }
                 }
 
+                var npcCuts = new List<(CutOperationId operation, bool child, string model)>();
                 foreach (Accepted a in _accepted)
                 {
                     string lineage = LineageOf(a.fragment);
                     if (lineage == null || !lineage.StartsWith("npc-")) continue;
                     if (!_mpModelOfName.TryGetValue(lineage.Substring(4), out (string family, bool reused) of)) continue;
                     ModelTally tally = ModelOf(of.family);
+                    npcCuts.Add((a.operation, a.child, of.family));
                     if (a.child)
                     {
                         if (a.committedFrame >= 0) tally.childCommitted++;
@@ -117,22 +134,49 @@ namespace Zantetsu.Sandbox
                     if (a.committedFrame >= 0) { tally.rootCommitted++; if (of.reused) tally.reusedRootCommitted++; }
                 }
 
-                var csv = new StringBuilder("family,slots,brokenSlots,individuals,reusedIndividuals,drawn,posed,hitTarget,directCreations,rootAccepted,rootPublished,rootCommitted,reusedRootCommitted,childCommitted,failures\n");
+                Dictionary<string, MobPlanCutFailureTally.Counts> cutCounts = _mpFailures.Tally(npcCuts, out int unattributed);
+                foreach (KeyValuePair<string, MobPlanCutFailureTally.Counts> c in cutCounts)
+                {
+                    ModelTally tally = ModelOf(c.Key);
+                    tally.rootFailed = c.Value.rootFailed;
+                    tally.childAccepted = c.Value.childAccepted;
+                    tally.childFailed = c.Value.childFailed;
+                    foreach (KeyValuePair<string, int> k in c.Value.kinds) tally.failureKinds[k.Key] = k.Value;
+                }
+
+                var csv = new StringBuilder("family,slots,brokenSlots,individuals,reusedIndividuals,drawn,posed,hitTarget,directCreations,rootAccepted,rootPublished,rootCommitted,reusedRootCommitted,childCommitted,failures,rootFailed,childAccepted,childFailed,cutFailureKinds\n");
                 foreach (KeyValuePair<string, ModelTally> m in _mpModels.OrderBy(p => p.Key, System.StringComparer.Ordinal))
                 {
                     ModelTally t = m.Value;
                     csv.Append(string.Join(",", m.Key, t.slots, t.brokenSlots, t.individuals, t.reusedIndividuals, t.drawn ? 1 : 0, t.posed ? 1 : 0, t.hitTarget ? 1 : 0,
                         t.directCreations, t.rootAccepted, t.rootPublished, t.rootCommitted, t.reusedRootCommitted, t.childCommitted,
-                        "\"" + string.Join("; ", t.failures).Replace("\"", "'") + "\"")).Append('\n');
+                        "\"" + string.Join("; ", t.failures).Replace("\"", "'") + "\"", t.rootFailed, t.childAccepted, t.childFailed,
+                        "\"" + string.Join("; ", t.failureKinds.OrderBy(k => k.Key, System.StringComparer.Ordinal).Select(k => k.Key + " " + k.Value)) + "\"")).Append('\n');
                     if (t.size != null) Log("mobplan model " + m.Key + " size: " + t.size);
                     Log("mobplan model " + m.Key + ": slots " + t.slots + " (broken " + t.brokenSlots + ") individuals " + t.individuals + " (on a reused slot "
                         + t.reusedIndividuals + ") drawn=" + t.drawn + " posed=" + t.posed + " hitTarget=" + t.hitTarget + " directSkin=" + t.directCreations
                         + " root cuts accepted/published/committed " + t.rootAccepted + "/" + t.rootPublished + "/" + t.rootCommitted
                         + " (reused individual committed " + t.reusedRootCommitted + ") child cuts committed " + t.childCommitted
+                        + " cut failures root " + t.rootFailed + "/" + t.rootAccepted + " child " + t.childFailed + "/" + t.childAccepted
                         + (t.failures.Count > 0 ? " failures: " + string.Join("; ", t.failures) : ""));
                 }
 
                 File.WriteAllText(Path.Combine(directory, "mobplan-models.csv"), csv.ToString());
+
+                // The cut failures of the whole run, as the driver counted them (once per cut), and the first ones it kept.
+                ProvisionalCutDriver driver = _world.Driver;
+                Log("mobplan cut failures: " + driver.FailureSummary() + "; reported to the check " + _mpFailures.Reported + "; NPC cuts accepted root "
+                    + cutCounts.Values.Sum(c => c.rootAccepted) + " child " + cutCounts.Values.Sum(c => c.childAccepted) + ", failed root " + cutCounts.Values.Sum(c => c.rootFailed)
+                    + " child " + cutCounts.Values.Sum(c => c.childFailed) + ", failures on no accepted NPC cut " + unattributed);
+                for (int i = 0; i < driver.KeptFailureCount; i++)
+                {
+                    ProvisionalCutDriver.CutFailure f = driver.KeptFailure(i);
+                    Accepted a = _accepted.FirstOrDefault(x => x.operation.Equals(f.operation));
+                    string lineage = a != null ? LineageOf(a.fragment) : null;
+                    string model = lineage != null && lineage.StartsWith("npc-") && _mpModelOfName.TryGetValue(lineage.Substring(4), out (string family, bool reused) of) ? of.family : "?";
+                    Log("mobplan cut failure " + (i + 1) + ": operation " + f.operation.value + " frame " + f.frame + " " + MobPlanCutFailureTally.Kind(f) + " kernel " + f.kernelStatus
+                        + " convex " + f.failedConvex + " model " + model + (a != null ? (a.child ? " child" : " root") + " slash " + a.slash : " (no accepted cut of the check)"));
+                }
                 File.WriteAllText(Path.Combine(directory, "mobplan-model-events.csv"),
                     "frame,family,kind\n" + string.Concat(_mpModelEvents.Select(e => e.frame + "," + e.family + "," + e.kind + "\n")));
                 int models = _mpModels.Count(p => p.Key != "?");

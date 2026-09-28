@@ -230,7 +230,10 @@ namespace Zantetsu.Sandbox
                     Accepted root = _accepted.FirstOrDefault(a => !a.child && LineageOf(a.fragment) == "npc-" + previous);
                     string state = root == null ? "no accepted cut" : "op " + root.operation.value + " committed@" + root.committedFrame;
                     _mpReuses.Add(c.CharacterRoot.name + ": " + previous + " -> " + name + " at frame " + Time.frameCount + " (" + state + ")");
-                    if (root == null || root.committedFrame < 0 || root.committedFrame >= Time.frameCount)
+                    // Or its cut failed and was aborted before now (counted by the driver): the slot came back from that.
+                    bool abortedBefore = root != null && FailedBefore(root.operation, Time.frameCount);
+                    if (abortedBefore) _mpReuses[_mpReuses.Count - 1] += " (its cut failed and was aborted)";
+                    if (!abortedBefore && (root == null || root.committedFrame < 0 || root.committedFrame >= Time.frameCount))
                     {
                         _mpReuseViolations.Add(c.CharacterRoot.name + " reused for " + name + " at frame " + Time.frameCount + " while " + previous + "'s cut was " + state);
                     }
@@ -334,6 +337,7 @@ namespace Zantetsu.Sandbox
                 MobPlanEyeViewBegin();
                 MobPlanAllocStagesBegin();
                 MobPlanCloseupsBegin();
+                MobPlanFailuresBegin();
                 Vector3 player = _mpInput.player.transform.position;
                 Log("mobplan begin: frame=" + Time.frameCount + " live=" + _mpLiveAtBegin + " published=" + _mpPublishedAtBegin
                     + " player=" + player.ToString("F3") + " yaw=" + _mpInput.player.transform.eulerAngles.y.ToString("F1", Inv)
@@ -545,6 +549,7 @@ namespace Zantetsu.Sandbox
                 MobPlanHitRegistryClose();
                 MobPlanEyeViewClose();
                 MobPlanCloseupsClose();
+                MobPlanFailuresClose();
                 _mpActors?.Dispose();
                 _mpActors = null;
                 _mpEvents?.Dispose();
