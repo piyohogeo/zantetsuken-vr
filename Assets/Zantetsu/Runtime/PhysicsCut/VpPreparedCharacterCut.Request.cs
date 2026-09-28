@@ -308,6 +308,8 @@ namespace Zantetsu.PhysicsCut
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))
                 { LastFailure="show prepared root"; return Result(VpCharacterCutOutcome.Failed); }
+                // The pieces this character's cuts leave are the lifetime's (DESIGN 7.10); the character itself never is.
+                world.Lifetime?.MarkLineage(Source);
                 taken=physics.TakeShape();
                 PhysicsFragmentOwner owner;
                 try { owner=world.Owners.RegisterAuthored(Source,actor,actorBody,taken,false,Matrix4x4.identity); }

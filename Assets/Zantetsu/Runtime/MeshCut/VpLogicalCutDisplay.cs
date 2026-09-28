@@ -4113,6 +4113,33 @@ namespace Zantetsu.MeshCut
             return false;
         }
 
+        /// <summary>
+        /// Whether the adopted snapshot draws <paramref name="fragment"/> as a branch of an aggregate -- past an Ignored
+        /// boundary, as part of the shape before it. Retiring such a fragment would stop this display
+        /// (<see cref="LogicalCutDisplayHaltReason.RetiredInsideAggregate"/>), so a lifetime policy asks this first.
+        /// False when there is no snapshot or it does not draw the fragment in an aggregate. Reads only.
+        /// </summary>
+        public bool IsDrawnInsideAggregate(LogicalFragmentId fragment)
+        {
+            if (!_hasSnapshot)
+            {
+                return false;
+            }
+
+            for (int b = 0; b < _snapshot.BranchCount; b++)
+            {
+                _snapshot.TryGetBranch(b, out VpMultiCutBranch branch);
+                if (branch.fragment == fragment
+                    && _snapshot.TryGetRenderFragment(branch.renderFragment, out VpMultiCutRenderFragment rf)
+                    && rf.aggregated)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private bool IsAdoptedBranch(LogicalFragmentId fragment)
         {
             for (int b = 0; b < _snapshot.BranchCount; b++)

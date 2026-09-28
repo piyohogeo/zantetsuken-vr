@@ -295,6 +295,15 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>Appends every fragment that has an owner here to <paramref name="into"/>, in no particular order.</summary>
+        public void CopyFragmentsTo(List<LogicalFragmentId> into)
+        {
+            foreach (LogicalFragmentId fragment in _owners.Keys)
+            {
+                into.Add(fragment);
+            }
+        }
+
         public bool TryGet(LogicalFragmentId fragment, out PhysicsFragmentOwner owner)
         {
             return _owners.TryGetValue(fragment, out owner);

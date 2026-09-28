@@ -161,6 +161,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The one caller of the cut path. It is on this object and drives itself from Unity's update.</summary>
         public ProvisionalCutDriver Driver { get; private set; }
 
+        /// <summary>The optional lifetime of characters' cut pieces (DESIGN 7.10), stepped once a frame.</summary>
+        public CutFragmentLifetime Lifetime { get; private set; }
+
         /// <summary>How many geometry failures this world has been told about.</summary>
         public int GeometryFaults => _fault?.Count ?? 0;
 
@@ -216,8 +219,21 @@ namespace Zantetsu.PhysicsCut
             if (_ending && !_released && !TerminationRequested)
             {
                 CarryEnding();
+                return;
+            }
+
+            // Before the frame's collection: a piece retired here leaves the physics and the drawing in the same frame.
+            if (IsReady && !_ending && !TerminationRequested)
+            {
+                using (s_lifetimeMarker.Auto())
+                {
+                    Lifetime?.Step();
+                }
             }
         }
+
+        private static readonly Unity.Profiling.ProfilerMarker s_lifetimeMarker =
+            new Unity.Profiling.ProfilerMarker("Zantetsu.PieceLifetime.Step");
 
         /// <summary>
         /// Builds the world from the profile. It is done once, in <c>Awake</c>, before the driver's first update: this
@@ -380,6 +396,7 @@ namespace Zantetsu.PhysicsCut
             // when the profile switches it on (k may be 0: no impulse); off, every cut keeps the caller's own values.
             Driver.SeparationStrength = profile.SeparationStrength;
             MakeColliderTemplate();
+            Lifetime = new CutFragmentLifetime(this, profile.PieceLifetime);
 
             IsReady = true;
         }
