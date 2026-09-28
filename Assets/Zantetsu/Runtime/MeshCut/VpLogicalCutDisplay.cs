@@ -53,6 +53,36 @@ namespace Zantetsu.MeshCut
         /// longer there, and nothing of the new one is adopted in part to take it away.
         /// </summary>
         RetiredWhileShown = 4,
+
+        /// <summary>
+        /// A need past a limit of <see cref="VpLogicalCutDisplayLimits"/>, or room that could not be made, told to
+        /// <see cref="VpLogicalCutDisplay.RoomFailureHandler"/>: the owner ends the Player, and nothing older is drawn in
+        /// the meantime.
+        /// </summary>
+        RoomNotEstablished = 5,
+    }
+
+    /// <summary>
+    /// How far a display may grow each of its counts. The counts it is made with are where it starts; a collection
+    /// that needs more grows the room it builds in, up to these, and switches to it whole at adoption. A limit equal to
+    /// its first capacity keeps that count fixed. <c>default</c> keeps every count fixed.
+    /// </summary>
+    public readonly struct VpLogicalCutDisplayLimits
+    {
+        public VpLogicalCutDisplayLimits(int commands, int instances, int branches, int candidates)
+        {
+            this.commands = commands;
+            this.instances = instances;
+            this.branches = branches;
+            this.candidates = candidates;
+        }
+
+        public readonly int commands;
+        public readonly int instances;
+        public readonly int branches;
+        public readonly int candidates;
+
+        internal bool IsDefault => commands == 0 && instances == 0 && branches == 0 && candidates == 0;
     }
 
     /// <summary>
@@ -274,9 +304,17 @@ namespace Zantetsu.MeshCut
     /// **Snapshot and adoption.** A collection builds a new snapshot beside the adopted one, over every registration
     /// together, and adopts it only when all of it was built and it fits: the commands, the instances, the display
     /// instances it needs, and the largest stencil arrangement it could need against every registered camera's batch.
-    /// A capacity shortfall alone keeps the previous snapshot drawing, whole: nothing of the new one is adopted or
-    /// uploaded -- but only when that snapshot draws no fragment retired since it was adopted; otherwise the display
-    /// stops (<see cref="LogicalCutDisplayHaltReason.RetiredWhileShown"/>). The body's upload is asked, by the counts and
+    /// **Room grows.** A count that falls short is grown -- at least doubled, never past its limit
+    /// (<see cref="VpLogicalCutDisplayLimits"/>) -- in the room the collection builds in, and the build is tried again,
+    /// within that collection -- at most as many times as the counts can still grow before their limits. Only what nothing draws from is replaced: the snapshot being
+    /// built, the candidate arrays and the scratch. A GPU buffer too small for the candidate is replaced by a new one
+    /// written whole before it is switched to at adoption, and the one replaced is released only after a readback asked
+    /// for when it was replaced has completed; nothing waits for the GPU. A need past a limit, or room that cannot be
+    /// made, is told once to <see cref="RoomFailureHandler"/> and stops the display
+    /// (<see cref="LogicalCutDisplayHaltReason.RoomNotEstablished"/>), so no older snapshot keeps drawing for good.
+    /// Without a handler, a shortfall keeps the previous snapshot drawing, whole, as it always did: nothing of the new
+    /// one is adopted or uploaded -- but only when that snapshot draws no fragment retired since it was adopted;
+    /// otherwise the display stops (<see cref="LogicalCutDisplayHaltReason.RetiredWhileShown"/>). The body's upload is asked, by the counts and
     /// contents it will send, before anything is written; an upload refused after that is not a shortfall and stops the
     /// display as broken. A preparation belongs to the frame and the adopted snapshot it was made for.
     /// </para>
@@ -292,9 +330,9 @@ namespace Zantetsu.MeshCut
     /// never what hides it (see <see cref="VpMultiCutSnapshot"/> for the one exception, an overflow).
     /// </para>
     /// <para>
-    /// **A preparation allocates nothing once the display is made.** The classification's room, the arrangement and the
-    /// batches are made with the display at the sizes its capacities give, filled to a count each time and never
-    /// grown. A cap is read as a look at the adopted snapshot's own vertices, held only while the preparation runs. A
+    /// **A preparation allocates nothing.** The classification's room, the arrangement and the batches are made at the
+    /// sizes the display's room gives, and made again larger only by a collection that grew that room -- never by a
+    /// preparation, which fills them to a count each time. A cap is read as a look at the adopted snapshot's own vertices, held only while the preparation runs. A
     /// preparation runs to its end before another starts: a call into this display made while one is running is
     /// refused before it changes anything.
     /// </para>
@@ -433,21 +471,23 @@ namespace Zantetsu.MeshCut
         private readonly Material _shadowMaterial;
         private readonly Material _provisionalShadowMaterial;
         private readonly VpGpuIndexedGeometryBuffers _buffers;
-        private readonly VpIndexedIndirectDrawBatch _batch;
+        // Replaced only at adoption, by one written whole for the candidate (see the class notes on room).
+        private VpIndexedIndirectDrawBatch _batch;
         private readonly VpStencilCapMaterials _stencilMaterials;
         private readonly VpStencilSettings _settings;
 
         // One slot per camera that may hold stencil work: fixed in number, filled and emptied only by registration.
         private readonly CameraStencil[] _cameraStencils;
-        private readonly int _stencilCommandCapacity;
-        private readonly int _stencilCapVertexCapacity;
+        private int _stencilCommandCapacity;
+        private int _stencilCapVertexCapacity;
 
         // The outward normal of every cap vertex of the adopted snapshot, in its order: the scratch it is gathered in
-        // and the buffer the cap materials read. Fixed at the cap vertex capacity, written by count, never grown.
-        private readonly Vector4[] _capNormals;
-        private readonly GraphicsBuffer _capNormalBuffer;
+        // and the buffer the cap materials read. At the cap vertex capacity, written by count; the buffer is replaced,
+        // written whole, at the adoption of a snapshot it is too small for.
+        private Vector4[] _capNormals;
+        private GraphicsBuffer _capNormalBuffer;
         private int _capNormalCount;
-        private readonly int _stencilCapIndexCapacity;
+        private int _stencilCapIndexCapacity;
 
         // What the stencil batches of cameras no longer registered had counted, so the totals do not go backwards.
         private int _retiredStencilUploads;
@@ -457,8 +497,35 @@ namespace Zantetsu.MeshCut
         private int _retiredStencilCapIssues;
         private readonly MaterialPropertyBlock _properties = new MaterialPropertyBlock();
         private readonly Func<int> _frameSource;
-        private readonly int _commandCapacity;
-        private readonly int _instanceCapacity;
+
+        // The room a collection builds in, and how far it may grow. The adopted side may be smaller for one collection
+        // after a growth: it is read by count only.
+        private int _commandCapacity;
+        private int _instanceCapacity;
+        private int _branchCapacity;
+        private int _candidateCapacity;
+        private readonly int _chainDepth;
+        private readonly VpLogicalCutDisplayLimits _limits;
+
+        // GPU objects replaced by larger ones, each kept until a readback asked for when it was replaced has completed.
+        private readonly List<RetiredGpu> _retiredGpu = new List<RetiredGpu>(2);
+        private bool _retiredReadbackErrorLogged;
+        private bool _roomFailed;
+
+
+        private sealed class RetiredGpu
+        {
+            public IDisposable owner;
+            public UnityEngine.Rendering.AsyncGPUReadbackRequest request;
+            public bool done;
+            public bool error;
+
+            public void Completed(UnityEngine.Rendering.AsyncGPUReadbackRequest completed)
+            {
+                done = true;
+                error = completed.hasError;
+            }
+        }
 
         private readonly List<Shown> _shown = new List<Shown>(2);
 
@@ -474,13 +541,13 @@ namespace Zantetsu.MeshCut
         // just replaced is what the next collection builds in, and sections are reused from the adopted one.
         private VpMultiCutSnapshot _snapshot;
         private VpMultiCutSnapshot _building;
-        private readonly VpCapJobClassification _capJobs;
+        private VpCapJobClassification _capJobs;
 
         // The draw ranges of every registration of the adopted snapshot, and of the one being built, in the snapshot's
         // registration order -- a registration drawn as nothing and one being let go included. They change places with
         // the snapshots on adoption, so a preparation reads the table its snapshot was built with. Both are made with the
         // display at the instance capacity -- every registration holds at least one instance, so there are never more
-        // registrations than instances -- and never grown.
+        // registrations than instances -- and the candidate's is made again larger when the instances grow.
         private GeometryTable _geometries;
         private GeometryTable _candidateGeometries;
 
@@ -517,14 +584,14 @@ namespace Zantetsu.MeshCut
         private long _generation;
 
         // A stencil arrangement being made: for the largest one a candidate could need, checked before adoption, and
-        // for one camera's colours when it is prepared. Made once, at the stencil capacity, and never grown.
-        private readonly VpIndirectCommand[] _candidateStencilCommands;
-        private readonly Matrix4x4[] _candidateStencilTransforms;
-        private readonly VpInstanceClip[] _candidateStencilClips;
-        private readonly int[] _candidateCapIndices;
+        // for one camera's colours when it is prepared. At the stencil capacity, made again larger when it grows.
+        private VpIndirectCommand[] _candidateStencilCommands;
+        private Matrix4x4[] _candidateStencilTransforms;
+        private VpInstanceClip[] _candidateStencilClips;
+        private int[] _candidateCapIndices;
         private readonly VpStencilCapColor[] _candidateStencilColors;
 
-        private readonly int _capRecordCapacity;
+        private int _capRecordCapacity;
         private int _preparationRecordLimit;
         private bool _preparing;
 
@@ -686,7 +753,8 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot snapshot,
             VpMultiCutSnapshot building,
             VpCapJobClassification capJobs,
-            Func<int> frameSource)
+            Func<int> frameSource,
+            in VpLogicalCutDisplayLimits limits)
         {
             _storage = storage;
             _table = table;
@@ -754,6 +822,10 @@ namespace Zantetsu.MeshCut
             _preparationRecordLimit = derived.caps;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
+            _branchCapacity = derived.branches;
+            _candidateCapacity = derived.candidates;
+            _chainDepth = derived.chainDepth;
+            _limits = limits;
             _frameSource = frameSource;
         }
 
@@ -1072,6 +1144,35 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// The same, with how far each count may grow (<see cref="VpLogicalCutDisplayLimits"/>). The capacities given
+        /// are where the display starts. False, as for any other size, when a limit is below its capacity or a size
+        /// derived from the limits is not an int.
+        /// </summary>
+        public static bool TryCreate(
+            VpCpuGeometryStorage storage,
+            VpGeometryReferenceTable table,
+            LogicalCutLedger ledger,
+            IReadOnlyDictionary<int, Material> materialsBySourceIndex,
+            Material shadowMaterial,
+            Material provisionalShadowMaterial,
+            int commandCapacity,
+            int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
+            VpStencilSettings stencilSettings,
+            int gpuVertexInitialCapacity,
+            int gpuIndexInitialCapacity,
+            VpLogicalCutDisplayLimits limits,
+            out VpLogicalCutDisplay display)
+        {
+            return TryCreateCore(
+                storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth, stencilSettings, null,
+                gpuVertexInitialCapacity, gpuIndexInitialCapacity, out display, limits);
+        }
+
+        /// <summary>
         /// The same, with the frame counter given by the caller instead of taken from the engine. It exists for tests,
         /// which have no frame loop to advance.
         /// </summary>
@@ -1116,10 +1217,26 @@ namespace Zantetsu.MeshCut
             Func<int> frameSource,
             int gpuVertexInitialCapacity,
             int gpuIndexInitialCapacity,
-            out VpLogicalCutDisplay display)
+            out VpLogicalCutDisplay display,
+            VpLogicalCutDisplayLimits limits = default)
         {
             display = null;
             if (storage == null || table == null || ledger == null || materialsBySourceIndex == null)
+            {
+                return false;
+            }
+
+            // No limits means every count stays where it starts.
+            if (limits.IsDefault)
+            {
+                limits = new VpLogicalCutDisplayLimits(commandCapacity, instanceCapacity, branchCapacity, candidateCapacity);
+            }
+
+            // Every size the limits give must be an int too, so that no growth can come to one that is not.
+            if (limits.commands < commandCapacity || limits.instances < instanceCapacity || limits.branches < branchCapacity
+                || limits.candidates < candidateCapacity
+                || !TryDeriveCapacities(
+                    limits.commands, limits.instances, limits.branches, limits.candidates, chainDepth, out _))
             {
                 return false;
             }
@@ -1184,7 +1301,7 @@ namespace Zantetsu.MeshCut
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
                     batch, stencilMaterials, capNormals, stencilSettings, commandCapacity, instanceCapacity, derived,
-                    snapshot, building, capJobs, frameSource);
+                    snapshot, building, capJobs, frameSource, limits);
                 taken = true;
                 return true;
             }
@@ -1681,10 +1798,10 @@ namespace Zantetsu.MeshCut
         /// all the same, before anything is written, and a snapshot with no cap vertex writes nothing at all. Nothing
         /// is allocated.
         /// </summary>
-        private void UploadCapNormals(VpMultiCutSnapshot snapshot)
+        private void UploadCapNormals(VpMultiCutSnapshot snapshot, GraphicsBuffer into)
         {
             int vertices = snapshot.CapVertexCount;
-            if (vertices < 0 || vertices > _capNormals.Length)
+            if (vertices < 0 || vertices > _capNormals.Length || vertices > into.count)
             {
                 throw new InvalidOperationException("the snapshot holds more cap vertices than this display's room");
             }
@@ -1702,7 +1819,7 @@ namespace Zantetsu.MeshCut
 
             if (vertices > 0)
             {
-                _capNormalBuffer.SetData(_capNormals, 0, 0, vertices);
+                into.SetData(_capNormals, 0, 0, vertices);
             }
 
             _capNormalCount = vertices;
@@ -1989,10 +2106,23 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // Room for the body now, and for a second render fragment it may take later.
-            if (_commandCount + commands.Length > _commandCapacity
-                || CurrentInstanceCount() + (commands.Length * 2) > _instanceCapacity
-                || (prepared != null && _shown.Count == _shown.Capacity))
+            // Room for the body now, and for a second render fragment it may take later: within the limits, since a
+            // collection grows the room to what it needs. Past a limit is told, not only refused.
+            if (_commandCount + commands.Length > _limits.commands)
+            {
+                ReportRoom("draw commands", _commandCount + commands.Length, _commandCapacity, _limits.commands,
+                    "a body could not be shown");
+                return false;
+            }
+
+            if (CurrentInstanceCount() + (commands.Length * 2) > _limits.instances)
+            {
+                ReportRoom("draw instances", CurrentInstanceCount() + (commands.Length * 2), _instanceCapacity,
+                    _limits.instances, "a body could not be shown");
+                return false;
+            }
+
+            if (prepared != null && _shown.Count == _shown.Capacity)
             {
                 return false;
             }
@@ -2228,10 +2358,24 @@ namespace Zantetsu.MeshCut
             // display instances until the next adoption is not drawing data at all -- it is room in the reference
             // table, and the table is asked by its own rule whether both sides could really be taken.
             int bodyInstances = body.commands.Length * Math.Max(1, body.renderFragmentsShown);
-            if (ShownCommandCount() - body.commands.Length + commands > _commandCapacity
-                || CurrentInstanceCount() - bodyInstances + commands > _instanceCapacity
-                || !_table.HasRoomForGeometriesWithDisplayInstances(registrations))
+            if (ShownCommandCount() - body.commands.Length + commands > _limits.commands)
             {
+                ReportRoom("draw commands", ShownCommandCount() - body.commands.Length + commands, _commandCapacity,
+                    _limits.commands, "a cut could not be committed");
+                return false;
+            }
+
+            if (CurrentInstanceCount() - bodyInstances + commands > _limits.instances)
+            {
+                ReportRoom("draw instances", CurrentInstanceCount() - bodyInstances + commands, _instanceCapacity,
+                    _limits.instances, "a cut could not be committed");
+                return false;
+            }
+
+            if (!_table.HasRoomForGeometriesWithDisplayInstances(registrations))
+            {
+                ReportRoom("geometry references and display instances", registrations, _table.GeometryCapacity,
+                    _table.GeometryLimit, "a cut could not be committed; " + _table.DescribeRoom());
                 return false;
             }
 
@@ -2525,6 +2669,7 @@ namespace Zantetsu.MeshCut
             // Replaced GPU buffers the GPU is past go here as well as at drawing, so that a frame with no camera does not
             // keep them.
             _buffers.ReleaseRetired();
+            ReleaseRetiredRoom();
             if (_hasSnapshot && _settledFrame == frame)
             {
                 // Already settled from the latest state: collecting again would rewrite a frame for nothing.
@@ -2867,12 +3012,32 @@ namespace Zantetsu.MeshCut
             _capNormalBuffer.Dispose();
             _batch.Dispose();
             _buffers.Dispose();
+
+            // Teardown alone waits: for each replaced object's readback, so the GPU is past it when it is released.
+            foreach (RetiredGpu retired in _retiredGpu)
+            {
+                if (!retired.done && !retired.error)
+                {
+                    retired.request.WaitForCompletion();
+                }
+
+                retired.owner.Dispose();
+            }
+
+            _retiredGpu.Clear();
         }
 
         // ----- collection ----------------------------------------------------------------------------------------
 
         private bool TryCollectAndUpload()
         {
+            // 0. The room this collection builds in is the room grown so far: what adoption traded back from the side
+            //    last drawn may be smaller, and nothing draws from it now.
+            if (!TryEnsureCandidateRoom(true, out string roomFailure))
+            {
+                return FailRoom("candidate room", _instanceCapacity, _instanceCapacity, _limits.instances, roomFailure);
+            }
+
             // 1. What each registration is now, read from the ledger, changing nothing.
             _registrations.Clear();
             for (int g = 0; g < _shown.Count; g++)
@@ -2893,8 +3058,8 @@ namespace Zantetsu.MeshCut
                     VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
             }
 
-            // 2. One snapshot of every registration together, beside the adopted one. Room short is an ordinary
-            //    refusal; anything else stops the display, decided here before this frame draws.
+            // 2. One snapshot of every registration together, beside the adopted one. Room short is grown below, or
+            //    told when it cannot be; anything else stops the display, decided here before this frame draws.
             //    <para>
             //    The structure -- the ledger's own validity, the lineage, the candidates, what is Selected and what is
             //    Ignored, and how the Ignored are grouped -- is settled again only when something it was settled from
@@ -2915,16 +3080,35 @@ namespace Zantetsu.MeshCut
             if (structureStillHolds && outcome == VpMultiCutBuildOutcome.CapacityExceeded)
             {
                 // The candidate could not hold that structure. Settling it again is what answers that, and only then
-                // is a shortage this display's to refuse for.
+                // is a shortage this display's to answer.
                 structureStillHolds = false;
                 outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
             }
 
-            CapPolygonBuilds += _building.SectionBuildCount;
-            if (outcome == VpMultiCutBuildOutcome.CapacityExceeded)
+            // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
+            // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
+            // are bounded by what the room and the limits allow, worked out here, and never by a number of their own.
+            int growthsLeft = GrowthsToLimits();
+            for (int growths = 0; outcome == VpMultiCutBuildOutcome.CapacityExceeded; growths++)
             {
-                return RefuseForRoom();
+                CapPolygonBuilds += _building.SectionBuildCount;
+                VpMultiCutShortage shortage = _building.Shortage;
+                if (growths > growthsLeft)
+                {
+                    // Not reachable while every growth takes at least one step: said, not looped on.
+                    return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage),
+                        "more growths than the limits allow (" + growthsLeft + ")");
+                }
+
+                if (!TryGrowFor(shortage, out string failure))
+                {
+                    return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
+                }
+
+                outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
             }
+
+            CapPolygonBuilds += _building.SectionBuildCount;
 
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
@@ -2966,22 +3150,36 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // Fixed capacity, decided before anything is taken or uploaded. The stencil side's room follows from these:
-            // no more volume commands than eight per instance, no more caps than the snapshot holds.
-            // The draw-range table holds one entry per registration in its fixed room. TryShow keeps every registration
-            // at an instance or more within the instance capacity, so this is never short; it is asked here all the
-            // same, before anything is taken, rather than found out while the candidate is built.
-            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity
-                || _shown.Count > _candidateGeometries.Capacity)
+            // Capacity, decided before anything is taken or uploaded, and grown to fit when short -- the snapshot just
+            // built is kept as it is. The stencil side's room follows from these: no more volume commands than eight per
+            // instance, no more caps than the snapshot holds. The draw-range table holds one entry per registration and
+            // grows with the instances, which are never fewer than the registrations; it is asked here all the same,
+            // before anything is taken, rather than found out while the candidate is built.
+            if (commandCount > _commandCapacity && !TryGrow(RoomKind.Commands, commandCount, false, out string commandFailure))
             {
-                return RefuseForRoom();
+                return FailRoom("draw commands", commandCount, _commandCapacity, _limits.commands, commandFailure);
+            }
+
+            long instancesNeeded = Math.Max(instanceCount, _shown.Count);
+            if (instancesNeeded > _instanceCapacity
+                && !TryGrow(RoomKind.Instances, instancesNeeded, false, out string instanceFailure))
+            {
+                return FailRoom("draw instances", instancesNeeded, _instanceCapacity, _limits.instances, instanceFailure);
+            }
+
+            if (_shown.Count > _candidateGeometries.Capacity)
+            {
+                return FailRoom("draw-range table", _shown.Count, _candidateGeometries.Capacity, _limits.instances,
+                    "the table was not grown with the instances");
             }
 
             // 4. The display instances the new snapshot needs that are not held yet. A failure gives back what this
-            //    pass took, and nothing already held is given back early to make room.
+            //    pass took, and nothing already held is given back early to make room; the table grows to its limit
+            //    by itself, so a failure here is past it.
             if (!TryTakeInstances())
             {
-                return RefuseForRoom();
+                return FailRoom("display instances", -1, _table.DisplayInstanceCapacity, _table.DisplayInstanceLimit,
+                    _table.DescribeRoom());
             }
 
             // 5. The candidate, beside the adopted draw data.
@@ -2996,6 +3194,22 @@ namespace Zantetsu.MeshCut
             bool stencilFits = stencilCommands <= _stencilCommandCapacity
                 && capVertices <= _stencilCapVertexCapacity
                 && capIndexCount <= _stencilCapIndexCapacity;
+
+            // A camera's batch is filled again by every preparation, and this frame has prepared none yet, so a batch
+            // smaller than the room is replaced now; the one replaced is released once the GPU is past it. The body's
+            // batch and the cap normals are still drawn from until adoption: larger ones are made here, written in 7,
+            // and switched to in 8.
+            VpIndexedIndirectDrawBatch grownBatch = null;
+            GraphicsBuffer grownNormals = null;
+            if (stencilFits && !TryMakeGpuRoomForCandidate(
+                    commands, instances, capVertices, out grownBatch, out grownNormals, out string gpuFailure))
+            {
+                GiveBackInstancesTakenThisPass();
+                _candidateSides.Clear();
+                return FailRoom("GPU buffers", instances, _batch.InstanceCapacity, _limits.instances, gpuFailure);
+            }
+
+            VpIndexedIndirectDrawBatch bodyBatch = grownBatch ?? _batch;
             if (stencilFits)
             {
                 foreach (CameraStencil slot in _cameraStencils)
@@ -3012,16 +3226,21 @@ namespace Zantetsu.MeshCut
             }
 
             // The body batch is asked too, by exactly the counts and contents it would be sent, before anything is written.
-            if (stencilFits && !_batch.CanUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips))
+            if (stencilFits && !bodyBatch.CanUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips))
             {
                 stencilFits = false;
             }
 
             if (!stencilFits)
             {
+                // Nothing drew from what was made a moment ago.
+                grownBatch?.Dispose();
+                grownNormals?.Dispose();
                 GiveBackInstancesTakenThisPass();
                 _candidateSides.Clear();
-                return RefuseForRoom();
+                return FailRoom("stencil arrangement", stencilCommands, _stencilCommandCapacity, _stencilCommandCapacity,
+                    "cap vertices " + capVertices + " of " + _stencilCapVertexCapacity + ", cap indices " + capIndexCount
+                    + " of " + _stencilCapIndexCapacity + ", or a batch refused the counts");
             }
 
             // 7. The body's upload, by count. The stereo condition is read once, here. It was asked a moment ago with
@@ -3040,15 +3259,17 @@ namespace Zantetsu.MeshCut
                     throw new InvalidOperationException("the cap normals' upload was refused for a test");
                 }
 
-                UploadCapNormals(_building);
+                UploadCapNormals(_building, grownNormals ?? _capNormalBuffer);
                 uploaded = RefuseBodyUploadForTest != null && RefuseBodyUploadForTest()
                     ? false
-                    : _batch.TryUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips, singlePassInstanced);
+                    : bodyBatch.TryUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips, singlePassInstanced);
             }
             catch
             {
                 _broken = true;
                 _candidateSides.Clear();
+                grownBatch?.Dispose();
+                grownNormals?.Dispose();
                 throw;
             }
 
@@ -3056,9 +3277,29 @@ namespace Zantetsu.MeshCut
             {
                 _broken = true;
                 _candidateSides.Clear();
+                grownBatch?.Dispose();
+                grownNormals?.Dispose();
                 throw new InvalidOperationException(
                     "the display batch refused an upload it had accepted by the same counts a moment before; this display "
                     + "stops");
+            }
+
+            // The larger GPU objects hold the whole candidate now: they are switched to here, at the adoption below, and
+            // the ones they replace are kept until the GPU is past them.
+            if (grownNormals != null)
+            {
+                RetireLater(_capNormalBuffer, _capNormalBuffer);
+                _capNormalBuffer = grownNormals;
+                for (int c = 0; c < _stencilMaterials.ColorCount; c++)
+                {
+                    _stencilMaterials.Cap(c).SetBuffer(CapNormalsId, _capNormalBuffer);
+                }
+            }
+
+            if (grownBatch != null)
+            {
+                RetireLater(_batch, _batch.RetirementFence);
+                _batch = grownBatch;
             }
 
             // 8. Everything the GPU needed has arrived: the candidate becomes the adopted snapshot, and the arrays and
@@ -3341,6 +3582,484 @@ namespace Zantetsu.MeshCut
             T held = a;
             a = b;
             b = held;
+        }
+
+        private enum RoomKind
+        {
+            Commands,
+            Instances,
+            Branches,
+            Candidates,
+        }
+
+        /// <summary>
+        /// Called once, on the main thread, when a need is past a limit or room cannot be made, with what was short,
+        /// how much was needed and held, the limit and what came of it. The owner turns that into the common
+        /// termination; the display stops (<see cref="LogicalCutDisplayHaltReason.RoomNotEstablished"/>). Without one,
+        /// a shortfall is refused as it always was, and only <see cref="LastRoomFailure"/> says so.
+        /// </summary>
+        public Action<string> RoomFailureHandler { get; set; }
+
+        /// <summary>The last shortfall that could not be answered by growing, in words; null while there has been none.</summary>
+        public string LastRoomFailure { get; private set; }
+
+        /// <summary>
+        /// Asked when a count is about to grow; when it answers true the memory is taken as not to be had. For tests only,
+        /// to reach what no input can; null otherwise.
+        /// </summary>
+        internal Func<bool> FailRoomAllocationForTest { get; set; }
+
+        /// <summary>How many times a count of this display's room has grown.</summary>
+        public int RoomGrowths { get; private set; }
+
+        /// <summary>GPU objects replaced by larger ones and not yet released: the GPU may still be reading them.</summary>
+        public int RetiredGpuObjects => _retiredGpu.Count;
+
+        public int CommandCapacity => _commandCapacity;
+
+        public int InstanceCapacity => _instanceCapacity;
+
+        public int BranchCapacity => _branchCapacity;
+
+        public int CandidateCapacity => _candidateCapacity;
+
+        /// <summary>This display's room, in words. Log text only.</summary>
+        public string DescribeRoom()
+            => "display room: commands " + _commandCapacity + " (limit " + _limits.commands + "), instances " + _instanceCapacity
+               + " (limit " + _limits.instances + "), branches " + _branchCapacity + " (limit " + _limits.branches + "), candidates "
+               + _candidateCapacity + " (limit " + _limits.candidates + "), grown " + RoomGrowths + " times, replaced GPU objects "
+               + "awaiting release " + _retiredGpu.Count + "; " + _table.DescribeRoom();
+
+        /// <summary>
+        /// Makes every array a collection builds in, and every piece of scratch, at least as large as the room -- the
+        /// snapshot being built too when <paramref name="building"/> says it holds nothing yet. Only what nothing draws
+        /// from is replaced; what it held is rebuilt by every collection. False when memory cannot be had.
+        /// </summary>
+        private bool TryEnsureCandidateRoom(bool building, out string failure)
+        {
+            failure = null;
+            if (!TryDeriveCapacities(
+                    _commandCapacity, _instanceCapacity, _branchCapacity, _candidateCapacity, _chainDepth,
+                    out DerivedCapacities derived))
+            {
+                failure = "a size derived from the room is not an int";
+                return false;
+            }
+
+            try
+            {
+                VpMultiCutCapacities room = derived.Snapshot;
+                if (building && !Holds(_building.Capacities, room))
+                {
+                    _building = new VpMultiCutSnapshot(room);
+                }
+
+                // Shared by the preparations, which never run during a collection.
+                if (!Holds(_capJobs.Capacities, room))
+                {
+                    _capJobs.Release();
+                    _capJobs = new VpCapJobClassification(room);
+                }
+
+                AtLeast(ref _candidateCommands, _commandCapacity);
+                AtLeast(ref _candidateCommandMaterials, _commandCapacity);
+                AtLeast(ref _candidateCommandProvisional, _commandCapacity);
+                AtLeast(ref _candidateTransforms, _instanceCapacity);
+                AtLeast(ref _candidateClips, _instanceCapacity);
+                AtLeast(ref _candidateRfCommandStart, derived.renderFragments);
+                AtLeast(ref _candidateRfCommandCount, derived.renderFragments);
+                AtLeast(ref _candidateRfTransform, derived.renderFragments);
+                AtLeast(ref _candidateCapRecords, derived.caps);
+                if (_candidateGeometries.Capacity < _instanceCapacity)
+                {
+                    _candidateGeometries.Restart(0);
+                    _candidateGeometries = new GeometryTable(_instanceCapacity);
+                }
+
+                AtLeast(ref _candidateStencilCommands, derived.stencilCommands);
+                AtLeast(ref _candidateStencilTransforms, derived.stencilCommands);
+                AtLeast(ref _candidateStencilClips, derived.stencilCommands);
+                AtLeast(ref _candidateCapIndices, derived.capIndices);
+                AtLeast(ref _capNormals, derived.capVertices);
+            }
+            catch (OutOfMemoryException exception)
+            {
+                failure = "memory could not be had: " + exception.Message;
+                return false;
+            }
+
+            // A preparation limit a test lowered stays lowered; one at the room grows with it.
+            if (_preparationRecordLimit == _capRecordCapacity)
+            {
+                _preparationRecordLimit = derived.caps;
+            }
+
+            _capRecordCapacity = derived.caps;
+            _stencilCommandCapacity = derived.stencilCommands;
+            _stencilCapVertexCapacity = derived.capVertices;
+            _stencilCapIndexCapacity = derived.capIndices;
+            return true;
+        }
+
+        private static bool Holds(in VpMultiCutCapacities have, in VpMultiCutCapacities need)
+        {
+            return have.branches >= need.branches && have.candidates >= need.candidates
+                && have.renderFragments >= need.renderFragments && have.caps >= need.caps && have.chainDepth >= need.chainDepth;
+        }
+
+        private static void AtLeast<T>(ref T[] array, int length)
+        {
+            if (array.Length < length)
+            {
+                array = new T[length];
+            }
+        }
+
+        /// <summary>
+        /// Grows one count to at least <paramref name="needed"/> -- at least doubling it, never past its limit -- and the
+        /// room built in with it. False, changing no count, when the need is past the limit or the room cannot be made.
+        /// </summary>
+        private bool TryGrow(RoomKind kind, long needed, bool building, out string failure)
+        {
+            failure = null;
+            int held = RoomOf(kind);
+            int limit = LimitOf(kind);
+            needed = Math.Max(needed, held + 1L);
+            if (needed > limit)
+            {
+                failure = "past the limit";
+                return false;
+            }
+
+            int grown = (int)Math.Min(limit, Math.Max(needed, held * 2L));
+            int commands = _commandCapacity;
+            int instances = _instanceCapacity;
+            int branches = _branchCapacity;
+            int candidates = _candidateCapacity;
+            SetRoom(kind, grown);
+            bool refusedForTest = FailRoomAllocationForTest != null && FailRoomAllocationForTest();
+            if (refusedForTest)
+            {
+                failure = "memory could not be had: refused for a test";
+            }
+
+            if (refusedForTest || !TryEnsureCandidateRoom(building, out failure))
+            {
+                _commandCapacity = commands;
+                _instanceCapacity = instances;
+                _branchCapacity = branches;
+                _candidateCapacity = candidates;
+                return false;
+            }
+
+            RoomGrowths++;
+            Debug.Log("VpLogicalCutDisplay: " + NameOf(kind) + " grown from " + held + " to " + grown + " (needed " + needed
+                      + ", limit " + limit + "); " + DescribeRoom());
+            return true;
+        }
+
+        /// <summary>
+        /// How many growths the room can still take, every count from where it is to its limit, each growth at least
+        /// doubling (or reaching the limit). The bound of one collection's builds.
+        /// </summary>
+        private int GrowthsToLimits()
+        {
+            return StepsToLimit(_commandCapacity, _limits.commands) + StepsToLimit(_instanceCapacity, _limits.instances)
+                + StepsToLimit(_branchCapacity, _limits.branches) + StepsToLimit(_candidateCapacity, _limits.candidates);
+        }
+
+        private static int StepsToLimit(int held, int limit)
+        {
+            int steps = 0;
+            for (long at = held; at < limit; steps++)
+            {
+                at = Math.Min(limit, Math.Max(at + 1L, at * 2L));
+            }
+
+            return steps;
+        }
+
+        /// <summary>What a snapshot shortage is answered with: the count its room follows from, grown.</summary>
+        private bool TryGrowFor(VpMultiCutShortage shortage, out string failure)
+        {
+            switch (shortage)
+            {
+                case VpMultiCutShortage.Branches:
+                    return TryGrow(RoomKind.Branches, _branchCapacity + 1L, true, out failure);
+                case VpMultiCutShortage.Candidates:
+                    return TryGrow(RoomKind.Candidates, _candidateCapacity + 1L, true, out failure);
+                case VpMultiCutShortage.RenderFragments:
+                case VpMultiCutShortage.Caps:
+                    // Render fragments are the instances' own number, and caps eight per render fragment.
+                    return TryGrow(RoomKind.Instances, _instanceCapacity + 1L, true, out failure);
+                default:
+                    // The chain depth is a limit of the lineage, not room to grow.
+                    failure = "the chain depth is not grown";
+                    return false;
+            }
+        }
+
+        private int RoomOf(RoomKind kind)
+        {
+            switch (kind)
+            {
+                case RoomKind.Commands: return _commandCapacity;
+                case RoomKind.Instances: return _instanceCapacity;
+                case RoomKind.Branches: return _branchCapacity;
+                default: return _candidateCapacity;
+            }
+        }
+
+        private int LimitOf(RoomKind kind)
+        {
+            switch (kind)
+            {
+                case RoomKind.Commands: return _limits.commands;
+                case RoomKind.Instances: return _limits.instances;
+                case RoomKind.Branches: return _limits.branches;
+                default: return _limits.candidates;
+            }
+        }
+
+        private void SetRoom(RoomKind kind, int value)
+        {
+            switch (kind)
+            {
+                case RoomKind.Commands: _commandCapacity = value; break;
+                case RoomKind.Instances: _instanceCapacity = value; break;
+                case RoomKind.Branches: _branchCapacity = value; break;
+                default: _candidateCapacity = value; break;
+            }
+        }
+
+        private static string NameOf(RoomKind kind)
+        {
+            switch (kind)
+            {
+                case RoomKind.Commands: return "draw commands";
+                case RoomKind.Instances: return "draw instances";
+                case RoomKind.Branches: return "branches";
+                default: return "candidates";
+            }
+        }
+
+        private static string ShortageName(VpMultiCutShortage shortage)
+        {
+            switch (shortage)
+            {
+                case VpMultiCutShortage.Branches: return "branches";
+                case VpMultiCutShortage.Candidates: return "candidates";
+                case VpMultiCutShortage.ChainDepth: return "chain depth";
+                case VpMultiCutShortage.RenderFragments: return "render fragments (draw instances)";
+                case VpMultiCutShortage.Caps: return "caps (draw instances)";
+                default: return "snapshot room";
+            }
+        }
+
+        private int HeldFor(VpMultiCutShortage shortage)
+        {
+            switch (shortage)
+            {
+                case VpMultiCutShortage.Branches: return _branchCapacity;
+                case VpMultiCutShortage.Candidates: return _candidateCapacity;
+                case VpMultiCutShortage.ChainDepth: return _chainDepth;
+                default: return _instanceCapacity;
+            }
+        }
+
+        private int LimitFor(VpMultiCutShortage shortage)
+        {
+            switch (shortage)
+            {
+                case VpMultiCutShortage.Branches: return _limits.branches;
+                case VpMultiCutShortage.Candidates: return _limits.candidates;
+                case VpMultiCutShortage.ChainDepth: return _chainDepth;
+                default: return _limits.instances;
+            }
+        }
+
+        /// <summary>
+        /// Every GPU object the candidate needs larger than it is: each registered camera's stencil batch, replaced now
+        /// -- this frame has prepared none yet, and every preparation fills its batch again -- and the body's batch and
+        /// the cap-normal buffer, made here and handed back to be written and switched to at adoption. False, having
+        /// made nothing that is kept, when the device cannot tell when a replaced object is no longer used or a buffer
+        /// cannot be made.
+        /// </summary>
+        private bool TryMakeGpuRoomForCandidate(
+            int commands, int instances, int capVertices, out VpIndexedIndirectDrawBatch grownBatch,
+            out GraphicsBuffer grownNormals, out string failure)
+        {
+            grownBatch = null;
+            grownNormals = null;
+            failure = null;
+            bool cameraShort = false;
+            foreach (CameraStencil slot in _cameraStencils)
+            {
+                cameraShort |= slot != null && IsSmallerThanRoom(slot.batch);
+            }
+
+            bool bodyShort = commands > _batch.CommandCapacity || instances > _batch.InstanceCapacity;
+            bool normalsShort = capVertices > _capNormalBuffer.count;
+            if (!cameraShort && !bodyShort && !normalsShort)
+            {
+                return true;
+            }
+
+            if (!SystemInfo.supportsAsyncGPUReadback)
+            {
+                failure = "the device cannot tell when a replaced buffer is no longer used (no asynchronous readback)";
+                return false;
+            }
+
+            try
+            {
+                if (bodyShort)
+                {
+                    grownBatch = new VpIndexedIndirectDrawBatch(_commandCapacity, _instanceCapacity);
+                }
+
+                if (normalsShort)
+                {
+                    grownNormals = new GraphicsBuffer(
+                        GraphicsBuffer.Target.Structured, Math.Max(1, _stencilCapVertexCapacity), sizeof(float) * 4);
+                }
+
+                for (int i = 0; i < _cameraStencils.Length; i++)
+                {
+                    CameraStencil slot = _cameraStencils[i];
+                    if (slot == null || !IsSmallerThanRoom(slot.batch))
+                    {
+                        continue;
+                    }
+
+                    var batch = new VpStencilCapBatch(
+                        _settings.maxStencilColors, _stencilCommandCapacity, _stencilCommandCapacity,
+                        _stencilCapVertexCapacity, _stencilCapIndexCapacity);
+                    VpStencilCapBatch replaced = slot.batch;
+                    slot.batch = batch;
+                    slot.preparedFrame = int.MinValue;
+                    slot.preparedGeneration = -1;
+                    slot.preparation = default;
+                    RetireStencilLater(replaced);
+                }
+            }
+            catch (Exception exception)
+            {
+                grownBatch?.Dispose();
+                grownNormals?.Dispose();
+                grownBatch = null;
+                grownNormals = null;
+                failure = "a GPU buffer could not be made: " + exception.Message;
+                return false;
+            }
+
+            Debug.Log("VpLogicalCutDisplay: GPU room made for " + commands + " commands, " + instances + " instances and "
+                      + capVertices + " cap vertices (body batch " + (bodyShort ? "replaced" : "kept") + ", cap normals "
+                      + (normalsShort ? "replaced" : "kept") + ", camera batches " + (cameraShort ? "replaced" : "kept") + ")");
+            return true;
+        }
+
+        private bool IsSmallerThanRoom(VpStencilCapBatch batch)
+        {
+            return batch.CommandCapacity < _stencilCommandCapacity || batch.CapVertexCapacity < _stencilCapVertexCapacity
+                || batch.CapIndexCapacity < _stencilCapIndexCapacity;
+        }
+
+        /// <summary>A camera's batch replaced: its counts are kept, and it is released once the GPU is past it.</summary>
+        private void RetireStencilLater(VpStencilCapBatch batch)
+        {
+            _retiredStencilUploads += batch.Uploads;
+            _retiredStencilBufferWrites += batch.BufferWrites;
+            _retiredStencilInitIssues += batch.StencilInitIssues;
+            _retiredStencilVolumeIssues += batch.VolumeIssues;
+            _retiredStencilCapIssues += batch.CapIssues;
+            RetireLater(batch, batch.RetirementFence);
+        }
+
+        /// <summary>
+        /// Keeps <paramref name="owner"/> until a readback of <paramref name="fence"/>, asked for now, has completed:
+        /// the GPU is then past everything issued from it before. One whose readback cannot be asked for, or fails, is
+        /// kept until Dispose. Never waits.
+        /// </summary>
+        private void RetireLater(IDisposable owner, GraphicsBuffer fence)
+        {
+            var retired = new RetiredGpu { owner = owner };
+            try
+            {
+                retired.request = UnityEngine.Rendering.AsyncGPUReadback.Request(fence, fence.stride, 0, retired.Completed);
+            }
+            catch (Exception)
+            {
+                retired.error = true;
+            }
+
+            _retiredGpu.Add(retired);
+        }
+
+        /// <summary>Releases, once each, the replaced objects whose readback has completed. Never waits.</summary>
+        private void ReleaseRetiredRoom()
+        {
+            for (int i = _retiredGpu.Count - 1; i >= 0; i--)
+            {
+                RetiredGpu retired = _retiredGpu[i];
+                if (retired.error)
+                {
+                    if (!_retiredReadbackErrorLogged)
+                    {
+                        _retiredReadbackErrorLogged = true;
+                        Debug.LogError("VpLogicalCutDisplay: a readback of a replaced GPU object failed; it is kept until Dispose.");
+                    }
+
+                    continue;
+                }
+
+                if (!retired.done)
+                {
+                    continue;
+                }
+
+                retired.owner.Dispose();
+                _retiredGpu.RemoveAt(i);
+            }
+        }
+
+        /// <summary>
+        /// A shortfall of a collection that growing could not answer. With a handler it is told once, the display stops
+        /// and the collection is refused, so no older snapshot keeps drawing; without one it is refused for room, as it
+        /// always was.
+        /// </summary>
+        private bool FailRoom(string kind, long needed, long held, long limit, string result)
+        {
+            if (!ReportRoom(kind, needed, held, limit, result))
+            {
+                return RefuseForRoom();
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Tells a shortfall past a limit, or room that could not be made, to <see cref="RoomFailureHandler"/>, once,
+        /// and stops the display. False when there is no handler, which leaves the display as it is.
+        /// </summary>
+        private bool ReportRoom(string kind, long needed, long held, long limit, string result)
+        {
+            LastRoomFailure = "the display's " + kind + " could not be given room: " + (needed < 0 ? "more" : needed.ToString())
+                              + " needed, " + held + " held, limit " + limit + " -- " + result;
+            Action<string> handler = RoomFailureHandler;
+            if (handler == null)
+            {
+                return false;
+            }
+
+            Halt(LogicalCutDisplayHaltReason.RoomNotEstablished);
+            if (!_roomFailed)
+            {
+                _roomFailed = true;
+                handler(LastRoomFailure + " (" + DescribeRoom() + ")");
+            }
+
+            return true;
         }
 
         /// <summary>

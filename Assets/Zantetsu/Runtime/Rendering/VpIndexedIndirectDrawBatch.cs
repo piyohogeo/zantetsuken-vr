@@ -107,6 +107,12 @@ namespace Zantetsu.Rendering
 
         public int InstanceCapacity { get; }
 
+        /// <summary>
+        /// A buffer of this batch for an owner that replaces it to read back asynchronously: once that readback has
+        /// completed, the GPU is past every draw that was issued from this batch before it was asked for.
+        /// </summary>
+        public GraphicsBuffer RetirementFence => _instanceBuffer;
+
         public int CommandCount { get; private set; }
 
         /// <summary>The number of logical instances, one per uploaded transform.</summary>

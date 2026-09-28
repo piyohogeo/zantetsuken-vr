@@ -98,6 +98,10 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int backgroundWorkerCount = 2;
 
         [Header("Display (counts)")]
+        [Tooltip(
+            "Where each display count starts. A collection that needs more grows it -- at least doubling, never past its "
+            + "limit below -- and switches to the larger room whole at a drawing boundary. A need past a limit ends the "
+            + "Player (DESIGN 4).")]
         [SerializeField] private int drawCommandCapacity = 256;
         [SerializeField] private int drawInstanceCapacity = 512;
         [SerializeField] private int geometryReferenceCapacity = 512;
@@ -105,6 +109,14 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int branchCapacity = 128;
         [SerializeField] private int candidateCapacity = 512;
         [SerializeField] private int chainDepth = 16;
+
+        [Tooltip("How far each display count may grow; at least its first capacity. Equal keeps that count fixed.")]
+        [SerializeField] private int drawCommandCapacityLimit = 2048;
+        [SerializeField] private int drawInstanceCapacityLimit = 4096;
+        [SerializeField] private int geometryReferenceCapacityLimit = 4096;
+        [SerializeField] private int displayInstanceCapacityLimit = 4096;
+        [SerializeField] private int branchCapacityLimit = 1024;
+        [SerializeField] private int candidateCapacityLimit = 4096;
 
         [Header("Stencil caps")]
         [SerializeField] private int maxStencilColours = 4;
@@ -219,6 +231,15 @@ namespace Zantetsu.PhysicsCut
 
         public int CandidateCapacity => candidateCapacity;
 
+        public int GeometryReferenceCapacityLimit => geometryReferenceCapacityLimit;
+
+        public int DisplayInstanceCapacityLimit => displayInstanceCapacityLimit;
+
+        /// <summary>How far the display's counts may grow, from the limits above.</summary>
+        public VpLogicalCutDisplayLimits DisplayLimits =>
+            new VpLogicalCutDisplayLimits(
+                drawCommandCapacityLimit, drawInstanceCapacityLimit, branchCapacityLimit, candidateCapacityLimit);
+
         public int ChainDepth => chainDepth;
 
         public int MaxIncompleteCuts => maxIncompleteCuts;
@@ -305,6 +326,13 @@ namespace Zantetsu.PhysicsCut
                      || chainDepth <= 0)
             {
                 reason = "the display's counts must be positive";
+            }
+            else if (drawCommandCapacityLimit < drawCommandCapacity || drawInstanceCapacityLimit < drawInstanceCapacity
+                     || geometryReferenceCapacityLimit < geometryReferenceCapacity
+                     || displayInstanceCapacityLimit < displayInstanceCapacity || branchCapacityLimit < branchCapacity
+                     || candidateCapacityLimit < candidateCapacity)
+            {
+                reason = "a display count's limit must be at least its first capacity";
             }
             else if (maxStencilColours <= 0 || stencilCameraCapacity <= 0)
             {

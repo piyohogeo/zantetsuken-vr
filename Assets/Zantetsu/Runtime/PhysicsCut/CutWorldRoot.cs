@@ -292,13 +292,14 @@ namespace Zantetsu.PhysicsCut
             // Pages that cannot be committed later are the same cause, told when they happen.
             Storage.BackingFailureHandler = RequestTermination;
             References = new VpGeometryReferenceTable(
-                Storage, profile.GeometryReferenceCapacity, profile.DisplayInstanceCapacity);
+                Storage, profile.GeometryReferenceCapacity, profile.DisplayInstanceCapacity,
+                profile.GeometryReferenceCapacityLimit, profile.DisplayInstanceCapacityLimit);
 
             if (!VpLogicalCutDisplay.TryCreate(
                     Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
                     profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
                     profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
-                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity,
+                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
                     out VpLogicalCutDisplay display))
             {
                 // The room the display needs, or the stencil configuration it requires, could not be established.
@@ -316,6 +317,10 @@ namespace Zantetsu.PhysicsCut
 
             Display = display;
             Display.BackingFailureHandler = RequestTermination;
+
+            // Display room past its limits, or room that could not be made, is the same common termination: the
+            // display stops rather than keep drawing an older snapshot while the game goes on.
+            Display.RoomFailureHandler = RequestTermination;
             if (usePalette)
             {
                 VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);

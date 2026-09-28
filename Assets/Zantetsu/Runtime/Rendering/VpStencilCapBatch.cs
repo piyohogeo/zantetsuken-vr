@@ -124,6 +124,18 @@ namespace Zantetsu.Rendering
 
         public int CapIndexCapacity { get; }
 
+        /// <summary>
+        /// A buffer of this batch for an owner that replaces it to read back asynchronously: once that readback has
+        /// completed, the GPU is past every draw that was issued from this batch before it was asked for.
+        /// </summary>
+        public GraphicsBuffer RetirementFence => _capVertexBuffer;
+
+        /// <summary>The volume commands this batch can hold.</summary>
+        public int CommandCapacity => _volumes.CommandCapacity;
+
+        /// <summary>The volume instances this batch can hold.</summary>
+        public int InstanceCapacity => _volumes.InstanceCapacity;
+
         /// <summary>How many colours the last upload settled.</summary>
         public int ColorCount => _colorCount;
 
