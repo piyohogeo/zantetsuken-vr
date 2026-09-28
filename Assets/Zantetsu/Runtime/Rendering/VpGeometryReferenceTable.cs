@@ -3,13 +3,14 @@ using System;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Fixed-capacity, main-thread lifetime table of geometry references and the display instances that use them
-    /// (DESIGN 4.5.3), over a <see cref="VpCpuGeometryStorage"/> that must outlive the table. The table is the storage's
-    /// only geometry reference manager for the storage's whole lifetime: a second table over the same storage cannot be
-    /// constructed. The table neither owns nor disposes the storage, and it owns no read leases.
+    /// Main-thread lifetime table of geometry references and the display instances that use them (DESIGN 4.5.3), made
+    /// at a first capacity of each and grown, when a slot is needed and none is free, up to a limit of each, over a
+    /// <see cref="VpCpuGeometryStorage"/> that must outlive the table. The table is the storage's only geometry reference
+    /// manager for the storage's whole lifetime: a second table over the same storage cannot be constructed. The table
+    /// neither owns nor disposes the storage, and it owns no read leases.
     /// <para>
     /// A geometry is registered from a stored geometry whose vertices are committed and whose index range is Published
-    /// in the storage, at most once per index range. Display instances, up to the instance capacity, reference a live
+    /// in the storage, at most once per index range. Display instances, up to the instance limit, reference a live
     /// geometry; each instance is retired once. Retiring the last instance does not retire the geometry, which can gain
     /// instances again. Retiring a geometry is a separate, explicit step that succeeds only while no instance references
     /// it: it retires the index range in the storage exactly once and ends the registration, after which no instance can
@@ -44,8 +45,12 @@ namespace Zantetsu.Rendering
         private readonly VpCpuGeometryStorage _storage;
         private readonly int _tableId;
         private readonly uint _lastGeneration;
-        private readonly GeometrySlot[] _geometries;
-        private readonly InstanceSlot[] _instances;
+        // Grown by copying into a larger array, never shrunk: a token names a slot by its index and generation, and both
+        // survive the copy.
+        private GeometrySlot[] _geometries;
+        private InstanceSlot[] _instances;
+        private readonly int _geometryLimit;
+        private readonly int _instanceLimit;
         // Zero means unregistered; otherwise the current index descriptor's geometry slot plus one.
         private readonly int[] _geometryOfIndexDescriptor;
 
@@ -56,12 +61,30 @@ namespace Zantetsu.Rendering
         /// nothing that can fail follows a successful claim.
         /// </summary>
         public VpGeometryReferenceTable(VpCpuGeometryStorage storage, int geometryCapacity, int displayInstanceCapacity)
-            : this(storage, geometryCapacity, displayInstanceCapacity, uint.MaxValue)
+            : this(storage, geometryCapacity, displayInstanceCapacity, geometryCapacity, displayInstanceCapacity, uint.MaxValue)
+        {
+        }
+
+        /// <summary>
+        /// A table that starts at the given capacities and grows each, when no usable slot is free, up to its limit.
+        /// A limit below its capacity is refused.
+        /// </summary>
+        public VpGeometryReferenceTable(
+            VpCpuGeometryStorage storage, int geometryCapacity, int displayInstanceCapacity, int geometryLimit,
+            int displayInstanceLimit)
+            : this(storage, geometryCapacity, displayInstanceCapacity, geometryLimit, displayInstanceLimit, uint.MaxValue)
         {
         }
 
         /// <summary>A table whose last generation is lowered, so tests can reach it.</summary>
         internal VpGeometryReferenceTable(VpCpuGeometryStorage storage, int geometryCapacity, int displayInstanceCapacity, uint lastGeneration)
+            : this(storage, geometryCapacity, displayInstanceCapacity, geometryCapacity, displayInstanceCapacity, lastGeneration)
+        {
+        }
+
+        private VpGeometryReferenceTable(
+            VpCpuGeometryStorage storage, int geometryCapacity, int displayInstanceCapacity, int geometryLimit,
+            int displayInstanceLimit, uint lastGeneration)
         {
             if (storage == null)
             {
@@ -78,6 +101,16 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(displayInstanceCapacity), displayInstanceCapacity, "Must not be negative.");
             }
 
+            if (geometryLimit < geometryCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(geometryLimit), geometryLimit, "Must not be below the capacity.");
+            }
+
+            if (displayInstanceLimit < displayInstanceCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(displayInstanceLimit), displayInstanceLimit, "Must not be below the capacity.");
+            }
+
             if (lastGeneration < 1)
             {
                 throw new ArgumentOutOfRangeException(nameof(lastGeneration), lastGeneration, "Must be at least 1.");
@@ -87,6 +120,8 @@ namespace Zantetsu.Rendering
             _lastGeneration = lastGeneration;
             _geometries = new GeometrySlot[geometryCapacity];
             _instances = new InstanceSlot[displayInstanceCapacity];
+            _geometryLimit = geometryLimit;
+            _instanceLimit = displayInstanceLimit;
             _geometryOfIndexDescriptor = new int[storage.IndexDescriptorCapacity];
             _tableId = VpIndexRangeLifecycleTable.NextTableId(ref s_lastTableId);
 
@@ -116,6 +151,20 @@ namespace Zantetsu.Rendering
         }
 
         public int DisplayInstanceCapacity => _instances.Length;
+
+        /// <summary>How many geometry slots this table may grow to.</summary>
+        public int GeometryLimit => _geometryLimit;
+
+        /// <summary>How many display instance slots this table may grow to.</summary>
+        public int DisplayInstanceLimit => _instanceLimit;
+
+        /// <summary>How many times either slot array has grown.</summary>
+        public int GrowthCount { get; private set; }
+
+        /// <summary>The table's room, in words. Log text only.</summary>
+        public string DescribeRoom()
+            => "geometries " + LiveGeometryCount + " live of " + _geometries.Length + " (limit " + _geometryLimit + "), display instances "
+               + LiveDisplayInstanceCount + " live of " + _instances.Length + " (limit " + _instanceLimit + "), grown " + GrowthCount + " times";
 
         public int LiveGeometryCount { get; private set; }
 
@@ -282,6 +331,8 @@ namespace Zantetsu.Rendering
         // The one rule for choosing a slot, kept in one place: a slot is usable while it is not live and its generation
         // has not reached the last one. Finding and taking are separate so that a caller needing two slots can find
         // both before taking either.
+        // When none is free and the limit allows, the array grows and the first new slot is the one found: growing
+        // takes nothing, so a caller that finds one slot and not the other still changes nothing but the room.
         private bool TryFindGeometrySlot(out int slot)
         {
             for (int s = 0; s < _geometries.Length; s++)
@@ -293,8 +344,14 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            slot = -1;
-            return false;
+            slot = _geometries.Length;
+            if (!TryGrow(ref _geometries, _geometryLimit))
+            {
+                slot = -1;
+                return false;
+            }
+
+            return true;
         }
 
         private bool TryFindInstanceSlot(out int slot)
@@ -308,8 +365,38 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            slot = -1;
-            return false;
+            slot = _instances.Length;
+            if (!TryGrow(ref _instances, _instanceLimit))
+            {
+                slot = -1;
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryGrow<T>(ref T[] slots, int limit)
+        {
+            if (slots.Length >= limit)
+            {
+                return false;
+            }
+
+            int grown = (int)Math.Min(limit, Math.Max(slots.Length + 1L, slots.Length * 2L));
+            T[] larger;
+            try
+            {
+                larger = new T[grown];
+            }
+            catch (OutOfMemoryException)
+            {
+                return false;
+            }
+
+            Array.Copy(slots, larger, slots.Length);
+            slots = larger;
+            GrowthCount++;
+            return true;
         }
 
         /// <summary>
@@ -325,7 +412,8 @@ namespace Zantetsu.Rendering
                 return true;
             }
 
-            int geometries = 0;
+            // The slots the limit still allows count as room: finding one grows the array to it.
+            long geometries = (long)_geometryLimit - _geometries.Length;
             for (int s = 0; s < _geometries.Length && geometries < count; s++)
             {
                 if (!_geometries[s].live && _geometries[s].generation != _lastGeneration)
@@ -334,7 +422,7 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            int instances = 0;
+            long instances = (long)_instanceLimit - _instances.Length;
             for (int s = 0; s < _instances.Length && instances < count; s++)
             {
                 if (!_instances[s].live && _instances[s].generation != _lastGeneration)

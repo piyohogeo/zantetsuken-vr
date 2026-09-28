@@ -71,6 +71,31 @@ namespace Zantetsu.MeshCut
     }
 
     /// <summary>
+    /// Which room a build answered <see cref="VpMultiCutBuildOutcome.CapacityExceeded"/> for, so that the owner of the
+    /// room can tell which of its capacities to give more of -- or say which one it could not.
+    /// </summary>
+    public enum VpMultiCutShortage
+    {
+        /// <summary>The last build was not refused for room.</summary>
+        None = 0,
+
+        /// <summary>Logical branches, or the walk over them, whose room follows from the branches.</summary>
+        Branches = 1,
+
+        /// <summary>Candidates over every branch together.</summary>
+        Candidates = 2,
+
+        /// <summary>A chain longer than the chain depth, or a chain checked that does not fit the room derived from it.</summary>
+        ChainDepth = 3,
+
+        /// <summary>Render fragments.</summary>
+        RenderFragments = 4,
+
+        /// <summary>Caps, their conditions or their sections.</summary>
+        Caps = 5,
+    }
+
+    /// <summary>
     /// What made a build <see cref="VpMultiCutBuildOutcome.InvalidInput"/>. The conservative numeric check before the walk
     /// and a value that really came out not finite in what would be drawn are different reasons and are never merged.
     /// </summary>
@@ -667,6 +692,14 @@ namespace Zantetsu.MeshCut
         public VpMultiCutCapacities Capacities => _capacities;
 
         /// <summary>
+        /// Which room the last build was short of, when it answered <see cref="VpMultiCutBuildOutcome.CapacityExceeded"/>;
+        /// <see cref="VpMultiCutShortage.None"/> otherwise.
+        /// </summary>
+        public VpMultiCutShortage Shortage => _shortage;
+
+        private VpMultiCutShortage _shortage;
+
+        /// <summary>
         /// How many box-and-plane sections the last build actually took -- not reused from this build's own earlier caps
         /// or from the snapshot it was told to reuse from. Counted whether or not that build succeeded.
         /// </summary>
@@ -938,6 +971,7 @@ namespace Zantetsu.MeshCut
             Clear();
             _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None;
+            _shortage = VpMultiCutShortage.None;
             SectionBuildCount = 0;
             if (reuseFrom == this || (reuseFrom != null && !reuseFrom.IsBuilt))
             {
@@ -1006,6 +1040,7 @@ namespace Zantetsu.MeshCut
             Clear();
             _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None;
+            _shortage = VpMultiCutShortage.None;
             SectionBuildCount = 0;
             // The same validation the ordinary build makes, in the same order, with only the checks the settled
             // structure has already answered left out.
@@ -1015,12 +1050,19 @@ namespace Zantetsu.MeshCut
                 return Fail(checkedInputs);
             }
 
-            if (structure._branchCount > _branches.Length
-                || structure._candidateCount > _candidates.Length
-                || structure._candidateCount > _states.Length
-                || structure._renderFragmentCount > _renderFragments.Length)
+            if (structure._branchCount > _branches.Length)
             {
-                return Fail(VpMultiCutBuildOutcome.CapacityExceeded);
+                return Fail(Short(VpMultiCutShortage.Branches));
+            }
+
+            if (structure._candidateCount > _candidates.Length || structure._candidateCount > _states.Length)
+            {
+                return Fail(Short(VpMultiCutShortage.Candidates));
+            }
+
+            if (structure._renderFragmentCount > _renderFragments.Length)
+            {
+                return Fail(Short(VpMultiCutShortage.RenderFragments));
             }
 
             Array.Copy(structure._branches, _branches, structure._branchCount);
@@ -1151,6 +1193,13 @@ namespace Zantetsu.MeshCut
             }
 
             return outcome;
+        }
+
+        /// <summary>Room short, and which.</summary>
+        private VpMultiCutBuildOutcome Short(VpMultiCutShortage which)
+        {
+            _shortage = which;
+            return VpMultiCutBuildOutcome.CapacityExceeded;
         }
 
         /// <summary>Invalid input, and why.</summary>
@@ -1495,7 +1544,7 @@ namespace Zantetsu.MeshCut
 
                         if (top + 2 > _stack.Length)
                         {
-                            return VpMultiCutBuildOutcome.CapacityExceeded;
+                            return Short(VpMultiCutShortage.Branches);
                         }
 
                         _stack[top++] = published.negative;
@@ -1525,7 +1574,7 @@ namespace Zantetsu.MeshCut
         {
             if (_branchCount >= _branches.Length)
             {
-                return VpMultiCutBuildOutcome.CapacityExceeded;
+                return Short(VpMultiCutShortage.Branches);
             }
 
             VpMultiCutBuildOutcome collected = Collect(
@@ -1571,8 +1620,11 @@ namespace Zantetsu.MeshCut
                     return VpMultiCutBuildOutcome.Built;
                 case VpClipCandidates.CollectOutcome.NotCollectable:
                     return Invalid(VpMultiCutInvalidInput.Lineage);
+                case VpClipCandidates.CollectOutcome.CandidateOverflow when into == _candidates:
+                    return Short(VpMultiCutShortage.Candidates);
                 default:
-                    return VpMultiCutBuildOutcome.CapacityExceeded;
+                    // The chain itself, or a chain read only to be checked, whose room is the chain depth's.
+                    return Short(VpMultiCutShortage.ChainDepth);
             }
         }
 
@@ -1635,7 +1687,7 @@ namespace Zantetsu.MeshCut
 
                 if (_renderFragmentCount >= _renderFragments.Length)
                 {
-                    return VpMultiCutBuildOutcome.CapacityExceeded;
+                    return Short(VpMultiCutShortage.RenderFragments);
                 }
 
                 // Where this one stands. A fragment that follows a placement of its own is drawn there, and
@@ -1799,7 +1851,7 @@ namespace Zantetsu.MeshCut
             int selected = representative.selectedCount;
             if (_conditionCount + selected > _conditions.Length || _capCount + selected > _caps.Length)
             {
-                return VpMultiCutBuildOutcome.CapacityExceeded;
+                return Short(VpMultiCutShortage.Caps);
             }
 
             int conditionStart = _conditionCount;
@@ -1910,7 +1962,7 @@ namespace Zantetsu.MeshCut
 
             if (_sectionCount >= _sections.Length)
             {
-                return VpMultiCutBuildOutcome.CapacityExceeded;
+                return Short(VpMultiCutShortage.Caps);
             }
 
             int slot = _sectionCount;
