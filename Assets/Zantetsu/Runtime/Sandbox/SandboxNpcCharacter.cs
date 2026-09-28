@@ -690,9 +690,17 @@ namespace Zantetsu.Sandbox
             {
                 if (!Pooled || Handle == null || !Handle.IsDisposed || !Handle.IsWithdrawn || !Handle.Operation.IsSet || world == null) return false;
                 if (_direct != null && _direct.Borrower != null) return false;   // its input not yet given back
-                return world.Ledger.TryGetOperation(Handle.Operation, out LogicalCutOperation operation)
-                    && operation.state != LogicalCutOperationState.Admitted
-                    && world.Geometry.StageOf(Handle.Operation) == CutGeometryStage.Committed;
+                if (!world.Ledger.TryGetOperation(Handle.Operation, out LogicalCutOperation operation) || operation.state == LogicalCutOperationState.Admitted)
+                {
+                    return false;
+                }
+
+                // Committed: the cut is published and its geometry committed. Or the cut failed and was aborted (DESIGN
+                // 7.1.1): the ledger ended it, the geometry was reclaimed rather than committed, and the driver holds no
+                // record of it any more (its work has come back). A reclaimed stage alone is not enough.
+                CutGeometryStage stage = world.Geometry.StageOf(Handle.Operation);
+                return stage == CutGeometryStage.Committed
+                    || (operation.state == LogicalCutOperationState.Aborted && stage == CutGeometryStage.Reclaimed && world.Driver.IsSettled(Handle.Operation));
             }
         }
 

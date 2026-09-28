@@ -187,8 +187,24 @@ namespace Zantetsu.PhysicsCut
             Build();
         }
 
+        // The cut failures the driver counted, logged once when this world ends -- its ordinary ending or its
+        // destruction, the Player's termination included (a line, no waiting) -- whether or not a check runs.
+        private bool _failuresLogged;
+
+        private void LogCutFailures()
+        {
+            if (_failuresLogged || Driver == null)
+            {
+                return;
+            }
+
+            _failuresLogged = true;
+            UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Driver.FailureSummary(), this);
+        }
+
         private void OnDestroy()
         {
+            LogCutFailures();
             if (TerminationRequested)
             {
                 // The Player is ending. DESIGN 4 guarantees no collection and no release for it, and starting the
@@ -584,6 +600,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void BeginEnding()
         {
+            LogCutFailures();
             _ending = true;
             IsReady = false;
             Driver?.EndEveryCut();
