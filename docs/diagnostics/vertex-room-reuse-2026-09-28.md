@@ -1,6 +1,6 @@
 # 頂点範囲の回収と再利用（DESIGN §4.5.3）実装記録（2026-09-28）
 
-commit／push は行っていない。基準は main `8e1b7019`。Building 系の未コミット変更は、別に作業ツリーに残っている。
+ローカルコミット済み、push なし（V1 `5555a936`、V2 `df59c07c`。下の「コミット」）。基準は main `8e1b7019`。Building 系の未コミット変更は、別に作業ツリーに残っている。
 
 ## 方式（§4.5.3 の保守的な方式）
 
@@ -101,3 +101,21 @@ commit／push は行っていない。基準は main `8e1b7019`。Building 系�
 - **残件の扱い**：
   - 頂点の再利用の残件は、これで解消とする。
   - 集約の中の片を退役させない制限などが残るため、§7.10 全体の完了や、長時間 Playable の受け入れの完了とはしない。
+
+## コミット（ローカル、push なし）
+
+- **V1 `5555a936`**（親 `8e1b7019`）：19 ファイル。
+  - 製品 9：
+    - 変更 8：`VpCpuGeometryStorage.cs`、`VpDirectSkinStorage.cs`、`VpCutOutputReservation.cs`、`CutDag.cs`、`VpLogicalCutDisplay.cs`、`VpPreparedRootDisplay.cs`、`CutWorldRoot.cs`、`VpPreparedCharacterCut.Request.cs`
+    - 新規 1：`VpCpuGeometryStorage.VertexGroups.cs`
+  - 試験 5：
+    - 変更 2：`VpStorageCutOutputTests.cs`、`CutWorldRootPlayModeTests.cs`
+    - 新規 3：`VpStorageCutOutputTests.VertexGroups.cs`、`CutWorldRootPlayModeTests.VertexRoom.cs`、`PreparedCharacterShowRefusedPlayModeTests.cs`
+  - `.meta` 4：新規 4 ファイルの分。
+  - 記録 1：この文書。
+- **V2 `df59c07c`**（親 `5555a936`）：計測 check の観測だけ。
+  - `SandboxPropSlashPlayerCheck.MobPlanLifetime.cs`
+  - mobplan-lifetime.csv の 4 列：`freeVertexRoom`、`vertexGroups`、`vertexGroupsReleased`、`verticesReleased`
+- **照合**：
+  - ステージ時：試験した状態の差分と一致した。
+  - コミット後：`git diff HEAD~1 HEAD` が、ステージした差分とバイト単位で一致した（V1・V2 とも）。
