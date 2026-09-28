@@ -115,11 +115,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             yield return null;
-            foreach (ProvisionalCutTransaction t in root.Driver.Transactions)
-            {
-                operations.Add(t.Operation);
-            }
-
+            operations.AddRange(AdmittedFor(root, bodies));
             Assert.That(operations.Count, Is.EqualTo(bodies.Count), "every cut was accepted");
             float deadline = Time.realtimeSinceStartup + DeadlineSeconds;
             while (!operations.TrueForAll(o => root.Geometry.StageOf(o) == CutGeometryStage.Committed) && Time.realtimeSinceStartup < deadline)
@@ -147,12 +143,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             ProvisionalCutAsk again = Ask(first.positive, new float4(1f, 0f, 0f, 0f));
             Assert.That(root.TryAsk(in again), Is.True);
             yield return null;
-            CutOperationId child = default;
-            foreach (ProvisionalCutTransaction t in root.Driver.Transactions)
-            {
-                child = t.Operation;
-            }
-
+            List<CutOperationId> admittedChild = AdmittedFor(root, new[] { first.positive });
+            Assert.That(admittedChild.Count, Is.EqualTo(1), "the child's cut was accepted");
+            CutOperationId child = admittedChild[0];
             yield return Until(() => root.Geometry.StageOf(child) == CutGeometryStage.Committed, "the child's cut committed");
             yield return null;
             yield return null;
@@ -273,6 +266,30 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(root.TerminationCalls, Is.EqualTo(1));
             TestContext.WriteLine(root.Storage.DescribeRoom());
         }
+        /// <summary>
+        /// The operation the ledger admitted for each of <paramref name="sources"/>, in their order, for those it
+        /// admitted one for. Read from the ledger's admission record, which keeps every admitted operation whatever
+        /// became of it -- not from the driver's transactions, which a cut leaves once it is handed over, possibly in the
+        /// very frame it was asked in, so that counting them counts fewer the faster the cuts go.
+        /// </summary>
+        private static List<CutOperationId> AdmittedFor(CutWorldRoot root, IReadOnlyList<LogicalFragmentId> sources)
+        {
+            var admitted = new List<CutOperationId>();
+            foreach (LogicalFragmentId source in sources)
+            {
+                for (int position = 0; root.Ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+                {
+                    if (operation.source == source)
+                    {
+                        admitted.Add(operation.id);
+                        break;
+                    }
+                }
+            }
+
+            return admitted;
+        }
+
         private static Action<CutWorldProfile> RoomOf(int vertexReserve)
         {
             return profile =>
