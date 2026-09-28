@@ -118,5 +118,5 @@ World 全体の論理ブランチ容量（`CutWorldProfile.branchCapacity`、既
 
 - 修正後の Link（実機）での境界越え：未検証。Playable の受入の残件。次に操作するときに、最終版の Player で確認する。
 - 片の寿命管理（DESIGN §7.10）。
-- Hit 登録数が 19 で、生存数 20 と合わない件。
+- Hit 登録数が 19 で、生存数 20 と合わない件。（2026-09-28 解決済み：登録漏れではなく、観測の対象と時点の違い。`hit-registration-count-2026-09-28.md`）
 - 終了時の NativeArray の 510 バイトの差。
