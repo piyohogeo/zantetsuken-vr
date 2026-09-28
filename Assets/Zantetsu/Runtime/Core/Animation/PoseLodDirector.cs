@@ -191,6 +191,9 @@ namespace Zantetsu.Core.Animation
         [SerializeField] private float displayRateHz;
 
         private readonly List<PoseLodCharacter> _characters = new List<PoseLodCharacter>(32);
+
+        /// <summary>How many characters are registered now.</summary>
+        public int CharacterCount => _characters.Count;
         private readonly Plane[][] _eyePlanes = { new Plane[6], new Plane[6] };
         private readonly Vector3[] _eyePositions = new Vector3[2];
         private readonly List<XRDisplaySubsystem> _displays = new List<XRDisplaySubsystem>(1);

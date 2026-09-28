@@ -88,6 +88,69 @@ namespace Zantetsu.Rendering
         public int TopologyCount { get; }
         internal bool IsAlive => !disposed;
 
+        // ----- lent by an owner to one prepared cut at a time -----------------------------------------------------------
+        // An owner that keeps this input for the life of one character (a crowd's prepared slot) lends it to each prepared
+        // cut it makes for that character in turn, and disposes it once, at its own end. A pose taken for one borrower is
+        // never used by the next: lending and returning both forget it, so the next append needs a new capture.
+
+        /// <summary>The prepared cut this input is lent to now, or null.</summary>
+        public object Borrower { get; private set; }
+
+        /// <summary>The renderer and mesh this input was made from (an owner compares them before lending again).</summary>
+        public SkinnedMeshRenderer SourceRenderer => renderer;
+
+        public Mesh SourceMesh => mesh;
+
+        /// <summary>Whether a pose is taken and not yet appended.</summary>
+        public bool HasCapturedPose => captured;
+
+        /// <summary>How many inputs were made in this process (measurement and tests).</summary>
+        public static int CreatedCount { get; private set; }
+
+        /// <summary>Lends this input to <paramref name="borrower"/>, forgetting any pose taken before. False while it is lent or disposed.</summary>
+        public bool TryLend(object borrower)
+        {
+            if (disposed || borrower == null || Borrower != null) return false;
+            Borrower = borrower;
+            captured = false;
+            return true;
+        }
+
+        /// <summary>
+        /// Takes this input back from <paramref name="borrower"/>, forgetting its pose; when its owner has ended in the
+        /// meantime (<see cref="DisposeWhenReturned"/>), frees it now, once. Nothing when another holds it.
+        /// </summary>
+        public void Return(object borrower)
+        {
+            if (borrower == null || !ReferenceEquals(Borrower, borrower)) return;
+            Borrower = null;
+            captured = false;
+            if (disposeOnReturn) Dispose();
+        }
+
+        // The owner has ended while the input was lent: it is freed when it comes back, and by nothing else.
+        bool disposeOnReturn;
+
+        /// <summary>Whether the owner has ended and the input waits to be freed on its return.</summary>
+        public bool IsDisposeRequested => disposeOnReturn && !disposed;
+
+        /// <summary>
+        /// The owner's end: frees the input now if it is not lent; if it is, leaves that to its return -- it is freed
+        /// once, when the borrower gives it back, never under the borrower. True when freed now.
+        /// </summary>
+        public bool DisposeWhenReturned()
+        {
+            if (disposed) return true;
+            if (Borrower == null)
+            {
+                Dispose();
+                return true;
+            }
+
+            disposeOnReturn = true;
+            return false;
+        }
+
         static bool FourWeights(SkinnedMeshRenderer r) => r.quality == SkinQuality.Bone4
             || (r.quality == SkinQuality.Auto && QualitySettings.skinWeights == SkinWeights.FourBones);
 
@@ -100,10 +163,37 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        // The cold creation's stages, for measurement: each Enter ends the stage before; the end of TryCreate ends the last.
+        static readonly Unity.Profiling.ProfilerMarker s_createRead = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Read");
+        static readonly Unity.Profiling.ProfilerMarker s_createWeights = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Weights");
+        static readonly Unity.Profiling.ProfilerMarker s_createRemap = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Remap");
+        static readonly Unity.Profiling.ProfilerMarker s_createVertices = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Vertices");
+        static readonly Unity.Profiling.ProfilerMarker s_createGate = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Gate");
+        static readonly Unity.Profiling.ProfilerMarker s_createBuild = new Unity.Profiling.ProfilerMarker("Zantetsu.DirectSkin.Create.Build");
+
+        sealed class CreateStages : IDisposable
+        {
+            Unity.Profiling.ProfilerMarker current;
+            bool open;
+            public void Enter(Unity.Profiling.ProfilerMarker next) { if (open) current.End(); next.Begin(); current = next; open = true; }
+            public void Dispose() { if (open) current.End(); open = false; }
+        }
+
         /// <summary>Cold only. Unsupported/invalid input returns false without changing the renderer or storage.</summary>
         public static bool TryCreate(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
             out VpDirectSkinInput input)
+            => TryCreate(renderer, topology, topologyCount, null, out input);
+
+        /// <summary>
+        /// The same, with the connectivity its owner has verified before (see <see cref="VpCutInputConnectivity"/>): the
+        /// input gate still checks this renderer's own values, and skips only the edge and fan checks of indices and a
+        /// topology identical to a verified one.
+        /// </summary>
+        public static bool TryCreate(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
+            VpCutInputConnectivity verified, out VpDirectSkinInput input)
         {
+            using var stages = new CreateStages();
+            stages.Enter(s_createRead);
             input = null;
             if (VpRenderVertex.Stride != 16 || renderer == null || renderer.sharedMesh == null
                 || topology == null || topologyCount <= 0 || !FourWeights(renderer) || !Rigid(renderer.transform)) return false;
@@ -119,6 +209,7 @@ namespace Zantetsu.Rendering
             var sourceBones = renderer.bones; var binds = mesh.bindposes; var signedIndices = mesh.triangles;
             if (p.Length != n.Length || p.Length != tex.Length || p.Length != w.Length
                 || p.Length != topology.Length || sourceBones.Length != binds.Length || signedIndices.Length == 0) return false;
+            stages.Enter(s_createWeights);
             var used = new SortedSet<int>();
             for (int i = 0; i < w.Length; i++)
             {
@@ -134,6 +225,7 @@ namespace Zantetsu.Rendering
                     used.Add(bone);
                 }
             }
+            stages.Enter(s_createRemap);
             int[] usedBones = used.ToArray();
             if (usedBones.Length == 0) return false;
             int Remap(int bone, float weight) => weight == 0 ? 0 : Array.IndexOf(usedBones, bone);
@@ -142,6 +234,7 @@ namespace Zantetsu.Rendering
                 var x = w[i]; x.boneIndex0 = Remap(x.boneIndex0, x.weight0); x.boneIndex1 = Remap(x.boneIndex1, x.weight1);
                 x.boneIndex2 = Remap(x.boneIndex2, x.weight2); x.boneIndex3 = Remap(x.boneIndex3, x.weight3); w[i] = x;
             }
+            stages.Enter(s_createVertices);
             var vertices = new VpRenderVertex[p.Length]; var bytes = new DirectUv[p.Length];
             var representatives = Enumerable.Repeat(-1, topologyCount).ToArray();
             for (int i = 0; i < p.Length; i++)
@@ -161,11 +254,14 @@ namespace Zantetsu.Rendering
                 int v = signedIndices[i]; if (v < 0 || v >= p.Length) return false;
                 ix[i] = (uint)v; referenced[v] = true;
             }
+            stages.Enter(s_createGate);
             if (referenced.Any(x => !x) || !VpCutInputGate.Check(vertices, ix, topology, topologyCount,
-                    new[] { new VpGeometrySubmesh(0, ix.Length, 0) }).Accepted) return false;
+                    new[] { new VpGeometrySubmesh(0, ix.Length, 0) }, verified).Accepted) return false;
+            stages.Enter(s_createBuild);
             if (!TryLayout(p.Length, ix.Length, usedBones.Length, out Layout layout)) return false;
             input = new VpDirectSkinInput(renderer, mesh, usedBones.Select(i => sourceBones[i]).ToArray(),
                 usedBones.Select(i => binds[i]).ToArray(), p, n, w, bytes, topology, topologyCount, ix, layout);
+            CreatedCount++;
             return true;
         }
 
@@ -296,6 +392,8 @@ namespace Zantetsu.Rendering
         public void Dispose()
         {
             if (disposed) return;
+            // A lent input goes back to its owner first: freeing it under a borrower would be an early release.
+            if (Borrower != null) throw new InvalidOperationException("The direct skin input is still lent to a prepared cut.");
             disposed = true;
             // The views go first, so nothing can reach the block once it is given back.
             positions = normals = null; weights = null; uv = null; topology = null; indices = null;

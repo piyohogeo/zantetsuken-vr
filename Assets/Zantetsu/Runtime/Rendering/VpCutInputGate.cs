@@ -61,7 +61,8 @@ namespace Zantetsu.Rendering
     /// <summary>
     /// The input contract of DESIGN 6.2 for a geometry that is to be cut, checked once, when it is registered as
     /// cuttable — never per frame, per draw, or on what a cut produces. It is a pure check of the arrays a caller would
-    /// hand to <see cref="VpCpuGeometryStorage.TryAppendCuttable"/>: it writes nothing and keeps nothing.
+    /// hand to <see cref="VpCpuGeometryStorage.TryAppendCuttable"/>: it writes nothing and keeps nothing, except that
+    /// the overload given a <see cref="VpCutInputConnectivity"/> keeps there the connectivity it has verified.
     /// <para>
     /// **The topology is the caller's.** The per render vertex topology id (an FBX control point, for the intake that
     /// exists) is the only thing that says which render vertices are the same logical vertex. Nothing here welds by
@@ -99,6 +100,25 @@ namespace Zantetsu.Rendering
             int[] topologyOfVertex,
             int topologyVertexCount,
             VpGeometrySubmesh[] submeshes)
+        {
+            return Check(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, null);
+        }
+
+        /// <summary>
+        /// The same judgement, with the connectivity its owner has already verified (<see cref="VpCutInputConnectivity"/>).
+        /// Every check of this input's own values is made as always -- references, the triangles' topology vertices, finite
+        /// attributes and one position per topology vertex. Only the edge and fan checks, which depend on nothing but the
+        /// indices and the topology, are not made again, and only when this input's indices, topology and topology count
+        /// are, element by element, those of a connectivity verified before. A connectivity verified here is kept by
+        /// <paramref name="verified"/> for the next input; one that fails is not.
+        /// </summary>
+        public static VpCutInputVerdict Check(
+            VpRenderVertex[] vertices,
+            uint[] localIndices,
+            int[] topologyOfVertex,
+            int topologyVertexCount,
+            VpGeometrySubmesh[] submeshes,
+            VpCutInputConnectivity verified)
         {
             if (vertices == null || localIndices == null || topologyOfVertex == null || submeshes == null)
             {
@@ -158,6 +178,24 @@ namespace Zantetsu.Rendering
                 }
             }
 
+            if (verified != null && verified.Holds(localIndices, topologyOfVertex, topologyVertexCount))
+            {
+                return new VpCutInputVerdict(VpCutInputRejection.None, -1);
+            }
+
+            VpCutInputVerdict connected = CheckConnectivity(localIndices, topologyOfVertex, topologyVertexCount, triangleCount, indexCount);
+            if (connected.Accepted)
+            {
+                verified?.Remember(localIndices, topologyOfVertex, topologyVertexCount);
+            }
+
+            return connected;
+        }
+
+        // The edge and fan checks: what depends on the indices and the topology alone.
+        private static VpCutInputVerdict CheckConnectivity(uint[] localIndices, int[] topologyOfVertex, int topologyVertexCount,
+            int triangleCount, int indexCount)
+        {
             // Every topology edge: exactly two faces, traversing it in opposite directions.
             var edges = new Dictionary<long, EdgeUse>(indexCount);
             for (int t = 0; t < triangleCount; t++)
@@ -284,6 +322,75 @@ namespace Zantetsu.Rendering
         private static bool SamePosition(Vector3 a, Vector3 b)
         {
             return a.x.Equals(b.x) && a.y.Equals(b.y) && a.z.Equals(b.z);
+        }
+    }
+
+    /// <summary>
+    /// Connectivity -- triangle indices, per vertex topology ids and the topology count -- that has passed the edge and
+    /// fan checks of <see cref="VpCutInputGate"/>, kept by the owner of the inputs it came from (a cut world keeps one for
+    /// every character prepared in it, and lets it go with the world). An input is recognised only by its own arrays,
+    /// compared element by element with the kept copies: never by a mesh, an asset or a digest. Nothing else is kept --
+    /// an input's positions, normals and uvs are checked every time -- and nothing is kept for an input that failed.
+    /// Main thread only.
+    /// </summary>
+    public sealed class VpCutInputConnectivity
+    {
+        // A few shapes per world at most (one per character model); beyond this, inputs are simply checked in full.
+        public const int Capacity = 8;
+
+        private readonly List<(uint[] indices, int[] topology, int count)> _verified = new List<(uint[], int[], int)>();
+
+        /// <summary>How many connectivities are kept.</summary>
+        public int Count => _verified.Count;
+
+        /// <summary>How many checks were answered by a kept connectivity, and how many kept one (for measurement).</summary>
+        public int Reused { get; private set; }
+
+        public int Kept { get; private set; }
+
+        /// <summary>Lets every kept connectivity go (the owner's end).</summary>
+        public void Clear()
+        {
+            _verified.Clear();
+        }
+
+        internal bool Holds(uint[] indices, int[] topology, int count)
+        {
+            foreach ((uint[] indices, int[] topology, int count) v in _verified)
+            {
+                if (v.count == count && Same(v.indices, indices) && Same(v.topology, topology))
+                {
+                    Reused++;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        internal void Remember(uint[] indices, int[] topology, int count)
+        {
+            if (_verified.Count >= Capacity)
+            {
+                return;
+            }
+
+            _verified.Add(((uint[])indices.Clone(), (int[])topology.Clone(), count));
+            Kept++;
+        }
+
+        private static bool Same(uint[] a, uint[] b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+            return true;
+        }
+
+        private static bool Same(int[] a, int[] b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+            return true;
         }
     }
 }
