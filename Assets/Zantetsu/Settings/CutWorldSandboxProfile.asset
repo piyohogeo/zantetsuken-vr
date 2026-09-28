@@ -42,4 +42,7 @@ MonoBehaviour:
   maxIncompleteCuts: 32
   separationImpulseByMass: 1
   separationImpulsePerKg: 1
+  buildingWorldFirstLimitMetres: 1
+  buildingWorldFirstAngleDegrees: 30
+  buildingWorldRatio: 0.5
   shutdownTimeoutMilliseconds: 5000

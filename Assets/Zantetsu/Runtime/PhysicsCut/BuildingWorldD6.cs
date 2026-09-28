@@ -83,7 +83,10 @@ namespace Zantetsu.PhysicsCut
     /// <summary>
     /// The three settings of the building World D6 (DESIGN 7.2.2): the first split's horizontal distance limit, its
     /// angle limit, and the one ratio both shrink by per depth. <c>L(d) = L1 * r^(d-1)</c>,
-    /// <c>A(d) = A1 * r^(d-1)</c> for a depth <c>d &gt;= 1</c>. No minimum, no table, no second ratio.
+    /// <c>A(d) = A1 * r^(d-1)</c> for a depth <c>d &gt;= 1</c>. These are the requested limits: no product minimum, no
+    /// table, no second ratio. What a joint reports back can differ by axis (DESIGN 7.2.2): the current Unity/PhysX
+    /// keeps a swing (joint Y, Z) limit at 3 degrees at least, while twist (joint X) keeps the requested range. That
+    /// is the engine's, accepted as it is; nothing here raises a request to it.
     /// </summary>
     [Serializable]
     public struct BuildingWorldD6Settings
@@ -105,10 +108,10 @@ namespace Zantetsu.PhysicsCut
         public float ratio;
 
         /// <summary>
-        /// The provisional values this build is verified with (O-048 candidates, not product values): a quarter metre
-        /// and fifteen degrees for a first-split child, halved at every further depth.
+        /// The adopted values (DESIGN 7.2.2, decided 2026-09-28): one metre and thirty degrees for a first-split child,
+        /// halved at every further depth. They replace the earlier provisional quarter metre and fifteen degrees.
         /// </summary>
-        public static BuildingWorldD6Settings Provisional => new BuildingWorldD6Settings(0.25f, 15f, 0.5f);
+        public static BuildingWorldD6Settings Adopted => new BuildingWorldD6Settings(1f, 30f, 0.5f);
 
         /// <summary>
         /// Finite, a non-negative distance, an angle a joint limit can take (0 to 180 degrees), and a ratio strictly
@@ -156,9 +159,11 @@ namespace Zantetsu.PhysicsCut
     /// actor, across the handoff. They are made, kept and ended separately.
     /// </para>
     /// <para>
-    /// No drive, spring, damper, projection, break or minimum limit, and nothing switches to Locked: a limit that has
-    /// shrunk to 0 stays a Limited motion with a 0 limit. Once published, nothing of it is changed — not at the Final
-    /// handoff and not when the child's mass properties are replaced.
+    /// No drive, spring, damper, projection, break or product minimum limit, and nothing switches to Locked: a limit
+    /// that has shrunk to 0 stays a Limited motion with a 0 request. Each angle limit is given A(d) as it is; where the
+    /// engine keeps a swing limit above that (see <see cref="BuildingWorldD6Settings"/>), nothing here raises,
+    /// corrects or checks it. Once published, nothing of it is changed — not at the Final handoff and not when the
+    /// child's mass properties are replaced.
     /// </para>
     /// </summary>
     internal static class BuildingWorldD6
