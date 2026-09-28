@@ -246,6 +246,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 },
                 null);
             geometry.HoldEverything = true;
+            // This case is about the order of an ancestor's geometry commit and its children's acceptance and publication
+            // (T-007), so the driver is given a sufficient Main remainder: the frame budget, the Pending carry-over and a
+            // stage predicted over the whole budget are the subject of their own tests.
+            root.Driver.RemainingMainSeconds = () => 1.0;
             AddBody(root, Vector3.zero);
             yield return null;
             var detector = new SlashHitDetector(root, in k_hitSettings);

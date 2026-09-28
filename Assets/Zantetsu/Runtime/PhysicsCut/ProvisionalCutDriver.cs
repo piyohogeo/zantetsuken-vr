@@ -81,6 +81,62 @@ namespace Zantetsu.PhysicsCut
         Held = 8,
     }
 
+    /// <summary>The two Main stages of a Provisional cut the frame budget is asked for (DESIGN 7.1.1).</summary>
+    public enum ProvisionalBudgetStage
+    {
+        /// <summary>The inactive pair's build.</summary>
+        Build = 0,
+
+        /// <summary>The pair's publication into the scene.</summary>
+        Publication = 1,
+    }
+
+    /// <summary>
+    /// One limited run of a Pending cut's stage past the frame budget (DESIGN 7.1.1): taken when the stage's prediction
+    /// is more than the whole Main budget of a frame, so that no frame could ever fit it. What was expected, what the
+    /// budget and the remainder were at the decision, and what the stage then measured.
+    /// </summary>
+    public readonly struct ProvisionalBudgetOverrun
+    {
+        public ProvisionalBudgetOverrun(
+            int frame, CutOperationId operation, ProvisionalBudgetStage stage,
+            double expectedSeconds, double budgetSeconds, double remainingSeconds, double measuredSeconds)
+        {
+            Frame = frame;
+            Operation = operation;
+            Stage = stage;
+            ExpectedSeconds = expectedSeconds;
+            BudgetSeconds = budgetSeconds;
+            RemainingSeconds = remainingSeconds;
+            MeasuredSeconds = measuredSeconds;
+        }
+
+        public int Frame { get; }
+
+        public CutOperationId Operation { get; }
+
+        public ProvisionalBudgetStage Stage { get; }
+
+        /// <summary>The prediction the decision compared: build and publication together for a build, else publication.</summary>
+        public double ExpectedSeconds { get; }
+
+        /// <summary>The whole Main budget of a frame the prediction was more than.</summary>
+        public double BudgetSeconds { get; }
+
+        /// <summary>What was left of this frame's Main budget at the decision; it may be 0 or less.</summary>
+        public double RemainingSeconds { get; }
+
+        /// <summary>What the stage took, as it was added to that stage's cost history.</summary>
+        public double MeasuredSeconds { get; }
+
+        public override string ToString()
+        {
+            return "frame " + Frame + " op" + Operation.value + " " + Stage + " expected " + (ExpectedSeconds * 1000.0).ToString("F3")
+                + " ms > budget " + (BudgetSeconds * 1000.0).ToString("F3") + " ms, remaining " + (RemainingSeconds * 1000.0).ToString("F3")
+                + " ms, measured " + (MeasuredSeconds * 1000.0).ToString("F3") + " ms";
+        }
+    }
+
     /// <summary>What a caller asks for when it asks for a cut.</summary>
     public struct ProvisionalCutAsk
     {
@@ -175,6 +231,21 @@ namespace Zantetsu.PhysicsCut
         // The product reads the same live Main clock as Physics.Simulate. Tests may supply a deterministic remainder.
         internal Func<double> RemainingMainSeconds;
 
+        // The whole Main budget of a frame, which a prediction is compared with to tell a stage that cannot fit any frame
+        // from one that did not fit this frame's remainder: the product's own (CutPhysicsStep.MainBudgetSeconds, the
+        // session's). Tests may supply a deterministic one.
+        internal Func<double> MainBudgetSeconds;
+
+        // The frame this world last ran a Pending stage past the budget in: at most one stage -- a build or a publication
+        // -- in a frame, however many times the frame's updates call this driver (DESIGN 7.1.1).
+        private int _overrunFrame = int.MinValue;
+
+        /// <summary>The last limited run past the budget (DESIGN 7.1.1), or the default if none has been taken.</summary>
+        public ProvisionalBudgetOverrun LastBudgetOverrun { get; private set; }
+
+        /// <summary>How many limited runs past the budget this driver has taken.</summary>
+        public int BudgetOverrunCount { get; private set; }
+
         /// <summary>
         /// The separation impulse's magnitude per child owner from its mass (DESIGN 7.2), used by every Provisional
         /// publication in place of the ask's two values when set: the hit gives the plane, and the strength is decided
@@ -184,10 +255,37 @@ namespace Zantetsu.PhysicsCut
         private readonly SimulateCostHistory _buildCosts = new SimulateCostHistory();
         private readonly SimulateCostHistory _publishCosts = new SimulateCostHistory();
 
+        // The two stages' cost histories, for tests that give the predictions deterministically.
+        internal SimulateCostHistory BuildCosts => _buildCosts;
+        internal SimulateCostHistory PublishCosts => _publishCosts;
+
+        private double RemainingMain => RemainingMainSeconds != null ? RemainingMainSeconds() : CutPhysicsStep.RemainingMainSeconds;
+
+        private double WholeMainBudget => MainBudgetSeconds != null ? MainBudgetSeconds() : CutPhysicsStep.MainBudgetSeconds;
+
         private bool FitsMain(double expected)
         {
-            double remaining = RemainingMainSeconds != null ? RemainingMainSeconds() : CutPhysicsStep.RemainingMainSeconds;
+            double remaining = RemainingMain;
             return _frame.Dispatcher.RemainingBudget > 0 && remaining > 0 && expected <= remaining;
+        }
+
+        /// <summary>
+        /// Whether a Pending stage that did not fit may run past the budget now (DESIGN 7.1.1): only when its prediction
+        /// is more than the whole Main budget of a frame -- no remainder could ever fit it, so the ordinary carry-over
+        /// would never end and its cost would never be measured again -- and only once in this world's frame. The
+        /// dispatch budget is still asked for; the Main remainder need not be positive. A stage that merely did not fit
+        /// this frame's remainder is carried over as before.
+        /// </summary>
+        private bool MayOverrun(double expected)
+        {
+            return expected > WholeMainBudget && _overrunFrame != CurrentFrame && _frame.Dispatcher.RemainingBudget > 0;
+        }
+
+        private void RecordOverrun(ProvisionalCutTransaction transaction, ProvisionalBudgetStage stage, double expected, double remaining, double measured)
+        {
+            LastBudgetOverrun = new ProvisionalBudgetOverrun(
+                CurrentFrame, transaction.Operation, stage, expected, WholeMainBudget, remaining, measured);
+            BudgetOverrunCount++;
         }
 
         private int? RemainingConstraintRoom()
@@ -448,7 +546,7 @@ namespace Zantetsu.PhysicsCut
                 transaction = made;
                 made.HoldInput(owner.Shape);
                 _frame.Dispatcher.BeginFrame(CurrentFrame);
-                return TryEstablish(made, owner);
+                return TryEstablish(made, owner, mayOverrun: false);
             }
             finally
             {
@@ -460,8 +558,13 @@ namespace Zantetsu.PhysicsCut
         /// Resumes an existing admission. Anchors are cached by the ledger, input and classification are retained,
         /// and an inactive pair is built at most once. Budget exhaustion leaves these intact; publication and final
         /// submission happen once at a later opportunity without another admission.
+        /// <para>
+        /// <paramref name="mayOverrun"/>: whether this is a later update's opportunity, where a stage whose prediction
+        /// is more than the whole frame budget may run past it once in the frame (DESIGN 7.1.1). An acceptance itself
+        /// never does.
+        /// </para>
         /// </summary>
-        private ProvisionalCutAcceptance TryEstablish(ProvisionalCutTransaction transaction, PhysicsFragmentOwner owner)
+        private ProvisionalCutAcceptance TryEstablish(ProvisionalCutTransaction transaction, PhysicsFragmentOwner owner, bool mayOverrun)
         {
             if (_latch != null && _latch.TerminationRequested) return ProvisionalCutAcceptance.Pending;
             AnchorPreparationOutcome prepared = _ledger.PrepareAnchorDistribution(
@@ -498,11 +601,24 @@ namespace Zantetsu.PhysicsCut
                 Give(transaction);
                 return ProvisionalCutAcceptance.NotAccepted;
             }
-            double expected = transaction.Candidate == null
+            // A build is predicted with its publication, as it runs on into it when it can; a built pair only with its
+            // publication. Either sum may be more than the whole budget although each part fits it.
+            bool building = transaction.Candidate == null;
+            double expected = building
                 ? _buildCosts.ExpectedSeconds + _publishCosts.ExpectedSeconds : _publishCosts.ExpectedSeconds;
-            if (!FitsMain(expected)) return ProvisionalCutAcceptance.Pending;
+            ProvisionalBudgetStage? overrun = null;
+            double remaining = 0.0;
+            if (!FitsMain(expected))
+            {
+                if (!mayOverrun || !MayOverrun(expected)) return ProvisionalCutAcceptance.Pending;
 
-            ProvisionalCutAcceptance established = TryBuildAndPublish(transaction, owner, anchors);
+                // The one stage this world runs past the budget in this frame: the allowance is taken before it runs.
+                overrun = building ? ProvisionalBudgetStage.Build : ProvisionalBudgetStage.Publication;
+                remaining = RemainingMain;
+                _overrunFrame = CurrentFrame;
+            }
+
+            ProvisionalCutAcceptance established = TryBuildAndPublish(transaction, owner, anchors, overrun, expected, remaining);
             if (established != ProvisionalCutAcceptance.Published)
             {
                 return established;
@@ -558,7 +674,7 @@ namespace Zantetsu.PhysicsCut
                 if (pending.Phase == ProvisionalCutPhase.Accepted && !pending.IsEnding)
                 {
                     _registry.TryGet(pending.Source, out PhysicsFragmentOwner owner);
-                    TryEstablish(pending, owner);
+                    TryEstablish(pending, owner, mayOverrun: true);
                 }
                 if (i < _transactions.Count && ReferenceEquals(_transactions[i], pending)) i++;
             }
@@ -798,7 +914,10 @@ namespace Zantetsu.PhysicsCut
         private ProvisionalCutAcceptance TryBuildAndPublish(
             ProvisionalCutTransaction transaction,
             PhysicsFragmentOwner owner,
-            AnchorDistributionResult anchors)
+            AnchorDistributionResult anchors,
+            ProvisionalBudgetStage? overrun,
+            double overrunExpected,
+            double overrunRemaining)
         {
             ProvisionalCutAsk ask = transaction.Ask;
             ProvisionalOwnerCandidate candidate = transaction.Candidate;
@@ -856,13 +975,20 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
-                    _buildCosts.Add((System.Diagnostics.Stopwatch.GetTimestamp() - buildStarted) / (double)System.Diagnostics.Stopwatch.Frequency);
+                    double buildSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - buildStarted) / (double)System.Diagnostics.Stopwatch.Frequency;
+                    _buildCosts.Add(buildSeconds);
+                    if (overrun == ProvisionalBudgetStage.Build)
+                    {
+                        RecordOverrun(transaction, ProvisionalBudgetStage.Build, overrunExpected, overrunRemaining, buildSeconds);
+                    }
                 }
 
                 transaction.Took(candidate);
             }
-            // A build can consume the remainder. Keep both inactive sides, never rebuild or publish half a pair.
-            if (!FitsMain(_publishCosts.ExpectedSeconds)) return ProvisionalCutAcceptance.Pending;
+            // A build can consume the remainder. Keep both inactive sides, never rebuild or publish half a pair. After a
+            // build run past the budget, the publication goes back to the ordinary decision; only a publication that is
+            // itself this frame's run past the budget skips it.
+            if (overrun != ProvisionalBudgetStage.Publication && !FitsMain(_publishCosts.ExpectedSeconds)) return ProvisionalCutAcceptance.Pending;
             var publication = new ProvisionalPhysicsPublicationInput
             {
                 ledger = _ledger,
@@ -910,7 +1036,12 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
-                _publishCosts.Add((System.Diagnostics.Stopwatch.GetTimestamp() - publishStarted) / (double)System.Diagnostics.Stopwatch.Frequency);
+                double publishSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - publishStarted) / (double)System.Diagnostics.Stopwatch.Frequency;
+                _publishCosts.Add(publishSeconds);
+                if (overrun == ProvisionalBudgetStage.Publication)
+                {
+                    RecordOverrun(transaction, ProvisionalBudgetStage.Publication, overrunExpected, overrunRemaining, publishSeconds);
+                }
             }
 
             if (published == PhysicsPublicationOutcome.Published)
