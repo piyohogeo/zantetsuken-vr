@@ -141,7 +141,100 @@ namespace Zantetsu.Sandbox
         private List<(Transform bone, Bounds box)> _hitBoxes;
         private List<Transform> _lodReferences;
         private IReadOnlyList<Transform>[] _lodOmissions;
+        private PoseLodPlan _lodPlan;
+        // A slot's bone-local collider meshes, baked at its first preparation and taken by each later one (they hold
+        // them through the existing hold count; this slot lets its own hold go when it is destroyed).
+        private VpBakedConvexMeshes _baked;
+        private static readonly ProfilerMarker s_slotBake = new ProfilerMarker("Zantetsu.Npc.Prepare.SlotBake");
+
+        /// <summary>How many slot preparations baked the collider meshes (a slot's first, or after its input changed).</summary>
+        public static int SlotBakes { get; private set; }
+
+        /// <summary>How many times a slot's kept baked meshes were found not to match its kept input (expected never: that input is set once).</summary>
+        public static int BakeMismatches { get; private set; }
+
+        /// <summary>Bakes done as the refill's own stage (<see cref="TryBake"/>), before a returned slot's preparation.</summary>
+        public static int StageBakes { get; private set; }
+
+        /// <summary>Bakes done inside a preparation again (a returned slot's) rather than as a stage: the spike the stage is for; expected 0.</summary>
+        public static int PreparationBakes { get; private set; }
+
+        // The kept bank, as a bank to read, for as long as it is held (Temp: this frame only).
+        private unsafe struct KeptBank : IDisposable
+        {
+            private NativeArray<float3> _vp;
+            private NativeArray<int> _fo, _fi, _fe;
+            private NativeArray<BrepEdge> _et;
+            public ConvexBrepBank bank;
+
+            public KeptBank(SandboxNpcCharacter c)
+            {
+                _vp = new NativeArray<float3>(c._bankPoints, Allocator.Temp);
+                _fo = new NativeArray<int>(c._bankOffsets, Allocator.Temp);
+                _fi = new NativeArray<int>(c._bankIndices, Allocator.Temp);
+                _fe = new NativeArray<int>(c._bankFaceEdges, Allocator.Temp);
+                _et = new NativeArray<BrepEdge>(c._bankEdges, Allocator.Temp);
+                bank = new ConvexBrepBank
+                {
+                    vertices = (float3*)_vp.GetUnsafePtr(), faceOffsets = (int*)_fo.GetUnsafePtr(), faceIndices = (int*)_fi.GetUnsafePtr(),
+                    faceEdges = (int*)_fe.GetUnsafePtr(), edges = (BrepEdge*)_et.GetUnsafePtr(),
+                };
+            }
+
+            public void Dispose()
+            {
+                _vp.Dispose(); _fo.Dispose(); _fi.Dispose(); _fe.Dispose(); _et.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Whether this returned slot's kept baked collider meshes must be baked again before it is prepared again: none
+        /// kept, or kept ones that do not match its kept input value by value. The refill then bakes them as a stage of
+        /// its own (<see cref="TryBake"/>), so a preparation never bakes.
+        /// </summary>
+        public bool NeedsBake
+        {
+            get
+            {
+                if (!Pooled || Failure != null || _bankPoints == null || _ranges == null) return false;
+                if (_baked == null) return true;
+                using var kept = new KeptBank(this);
+                return !_baked.Matches(kept.bank, _ranges);
+            }
+        }
+
+        /// <summary>Bakes this slot's collider meshes again from its kept input, as the refill's stage; false when not pooled or it failed.</summary>
+        public bool TryBake()
+        {
+            if (!Pooled || _bankPoints == null || _ranges == null) return false;
+            using var kept = new KeptBank(this);
+            if (_baked != null && _baked.Matches(kept.bank, _ranges)) return true;
+            if (_baked != null) BakeMismatches++;
+            _baked?.Dispose();
+            _baked = null;
+            try
+            {
+                using (s_slotBake.Auto())
+                {
+                    _baked = new VpBakedConvexMeshes(kept.bank, _ranges);
+                }
+            }
+            catch (Exception e)
+            {
+                Failure = "the slot's collider meshes could not be baked again: " + e.Message;
+                return false;
+            }
+
+            SlotBakes++;
+            StageBakes++;
+            return true;
+        }
         private static readonly ProfilerMarker s_activate = new ProfilerMarker("Zantetsu.Npc.Activate");
+        private static readonly ProfilerMarker s_activateBody = new ProfilerMarker("Zantetsu.Npc.Activate.Body");
+        private static readonly ProfilerMarker s_activatePose = new ProfilerMarker("Zantetsu.Npc.Activate.Pose");
+        private static readonly ProfilerMarker s_activateDraw = new ProfilerMarker("Zantetsu.Npc.Activate.Draw");
+        private static readonly ProfilerMarker s_activateLod = new ProfilerMarker("Zantetsu.Npc.Activate.Lod");
+        private static readonly ProfilerMarker s_activateHit = new ProfilerMarker("Zantetsu.Npc.Activate.Hit");
         private static readonly ProfilerMarker s_slotDirect = new ProfilerMarker("Zantetsu.Npc.Prepare.SlotDirectSkin");
 
         // A slot's own direct skin input: made once for its renderer, mesh and topology, lent to each prepared cut the
@@ -292,6 +385,10 @@ namespace Zantetsu.Sandbox
                 _direct.DisposeWhenReturned();
                 _direct = null;
             }
+
+            // This slot's hold only: the meshes go when the handle and every piece that inherited one have let go too.
+            _baked?.Dispose();
+            _baked = null;
 
             if (_cold != null)
             {
@@ -603,13 +700,29 @@ namespace Zantetsu.Sandbox
                 lent = _direct;
             }
 
+            if (Pooled && (_baked == null || !_baked.Matches(bank, _ranges)))
+            {
+                // A slot's first preparation (before the scenario) bakes here; a returned slot's is baked by the refill's
+                // own stage first, so reaching this again is counted as the spike it is.
+                if (_baked != null) BakeMismatches++;
+                if (Reprepared > 0 || Activations > 0) PreparationBakes++;
+                _baked?.Dispose();
+                _baked = null;
+                using (s_slotBake.Auto())
+                {
+                    _baked = new VpBakedConvexMeshes(bank, _ranges);
+                }
+
+                SlotBakes++;
+            }
+
             _cold = new VpPhysicsColdPreparation();
             bool prepared;
             VpPreparedCharacterCut handle;
             using (s_prepareCut.Auto())
             {
                 prepared = world.TryPrepareCharacterCut(_fixedInput.Renderer, _entry.topologyMap, _entry.topologyCount, bank, _ranges, _convexBones,
-                    _cold, lent, characterRoot, motionBody, out handle);
+                    _cold, lent, _baked, characterRoot, motionBody, out handle);
             }
 
             if (!prepared)
@@ -642,6 +755,32 @@ namespace Zantetsu.Sandbox
             if (motionBody != null) motionBody.gameObject.SetActive(false);
         }
 
+        /// <summary>How many activations registered the level of detail in full because no prepared plan held.</summary>
+        public static int LodPlanFallbacks { get; private set; }
+
+        /// <summary>How long this slot's level-of-detail plan took to prepare (0 when none was).</summary>
+        public double LodPlanSeconds { get; private set; }
+
+        /// <summary>
+        /// Prepares this dormant slot's level-of-detail plan ahead of its first activation (the costly part of the
+        /// registration; its activations then only register it). The Pose Table player's table bank must be the one it
+        /// will be driven with: a plan made with another no longer holds, and the activation then registers in full.
+        /// False, preparing nothing, when the scene has no level of detail enabled or the director refused.
+        /// </summary>
+        public bool PrepareLodPlan(out string refused)
+        {
+            refused = null;
+            if (!Pooled || poseLod == null || !poseLod.isActiveAndEnabled || _lodReferences == null)
+            {
+                refused = "no level of detail for this slot";
+                return false;
+            }
+
+            _lodPlan = poseLod.Prepare(_pose, _lodReferences, _lodOmissions, _hitBoxes, out refused);
+            LodPlanSeconds = _lodPlan != null ? _lodPlan.PrepareSeconds : 0.0;
+            return _lodPlan != null;
+        }
+
         /// <summary>
         /// Activates a prepared dormant slot for a new individual. The caller has placed the character root where the
         /// individual stands; here its current pose is applied, and only then is it drawn, given its level of detail and
@@ -656,19 +795,43 @@ namespace Zantetsu.Sandbox
 
             using (s_activate.Auto())
             {
-                if (motionBody != null) motionBody.gameObject.SetActive(true);
-                _pose.enabled = true;
-                _pose.ApplyNow(null, 0);
-                _fixedInput.Renderer.enabled = true;
-                if (poseLod != null && poseLod.isActiveAndEnabled && _lodReferences != null)
+                using (s_activateBody.Auto())
                 {
-                    Lod = poseLod.Register(_pose, _lodReferences, _lodOmissions, _hitBoxes, out string refused);
-                    if (Lod == null) Debug.LogWarning(characterRoot.name + ": the bone level of detail did not take the slot: " + refused, this);
+                    if (motionBody != null) motionBody.gameObject.SetActive(true);
                 }
 
-                if (hit != null && hit.Detector != null)
+                using (s_activatePose.Auto())
                 {
-                    hit.Detector.AddCharacter(Handle, poseLod != null && poseLod.NeededOnly ? null : Lod);
+                    _pose.enabled = true;
+                    _pose.ApplyNow(null, 0);
+                }
+
+                using (s_activateDraw.Auto())
+                {
+                    _fixedInput.Renderer.enabled = true;
+                }
+
+                using (s_activateLod.Auto())
+                {
+                    if (poseLod != null && poseLod.isActiveAndEnabled && _lodReferences != null)
+                    {
+                        // The plan prepared ahead when it still holds; in full otherwise.
+                        Lod = _lodPlan != null ? poseLod.Register(_lodPlan) : null;
+                        if (Lod == null)
+                        {
+                            LodPlanFallbacks++;
+                            Lod = poseLod.Register(_pose, _lodReferences, _lodOmissions, _hitBoxes, out string refused);
+                            if (Lod == null) Debug.LogWarning(characterRoot.name + ": the bone level of detail did not take the slot: " + refused, this);
+                        }
+                    }
+                }
+
+                using (s_activateHit.Auto())
+                {
+                    if (hit != null && hit.Detector != null)
+                    {
+                        hit.Detector.AddCharacter(Handle, poseLod != null && poseLod.NeededOnly ? null : Lod);
+                    }
                 }
 
                 IsPrepared = false;

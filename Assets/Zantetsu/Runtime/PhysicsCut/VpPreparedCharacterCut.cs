@@ -21,7 +21,7 @@ namespace Zantetsu.PhysicsCut
             IReadOnlyList<Transform> convexBones, VpPhysicsColdPreparation sharedCold,
             out VpPreparedCharacterCut prepared)
             => VpPreparedCharacterCut.TryCreate(this, renderer, topology, topologyCount, boneLocalBank,
-                convexes, convexBones, sharedCold, null, out prepared);
+                convexes, convexBones, sharedCold, null, null, out prepared);
 
         /// <summary>
         /// The same, borrowing a direct skin input its caller owns for the character's life (a crowd's prepared slot)
@@ -34,7 +34,7 @@ namespace Zantetsu.PhysicsCut
             IReadOnlyList<Transform> convexBones, VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect,
             out VpPreparedCharacterCut prepared)
             => VpPreparedCharacterCut.TryCreate(this, renderer, topology, topologyCount, boneLocalBank,
-                convexes, convexBones, sharedCold, lentDirect, out prepared);
+                convexes, convexBones, sharedCold, lentDirect, null, out prepared);
     }
 
     /// <summary>
@@ -95,7 +95,7 @@ namespace Zantetsu.PhysicsCut
         internal static bool TryCreate(CutWorldRoot world, SkinnedMeshRenderer renderer, int[] topology,
             int topologyCount, ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes,
             IReadOnlyList<Transform> bones, VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect,
-            out VpPreparedCharacterCut prepared)
+            VpBakedConvexMeshes bakedMeshes, out VpPreparedCharacterCut prepared)
         {
             prepared = null;
             if (!Usable(world) || sharedCold == null || convexes == null || convexes.Count == 0
@@ -130,7 +130,10 @@ namespace Zantetsu.PhysicsCut
                 bool slot;
                 using (s_prepareSlot.Auto()) slot = world.Display.TryPrepareRoot(made.direct, out made.slot);
                 if (!slot) return false;
-                using (s_preparePhysics.Auto()) made.physics = new VpPreparedPhysicsInput(bank, convexes);
+                // The caller's baked meshes when they were baked from this very input; baked here otherwise.
+                using (s_preparePhysics.Auto())
+                    made.physics = bakedMeshes != null && !bakedMeshes.IsDisposed && bakedMeshes.Matches(bank, convexes)
+                        ? new VpPreparedPhysicsInput(bank, convexes, bakedMeshes) : new VpPreparedPhysicsInput(bank, convexes);
                 // The bone-local copy a hit reads (DESIGN 19.1.7): made here, once, from the same authored bank.
                 using (s_prepareHitShape.Auto()) made.hitShape = new VpCharacterHitShape(bank, convexes);
                 using (s_prepareCold.Auto()) sharedCold.Prepare(made.physics);

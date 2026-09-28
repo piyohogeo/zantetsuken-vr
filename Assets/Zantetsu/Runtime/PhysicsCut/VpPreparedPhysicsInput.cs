@@ -69,6 +69,7 @@ namespace Zantetsu.PhysicsCut
     {
         PhysicsOwnerShape shape;
         readonly PhysicsShapeSource meshOwner;
+        // Bind-pose points, read only once made (shared with the baked meshes an input was made from).
         readonly float3[][] bindPoints;
         readonly PhysicsMeshFrame[] frames;
         bool attempted, everAttempted, transferred, disposed;
@@ -84,40 +85,72 @@ namespace Zantetsu.PhysicsCut
             var owner = meshOwner = PhysicsShapeSource.OwnPreparedMeshes(meshes);
             try
             {
-                for (int c = 0; c < ranges.Count; c++)
-                {
-                    var r = ranges[c];
-                    if (r.vertexCount < 4 || r.faceCount < 4) throw new ArgumentException("Nonempty convex required");
-                    var vertices = new Vector3[r.vertexCount]; bindPoints[c] = new float3[r.vertexCount];
-                    for (int v = 0; v < vertices.Length; v++)
-                    {
-                        float3 p = bank.vertices[r.vertexBase + v];
-                        if (!math.all(math.isfinite(p))) throw new ArgumentException("Finite bind points required");
-                        vertices[v] = p; bindPoints[c][v] = p;
-                    }
-                    var triangles = new List<int>();
-                    for (int f = 0; f < r.faceCount; f++)
-                    {
-                        int start = bank.faceOffsets[r.faceBase + f], end = bank.faceOffsets[r.faceBase + f + 1];
-                        if (start < 0 || end > r.faceIndexCount || end - start < 3) throw new ArgumentException("Invalid face loop");
-                        for (int k = start; k < end; k++)
-                            if ((uint)bank.faceIndices[r.faceIndexBase + k] >= r.vertexCount) throw new ArgumentException("Invalid vertex reference");
-                        for (int k = start + 1; k + 1 < end; k++)
-                        {
-                            triangles.Add(bank.faceIndices[r.faceIndexBase + start]);
-                            triangles.Add(bank.faceIndices[r.faceIndexBase + k]);
-                            triangles.Add(bank.faceIndices[r.faceIndexBase + k + 1]);
-                        }
-                    }
-                    var mesh = meshes[c] = new Mesh { name = "Prepared bone-local convex" };
-                    mesh.vertices = vertices; mesh.triangles = triangles.ToArray();
-                    Physics.BakeMesh(mesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking); ColdCookCalls++;
-                }
+                ColdCookCalls = BakeConvexMeshes(bank, ranges, meshes, bindPoints);
                 shape = PhysicsOwnerShape.Authored(bank, ranges, meshes, owner, float4x4.identity);
                 shape.PrepareMeshFrames();
             }
             catch { shape?.Dispose(); throw; }
             finally { owner.Release(); }
+        }
+
+        /// <summary>
+        /// The same input, taking meshes already baked from this very bank and these ranges (a crowd slot's, kept for its
+        /// next preparation) instead of baking them: no mesh is made or baked here. The meshes are held through a source
+        /// of this input's own, so what holds this input's meshes -- its shape, the cold preparation, a piece that
+        /// inherits one -- counts exactly as with meshes of its own. Throws, making nothing, when the baked meshes are
+        /// disposed or were baked from another input.
+        /// </summary>
+        public VpPreparedPhysicsInput(ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> ranges, VpBakedConvexMeshes baked)
+        {
+            if (ranges == null || ranges.Count == 0) throw new ArgumentException("Validated bone-local convexes required", nameof(ranges));
+            if (baked == null) throw new ArgumentNullException(nameof(baked));
+            if (baked.IsDisposed) throw new ObjectDisposedException(nameof(VpBakedConvexMeshes));
+            if (!baked.Matches(bank, ranges)) throw new ArgumentException("The baked meshes were made from another input", nameof(baked));
+            frames = new PhysicsMeshFrame[ranges.Count];
+            var owner = meshOwner = baked.Borrow(out Mesh[] meshes, out bindPoints);
+            try
+            {
+                shape = PhysicsOwnerShape.Authored(bank, ranges, meshes, owner, float4x4.identity);
+                shape.PrepareMeshFrames();
+            }
+            catch { shape?.Dispose(); throw; }
+            finally { owner.Release(); }
+        }
+
+        // Makes and bakes one bone-local mesh per convex into meshes, and copies the bind points; the cook calls made.
+        internal static int BakeConvexMeshes(ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> ranges, Mesh[] meshes, float3[][] bindPoints)
+        {
+            int cooks = 0;
+            for (int c = 0; c < ranges.Count; c++)
+            {
+                var r = ranges[c];
+                if (r.vertexCount < 4 || r.faceCount < 4) throw new ArgumentException("Nonempty convex required");
+                var vertices = new Vector3[r.vertexCount]; bindPoints[c] = new float3[r.vertexCount];
+                for (int v = 0; v < vertices.Length; v++)
+                {
+                    float3 p = bank.vertices[r.vertexBase + v];
+                    if (!math.all(math.isfinite(p))) throw new ArgumentException("Finite bind points required");
+                    vertices[v] = p; bindPoints[c][v] = p;
+                }
+                var triangles = new List<int>();
+                for (int f = 0; f < r.faceCount; f++)
+                {
+                    int start = bank.faceOffsets[r.faceBase + f], end = bank.faceOffsets[r.faceBase + f + 1];
+                    if (start < 0 || end > r.faceIndexCount || end - start < 3) throw new ArgumentException("Invalid face loop");
+                    for (int k = start; k < end; k++)
+                        if ((uint)bank.faceIndices[r.faceIndexBase + k] >= r.vertexCount) throw new ArgumentException("Invalid vertex reference");
+                    for (int k = start + 1; k + 1 < end; k++)
+                    {
+                        triangles.Add(bank.faceIndices[r.faceIndexBase + start]);
+                        triangles.Add(bank.faceIndices[r.faceIndexBase + k]);
+                        triangles.Add(bank.faceIndices[r.faceIndexBase + k + 1]);
+                    }
+                }
+                var mesh = meshes[c] = new Mesh { name = "Prepared bone-local convex" };
+                mesh.vertices = vertices; mesh.triangles = triangles.ToArray();
+                Physics.BakeMesh(mesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking); cooks++;
+            }
+            return cooks;
         }
 
         // Borrowed synchronously by the load-time preparer only; it must release every temporary hold before returning.

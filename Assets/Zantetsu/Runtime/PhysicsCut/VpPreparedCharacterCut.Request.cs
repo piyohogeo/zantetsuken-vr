@@ -57,13 +57,25 @@ namespace Zantetsu.PhysicsCut
             ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
             VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, GameObject characterRoot, Rigidbody motionBody,
             out VpPreparedCharacterCut prepared)
+            => TryPrepareCharacterCut(renderer, topology, topologyCount, bank, convexes, convexBones, sharedCold, lentDirect, null,
+                characterRoot, motionBody, out prepared);
+
+        /// <summary>
+        /// The same, also taking the caller's baked collider meshes (<see cref="VpBakedConvexMeshes"/>, a crowd slot's
+        /// kept ones) instead of baking them, when they were baked from this very bank and these convexes; baked afresh
+        /// otherwise. The meshes stay the caller's object; this handle and what its cut publishes only hold them.
+        /// </summary>
+        public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
+            ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
+            VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, VpBakedConvexMeshes bakedMeshes,
+            GameObject characterRoot, Rigidbody motionBody, out VpPreparedCharacterCut prepared)
         {
             prepared = null;
             if (renderer == null || characterRoot == null || motionBody == null
                 || !renderer.transform.IsChildOf(characterRoot.transform)
                 || !motionBody.transform.IsChildOf(characterRoot.transform)
                 || transform.IsChildOf(characterRoot.transform)) return false;
-            if (!TryPrepareCharacterCut(renderer,topology,topologyCount,bank,convexes,convexBones,sharedCold,lentDirect,out var made)) return false;
+            if (!VpPreparedCharacterCut.TryCreate(this,renderer,topology,topologyCount,bank,convexes,convexBones,sharedCold,lentDirect,bakedMeshes,out var made)) return false;
             try { made.BindSource(characterRoot,motionBody); prepared=made; return true; }
             catch { made.Dispose(); throw; }
         }

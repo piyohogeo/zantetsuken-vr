@@ -62,9 +62,9 @@ namespace Zantetsu.Sandbox
         // ----- the prepared slots --------------------------------------------------------------------------------------
         // Every character this crowd shows is one of a fixed set of slots, all prepared before the scenario begins: the
         // scene's own characters and the spares made from the template. A replacement activates a free prepared slot; a
-        // cut character's slot comes back once its cut refers to nothing of it any more, is prepared again on the frames
-        // after that (one a frame), and is free again. With no free slot a replacement waits -- the crowd is short for a
-        // while -- and nothing is made or waited for on the spot.
+        // cut character's slot comes back once its cut refers to nothing of it any more, is prepared again by the refill
+        // on the frames after that (as its cap and the frame allow), and is free again. With no free slot a replacement
+        // waits in the refill -- the crowd is short for a while -- and nothing is made or waited for on the spot.
         private readonly MobPlanSlotPool<SandboxNpcCharacter> pool = new MobPlanSlotPool<SandboxNpcCharacter>();
         // One share per model (SandboxNpcCharacter.SlotShareKey): the parsed intake and hulls and the fixed-scale mesh of
         // one model are shared by that model's slots only.
@@ -79,7 +79,7 @@ namespace Zantetsu.Sandbox
         public int PreparingSlots => pool.PreparingCount;
         public int BrokenSlots => pool.BrokenCount;
         public bool PoolPrepared => poolPrepared;
-        /// <summary>Replacements the planner published that waited for a free slot (left out of that cycle).</summary>
+        /// <summary>The refill's tries to start a waiting individual that found no free slot (it waits on, once a frame at most).</summary>
         public int WaitedForSlot { get; private set; }
         /// <summary>Activations of a slot that had carried an individual before.</summary>
         public int ReusedActivations { get; private set; }
@@ -90,6 +90,33 @@ namespace Zantetsu.Sandbox
         public int SharedReads => slotShares.Values.Sum(s => s.SharedReads);
         public int SlotShareCount => slotShares.Count;
         private static readonly ProfilerMarker s_pool = new ProfilerMarker("Zantetsu.MobPlan.Pool");
+
+        // ----- the refill ----------------------------------------------------------------------------------------------
+        // A published individual no slot carries yet waits in one queue with the returned slots' re-preparation; each
+        // frame runs what fits both the refill's own Main cap and the frame's remaining Main budget over a reserve
+        // (MobPlanRefillQueue). A waiting individual stays in the planner's baseline, takes each newer plan, and starts
+        // with the plan current then -- dropped instead, taking no slot, when that plan no longer places it or places
+        // it in view.
+        [Tooltip("The refill's own Main time per frame (display starts and slot re-preparation), in milliseconds.")]
+        [SerializeField] private float refillCapMilliseconds = 2f;
+        [Tooltip("Main time the refill leaves to the rest of the frame (over the simulation's expected cost), in milliseconds.")]
+        [SerializeField] private float refillReserveMilliseconds = 4f;
+        public const string RefillCapArgument = "-zantetsuRefillCapMs";
+        private readonly MobPlanRefillQueue<PublishedMobPlan> refill = new MobPlanRefillQueue<PublishedMobPlan>(0.0005, 0.0015, 0.0015);
+        private readonly List<double> refillStartWaits = new List<double>();
+        private readonly List<double> refillStages = new List<double>();
+        private readonly double[] refillStageMax = new double[3];
+        // A returned slot's waits: from its individual's retirement to its preparation again, and to its being free.
+        private readonly Dictionary<SandboxNpcCharacter, double> returnedAt = new Dictionary<SandboxNpcCharacter, double>();
+        private readonly Dictionary<SandboxNpcCharacter, double> preparedAt = new Dictionary<SandboxNpcCharacter, double>();
+        private readonly List<double> refillPrepareWaits = new List<double>();
+        private readonly List<double> refillFreeWaits = new List<double>();
+        private int refillMaxReturning, refillMaxPreparing;
+        private double refillOverrunMax;
+        private int refillStartsDroppedInView, refillStartsDroppedUnplaced, refillIgnoredStale;
+        private static readonly ProfilerMarker s_refill = new ProfilerMarker("Zantetsu.MobPlan.Refill");
+        private static readonly ProfilerMarker s_refillStart = new ProfilerMarker("Zantetsu.MobPlan.Refill.Start");
+        public MobPlanRefillQueue<PublishedMobPlan> Refill => refill;
 
         private static readonly ProfilerMarker s_update = new ProfilerMarker("Zantetsu.MobPlan.Update");
         private static readonly ProfilerMarker s_queue = new ProfilerMarker("Zantetsu.MobPlan.Queue");
@@ -159,6 +186,11 @@ namespace Zantetsu.Sandbox
             {
                 AdvancePool();
             }
+
+            using (s_refill.Auto())
+            {
+                RunRefill();
+            }
             Vector3 position = player.transform.position;
             playerVelocity = Time.deltaTime > 0 ? (position - previousPlayer) / Time.deltaTime : Vector3.zero;
             previousPlayer = position;
@@ -214,10 +246,29 @@ namespace Zantetsu.Sandbox
             player.transform.position = new Vector3(simulation.FocusX, 0, simulation.FocusZ) + mapOffset;
             player.ConfigureMap(simulation.Map, mapOffset);
             previousPlayer = player.transform.position;
+            PrepareLodPlans();
             for (int i = 0; i < simulation.Agents.Count && pool.TryTake(out SandboxNpcCharacter slot); i++)
                 AddActor(simulation.Agents[i].Id, slot, new PublishedMobPlan(simulation.Agents[i].Plan, generation));
             ready = true;
             Debug.Log($"MobPlan ready: {actors.Count} NPC, {simulation.Dataset.Count} nodes, {bank.Tables.Count} tables, 66 bones; slots {pool.SlotCount} ({pool.FreeCount} free)");
+        }
+
+        // Before the scenario, with the table bank loaded: every slot's level-of-detail plan, so that an activation only
+        // registers it (the plan's range is read over the bank the slot will be driven with).
+        private void PrepareLodPlans()
+        {
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            int prepared = 0, refused = 0;
+            double largest = 0;
+            foreach (SandboxNpcCharacter slot in pool.Slots)
+            {
+                if (slot == null || slot.Failure != null) continue;
+                slot.CharacterRoot.GetComponent<PoseTablePlayer>().TableBank = bank.Tables;
+                if (slot.PrepareLodPlan(out _)) { prepared++; largest = Math.Max(largest, slot.LodPlanSeconds); }
+                else refused++;
+            }
+            double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+            Debug.Log($"MOBPLAN LOD plans prepared: {prepared} slots, {refused} without, total_ms={seconds * 1000:F2} largest_ms={largest * 1000:F2}");
         }
 
         // Before the scenario: the scene's characters and the spares, each configured and prepared as a dormant slot.
@@ -272,9 +323,115 @@ namespace Zantetsu.Sandbox
         // frame; a prepared one is free.
         private void AdvancePool()
         {
+            pool.Advance(false);
+            refillMaxReturning = Math.Max(refillMaxReturning, pool.ReturningCount);
+            refillMaxPreparing = Math.Max(refillMaxPreparing, pool.PreparingCount);
+            // A slot prepared again and now free: its whole wait since its individual's retirement.
+            if (preparedAt.Count > 0)
+            {
+                List<SandboxNpcCharacter> free = null;
+                foreach (KeyValuePair<SandboxNpcCharacter, double> p in preparedAt)
+                    if (p.Key == null || p.Key.IsPrepared || p.Key.Failure != null) (free ??= new List<SandboxNpcCharacter>()).Add(p.Key);
+                if (free != null)
+                    foreach (SandboxNpcCharacter s in free)
+                    {
+                        if (s != null && s.IsPrepared) refillFreeWaits.Add(Time.realtimeSinceStartupAsDouble - preparedAt[s]);
+                        preparedAt.Remove(s);
+                    }
+            }
+        }
+
+        private double RefillCapSeconds()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            int at = Array.IndexOf(args, RefillCapArgument);
+            if (at >= 0 && at + 1 < args.Length && double.TryParse(args[at + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms) && ms > 0)
+                return ms / 1000.0;
+            return refillCapMilliseconds / 1000.0;
+        }
+
+        private double refillCap = double.NaN;
+        // Made once: the refill runs every frame and allocates nothing.
+        private Func<double> refillRemaining;
+        private Func<int, PublishedMobPlan, MobPlanRefillQueue<PublishedMobPlan>.StartResult> refillStart;
+        private Func<bool> refillHasPrepare, refillPrepare, refillNeedsBake, refillBake;
+
+        // The frame's refill: waiting starts first, then returned slots prepared again, as far as the cap and the frame allow.
+        private void RunRefill()
+        {
+            if (double.IsNaN(refillCap))
+            {
+                refillCap = RefillCapSeconds();
+                refillRemaining = () => CutPhysicsStep.FrameRemainingMainSeconds;
+                refillStart = StartWaiting;
+                refillHasPrepare = () => pool.HasReturnReady;
+                refillPrepare = () =>
+                {
+                    bool ok = pool.PrepareOneAgain();
+                    SandboxNpcCharacter slot = pool.LastPrepared;
+                    if (slot != null && returnedAt.TryGetValue(slot, out double at))
+                    {
+                        refillPrepareWaits.Add(Time.realtimeSinceStartupAsDouble - at);
+                        preparedAt[slot] = at;
+                        returnedAt.Remove(slot);
+                    }
+
+                    return ok;
+                };
+                refillNeedsBake = () => pool.NextNeedsBake;
+                refillBake = pool.BakeNext;
+            }
+
             int broken = pool.BrokenCount;
-            pool.Advance(true);
+            int records = refill.Records.Count;
+            refill.Run(Time.frameCount, refillCap, refillRemaining,
+                refillReserveMilliseconds / 1000.0 + CutPhysicsStep.ExpectedSimulateSeconds, refillStart, refillHasPrepare, refillPrepare, refillNeedsBake, refillBake);
             if (pool.BrokenCount > broken) Debug.LogError("MobPlan slot not prepared again: " + pool.Broken[pool.BrokenCount - 1].Failure, pool.Broken[pool.BrokenCount - 1]);
+            for (int i = records; i < refill.Records.Count; i++)
+            {
+                MobPlanRefillQueue<PublishedMobPlan>.Record r = refill.Records[i];
+                refillStages.Add(r.measured);
+                refillStageMax[(int)r.stage] = Math.Max(refillStageMax[(int)r.stage], r.measured);
+                refillOverrunMax = Math.Max(refillOverrunMax, r.overrun);
+                if (r.stage == MobPlanRefillQueue<PublishedMobPlan>.Stage.Start) refillStartWaits.Add(r.waitSeconds);
+            }
+
+            refill.Records.Clear();
+        }
+
+        // One waiting individual's start with the plan it has now: dropped, taking no slot, when the plan no longer places
+        // it or places it in view; waiting on when no slot is free.
+        private MobPlanRefillQueue<PublishedMobPlan>.StartResult StartWaiting(int id, PublishedMobPlan plan)
+        {
+            using (s_refillStart.Auto())
+            {
+                if (!bank.TryEvaluate(plan, PlanTime, simulation.Dataset, out _, out _, out var root))
+                {
+                    refillStartsDroppedUnplaced++;
+                    return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
+                }
+
+                if (Visible(root.position.x, root.position.z))
+                {
+                    refillStartsDroppedInView++;
+                    return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
+                }
+
+                if (pool.FreeCount == 0)
+                {
+                    WaitedForSlot++;
+                    return MobPlanRefillQueue<PublishedMobPlan>.StartResult.NoSlot;
+                }
+
+                pool.TryTake(out SandboxNpcCharacter slot);
+                using (s_replacement.Auto())
+                {
+                    if (!AddActor(id, slot, plan, true)) return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Dropped;
+                    ReplacementsAdded++;
+                }
+
+                return MobPlanRefillQueue<PublishedMobPlan>.StartResult.Started;
+            }
         }
 
         private bool AddActor(int id, SandboxNpcCharacter character, PublishedMobPlan plan, bool replacement = false)
@@ -316,7 +473,7 @@ namespace Zantetsu.Sandbox
                 // A cut character's pose is no longer updated: it leaves the bone level of detail with its retirement.
                 if (character != null) character.LeaveLevelOfDetail();
                 // Its slot waits until the cut refers to nothing of it (AdvancePool).
-                if (character != null) pool.Return(character);
+                if (character != null) { pool.Return(character); returnedAt[character] = Time.realtimeSinceStartupAsDouble; }
             }
 
             generation++;
@@ -344,12 +501,15 @@ namespace Zantetsu.Sandbox
             public CycleResult cycle;
             public Dictionary<int, PublishedMobPlan> plans;
             public List<int> relocated;
+            public HashSet<int> baseline;
         }
         private void QueueCycle(float now)
         {
             int capturedGeneration = generation;
             int queuedFrame = Time.frameCount;
             var baseline = actors.ToDictionary(p => p.Key, p => p.Value.plan);
+            foreach (KeyValuePair<int, PublishedMobPlan> waiting in refill.Waiting) baseline[waiting.Key] = waiting.Value;
+            var baselineIds = new HashSet<int>(baseline.Keys);
             Vector3 p = player.transform.position - mapOffset, velocity = playerVelocity;
             float yaw = view != null ? view.eulerAngles.y : player.transform.eulerAngles.y;
             var accepted = lastAccepted;
@@ -370,7 +530,7 @@ namespace Zantetsu.Sandbox
                     if (!baseline.TryGetValue(agent.Id, out var old) ||
                         (old.TryResolve(now, simulation.Dataset, out _, out _, out var at) &&
                          Pose2.Distance(at, AgentPlan.PoseAt(simulation.Dataset, agent.Plan.Segments, now)) > .1f)) moved.Add(agent.Id);
-                return new Product { cycle = result, relocated = moved,
+                return new Product { cycle = result, relocated = moved, baseline = baselineIds,
                     plans = result.NewPlans.ToDictionary(pair => pair.Key, pair => new PublishedMobPlan(pair.Value, capturedGeneration)) };
             }, (job, completion) =>
             {
@@ -410,21 +570,18 @@ namespace Zantetsu.Sandbox
                     || (actors.TryGetValue(id, out var old) && Visible(old.character.CharacterRoot.transform.position.x - mapOffset.x, old.character.CharacterRoot.transform.position.z - mapOffset.z)))
                 { StaleCycles++; nextRequest = PlanTime; return "stale-visible"; }
             }
+            // A waiting start the plan no longer has is cancelled; one it has takes the new plan; a new individual waits for
+            // its start (the refill). One the cycle's baseline held that is neither live nor waiting now -- retired, dropped
+            // or cancelled since -- is not asked for again.
+            List<int> gone = null;
+            foreach (KeyValuePair<int, PublishedMobPlan> waiting in refill.Waiting)
+                if (!product.plans.ContainsKey(waiting.Key)) (gone ??= new List<int>()).Add(waiting.Key);
+            if (gone != null) foreach (int id in gone) refill.Cancel(id);
             foreach (var pair in product.plans)
             {
                 if (actors.TryGetValue(pair.Key, out var actor)) actor.plan = pair.Value;
-                else if (pool.TryTake(out SandboxNpcCharacter slot))
-                {
-                    using (s_replacement.Auto())
-                    {
-                        if (AddActor(pair.Key, slot, pair.Value, true)) ReplacementsAdded++;
-                    }
-                }
-                else
-                {
-                    // No free slot: this individual is left out, and the planner drops it from the next baseline.
-                    WaitedForSlot++;
-                }
+                else if (refill.IsWaiting(pair.Key) || !product.baseline.Contains(pair.Key)) refill.Request(pair.Key, pair.Value, Time.frameCount);
+                else refillIgnoredStale++;
             }
             lastAccepted = product.cycle;
             PublishedCycles++;
@@ -441,7 +598,36 @@ namespace Zantetsu.Sandbox
                 && !simulation.Map.SegmentBlocked(eye.x, eye.z, x, z);
         }
         private void Fail(Exception failure) { FailedCycles++; if (failure != null) Debug.LogException(failure, this); }
-        private void OnDestroy() { stopped = true; generation++; }
+        private void OnDestroy()
+        {
+            stopped = true; generation++;
+            int waitingAtEnd = refill.WaitingStarts;
+            refill.CancelAll();
+            if (ready)
+            {
+                Debug.Log($"MOBPLAN END reusedActivations={ReusedActivations} lodPlanFallbacks={SandboxNpcCharacter.LodPlanFallbacks} slotBakes={SandboxNpcCharacter.SlotBakes}");
+                Debug.Log($"MOBPLAN REFILL capMs={refillCap * 1000:F2} reserveMs={refillReserveMilliseconds:F2} requests={refill.Requests} replaced={refill.Replaced} "
+                    + $"cancelled={refill.Cancelled} (waiting at end {waitingAtEnd}) started={refill.Started} dropped={refill.Dropped} (unplaced {refillStartsDroppedUnplaced}, in view {refillStartsDroppedInView}) "
+                    + $"ignoredStale={refillIgnoredStale} prepared={refill.Prepared} deferredByCap={refill.DeferredByCap} deferredByFrame={refill.DeferredByFrame} "
+                    + $"overCapRefusals={refill.OverCapRefusals} noSlotFrames={refill.NoSlotFrames} overruns={refill.Overruns} overrunMaxMs={refillOverrunMax * 1000:F3} "
+                    + $"startMaxMs={refillStageMax[0] * 1000:F3} prepareMaxMs={refillStageMax[1] * 1000:F3} bakeMaxMs={refillStageMax[2] * 1000:F3} baked={refill.Baked} "
+                    + $"expectedMs start={refill.ExpectedSeconds(MobPlanRefillQueue<PublishedMobPlan>.Stage.Start) * 1000:F3} prepare={refill.ExpectedSeconds(MobPlanRefillQueue<PublishedMobPlan>.Stage.Prepare) * 1000:F3} "
+                    + $"maxWaitingStarts={refill.MaxWaitingStarts} maxReturning={refillMaxReturning} maxPreparing={refillMaxPreparing} "
+                    + $"atEnd returning={pool.ReturningCount} (ready {(pool.HasReturnReady ? "yes" : "no")}) preparing={pool.PreparingCount} free={pool.FreeCount} broken={pool.BrokenCount} "
+                    + $"bakeMismatches={SandboxNpcCharacter.BakeMismatches} stageBakes={SandboxNpcCharacter.StageBakes} preparationBakes={SandboxNpcCharacter.PreparationBakes} "
+                    + $"prepareWaitMs(retired->prepared) n={refillPrepareWaits.Count} median={Quantile(refillPrepareWaits, .5) * 1000:F1} p90={Quantile(refillPrepareWaits, .9) * 1000:F1} max={Quantile(refillPrepareWaits, 1) * 1000:F1} "
+                    + $"freeWaitMs(retired->free) n={refillFreeWaits.Count} median={Quantile(refillFreeWaits, .5) * 1000:F1} max={Quantile(refillFreeWaits, 1) * 1000:F1} "
+                    + $"startWaitMs median={Quantile(refillStartWaits, .5) * 1000:F1} p90={Quantile(refillStartWaits, .9) * 1000:F1} max={Quantile(refillStartWaits, 1) * 1000:F1}");
+            }
+        }
+
+        private static double Quantile(List<double> values, double q)
+        {
+            if (values.Count == 0) return double.NaN;
+            var sorted = new List<double>(values);
+            sorted.Sort();
+            return sorted[Math.Min(sorted.Count - 1, (int)Math.Round(q * (sorted.Count - 1)))];
+        }
         private void OnValidate() { if (spareSlots < 0) spareSlots = 0; }
 
         private sealed class Work : IDispatchWork
