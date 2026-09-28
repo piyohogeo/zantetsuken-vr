@@ -1321,6 +1321,12 @@ namespace Zantetsu.Sandbox
                         + _recorder.ReplayIndex + "); not read again");
                 }
 
+                // The MobPlan refill unit's burst of simultaneous retirements (check only, off unless asked).
+                if (MobPlanMode)
+                {
+                    MobPlanBurst(frame, update);
+                }
+
                 // The run's ordinary drain, once a frame, as the lane's consumer.
                 if (_traceDrainer != null)
                 {
