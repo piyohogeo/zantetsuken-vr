@@ -316,8 +316,7 @@ namespace Zantetsu.Sandbox
                 PlayableCityBegin();
                 _mpPreviousPlayer = _mpInput.player.transform.position;
                 _multiRows = new StreamWriter(Path.Combine(directory, "multi.csv"));
-                _multiHits = new StreamWriter(Path.Combine(directory, "multi-hits.csv")) { AutoFlush = MobPlanLive };
-                _multiHits.WriteLine("frame,slashId,of,child,fragment,acceptance,admission,operation");
+                HitLogOpen("mobPlan");
                 _multiRows.WriteLine("frame,real,waves,uncutNpcs,liveFragments,livePieces,liveConvexes,acceptedOps,pendingOps,incompleteOps,acceptedThisFrame,provisionalThisFrame,finalThisFrame,committedThisFrame,unsimulated,stepId");
                 _mpFrames = new StreamWriter(Path.Combine(directory, "mobplan-frames.csv"));
                 _mpFrames.WriteLine("frame,t,delta,live,busy,published,stale,replacements,playerX,playerZ,playerYaw,waves,replaying,chunk,fed,lodRegistered,slots,free,returning,preparing,waitedForSlot");

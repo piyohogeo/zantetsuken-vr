@@ -27,7 +27,7 @@ namespace Zantetsu.Sandbox
             private readonly Dictionary<LogicalFragmentId, SandboxNpcCharacter> _multiRoots = new Dictionary<LogicalFragmentId, SandboxNpcCharacter>();
             private readonly SortedDictionary<long, SlashTally> _multiSlashes = new SortedDictionary<long, SlashTally>();
             private readonly Dictionary<LogicalFragmentId, int> _multiAcceptedOnSource = new Dictionary<LogicalFragmentId, int>();
-            private StreamWriter _multiRows, _multiHits;
+            private StreamWriter _multiRows;
             private readonly HashSet<long> _multiSlashEnded = new HashSet<long>();
 
             // Hits held before acceptance: the character, the Slash and the frame it was held, until its handle is accepted.
@@ -81,8 +81,7 @@ namespace Zantetsu.Sandbox
                 Expect(_npcs.Select(c => c.Renderer != null && c.Renderer.sharedMesh != null ? c.Renderer.sharedMesh.vertexCount + ":" + Model(c) : Model(c)).Distinct().Count() == _npcs.Count,
                     "every NPC has a model of its own");
                 _multiRows = new StreamWriter(Path.Combine(directory, "multi.csv"));
-                _multiHits = new StreamWriter(Path.Combine(directory, "multi-hits.csv")) { AutoFlush = true };
-                _multiHits.WriteLine("frame,slashId,of,child,fragment,acceptance,admission,operation");
+                HitLogOpen("multiNpc");
                 MultiStorage("before replay");
                 _multiRows.WriteLine("frame,real,waves,uncutNpcs,liveFragments,livePieces,liveConvexes,acceptedOps,pendingOps,incompleteOps,acceptedThisFrame,provisionalThisFrame,finalThisFrame,committedThisFrame,unsimulated,stepId");
             }
@@ -153,7 +152,7 @@ namespace Zantetsu.Sandbox
             }
 
             // One hit, as the check logged it: which Slash, which lineage, what the acceptance said.
-            private void MultiOnHit(in SlashHitConfirmed hit, int frame, bool child)
+            private void MultiOnHit(in SlashHitConfirmed hit, int frame, bool child, int update)
             {
                 SlashTally t = Tally(hit.SlashId);
                 string of = LineageOf(hit.Fragment);
@@ -197,7 +196,7 @@ namespace Zantetsu.Sandbox
                     t.publishedAtFrame[frame] = p + 1;
                 }
 
-                _multiHits?.WriteLine(string.Join(",", frame, hit.SlashId, of, child, hit.Fragment.value, hit.Acceptance, hit.Admission, hit.Operation.value));
+                HitLogHit(hit, frame, of, child, update);
                 SandboxNpcCharacter c = _multiRoots.Values.FirstOrDefault(x => "npc-" + Model(x) == of);
                 PoseTablePlayer pose = c != null && c.CharacterRoot != null ? c.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
                 Log("multi hit: slashId=" + hit.SlashId + " of=" + of + (child ? " child" : " root") + " fragment=" + hit.Fragment.value
@@ -326,8 +325,7 @@ namespace Zantetsu.Sandbox
             {
                 _multiRows?.Dispose();
                 _multiRows = null;
-                _multiHits?.Dispose();
-                _multiHits = null;
+                HitLogEnd();
                 BuildingClose();
                 MobPlanClose();
             }
