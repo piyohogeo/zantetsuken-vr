@@ -13,7 +13,8 @@
         "Unity.Mathematics",
         "Unity.Collections",
         "Unity.Burst",
-        "Zantetsu.Sandbox"
+        "Zantetsu.Sandbox",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "optionalUnityReferences": [
