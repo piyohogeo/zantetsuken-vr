@@ -11,6 +11,7 @@ diagnosis tools, not product checks: no product test's pass or fail depends on t
 |---|---|---|---|
 | `CutPhysicsStep` | `Assets/Zantetsu/Runtime/PhysicsCut/CutPhysicsStep.Diagnosis.cs`: each step decision; PlayMode test marks from `StepDiagnosisAction.cs` | `ZTK_STEP_DIAG=1` in the environment when the play session starts (DEBUG builds only) | `[step diagnosis] ended: attempted N (seq 1..N, the summary last), accepted A, refused: ...` |
 | `CheckHits` | `Assets/Zantetsu/Runtime/Sandbox/SandboxPropSlashPlayerCheck.HitLog.cs`: each hit the check observed in its multi-NPC, building and MobPlan modes (formerly `multi-hits.csv` / `building-hits.csv`); records `start`, `hit`, `summary` | those check modes in a Development Player (`-zantetsuPropSlash <dir>` with `-zantetsuMultiNpc`, `-zantetsuBuildingSlash` or `-zantetsuMobPlan`); one recording per check walk (each iteration of `-zantetsuPropIterations`) | `[check hits] ended: recording R, attempted N (seq 1..N, the summary last), accepted A, refused: ...; ...; hits H` |
+| `CheckFrames` | `Assets/Zantetsu/Runtime/Sandbox/SandboxPropSlashPlayerCheck.FrameLog.cs`: the check's row for each replay frame in its multi-NPC and MobPlan modes (formerly `multi.csv`); records `start`, `frame`, `summary` | those two check modes in a Development Player (`-zantetsuPropSlash <dir>` with `-zantetsuMultiNpc` or `-zantetsuMobPlan`); one recording per check walk, apart from the walk's `CheckHits` recording | `[check frames] ended: recording R, attempted N (seq 1..N, the summary last), accepted A, refused: ...; ...; frames F` |
 | `ViewDiagnosis` | `Assets/Zantetsu/Runtime/Sandbox/ViewDiagnosis.cs`: the head pose at each stage (tags `inputAfterUpdate`, `update`, `beforeRender`), and records `start`, `found`, `focus`, `pause`, `device`, `mark`, `state`, `summary` | the Player argument `-zantetsuViewDiag` (no value), or `ViewDiagnosis.Start()` in a test (DEBUG builds only) | `[view diagnosis] ended: recording R, attempted N (seq 1..N, the summary last), accepted A, refused: ...; ...; cost before the summary: ...` |
 
 A record's value is a flat list of field names and values, starting with `seq` (1..N, one per record tried), `eventFrame`
@@ -67,6 +68,26 @@ The summary's ops tally keeps apart a mode that writes no ops from one that acce
 
 The end line adds `; ops planned P, attempted A, accepted C`, `; ops not applicable`, or `; ops applicable, not written`.
 
+`CheckFrames` records start with `recording` too, numbered on their own (not the `CheckHits` numbers). They are a writer
+and a recording apart from the walk's hits and ops, so that a gap in the many per-frame records leaves the hits and ops
+usable. The `start` record names the walk's mode, iteration, `directory`, and `hitRecording`: the walk's `CheckHits`
+recording (null when the walk opened none). The two recordings also share `directory`. Being apart does not separate their
+load: the logger's queue (65,536 records) is shared by every writer, so many frame records can still fill it for the hits
+and ops of the same moment. A refusal is counted against the writer that tried. In a `frame` record:
+- `eventFrame` is the frame the check ran its per-frame pass (MultiFrame, in its LateUpdate, order 400) in, the old CSV's
+  `frame`. It is the frame of the observation.
+- `seconds` is the Stopwatch then, counted from the recording's start.
+- `real` is the check's clock, `Time.unscaledTimeAsDouble` since the replay's start, in seconds: the clock of the op
+  records' times, not the Stopwatch, and not the replay input clock of a hit's `at`.
+- `waves`, `uncutNpcs`, `liveFragments`, `livePieces`, `liveConvexes`, `acceptedOps`, `pendingOps`, `incompleteOps`,
+  `acceptedThisFrame`, `provisionalThisFrame`, `finalThisFrame` and `committedThisFrame` are the counts the check read in
+  that frame, as in the old CSV.
+- `unsimulated` is the step clock's unsimulated seconds then, null without a step clock (the old empty field). `stepId` is
+  its step id, -1 without one.
+
+The logger's own `time` (UTC) and `frame` on each line are those of the call, not of the observation. The summary carries
+`frames`, the rows tried; a recording is analysed only if its saved `frame` records number it.
+
 ## Files
 
 - `check_writer_jsonl.py`: the completeness check, per writer.
@@ -87,6 +108,11 @@ The end line adds `; ops planned P, attempted A, accepted C`, `; ops not applica
   classified by its acceptance: no cut by the rule or not taken up are by specification; Published or Pending is a record
   short. `ops_for_run(run_dir, check_dir)` gives other readers one run's ops, hits and matching, and raises `NotComplete`
   unless the record and its ops are complete.
+- `analyze_frames.py`: per recording, the saved `frame` records against the summary's `frames` first, then the walk's
+  `CheckHits` recording it names and whether that one is complete (reported apart: one does not stop the other), the
+  observed frames and the check clock along the rows, and the logger's frame against `eventFrame`. It runs the check per
+  recording first. `frames_for_run(run_dir, check_dir)` gives other readers one run's frame records, and raises
+  `NotComplete` unless the recording and its rows are complete.
 - `analyze_step.py`: the step decisions inside `CutPhysicsStepPlayModeTests.TheStep_IsDecidedOncePerFrame...`, by reason, with the clock, budget and estimate they read. It runs the check first.
 
 ## Use
@@ -104,9 +130,10 @@ The end line adds `; ops planned P, attempted A, accepted C`, `; ops not applica
    - PARTIAL (exit 2): complete up to the summary, but there are records after it. The run is not complete.
    - NOT CONFIRMED (exit 1): no end line, a refusal, a missing or repeated seq, the summary not saved, or a cut tail.
    For `ViewDiagnosis`: `python check_writer_jsonl.py ViewDiagnosis "view diagnosis" <session.jsonl> <log> [--recording R]`,
-   and for `CheckHits`: `python check_writer_jsonl.py CheckHits "check hits" <session.jsonl> <player.log> [--recording R]`.
+   for `CheckHits`: `python check_writer_jsonl.py CheckHits "check hits" <session.jsonl> <player.log> [--recording R]`,
+   and for `CheckFrames`: `python check_writer_jsonl.py CheckFrames "check frames" <session.jsonl> <player.log> [--recording R]`.
    Each recording is checked on its own; the run is COMPLETE only if every recording is.
-4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, `python analyze_view.py <session.jsonl>:<log>`, `python analyze_hits.py <session.jsonl>:<player.log>`, or `python analyze_ops.py <session.jsonl>:<player.log>`. Give both, joined by `:`; absolute paths with drive
+4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, `python analyze_view.py <session.jsonl>:<log>`, `python analyze_hits.py <session.jsonl>:<player.log>`, `python analyze_ops.py <session.jsonl>:<player.log>`, or `python analyze_frames.py <session.jsonl>:<player.log>`. Give both, joined by `:`; absolute paths with drive
    letters are fine. Only a COMPLETE run is analysed; any other run is reported as "not analysed" with the check's verdict.
 
 ### The view diagnosis in the Player
@@ -124,7 +151,10 @@ iterations, an early end, a refusal, and after the end. `CheckOpLogPlayModeTests
 building columns, unobserved times written null, operation 0, repeated rows, none accepted against not applicable, a
 summary that never reached the ops, a refused op, and after the end. The op records come from the summary, so an ending
 that never runs it (an early ending with a fixed code, or a forced one) leaves `opsPlanned` null, and the ops are not
-analysed.
+analysed. The frame records end at the same close, just after the hit record, so that a tail cut off by the bounded drain loses
+the frame record's summary before the hit record's. `CheckFrameLogPlayModeTests` exercise them:
+the start naming the walk's hit recording, rows with and without a step clock, two iterations and a MobPlan walk, a refused
+row (the hit recording beside it stays complete), and after the end.
 
 ### In the Editor
 
