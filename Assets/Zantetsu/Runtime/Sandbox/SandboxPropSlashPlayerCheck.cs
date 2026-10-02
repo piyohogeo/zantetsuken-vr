@@ -110,7 +110,7 @@ namespace Zantetsu.Sandbox
         // Image evidence (XR Temporary): hold the geometry pool's finished work for N frames after the first hit.
         public const string HoldGeometryArgument = "-zantetsuPropHoldGeometry";
 
-        // Measurement (re-cut miss): pieces and sweeps recorded in a light run too.
+        // Measurement (re-cut miss): pieces recorded in a light run too.
         public const string TraceMissArgument = "-zantetsuPropTraceMiss";
 
         // Measurement (the moving VRS): after the preparation, the replay begins when the XR head leaves its pose.
@@ -379,10 +379,6 @@ namespace Zantetsu.Sandbox
             internal float viewTurnDegrees;
             private Transform _viewTurn;
             private bool _viewTurned;
-            private StreamWriter _sweepRows;
-            private StreamWriter _pairRows, _pairVertices;
-            private readonly List<CurrentShape> _pairShapes = new List<CurrentShape>();
-            private float3[] _pairSection = new float3[64];
             internal string withdrawalMode;
             internal int iteration;
             internal int frameRate;
@@ -1364,9 +1360,6 @@ namespace Zantetsu.Sandbox
                 }
 
                 _pieceRows?.Dispose();
-                _sweepRows?.Dispose();
-                _pairRows?.Dispose();
-                _pairVertices?.Dispose();
                 _poseEvaluateNs.Dispose();
                 _poseApplyNs.Dispose();
                 _hitEvaluateNs.Dispose();
@@ -1439,12 +1432,6 @@ namespace Zantetsu.Sandbox
                 if (building && _observing)
                 {
                     BuildingFrame(Time.frameCount);
-                }
-
-                if (traceMiss && _replaying)
-                {
-                    RecordSweeps();
-                    RecordHitPairs(3);
                 }
 
                 if (!_replaying || _world == null || _world.IsEnding)
@@ -2131,105 +2118,6 @@ namespace Zantetsu.Sandbox
             }
 
             // One row per live piece per frame, and where each stands when the observation starts and ends.
-            // Every sweep of this update, as the hit detector was given it (SlashWaveCore.SweepAt).
-            private void RecordSweeps()
-            {
-                SlashWaveCore core = _katana != null ? _katana.Core : null;
-                if (core == null)
-                {
-                    return;
-                }
-
-                if (_sweepRows == null)
-                {
-                    _sweepRows = new StreamWriter(Path.Combine(directory, "sweeps.csv"));
-                    _sweepRows.WriteLine("frame,slashId,at,latch,prevAX,prevAY,prevAZ,prevBX,prevBY,prevBZ,curAX,curAY,curAZ,curBX,curBY,curBZ,travelX,travelY,travelZ,planeNX,planeNY,planeNZ,planeD");
-                }
-
-                for (int i = 0; i < core.SweepCount; i++)
-                {
-                    SlashSweep w = core.SweepAt(i);
-                    _sweepRows.WriteLine(string.Join(",", Time.frameCount, w.SlashId, w.At.ToString("R", Inv), w.IsLatch,
-                        F(w.PreviousA.x), F(w.PreviousA.y), F(w.PreviousA.z), F(w.PreviousB.x), F(w.PreviousB.y), F(w.PreviousB.z),
-                        F(w.CurrentA.x), F(w.CurrentA.y), F(w.CurrentA.z), F(w.CurrentB.x), F(w.CurrentB.y), F(w.CurrentB.z),
-                        F(w.TravelAxis.x), F(w.TravelAxis.y), F(w.TravelAxis.z),
-                        F(w.SourceSlashPlane.normal.x), F(w.SourceSlashPlane.normal.y), F(w.SourceSlashPlane.normal.z), F(w.SourceSlashPlane.distance)));
-                }
-            }
-
-            // The detector's two stages for Slash `slashId`'s sweeps against the NPC lineage's current shapes.
-            private unsafe void RecordHitPairs(long slashId)
-            {
-                SlashWaveCore core = _katana != null ? _katana.Core : null;
-                if (core == null || _world == null || _detector == null)
-                {
-                    return;
-                }
-
-                if (_pairRows == null)
-                {
-                    _pairRows = new StreamWriter(Path.Combine(directory, "hitpair.csv"));
-                    _pairRows.WriteLine("frame,slashId,sweepIndex,fragment,side,convex,consumed,candidate,intersects,vertexCount");
-                    _pairVertices = new StreamWriter(Path.Combine(directory, "hitpair-vertices.csv"));
-                    _pairVertices.WriteLine("frame,sweepIndex,fragment,side,convex,vertex,x,y,z");
-                }
-
-                _world.Owners.CollectCurrentShapes(_pairShapes);
-                for (int i = 0; i < core.SweepCount; i++)
-                {
-                    SlashSweep sweep = core.SweepAt(i);
-                    if (sweep.SlashId != slashId)
-                    {
-                        continue;
-                    }
-
-                    float3 n = sweep.SourceSlashPlane.normal;
-                    var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
-                    foreach (CurrentShape current in _pairShapes)
-                    {
-                        if (current.Owner == null || current.Shape.IsFreed || LineageOf(current.Fragment) != "npc")
-                        {
-                            continue;
-                        }
-
-                        PhysicsOwnerShape shape = current.Shape;
-                        float4x4 shapeToWorld = math.mul((float4x4)current.Owner.localToWorldMatrix, shape.LocalToOwner);
-                        float4x4 worldToShape = math.inverse(shapeToWorld);
-                        float4 plane = math.mul(math.transpose(shapeToWorld), worldPlane);
-                        plane /= math.length(plane.xyz);
-                        float3 la0 = math.transform(worldToShape, (float3)sweep.PreviousA);
-                        float3 lb0 = math.transform(worldToShape, (float3)sweep.PreviousB);
-                        float3 la1 = math.transform(worldToShape, (float3)sweep.CurrentA);
-                        float3 lb1 = math.transform(worldToShape, (float3)sweep.CurrentB);
-                        float3 qlo = math.min(math.min(la0, lb0), math.min(la1, lb1));
-                        float3 qhi = math.max(math.max(la0, lb0), math.max(la1, lb1));
-                        bool consumed = _detector.Consumption.IsConsumed(slashId, current.Fragment);
-                        for (int k = 0; k < shape.ConvexCount; k++)
-                        {
-                            shape.ConvexBounds(k, out float3 lo, out float3 hi);
-                            bool candidate = !(math.any(qhi < lo) || math.any(hi < qlo));
-                            bool intersects = candidate && SlashSweepConvexQuery.Intersects(
-                                plane, la0, lb0, la1, lb1, shape.BankOf(k), shape.Convex(k), ref _pairSection);
-                            ConvexBrepRange range = shape.Convex(k);
-                            _pairRows.WriteLine(string.Join(",", Time.frameCount, slashId, i, current.Fragment.value, current.Side.ToString("R", Inv), k,
-                                consumed ? 1 : 0, candidate ? 1 : 0, intersects ? 1 : 0, range.vertexCount));
-                            if (!candidate)
-                            {
-                                continue;
-                            }
-
-                            ConvexBrepBank bank = shape.BankOf(k);
-                            for (int v = 0; v < range.vertexCount; v++)
-                            {
-                                float3 w = math.transform(shapeToWorld, bank.vertices[range.vertexBase + v]);
-                                _pairVertices.WriteLine(string.Join(",", Time.frameCount, i, current.Fragment.value, current.Side.ToString("R", Inv), k, v,
-                                    w.x.ToString("R", Inv), w.y.ToString("R", Inv), w.z.ToString("R", Inv)));
-                            }
-                        }
-                    }
-                }
-            }
-
             private void TrackPieces()
             {
                 if (_pieceRows == null)
