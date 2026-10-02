@@ -23,9 +23,9 @@ namespace Zantetsu.Core.Tests
     /// </remarks>
     public unsafe class TraceLaneContractTests
     {
-        private const TraceEventType KindA = TraceEventType.SlashHitConfirmed;
-        private const TraceEventType KindB = (TraceEventType)48;
-        private const TraceEventType KindOff = (TraceEventType)49;
+        private const TraceEventType KindA = TraceEventType.TaskScheduled;
+        private const TraceEventType KindB = TraceEventType.TaskStarted;
+        private const TraceEventType KindOff = TraceEventType.TaskCompleted;
 
         private static TraceLaneEventMask TwoEvents =>
             TraceLaneEventMask.None.With(KindA).With(KindB);

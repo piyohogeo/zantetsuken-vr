@@ -18,7 +18,7 @@ namespace Zantetsu.Core.Tests
     /// </remarks>
     public unsafe class TracePagedHistoryContractTests
     {
-        private const TraceEventType KindA = TraceEventType.SlashHitConfirmed;
+        private const TraceEventType KindA = TraceEventType.TaskScheduled;
 
         private const int MaxPayloadLength = 8;
         private const int NormalDrainMaxRecordCount = 4;

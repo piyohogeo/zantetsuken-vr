@@ -2,7 +2,8 @@ namespace Zantetsu.Core.Input
 {
     /// <summary>
     /// Rejection reasons for the edge direction gate, listed in evaluation
-    /// priority order.
+    /// priority order. Gate-specific; this type does not alter
+    /// <c>Zantetsu.Trace.TraceReason</c>.
     /// </summary>
     public enum BladeEdgeGateReason : int
     {
