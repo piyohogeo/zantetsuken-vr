@@ -628,8 +628,6 @@ namespace Zantetsu.Sandbox
                 {
                     k.Value.endedLive = live.Contains(k.Key);
                 }
-
-                BuildingDiagFrame(frame, step);
             }
 
             // Called from MultiClose, which has ended the hit record this mode shares (CheckHits).
@@ -637,7 +635,6 @@ namespace Zantetsu.Sandbox
             {
                 BuildingFusionClose();
                 BuildingHullClose();
-                BuildingDiagClose();
                 _buildingRows?.Dispose();
                 _buildingRows = null;
                 _eventRows?.Dispose();
