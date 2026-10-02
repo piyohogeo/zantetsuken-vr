@@ -46,9 +46,9 @@ def verdict(jsonl, log, recording):
     return chk.returncode, (lines[0] if lines else chk.stderr.strip())
 
 
-def hits_for_run(run_dir, check_dir, log=None):
-    """The hit records of the recording whose start names check_dir, from a session file written while the run's log was
-    (run_dir/player.log unless log is given), checked against that log."""
+def recording_of(run_dir, check_dir, log=None):
+    """(session file, recording) of the one recording whose start names check_dir, from a session file written while the
+    run's log was (run_dir/player.log unless log is given). Raises NotComplete when there is not exactly one."""
     log = log or os.path.join(run_dir, 'player.log')
     first = datetime.datetime.utcfromtimestamp(os.path.getctime(log)) - datetime.timedelta(minutes=2)
     last = datetime.datetime.utcfromtimestamp(os.path.getmtime(log)) + datetime.timedelta(minutes=1)
@@ -67,11 +67,17 @@ def hits_for_run(run_dir, check_dir, log=None):
                 found.append((path, rec, rs))
     if len(found) != 1:
         raise NotComplete('%d recordings name %s (one expected)' % (len(found), check_dir))
-    path, rec, rs = found[0]
+    return found[0][0], found[0][1]
+
+
+def hits_for_run(run_dir, check_dir, log=None):
+    """The hit records of the recording whose start names check_dir (recording_of), checked against the run's log."""
+    log = log or os.path.join(run_dir, 'player.log')
+    path, rec = recording_of(run_dir, check_dir, log)
     code, text = verdict(path, log, rec)
     if code != 0:
         raise NotComplete(text)
-    return [d for t, d, _ in rs if t == 'hit']
+    return [d for t, d, _ in records(path)[rec] if t == 'hit']
 
 
 def analyse(rs):
@@ -81,6 +87,7 @@ def analyse(rs):
     print('   start: mode %s, iteration %s, directory %s' % (start.get('mode'), start.get('iteration'), start.get('directory')))
     print('   hits %d (summary says %s); eventFrame is the frame the check observed each hit in (the old CSV\'s frame); update is the'
           ' replay index - 1 at that observation (not an input-side update id); at is on the replay input clock' % (len(hits), summary.get('hits')))
+    print('   other records in this recording (not hits): %s' % dict(collections.Counter(t for t, _, _ in rs if t not in ('start', 'hit', 'summary'))))
     kinds = collections.Counter((('child' if d['child'] else 'root'), d['acceptance']) for d, _ in hits)
     print('   by child/root and acceptance: %s' % dict(sorted(kinds.items())))
     slashes = collections.Counter(d['slashId'] for d, _ in hits)

@@ -56,7 +56,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(log.Accepted, Is.EqualTo(2));
             Assert.That(_ended.Count, Is.EqualTo(1));
             Assert.That(_ended[0], Does.StartWith("[check hits] ended: recording " + log.Recording + ", attempted 2 (seq 1..2, the summary last), accepted 2, refused: queue full 0, unavailable 0, invalid value 0, disabled 0"));
-            Assert.That(_ended[0], Does.EndWith("; hits 0"));
+            Assert.That(_ended[0], Does.EndWith("; hits 0; ops not applicable"), "a recording made without ops: not applicable, not zero");
         }
 
         // Two walks one after the other (two iterations): two recordings, each with its own seq and counts and its own end.
@@ -93,7 +93,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             SandboxPropSlashPlayerCheck.EndHitLog(log, 1);   // as the records' close of an early ending would
             Assert.That(log.Ended, Is.True);
             Assert.That(log.Accepted, Is.EqualTo(log.Attempted), "complete as a record");
-            Assert.That(_ended[0], Does.EndWith("; hits 1"));
+            Assert.That(_ended[0], Does.EndWith("; hits 1; ops not applicable"));
         }
 
         // A record the logger refuses (a NaN input time) is counted as refused, its seq stays taken, and the record still ends:
