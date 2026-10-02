@@ -1661,7 +1661,7 @@ namespace Zantetsu.Sandbox
                 Expect(!bad, "hit " + _hitsLogged + " is an ordinary outcome of acceptance (" + hit.Acceptance + ")");
                 if (multiNpc || building || MobPlanMode)
                 {
-                    MultiOnHit(hit, frame, hasOrigin);
+                    MultiOnHit(hit, frame, hasOrigin, update);
                 }
 
                 if (MobPlanMode)

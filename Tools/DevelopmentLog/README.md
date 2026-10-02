@@ -10,6 +10,7 @@ diagnosis tools, not product checks: no product test's pass or fail depends on t
 | writer_id | Source | Turned on by | End line in the log |
 |---|---|---|---|
 | `CutPhysicsStep` | `Assets/Zantetsu/Runtime/PhysicsCut/CutPhysicsStep.Diagnosis.cs`: each step decision; PlayMode test marks from `StepDiagnosisAction.cs` | `ZTK_STEP_DIAG=1` in the environment when the play session starts (DEBUG builds only) | `[step diagnosis] ended: attempted N (seq 1..N, the summary last), accepted A, refused: ...` |
+| `CheckHits` | `Assets/Zantetsu/Runtime/Sandbox/SandboxPropSlashPlayerCheck.HitLog.cs`: each hit the check observed in its multi-NPC, building and MobPlan modes (formerly `multi-hits.csv` / `building-hits.csv`); records `start`, `hit`, `summary` | those check modes in a Development Player (`-zantetsuPropSlash <dir>` with `-zantetsuMultiNpc`, `-zantetsuBuildingSlash` or `-zantetsuMobPlan`); one recording per check walk (each iteration of `-zantetsuPropIterations`) | `[check hits] ended: recording R, attempted N (seq 1..N, the summary last), accepted A, refused: ...; ...; hits H` |
 | `ViewDiagnosis` | `Assets/Zantetsu/Runtime/Sandbox/ViewDiagnosis.cs`: the head pose at each stage (tags `inputAfterUpdate`, `update`, `beforeRender`), and records `start`, `found`, `focus`, `pause`, `device`, `mark`, `state`, `summary` | the Player argument `-zantetsuViewDiag` (no value), or `ViewDiagnosis.Start()` in a test (DEBUG builds only) | `[view diagnosis] ended: recording R, attempted N (seq 1..N, the summary last), accepted A, refused: ...; ...; cost before the summary: ...` |
 
 A record's value is a flat list of field names and values, starting with `seq` (1..N, one per record tried), `eventFrame`
@@ -22,12 +23,36 @@ with its own seq 1..N and its own end line. A sample's `eventFrame` and `seconds
 its values; `seconds` counts from the recorder's start. Its summary and end line also carry the record's own main-thread
 cost (write_log and sample time; the allocated bytes are 0 where the runtime does not count them, which is not "none").
 
+`CheckHits` records start with `recording` too: one per check walk, each with its own seq and end line. The `start`
+record names the walk's mode, iteration and output directory (`directory`, which ties the recording to that run's other
+files). In a `hit` record:
+- `eventFrame` is the frame the check observed the hit in: its LateUpdate (order 400), reading the detector's new hit list.
+  It is the same value as the old CSV's `frame`. It is not the frame the hit was evaluated in, which the hit does not carry
+  and nothing makes up.
+- `seconds` is the Stopwatch at that observation, counted from the recording's start.
+- `slashId`, `of` (the lineage's name), `child` (1 when the fragment has an origin), `fragment`, `acceptance`, `admission`
+  and `operation` are as in the old CSV.
+- `at` is `SlashHitConfirmed.At`: the input time of the wave update whose sweep hit. It is in seconds on the replay's input
+  clock: `Time.unscaledTimeAsDouble` at the replay's start, plus each replayed row's recorded offset, then plus each tick's
+  unscaled delta. This clock is its own, not the Stopwatch.
+- `side` is `SlashHitConfirmed.Side`: +1 or -1 for a side of a Provisional pair, 0 for a published owner.
+- `update` is the recorder's replay index minus one at the observation, not an input-side update id: the last replayed input row (from 0). It stays at
+  the last row while the ticks go on.
+
+The check's verdicts do not read this record. The required hit Trace (`slash-hits.ztrace`) is a separate path. A complete
+record says the record is complete, nothing more: a walk that ended early also ends its record, and whether its scenario
+passed is the check's own verdict (`PROP SLASH: ok` / `FAILED` in the log).
+
 ## Files
 
 - `check_writer_jsonl.py`: the completeness check, per writer.
 - `analyze_view.py`: per recording, the stages' order within a frame and the clock along seq, then per phase (cut at the
   `focus` and `pause` records) how much each stage of the head pose moved, the tracking states, and the camera against the
   driver's pose. It runs the check per recording first.
+- `analyze_hits.py`: per recording, the hits by child/root and acceptance, by Slash and by observed frame, the logger's
+  frame against `eventFrame`, and the record's cost. It runs the check per recording first. `hits_for_run(run_dir,
+  check_dir)` gives other readers one run's hits: it finds the recording whose `start` names `check_dir`, checks it against
+  `run_dir/player.log`, and raises `NotComplete` otherwise.
 - `analyze_step.py`: the step decisions inside `CutPhysicsStepPlayModeTests.TheStep_IsDecidedOncePerFrame...`, by reason, with the clock, budget and estimate they read. It runs the check first.
 
 ## Use
@@ -45,8 +70,9 @@ cost (write_log and sample time; the allocated bytes are 0 where the runtime doe
    - PARTIAL (exit 2): complete up to the summary, but there are records after it. The run is not complete.
    - NOT CONFIRMED (exit 1): no end line, a refusal, a missing or repeated seq, the summary not saved, or a cut tail.
    For `ViewDiagnosis`: `python check_writer_jsonl.py ViewDiagnosis "view diagnosis" <session.jsonl> <log> [--recording R]`,
-   each recording checked on its own (the run is COMPLETE only if every recording is).
-4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, or `python analyze_view.py <session.jsonl>:<log>`. Give both, joined by `:`; absolute paths with drive
+   and for `CheckHits`: `python check_writer_jsonl.py CheckHits "check hits" <session.jsonl> <player.log> [--recording R]`.
+   Each recording is checked on its own; the run is COMPLETE only if every recording is.
+4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, `python analyze_view.py <session.jsonl>:<log>`, or `python analyze_hits.py <session.jsonl>:<player.log>`. Give both, joined by `:`; absolute paths with drive
    letters are fine. Only a COMPLETE run is analysed; any other run is reported as "not analysed" with the check's verdict.
 
 ### The view diagnosis in the Player
@@ -54,6 +80,13 @@ cost (write_log and sample time; the allocated bytes are 0 where the runtime doe
 Start the Development Player with `-zantetsuViewDiag` and `-logFile <player.log>`. End it normally (close its window, or
 Application.Quit): the record ends at the quit request, before the logger stops. Then find the session file as above and
 check it against `player.log`. Each run of the diagnosis adds load: formatting each record is on the main thread.
+
+### The check's hits
+
+The check runs only in the Player, by its arguments. The hit record ends at the check's records' close, in its ending,
+before `Application.Quit`. An ending through `Application.quitting` (a forced one) comes after the logger has stopped, and
+leaves that recording NOT CONFIRMED. `CheckHitLogPlayModeTests` exercise the recording itself in the Editor: no hit, two
+iterations, an early end, a refusal, and after the end.
 
 ### In the Editor
 

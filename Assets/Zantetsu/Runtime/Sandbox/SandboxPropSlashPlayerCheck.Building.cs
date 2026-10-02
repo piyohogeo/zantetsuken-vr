@@ -237,8 +237,7 @@ namespace Zantetsu.Sandbox
 
                 GameObject floor = GameObject.Find("Building Slash Floor");
                 _buildingFloor = floor != null ? floor.GetComponent<Collider>() : null;
-                _multiHits = new StreamWriter(Path.Combine(directory, "building-hits.csv")) { AutoFlush = true };
-                _multiHits.WriteLine("frame,slashId,of,child,fragment,acceptance,admission,operation");
+                HitLogOpen("building");
                 if (!light)
                 {
                     _buildingRows = new StreamWriter(Path.Combine(directory, "building-pieces.csv"));
@@ -617,7 +616,7 @@ namespace Zantetsu.Sandbox
                 BuildingDiagFrame(frame, step);
             }
 
-            // Called from MultiClose, which has closed the hit rows this mode shares.
+            // Called from MultiClose, which has ended the hit record this mode shares (CheckHits).
             private void BuildingClose()
             {
                 BuildingFusionClose();
