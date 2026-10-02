@@ -16,15 +16,13 @@
     The Unity Test Framework builds a throw-away test player for every
     Standalone run and, left to itself, writes it into a new temporary directory
     each time - so a Windows Firewall decision a human makes for one player
-    never matches the next run's executable. Like Run-NvencStandaloneTests.ps1,
-    this runner pins the player to one absolute path outside the repository, so
+    never matches the next run's executable. This runner pins the player to
+    one absolute path outside the repository, so
     that one human decision keeps holding.
 
-    That path is this harness's own, and deliberately not the one the NVENC
-    runner pins: a build refuses a directory that already holds a player built
-    with another scripting backend ("Build path contains a project previously
-    built with the Mono2x scripting backend"), so two harnesses sharing one
-    directory can block each other. The first run of a new path may therefore
+    A build refuses a directory that already holds a player built with another
+    scripting backend ("Build path contains a project previously built with
+    the Mono2x scripting backend"). The first run of a new path may therefore
     need a one-time firewall decision from a human, because the test player
     connects back to the editor. This script never adds, removes or inspects
     firewall rules, and never deletes a player another tool pinned.

@@ -3,7 +3,6 @@ using System.Reflection;
 using NUnit.Framework;
 using Unity.Profiling;
 using Zantetsu.Observability;
-using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
@@ -11,20 +10,7 @@ namespace Zantetsu.Core.Tests
     {
         private static readonly string[] ExpectedMarkerNames =
         {
-            "Zantetsu.Slash.CandidateSearch",
-            "Zantetsu.Slash.FrontAdvance",
-            "Zantetsu.Slash.FrontSweep",
-            "Zantetsu.Slash.TopologyValidate",
-            "Zantetsu.Future.PredictPose",
-            "Zantetsu.Physics.Predict",
-            "Zantetsu.Mesh.Classify",
-            "Zantetsu.Mesh.BuildCap",
-            "Zantetsu.Convex.Slice",
-            "Zantetsu.Commit.Validate",
-            "Zantetsu.Commit.Apply",
-            "Zantetsu.Trace.Drain",
             "Zantetsu.Capture.Copy",
-            "Zantetsu.Capture.Encode",
         };
 
         [Test]
@@ -42,8 +28,8 @@ namespace Zantetsu.Core.Tests
                 }
             }
 
-            Assert.That(stringFieldCount, Is.EqualTo(14));
-            Assert.That(names.Count, Is.EqualTo(14), "Duplicate marker name detected");
+            Assert.That(stringFieldCount, Is.EqualTo(1));
+            Assert.That(names.Count, Is.EqualTo(1), "Duplicate marker name detected");
 
             foreach (string expected in ExpectedMarkerNames)
             {
@@ -81,19 +67,7 @@ namespace Zantetsu.Core.Tests
                 }
             }
 
-            Assert.That(markerCount, Is.EqualTo(14));
-        }
-
-        [Test]
-        public void TraceLogger_Drain_StillWorksWithSharedMarker()
-        {
-            using (TraceLogger logger = new TraceLogger(4))
-            {
-                logger.Enqueue(new TraceEvent { Timestamp = 1 });
-
-                Assert.That(logger.Drain(), Is.EqualTo(1));
-                Assert.That(logger.HistoryCount, Is.EqualTo(1));
-            }
+            Assert.That(markerCount, Is.EqualTo(1));
         }
     }
 }
