@@ -20,9 +20,9 @@ namespace Zantetsu.Core.Tests
     /// </remarks>
     public unsafe class TraceFinalDrainContractTests
     {
-        private const TraceEventType KindA = TraceEventType.TaskScheduled;
-        private const TraceEventType KindB = TraceEventType.TaskStarted;
-        private const TraceEventType KindC = TraceEventType.TaskCompleted;
+        private const TraceEventType KindA = TraceEventType.SlashHitConfirmed;
+        private const TraceEventType KindB = (TraceEventType)48;
+        private const TraceEventType KindC = (TraceEventType)49;
 
         private const int MaxPayloadLength = 4;
 
