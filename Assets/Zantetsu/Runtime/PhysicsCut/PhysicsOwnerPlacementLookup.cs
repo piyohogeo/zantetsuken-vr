@@ -46,6 +46,15 @@ namespace Zantetsu.PhysicsCut
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         }
 
+        /// <summary>
+        /// A crossed member of a fused group's cut (BuildingFusion), until its Final: where each side stands, by
+        /// (fragment, operation, side) -- the positive side at the member's Root, the negative at its shadow. Given by
+        /// the root when the fusion is on; null otherwise. It answers only for a cut in progress on that fragment.
+        /// </summary>
+        public FusedSidePlacement FusedSide { get; set; }
+
+        public delegate bool FusedSidePlacement(LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 rootToWorld);
+
         public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
             LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld)
         {
@@ -94,6 +103,15 @@ namespace Zantetsu.PhysicsCut
                 // An owner in use whose display is arranged some other way, which is what having no correspondence
                 // means: its fragment is drawn where it was registered, and that is the answer.
                 return VpFragmentPlacementKind.Static;
+            }
+
+            // A crossed member of a fused group's cut, asked by side: the negative side follows its shadow on the
+            // negative side group; the positive one its Root. Asked as a whole, the Root answers as for any owner.
+            if (owner.IsFused && operation.IsSet && (side > 0f || side < 0f) && FusedSide != null
+                && FusedSide(fragment, operation, side, out Matrix4x4 sideRootToWorld))
+            {
+                geometryLocalToWorld = sideRootToWorld * owner.GeometryLocalToOwner.Value;
+                return VpFragmentPlacementKind.Following;
             }
 
             return owner.TryReadGeometryLocalToWorld(out geometryLocalToWorld)

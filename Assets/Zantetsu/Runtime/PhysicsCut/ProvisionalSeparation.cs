@@ -32,13 +32,25 @@ namespace Zantetsu.PhysicsCut
         internal static ConfigurableJoint Configure(
             PhysicsOwnerSide positive, PhysicsOwnerSide negative, float3 planeNormalOwner)
         {
+            return Configure(positive.Root, negative.Body, planeNormalOwner, Metre);
+        }
+
+        /// <summary>
+        /// The same constraint between any two siblings built at one placement (the building hull trial's short sibling
+        /// constraint, 2026-09-30): the joint on the positive side's Root, the axis the plane normal in that Root's local
+        /// space, the symmetric limit and the anchor offset both <paramref name="halfOpening"/> -- so that the relation the
+        /// pair is published with is the inward boundary (no constraint error at the publication) and 2 x halfOpening
+        /// apart along the normal is the other one. Everything else as the Provisional constraint.
+        /// </summary>
+        internal static ConfigurableJoint Configure(GameObject positiveRoot, Rigidbody negativeBody, float3 planeNormalOwner, float halfOpening)
+        {
             // Both actors are built at the source's placement, so each one's local space is that placement and the
             // normal in the owner's frame is already the normal in the joint owner's local space.
             float3 axis = math.normalize(planeNormalOwner);
             float3 secondary = Orthogonal(axis);
 
-            ConfigurableJoint joint = positive.Root.AddComponent<ConfigurableJoint>();
-            joint.connectedBody = negative.Body;
+            ConfigurableJoint joint = positiveRoot.AddComponent<ConfigurableJoint>();
+            joint.connectedBody = negativeBody;
             joint.autoConfigureConnectedAnchor = false;
             joint.axis = axis;
             joint.secondaryAxis = secondary;
@@ -48,7 +60,7 @@ namespace Zantetsu.PhysicsCut
             // Configure always adds a fresh component. anchor=zero, projection=None, breakForce/breakTorque=+Inf,
             // enableCollision=false are Unity 6000.3.22f1 fresh defaults, covered by baseline-equivalence tests.
             // Do not turn this into a pooled/deserialized-joint configurator without restoring those writes.
-            joint.connectedAnchor = (Vector3)(axis * Metre);
+            joint.connectedAnchor = (Vector3)(axis * halfOpening);
 
             // Along the normal: limited. Along the plane and about the normal: free. About the tangents: locked.
             joint.xMotion = ConfigurableJointMotion.Limited;
@@ -57,7 +69,7 @@ namespace Zantetsu.PhysicsCut
             joint.angularXMotion = ConfigurableJointMotion.Free;
             joint.angularYMotion = ConfigurableJointMotion.Locked;
             joint.angularZMotion = ConfigurableJointMotion.Locked;
-            joint.linearLimit = new SoftJointLimit { limit = Metre, bounciness = 0f, contactDistance = 0f };
+            joint.linearLimit = new SoftJointLimit { limit = halfOpening, bounciness = 0f, contactDistance = 0f };
 
             // No drive, spring, damper, projection or break (DESIGN 7.1.1); fresh defaults remain untouched.
             return joint;

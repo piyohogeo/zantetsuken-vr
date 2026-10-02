@@ -565,8 +565,12 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(w.registry.SystemConstraintCount, Is.Zero, "the candidate is not published");
                 ask.source = children.negative;
                 w.driver.RemainingMainSeconds = () => 1;
-                Assert.That(w.driver.RequestCut(ask, out var refused, out _), Is.EqualTo(ProvisionalCutAcceptance.Aborted), "held constraint consumes the only slot");
-                Assert.That(refused.Candidate, Is.Null);
+                // The held constraint consumes the only slot: the second request is not accepted -- before the ledger is
+                // asked -- and its source stays as it is (2026-09-29: a shortage no longer goes the abort way).
+                Assert.That(w.driver.RequestCut(ask, out var refused, out _), Is.EqualTo(ProvisionalCutAcceptance.NotAccepted), "held constraint consumes the only slot");
+                Assert.That(refused, Is.Null, "nothing was accepted");
+                Assert.That(w.ledger.IsCurrentTarget(children.negative), Is.True, "the refused source is still live");
+                Assert.That(w.driver.ConstraintRoomRefusals, Is.EqualTo(1));
                 Assert.That(pending.Candidate.IsDisposed, Is.False, "the other accepted request is untouched");
             }
         }

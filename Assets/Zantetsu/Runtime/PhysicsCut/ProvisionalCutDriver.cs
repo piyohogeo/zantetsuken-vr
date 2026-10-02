@@ -159,6 +159,20 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The FragmentRenderAnchor of the source, in the world, for the first-split velocity (DESIGN 7.2).</summary>
         public float3 renderAnchor;
+
+        /// <summary>The Slash the hit belongs to (the hit detector's), or 0: a building's aggregation tells a next Slash from more hits of the same one by it.</summary>
+        public long slashId;
+
+        /// <summary>
+        /// The identity of the plane the Slash adopted for this hit (the hit detector's: one per sweep, shared by every
+        /// hit that sweep found), or 0 when the ask carries none. A building's fusion tells a hit that is the same
+        /// request as a cut being prepared or in progress -- the same Slash and the same adopted plane -- from another
+        /// plane, however close, by this and never by a tolerance.
+        /// </summary>
+        public long adoptedPlaneId;
+
+        /// <summary>The adopted plane's value in the world, as the detector had it, for the fusion's own frames.</summary>
+        public float4 adoptedPlaneWorld;
     }
 
     /// <summary>
@@ -214,6 +228,9 @@ namespace Zantetsu.PhysicsCut
         /// <see cref="ProvisionalOwnerBuildInput.colliderTemplate"/>. None means the builds make colliders call by call.
         /// </summary>
         internal MeshCollider ColliderTemplate { get; set; }
+
+        /// <summary>The trial fusion of building groups (2026-09-29), when the world has one: a cut of a fused member is the group's.</summary>
+        internal BuildingFusion Fusion { get; set; }
         private SharedWorkFrame _frame;
         private VpLogicalCutDisplay _display;
         private float _supportEpsilon;
@@ -257,6 +274,45 @@ namespace Zantetsu.PhysicsCut
             public PhysicsCutOutcomeKind outcome;
             public ConvexCutOwnerStatus kernelStatus;
             public int cutStatus, failedConvex, frame;
+            public LogicalFragmentId source;
+            public PhysicsCutHullRejection hull;   // the first convex PhysX refused, when that ended the cut
+            public int hullMeshes;   // how many of its convexes PhysX refused
+        }
+
+        /// <summary>
+        /// One cut the driver aborted -- the ordinary continuation of DESIGN 7.1.1, which retires the source -- and why:
+        /// its build refused (the outcome, with the system constraint room it was built against and what it needed) or its
+        /// Final set could not be established (the publication's outcome).
+        /// </summary>
+        public struct CutAbort
+        {
+            public CutOperationId operation;
+            public int frame;
+            public string stage;
+            public PhysicsOwnerBuildOutcome build;
+            public string publication;
+            public int constraintRoom, constraintsNeeded;
+        }
+
+        private readonly CutAbort[] _firstAborts = new CutAbort[8];
+        private readonly Dictionary<string, int> _abortReasons = new Dictionary<string, int>();
+
+        /// <summary>Cuts aborted by this driver (build or Final set), by reason; the first eight are kept.</summary>
+        public int AbortCount { get; private set; }
+
+        public int KeptAbortCount => Math.Min(AbortCount, _firstAborts.Length);
+
+        public CutAbort KeptAbort(int index) => _firstAborts[index];
+
+        /// <summary>Requests not accepted because the system constraints they may need had no room; their sources stay as they were.</summary>
+        public int ConstraintRoomRefusals { get; private set; }
+
+        private void NoteAbort(in CutAbort abort)
+        {
+            if (AbortCount < _firstAborts.Length) _firstAborts[AbortCount] = abort;
+            AbortCount++;
+            string reason = abort.stage + "/" + (abort.stage == "build" ? abort.build.ToString() : abort.publication);
+            _abortReasons[reason] = _abortReasons.TryGetValue(reason, out int n) ? n + 1 : 1;
         }
 
         /// <summary>Raised once per failed cut, when its record takes the ended cut in (never again for the same cut).</summary>
@@ -266,6 +322,9 @@ namespace Zantetsu.PhysicsCut
         public int FailedCutCount { get; private set; }
 
         public int KernelFailedCount { get; private set; }
+
+        /// <summary>Of the failed cuts, those whose cook ended because PhysX refused a produced convex (the cook's hull check).</summary>
+        public int HullRejectedCutCount { get; private set; }
 
         private readonly int[] _kernelFailuresByCutStatus = new int[32];
 
@@ -290,7 +349,14 @@ namespace Zantetsu.PhysicsCut
             {
                 operation = at.Operation, outcome = request.Outcome, kernelStatus = request.KernelStatus,
                 cutStatus = request.cut.kernel.cutStatus, failedConvex = request.cut.kernel.failedConvex, frame = CurrentFrame,
+                source = at.Source, hull = request.HullRejection, hullMeshes = request.HullRejections.Count,
             };
+            if (failure.hull != null)
+            {
+                _cook.AttributeHullRejection(request, at.Operation, at.Source, "driver");
+                HullRejectedCutCount++;
+            }
+
             FailedCutCount++;
             if (failure.outcome == PhysicsCutOutcomeKind.KernelFailed)
             {
@@ -321,9 +387,29 @@ namespace Zantetsu.PhysicsCut
             for (int i = 0; i < KeptFailureCount; i++)
             {
                 CutFailure f = _firstFailures[i];
-                text.Append("; operation ").Append(f.operation.value).Append(" frame ").Append(f.frame).Append(' ').Append(f.outcome)
+                text.Append("; operation ").Append(f.operation.value).Append(" source ").Append(f.source.value).Append(" frame ").Append(f.frame).Append(' ').Append(f.outcome)
                     .Append(" kernel ").Append(f.kernelStatus).Append(" clip ").Append((CutStatus)f.cutStatus).Append(" convex ").Append(f.failedConvex);
+                if (f.hull != null) text.Append(" hull [").Append(f.hull).Append(']').Append(f.hullMeshes > 1 ? " and " + (f.hullMeshes - 1) + " more refused mesh(es)" : "");
             }
+
+            text.Append("; aborted ").Append(AbortCount).Append(" [");
+            first = true;
+            foreach (KeyValuePair<string, int> r in _abortReasons)
+            {
+                text.Append(first ? "" : ", ").Append(r.Key).Append(' ').Append(r.Value);
+                first = false;
+            }
+
+            text.Append("]");
+            for (int i = 0; i < KeptAbortCount; i++)
+            {
+                CutAbort a = _firstAborts[i];
+                text.Append("; abort operation ").Append(a.operation.value).Append(" frame ").Append(a.frame).Append(' ').Append(a.stage).Append('/')
+                    .Append(a.stage == "build" ? a.build.ToString() : a.publication).Append(" constraint room ").Append(a.constraintRoom).Append(" needed ").Append(a.constraintsNeeded);
+            }
+
+            text.Append("; not accepted for system constraint room ").Append(ConstraintRoomRefusals);
+            text.Append("; of the failed cuts, refused by PhysX's cooking ").Append(HullRejectedCutCount);
 
             return text.ToString();
         }
@@ -376,21 +462,33 @@ namespace Zantetsu.PhysicsCut
             BudgetOverrunCount++;
         }
 
-        private int? RemainingConstraintRoom()
+        private int? RemainingConstraintRoom(ProvisionalCutTransaction except = null)
         {
             if (!_constraintCapacity.HasValue) return null;
             int used = _registry.SystemConstraintCount;
-            // A budget-deferred candidate is not in the registry yet, but already owns its constraints.
+            // A budget-deferred candidate is not in the registry yet, but already owns its constraints; an accepted cut
+            // not built yet holds what it may need (its reservation).
             foreach (ProvisionalCutTransaction transaction in _transactions)
             {
+                if (transaction == except) continue;
                 ProvisionalOwnerCandidate candidate = transaction.Candidate;
-                if (candidate == null || candidate.IsDisposed || candidate.IsDetached) continue;
+                if (candidate == null)
+                {
+                    if (transaction.Pair == null) used += transaction.ConstraintReservation;
+                    continue;
+                }
+
+                if (candidate.IsDisposed || candidate.IsDetached) continue;
                 used += (candidate.Separation != null ? 1 : 0)
                     + (candidate.Positive.BuildingWorld != null ? 1 : 0)
                     + (candidate.Negative.BuildingWorld != null ? 1 : 0);
             }
             return Math.Max(0, _constraintCapacity.Value - used);
         }
+
+        // The system constraints a cut of this owner may need: the sibling constraint, and a building World D6 on each
+        // side of a building child at most (which sides need one is known only from the anchors, after acceptance).
+        private static int ConstraintsAtMost(PhysicsFragmentOwner owner) => 1 + (owner.Building.ChildOfSplit().IsBuildingDerived ? 2 : 0);
 
         /// <summary>
         /// The frame this driver counts by: the engine's, or whatever the caller counts with instead. A display created
@@ -459,6 +557,7 @@ namespace Zantetsu.PhysicsCut
             _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _cook = cook ?? throw new ArgumentNullException(nameof(cook));
+            _cook.MainRemaining = () => RemainingMain;   // the pump's hull checks share this frame's Main budget
             _frame = frame ?? throw new ArgumentNullException(nameof(frame));
             _display = display;
             if (!(supportEpsilon >= 0f) || !math.isfinite(supportEpsilon)
@@ -582,6 +681,31 @@ namespace Zantetsu.PhysicsCut
                 return ProvisionalCutAcceptance.InvalidRequest;
             }
 
+            // **A fused member is cut as its group** (BuildingFusion, 2026-09-29): the group is split by this plane into
+            // two compound bodies, and only the members the plane crosses get a logical cut of their own. No record of
+            // this driver is made for it; the fusion keeps its own.
+            if (owner.IsFused)
+            {
+                if (Fusion == null || prepared != null)
+                {
+                    return ProvisionalCutAcceptance.InvalidRequest;
+                }
+
+                _frame.Dispatcher.BeginFrame(CurrentFrame);
+                return Fusion.TryRequestGroupCut(owner, in ask, out admission);
+            }
+
+            // **Room for its constraints, before anything is asked or consumed** (DESIGN 7.1.1, 7.2.2): a cut that may
+            // not fit the system constraints is not accepted, so a shortage never reaches the abort that retires the
+            // source. Nothing has changed: the source stays as it is, and the room comes back as Provisional pairs end.
+            int mayNeed = ConstraintsAtMost(owner);
+            int? room = RemainingConstraintRoom();
+            if (room.HasValue && room.Value < mayNeed)
+            {
+                ConstraintRoomRefusals++;
+                return ProvisionalCutAcceptance.NotAccepted;
+            }
+
             // The classification comes first, and before the acceptance: it is what says whether this plane cuts the
             // shape at all. The question is whether **the set** has support on both sides of the plane (DESIGN 7.6),
             // not how the convexes were allocated -- a convex with no support at all goes to the positive side by the
@@ -627,7 +751,7 @@ namespace Zantetsu.PhysicsCut
                 // The parent mass of this cut, read from the source once, here: the temporary split and the final
                 // masses are both against this one number (DESIGN 7.2), and after the publication there is no source body
                 // left to read it from.
-                var made = new ProvisionalCutTransaction(operation, ask.source, classification);
+                var made = new ProvisionalCutTransaction(operation, ask.source, classification) { ConstraintReservation = mayNeed };
                 made.Asked(in ask, owner.Mass);
                 _transactions.Add(made);
                 ownedByTransaction = true;
@@ -1029,7 +1153,7 @@ namespace Zantetsu.PhysicsCut
                     // children are published with this one value.
                     childLineage = owner.Building.ChildOfSplit(),
                     buildingWorld = _buildingWorld,
-                    constraintRoom = RemainingConstraintRoom(),
+                    constraintRoom = RemainingConstraintRoom(transaction),
                     name = owner.Root != null ? owner.Root.name : "Provisional",
                 };
 
@@ -1047,6 +1171,12 @@ namespace Zantetsu.PhysicsCut
                     {
                         // Nothing was built, so there is nothing of it to give back. The cut cannot be established
                         // (DESIGN 7.1.1): it is aborted, and the source retired unless the ledger finds it stale.
+                        NoteAbort(new CutAbort
+                        {
+                            operation = transaction.Operation, frame = CurrentFrame, stage = "build", build = built,
+                            constraintRoom = build.constraintRoom ?? -1,
+                            constraintsNeeded = 1 + BuildingWorldD6.Needed(in _buildingWorld, in build.childLineage, build.anchors.IsPositiveFixed, build.anchors.IsNegativeFixed),
+                        });
                         Abort(transaction);
                         return ProvisionalCutAcceptance.Aborted;
                     }
@@ -1259,6 +1389,11 @@ namespace Zantetsu.PhysicsCut
                 default:
                     // A final set that cannot be established, and a call that does not hold together, both end the
                     // ordinary way rather than being tried again with the same input at every collection.
+                    NoteAbort(new CutAbort
+                    {
+                        operation = transaction.Operation, frame = CurrentFrame, stage = "final", publication = handed.ToString(),
+                        constraintRoom = -1, constraintsNeeded = -1,
+                    });
                     Abort(transaction);
                     return;
             }

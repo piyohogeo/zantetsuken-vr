@@ -199,7 +199,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             _failuresLogged = true;
-            UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Driver.FailureSummary(), this);
+            UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Driver.FailureSummary() + (Cook != null ? "; " + Cook.HullSummary() : ""), this);
         }
 
         private void OnDestroy()
@@ -252,6 +252,11 @@ namespace Zantetsu.PhysicsCut
                 {
                     Lifetime?.Step();
                 }
+
+                // The trial rest's turn: before this frame's step, with the steps that happened since its last turn.
+                StepRest();
+                StepFusion();
+                StepHulls();
             }
         }
 
@@ -422,7 +427,11 @@ namespace Zantetsu.PhysicsCut
             // when the profile switches it on (k may be 0: no impulse); off, every cut keeps the caller's own values.
             Driver.SeparationStrength = profile.SeparationStrength;
             MakeColliderTemplate();
+            Cook.PrepareHullProbe();   // the hull check's collider made and read once here, at load, not by the first cut
             Lifetime = new CutFragmentLifetime(this, profile.PieceLifetime);
+            MakeRest(profile);
+            MakeFusion(profile);
+            MakeHulls(profile);
 
             IsReady = true;
         }
@@ -691,6 +700,9 @@ namespace Zantetsu.PhysicsCut
                 _colliderTemplateHolder = null;
             }
 
+            ReleaseHulls();
+            ReleaseFusion();
+            ReleaseRest();
             Owners?.Dispose();
             Display?.Dispose();
             CutInputConnectivity.Clear();

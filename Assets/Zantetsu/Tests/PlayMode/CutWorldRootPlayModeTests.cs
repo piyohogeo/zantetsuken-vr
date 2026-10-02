@@ -728,6 +728,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             /// </summary>
             internal bool LetNewWorkThrough { get; set; }
 
+            /// <summary>Whether the destination answers that it has no room, so that an offer stays waiting in the dispatcher's queue (never submitted) until the flag is cleared or the dispatcher shuts down and cancels it.</summary>
+            internal bool RefuseNew { get; set; }
+
             /// <summary>How many it is holding back from the collection now.</summary>
             internal int HoldingCount => _held.Count;
 
@@ -743,11 +746,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             public int Held => _inner.Held;
 
-            public bool CanAccept => _inner.CanAccept;
+            public bool CanAccept => !RefuseNew && _inner.CanAccept;
 
             public bool TryAccept(IDispatchWork work)
             {
-                return _inner.TryAccept(work);
+                return !RefuseNew && _inner.TryAccept(work);
             }
 
             public void BeginAccepted(IDispatchWork work)
@@ -2064,6 +2067,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 });
 
             Assert.That(physics, Is.Not.Null);
+            // The cook's hull check (2026-09-30) runs between the bake and the products under the frame's budget: given
+            // room here, the collected bake is checked in the same carry and its products come back -- the situation this
+            // case is about. Without room the check would wait for a later pump, which the latch never gives.
+            root.Cook.MainRemaining = () => 1.0;
             LogicalFragmentId cuttable = AddBody(root, new Vector3(-4f, 0f, 0f));
             LogicalFragmentId unusable = AddPlainBody(root, new Vector3(4f, 0f, 0f));
             yield return null;

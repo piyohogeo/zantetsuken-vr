@@ -18,9 +18,11 @@ MonoBehaviour:
   anchorEpsilon: 0.00001
   vertexCapacity: 65536
   indexCapacity: 262144
-  geometryDescriptorCapacity: 512
-  submeshCapacity: 2048
-  vertexBlockCapacity: 2048
+  gpuVertexInitialCapacity: 16777216
+  gpuIndexInitialCapacity: 67108864
+  geometryDescriptorCapacity: 8192
+  submeshCapacity: 32768
+  vertexBlockCapacity: 65536
   waitingCapacity: 32
   reservedForUrgent: 8
   frameBudget: 64
@@ -33,13 +35,19 @@ MonoBehaviour:
   displayInstanceCapacity: 512
   branchCapacity: 128
   candidateCapacity: 512
-  chainDepth: 16
+  chainDepth: 256
+  drawCommandCapacityLimit: 65536
+  drawInstanceCapacityLimit: 65536
+  geometryReferenceCapacityLimit: 65536
+  displayInstanceCapacityLimit: 65536
+  branchCapacityLimit: 65536
+  candidateCapacityLimit: 65536
   maxStencilColours: 4
   capFacingEpsilon: 0.01
   capPlaneEpsilon: 0.0001
   capNdcMargin: {x: 0.01, y: 0.01}
   stencilCameraCapacity: 4
-  maxIncompleteCuts: 32
+  maxIncompleteCuts: 4096
   separationImpulseByMass: 1
   separationImpulsePerKg: 1
   buildingWorldFirstLimitMetres: 1

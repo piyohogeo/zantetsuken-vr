@@ -12,6 +12,9 @@ using Zantetsu.PhysicsCut;
 // own rather than in the test one.
 [assembly: InternalsVisibleTo("Zantetsu.Sandbox.Editor")]
 
+// The PlayMode tests read internal members of this assembly (the building fusion's test hooks and counters) with a world of their own.
+[assembly: InternalsVisibleTo("Zantetsu.PhysicsCut.PlayModeTests")]
+
 namespace Zantetsu.Sandbox
 {
     /// <summary>

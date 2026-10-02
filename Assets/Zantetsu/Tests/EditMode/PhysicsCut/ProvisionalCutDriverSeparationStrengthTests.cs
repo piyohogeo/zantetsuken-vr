@@ -150,6 +150,60 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
+        /// The coexistence profile's k (TL, 2026-10-01: back to 1.0 N·s/kg, by mass): through a profile switched on with
+        /// k = 1.0, two free sides of different mass are each given J = 1.0 × their own mass -- read as the impulse each was
+        /// given (mass × its first velocity, before any step: no contact or gravity has acted yet) -- and a side the anchors
+        /// fix is given nothing and not asked.
+        /// </summary>
+        [Test]
+        public void AProfileByMassWithKOne_GivesEachFreeSideOneTimesItsMass_AndAFixedSideNothing()
+        {
+            CutWorldProfile profile = ScriptableObject.CreateInstance<CutWorldProfile>();
+            try
+            {
+                var serialized = new SerializedObject(profile);
+                serialized.FindProperty("separationImpulseByMass").boolValue = true;
+                serialized.FindProperty("separationImpulsePerKg").floatValue = 1.0f;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                Assert.That(profile.IsUsable(out string reason), Is.True, reason);
+                Assert.That(profile.SeparationImpulseByMass && profile.SeparationImpulsePerKg == 1.0f, Is.True, "read back: by mass, k 1.0");
+                SeparationImpulseStrength fromProfile = profile.SeparationStrength;
+                var asked = new List<double>();
+                SeparationImpulseStrength strength = mass => { asked.Add(mass); return fromProfile(mass); };
+
+                using (World w = NewWorld(convexOffsets: new[] { new double3(0.0, 0.0, 0.0), new double3(1.5, 1.0, 0.0) }))
+                {
+                    w.job.HoldEverything = true;
+                    w.driver.SeparationStrength = strength;
+                    ProvisionalOwnerPair pair = Publish(w).Pair;
+                    double mp = pair.Positive.Mass, mn = pair.Negative.Mass;
+                    Assert.That(mp, Is.GreaterThan(mn * 1.5), "two sides of different mass");
+                    Assert.That(asked, Is.EqualTo(new[] { mp, mn }), "asked once for each free side's own mass");
+                    double jp = mp * pair.Positive.Body.linearVelocity.magnitude, jn = mn * pair.Negative.Body.linearVelocity.magnitude;
+                    TestContext.Out.WriteLine("masses " + mp.ToString("R") + " / " + mn.ToString("R") + " kg; impulses given " + jp.ToString("R") + " / " + jn.ToString("R") + " N·s");
+                    Assert.That(jp, Is.EqualTo(1.0 * mp).Within(1e-3 * mp), "J = 1.0 × the positive side's mass");
+                    Assert.That(jn, Is.EqualTo(1.0 * mn).Within(1e-3 * mn), "J = 1.0 × the negative side's mass");
+                }
+
+                asked.Clear();
+                using (World w = NewWorld(anchors: new[] { new float3(0f, 0.5f, 0f) }))
+                {
+                    w.job.HoldEverything = true;
+                    w.driver.SeparationStrength = strength;
+                    ProvisionalOwnerPair pair = Publish(w).Pair;
+                    Assert.That(pair.Positive.FixedByAnchors, Is.True, "the positive side fixed by its anchor");
+                    Assert.That(asked, Is.EqualTo(new[] { pair.Negative.Mass }), "only the free side asked");
+                    Assert.That((float3)pair.Positive.Body.linearVelocity, Is.EqualTo(float3.zero).Using(Float3Within(1e-6f)), "the fixed side is given nothing");
+                    Assert.That(pair.Negative.Mass * pair.Negative.Body.linearVelocity.magnitude, Is.EqualTo(1.0 * pair.Negative.Mass).Within(1e-3 * pair.Negative.Mass), "the free side J = 1.0 × its mass");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(profile);
+            }
+        }
+
+        /// <summary>
         /// A cut kept Pending for its budget is given its strength at the publication that follows, once; the Final
         /// handoff after it adds nothing to either side's motion and asks nothing again.
         /// </summary>

@@ -547,10 +547,58 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(handle.TryFinishPreparation(), Is.True);
             var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
             detector.AddCharacter(handle);
+            // The acceptance follows the Main budget of this frame (the frame's own remainder against the stages' predictions):
+            // Published at once, or Pending -- the root kept until the same operation is published (TL, 2026-10-01; md5-play
+            // and wd1-play were Pending, published one frame later). Either way the whole root leaves at the publication, not
+            // before it and not by parts.
+            string Budget() => "frame " + Time.frameCount + ", Main remaining " + CutPhysicsStep.FrameRemainingMainSeconds.ToString("R") + " s, dispatch budget " + coldWorld.Dispatcher.RemainingBudget
+                + ", build history " + coldWorld.Driver.BuildCosts.Count + " (predicted " + coldWorld.Driver.BuildCosts.ExpectedSeconds.ToString("R") + " s), publication history " + coldWorld.Driver.PublishCosts.Count
+                + " (predicted " + coldWorld.Driver.PublishCosts.ExpectedSeconds.ToString("R") + " s)";
+            string budget = Budget();
             List<SlashHitConfirmed> cut = Evaluate(detector, CharacterLevel(1, 0.3f, -3f, 3f), 1);
             Assert.That(cut.Count, Is.EqualTo(1));
-            Assert.That(root.activeInHierarchy, Is.False, "the whole root left, as before");
-            yield return UntilCommitted(cut[0].Operation);
+            Assert.That(cut[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published).Or.EqualTo(ProvisionalCutAcceptance.Pending), "accepted");
+            CutOperationId operation = cut[0].Operation;
+            var record = new List<string> { "before the evaluation: " + budget };
+            string State() => "frame " + Time.frameCount + ", acceptance " + cut[0].Acceptance + ", operation " + operation.value
+                + ", ledger " + (coldWorld.Ledger.TryGetOperation(operation, out LogicalCutOperation op) ? op.state.ToString() : "none")
+                + ", geometry " + coldWorld.Geometry.StageOf(operation) + ", transaction " + (coldWorld.Driver.TransactionOf(operation)?.Phase.ToString() ?? "none")
+                + ", root active " + root.activeInHierarchy + ", withdrawn " + handle.IsWithdrawn + " (by parts " + handle.WithdrawsParts + "), handle held " + handle.IsHeld;
+            // The operation's publication: its transaction published (or past it), or handed off and completed in the ledger.
+            bool Published()
+            {
+                ProvisionalCutTransaction t = coldWorld.Driver.TransactionOf(operation);
+                if (t != null) return t.Phase == ProvisionalCutPhase.Published || t.Phase == ProvisionalCutPhase.FinalHeld || t.Phase == ProvisionalCutPhase.HandedOff;
+                return coldWorld.Ledger.TryGetOperation(operation, out LogicalCutOperation done) && done.state == LogicalCutOperationState.Completed;
+            }
+
+            record.Add("after the evaluation: " + State());
+            record.Add("the budget after the evaluation: " + Budget());
+            if (cut[0].Acceptance == ProvisionalCutAcceptance.Pending)
+            {
+                // Pending: the root kept, then the same operation followed to its publication.
+                Assert.That(Published(), Is.False, "Pending: not published yet");
+                Assert.That(root.activeInHierarchy && !handle.IsWithdrawn, Is.True, "Pending: the root kept until the publication");
+                int frames = 0;
+                while (!Published() && frames < 600)
+                {
+                    yield return null;
+                    frames++;
+                    if (!Published()) Assert.That(root.activeInHierarchy && !handle.IsWithdrawn, Is.True, "still Pending at frame " + Time.frameCount + ": the root kept");
+                }
+
+                record.Add("published: " + State() + " (" + frames + " frame(s) after the evaluation)");
+                foreach (string line in record) TestContext.Out.WriteLine(line);
+                Assert.That(Published(), Is.True, "the same operation was published");
+            }
+            else
+            {
+                foreach (string line in record) TestContext.Out.WriteLine(line);
+            }
+
+            Assert.That(root.activeInHierarchy, Is.False, "the whole root left, as before, at the publication");
+            Assert.That(handle.IsWithdrawn && !handle.WithdrawsParts, Is.True, "withdrawn whole, not by parts");
+            yield return UntilCommitted(operation);
         }
 
         [UnityTest]

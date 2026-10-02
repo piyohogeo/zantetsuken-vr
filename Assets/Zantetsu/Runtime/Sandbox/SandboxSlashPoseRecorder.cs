@@ -73,7 +73,7 @@ namespace Zantetsu.Sandbox
         /// Fixed recording length in samples: about 5.7 s at the 90 Hz Quest
         /// Link mode.
         /// </summary>
-        internal const int Capacity = 512;
+        internal const int Capacity = 4096;   // 512 until 2026-09-30: a 30 s replay of the katana input at 90 Hz needs about 2700 rows (the hull scenario)
 
         /// <summary>
         /// Name of the slash method the katana runs: the first candidate, and

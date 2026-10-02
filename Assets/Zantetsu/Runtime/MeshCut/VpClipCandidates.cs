@@ -107,6 +107,37 @@ namespace Zantetsu.MeshCut
     /// kept apart. Nothing is drawn from this yet.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// A registration root's chain as its structure build's validation read it (2026-10-01): the boundaries from the root
+    /// up, bottom first, in <see cref="boundaries"/> from <see cref="start"/>; the offsets (bottom first) of those the
+    /// registration's reflected set does not hold; and whether they read in admission order from the top down. A
+    /// collection whose walk up reaches <see cref="root"/> takes these instead of walking and matching them again. Valid only
+    /// within that build, for that ledger and that registration's reflected set: the snapshot passes it under those
+    /// conditions only.
+    /// </summary>
+    internal readonly struct VpChainSegment
+    {
+        public VpChainSegment(LogicalFragmentId root, VpClipBoundary[] boundaries, int start, int length, int[] unreflected, int unreflectedStart, int unreflectedCount, bool ordered)
+        {
+            this.root = root;
+            this.boundaries = boundaries;
+            this.start = start;
+            this.length = length;
+            this.unreflected = unreflected;
+            this.unreflectedStart = unreflectedStart;
+            this.unreflectedCount = unreflectedCount;
+            this.ordered = ordered;
+        }
+
+        public readonly LogicalFragmentId root;
+        public readonly VpClipBoundary[] boundaries;
+        public readonly int start, length;
+        public readonly int[] unreflected;
+        public readonly int unreflectedStart, unreflectedCount;
+        public readonly bool ordered;
+        public bool IsSet => boundaries != null;
+    }
+
     public static class VpClipCandidates
     {
         /// <summary>The most planes one fragment is drawn with at once (DESIGN 5.2 <c>TemporaryClipPlaneCapacity</c>).</summary>
@@ -193,7 +224,13 @@ namespace Zantetsu.MeshCut
         /// <paramref name="chain"/>, and its candidates into <paramref name="into"/> from <paramref name="start"/>, at most
         /// <paramref name="capacity"/> of them. Nothing grows and nothing is allocated; a shortage is answered, never cut
         /// short. With <paramref name="requireLive"/> false the chain of a fragment that is replaced or retired is read
-        /// too -- still only through the ledger's read-only calls, and only with a pending side of 0.
+        /// too -- still only through the ledger's read-only calls, and only with a pending side of 0. With
+        /// <paramref name="lineage"/> (a structure build's, open for this ledger) the chain's ancestors are taken from the
+        /// facts that build has read, and only those it has not are read from the ledger; without it (the default) every
+        /// ancestor is read from the ledger. The chain and the candidates are the same either way. With
+        /// <paramref name="segment"/> (2026-10-01: the registration root's chain as the same build's validation read and
+        /// matched it), a walk that reaches its root takes it instead of walking and matching it again; the chain's
+        /// length, its order, the candidates and every refusal are the same.
         /// </summary>
         internal static CollectOutcome CollectInto(
             LogicalCutLedger ledger,
@@ -205,7 +242,9 @@ namespace Zantetsu.MeshCut
             VpClipCandidate[] into,
             int start,
             int capacity,
-            out int count)
+            out int count,
+            VpLineageFacts lineage = null,
+            in VpChainSegment segment = default)
         {
             count = 0;
             if (!ledger.TryGetFragmentState(fragment, out LogicalFragmentState state)
@@ -233,23 +272,243 @@ namespace Zantetsu.MeshCut
             }
 
             LogicalFragmentId at = fragment;
-            while (ledger.TryGetOrigin(at, out CutOperationId origin, out float side))
+            bool spliced = false;
+            while (true)
             {
+                // The registration root's chain, read and matched already in this build: taken as it stands -- unless it
+                // does not read in admission order (then walked, and the order check below finds it as always).
+                if (segment.IsSet && at == segment.root && segment.ordered && !reflectedAfterReadForTest
+                    && !(orderViolationAtForTest >= 0 && orderViolationAtForTest < segment.length))
+                {
+                    spliced = true;
+                    break;
+                }
+
+                LineageVisits++;
+                CutOperationId origin;
+                float side;
+                bool operationKnown;
+                LogicalFragmentId source;
+                if (lineage != null)
+                {
+                    long read = LineageReads;
+                    if (!lineage.TryGet(ledger, at, out origin, out side, out operationKnown, out source, out _, ref LineageReads, ref LineageHits))
+                    {
+                        break;
+                    }
+
+                    if (LineageReads != read) OperationReads++;
+                }
+                else
+                {
+                    LineageReads++;
+                    if (!ledger.TryGetOrigin(at, out origin, out side))
+                    {
+                        break;
+                    }
+
+                    OperationReads++;
+                    operationKnown = ledger.TryGetOperation(origin, out LogicalCutOperation operation);
+                    source = operation.source;
+                }
+
                 if (length >= chain.Length)
                 {
                     return CollectOutcome.ChainOverflow;
                 }
 
                 chain[length++] = new VpClipBoundary(new VpCapFace(ledger, origin), side);
-                if (!ledger.TryGetOperation(origin, out LogicalCutOperation operation))
+                ChainSteps++;
+
+                // An origin whose operation is not known ends the chain here, its boundary added: the collection's own
+                // rule, never the validation's Lineage refusal.
+                if (!operationKnown)
                 {
                     break;
                 }
 
-                at = operation.source;
+                at = source;
             }
 
-            // In the ledger's admission order, the chain's boundaries the drawn geometry does not reflect.
+            if (chainOnlyForTest)
+            {
+                return CollectOutcome.Collected;
+            }
+
+            if (spliced)
+            {
+                return CollectSpliced(ledger, reflected, chain, length, in segment, into, start, capacity, out count);
+            }
+
+            // In the ledger's admission order, the chain's boundaries the drawn geometry does not reflect. The chain was
+            // read from the fragment up, and each boundary on it was admitted before the one below it (a fragment is cut
+            // only once it exists, and it exists only once the cut above it was published; the ledger appends operations
+            // and never reorders them), so the chain read from the top down **is** the admission order of these
+            // boundaries: only the chain's own operations are read, not every operation the ledger ever admitted
+            // (2026-09-29: the scan of the whole history, once per branch, was what grew with the history and the depth).
+            // The order is checked as it is walked; a chain that did not hold it -- none does -- is listed by the scan.
+            VpClipBoundary previous = default;
+            int lastAdmitted = -1;
+            for (int i = length - 1; i >= 0; i--)
+            {
+                VpClipBoundary boundary = chain[i];
+                if (boundary.face.operation.value <= lastAdmitted || orderViolationAtForTest == length - 1 - i)
+                {
+                    OrderFallbacks++;
+                    count = 0;
+                    return CollectByAdmissionScan(ledger, reflected, chain, length, into, start, capacity, out count);
+                }
+
+                lastAdmitted = boundary.face.operation.value;
+                LogicalCutOperation operation;
+                if (reflectedAfterReadForTest)
+                {
+                    OperationReads++;
+                    if (!ledger.TryGetOperation(boundary.face.operation, out operation) || Contains(reflected, boundary))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    // A boundary the geometry reflects is no candidate whatever its operation says: asked first, so that its
+                    // operation is not read a second time (2026-10-01; either way it is skipped, as before).
+                    ReflectedLookups++;
+                    if (Contains(reflected, boundary))
+                    {
+                        continue;
+                    }
+
+                    OperationReads++;
+                    if (!ledger.TryGetOperation(boundary.face.operation, out operation))
+                    {
+                        continue;
+                    }
+                }
+
+                if (count >= capacity)
+                {
+                    count = 0;
+                    return CollectOutcome.CandidateOverflow;
+                }
+
+                bool pending = operation.state == LogicalCutOperationState.Admitted;
+                into[start + count++] = new VpClipCandidate(boundary, operation.plane, pending, previous);
+                CandidatesMade++;
+                previous = boundary;
+            }
+
+            return CollectOutcome.Collected;
+        }
+
+        /// <summary>How many chains were not in admission order from the top down and were listed by the scan. Expected 0.</summary>
+        public static int OrderFallbacks { get; private set; }
+
+        // The chain with a registration root's segment taken in: below the root, chain[0..below) as walked; the segment
+        // above. The same events in the same order as the whole chain's top-down pass: the segment's boundaries first (in
+        // admission order, checked when it was made; its reflected ones skipped), then those below, checked on from the
+        // segment's bottom. A violation below copies the segment into the chain and lists the whole by the scan.
+        private static CollectOutcome CollectSpliced(
+            LogicalCutLedger ledger, IReadOnlyCollection<VpClipBoundary> reflected, VpClipBoundary[] chain, int below,
+            in VpChainSegment segment, VpClipCandidate[] into, int start, int capacity, out int count)
+        {
+            count = 0;
+            if (below + segment.length > chain.Length)
+            {
+                ChainSteps += chain.Length - below;   // as many as the walk would have placed before the room ran out
+                return CollectOutcome.ChainOverflow;
+            }
+
+            SegmentSplices++;
+            SegmentBoundaries += segment.length;
+            ChainSteps += segment.length;
+            VpClipBoundary previous = default;
+            for (int u = segment.unreflectedCount - 1; u >= 0; u--)
+            {
+                VpClipBoundary boundary = segment.boundaries[segment.start + segment.unreflected[segment.unreflectedStart + u]];
+                OperationReads++;
+                if (!ledger.TryGetOperation(boundary.face.operation, out LogicalCutOperation operation))
+                {
+                    continue;
+                }
+
+                if (count >= capacity)
+                {
+                    count = 0;
+                    return CollectOutcome.CandidateOverflow;
+                }
+
+                bool pending = operation.state == LogicalCutOperationState.Admitted;
+                into[start + count++] = new VpClipCandidate(boundary, operation.plane, pending, previous);
+                CandidatesMade++;
+                previous = boundary;
+            }
+
+            int lastAdmitted = segment.length > 0 ? segment.boundaries[segment.start].face.operation.value : -1;
+            for (int i = below - 1; i >= 0; i--)
+            {
+                VpClipBoundary boundary = chain[i];
+                if (boundary.face.operation.value <= lastAdmitted || orderViolationAtForTest == segment.length + below - 1 - i)
+                {
+                    OrderFallbacks++;
+                    System.Array.Copy(segment.boundaries, segment.start, chain, below, segment.length);
+                    count = 0;
+                    return CollectByAdmissionScan(ledger, reflected, chain, below + segment.length, into, start, capacity, out count);
+                }
+
+                lastAdmitted = boundary.face.operation.value;
+                ReflectedLookups++;
+                if (Contains(reflected, boundary))
+                {
+                    continue;
+                }
+
+                OperationReads++;
+                if (!ledger.TryGetOperation(boundary.face.operation, out LogicalCutOperation operation))
+                {
+                    continue;
+                }
+
+                if (count >= capacity)
+                {
+                    count = 0;
+                    return CollectOutcome.CandidateOverflow;
+                }
+
+                bool pending = operation.state == LogicalCutOperationState.Admitted;
+                into[start + count++] = new VpClipCandidate(boundary, operation.plane, pending, previous);
+                CandidatesMade++;
+                previous = boundary;
+            }
+
+            return CollectOutcome.Collected;
+        }
+
+        /// <summary>For observation: the reflected-set lookups the collections made, the segments taken in, and their boundaries (not walked, not matched).</summary>
+        internal static long ReflectedLookups, SegmentSplices, SegmentBoundaries;
+
+        /// <summary>Tests only: the boundary that many from the top of a chain is taken as out of admission order (the scan's path, which no real chain takes).</summary>
+        internal static int orderViolationAtForTest = -1;
+
+        /// <summary>Tests only (a cost split): the chain is read and nothing more is done (no candidates).</summary>
+        internal static bool chainOnlyForTest;
+
+        /// <summary>For observation, over every collection on the main thread: the chain boundaries read, the operations read, the candidates made.</summary>
+        internal static long ChainSteps, OperationReads, CandidatesMade;
+
+        /// <summary>For observation, over every collection's chain walk: the ancestors visited, their facts read from the ledger, and those taken from a build's facts.</summary>
+        internal static long LineageVisits, LineageReads, LineageHits;
+
+        /// <summary>Tests only: each chain boundary's operation read before the reflected set is asked (the collection before 2026-10-01).</summary>
+        internal static bool reflectedAfterReadForTest;
+
+        // The listing by the ledger's held order, over every operation admitted: the one the chain walk above replaces,
+        // kept for a chain that did not read in admission order.
+        private static CollectOutcome CollectByAdmissionScan(
+            LogicalCutLedger ledger, IReadOnlyCollection<VpClipBoundary> reflected, VpClipBoundary[] chain, int length,
+            VpClipCandidate[] into, int start, int capacity, out int count)
+        {
+            count = 0;
             VpClipBoundary previous = default;
             for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
             {
@@ -354,6 +613,12 @@ namespace Zantetsu.MeshCut
 
         private static bool Contains(IReadOnlyCollection<VpClipBoundary> set, VpClipBoundary boundary)
         {
+            // A snapshot's index of the registration's set answers as the set's scan would, without the scan.
+            if (set is VpReflectedIndex index)
+            {
+                return index.Contains(boundary);
+            }
+
             foreach (VpClipBoundary item in set)
             {
                 if (item == boundary)

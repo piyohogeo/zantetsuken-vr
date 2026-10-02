@@ -36,6 +36,9 @@ namespace Zantetsu.MeshCut
 
         public bool IsFull => IncompleteCutOperationCount >= MaxIncompleteCutOperationCount;
 
+        /// <summary>The most operations that were incomplete at once, so far.</summary>
+        public int PeakIncompleteCutOperationCount { get; private set; }
+
         // Called by a ledger only after it has checked IsFull as part of admission; a full budget here is a ledger bug.
         internal void Take()
         {
@@ -45,6 +48,7 @@ namespace Zantetsu.MeshCut
             }
 
             IncompleteCutOperationCount++;
+            if (IncompleteCutOperationCount > PeakIncompleteCutOperationCount) PeakIncompleteCutOperationCount = IncompleteCutOperationCount;
         }
 
         // Called by a ledger once per operation, when the operation reaches a terminal state.
