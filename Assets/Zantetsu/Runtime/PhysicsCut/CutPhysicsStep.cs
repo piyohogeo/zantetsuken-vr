@@ -289,7 +289,7 @@ namespace Zantetsu.PhysicsCut
             LastDecisionExpectedSeconds = expected;
             LastDecisionRemainingSeconds = remaining;
             LastDecisionStepped = step;
-            RecordDecision(scripted, remaining, expected, shouldStep, step, verify, s_frameStart);   // DIAGNOSIS ONLY: nothing when off
+            RecordDecision(scripted, remaining, expected, shouldStep, step, verify, s_frameStart, now);   // DIAGNOSIS ONLY: nothing when off
             if (step)
             {
                 long begin = Stopwatch.GetTimestamp();

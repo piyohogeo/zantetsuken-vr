@@ -2,52 +2,67 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using Zantetsu.Core;
 
 namespace Zantetsu.PhysicsCut
 {
-    // DIAGNOSIS ONLY (2026-10-02, the integration worktree): the step decision of every frame, recorded with what it read, so
-    // that a decision that does not step can be told apart -- paused, nothing owed, no budget left, the estimate over the
-    // budget, not in script mode. Off unless the environment variable ZTK_STEP_DIAG is "1" when a play session starts; then
-    // a fixed ring of records is filled frame by frame (no allocation per frame) and events can be added by name. Nothing of
-    // the decision itself is changed by it.
+    // DIAGNOSIS ONLY (2026-10-02): the step decision of every frame, recorded with what it read, so that a decision that
+    // does not step can be told apart -- paused, nothing owed, no budget left, the estimate over the budget, not in script
+    // mode. Off unless the environment variable ZTK_STEP_DIAG is "1" when a play session starts (and only where DEBUG is
+    // defined); then each decision, and each mark named by a caller, is one record of the development logger (DESIGN 21.17,
+    // writer "CutPhysicsStep"), its value the field names and values in turn. Nothing of the decision itself is changed.
+    //
+    // The record has an explicit end (DiagnosisEnd): from the session's start to it every record tried is counted, the
+    // summary is the last record, and afterwards no decision or mark is recorded (the physics goes on; only the record stops).
+    // The logger is best effort (accepted is not saved): each record carries its own sequence number (seq, one per record
+    // tried, from 1), and the attempts, acceptances and refusals by reason are counted here, so that the saved file can be
+    // checked against them afterwards; a record is complete only if every record from seq 1 to the summary was saved.
+    //
+    // seconds: the Stopwatch (QueryPerformanceCounter) clock, from the moment ResetDiagnosisForSession ran (the session's
+    // SubsystemRegistration reset). A decision's seconds are the decision's own reading -- the one its remaining budget
+    // was computed from; a mark's and the summary's are read when they are made.
     public static partial class CutPhysicsStep
     {
         internal const string DiagnosisVariable = "ZTK_STEP_DIAG";
+        internal const string DiagnosisWriter = "CutPhysicsStep";
 
-        internal struct DecisionRecord
-        {
-            public int frame;
-            public double seconds;          // since the session started (Stopwatch)
-            public bool scripted, clockPaused, gamePaused, applicationPaused;
-            public double owed, stepSeconds, dropped, remaining, expected, budget;
-            public bool shouldStep, ownedAndBudget, withinCostAlone, stepped, verify, reevaluateAsked, frameStartWasZero;
-            public int skippedInARow, collectors, costSamples;
-            public long stepId;
-            public string reason;
-        }
-
-        private const int DiagnosisCapacity = 16384;
-        private static DecisionRecord[] s_diagnosis;
-        private static int s_diagnosisCount;   // total written; the ring holds the last DiagnosisCapacity
+        private static bool s_diagnosisOn;
+        private static bool s_diagnosisEnded;
         private static long s_diagnosisStart;
+        private static long s_diagnosisSeq;
+        private static long s_diagnosisAccepted;
+        private static long s_diagnosisQueueFull, s_diagnosisUnavailable, s_diagnosisInvalid, s_diagnosisDisabled;
 
-        /// <summary>Whether this session records its decisions (ZTK_STEP_DIAG=1 at the session's start).</summary>
-        internal static bool DiagnosisOn => s_diagnosis != null;
+        /// <summary>Whether this session records its decisions (ZTK_STEP_DIAG=1 at the session's start, DEBUG defined).</summary>
+        internal static bool DiagnosisOn => s_diagnosisOn;
 
-        internal static int DiagnosisCount => s_diagnosisCount;
+        /// <summary>Whether the record was ended (<see cref="DiagnosisEnd"/>): nothing is recorded after it.</summary>
+        internal static bool DiagnosisEnded => s_diagnosisEnded;
+
+        /// <summary>Records tried this session: the seq of the last one.</summary>
+        internal static long DiagnosisAttempted => s_diagnosisSeq;
+
+        /// <summary>Records the logger accepted (queued -- not yet known to be saved).</summary>
+        internal static long DiagnosisAccepted => s_diagnosisAccepted;
 
         private static void ResetDiagnosisForSession()
         {
-            bool on = Environment.GetEnvironmentVariable(DiagnosisVariable) == "1";
-            s_diagnosis = on ? new DecisionRecord[DiagnosisCapacity] : null;
-            s_diagnosisCount = 0;
+            s_diagnosisEnded = false;
+            s_diagnosisSeq = 0;
+            s_diagnosisAccepted = 0;
+            s_diagnosisQueueFull = s_diagnosisUnavailable = s_diagnosisInvalid = s_diagnosisDisabled = 0;
             s_diagnosisStart = Stopwatch.GetTimestamp();
-            if (on) UnityEngine.Debug.Log("[step diagnosis] on for this session (" + DiagnosisVariable + "=1)");
+#if DEBUG
+            s_diagnosisOn = Environment.GetEnvironmentVariable(DiagnosisVariable) == "1";
+            if (s_diagnosisOn) UnityEngine.Debug.Log("[step diagnosis] on for this session (" + DiagnosisVariable + "=1): records of writer " + DiagnosisWriter + " to the development logger");
+#else
+            s_diagnosisOn = false;
+#endif
         }
 
-        private static void RecordDecision(bool scripted, double remaining, double expected, bool shouldStep, bool step, bool verify, long frameStart)
+        private static void RecordDecision(bool scripted, double remaining, double expected, bool shouldStep, bool step, bool verify, long frameStart, long now)
         {
-            if (s_diagnosis == null)
+            if (!s_diagnosisOn || s_diagnosisEnded)
             {
                 return;
             }
@@ -63,35 +78,81 @@ namespace Zantetsu.PhysicsCut
             else if (remaining < 0.0) reason = "no-budget-left";
             else if (!shouldStep && owedAndBudget && withinCostAlone) reason = "estimate-over-remaining";
             else reason = "other";
-            ref DecisionRecord r = ref s_diagnosis[s_diagnosisCount % DiagnosisCapacity];
-            r.frame = UnityEngine.Time.frameCount;
-            r.seconds = (double)(Stopwatch.GetTimestamp() - s_diagnosisStart) / Stopwatch.Frequency;
-            r.scripted = scripted;
-            r.clockPaused = s_clock.IsPaused;
-            r.gamePaused = s_gamePaused;
-            r.applicationPaused = s_applicationPaused;
-            r.owed = s_clock.UnsimulatedSeconds;
-            r.stepSeconds = s_clock.StepSeconds;
-            r.dropped = s_clock.DroppedSeconds;
-            r.remaining = remaining;
-            r.expected = expected;
-            r.budget = s_mainBudgetSeconds;
-            r.shouldStep = shouldStep;
-            r.ownedAndBudget = owedAndBudget;
-            r.withinCostAlone = withinCostAlone;
-            r.stepped = step;
-            r.verify = verify;
-            r.reevaluateAsked = s_reevaluateAsked;
-            r.frameStartWasZero = frameStart == 0;
-            r.skippedInARow = SkippedForCostInARow;
-            r.collectors = s_collectors.Count;
-            r.costSamples = s_costs.Count;
-            r.stepId = s_clock.StepId;
-            r.reason = reason;
-            s_diagnosisCount++;
+            WriteDiagnosis("decision", now, new object[]
+            {
+                "reason", reason, "stepped", B(step), "verify", B(verify), "scripted", B(scripted),
+                "clockPaused", B(s_clock.IsPaused), "gamePaused", B(s_gamePaused), "applicationPaused", B(s_applicationPaused),
+                "owed", s_clock.UnsimulatedSeconds, "stepSeconds", s_clock.StepSeconds, "dropped", s_clock.DroppedSeconds,
+                "remaining", remaining, "expected", expected, "budget", s_mainBudgetSeconds,
+                "shouldStep", B(shouldStep), "owedAndBudget", B(owedAndBudget), "withinCostAlone", B(withinCostAlone),
+                "reevaluateAsked", B(s_reevaluateAsked), "frameStartWasZero", B(frameStart == 0),
+                "skippedInARow", SkippedForCostInARow, "collectors", s_collectors.Count, "costSamples", s_costs.Count, "stepId", s_clock.StepId,
+            });
         }
 
-        /// <summary>The state the next decision will read, in one line (for an event mark).</summary>
+        /// <summary>A named mark (a test's begin or end, say) with the state the next decision will read; nothing while off or after the end.</summary>
+        internal static void DiagnosisMark(string what, string name, string outcome)
+        {
+            if (!s_diagnosisOn || s_diagnosisEnded)
+            {
+                return;
+            }
+
+            WriteDiagnosis("mark", Stopwatch.GetTimestamp(), new object[] { "what", what, "name", name, "outcome", outcome, "state", DiagnosisState() });
+        }
+
+        /// <summary>
+        /// Ends the record (once; nothing while off or once ended): the summary is tried as the last record, then no decision or
+        /// mark is recorded for the rest of the session. The summary record's counts are of the records before it
+        /// (seq 1..N-1); the summary itself is seq N. The same counts, the summary included (attempted N, accepted and refused
+        /// over seq 1..N), go to the Editor's log, which does not depend on the logger: what the saved file is checked against.
+        /// </summary>
+        internal static void DiagnosisEnd()
+        {
+            if (!s_diagnosisOn || s_diagnosisEnded)
+            {
+                return;
+            }
+
+            WriteDiagnosis("summary", Stopwatch.GetTimestamp(), new object[]
+            {
+                "attemptedBefore", s_diagnosisSeq, "acceptedBefore", s_diagnosisAccepted, "queueFull", s_diagnosisQueueFull,
+                "unavailable", s_diagnosisUnavailable, "invalidValue", s_diagnosisInvalid, "disabled", s_diagnosisDisabled,
+            });
+            s_diagnosisEnded = true;
+            UnityEngine.Debug.Log("[step diagnosis] ended: attempted " + s_diagnosisSeq + " (seq 1.." + s_diagnosisSeq + ", the summary last), accepted " + s_diagnosisAccepted
+                + ", refused: queue full " + s_diagnosisQueueFull + ", unavailable " + s_diagnosisUnavailable + ", invalid value " + s_diagnosisInvalid
+                + ", disabled " + s_diagnosisDisabled);
+        }
+
+        // One record: seq, the frame of the moment it is made and its seconds (from the reading given), then the caller's fields.
+        private static void WriteDiagnosis(string tag, long timestamp, object[] fields)
+        {
+            long seq = ++s_diagnosisSeq;
+            var values = new object[6 + fields.Length];
+            values[0] = "seq";
+            values[1] = seq;
+            values[2] = "eventFrame";
+            values[3] = UnityEngine.Time.frameCount;
+            values[4] = "seconds";
+            values[5] = (double)(timestamp - s_diagnosisStart) / Stopwatch.Frequency;
+            Array.Copy(fields, 0, values, 6, fields.Length);
+#if DEBUG
+            DevelopmentLogResult result = DevelopmentLogger.Instance.write_log(DiagnosisWriter, tag, values);
+            switch (result)
+            {
+                case DevelopmentLogResult.Accepted: s_diagnosisAccepted++; break;
+                case DevelopmentLogResult.QueueFull: s_diagnosisQueueFull++; break;
+                case DevelopmentLogResult.Unavailable: s_diagnosisUnavailable++; break;
+                case DevelopmentLogResult.InvalidValue: s_diagnosisInvalid++; break;
+                default: s_diagnosisDisabled++; break;
+            }
+#endif
+        }
+
+        private static int B(bool value) => value ? 1 : 0;
+
+        /// <summary>The state the next decision will read, in one line (for a mark).</summary>
         internal static string DiagnosisState()
         {
             var b = new StringBuilder();
@@ -107,28 +168,6 @@ namespace Zantetsu.PhysicsCut
                 .Append(", frame ").Append(UnityEngine.Time.frameCount);
             return b.ToString();
         }
-
-        /// <summary>The records from <paramref name="from"/> (a count, as <see cref="DiagnosisCount"/> returned) to now, as CSV lines.</summary>
-        internal static void AppendDiagnosisCsv(StringBuilder b, int from)
-        {
-            if (s_diagnosis == null)
-            {
-                return;
-            }
-
-            int start = Math.Max(from, s_diagnosisCount - DiagnosisCapacity);
-            for (int i = start; i < s_diagnosisCount; i++)
-            {
-                DecisionRecord r = s_diagnosis[i % DiagnosisCapacity];
-                b.Append(r.frame).Append(',').Append(R(r.seconds)).Append(',').Append(r.reason).Append(',').Append(r.stepped).Append(',').Append(r.verify).Append(',')
-                    .Append(r.scripted).Append(',').Append(r.clockPaused).Append(',').Append(r.gamePaused).Append(',').Append(r.applicationPaused).Append(',')
-                    .Append(R(r.owed)).Append(',').Append(R(r.stepSeconds)).Append(',').Append(R(r.dropped)).Append(',').Append(R(r.remaining)).Append(',').Append(R(r.expected)).Append(',').Append(R(r.budget)).Append(',')
-                    .Append(r.shouldStep).Append(',').Append(r.ownedAndBudget).Append(',').Append(r.withinCostAlone).Append(',').Append(r.reevaluateAsked).Append(',').Append(r.frameStartWasZero).Append(',')
-                    .Append(r.skippedInARow).Append(',').Append(r.collectors).Append(',').Append(r.costSamples).Append(',').Append(r.stepId).Append('\n');
-            }
-        }
-
-        internal const string DiagnosisCsvHeader = "frame,seconds,reason,stepped,verify,scripted,clockPaused,gamePaused,applicationPaused,owed,stepSeconds,dropped,remaining,expected,budget,shouldStep,owedAndBudget,withinCostAlone,reevaluateAsked,frameStartWasZero,skippedInARow,collectors,costSamples,stepId";
 
         private static string R(double v) => v.ToString("R", CultureInfo.InvariantCulture);
     }
