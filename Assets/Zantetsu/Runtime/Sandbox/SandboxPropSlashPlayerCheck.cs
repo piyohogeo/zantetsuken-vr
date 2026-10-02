@@ -42,8 +42,8 @@ namespace Zantetsu.Sandbox
     /// <para>
     /// **The pieces' physics.** The cuts are complete when every accepted cut's geometry has committed; that is not a
     /// physical rest. After it the ordinary Steps go on for a fixed observation period, apart from the cuts' times, and
-    /// every live piece is written frame by frame from the frame its owner is first seen (pieces.csv: StepId, the
-    /// unsimulated time, position, velocity, its own lowest vertex, its colliders, the floor's footprint and contact).
+    /// every live piece is tracked frame by frame from the frame its owner is first seen (its own lowest vertex, its
+    /// colliders, the floor's footprint and contact; nothing of it is written per frame).
     /// What is judged is that the Steps went on, that every piece's colliders stayed on its body, and -- a check limited
     /// to this scenario, not a guarantee to catch every way through a floor -- where each piece's own lowest vertex was
     /// in the first row it was under the floor's underside: inside the floor's footprint fails, outside it is written as
@@ -109,9 +109,6 @@ namespace Zantetsu.Sandbox
 
         // Image evidence (XR Temporary): hold the geometry pool's finished work for N frames after the first hit.
         public const string HoldGeometryArgument = "-zantetsuPropHoldGeometry";
-
-        // Measurement (re-cut miss): pieces recorded in a light run too.
-        public const string TraceMissArgument = "-zantetsuPropTraceMiss";
 
         // Measurement (the moving VRS): after the preparation, the replay begins when the XR head leaves its pose.
         public const string StartOnHeadMoveArgument = "-zantetsuPropStartOnHeadMove";
@@ -248,7 +245,6 @@ namespace Zantetsu.Sandbox
                     walk.extraMarkers = Value(MarkersArgument);
                     walk.showUi = Has(UiArgument);
                     walk.listMarkers = Has(ListMarkersArgument) && i == 0;
-                    walk.traceMiss = Has(TraceMissArgument);
                     walk.startOnHeadMove = float.TryParse(Value(StartOnHeadMoveArgument), NumberStyles.Float, CultureInfo.InvariantCulture,
                         out float move) ? move : 0f;
                     walk.headWaitSeconds = double.TryParse(Value(HeadWaitSecondsArgument), NumberStyles.Float, CultureInfo.InvariantCulture,
@@ -370,7 +366,6 @@ namespace Zantetsu.Sandbox
             internal string extraMarkers;
             internal bool showUi;
             internal bool listMarkers;
-            internal bool traceMiss;
             internal float startOnHeadMove;
             internal double headWaitSeconds = 60.0;
             internal float endHoldSeconds;
@@ -471,11 +466,11 @@ namespace Zantetsu.Sandbox
             private readonly HashSet<int> _fastSeen = new HashSet<int>();
 
             // The pieces' physics, frame by frame, from the frame each owner is first seen to the end of the observation
-            // period (pieces.csv): read in this LateUpdate, which is before the frame's Step, so a row carries the state
-            // the last Step (its StepId) and this frame's publications left.
+            // period: read in this LateUpdate, which is before the frame's Step, so a frame's reading is the state the last
+            // Step (its StepId) and this frame's publications left.
             private const float ObservationPhysicsSeconds = 3f;
-            private StreamWriter _pieceRows;
             private Collider _floor;
+            private bool _floorLooked;
             private bool _observing;
             private readonly Dictionary<int, PieceTrack> _tracks = new Dictionary<int, PieceTrack>();
 
@@ -1359,7 +1354,6 @@ namespace Zantetsu.Sandbox
                     _timelineRecorders = null;
                 }
 
-                _pieceRows?.Dispose();
                 _poseEvaluateNs.Dispose();
                 _poseApplyNs.Dispose();
                 _hitEvaluateNs.Dispose();
@@ -1419,7 +1413,7 @@ namespace Zantetsu.Sandbox
                     RecordFrame();
                 }
 
-                if ((!light || traceMiss) && (_replaying || _observing) && _world != null && !_world.IsEnding)
+                if (!light && (_replaying || _observing) && _world != null && !_world.IsEnding)
                 {
                     TrackPieces();
                 }
@@ -2117,27 +2111,24 @@ namespace Zantetsu.Sandbox
                 }
             }
 
-            // One row per live piece per frame, and where each stands when the observation starts and ends.
+            // Every live piece, every frame: its track for the observation's judgement, and where each stands when the
+            // observation starts and ends. The floor is looked up on the first call, as it always was.
             private void TrackPieces()
             {
-                if (_pieceRows == null)
+                if (!_floorLooked)
                 {
+                    _floorLooked = true;
                     GameObject floorObject = GameObject.Find(building ? "Building Slash Floor" : "Prop Floor");
                     _floor = floorObject != null ? floorObject.GetComponent<Collider>() : null;
                     Log("floor: " + (_floor != null ? _floor.GetType().Name + " bounds min=" + _floor.bounds.min.ToString("F4") + " max=" + _floor.bounds.max.ToString("F4")
                             + " layer=" + _floor.gameObject.layer + " contactOffset=" + _floor.contactOffset.ToString("R", Inv) : "none")
                         + " defaultContactOffset=" + Physics.defaultContactOffset.ToString("R", Inv) + " solverIterations=" + Physics.defaultSolverIterations
                         + " bounceThreshold=" + Physics.bounceThreshold.ToString("R", Inv) + " gravity=" + Physics.gravity.ToString("F3"));
-                    _pieceRows = new StreamWriter(Path.Combine(directory, "pieces.csv"));
-                    _pieceRows.WriteLine("frame,phase,stepId,unsimulated,fragment,of,mass,posX,posY,posZ,velX,velY,velZ,speed,sleeping,kinematic,detection,"
-                        + "lowestVertexY,colliders,enabledColliders,attached,colliderMinY,colliderMaxY,overFloor,floorPenetration,floorTouch,"
-                        + "lowestX,lowestZ,centreX,centreY,centreZ,originOverFloor,boundsMinX,boundsMinY,boundsMinZ,boundsMaxX,boundsMaxY,boundsMaxZ");
                 }
 
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 long step = clock != null ? clock.StepId : -1;
                 int frame = Time.frameCount;
-                string phase = _observing ? "observe" : "cuts";
                 for (int id = 1; id < 256; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
@@ -2158,8 +2149,6 @@ namespace Zantetsu.Sandbox
                     Vector3 centre = PieceCentre(owner);
                     int colliders = 0, enabled = 0, attached = 0;
                     float minY = float.PositiveInfinity, maxY = float.NegativeInfinity, penetration = 0f;
-                    Bounds all = default;
-                    bool anyBounds = false;
                     foreach (Collider collider in owner.Root.GetComponentsInChildren<Collider>(true))
                     {
                         colliders++;
@@ -2171,7 +2160,6 @@ namespace Zantetsu.Sandbox
                         enabled++;
                         attached += collider.attachedRigidbody == body ? 1 : 0;
                         Bounds b = collider.bounds;
-                        if (anyBounds) all.Encapsulate(b); else { all = b; anyBounds = true; }
                         minY = Math.Min(minY, b.min.y);
                         maxY = Math.Max(maxY, b.max.y);
                         if (_floor != null && Physics.ComputePenetration(collider, collider.transform.position, collider.transform.rotation,
@@ -2181,19 +2169,12 @@ namespace Zantetsu.Sandbox
                         }
                     }
 
-                    Vector3 position = body.position;
-                    // Over the floor: the piece's own lowest vertex inside the floor's footprint (the body's origin is its
-                    // source's, not the piece's, so it is kept only as a column).
+                    // Over the floor: the piece's own lowest vertex inside the floor's footprint (not the body's origin, which
+                    // is its source's, not the piece's).
                     bool overFloor = OverFloor(lowestPoint);
-                    bool originOverFloor = OverFloor(position);
                     bool touch = _floor != null && enabled > 0 && (penetration > 0f
                         || (overFloor && minY <= _floor.bounds.max.y + 2f * Physics.defaultContactOffset));
                     Vector3 v = body.linearVelocity;
-                    _pieceRows.WriteLine(string.Join(",", frame, phase, step, clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "",
-                        id, LineageOf(fragment), body.mass.ToString("R", Inv), F(position.x), F(position.y), F(position.z), F(v.x), F(v.y), F(v.z),
-                        F(v.magnitude), body.IsSleeping(), body.isKinematic, body.collisionDetectionMode, F(lowest), colliders, enabled, attached,
-                        F(minY), F(maxY), overFloor, F(penetration), touch, F(lowestPoint.x), F(lowestPoint.z), F(centre.x), F(centre.y), F(centre.z),
-                        originOverFloor, F(all.min.x), F(all.min.y), F(all.min.z), F(all.max.x), F(all.max.y), F(all.max.z)));
 
                     if (!_tracks.TryGetValue(id, out PieceTrack track))
                     {
@@ -2238,7 +2219,6 @@ namespace Zantetsu.Sandbox
             // collider apart from its own vertices), and no general contact check is made here.
             private void SummariseObservation()
             {
-                _pieceRows?.Flush();
                 Expect(_observedSteps >= _askedSteps && _askedSteps > 0,
                     "the ordinary Steps went on through the observation (" + _observedSteps + " of " + _askedSteps + " steps)");
                 foreach (KeyValuePair<int, PieceTrack> at in _tracks)
