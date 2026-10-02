@@ -9,8 +9,8 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// One bit per <see cref="TraceEventType"/> value, in a single 64-bit word:
-    /// the existing event set runs from 0 to 46, so one word already holds all
-    /// of it with room to spare. Nothing here invents an identifier of its own
+    /// the active SlashHitConfirmed record uses value 47, which fits in this
+    /// word. Nothing here invents an identifier of its own
     /// - the event type is the identity, and a value that could not be
     /// represented is simply not enabled rather than being remapped.
     /// </para>
