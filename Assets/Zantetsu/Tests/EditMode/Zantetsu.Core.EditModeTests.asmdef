@@ -6,7 +6,6 @@
         "Zantetsu.Core",
         "Zantetsu.Trace",
         "Zantetsu.Observability",
-        "Zantetsu.Observability.Editor",
         "Unity.Collections",
         "Unity.Burst",
         "Zantetsu.ConvexCut",

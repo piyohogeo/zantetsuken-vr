@@ -1,5 +1,7 @@
 # check 撮影基盤の一本化（設計記録、2026-10-02、実装前に記録）
 
+> Cleanup update (2026-10-02): The unused Phase 0/0.1 PNG/JSON capture path and all Phase 0.11 NVENC code, native plugin, tests, and build entry points have been removed. The NVENC and PNG/JSON sections below record the pre-cleanup investigation. The current check/movie capture uses JPEG and retains only the shared GPU readback components.
+
 対象は check と画像 run の撮影だけ。製品の挙動・設定、既定無効、VB／IB 各 256 MiB は変えない。既存 API と内部構造の互換性は保たない。
 
 ## 1. 既存資産の経路と、確認済みの範囲

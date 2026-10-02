@@ -56,9 +56,8 @@ namespace Zantetsu.Observability
     /// storage only - not the objects that hold it.
     /// </para>
     /// <para>
-    /// This is not <c>CaptureTraceProfile</c> and does not replace it: it
-    /// describes the variable-length lanes and the paged history behind them,
-    /// and nothing in the existing trace configuration is read or changed.
+    /// This describes the variable-length lanes and the paged history behind
+    /// them.
     /// </para>
     /// </remarks>
     internal sealed class TraceLaneSetProfile

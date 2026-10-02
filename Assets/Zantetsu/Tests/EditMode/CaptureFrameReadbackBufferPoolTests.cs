@@ -13,7 +13,6 @@ namespace Zantetsu.Core.Tests
         {
             typeof(RenderTexture),
             typeof(Camera),
-            typeof(TraceLogger),
             typeof(UnityEngine.Logger),
             typeof(UnityEngine.Rendering.AsyncGPUReadbackRequest)
         };
