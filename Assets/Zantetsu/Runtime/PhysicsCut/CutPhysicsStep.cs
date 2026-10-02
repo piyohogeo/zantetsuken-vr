@@ -46,7 +46,7 @@ namespace Zantetsu.PhysicsCut
     /// Nothing a world does later -- whenever it is loaded -- changes either.
     /// </para>
     /// </summary>
-    public static class CutPhysicsStep
+    public static partial class CutPhysicsStep
     {
         /// <summary>The physics frequency when nothing else was chosen (DESIGN 4.4: 45 Hz by default).</summary>
         public const int DefaultFrequencyHz = 45;
@@ -89,6 +89,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The duration of the last real simulation, in seconds (the latest sample, not the prediction).</summary>
         public static double LastSimulateSeconds { get; private set; }
 
+        /// <summary>The duration of the last frame's collection (the drivers' display snapshots after the decision), in seconds.</summary>
+        public static double LastCollectSeconds { get; private set; }
+
         /// <summary>The expected cost of the next simulation: the median of the last five real ones, 0 before any.</summary>
         public static double ExpectedSimulateSeconds => s_costs.ExpectedSeconds;
 
@@ -106,6 +109,44 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The frame of the last decision, simulated or not, or <see cref="int.MinValue"/>.</summary>
         public static int LastDecidedFrame { get; private set; } = int.MinValue;
+
+        /// <summary>
+        /// After this many decisions in a row that skipped for the expected cost alone (time owed, budget short of the
+        /// estimate), one verification step is taken past the budget: the estimate is from real simulations only, and a
+        /// world whose load fell after the estimate was taken would otherwise never be simulated again.
+        /// </summary>
+        public const int VerifyAfterSkippedFrames = 45;
+
+        /// <summary>Verification steps taken: a simulation past the budget to measure the cost again (bounded: one per <see cref="VerifyAfterSkippedFrames"/> skipped frames, or one asked for).</summary>
+        public static int VerificationSteps { get; private set; }
+
+        /// <summary>The duration of the last verification step, in seconds.</summary>
+        public static double LastVerificationSeconds { get; private set; }
+
+        /// <summary>The sum, over the verification steps, of their cost beyond what was left of the budget, in seconds.</summary>
+        public static double VerificationOverrunSeconds { get; private set; }
+
+        /// <summary>The decisions in a row that skipped for the expected cost alone, so far.</summary>
+        public static int SkippedForCostInARow { get; private set; }
+
+        private static bool s_reevaluateAsked;
+
+        /// <summary>
+        /// Asks for the cost to be measured again at the next decision (a world's load was reduced: an aggregation
+        /// completed, groups rested): the next decision simulates once even past the budget, and the estimate starts
+        /// over from that measurement. One step, no catch-up.
+        /// </summary>
+        public static void RequestCostReevaluation()
+        {
+            s_reevaluateAsked = true;
+        }
+
+        /// <summary>Tests only: the estimate the next decisions compare with, as if five real simulations had cost this.</summary>
+        internal static void InjectExpectedCostForTest(double seconds)
+        {
+            s_costs.Clear();
+            for (int i = 0; i < SimulateCostHistory.Capacity; i++) s_costs.Add(seconds);
+        }
 
         /// <summary>The game's pause: while it holds, no time is owed to the physics.</summary>
         public static void SetPaused(bool paused)
@@ -149,12 +190,19 @@ namespace Zantetsu.PhysicsCut
             s_pauseListener = null;
             s_collectors.Clear();
             LastSimulateSeconds = 0.0;
+            LastCollectSeconds = 0.0;
             s_costs.Clear();
+            VerificationSteps = 0;
+            LastVerificationSeconds = 0.0;
+            VerificationOverrunSeconds = 0.0;
+            SkippedForCostInARow = 0;
+            s_reevaluateAsked = false;
             LastDecisionExpectedSeconds = 0.0;
             LastDecisionRemainingSeconds = 0.0;
             LastDecisionStepped = false;
             LastSimulatedFrame = int.MinValue;
             LastDecidedFrame = int.MinValue;
+            ResetDiagnosisForSession();   // DIAGNOSIS ONLY: off unless ZTK_STEP_DIAG=1 (CutPhysicsStep.Diagnosis.cs)
         }
 
         /// <summary>
@@ -216,10 +264,32 @@ namespace Zantetsu.PhysicsCut
             long frameStart = s_frameStart != 0 ? s_frameStart : now;
             double remaining = s_mainBudgetSeconds - ((double)(now - frameStart) / Stopwatch.Frequency);
             double expected = s_costs.ExpectedSeconds;
-            bool step = Physics.simulationMode == SimulationMode.Script && s_clock.ShouldStep(expected, remaining);
+            bool scripted = Physics.simulationMode == SimulationMode.Script;
+            bool step = scripted && s_clock.ShouldStep(expected, remaining);
+            bool shouldStep = step;   // DIAGNOSIS ONLY: the plain decision, before a verification step
+            // A skip for the cost alone (time owed, the estimate over what is left): counted; after enough of them in a
+            // row, or when a re-evaluation was asked for, one verification step is taken past the budget so that the
+            // estimate is measured again -- a stale high estimate never holds the physics for ever. One step, not a catch-up.
+            bool verify = false;
+            if (scripted && !step && s_clock.ShouldStep(0.0, remaining) && s_clock.ShouldStep(expected, double.PositiveInfinity))
+            {
+                SkippedForCostInARow++;
+                if (SkippedForCostInARow >= VerifyAfterSkippedFrames || s_reevaluateAsked)
+                {
+                    step = true;
+                    verify = true;
+                }
+            }
+            else if (step)
+            {
+                SkippedForCostInARow = 0;
+                s_reevaluateAsked = false;   // the steps go on by themselves: nothing to measure again
+            }
+
             LastDecisionExpectedSeconds = expected;
             LastDecisionRemainingSeconds = remaining;
             LastDecisionStepped = step;
+            RecordDecision(scripted, remaining, expected, shouldStep, step, verify, s_frameStart);   // DIAGNOSIS ONLY: nothing when off
             if (step)
             {
                 long begin = Stopwatch.GetTimestamp();
@@ -229,12 +299,23 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;
+                if (verify)
+                {
+                    VerificationSteps++;
+                    LastVerificationSeconds = LastSimulateSeconds;
+                    VerificationOverrunSeconds += Math.Max(0.0, LastSimulateSeconds - remaining);
+                    SkippedForCostInARow = 0;
+                    s_reevaluateAsked = false;
+                    s_costs.Clear();   // the estimate starts over from this measurement
+                }
+
                 s_costs.Add(LastSimulateSeconds);
                 s_clock.Stepped();
                 LastSimulatedFrame = Time.frameCount;
             }
 
             // Backwards and bounds-checked: a collection may end a driver (the termination latch), which leaves.
+            long collectBegin = Stopwatch.GetTimestamp();
             using (s_collect.Auto())
             {
                 for (int i = s_collectors.Count - 1; i >= 0; i--)
@@ -245,6 +326,8 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
             }
+
+            LastCollectSeconds = (double)(Stopwatch.GetTimestamp() - collectBegin) / Stopwatch.Frequency;
         }
 
         private static void EnsurePauseListener()

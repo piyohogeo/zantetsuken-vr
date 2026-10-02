@@ -98,9 +98,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+        /// <summary>
+        /// The step as the player loop decides it, observed over real time (2026-10-02): from a baseline -- the first frame
+        /// the readers see -- the frames run until <see cref="RequiredSteps"/> real steps have been seen, within
+        /// <see cref="ObservationLimitSeconds"/> of real time (not reaching them is a failure; nothing is reset and no order is
+        /// relied on). In every frame of the window there is at most one step; a frame without one leaves the body where it
+        /// was, a frame with one moves it by one fixed step; the whole movement is the steps seen times one step's movement.
+        /// The decision is taken after the frame's late updates, and each simulation is one profiler sample.
+        /// </summary>
         [UnityTest]
         public IEnumerator TheStep_IsDecidedOncePerFrameAfterTheLateUpdates_AndOnlyARealSimulationMovesTheWorld()
         {
+            const int RequiredSteps = 5;
+            const float ObservationLimitSeconds = 5f;
             Assert.That(Physics.simulationMode, Is.EqualTo(SimulationMode.Script), "the project steps by script");
             var go = new GameObject("Stepped body");
             _objects.Add(go);
@@ -119,12 +129,55 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var late = readers.AddComponent<LateReader>();
 
             // The simulation is recorded where the profiler can see it (DESIGN 4.4: its duration is kept there).
-            long stepsBefore = CutPhysicsStep.Clock.StepId;
-            using var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.CutPhysicsStep.Simulate", 256);
-            for (int i = 0; i < 90; i++)
+            // Room for every frame of the window: batchmode frames can be ~0.1 ms, so the 5 s limit is up to ~50,000 frames
+            // (a recorder of 1024 frames dropped the window's first steps, 2026-10-02).
+            using var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.CutPhysicsStep.Simulate", 65536);
+
+            // The baseline: the first frame the early reader has seen (its frame, step id and position).
+            float limit = Time.realtimeSinceStartup + ObservationLimitSeconds;
+            while (early.seen.Count == 0 && Time.realtimeSinceStartup < limit)
             {
                 yield return null;
             }
+
+            Assert.That(early.seen.Count, Is.GreaterThan(0), "the early reader saw a frame");
+            int baseIndex = early.seen.Count - 1;
+            var baseline = early.seen[baseIndex];
+            float stepMove = 3f * (float)CutPhysicsStep.Clock.StepSeconds;
+            int stepped = 0;
+            int checkedUpTo = baseIndex;
+            float started = Time.realtimeSinceStartup;
+            while (stepped < RequiredSteps && Time.realtimeSinceStartup < limit)
+            {
+                yield return null;
+                for (int i = checkedUpTo + 1; i < early.seen.Count; i++)
+                {
+                    var previous = early.seen[i - 1];
+                    var now = early.seen[i];
+                    Assert.That(now.decided, Is.EqualTo(now.frame - 1), "by the next frame, the previous frame has decided");
+                    long steps = now.step - previous.step;
+                    Assert.That(steps, Is.InRange(0L, 1L), "at most one simulation in a frame (frame " + now.frame + ")");
+                    if (steps == 0)
+                    {
+                        Assert.That(now.x, Is.EqualTo(previous.x), "a frame that did not simulate does not move the body (frame " + now.frame + ")");
+                    }
+                    else
+                    {
+                        stepped++;
+                        Assert.That(now.x - previous.x, Is.EqualTo(stepMove).Within(1e-4f), "a real step moves the body by one fixed step (frame " + now.frame + ")");
+                    }
+                }
+
+                checkedUpTo = early.seen.Count - 1;
+            }
+
+            var last = early.seen[checkedUpTo];
+            float waited = Time.realtimeSinceStartup - started;
+            TestContext.Out.WriteLine("observed " + stepped + " steps over " + (checkedUpTo - baseIndex) + " frames and " + waited.ToString("F3") + " s of real time (baseline frame " + baseline.frame
+                + ", step id " + baseline.step + "; last frame " + last.frame + ", step id " + last.step + "; dropped owed time so far " + CutPhysicsStep.Clock.DroppedSeconds.ToString("R") + " s)");
+            Assert.That(stepped, Is.GreaterThanOrEqualTo(RequiredSteps), "the physics advanced " + RequiredSteps + " steps within " + ObservationLimitSeconds + " s of real time");
+            Assert.That(last.step - baseline.step, Is.EqualTo(stepped), "the steps seen frame by frame are the step id's whole advance");
+            Assert.That(last.x - baseline.x, Is.EqualTo(stepped * stepMove).Within(1e-3f), "the whole movement is the steps seen times one step's movement");
 
             long recorded = 0;
             for (int i = 0; i < recorder.Count; i++)
@@ -132,40 +185,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 recorded += recorder.GetSample(i).Count;
             }
 
-            long stepsTaken = CutPhysicsStep.Clock.StepId - stepsBefore;
-            Assert.That(stepsTaken, Is.GreaterThan(0));
-            Assert.That(recorded, Is.EqualTo(stepsTaken).Within(2),
-                "each real simulation is one sample of the profiler marker (the last frames may not be collected yet)");
+            Assert.That(recorded, Is.GreaterThanOrEqualTo(stepped).And.LessThanOrEqualTo(stepped + 3),
+                "each real simulation is one sample of the profiler marker (counted from before the baseline; the last frames may not be collected yet)");
             Assert.That(CutPhysicsStep.LastSimulateSeconds, Is.GreaterThan(0.0), "and its duration is kept as the latest sample");
             Assert.That(CutPhysicsStep.ExpectedSimulateSeconds, Is.GreaterThan(0.0), "and the next decision's prediction is taken from the real ones");
 
-            Assert.That(late.seen.Count, Is.GreaterThan(30));
+            Assert.That(late.seen.Count, Is.GreaterThan(0));
             foreach (var (frame, decided, _) in late.seen)
             {
                 Assert.That(decided, Is.LessThan(frame), "after the late updates of frame " + frame + " it is not decided yet");
             }
 
-            int stepped = 0;
-            for (int i = 1; i < early.seen.Count; i++)
-            {
-                var previous = early.seen[i - 1];
-                var now = early.seen[i];
-                Assert.That(now.decided, Is.EqualTo(now.frame - 1), "by the next frame, the previous frame has decided");
-                long steps = now.step - previous.step;
-                Assert.That(steps, Is.InRange(0L, 1L), "at most one simulation in a frame");
-                if (steps == 0)
-                {
-                    Assert.That(now.x, Is.EqualTo(previous.x), "a frame that did not simulate does not move the body");
-                }
-                else
-                {
-                    stepped++;
-                    Assert.That(now.x - previous.x, Is.EqualTo(3f * (float)CutPhysicsStep.Clock.StepSeconds).Within(1e-4f),
-                        "a real step moves the body by one fixed step");
-                }
-            }
-
-            Assert.That(stepped, Is.GreaterThan(0), "the physics did advance");
             Assert.That(CutPhysicsStep.Clock.PhysicsSeconds,
                 Is.EqualTo(CutPhysicsStep.Clock.StepId * CutPhysicsStep.Clock.StepSeconds).Within(1e-9),
                 "the physics time is the real steps, and only them");
