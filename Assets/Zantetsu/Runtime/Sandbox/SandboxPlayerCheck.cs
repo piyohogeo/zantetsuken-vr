@@ -51,6 +51,16 @@ namespace Zantetsu.Sandbox
         /// What the physics step and the building D6 creation cost while the walk runs, per phase: the Simulate time
         /// the session's own step measures, and the creation marker read with a recorder. Observation only.
         /// </summary>
+        /// <summary>
+        /// Whether a World D6 reports the linear limit a request is expected to read back as (DESIGN 7.2.2, Unity 6000.3.22f1
+        /// observation: 0 &lt; L &lt; 0.001 m reads 0.001 m), within the building check's tolerance 1e-6 -- the same rule as the
+        /// building check (SandboxPropSlashPlayerCheck.LinearReadbackMatches). The angle is compared as before.
+        /// </summary>
+        internal static bool LinearLimitAsAsked(ConfigurableJoint joint, float requested)
+        {
+            return SandboxPropSlashPlayerCheck.LinearReadbackMatches(joint.linearLimit.limit, requested);
+        }
+
         private sealed class ConstraintSampler : MonoBehaviour
         {
             internal string Phase = "";
@@ -767,7 +777,7 @@ namespace Zantetsu.Sandbox
                         && joint.yMotion == ConfigurableJointMotion.Free
                         && joint.xMotion == ConfigurableJointMotion.Limited && joint.zMotion == ConfigurableJointMotion.Limited
                         && joint.angularXMotion == ConfigurableJointMotion.Limited
-                        && Mathf.Approximately(joint.linearLimit.limit, settings.LimitMetres(depth))
+                        && LinearLimitAsAsked(joint, settings.LimitMetres(depth))
                         && Mathf.Approximately(joint.angularYLimit.limit, settings.AngleDegrees(depth));
                 }
 
