@@ -13,7 +13,7 @@ namespace Zantetsu.Sandbox
     // Measurement (the MultiNpcSlash benchmark, Assets/Licensed/MultiNpc/MultiNpcCity.unity): ten NPCs of ten models, no
     // box. With MultiNpcArgument the check does not ask for the box and does not judge the single target; instead it
     // follows every NPC's lineage, every hit's outcome by Slash, and every accepted cut -- Published or Pending -- to its
-    // Provisional publication, its Final/Logical publication and its geometry commit, frame by frame (multi.csv,
+    // Provisional publication, its Final/Logical publication and its geometry commit, frame by frame (the "frame" records of CheckFrames,
     // the "op" records of the hit record, CheckHits), and judges the benchmark's functional conditions at the end. It only reads: nothing is cut, hit,
     // published, reset or completed from here.
     public static partial class SandboxPropSlashPlayerCheck
@@ -27,7 +27,6 @@ namespace Zantetsu.Sandbox
             private readonly Dictionary<LogicalFragmentId, SandboxNpcCharacter> _multiRoots = new Dictionary<LogicalFragmentId, SandboxNpcCharacter>();
             private readonly SortedDictionary<long, SlashTally> _multiSlashes = new SortedDictionary<long, SlashTally>();
             private readonly Dictionary<LogicalFragmentId, int> _multiAcceptedOnSource = new Dictionary<LogicalFragmentId, int>();
-            private StreamWriter _multiRows;
             private readonly HashSet<long> _multiSlashEnded = new HashSet<long>();
 
             // Hits held before acceptance: the character, the Slash and the frame it was held, until its handle is accepted.
@@ -80,10 +79,9 @@ namespace Zantetsu.Sandbox
                 Expect(_npcs.Count == 10 && _npcs.All(c => c.IsTarget), "ten NPCs, each a prepared hit target (" + _npcs.Count(c => c.IsTarget) + " of " + _npcs.Count + ")");
                 Expect(_npcs.Select(c => c.Renderer != null && c.Renderer.sharedMesh != null ? c.Renderer.sharedMesh.vertexCount + ":" + Model(c) : Model(c)).Distinct().Count() == _npcs.Count,
                     "every NPC has a model of its own");
-                _multiRows = new StreamWriter(Path.Combine(directory, "multi.csv"));
                 HitLogOpen("multiNpc");
+                FrameLogOpen("multiNpc");   // the per-frame rows (formerly multi.csv), a recording of their own
                 MultiStorage("before replay");
-                _multiRows.WriteLine("frame,real,waves,uncutNpcs,liveFragments,livePieces,liveConvexes,acceptedOps,pendingOps,incompleteOps,acceptedThisFrame,provisionalThisFrame,finalThisFrame,committedThisFrame,unsimulated,stepId");
             }
 
             // The first frame after the replay began, once the Pose Tables have applied: where each NPC stands.
@@ -317,15 +315,19 @@ namespace Zantetsu.Sandbox
                 }
 
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
-                _multiRows?.WriteLine(string.Join(",", frame, now.ToString("R", Inv), _katana.WaveCount, uncut, live, pieces, convexes, _accepted.Count, pending, incomplete,
-                    acceptedNow, provisionalNow, finalNow, committedNow, clock != null ? clock.UnsimulatedSeconds.ToString("R", Inv) : "", clock != null ? clock.StepId : -1));
+                FrameLogRow(new CheckFrameRow
+                {
+                    frame = frame, real = now, waves = _katana.WaveCount, uncutNpcs = uncut, liveFragments = live, livePieces = pieces, liveConvexes = convexes,
+                    acceptedOps = _accepted.Count, pendingOps = pending, incompleteOps = incomplete, acceptedThisFrame = acceptedNow,
+                    provisionalThisFrame = provisionalNow, finalThisFrame = finalNow, committedThisFrame = committedNow,
+                    unsimulated = clock != null ? clock.UnsimulatedSeconds : (double?)null, stepId = clock != null ? clock.StepId : -1,
+                });
             }
 
             private void MultiClose()
             {
-                _multiRows?.Dispose();
-                _multiRows = null;
                 HitLogEnd();
+                FrameLogEnd();   // after the hit record's summary: a tail the bounded drain cuts takes the frame record's first
                 BuildingClose();
                 MobPlanClose();
             }
