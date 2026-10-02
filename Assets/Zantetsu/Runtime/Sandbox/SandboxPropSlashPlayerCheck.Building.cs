@@ -66,6 +66,10 @@ namespace Zantetsu.Sandbox
             private readonly List<string> _buildingViolations = new List<string>();
             private int _buildingViolationsDropped;
             private readonly SortedDictionary<string, int> _angleReadback = new SortedDictionary<string, int>();
+            // [readback] the reads the engine's linear minimum applied to (DESIGN 7.2.2), by depth: the fragments, the reads, the
+            // request, and the smallest and largest value read (a light run writes no per-piece rows, so what was read is kept here).
+            private readonly SortedDictionary<int, (HashSet<int> fragments, int reads, float requested, float readMin, float readMax)> _linearRaised
+                = new SortedDictionary<int, (HashSet<int>, int, float, float, float)>();
             private int _events;
             private readonly List<string> _eventLines = new List<string>();
             private readonly Dictionary<Rigidbody, int> _bodyFragment = new Dictionary<Rigidbody, int>();
@@ -242,7 +246,7 @@ namespace Zantetsu.Sandbox
                 {
                     _buildingRows = new StreamWriter(Path.Combine(directory, "building-pieces.csv"));
                     _buildingRows.WriteLine("frame,phase,stepId,fragment,originOp,depth,derived,anchors,fixedByAnchors,ledgerFixed,kinematic,joints,d6,d6Connected,"
-                        + "d6XMotion,d6YMotion,limit,expectedLimit,lowX,highX,limitY,limitZ,expectedAngle,offset,total,twist,swingY,swingZ,"
+                        + "d6XMotion,d6YMotion,limit,expectedLimit,expectedRead,lowX,highX,limitY,limitZ,expectedAngle,offset,total,twist,swingY,swingZ,"
                         + "comX,comY,comZ,speed,angularDegPerS,comJump,rotJump,posX,posY,posZ,lowestVertexY");
                     _eventRows = new StreamWriter(Path.Combine(directory, "building-events.csv"));
                     _eventRows.WriteLine("event,trigger," + EventHeader);
@@ -422,11 +426,12 @@ namespace Zantetsu.Sandbox
                         Violation("fixed fragment " + id + " kinematic=" + body.isKinematic + " d6=" + (joint != null) + " at frame " + frame);
                     }
 
-                    float expectedLimit = float.NaN, expectedAngle = float.NaN, offset = float.NaN, total = float.NaN, twist = float.NaN, swingY = float.NaN, swingZ = float.NaN;
+                    float expectedLimit = float.NaN, expectedRead = float.NaN, expectedAngle = float.NaN, offset = float.NaN, total = float.NaN, twist = float.NaN, swingY = float.NaN, swingZ = float.NaN;
                     Vector3 anchorWorld = position;
                     if (d6On && !owner.FixedByAnchors && depth >= 1)
                     {
-                        expectedLimit = d6.LimitMetres(depth);
+                        expectedLimit = d6.LimitMetres(depth);   // the request L(d)
+                        expectedRead = ExpectedLinearReadback(expectedLimit);   // what the joint is expected to report (DESIGN 7.2.2)
                         expectedAngle = d6.AngleDegrees(depth);
                         if (joint == null || joint.gameObject != owner.Root)
                         {
@@ -437,10 +442,21 @@ namespace Zantetsu.Sandbox
                             bool shape = joint.connectedBody == null && joint.xMotion == ConfigurableJointMotion.Limited && joint.yMotion == ConfigurableJointMotion.Free
                                 && joint.zMotion == ConfigurableJointMotion.Limited && joint.angularXMotion == ConfigurableJointMotion.Limited
                                 && joint.angularYMotion == ConfigurableJointMotion.Limited && joint.angularZMotion == ConfigurableJointMotion.Limited;
-                            if (!shape || Mathf.Abs(joint.linearLimit.limit - expectedLimit) > 1e-6f)
+                            if (!shape || !LinearReadbackMatches(joint.linearLimit.limit, expectedLimit))
                             {
-                                Violation("fragment " + id + " D6 at depth " + depth + " shape=" + shape + " limit=" + joint.linearLimit.limit.ToString("R", Inv)
-                                    + " (expected " + expectedLimit.ToString("R", Inv) + ") at frame " + frame);
+                                Violation("fragment " + id + " D6 at depth " + depth + " shape=" + shape + " limit read " + joint.linearLimit.limit.ToString("R", Inv)
+                                    + " (requested L(d) " + expectedLimit.ToString("R", Inv) + ", expected read " + expectedRead.ToString("R", Inv)
+                                    + ", tolerance " + LinearLimitTolerance.ToString("R", Inv) + ") at frame " + frame);
+                            }
+
+                            if (LinearMinimumApplies(expectedLimit))
+                            {
+                                float read = joint.linearLimit.limit;
+                                bool raisedBefore = _linearRaised.TryGetValue(depth, out (HashSet<int> fragments, int reads, float requested, float readMin, float readMax) raised);
+                                raised.fragments ??= new HashSet<int>();
+                                raised.fragments.Add(id);
+                                _linearRaised[depth] = (raised.fragments, raised.reads + 1, expectedLimit, raisedBefore ? Mathf.Min(raised.readMin, read) : read,
+                                    raisedBefore ? Mathf.Max(raised.readMax, read) : read);
                             }
 
                             // [readback] the angle limits as the joint reports them, beside A(d), tallied per depth.
@@ -550,7 +566,7 @@ namespace Zantetsu.Sandbox
                     _buildingRows?.WriteLine(string.Join(",", frame, _observing ? "observe" : "cuts", step, id, t.originOp, depth, owner.Building.IsBuildingDerived,
                         anchors, owner.FixedByAnchors, ledgerFixed, body.isKinematic, joints, joint != null, joint != null && joint.connectedBody == null,
                         joint != null ? joint.xMotion.ToString() : "", joint != null ? joint.yMotion.ToString() : "",
-                        joint != null ? F(joint.linearLimit.limit) : "", F(expectedLimit), joint != null ? F(joint.lowAngularXLimit.limit) : "",
+                        joint != null ? F(joint.linearLimit.limit) : "", F(expectedLimit), F(expectedRead), joint != null ? F(joint.lowAngularXLimit.limit) : "",
                         joint != null ? F(joint.highAngularXLimit.limit) : "", joint != null ? F(joint.angularYLimit.limit) : "", joint != null ? F(joint.angularZLimit.limit) : "",
                         F(expectedAngle), F(offset), F(total), F(twist), F(swingY), F(swingZ), F(com.x), F(com.y), F(com.z), F(v.magnitude),
                         F(w.magnitude * Mathf.Rad2Deg), F(comJump), F(rotJump), F(position.x), F(position.y), F(position.z), !light ? F(LowestVertexY(owner)) : ""));
@@ -756,6 +772,13 @@ namespace Zantetsu.Sandbox
                 foreach (string v in _buildingViolations) Log("building violation: " + v);
                 if (_buildingViolationsDropped > 0) Log("building violations not written: " + _buildingViolationsDropped);
                 foreach (KeyValuePair<string, int> r in _angleReadback) Log("[readback] " + r.Key + " (" + r.Value + " reads)");
+                if (_linearRaised.Count == 0) Log("[readback] linear limit raised by the engine's minimum " + EngineLinearLimitMinimum.ToString("R", Inv) + " m (DESIGN 7.2.2): none");
+                foreach (KeyValuePair<int, (HashSet<int> fragments, int reads, float requested, float readMin, float readMax)> r in _linearRaised)
+                {
+                    Log("[readback] linear limit raised by the engine's minimum (DESIGN 7.2.2): depth " + r.Key + ": " + r.Value.fragments.Count + " fragments, "
+                        + r.Value.reads + " reads, requested L(d) " + r.Value.requested.ToString("R", Inv) + ", expected read "
+                        + ExpectedLinearReadback(r.Value.requested).ToString("R", Inv) + ", read " + r.Value.readMin.ToString("R", Inv) + ".." + r.Value.readMax.ToString("R", Inv));
+                }
                 foreach (string e in _eventLines) Log("[quality] " + e);
 
                 // [scenario] The unit's conditions. Vertical sinking and rest are not judged.
