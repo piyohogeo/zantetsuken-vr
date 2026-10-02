@@ -113,14 +113,27 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             material.SetColor("_BaseColor", new Color(0.5f, 0.5f, 0.5f, 1f));
             quad.GetComponent<Renderer>().sharedMaterial = material;
 
+            // The camera's real time is read in its own end-of-render handler and handed to the sink, which keeps the value it
+            // was given (the slow-writer case checks that value directly). Here the wiring is checked: a handler on the same
+            // event subscribed before the camera's own and one after it read each render just before and just after the
+            // camera's handler, and every row's time lies between the two readings of that frame's one render. Two separate
+            // readings of one event, with the offer's own work between them, need not be within any fixed distance (the first
+            // offer of a session took 2.8-3.3 ms, 2026-10-02 fsd-alone-1..3), so no tolerance is assumed.
+            // ZTK_FRAME_SINK_DIAG=1 (diagnosis only, off by default) also writes every row's three times to the test's output.
+            bool diag = Environment.GetEnvironmentVariable("ZTK_FRAME_SINK_DIAG") == "1";
+            var beforeCamera = new List<(int frame, double real)>();
+            Camera observed = null;
+            Action<ScriptableRenderContext, Camera> seenBefore = (c, camera) => { if (observed != null && ReferenceEquals(camera, observed)) beforeCamera.Add((Time.frameCount, Time.realtimeSinceStartupAsDouble)); };
+            RenderPipelineManager.endCameraRendering += seenBefore;
             var sink = new CheckFrameSink("known", dir, w, h, 90, new TestWriter { delayMs = 25 });
             var capture = new CheckCaptureCamera(null, null, sink, 0f, 0f, 0f, 60f, w, h,
                 new[] { new CheckCaptureCamera.Shot { name = "known", position = new Vector3(0f, 0f, -2f), lookAt = Vector3.zero, fieldOfView = 60f } });
             capture.Camera.clearFlags = CameraClearFlags.SolidColor;
             capture.Camera.backgroundColor = Color.red;
-            // The render's own frame and real time, read beside the camera's.
+            // The render's own frame and real time, read just after the camera's own handler (subscribed after it).
             var renders = new List<(int frame, double real)>();
             Camera cam = capture.Camera;
+            observed = cam;
             Action<ScriptableRenderContext, Camera> seen = (c, camera) => { if (ReferenceEquals(camera, cam)) renders.Add((Time.frameCount, Time.realtimeSinceStartupAsDouble)); };
             RenderPipelineManager.endCameraRendering += seen;
             sink.StartSaving();
@@ -131,6 +144,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             RenderPipelineManager.endCameraRendering -= seen;
+            RenderPipelineManager.endCameraRendering -= seenBefore;
             RenderTexture target = capture.Target;
             capture.Dispose();
             sink.BeginFinish("the test's end");
@@ -147,8 +161,38 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return null;
             Assert.That(target == null, Is.True, "the capture texture released");
 
-            // The rows: each real time is the render's own (the same frame, the same real time), and they follow in order.
+            // The rows, and they follow in order.
             string[] rows = File.ReadAllLines(Path.Combine(dir, "frames.csv"));
+            if (diag)
+            {
+                double maxAfter = 0.0, maxBefore = 0.0;
+                int outside = 0, overOneMs = 0;
+                for (int i = 1; i < rows.Length; i++)
+                {
+                    string[] f = rows[i].Split(',');
+                    int frame = int.Parse(f[0], CultureInfo.InvariantCulture);
+                    double saved = double.Parse(f[1], CultureInfo.InvariantCulture);
+                    var b = beforeCamera.Where(r => r.frame == frame).ToList();
+                    var a = renders.Where(r => r.frame == frame).ToList();
+                    double before = b.Count == 1 ? b[0].real : double.NaN, after = a.Count == 1 ? a[0].real : double.NaN;
+                    double savedMinusBefore = (saved - before) * 1000.0, afterMinusSaved = (after - saved) * 1000.0;
+                    bool within = before <= saved && saved <= after;
+                    if (!within) outside++;
+                    if (afterMinusSaved >= 1.0) overOneMs++;
+                    maxAfter = Math.Max(maxAfter, afterMinusSaved);
+                    maxBefore = Math.Max(maxBefore, savedMinusBefore);
+                    TestContext.Out.WriteLine("[frame sink diag] row " + i + " frame " + frame + " (" + f[3] + "): before " + before.ToString("R", CultureInfo.InvariantCulture)
+                        + ", saved " + saved.ToString("R", CultureInfo.InvariantCulture) + ", after " + after.ToString("R", CultureInfo.InvariantCulture)
+                        + " | saved-before " + savedMinusBefore.ToString("F3", CultureInfo.InvariantCulture) + " ms, after-saved " + afterMinusSaved.ToString("F3", CultureInfo.InvariantCulture)
+                        + " ms | readings this frame: before " + b.Count + ", after " + a.Count + (within ? "" : " | NOT between"));
+                }
+
+                TestContext.Out.WriteLine("[frame sink diag] rows " + (rows.Length - 1) + ", saved outside [before, after] " + outside + ", after-saved >= 1 ms " + overOneMs
+                    + ", max after-saved " + maxAfter.ToString("F3", CultureInfo.InvariantCulture) + " ms, max saved-before " + maxBefore.ToString("F3", CultureInfo.InvariantCulture) + " ms | " + sink.Describe());
+            }
+
+            // Each row's time was read in that frame's one render of the camera, at its end: between the readings just before
+            // and just after the camera's own end-of-render handler.
             Assert.That(rows[0], Is.EqualTo("frame,real,shot,outcome,readbackMs,writeMs"));
             double last = double.MinValue;
             for (int i = 1; i < rows.Length; i++)
@@ -156,7 +200,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 string[] f = rows[i].Split(',');
                 int frame = int.Parse(f[0], CultureInfo.InvariantCulture);
                 double real = double.Parse(f[1], CultureInfo.InvariantCulture);
-                Assert.That(renders.Any(r => r.frame == frame && Math.Abs(r.real - real) < 0.001), Is.True, "row " + rows[i] + " is a render's own frame and time (read at its end, within 1 ms)");
+                var justBefore = beforeCamera.Where(r => r.frame == frame).ToList();
+                var justAfter = renders.Where(r => r.frame == frame).ToList();
+                Assert.That(justBefore.Count == 1 && justAfter.Count == 1, Is.True, "row " + rows[i] + ": the camera rendered once in its frame");
+                Assert.That(justBefore[0].real <= real && real <= justAfter[0].real, Is.True,
+                    "row " + rows[i] + " was read in that render's end-of-render handler (between " + justBefore[0].real.ToString("R", CultureInfo.InvariantCulture)
+                    + " and " + justAfter[0].real.ToString("R", CultureInfo.InvariantCulture) + ")");
                 Assert.That(real, Is.GreaterThan(last), "in order");
                 last = real;
             }
