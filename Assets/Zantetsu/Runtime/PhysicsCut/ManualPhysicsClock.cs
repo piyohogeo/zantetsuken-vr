@@ -52,8 +52,18 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The fixed step, the inverse of <see cref="FrequencyHz"/>.</summary>
         public double StepSeconds { get; }
 
-        /// <summary>Real time owed to the physics and not simulated yet, in seconds.</summary>
+        /// <summary>Real time owed to the physics and not simulated yet, in seconds: at most <see cref="MaxOwedSteps"/> steps' worth.</summary>
         public double UnsimulatedSeconds { get; private set; }
+
+        /// <summary>
+        /// How many steps' worth of time may be owed at once. What frames without a step let accumulate beyond it is
+        /// dropped (and counted in <see cref="DroppedSeconds"/>): when the steps resume they resume at the step's pace,
+        /// not as an unbounded catch-up of every step missed.
+        /// </summary>
+        public const int MaxOwedSteps = 2;
+
+        /// <summary>Owed time dropped at the cap, in seconds, over the run.</summary>
+        public double DroppedSeconds { get; private set; }
 
         /// <summary>The physics time: steps really simulated, times the step.</summary>
         public double PhysicsSeconds { get; private set; }
@@ -93,6 +103,12 @@ namespace Zantetsu.PhysicsCut
             if (elapsed > 0)
             {
                 UnsimulatedSeconds += (double)elapsed / _ticksPerSecond;
+                double cap = MaxOwedSteps * StepSeconds;
+                if (UnsimulatedSeconds > cap)
+                {
+                    DroppedSeconds += UnsimulatedSeconds - cap;
+                    UnsimulatedSeconds = cap;
+                }
             }
         }
 

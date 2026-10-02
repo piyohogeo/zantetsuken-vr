@@ -8,7 +8,9 @@ namespace Zantetsu.PhysicsCut.Tests
     /// with the decision it feeds (<see cref="ManualPhysicsClock.ShouldStep"/>): what the median fixes -- one or two long
     /// simulations among short ones no longer stop the steps for good -- and what it leaves as it was -- a long first
     /// simulation, or long ones making up most of the last five, still hold the steps back, and nothing that does not
-    /// simulate changes the prediction.
+    /// simulate changes the prediction. While the steps are held back, the time owed stops at the clock's cap of two
+    /// steps and what passes beyond it is dropped and counted (2026-09-30); a held-back decision is released by the
+    /// physics step's verification step, not by owing more.
     /// </summary>
     public sealed class SimulateCostHistoryTests
     {
@@ -90,7 +92,10 @@ namespace Zantetsu.PhysicsCut.Tests
 
             Assert.That(history.Count, Is.EqualTo(1));
             Assert.That(history.ExpectedSeconds, Is.EqualTo(17.4 * Ms).Within(1e-12), "refusing never lowered the prediction");
-            Assert.That(clock.UnsimulatedSeconds, Is.GreaterThan(1.0), "and the time owed kept growing");
+            double cap = ManualPhysicsClock.MaxOwedSteps * clock.StepSeconds;
+            double elapsed = (double)TicksAt(201) / TicksPerSecond;
+            Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(cap).Within(1e-6), "the time owed stopped at the cap of two steps");
+            Assert.That(clock.DroppedSeconds, Is.EqualTo(elapsed - cap).Within(1e-6), "and everything past it was dropped and counted");
         }
 
         [TestCase(new[] { 0.1, 0.1, 15.0, 16.0, 17.4 })]
