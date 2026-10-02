@@ -72,7 +72,16 @@ namespace Zantetsu.PhysicsCut
             if (!IsBound || (_latch != null && _latch.TerminationRequested)
                 || prepared == null || !prepared.IsFresh(this)) return FreshCutEligibility.Invalid;
             if (!prepared.Classification.SplitsBothSides) return FreshCutEligibility.EmptySide;
-            return _ledger.Budget.IsFull ? FreshCutEligibility.Full : FreshCutEligibility.Ready;
+            if (_ledger.Budget.IsFull) return FreshCutEligibility.Full;
+            // No room for the sibling constraint a character's first cut needs: full as a full budget is -- nothing is
+            // accepted, the character stays usable (a held request stays held), and the room comes back as pairs end.
+            if (RemainingConstraintRoom() is int room && room < 1)
+            {
+                ConstraintRoomRefusals++;
+                return FreshCutEligibility.Full;
+            }
+
+            return FreshCutEligibility.Ready;
         }
 
         internal ProvisionalCutAcceptance RequestPreparedCut(in ProvisionalCutAsk ask, PreparedCutLease prepared,

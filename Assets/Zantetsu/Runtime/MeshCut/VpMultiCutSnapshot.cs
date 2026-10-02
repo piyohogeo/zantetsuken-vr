@@ -561,7 +561,10 @@ namespace Zantetsu.MeshCut
     /// **Adoption.** A build writes only this object. It either ends <see cref="VpMultiCutBuildOutcome.Built"/> with
     /// <see cref="IsBuilt"/> true, or leaves <see cref="IsBuilt"/> false with nothing readable; a caller keeps its
     /// adopted snapshot in another instance and swaps only on success. The ledger and the inputs are only read. The room
-    /// is fixed when this is made and never grows.
+    /// is fixed when this is made and never grows -- with one exception: the validation's two lookup tables (which
+    /// registration each root is, and which registration's lineage each fragment reached is on) hold one entry per root
+    /// and one per fragment the ledger's operations were cut from, unrelated lineages included, so they grow with the
+    /// history once, the first time a build meets it; a build over an unchanged history allocates nothing for them.
     /// </para>
     /// </summary>
     public sealed class VpMultiCutSnapshot
@@ -592,6 +595,16 @@ namespace Zantetsu.MeshCut
         private readonly VpMultiCutCapIdentity[] _capIdentity;
         private readonly VpCapConstraint[] _conditions;
         private readonly VpMultiCutCap[] _caps;
+
+        // Validate's own tables, filled at each structural validation and read only inside it: which registration each
+        // root is (so a fragment on a chain is matched by one lookup, not by comparing it with every registration), and
+        // the answer already found for a fragment -- the registration its lineage is on, or none -- so that one chain is
+        // walked once however many operations were cut from it (2026-09-29: the walk from every operation ever admitted,
+        // compared with every registration at every step, was what grew with the history, the depth and the count).
+        private readonly Dictionary<LogicalFragmentId, int> _registrationOfRoot = new Dictionary<LogicalFragmentId, int>();
+        private readonly Dictionary<LogicalFragmentId, int> _lineageOf = new Dictionary<LogicalFragmentId, int>();
+        private readonly HashSet<LogicalFragmentId> _rootsRegisteredTwice = new HashSet<LogicalFragmentId>();   // roots two registrations or more have: filled with the root table, read once per registration
+        private readonly List<LogicalFragmentId> _lineageWalk = new List<LogicalFragmentId>();
         private readonly Vector3[] _capVertices;
 
         // Work room, made once.
@@ -719,8 +732,225 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public long StructureValidations { get; private set; }
 
+        /// <summary>Root lookups the structural validation made to refuse two registrations of one root (in all; one per registration -- it was one comparison per pair of registrations), and the seconds the last structural validation took (2026-09-30: the coexistence run's Validate stage reached 185 ms).</summary>
+        public long RootComparisons { get; private set; }
+        public double LastStructureValidateSeconds { get; private set; }
+
+        // Each registration's reflected boundaries, indexed once per structure build and read by its validation and
+        // collection (2026-10-01: each ancestor's boundary used to be looked for from the start of the set, the square of
+        // the depth per branch). Filled again by every build; nothing is carried from one build to the next.
+        private VpReflectedIndex[] _reflected = System.Array.Empty<VpReflectedIndex>();
+        private readonly VpReflectedIndex.Counts _reflectedCounts = new VpReflectedIndex.Counts();
+
+        /// <summary>For tests: the reflected sets scanned from their start at every lookup, as before the index.</summary>
+        internal bool reflectedByScanForTest;
+
+        /// <summary>For tests: a display's own reflected set indexed again from its contents, as before 2026-10-01, instead of by its own lookup.</summary>
+        internal bool reflectedIndexAgainForTest;
+
+        /// <summary>The registrations' sets indexed again at a structure build, and a display's sets taken by their own lookup, over every build.</summary>
+        public long ReflectedIndexesBuilt => _reflectedCounts.built;
+        public long ReflectedIndexesReused => _reflectedCounts.reused;
+
+        /// <summary>Whether any registration's set is still held after the last build (tests: nothing should be).</summary>
+        internal bool HoldsReflectedForTest
+        {
+            get
+            {
+                foreach (VpReflectedIndex index in _reflected) if (index.HoldsForTest) return true;
+                return false;
+            }
+        }
+
+        /// <summary>Lookups of a reflected boundary, over every build of this snapshot.</summary>
+        public long ReflectedLookups => _reflectedCounts.lookups;
+
+        /// <summary>Items compared by the scan (only when <see cref="reflectedByScanForTest"/>).</summary>
+        public long ReflectedComparisons => _reflectedCounts.comparisons;
+
+        /// <summary>Boundaries entered into the indexes, over every build.</summary>
+        public long ReflectedIndexEntries => _reflectedCounts.entries;
+
+        /// <summary>The last structure build's time making the indexes (inside the validation's time).</summary>
+        public double LastReflectedIndexSeconds { get; private set; }
+
+        /// <summary>Every validation's parts, summed (never reset by a build).</summary>
+        public VpValidateCounts ValidateCounts { get; } = new VpValidateCounts();
+
+        /// <summary>The structural builds' Place passes: their counts and time, summed (never reset by a build; 2026-10-01).</summary>
+        public VpPlaceCounts StructuralPlaceCounts { get; } = new VpPlaceCounts();
+
+        /// <summary>The placement-only builds' Place passes, apart.</summary>
+        public VpPlaceCounts PlacementOnlyPlaceCounts { get; } = new VpPlaceCounts();
+
+        // The record the Place pass running now counts into.
+        private VpPlaceCounts _placeInto;
+
+        /// <summary>Tests only: a query's answer checked a second time once it is the placement (the pass before 2026-10-01's change).</summary>
+        internal static bool placementCheckTwiceForTest;
+
+        /// <summary>
+        /// DIAGNOSIS ONLY, off by default (2026-10-01): each Place pass makes the same calls in three blocks, each timed whole
+        /// -- every render fragment's placement query, then the checks of their answers, then everything built from them --
+        /// into its record's providerSeconds, checkSeconds and restSeconds. The same outcome, the same first refusal and its
+        /// reason; only on a refusal are the queries after the refused render fragment asked as well (they change nothing).
+        /// </summary>
+        public static bool PlacePhasedDiagnosis;
+
+        // The diagnosis's answers, one a render fragment (made on its first use).
+        private Matrix4x4[] _phasedPlacements = Array.Empty<Matrix4x4>();
+        private bool[] _phasedAnswered = Array.Empty<bool>(), _phasedChecked = Array.Empty<bool>();
+
+        /// <summary>Tests only: what render fragment <paramref name="index"/> stands as (the placement it asks for).</summary>
+        internal (LogicalFragmentId fragment, CutOperationId operation, float side) StandsAsForTest(int index) => (_standsAs[index].fragment, _standsAs[index].operation, _standsAs[index].side);
+
+        /// <summary>Tests only (a cost split): each render fragment's placement is asked and set, and nothing more is built from it.</summary>
+        internal bool placeQueriesOnlyForTest;
+
+        /// <summary>Tests only (a cost split): the planes and the clip are made, no section and no cap.</summary>
+        internal bool placeNoCapsForTest;
+
+        /// <summary>Tests only (a cost split): the sections are taken, no cap polygon is clipped.</summary>
+        internal bool placeNoCapClipForTest;
+
+        // The ledger's facts of each fragment an ancestor walk has read in this structural validation (2026-10-01): its
+        // origin, side, the cut's source and plane, read once and kept for this validation only (the stamp tells this
+        // validation's from an earlier one's). Each registration still makes its own checks on them.
+        // Since 2026-10-01 they are the structure build's, opened by the validation and closed when the build's structure
+        // part ends, and the Collect stage's chain walks (and the Group stage's root-chain checks) take what the build has
+        // read from them, reading from the ledger only what it has not.
+        private readonly VpLineageFacts _lineage = new VpLineageFacts();
+
+        /// <summary>Tests only: every ancestor read from the ledger at every step (the walk before 2026-10-01), in the validation and the collection alike.</summary>
+        internal bool lineageArraysOffForTest { get => _lineage.offForTest; set => _lineage.offForTest = value; }
+
+        /// <summary>Tests only: the collection's chain walks read every ancestor from the ledger (the collection before 2026-10-01); the validation still keeps its facts.</summary>
+        internal bool collectLineageOffForTest;
+
+        // The fragment's origin (false: none) and, when it has one, whether its operation is known, with the cut's source and plane.
+        private bool TryLineage(LogicalCutLedger ledger, LogicalFragmentId at, out CutOperationId origin, out float side, out bool operationKnown, out LogicalFragmentId source, out float4 plane)
+        {
+            return _lineage.TryGet(ledger, at, out origin, out side, out operationKnown, out source, out plane, ref ValidateCounts.ancestorReads, ref ValidateCounts.ancestorHits);
+        }
+
+        private void PrepareLineage(LogicalCutLedger ledger) => _lineage.Open(ledger);
+
+        // Each registration root's chain as this structure build's validation walked and matched it (2026-10-01): the
+        // boundaries from the root up, bottom first, the offsets of those its reflected set does not hold, whether they read
+        // in admission order. Made by the validation's walk, taken in by the collections whose walk up reaches the root
+        // (VpChainSegment), for this ledger, this build and that registration's own index only; the build number tells
+        // this build's from an earlier one's, and the end of the structure part closes them (TryBuild's finally).
+        private VpClipBoundary[] _segBoundaries = System.Array.Empty<VpClipBoundary>();
+        private int[] _segUnreflected = System.Array.Empty<int>();
+        private int _segCount, _segUnreflectedCount, _segBuild, _currentRegistration = -1;
+        private LogicalCutLedger _segLedger;
+        private (LogicalFragmentId root, int start, int length, int unreflectedStart, int unreflectedCount, bool ordered, int build)[] _segOf =
+            System.Array.Empty<(LogicalFragmentId, int, int, int, int, bool, int)>();
+
+        /// <summary>Tests only: no segment is taken in; every collection walks and matches its whole chain (the collection before 2026-10-01's second change).</summary>
+        internal bool collectSegmentsOffForTest;
+
+        // Estimated element sizes (x64: a boundary is a ledger reference, an operation id and a side, padded; a record seven
+        // fields, padded): the bytes below are estimates from the element counts, which are exact.
+        private const int SegmentBoundaryBytes = 24, SegmentRecordBytes = 32;
+
+        /// <summary>The segments' element capacities now (boundaries, unreflected offsets, registrations).</summary>
+        public (int boundaries, int unreflected, int registrations) SegmentCapacity => (_segBoundaries.Length, _segUnreflected.Length, _segOf.Length);
+
+        /// <summary>The segments' arrays: their growths and the bytes those allocated, and the bytes held now (estimates, see above).</summary>
+        public long SegmentGrowths { get; private set; }
+        public long SegmentAllocatedBytes { get; private set; }
+        public long SegmentHeldBytes => (long)_segBoundaries.Length * SegmentBoundaryBytes + (long)_segUnreflected.Length * sizeof(int)
+            + (long)_segOf.Length * SegmentRecordBytes;
+
+        private void OpenSegments(LogicalCutLedger ledger, int registrations)
+        {
+            _segBuild++;
+            _segLedger = ledger;
+            _segCount = 0;
+            _segUnreflectedCount = 0;
+            if (_segOf.Length < registrations)
+            {
+                int grown = System.Math.Max(registrations, _segOf.Length * 2);
+                _segOf = new (LogicalFragmentId, int, int, int, int, bool, int)[grown];
+                SegmentGrowths++;
+                SegmentAllocatedBytes += (long)grown * SegmentRecordBytes;
+            }
+        }
+
+        private void AddToSegment(VpClipBoundary boundary, bool reflected, int segmentStart)
+        {
+            if (_segCount == _segBoundaries.Length)
+            {
+                var more = new VpClipBoundary[System.Math.Max(256, _segBoundaries.Length * 2)];
+                System.Array.Copy(_segBoundaries, more, _segCount);
+                _segBoundaries = more;
+                SegmentGrowths++;
+                SegmentAllocatedBytes += (long)more.Length * SegmentBoundaryBytes;
+            }
+
+            if (!reflected)
+            {
+                if (_segUnreflectedCount == _segUnreflected.Length)
+                {
+                    var more = new int[System.Math.Max(64, _segUnreflected.Length * 2)];
+                    System.Array.Copy(_segUnreflected, more, _segUnreflectedCount);
+                    _segUnreflected = more;
+                    SegmentGrowths++;
+                    SegmentAllocatedBytes += (long)more.Length * sizeof(int);
+                }
+
+                _segUnreflected[_segUnreflectedCount++] = _segCount - segmentStart;
+            }
+
+            _segBoundaries[_segCount++] = boundary;
+        }
+
+        // The segment a collection of registration g may take in now, or none: this build's, for this ledger, made for g,
+        // and asked with g's own index of this build.
+        private VpChainSegment SegmentFor(LogicalCutLedger ledger, IReadOnlyCollection<VpClipBoundary> reflected)
+        {
+            int g = _currentRegistration;
+            if (collectSegmentsOffForTest || _segLedger == null || !ReferenceEquals(_segLedger, ledger) || (uint)g >= (uint)_segOf.Length
+                || g >= _reflected.Length || !ReferenceEquals(reflected, _reflected[g]))
+            {
+                return default;
+            }
+
+            var s = _segOf[g];
+            return s.build == _segBuild
+                ? new VpChainSegment(s.root, _segBoundaries, s.start, s.length, _segUnreflected, s.unreflectedStart, s.unreflectedCount, s.ordered)
+                : default;
+        }
+
+        // The parts of the validation running now, added to the sums when it ends (whichever way).
+        private double _vIndex, _vInput, _vAncestors, _vOperations, _vContract;
+        private long _vMark;
+
+        private void Lap(ref double into)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            into += (now - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+            _vMark = now;
+        }
+
+        /// <summary>The other stages' seconds in the last build that had them (the markers' own stages, timed here for a caller without the profiler): the branches' collection and the grouping, summed over the registrations, and the placements.</summary>
+        public double LastCollectSeconds { get; private set; }
+        public double LastGroupSeconds { get; private set; }
+        public double LastPlaceSeconds { get; private set; }
+
+        private static double SecondsSince(long begin) => (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+
         /// <summary>How often placements and what they decide have been settled, by either route.</summary>
         public long PlacementPasses { get; private set; }
+
+        // The build's stages, each on a marker of its own (diagnosis: which stage a long snapshot spends in): the structural
+        // checks, the branches' candidates and selection, the grouping into render fragments, and the placements with the
+        // planes, clip and caps that follow from them.
+        private static readonly Unity.Profiling.ProfilerMarker s_validate = new Unity.Profiling.ProfilerMarker("Zantetsu.Snapshot.Validate");
+        private static readonly Unity.Profiling.ProfilerMarker s_collect = new Unity.Profiling.ProfilerMarker("Zantetsu.Snapshot.Collect");
+        private static readonly Unity.Profiling.ProfilerMarker s_group = new Unity.Profiling.ProfilerMarker("Zantetsu.Snapshot.Group");
+        private static readonly Unity.Profiling.ProfilerMarker s_place = new Unity.Profiling.ProfilerMarker("Zantetsu.Snapshot.Place");
 
 
         /// <summary>What made the last build <see cref="VpMultiCutBuildOutcome.InvalidInput"/>; <see cref="VpMultiCutInvalidInput.None"/> otherwise.</summary>
@@ -979,13 +1209,40 @@ namespace Zantetsu.MeshCut
             }
 
             // Decided with no room of this snapshot's, so that no shortage below can be what hides it.
-            VpMultiCutBuildOutcome outcome = TryBuildStructure(ledger, registrations);
+            VpMultiCutBuildOutcome outcome;
+            long structureBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                outcome = TryBuildStructure(ledger, registrations);
+            }
+            finally
+            {
+                // The registrations' sets are the build's: none is held past it (a registration retired, reordered or the
+                // display ended is never looked up through a set of an earlier build). The lineage facts likewise: none is
+                // read after the structure part, by placement or by a later build.
+                for (int g = 0; g < _reflected.Length; g++) _reflected[g].Release();
+                _lineage.Close();
+                _segLedger = null;
+                _currentRegistration = -1;
+                ValidateCounts.structureSeconds += SecondsSince(structureBegin);
+            }
+
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(outcome);
             }
 
-            outcome = TryApplyPlacements(ledger, registrations, placement, reuseFrom);
+            long placeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            _placeInto = StructuralPlaceCounts;
+            using (s_place.Auto())
+            {
+                outcome = TryApplyPlacements(ledger, registrations, placement, reuseFrom);
+            }
+
+            LastPlaceSeconds = SecondsSince(placeBegin);
+            StructuralPlaceCounts.passes++;
+            StructuralPlaceCounts.seconds += LastPlaceSeconds;
+
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(outcome);
@@ -1044,7 +1301,12 @@ namespace Zantetsu.MeshCut
             SectionBuildCount = 0;
             // The same validation the ordinary build makes, in the same order, with only the checks the settled
             // structure has already answered left out.
-            VpMultiCutBuildOutcome checkedInputs = Validate(ledger, registrations, true);
+            VpMultiCutBuildOutcome checkedInputs;
+            using (s_validate.Auto())
+            {
+                checkedInputs = Validate(ledger, registrations, true);
+            }
+
             if (checkedInputs != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(checkedInputs);
@@ -1079,7 +1341,18 @@ namespace Zantetsu.MeshCut
             _candidateCount = structure._candidateCount;
             _renderFragmentCount = structure._renderFragmentCount;
 
-            VpMultiCutBuildOutcome placed = TryApplyPlacements(ledger, registrations, placement, structure);
+            VpMultiCutBuildOutcome placed;
+            long placeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            _placeInto = PlacementOnlyPlaceCounts;
+            using (s_place.Auto())
+            {
+                placed = TryApplyPlacements(ledger, registrations, placement, structure);
+            }
+
+            LastPlaceSeconds = SecondsSince(placeBegin);
+            PlacementOnlyPlaceCounts.passes++;
+            PlacementOnlyPlaceCounts.seconds += LastPlaceSeconds;
+
             if (placed != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(placed);
@@ -1099,31 +1372,80 @@ namespace Zantetsu.MeshCut
         private VpMultiCutBuildOutcome TryBuildStructure(
             LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations)
         {
-            VpMultiCutBuildOutcome outcome = Validate(ledger, registrations, false);
+            VpMultiCutBuildOutcome outcome;
+            using (s_validate.Auto())
+            {
+                outcome = Validate(ledger, registrations, false);
+            }
+
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
                 return outcome;
             }
 
             StructureBuilds++;
+            LastCollectSeconds = 0.0;
+            LastGroupSeconds = 0.0;
             for (int g = 0; g < registrations.Count; g++)
             {
                 VpMultiCutRegistration registration = registrations[g];
                 int branchStart = _branchCount;
                 int candidateStart = _candidateCount;
                 int renderFragmentStart = _renderFragmentCount;
-                outcome = TryCollectBranches(ledger, g, registration.root, registration.reflected);
+                long collectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                long chainSteps = VpClipCandidates.ChainSteps, operationReads = VpClipCandidates.OperationReads, candidatesMade = VpClipCandidates.CandidatesMade;
+                long visits = VpClipCandidates.LineageVisits, reads = VpClipCandidates.LineageReads, hits = VpClipCandidates.LineageHits;
+                long lookups = VpClipCandidates.ReflectedLookups, splices = VpClipCandidates.SegmentSplices, spliced = VpClipCandidates.SegmentBoundaries;
+                _currentRegistration = g;
+                using (s_collect.Auto())
+                {
+                    _inCollect = true;
+                    try
+                    {
+                        outcome = TryCollectBranches(ledger, g, registration.root, _reflected[g]);
+                    }
+                    finally
+                    {
+                        _inCollect = false;
+                    }
+
+                    if (outcome == VpMultiCutBuildOutcome.Built)
+                    {
+                        long capBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                        for (int c = candidateStart; c < _candidateCount; c++)
+                        {
+                            _capIdentity[c] = CapIdentityOf(ledger, _candidates[c]);
+                        }
+
+                        ValidateCounts.capIdentitySeconds += SecondsSince(capBegin);
+                        ValidateCounts.capIdentities += _candidateCount - candidateStart;
+                    }
+                }
+
+                double collected = SecondsSince(collectBegin);
+                LastCollectSeconds += collected;
+                ValidateCounts.collectSeconds += collected;
+                ValidateCounts.chainSteps += VpClipCandidates.ChainSteps - chainSteps;
+                ValidateCounts.operationReads += VpClipCandidates.OperationReads - operationReads;
+                ValidateCounts.candidatesMade += VpClipCandidates.CandidatesMade - candidatesMade;
+                ValidateCounts.collectVisits += VpClipCandidates.LineageVisits - visits;
+                ValidateCounts.collectReads += VpClipCandidates.LineageReads - reads;
+                ValidateCounts.collectHits += VpClipCandidates.LineageHits - hits;
+                ValidateCounts.collectLookups += VpClipCandidates.ReflectedLookups - lookups;
+                ValidateCounts.collectSplices += VpClipCandidates.SegmentSplices - splices;
+                ValidateCounts.collectSegmentBoundaries += VpClipCandidates.SegmentBoundaries - spliced;
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
                     return outcome;
                 }
 
-                for (int c = candidateStart; c < _candidateCount; c++)
+                long groupBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (s_group.Auto())
                 {
-                    _capIdentity[c] = CapIdentityOf(ledger, _candidates[c]);
+                    outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
                 }
 
-                outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
+                LastGroupSeconds += SecondsSince(groupBegin);
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
                     return outcome;
@@ -1145,17 +1467,24 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot reuseFrom)
         {
             PlacementPasses++;
+            if (PlacePhasedDiagnosis && !placeQueriesOnlyForTest)
+            {
+                return TryApplyPlacementsPhased(ledger, registrations, placement, reuseFrom);
+            }
+
             for (int r = 0; r < _renderFragmentCount; r++)
             {
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 VpMultiCutRegistration registration = registrations[renderFragment.registration];
+                _placeInto.renderFragments++;
                 if (!TryPlacementOf(
-                        placement, registration, _standsAs[r], out Matrix4x4 geometryLocalToWorld))
+                        placement, registration, _standsAs[r], _placeInto, out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
 
                 _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
+                if (placeQueriesOnlyForTest) continue;
                 VpMultiCutBuildOutcome outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
@@ -1220,6 +1549,42 @@ namespace Zantetsu.MeshCut
             IReadOnlyList<VpMultiCutRegistration> registrations,
             bool structureAlreadySettled)
         {
+            long validateBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            _vIndex = _vInput = _vAncestors = _vOperations = _vContract = 0.0;
+            _vMark = validateBegin;
+            try
+            {
+                return ValidateCore(ledger, registrations, structureAlreadySettled);
+            }
+            finally
+            {
+                if (structureAlreadySettled)
+                {
+                    ValidateCounts.placementOnly++;
+                    ValidateCounts.placementRegistrations += registrations.Count;
+                    ValidateCounts.placementInputSeconds += _vInput;
+                    ValidateCounts.placementContractSeconds += _vContract;
+                }
+                else
+                {
+                    ValidateCounts.structural++;
+                    ValidateCounts.registrations += registrations.Count;
+                    ValidateCounts.indexSeconds += _vIndex;
+                    ValidateCounts.inputSeconds += _vInput;
+                    ValidateCounts.contractSeconds += _vContract;
+                    ValidateCounts.ancestorSeconds += _vAncestors;
+                    ValidateCounts.operationsSeconds += _vOperations;
+                }
+
+                if (!structureAlreadySettled) LastStructureValidateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - validateBegin) / (double)System.Diagnostics.Stopwatch.Frequency;
+            }
+        }
+
+        private VpMultiCutBuildOutcome ValidateCore(
+            LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations,
+            bool structureAlreadySettled)
+        {
             for (int g = 0; g < registrations.Count; g++)
             {
                 VpMultiCutRegistration registration = registrations[g];
@@ -1231,9 +1596,44 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            _vContract = (System.Diagnostics.Stopwatch.GetTimestamp() - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+            Lap(ref _vInput);
             if (!structureAlreadySettled)
             {
                 StructureValidations++;
+                long indexBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (_reflected.Length < registrations.Count)
+                {
+                    int grown = System.Math.Max(registrations.Count, _reflected.Length * 2);
+                    var more = new VpReflectedIndex[grown];
+                    System.Array.Copy(_reflected, more, _reflected.Length);
+                    for (int i = _reflected.Length; i < grown; i++) more[i] = new VpReflectedIndex();
+                    _reflected = more;
+                }
+
+                long builtBefore = _reflectedCounts.built, reusedBefore = _reflectedCounts.reused;
+                for (int g = 0; g < registrations.Count; g++)
+                {
+                    _reflected[g].Fill(registrations[g].reflected, reflectedByScanForTest, _reflectedCounts, reflectedIndexAgainForTest);
+                }
+
+                ValidateCounts.indexesBuilt += _reflectedCounts.built - builtBefore;
+                ValidateCounts.indexesReused += _reflectedCounts.reused - reusedBefore;
+
+                LastReflectedIndexSeconds = SecondsSince(indexBegin);
+                PrepareLineage(ledger);
+                OpenSegments(ledger, registrations.Count);
+                Lap(ref _vIndex);
+                _registrationOfRoot.Clear();
+                _lineageOf.Clear();
+                _rootsRegisteredTwice.Clear();
+                for (int g = 0; g < registrations.Count; g++)
+                {
+                    // Two registrations of one root are refused below, in the order that check always had; the table
+                    // notes here which roots are registered more than once, so that each registration asks once.
+                    if (!_registrationOfRoot.ContainsKey(registrations[g].root)) _registrationOfRoot.Add(registrations[g].root, g);
+                    else _rootsRegisteredTwice.Add(registrations[g].root);
+                }
             }
 
             int steps = ledger.OperationCount + 1;
@@ -1258,19 +1658,25 @@ namespace Zantetsu.MeshCut
                 {
                     // The rest of this is what the ledger and the lineage say, and it was settled when the structure
                     // was. Only these checks are skipped; the order of the ones that remain is untouched.
+                    Lap(ref _vInput);
                     continue;
                 }
 
-                // No root on another's lineage: not the same root, and no other root above this one.
-                for (int h = 0; h < registrations.Count; h++)
+                // No root on another's lineage: not the same root, and no other root above this one. Another registration
+                // of this root is one the table noted (2026-09-30: each registration used to compare its root with every
+                // other's, the square of the registrations; the refusal comes at the same registration as it did).
+                RootComparisons++;
+                if (_rootsRegisteredTwice.Contains(registration.root))
                 {
-                    if (h != g && registrations[h].root == registration.root)
-                    {
-                        return Invalid(VpMultiCutInvalidInput.Lineage);
-                    }
+                    return Invalid(VpMultiCutInvalidInput.Lineage);
                 }
 
+                Lap(ref _vInput);
                 LogicalFragmentId at = registration.root;
+                VpReflectedIndex reflectedOf = _reflected[g];
+                int position = reflectedOf.Count - 1;   // a display's set holds the k-th ancestor up at the k-th from its end
+                int segmentStart = _segCount, unreflectedStart = _segUnreflectedCount, below = int.MaxValue;
+                bool ordered = true;
                 for (int step = 0; ; step++)
                 {
                     if (step > steps)
@@ -1278,35 +1684,44 @@ namespace Zantetsu.MeshCut
                         return Invalid(VpMultiCutInvalidInput.Lineage);
                     }
 
-                    if (!ledger.TryGetOrigin(at, out CutOperationId origin, out float side))
+                    ValidateCounts.ancestorSteps++;
+                    if (!TryLineage(ledger, at, out CutOperationId origin, out float side, out bool operationKnown, out LogicalFragmentId source, out float4 plane))
                     {
                         break;
                     }
 
-                    if (!ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                    if (!operationKnown)
                     {
                         return Invalid(VpMultiCutInvalidInput.Lineage);
                     }
 
-                    // A boundary above the root the geometry does not reflect is a candidate of every branch below.
-                    if (!Contains(registration.reflected, new VpClipBoundary(new VpCapFace(ledger, origin), side)))
+                    // A boundary above the root the geometry does not reflect is a candidate of every branch below. This
+                    // registration's own set is asked, at every ancestor.
+                    ValidateCounts.ancestorLookups++;
+                    var boundary = new VpClipBoundary(new VpCapFace(ledger, origin), side);
+                    bool held = reflectedOf.ContainsAt(position--, boundary);
+                    AddToSegment(boundary, held, segmentStart);
+                    if (origin.value >= below) ordered = false;   // from the top down each must come after the one above
+                    below = origin.value;
+                    if (!held)
                     {
-                        VpMultiCutBuildOutcome planed = CheckPlane(cut.plane, registration);
+                        VpMultiCutBuildOutcome planed = CheckPlane(plane, registration);
                         if (planed != VpMultiCutBuildOutcome.Built)
                         {
                             return planed;
                         }
                     }
 
-                    at = cut.source;
-                    for (int h = 0; h < registrations.Count; h++)
+                    at = source;
+                    if (_registrationOfRoot.TryGetValue(at, out int above) && above != g)
                     {
-                        if (h != g && registrations[h].root == at)
-                        {
-                            return Invalid(VpMultiCutInvalidInput.Lineage);
-                        }
+                        return Invalid(VpMultiCutInvalidInput.Lineage);
                     }
                 }
+
+                _segOf[g] = (registration.root, segmentStart, _segCount - segmentStart, unreflectedStart, _segUnreflectedCount - unreflectedStart, ordered, _segBuild);
+                ValidateCounts.segmentEntries += _segCount - segmentStart;
+                Lap(ref _vAncestors);
             }
 
             if (!structureAlreadySettled)
@@ -1316,6 +1731,7 @@ namespace Zantetsu.MeshCut
                 // above, and is skipped for the same reason -- a settled structure has answered it already.
                 for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
                 {
+                    ValidateCounts.operations++;
                     VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
                     if (found != VpMultiCutBuildOutcome.Built)
                     {
@@ -1335,7 +1751,7 @@ namespace Zantetsu.MeshCut
                             // The source is retired: past an Ignored boundary when more of its chain is unreflected than the
                             // selection can take. Every requirement is the previous candidate, so nothing is Ignored for order.
                             VpMultiCutBuildOutcome counted = CountUnreflected(
-                                ledger, operation.source, registration.reflected, steps, out int unreflected);
+                                ledger, operation.source, _reflected[g], steps, out int unreflected);
                             if (counted != VpMultiCutBuildOutcome.Built)
                             {
                                 return counted;
@@ -1379,6 +1795,7 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            Lap(ref _vOperations);
             return VpMultiCutBuildOutcome.Built;
         }
 
@@ -1388,6 +1805,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome CheckPlane(float4 plane, in VpMultiCutRegistration registration)
         {
+            ValidateCounts.planeChecks++;
             if (!VpCutPlane.TryGeometryLocalToWorld(plane, registration.lineageToGeometryLocal, out float4 local)
                 || !VpCutPlane.TryGeometryLocalToWorld(local, registration.geometryLocalToWorld, out _))
             {
@@ -1412,20 +1830,29 @@ namespace Zantetsu.MeshCut
         {
             registration = -1;
             LogicalFragmentId at = fragment;
+            _lineageWalk.Clear();
+            ValidateCounts.ownerLookups++;
             for (int step = 0; step <= steps; step++)
             {
-                for (int g = 0; g < registrations.Count; g++)
+                ValidateCounts.ownerSteps++;
+                // Answered before, for this fragment or one below it on the same chain: the answer is the same.
+                if (_lineageOf.TryGetValue(at, out int known))
                 {
-                    if (registrations[g].root == at)
-                    {
-                        registration = g;
-                        return VpMultiCutBuildOutcome.Built;
-                    }
+                    ValidateCounts.ownerCacheHits++;
+                    registration = known;
+                    return Remember(registration);
                 }
 
+                if (_registrationOfRoot.TryGetValue(at, out int g))
+                {
+                    registration = g;
+                    return Remember(registration);
+                }
+
+                _lineageWalk.Add(at);
                 if (!ledger.TryGetOrigin(at, out CutOperationId origin, out _))
                 {
-                    return VpMultiCutBuildOutcome.Built;
+                    return Remember(-1);
                 }
 
                 if (!ledger.TryGetOperation(origin, out LogicalCutOperation cut))
@@ -1437,6 +1864,19 @@ namespace Zantetsu.MeshCut
             }
 
             return Invalid(VpMultiCutInvalidInput.Lineage);
+        }
+
+        // Every fragment walked on the way to an answer has that answer; an invalid lineage is never remembered (it ends
+        // the validation at once).
+        private VpMultiCutBuildOutcome Remember(int registration)
+        {
+            for (int i = 0; i < _lineageWalk.Count; i++)
+            {
+                _lineageOf[_lineageWalk[i]] = registration;
+            }
+
+            _lineageWalk.Clear();
+            return VpMultiCutBuildOutcome.Built;
         }
 
         /// <summary>How many boundaries of <paramref name="fragment"/>'s whole chain the geometry does not reflect.</summary>
@@ -1451,6 +1891,7 @@ namespace Zantetsu.MeshCut
             LogicalFragmentId at = fragment;
             for (int step = 0; step <= steps; step++)
             {
+                ValidateCounts.unreflectedSteps++;
                 if (!ledger.TryGetOrigin(at, out CutOperationId origin, out float side))
                 {
                     return VpMultiCutBuildOutcome.Built;
@@ -1470,6 +1911,11 @@ namespace Zantetsu.MeshCut
 
         private static bool Contains(IReadOnlyCollection<VpClipBoundary> set, VpClipBoundary boundary)
         {
+            if (set is VpReflectedIndex index)
+            {
+                return index.Contains(boundary);
+            }
+
             foreach (VpClipBoundary item in set)
             {
                 if (item == boundary)
@@ -1584,7 +2030,9 @@ namespace Zantetsu.MeshCut
                 return collected;
             }
 
+            long selectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
             int selected = VpClipCandidates.Select(_candidates, _candidateCount, count, _states);
+            if (_inCollect) { ValidateCounts.selectSeconds += SecondsSince(selectBegin); ValidateCounts.branches++; }
             _branches[_branchCount++] = new VpMultiCutBranch(
                 registration, fragment, pendingSide, pendingOperation, _candidateCount, count, selected, -1);
             _candidateCount += count;
@@ -1604,17 +2052,31 @@ namespace Zantetsu.MeshCut
                 return collected;
             }
 
+            long selectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
             int selected = VpClipCandidates.Select(_checkCandidates, 0, count, _checkStates);
+            if (_inCollect) { ValidateCounts.selectSeconds += SecondsSince(selectBegin); ValidateCounts.branches++; }
             return selected < count ? VpMultiCutBuildOutcome.RetiredInsideAggregate : VpMultiCutBuildOutcome.Built;
         }
+
+        // Whether the Collect stage is running: its chains, selections and branches are counted as its own (the Group
+        // stage's root-chain checks collect too, and are not).
+        private bool _inCollect;
 
         private VpMultiCutBuildOutcome Collect(
             LogicalCutLedger ledger, LogicalFragmentId fragment, float pendingSide, bool requireLive,
             IReadOnlyCollection<VpClipBoundary> reflected, VpClipCandidate[] into, int start, out int count)
         {
-            switch (VpClipCandidates.CollectInto(
-                        ledger, fragment, pendingSide, requireLive, reflected, _chain, into, start, into.Length - start,
-                        out count))
+            long begin = _inCollect ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            VpClipCandidates.CollectOutcome collectedOutcome = VpClipCandidates.CollectInto(
+                ledger, fragment, pendingSide, requireLive, reflected, _chain, into, start, into.Length - start, out count,
+                collectLineageOffForTest ? null : _lineage, SegmentFor(ledger, reflected));
+            if (_inCollect)
+            {
+                ValidateCounts.collectIntoSeconds += SecondsSince(begin);
+                ValidateCounts.collectCalls++;
+            }
+
+            switch (collectedOutcome)
             {
                 case VpClipCandidates.CollectOutcome.Collected:
                     return VpMultiCutBuildOutcome.Built;
@@ -1640,7 +2102,7 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger, in VpMultiCutRegistration registration, int registrationIndex, int branchStart,
             int renderFragmentStart)
         {
-            IReadOnlyCollection<VpClipBoundary> reflected = registration.reflected;
+            IReadOnlyCollection<VpClipBoundary> reflected = _reflected[registrationIndex];
             for (int b = branchStart; b < _branchCount; b++)
             {
                 VpMultiCutBranch branch = _branches[b];
@@ -1725,9 +2187,93 @@ namespace Zantetsu.MeshCut
         /// when it follows nothing. Nothing is put on top of it. A placement that is not one is refused exactly as the
         /// registration's would be.
         /// </summary>
+        // The diagnosis's pass (PlacePhasedDiagnosis): the queries, the checks and the builds as three blocks. The first render
+        // fragment refused by its query or check is the one the ordinary pass refuses; the builds before it run as they do
+        // there, so a build refused earlier is still the refusal; nothing after it is built.
+        private VpMultiCutBuildOutcome TryApplyPlacementsPhased(
+            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement, VpMultiCutSnapshot reuseFrom)
+        {
+            int n = _renderFragmentCount;
+            if (_phasedPlacements.Length < n)
+            {
+                _phasedPlacements = new Matrix4x4[n];
+                _phasedAnswered = new bool[n];
+                _phasedChecked = new bool[n];
+            }
+
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            int refusedAt = n;
+            for (int r = 0; r < n; r++)
+            {
+                VpMultiCutRenderFragment renderFragment = _renderFragments[r];
+                _placeInto.renderFragments++;
+                _phasedAnswered[r] = TryQueryPlacement(placement, registrations[renderFragment.registration], _standsAs[r], _placeInto, out _phasedPlacements[r], out _phasedChecked[r]);
+                if (!_phasedAnswered[r] && refusedAt == n) refusedAt = r;
+            }
+
+            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int r = 0; r < refusedAt; r++)
+            {
+                if (!_phasedChecked[r]) continue;
+                _placeInto.placementChecks++;
+                if (!IsPlacement(_phasedPlacements[r]))
+                {
+                    refusedAt = r;
+                    break;
+                }
+            }
+
+            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+            VpMultiCutBuildOutcome outcome = VpMultiCutBuildOutcome.Built;
+            for (int r = 0; r < refusedAt; r++)
+            {
+                VpMultiCutRenderFragment renderFragment = _renderFragments[r];
+                _renderFragments[r] = WithPlacement(renderFragment, _phasedPlacements[r]);
+                outcome = TryBuildRenderFragment(ledger, registrations[renderFragment.registration], r, reuseFrom);
+                if (outcome != VpMultiCutBuildOutcome.Built) break;
+            }
+
+            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            double f = 1.0 / System.Diagnostics.Stopwatch.Frequency;
+            _placeInto.providerSeconds += (t1 - t0) * f;
+            _placeInto.checkSeconds += (t2 - t1) * f;
+            _placeInto.restSeconds += (t3 - t2) * f;
+            if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
+            return refusedAt < n ? Invalid(VpMultiCutInvalidInput.InputContract) : VpMultiCutBuildOutcome.Built;
+        }
+
+        // A render fragment's placement as its query answers it, and whether that answer is to be checked: the
+        // registration's own with no provider (unchecked, as TryPlacementOf has it); false when it is Missing.
+        private static bool TryQueryPlacement(
+            IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
+            VpPlaceCounts counts, out Matrix4x4 baseline, out bool check)
+        {
+            check = false;
+            if (placement == null)
+            {
+                baseline = registration.geometryLocalToWorld;
+                return true;
+            }
+
+            counts.queries++;
+            VpFragmentPlacementKind kind = placement.TryGetGeometryLocalToWorld(
+                stands.fragment, stands.operation, stands.side, out Matrix4x4 followed);
+            if (kind == VpFragmentPlacementKind.Following) counts.following++;
+            else if (kind == VpFragmentPlacementKind.Static) counts.staticPlacements++;
+            if (kind == VpFragmentPlacementKind.Missing)
+            {
+                baseline = default;
+                return false;
+            }
+
+            baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            check = true;
+            return true;
+        }
+
         private static bool TryPlacementOf(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
-            out Matrix4x4 geometryLocalToWorld)
+            VpPlaceCounts counts, out Matrix4x4 geometryLocalToWorld)
         {
             if (placement == null)
             {
@@ -1736,8 +2282,11 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
+            counts.queries++;
             VpFragmentPlacementKind kind = placement.TryGetGeometryLocalToWorld(
                 stands.fragment, stands.operation, stands.side, out Matrix4x4 followed);
+            if (kind == VpFragmentPlacementKind.Following) counts.following++;
+            else if (kind == VpFragmentPlacementKind.Static) counts.staticPlacements++;
             if (kind == VpFragmentPlacementKind.Missing)
             {
                 // It follows something and where was not said. Drawing it where it was registered would draw it where
@@ -1747,14 +2296,23 @@ namespace Zantetsu.MeshCut
             }
 
             Matrix4x4 baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            counts.placementChecks++;
             if (!IsPlacement(baseline))
             {
                 geometryLocalToWorld = default;
                 return false;
             }
 
+            // The checked baseline is the placement as it is: checked once (2026-10-01; it was checked again here, the same
+            // matrix, the same answer).
             geometryLocalToWorld = baseline;
-            return IsPlacement(geometryLocalToWorld);
+            if (placementCheckTwiceForTest)
+            {
+                counts.placementChecks++;
+                return IsPlacement(geometryLocalToWorld);
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -1871,10 +2429,22 @@ namespace Zantetsu.MeshCut
                     candidate.boundary.face, candidate.boundary.side, ToVector4(world));
             }
 
+            _placeInto.selected += selected;
+            _placeInto.planeTransforms += 2 * selected;
             _selectedHalfSpaces.Set(0, selected);
             if (!VpInstanceClip.TryKeep(_selectedHalfSpaces, out VpInstanceClip clip))
             {
                 return Invalid(VpMultiCutInvalidInput.ClipNotTaken);
+            }
+
+            _placeInto.clipsKept++;
+            if (placeNoCapsForTest)
+            {
+                _renderFragments[index] = new VpMultiCutRenderFragment(
+                    renderFragment.registration, renderFragment.localBounds, renderFragment.geometryLocalToWorld,
+                    renderFragment.root, renderFragment.rootPendingSide, renderFragment.aggregated,
+                    renderFragment.branchStart, renderFragment.branchCount, conditionStart, selected, clip, _capCount, 0);
+                return VpMultiCutBuildOutcome.Built;
             }
 
             // 3. One cap per selected boundary, cut by the other selected half-spaces.
@@ -1901,7 +2471,13 @@ namespace Zantetsu.MeshCut
                 }
 
                 int clipped = 0;
-                if (initial > 0
+                if (initial > 0 && !placeNoCapClipForTest)
+                {
+                    _placeInto.capClips++;
+                    _placeInto.capInputVertices += initial;
+                }
+
+                if (initial > 0 && !placeNoCapClipForTest
                     && !VpCapPolygonClip.TryClip(
                         _initial, initial, boundary, _selectedCandidates, _selectedStates, _selectedPlanes,
                         vertexEpsilon, _clipped, out clipped))
@@ -1909,6 +2485,7 @@ namespace Zantetsu.MeshCut
                     return Invalid(VpMultiCutInvalidInput.ClipNotTaken);
                 }
 
+                _placeInto.capOutputVertices += clipped;
                 for (int v = 0; v < clipped; v++)
                 {
                     // Finite inputs can still overflow when added; such a vertex is refused, never dropped or emptied.
@@ -1951,9 +2528,10 @@ namespace Zantetsu.MeshCut
             vertexCount = 0;
             sectionSlot = -1;
             const int stride = VpCapBoundsPolygon.MaxVertices;
-            int found = FindSection(face, localPlane, registration, geometryLocalToWorld);
+            int found = FindSection(face, localPlane, registration, geometryLocalToWorld, _placeInto);
             if (found >= 0)
             {
+                _placeInto.sectionsFoundHere++;
                 sectionSlot = found;
                 vertexCount = _sections[found].vertexCount;
                 Array.Copy(_sectionVertices, found * stride, _initial, 0, vertexCount);
@@ -1966,15 +2544,17 @@ namespace Zantetsu.MeshCut
             }
 
             int slot = _sectionCount;
-            int reused = reuseFrom != null ? reuseFrom.FindSection(face, localPlane, registration, geometryLocalToWorld) : -1;
+            int reused = reuseFrom != null ? reuseFrom.FindSection(face, localPlane, registration, geometryLocalToWorld, _placeInto) : -1;
             if (reused >= 0)
             {
+                _placeInto.sectionsReused++;
                 vertexCount = reuseFrom._sections[reused].vertexCount;
                 Array.Copy(reuseFrom._sectionVertices, reused * stride, _sectionVertices, slot * stride, vertexCount);
             }
             else
             {
                 SectionBuildCount++;
+                _placeInto.sectionsBuilt++;
                 if (!_section.TryBuild(
                         registration.localBounds, localPlane, geometryLocalToWorld,
                         registration.vertexEpsilon, _sectionVertices, slot * stride, out vertexCount, out _))
@@ -1999,10 +2579,11 @@ namespace Zantetsu.MeshCut
         }
 
         private int FindSection(
-            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld)
+            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld, VpPlaceCounts counts)
         {
             for (int i = 0; i < _sectionCount; i++)
             {
+                counts.sectionEntriesCompared++;
                 Section section = _sections[i];
                 if (section.face == face
                     && Same(section.localPlane, localPlane)
@@ -2221,6 +2802,9 @@ namespace Zantetsu.MeshCut
             return !float.IsNaN(determinant) && !float.IsInfinity(determinant) && determinant != 0f && IsFiniteMatrix(m.inverse);
         }
 
+        /// <summary>Tests only: the placement check a query's answer is given.</summary>
+        internal static bool IsPlacementForTest(Matrix4x4 m) => IsPlacement(m);
+
         /// <summary>Finite, affine, and a rotation (orthonormal columns within 1e-4, determinant +1) with a translation.</summary>
         private static bool IsRigid(Matrix4x4 m)
         {
@@ -2239,17 +2823,30 @@ namespace Zantetsu.MeshCut
                 && Math.Abs(m.determinant - 1f) <= tolerance;
         }
 
-        private static bool IsFiniteMatrix(Matrix4x4 m)
+        /// <summary>For tests: the elements read through the matrix's indexer, as before 2026-10-01.</summary>
+        internal static bool finiteByIndexerForTest;
+
+        // Every one of the 16 elements neither NaN nor infinite. Read by field (2026-10-01: the indexer's reads were most
+        // of the registrations' contract, which every validation checks); the same test of the same elements.
+        internal static bool IsFiniteMatrix(Matrix4x4 m)
         {
-            for (int i = 0; i < 16; i++)
+            if (finiteByIndexerForTest)
             {
-                if (float.IsNaN(m[i]) || float.IsInfinity(m[i]))
+                for (int i = 0; i < 16; i++)
                 {
-                    return false;
+                    if (float.IsNaN(m[i]) || float.IsInfinity(m[i]))
+                    {
+                        return false;
+                    }
                 }
+
+                return true;
             }
 
-            return true;
+            return math.all(math.isfinite(new float4(m.m00, m.m10, m.m20, m.m30)))
+                && math.all(math.isfinite(new float4(m.m01, m.m11, m.m21, m.m31)))
+                && math.all(math.isfinite(new float4(m.m02, m.m12, m.m22, m.m32)))
+                && math.all(math.isfinite(new float4(m.m03, m.m13, m.m23, m.m33)));
         }
 
         private static bool IsFiniteNonNegative(float value)

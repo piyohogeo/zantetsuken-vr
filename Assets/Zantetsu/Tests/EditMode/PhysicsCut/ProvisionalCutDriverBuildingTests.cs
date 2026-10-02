@@ -311,26 +311,35 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         [Test]
-        public void ConstraintsThatDoNotFit_CannotBeBuilt_AndTheCutGoesTheAbortWay()
+        public void ConstraintsThatMayNotFit_AreNotAccepted_AndTheSourceStaysUntilThereIsRoom()
         {
             using (World w = NewWorld(building: true))
             {
-                // Two free building sides and the sibling constraint are three; two do not fit.
+                // Two free building sides and the sibling constraint may be three; with two, the cut is not accepted --
+                // before the ledger is asked -- and nothing of the source changes (2026-09-29: a shortage no longer goes
+                // the abort way, which retires the source).
                 w.driver.ConfigureConstraints(k_building, 2);
                 ProvisionalCutAsk ask = Ask(w);
                 Assert.That(
-                    w.driver.RequestCut(in ask, out ProvisionalCutTransaction _, out LogicalCutAdmission _),
-                    Is.EqualTo(ProvisionalCutAcceptance.Aborted), "a pair without the constraints it needs is not built");
+                    w.driver.RequestCut(in ask, out ProvisionalCutTransaction refused, out LogicalCutAdmission admission),
+                    Is.EqualTo(ProvisionalCutAcceptance.NotAccepted), "no room for what it may need: not accepted");
+                Assert.That(refused, Is.Null);
+                Assert.That(admission, Is.EqualTo(LogicalCutAdmission.NoOp), "the ledger was not asked");
+                Assert.That(w.driver.ConstraintRoomRefusals, Is.EqualTo(1));
+                Assert.That(w.driver.AbortCount, Is.Zero, "nothing was aborted");
                 Assert.That(w.registry.ProvisionalPairCount, Is.Zero);
                 Assert.That(w.registry.SystemConstraintCount, Is.Zero);
                 Assert.That(Object.FindObjectsByType<ConfigurableJoint>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     Is.Empty, "no joint of a half-built pair is left");
-                foreach (Transform any in Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-                {
-                    Assert.That(any.name == "Authored Source +" || any.name == "Authored Source -", Is.False,
-                        "no actor of a half-built pair is left, active or not: " + any.name);
-                }
-                Assert.That(w.registry.Count, Is.Zero, "the ordinary abort retired the source");
+                Assert.That(w.registry.Count, Is.EqualTo(1), "the source is still the live owner");
+                Assert.That(w.ledger.IsCurrentTarget(ask.source), Is.True, "and still the ledger's current target");
+                StringAssert.Contains("not accepted for system constraint room 1", w.driver.FailureSummary());
+
+                // Room again: the same source is cut the ordinary way.
+                w.driver.ConfigureConstraints(k_building, 3);
+                Assert.That(w.driver.RequestCut(in ask, out ProvisionalCutTransaction _, out LogicalCutAdmission _),
+                    Is.EqualTo(ProvisionalCutAcceptance.Published));
+                Assert.That(w.registry.SystemConstraintCount, Is.EqualTo(3));
             }
 
             using (World w = NewWorld(building: true))

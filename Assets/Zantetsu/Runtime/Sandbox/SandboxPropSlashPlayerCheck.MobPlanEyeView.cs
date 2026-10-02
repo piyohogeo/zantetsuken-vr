@@ -52,6 +52,7 @@ namespace Zantetsu.Sandbox
                         _mpEyePivot = new GameObject("Check View Level").transform;
                         _mpEyePivot.SetParent(space, false);
                         camera.transform.SetParent(_mpEyePivot, false);
+                        GameViewEyeLevel(_mpEyePivot);   // the one sanctioned re-parenting of the game camera, noted where it is made
                         MobPlanLevelEye();
                         line = "mobplan eye level: the view is held level (pitch and roll taken away, yaw and position kept) every frame; "
                                + "the camera alone hangs under the pivot";

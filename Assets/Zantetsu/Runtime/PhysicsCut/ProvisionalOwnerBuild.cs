@@ -321,7 +321,7 @@ namespace Zantetsu.PhysicsCut
 
             // The constraints the pair needs are part of what is built: one between the siblings, and a building World
             // D6 on each anchor-less side of a building child (DESIGN 7.1.1, 7.2.2). Judged here, before anything is.
-            int buildingConstraints = BuildingWorldD6.Needed(
+            int buildingConstraints = BuildingWorldD6.Needed(in input.buildingWorld, 
                 in input.childLineage, input.anchors.IsPositiveFixed, input.anchors.IsNegativeFixed);
             if (buildingConstraints > 0 && !input.buildingWorld.IsValid
                 || input.constraintRoom.HasValue && 1 + buildingConstraints > input.constraintRoom.Value)
@@ -353,8 +353,8 @@ namespace Zantetsu.PhysicsCut
                 if (buildingConstraints > 0)
                 {
                     int depth = input.childLineage.SplitDepth;
-                    if (!positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
-                    if (!negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
+                    if (input.buildingWorld.enabled && !positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
+                    if (input.buildingWorld.enabled && !negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
                 }
 
                 candidate = new ProvisionalOwnerCandidate(

@@ -68,6 +68,7 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(vertexCapacity), "the first capacities are positive and within the limits");
             }
 
+            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
             _vertexBuffer = NewVertexBuffer(vertexCapacity);
             try
             {
@@ -79,6 +80,7 @@ namespace Zantetsu.Rendering
                 throw;
             }
 
+            CreationSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
             VertexCapacity = vertexCapacity;
             IndexCapacity = indexCapacity;
             MaxVertexCapacity = maxVertexCapacity;
@@ -99,6 +101,16 @@ namespace Zantetsu.Rendering
 
         /// <summary>How many times a buffer has been replaced by a larger one.</summary>
         public int GrowthCount { get; private set; }
+
+        /// <summary>How many times the vertex buffer, and the index buffer, were each replaced by a larger one (2026-10-01).</summary>
+        public int VertexGrowthCount { get; private set; }
+        public int IndexGrowthCount { get; private set; }
+
+        /// <summary>The most replaced buffers awaiting their release at once.</summary>
+        public int MaxRetiredCount { get; private set; }
+
+        /// <summary>The time this object took to make its first two buffers (observation).</summary>
+        public double CreationSeconds { get; private set; }
 
         /// <summary>Replaced buffers not yet released.</summary>
         public int RetiredCount => _retired.Count;
@@ -178,6 +190,7 @@ namespace Zantetsu.Rendering
 
             if (vertexGrew)
             {
+                VertexGrowthCount++;
                 Retire(_vertexBuffer, VpRenderVertex.Stride);
                 _vertexBuffer = vertexBuffer;
                 VertexCapacity = vertexCapacity;
@@ -185,6 +198,7 @@ namespace Zantetsu.Rendering
 
             if (indexGrew)
             {
+                IndexGrowthCount++;
                 Retire(_indexBuffer, IndexStride);
                 _indexBuffer = indexBuffer;
                 IndexCapacity = indexCapacity;
@@ -199,6 +213,7 @@ namespace Zantetsu.Rendering
             var retired = new Retired { buffer = buffer };
             retired.request = AsyncGPUReadback.Request(buffer, stride, 0, retired.Completed);
             _retired.Add(retired);
+            MaxRetiredCount = Math.Max(MaxRetiredCount, _retired.Count);
         }
 
         /// <summary>

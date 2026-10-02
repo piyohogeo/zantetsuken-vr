@@ -159,6 +159,13 @@ namespace Zantetsu.PhysicsCut
             Candidate = candidate;
         }
 
+        /// <summary>
+        /// The system constraints this cut may need, held for it from its acceptance until its candidate is built (the
+        /// sibling constraint, and a building World D6 on each side of a building child at most), so that a cut accepted
+        /// meanwhile cannot take the room this one was accepted with.
+        /// </summary>
+        internal int ConstraintReservation { get; set; }
+
         /// <summary>The pair is in the scene: the candidate has handed its actors over and names them no more.</summary>
         internal void Published(ProvisionalOwnerPair pair, int frame)
         {

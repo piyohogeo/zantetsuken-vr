@@ -436,6 +436,28 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Judges, without admitting anything, whether <see cref="PrepareAnchorDistribution"/> would prepare a cut of
+        /// this source by this plane with this epsilon: the same distribution rule over the source's current anchor
+        /// set, and nothing stored. It lets a caller that must admit several cuts together (a fused group's cut) know
+        /// every answer before the first admission, so that a refusal never leaves an admitted operation to abort and
+        /// a source to retire for it. False, with the reason, for a source that is not live or a distribution the rule
+        /// refuses. The judgement holds for as long as the source's anchor set and state do not change.
+        /// </summary>
+        public bool TryJudgeAnchorDistribution(LogicalFragmentId source, float4 plane, float anchorEpsilon, out AnchorDistributionResult distribution)
+        {
+            distribution = default;
+            if (!TryIndex(source, out int sourceIndex) || _fragments[sourceIndex].state != LogicalFragmentState.Live)
+            {
+                return false;
+            }
+
+            var anchors = _fragments[sourceIndex].anchors;
+            return anchors == null
+                ? FixedSupportAnchors.TryValidatePlane(plane, anchorEpsilon, out distribution)
+                : DistributeNonempty(anchors, plane, anchorEpsilon, out _, out _, out distribution);
+        }
+
+        /// <summary>
         /// Distributes the source owner's current anchor set across the operation's own adopted plane (DESIGN 7.1),
         /// leaving the result prepared and unpublished. Only an admitted operation can be prepared, and the source and
         /// the plane are the ones the operation already holds — neither is passed in, so no other plane and no

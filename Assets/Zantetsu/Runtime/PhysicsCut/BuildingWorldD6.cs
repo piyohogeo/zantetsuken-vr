@@ -92,13 +92,22 @@ namespace Zantetsu.PhysicsCut
     public struct BuildingWorldD6Settings
     {
         public BuildingWorldD6Settings(float firstLimitMetres, float firstAngleDegrees, float ratio)
+            : this(firstLimitMetres, firstAngleDegrees, ratio, true)
         {
+        }
+
+        public BuildingWorldD6Settings(float firstLimitMetres, float firstAngleDegrees, float ratio, bool enabled)
+        {
+            this.enabled = enabled;
             this.firstLimitMetres = firstLimitMetres;
             this.firstAngleDegrees = firstAngleDegrees;
             this.ratio = ratio;
         }
 
         /// <summary>L1: the horizontal distance limit of a first-split child, in metres.</summary>
+        /// <summary>Off: no building World D6 is made at all (a trial comparison; the product's value is on).</summary>
+        public readonly bool enabled;
+
         public float firstLimitMetres;
 
         /// <summary>A1: the symmetric angle limit of a first-split child, in degrees.</summary>
@@ -233,6 +242,12 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>How many sides of a split get a constraint: the anchor-less ones of a building child, else none.</summary>
+        internal static int Needed(in BuildingWorldD6Settings settings, in BuildingLineage child, bool positiveFixed, bool negativeFixed)
+        {
+            return settings.enabled ? Needed(in child, positiveFixed, negativeFixed) : 0;
+        }
+
+        /// <summary>How many sides of a split get a constraint with the constraint on (the product's value): the anchor-less ones of a building child, else none.</summary>
         internal static int Needed(in BuildingLineage child, bool positiveFixed, bool negativeFixed)
         {
             if (!child.IsBuildingDerived)

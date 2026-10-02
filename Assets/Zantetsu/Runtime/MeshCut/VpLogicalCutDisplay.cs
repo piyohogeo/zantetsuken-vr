@@ -436,7 +436,10 @@ namespace Zantetsu.MeshCut
             public Matrix4x4 objectToWorld;
 
             public Matrix4x4 lineageToGeometryLocal;
-            public VpClipBoundary[] reflected;
+
+            // What the geometry reflects: an unchangeable set with its lookup, made when the body was taken in or a commit
+            // added a boundary, and read by the snapshot through that lookup (2026-10-01).
+            public VpReflectedSet reflected;
             public VpIndirectCommand[] commands;
             public Material[] commandMaterials;
 
@@ -1554,13 +1557,109 @@ namespace Zantetsu.MeshCut
         /// the candidates collected, the Selected and Ignored decided and grouped. A frame in which nothing of the
         /// input changed leaves this where it was, however much anything moved.
         /// </summary>
-        public long StructureBuilds => _snapshot.StructureBuilds + _building.StructureBuilds;
+        public long StructureBuilds => _snapshot.StructureBuilds + _building.StructureBuilds + _retiredStructureBuilds;
+
+        private long _retiredStructureBuilds, _retiredStructureValidations, _retiredPlacementPasses;
 
         /// <summary>How often the structural checks over the ledger have run. Rises with <see cref="StructureBuilds"/>.</summary>
-        public long StructureValidations => _snapshot.StructureValidations + _building.StructureValidations;
+        public long StructureValidations => _snapshot.StructureValidations + _building.StructureValidations + _retiredStructureValidations;
 
         /// <summary>How often placements and what they decide have been settled, by either route.</summary>
-        public long PlacementPasses => _snapshot.PlacementPasses + _building.PlacementPasses;
+        public long PlacementPasses => _snapshot.PlacementPasses + _building.PlacementPasses + _retiredPlacementPasses;
+
+        /// <summary>How often the snapshot being built was made again for a larger room (its counts kept, above).</summary>
+        public int SnapshotRegrowths { get; private set; }
+
+        /// <summary>
+        /// What the collections of one frame did, counted where they ran (2026-09-30, for observation): the counters
+        /// above read before and after each collection, the difference given to the frame the collection ran in
+        /// (<see cref="Time.frameCount"/>); a room's growth and a snapshot made again counted in the frame they happen.
+        /// A frame's markers and these counts then belong to the same frame, wherever in the frame an observer reads them.
+        /// </summary>
+        public struct FrameCounts
+        {
+            public int frame, collections, roomGrowths, snapshotRegrowths;
+            public long structureBuilds, structureValidations, placementPasses;
+
+            /// <summary>The validations' parts in this frame, every one of them added (2026-10-01); null in a frame that validated nothing.</summary>
+            public VpValidateCounts validate;
+
+            /// <summary>The Place passes in this frame, the structural builds' and the placement-only ones' apart (2026-10-01); null as above.</summary>
+            public VpPlaceCounts placeStructural, placePlacementOnly;
+        }
+
+        // The validations' parts of the snapshots made again (their sums kept, as the counters above), and two sums to take a collection's difference.
+        private readonly VpValidateCounts _retiredValidate = new VpValidateCounts(), _validateBefore = new VpValidateCounts(), _validateAfter = new VpValidateCounts();
+
+        private void SumValidate(VpValidateCounts into)
+        {
+            into.CopyFrom(_snapshot.ValidateCounts);
+            if (!ReferenceEquals(_building, _snapshot)) into.Add(_building.ValidateCounts);
+            into.Add(_retiredValidate);
+        }
+
+        // The Place passes' records likewise, the structural and the placement-only ones apart.
+        private readonly VpPlaceCounts _retiredPlaceStructural = new VpPlaceCounts(), _retiredPlacePlacementOnly = new VpPlaceCounts();
+        private readonly VpPlaceCounts _placeStructuralBefore = new VpPlaceCounts(), _placeStructuralAfter = new VpPlaceCounts();
+        private readonly VpPlaceCounts _placePlacementOnlyBefore = new VpPlaceCounts(), _placePlacementOnlyAfter = new VpPlaceCounts();
+
+        private void SumPlace(VpPlaceCounts structural, VpPlaceCounts placementOnly)
+        {
+            structural.CopyFrom(_snapshot.StructuralPlaceCounts);
+            placementOnly.CopyFrom(_snapshot.PlacementOnlyPlaceCounts);
+            if (!ReferenceEquals(_building, _snapshot))
+            {
+                structural.Add(_building.StructuralPlaceCounts);
+                placementOnly.Add(_building.PlacementOnlyPlaceCounts);
+            }
+
+            structural.Add(_retiredPlaceStructural);
+            placementOnly.Add(_retiredPlacePlacementOnly);
+        }
+
+        // The last two frames that collected, the later one still counting while its frame runs.
+        private FrameCounts _countsNow = new FrameCounts { frame = int.MinValue }, _countsBefore = new FrameCounts { frame = int.MinValue };
+
+        /// <summary>
+        /// The collections of <paramref name="frame"/>: false when that frame is older than the two last collecting
+        /// frames kept (unknown), true with zeros when it collected nothing. Read it in a later frame for a whole frame.
+        /// </summary>
+        public bool TryGetFrameCounts(int frame, out FrameCounts counts)
+        {
+            if (frame == _countsNow.frame) { counts = _countsNow; return true; }
+            if (frame == _countsBefore.frame) { counts = _countsBefore; return true; }
+            counts = new FrameCounts { frame = frame };
+            return frame > _countsBefore.frame;
+        }
+
+        // This frame's counts, the frame before kept when this is a new one.
+        private void CountingFrame()
+        {
+            int frame = Time.frameCount;
+            if (_countsNow.frame != frame)
+            {
+                VpValidateCounts reuse = _countsBefore.validate;   // the frame two back: its counts are no longer asked for
+                VpPlaceCounts reuseStructural = _countsBefore.placeStructural, reusePlacementOnly = _countsBefore.placePlacementOnly;
+                _countsBefore = _countsNow;
+                _countsNow = new FrameCounts
+                {
+                    frame = frame, validate = reuse ?? new VpValidateCounts(),
+                    placeStructural = reuseStructural ?? new VpPlaceCounts(), placePlacementOnly = reusePlacementOnly ?? new VpPlaceCounts(),
+                };
+                _countsNow.validate.Clear();
+                _countsNow.placeStructural.Clear();
+                _countsNow.placePlacementOnly.Clear();
+            }
+        }
+
+        private void CountCollection(long builds, long validations, long placements)
+        {
+            CountingFrame();
+            _countsNow.collections++;
+            _countsNow.structureBuilds += builds;
+            _countsNow.structureValidations += validations;
+            _countsNow.placementPasses += placements;
+        }
 
         /// <summary>What this display's own inputs are at, for a test that wants to see a change noticed.</summary>
         internal long InputRevision => _inputRevision;
@@ -1891,6 +1990,23 @@ namespace Zantetsu.MeshCut
 
         public int GpuGrowthCount => _buffers.GrowthCount;
 
+        /// <summary>
+        /// The GPU copy's figures (2026-10-01): each buffer's stride and bytes, the time its first buffers took, how often the
+        /// vertex and the index buffer each grew, the most replaced buffers awaiting release at once and now, and the
+        /// furthest a transfer asked into each (the range used).
+        /// </summary>
+        public int GpuVertexStride => VpRenderVertex.Stride;
+        public int GpuIndexStride => VpGpuIndexedGeometryBuffers.IndexStride;
+        public long GpuVertexBytes => (long)_buffers.VertexCapacity * VpRenderVertex.Stride;
+        public long GpuIndexBytes => (long)_buffers.IndexCapacity * VpGpuIndexedGeometryBuffers.IndexStride;
+        public double GpuCreationSeconds => _buffers.CreationSeconds;
+        public int GpuVertexGrowthCount => _buffers.VertexGrowthCount;
+        public int GpuIndexGrowthCount => _buffers.IndexGrowthCount;
+        public int GpuMaxRetired => _buffers.MaxRetiredCount;
+        public int GpuRetiredNow => _buffers.RetiredCount;
+        public int GpuVertexHighWater { get; private set; }
+        public int GpuIndexHighWater { get; private set; }
+
         /// <summary>The GPU copy itself, for a test that reads back what was transferred.</summary>
         internal VpGpuIndexedGeometryBuffers Buffers => _buffers;
 
@@ -1912,6 +2028,8 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private bool TryMakeGpuRoom(int vertexEnd, int indexEnd)
         {
+            GpuVertexHighWater = Math.Max(GpuVertexHighWater, vertexEnd);
+            GpuIndexHighWater = Math.Max(GpuIndexHighWater, indexEnd);
             _buffers.ReleaseRetired();
             if (vertexEnd <= _buffers.VertexCapacity && indexEnd <= _buffers.IndexCapacity)
             {
@@ -2163,12 +2281,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            var reflectedCopy = coldEntry == null ? new VpClipBoundary[reflected.Count] : coldEntry.reflected;
-            int k = 0;
-            foreach (VpClipBoundary boundary in reflected)
-            {
-                reflectedCopy[k++] = boundary;
-            }
+            VpReflectedSet reflectedCopy = VpReflectedSet.Of(reflected, _reflectedSets);
 
             var ranges = coldEntry == null ? new VpGeometryRange[commands.Length] : coldEntry.ranges;
             for (int c = 0; c < commands.Length; c++)
@@ -2250,11 +2363,43 @@ namespace Zantetsu.MeshCut
             in VpStorageCutSide negative,
             int capTriangles)
         {
+            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            _commitNow = new CommitRecord { frame = Time.frameCount, operation = operation.value, source = source.value, shown = _shown.Count, outcome = "an exception" };
+            _commitMark = begin;
+            double setsBefore = _reflectedSets.seconds;
+            try
+            {
+                return TryCommitCutCore(source, operation, plane, positiveFragment, in positive, negativeFragment, in negative, capTriangles);
+            }
+            finally
+            {
+                double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+                CommitCalls++;
+                CommitSeconds += seconds;
+                MaxCommitSeconds = Math.Max(MaxCommitSeconds, seconds);
+                _commitNow.total = seconds;
+                _commitNow.sets = _reflectedSets.seconds - setsBefore;
+                _commitNow.register = Math.Max(0.0, _commitNow.register - _commitNow.sets);   // the sets are made inside the taking in
+                if (_commitRecords.Count < CommitRecordLimit) _commitRecords.Add(_commitNow);
+            }
+        }
+
+        private bool TryCommitCutCore(
+            LogicalFragmentId source,
+            CutOperationId operation,
+            Vector4 plane,
+            LogicalFragmentId positiveFragment,
+            in VpStorageCutSide positive,
+            LogicalFragmentId negativeFragment,
+            in VpStorageCutSide negative,
+            int capTriangles)
+        {
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfPreparing();
             if (_halted || !source.IsSet || !operation.IsSet)
             {
+                _commitNow.outcome = "refused: halted or unset";
                 return false;
             }
 
@@ -2272,10 +2417,12 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            CommitLap(ref _commitNow.search);
             if (body == null)
             {
                 // Nothing of this body is shown. Two empty sides change nothing, so that is not a refusal; a side with
                 // geometry cannot be placed without the body's placement, so it is.
+                _commitNow.outcome = positive.IsEmpty && negative.IsEmpty ? "no body shown, both sides empty" : "refused: no body shown";
                 return positive.IsEmpty && negative.IsEmpty;
             }
 
@@ -2290,12 +2437,17 @@ namespace Zantetsu.MeshCut
                 LogicalFragmentId kept = positiveBorrows ? positiveFragment : negativeFragment;
                 if (!kept.IsSet || !TrySidePlacements(kept, body, out SidePlacements keptPlacements))
                 {
+                    _commitNow.outcome = "refused: the kept side's placement";
+                    CommitLap(ref _commitNow.prepare);
                     return false;
                 }
 
+                CommitLap(ref _commitNow.prepare);
                 body.fragment = kept;
                 body.objectToWorld = keptPlacements.registered;
-                body.reflected = Reflecting(body.reflected, face, side);
+                body.reflected = body.reflected.With(new VpClipBoundary(face, side), _reflectedSets);
+                CommitLap(ref _commitNow.register);
+                _commitNow.outcome = "borrowed: the plane did not cut";
                 return true;
             }
 
@@ -2303,6 +2455,8 @@ namespace Zantetsu.MeshCut
             {
                 // Neither side has geometry: the body stops being shown, and no child is registered for it.
                 Retire(body);
+                CommitLap(ref _commitNow.register);
+                _commitNow.outcome = "both sides empty: the body retired";
                 return true;
             }
 
@@ -2326,6 +2480,8 @@ namespace Zantetsu.MeshCut
                         positive.geometry, body, in positivePlacements, out positiveCommands, out positiveMaterials,
                         out positiveBounds))
                 {
+                    _commitNow.outcome = "refused: the positive side's placement or preparation";
+                    CommitLap(ref _commitNow.prepare);
                     return false;
                 }
 
@@ -2341,6 +2497,8 @@ namespace Zantetsu.MeshCut
                         negative.geometry, body, in negativePlacements, out negativeCommands, out negativeMaterials,
                         out negativeBounds))
                 {
+                    _commitNow.outcome = "refused: the negative side's placement or preparation";
+                    CommitLap(ref _commitNow.prepare);
                     return false;
                 }
 
@@ -2348,8 +2506,10 @@ namespace Zantetsu.MeshCut
                 registrations++;
             }
 
+            CommitLap(ref _commitNow.prepare);
             if (commands == 0)
             {
+                _commitNow.outcome = "refused: no commands";
                 return false;
             }
 
@@ -2362,6 +2522,8 @@ namespace Zantetsu.MeshCut
             {
                 ReportRoom("draw commands", ShownCommandCount() - body.commands.Length + commands, _commandCapacity,
                     _limits.commands, "a cut could not be committed");
+                _commitNow.outcome = "refused: draw command room";
+                CommitLap(ref _commitNow.room);
                 return false;
             }
 
@@ -2369,6 +2531,8 @@ namespace Zantetsu.MeshCut
             {
                 ReportRoom("draw instances", CurrentInstanceCount() - bodyInstances + commands, _instanceCapacity,
                     _limits.instances, "a cut could not be committed");
+                _commitNow.outcome = "refused: draw instance room";
+                CommitLap(ref _commitNow.room);
                 return false;
             }
 
@@ -2376,8 +2540,12 @@ namespace Zantetsu.MeshCut
             {
                 ReportRoom("geometry references and display instances", registrations, _table.GeometryCapacity,
                     _table.GeometryLimit, "a cut could not be committed; " + _table.DescribeRoom());
+                _commitNow.outcome = "refused: reference table room";
+                CommitLap(ref _commitNow.room);
                 return false;
             }
+
+            CommitLap(ref _commitNow.room);
 
             // One vertex transfer for what the cut appended -- both sides share it -- and one index transfer for the
             // two sides together, which is the one contiguous run they were written as.
@@ -2390,8 +2558,12 @@ namespace Zantetsu.MeshCut
                 || (negative.IsProduced && !TryIndexEnd(negative.geometry.indexRange, out negativeEnd))
                 || !TryMakeGpuRoom(appended.vertexStart + appended.vertexCount, Math.Max(positiveEnd, negativeEnd)))
             {
+                _commitNow.outcome = "refused: GPU room";
+                CommitLap(ref _commitNow.growth);
                 return false;
             }
+
+            CommitLap(ref _commitNow.growth);
 
             int vertices;
             int indices;
@@ -2400,6 +2572,8 @@ namespace Zantetsu.MeshCut
                 if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
                         _storage, _buffers.VertexBuffer, appended.vertexStart, appended.vertexCount, out vertices))
                 {
+                    _commitNow.outcome = "refused: vertex transfer";
+                    CommitLap(ref _commitNow.transfer);
                     return false;
                 }
 
@@ -2413,6 +2587,8 @@ namespace Zantetsu.MeshCut
                         out indices);
                 if (!uploaded)
                 {
+                    _commitNow.outcome = "refused: index transfer";
+                    CommitLap(ref _commitNow.transfer);
                     return false;
                 }
             }
@@ -2421,6 +2597,8 @@ namespace Zantetsu.MeshCut
                 _broken = true;
                 throw;
             }
+
+            CommitLap(ref _commitNow.transfer);
 
             VertexTransfers += vertices > 0 ? 1 : 0;
             IndexTransfers += indices > 0 ? 1 : 0;
@@ -2432,14 +2610,14 @@ namespace Zantetsu.MeshCut
             {
                 TakeBody(
                     positiveFragment, positive.geometry, body, in positivePlacements, positiveCommands, positiveMaterials,
-                    positiveBounds, Reflecting(body.reflected, face, 1f));
+                    positiveBounds, body.reflected.With(new VpClipBoundary(face, 1f), _reflectedSets));
             }
 
             if (negative.IsProduced)
             {
                 TakeBody(
                     negativeFragment, negative.geometry, body, in negativePlacements, negativeCommands, negativeMaterials,
-                    negativeBounds, Reflecting(body.reflected, face, -1f));
+                    negativeBounds, body.reflected.With(new VpClipBoundary(face, -1f), _reflectedSets));
             }
 
             if (capTriangles > 0 && positive.IsProduced && negative.IsProduced)
@@ -2459,6 +2637,8 @@ namespace Zantetsu.MeshCut
             }
 
             Retire(body);
+            CommitLap(ref _commitNow.register);
+            _commitNow.outcome = "committed";
             return true;
         }
 
@@ -2588,7 +2768,7 @@ namespace Zantetsu.MeshCut
             VpIndirectCommand[] commands,
             Material[] commandMaterials,
             Bounds localBounds,
-            VpClipBoundary[] reflected)
+            VpReflectedSet reflected)
         {
             if (!_table.TryRegisterGeometryWithDisplayInstance(
                     geometry, out VpGeometryReference reference, out VpDisplayInstanceReference instance))
@@ -2632,14 +2812,70 @@ namespace Zantetsu.MeshCut
             InputChanged();
         }
 
-        /// <summary>What a side reflects once it is committed: what the body reflected, and this cut on its own side.</summary>
-        private static VpClipBoundary[] Reflecting(VpClipBoundary[] reflected, VpCapFace face, float side)
+        // The reflected sets this display made: how many, their boundaries, and the time making them (their lookups included).
+        private readonly VpReflectedSet.Counts _reflectedSets = new VpReflectedSet.Counts();
+
+        /// <summary>The reflected sets made (a registration taken in, a commit's side), their boundaries in all, and the time making them.</summary>
+        public long ReflectedSetsMade => _reflectedSets.made;
+        public long ReflectedSetEntries => _reflectedSets.entries;
+        public double ReflectedSetSeconds => _reflectedSets.seconds;
+
+        /// <summary>The boundaries the registrations now shown hold in their reflected sets (what is kept, not what was made).</summary>
+        public long ReflectedEntriesHeld
         {
-            var with = new VpClipBoundary[reflected.Length + 1];
-            Array.Copy(reflected, with, reflected.Length);
-            with[reflected.Length] = new VpClipBoundary(face, side);
-            return with;
+            get
+            {
+                long n = 0;
+                foreach (Shown entry in _shown) n += entry.reflected.Count;
+                return n;
+            }
         }
+
+        /// <summary>Tests only: the reflected set a registration now shown holds.</summary>
+        internal bool TryGetReflectedForTest(LogicalFragmentId fragment, out VpReflectedSet set)
+        {
+            foreach (Shown entry in _shown)
+            {
+                if (entry.fragment == fragment) { set = entry.reflected; return true; }
+            }
+
+            set = null;
+            return false;
+        }
+
+        /// <summary>
+        /// One commit attempt, for observation (2026-10-01): its frame, operation, source fragment, the registrations
+        /// shown when it came, what it came to, and its time by stage -- finding the body, preparing the sides, judging the
+        /// room, the GPU capacity's management (<c>growth</c>: making room in the GPU copy -- the replaced buffers' release,
+        /// a larger buffer and what is drawn transferred into it again), transferring, making the reflected sets, and taking
+        /// the sides in (the sets apart) -- and in all. Laps at the stages' ends only.
+        /// </summary>
+        public struct CommitRecord
+        {
+            public int frame, operation, source, shown;
+            public string outcome;
+            public double search, prepare, room, growth, transfer, sets, register, total;
+        }
+
+        private const int CommitRecordLimit = 16384;
+        private readonly List<CommitRecord> _commitRecords = new List<CommitRecord>(256);
+        private CommitRecord _commitNow;
+        private long _commitMark;
+
+        /// <summary>The commit attempts recorded (the first 16384).</summary>
+        public IReadOnlyList<CommitRecord> CommitRecords => _commitRecords;
+
+        private void CommitLap(ref double part)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            part += (now - _commitMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+            _commitMark = now;
+        }
+
+        /// <summary>The commits of a cut's sides: how many, their time in all and the longest (the reflected sets' making included).</summary>
+        public long CommitCalls { get; private set; }
+        public double CommitSeconds { get; private set; }
+        public double MaxCommitSeconds { get; private set; }
 
         // ----- frames ----------------------------------------------------------------------------------------------
 
@@ -3029,8 +3265,56 @@ namespace Zantetsu.MeshCut
 
         // ----- collection ----------------------------------------------------------------------------------------
 
+        // The collection's stages, each on a marker of its own (diagnosis: which stage a long collection spends in). Exactly
+        // one is open at a time; the wrapper closes the last one whichever way the collection ends.
+        private static readonly Unity.Profiling.ProfilerMarker[] s_collectStages =
+        {
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.0Room"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.1Read"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.2Snapshot"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.3Draw"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.4Instances"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.5Candidate"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.6Stencil"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.7Upload"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.8Adopt"),
+            new Unity.Profiling.ProfilerMarker("Zantetsu.Display.Collect.9Release"),
+        };
+
+        private int _collectStage = -1;
+
+        private void EnterCollectStage(int stage)
+        {
+            if (_collectStage >= 0) s_collectStages[_collectStage].End();
+            s_collectStages[stage].Begin();
+            _collectStage = stage;
+        }
+
         private bool TryCollectAndUpload()
         {
+            long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
+            SumValidate(_validateBefore);
+            SumPlace(_placeStructuralBefore, _placePlacementOnlyBefore);
+            try
+            {
+                return TryCollectAndUploadStages();
+            }
+            finally
+            {
+                if (_collectStage >= 0) s_collectStages[_collectStage].End();
+                _collectStage = -1;
+                CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
+                SumValidate(_validateAfter);
+                _countsNow.validate.AddDifference(_validateAfter, _validateBefore);
+                SumPlace(_placeStructuralAfter, _placePlacementOnlyAfter);
+                _countsNow.placeStructural.AddDifference(_placeStructuralAfter, _placeStructuralBefore);
+                _countsNow.placePlacementOnly.AddDifference(_placePlacementOnlyAfter, _placePlacementOnlyBefore);
+            }
+        }
+
+        private bool TryCollectAndUploadStages()
+        {
+            EnterCollectStage(0);
             // 0. The room this collection builds in is the room grown so far: what adoption traded back from the side
             //    last drawn may be smaller, and nothing draws from it now.
             if (!TryEnsureCandidateRoom(true, out string roomFailure))
@@ -3038,6 +3322,7 @@ namespace Zantetsu.MeshCut
                 return FailRoom("candidate room", _instanceCapacity, _instanceCapacity, _limits.instances, roomFailure);
             }
 
+            EnterCollectStage(1);
             // 1. What each registration is now, read from the ledger, changing nothing.
             _registrations.Clear();
             for (int g = 0; g < _shown.Count; g++)
@@ -3062,6 +3347,7 @@ namespace Zantetsu.MeshCut
                     VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
             }
 
+            EnterCollectStage(2);
             // 2. One snapshot of every registration together, beside the adopted one. Room short is grown below, or
             //    told when it cannot be; anything else stops the display, decided here before this frame draws.
             //    <para>
@@ -3125,6 +3411,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            EnterCollectStage(3);
             // 3. What each registration is drawn as; the commands and instances that takes.
             int renderFragments = _building.RenderFragmentCount;
             for (int r = 0; r < renderFragments; r++)
@@ -3177,6 +3464,7 @@ namespace Zantetsu.MeshCut
                     "the table was not grown with the instances");
             }
 
+            EnterCollectStage(4);
             // 4. The display instances the new snapshot needs that are not held yet. A failure gives back what this
             //    pass took, and nothing already held is given back early to make room; the table grows to its limit
             //    by itself, so a failure here is past it.
@@ -3186,9 +3474,11 @@ namespace Zantetsu.MeshCut
                     _table.DescribeRoom());
             }
 
+            EnterCollectStage(5);
             // 5. The candidate, beside the adopted draw data.
             BuildCandidate(out int commands, out int instances);
 
+            EnterCollectStage(6);
             // 6. The largest stencil arrangement this candidate could need -- every non-empty cap a job of its own, its
             //    own-face volume and its fan, in one colour -- asked of the fixed sizes and of every registered camera's
             //    batch, by count, before anything is written. A judgement of capacity and form, not a promise of each
@@ -3247,6 +3537,7 @@ namespace Zantetsu.MeshCut
                     + " of " + _stencilCapIndexCapacity + ", or a batch refused the counts");
             }
 
+            EnterCollectStage(7);
             // 7. The body's upload, by count. The stereo condition is read once, here. It was asked a moment ago with
             //    these very counts; a refusal now is not a shortfall, and like a GPU call that throws it stops the display
             //    as broken, since what reached the GPU cannot be established. Whatever references this pass took stay
@@ -3306,6 +3597,7 @@ namespace Zantetsu.MeshCut
                 _batch = grownBatch;
             }
 
+            EnterCollectStage(8);
             // 8. Everything the GPU needed has arrived: the candidate becomes the adopted snapshot, and the arrays and
             //    the snapshots change places. The revisions this structure answers to are recorded **here**, where the
             //    update is really taken: a build that was refused anywhere above leaves them as they were, so the next
@@ -3315,6 +3607,7 @@ namespace Zantetsu.MeshCut
             _structureInputRevision = inputRevision;
             CommandUploads++;
 
+            EnterCollectStage(9);
             // 9. Only now is the display's own state changed: the references no longer needed are given back, and a
             //    registered fragment that is retired is let go. A body a commit replaced goes here too, never earlier:
             //    until this adoption it was what the snapshot on screen was drawn from.
@@ -3655,7 +3948,18 @@ namespace Zantetsu.MeshCut
                 VpMultiCutCapacities room = derived.Snapshot;
                 if (building && !Holds(_building.Capacities, room))
                 {
+                    // The counters of the snapshot made again are kept (2026-09-30: a regrowth used to drop them, and the
+                    // sums below went down by that much).
+                    _retiredStructureBuilds += _building.StructureBuilds;
+                    _retiredStructureValidations += _building.StructureValidations;
+                    _retiredPlacementPasses += _building.PlacementPasses;
+                    _retiredValidate.Add(_building.ValidateCounts);
+                    _retiredPlaceStructural.Add(_building.StructuralPlaceCounts);
+                    _retiredPlacePlacementOnly.Add(_building.PlacementOnlyPlaceCounts);
                     _building = new VpMultiCutSnapshot(room);
+                    SnapshotRegrowths++;
+                    CountingFrame();
+                    _countsNow.snapshotRegrowths++;
                 }
 
                 // Shared by the preparations, which never run during a collection.
@@ -3757,6 +4061,8 @@ namespace Zantetsu.MeshCut
             }
 
             RoomGrowths++;
+            CountingFrame();
+            _countsNow.roomGrowths++;
             Debug.Log("VpLogicalCutDisplay: " + NameOf(kind) + " grown from " + held + " to " + grown + " (needed " + needed
                       + ", limit " + limit + "); " + DescribeRoom());
             return true;

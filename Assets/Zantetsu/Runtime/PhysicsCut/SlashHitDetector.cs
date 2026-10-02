@@ -57,6 +57,23 @@ namespace Zantetsu.PhysicsCut
         public CutOperationId Operation { get; }
     }
 
+    /// <summary>
+    /// A building hull group as a hit target (BuildingHullFusion, 2026-09-30): one convex in its Root's frame, consumed
+    /// per Slash by the group itself (inherited by what a cut or a fusion makes of it), and cut through its own acceptance.
+    /// </summary>
+    public interface ISlashHullTarget
+    {
+        bool IsHitTarget { get; }
+        Transform Root { get; }
+        Zantetsu.ConvexCut.ConvexBrepBank Bank { get; }
+        Zantetsu.ConvexCut.ConvexBrepRange Convex { get; }
+        void Bounds(out float3 lo, out float3 hi);
+        LogicalFragmentId TraceFragment { get; }
+        bool IsConsumedBy(long slashId);
+        /// <param name="travelWorld">The sweep's travel direction in the world (the always-kinematic mode slides a near-horizontal cut's side along it).</param>
+        ProvisionalCutAcceptance TryCut(float4 planeRoot, float4 planeWorld, long slashId, long planeId, double at, float3 travelWorld);
+    }
+
     /// <summary>What a hit's acceptance is asked with that is not the hit's own: the caller's values.</summary>
     public struct SlashHitSettings
     {
@@ -134,12 +151,15 @@ namespace Zantetsu.PhysicsCut
         private readonly Func<bool> _open;
         private readonly SlashHitSettings _settings;
         private readonly SlashLineageConsumption _consumption;
+        private long _adoptedPlanes;   // one per sweep found for: the identity of its adopted plane
         private readonly List<Pending> _pending = new List<Pending>(8);
         private readonly List<SlashHitConfirmed> _hits = new List<SlashHitConfirmed>(8);
         private readonly List<CurrentShape> _shapes = new List<CurrentShape>(16);
         private readonly List<VpPreparedCharacterCut> _characters = new List<VpPreparedCharacterCut>(4);
         private readonly List<VpPreparedCharacterCut> _characterTargets = new List<VpPreparedCharacterCut>(4);
         private readonly List<IPoseOnDemand> _characterPoses = new List<IPoseOnDemand>(4);
+        private readonly List<ISlashHullTarget> _hullTargets = new List<ISlashHullTarget>(4);
+        private BuildingHullFusion _hulls;
         private readonly long[] _live = new long[SlashWaveCore.Capacity];
         private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.Capacity];
         private float3[] _section = new float3[64];
@@ -155,6 +175,10 @@ namespace Zantetsu.PhysicsCut
             public float4 plane;
             public float3 renderAnchor;
             public VpPreparedCharacterCut character;
+            public ISlashHullTarget hull;
+            public long planeId;   // the sweep's adopted plane: one identity per sweep, shared by the hits it found
+            public float4 planeWorld;
+            public float3 travelWorld;   // the sweep's travel (hull targets)
         }
 
         /// <summary>A detector over one cut world's parts, open while <paramref name="open"/> says so.</summary>
@@ -176,6 +200,7 @@ namespace Zantetsu.PhysicsCut
             _settings = settings;
             _open = open;
             _consumption = new SlashLineageConsumption(ledger, SlashWaveCore.Capacity);
+            _adoptedPlanes = 0;
         }
 
         /// <summary>A detector over a composed cut world, open while that world is ready and not ending.</summary>
@@ -183,6 +208,13 @@ namespace Zantetsu.PhysicsCut
             : this(world.Owners, world.Ledger, world.Driver, in settings,
                 () => world != null && world.IsReady && !world.IsEnding && !world.IsReleased && !world.TerminationRequested)
         {
+            _hulls = world.Hulls;
+        }
+
+        /// <summary>The building hull trial whose groups are candidates from now on (their hulls, each in its Root's frame).</summary>
+        public void AttachHulls(BuildingHullFusion hulls)
+        {
+            _hulls = hulls;
         }
 
         /// <summary>The real hits of the last <see cref="Evaluate"/>, in the order they were passed on.</summary>
@@ -284,6 +316,7 @@ namespace Zantetsu.PhysicsCut
 
             // A Slash that has gone gives its set back first: it can hit nothing any more.
             _consumption.KeepOnly(live);
+            _hulls?.KeepOnlyLiveSlashes(live);
             if (sweeps.Length == 0 || (_open != null && !_open()))
             {
                 return;
@@ -318,10 +351,14 @@ namespace Zantetsu.PhysicsCut
                     _characterTargets.Add(_characters[c]);
                 }
 
+                _hullTargets.Clear();
+                _hulls?.CollectTargets(_hullTargets);
                 for (int s = 0; s < sweeps.Length; s++)
                 {
+                    _adoptedPlanes++;   // this sweep's plane: the identity every hit it finds carries
                     Find(in sweeps[s]);
                     FindCharacters(in sweeps[s]);
+                    FindHulls(in sweeps[s]);
                 }
             }
 
@@ -334,6 +371,16 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
+                if (hit.hull != null)
+                {
+                    // The group's own acceptance: it consumes the Slash for the group on any answer but a refusal of the request.
+                    ProvisionalCutAcceptance hullAcceptance = hit.hull.TryCut(hit.plane, hit.planeWorld, hit.slashId, hit.planeId, hit.at, hit.travelWorld);
+                    var hullConfirmed = new SlashHitConfirmed(hit.slashId, hit.at, hit.atLatch, hit.fragment, 0f, hullAcceptance, LogicalCutAdmission.NoOp, default);
+                    _hits.Add(hullConfirmed);
+                    Trace(in hullConfirmed);
+                    continue;
+                }
+
                 var ask = new ProvisionalCutAsk
                 {
                     source = hit.fragment,
@@ -341,6 +388,9 @@ namespace Zantetsu.PhysicsCut
                     positiveSeparationImpulse = _settings.positiveSeparationImpulse,
                     negativeSeparationImpulse = _settings.negativeSeparationImpulse,
                     renderAnchor = hit.renderAnchor,
+                    slashId = hit.slashId,
+                    adoptedPlaneId = hit.planeId,
+                    adoptedPlaneWorld = hit.planeWorld,
                 };
 
                 ProvisionalCutAcceptance acceptance = _driver.RequestCut(
@@ -509,6 +559,63 @@ namespace Zantetsu.PhysicsCut
                     plane = rendererPlane,
                     renderAnchor = renderer.position,
                     character = character,
+                    planeId = _adoptedPlanes,
+                    planeWorld = worldPlane,
+                });
+            }
+        }
+
+        // The building hull groups: each one convex in its Root's frame, consumed per Slash by the group.
+        private void FindHulls(in SlashSweep sweep)
+        {
+            float3 n = sweep.SourceSlashPlane.normal;
+            float3 a0 = sweep.PreviousA;
+            float3 b0 = sweep.PreviousB;
+            float3 a1 = sweep.CurrentA;
+            float3 b1 = sweep.CurrentB;
+            if (_hullTargets.Count == 0 || !math.all(math.isfinite(n)) || math.lengthsq(n) <= 0f
+                || !math.all(math.isfinite(a0) & math.isfinite(b0) & math.isfinite(a1) & math.isfinite(b1)))
+            {
+                return;
+            }
+
+            var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
+            for (int h = 0; h < _hullTargets.Count; h++)
+            {
+                ISlashHullTarget target = _hullTargets[h];
+                Transform root = target.Root;
+                if (!target.IsHitTarget || root == null || target.IsConsumedBy(sweep.SlashId))
+                {
+                    continue;
+                }
+
+                float4x4 rootToWorld = (float4x4)root.localToWorldMatrix;
+                float4x4 worldToRoot = math.inverse(rootToWorld);
+                float4 plane = math.mul(math.transpose(rootToWorld), worldPlane);
+                plane /= math.length(plane.xyz);
+                float3 la0 = math.transform(worldToRoot, a0);
+                float3 lb0 = math.transform(worldToRoot, b0);
+                float3 la1 = math.transform(worldToRoot, a1);
+                float3 lb1 = math.transform(worldToRoot, b1);
+                target.Bounds(out float3 lo, out float3 hi);
+                float3 qlo = math.min(math.min(la0, lb0), math.min(la1, lb1));
+                float3 qhi = math.max(math.max(la0, lb0), math.max(la1, lb1));
+                if (math.any(qhi < lo) || math.any(hi < qlo))
+                {
+                    continue;
+                }
+
+                Zantetsu.ConvexCut.ConvexBrepBank bank = target.Bank;
+                Zantetsu.ConvexCut.ConvexBrepRange range = target.Convex;
+                if (!SlashSweepConvexQuery.Intersects(plane, la0, lb0, la1, lb1, in bank, in range, ref _section))
+                {
+                    continue;
+                }
+
+                _pending.Add(new Pending
+                {
+                    slashId = sweep.SlashId, at = sweep.At, atLatch = sweep.IsLatch, fragment = target.TraceFragment, side = 0f,
+                    plane = plane, renderAnchor = root.position, hull = target, planeId = _adoptedPlanes, planeWorld = worldPlane, travelWorld = (float3)sweep.TravelAxis,
                 });
             }
         }
@@ -592,6 +699,8 @@ namespace Zantetsu.PhysicsCut
                     side = current.Side,
                     plane = plane,
                     renderAnchor = owner.position,
+                    planeId = _adoptedPlanes,
+                    planeWorld = worldPlane,
                 });
             }
         }

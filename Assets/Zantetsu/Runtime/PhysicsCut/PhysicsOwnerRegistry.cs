@@ -26,12 +26,80 @@ namespace Zantetsu.PhysicsCut
             ConfigurableJoint buildingWorld = null)
         {
             Root = root != null ? root : throw new ArgumentNullException(nameof(root));
+            _rootTransform = Root.transform;
             Body = body != null ? body : throw new ArgumentNullException(nameof(body));
             Shape = shape ?? throw new ArgumentNullException(nameof(shape));
             FixedByAnchors = fixedByAnchors;
             GeometryLocalToOwner = geometryLocalToOwner;
             Building = building;
             BuildingWorldConstraint = buildingWorld;
+        }
+
+        // A member of a fused building group (BuildingFusion, 2026-09-29): no Rigidbody of its own -- its colliders
+        // belong to the group's -- but a Root of its own, which the display and the hit shapes follow as before.
+        private PhysicsFragmentOwner(
+            GameObject root, PhysicsOwnerShape shape, bool fixedByAnchors, Matrix4x4? geometryLocalToOwner,
+            BuildingLineage building, FusedGroup group, float mass)
+        {
+            Root = root != null ? root : throw new ArgumentNullException(nameof(root));
+            _rootTransform = Root.transform;
+            Shape = shape ?? throw new ArgumentNullException(nameof(shape));
+            FixedByAnchors = fixedByAnchors;
+            GeometryLocalToOwner = geometryLocalToOwner;
+            Building = building;
+            Group = group ?? throw new ArgumentNullException(nameof(group));
+            _fusedMass = mass;
+        }
+
+        /// <summary>A member owner of a fused group: made body-less, its mass the value the fusion computed for it.</summary>
+        internal static PhysicsFragmentOwner Fused(
+            GameObject root, PhysicsOwnerShape shape, bool fixedByAnchors, Matrix4x4? geometryLocalToOwner,
+            BuildingLineage building, FusedGroup group, float mass)
+        {
+            return new PhysicsFragmentOwner(root, shape, fixedByAnchors, geometryLocalToOwner, building, group, mass);
+        }
+
+        private float _fusedMass;
+
+        // A display member of a building hull group (BuildingHullFusion, 2026-09-30): no body, no shape, no colliders of
+        // its own -- only a Root under its group's, which the display follows. Never a hit target (no shape).
+        private PhysicsFragmentOwner(GameObject root, Matrix4x4? geometryLocalToOwner, BuildingLineage building)
+        {
+            Root = root != null ? root : throw new ArgumentNullException(nameof(root));
+            _rootTransform = Root.transform;
+            GeometryLocalToOwner = geometryLocalToOwner;
+            Building = building;
+        }
+
+        /// <summary>A display-only owner: a Root for the placement and nothing of the physics (its group's hull carries that).</summary>
+        internal static PhysicsFragmentOwner DisplayOnly(GameObject root, Matrix4x4? geometryLocalToOwner, BuildingLineage building)
+        {
+            return new PhysicsFragmentOwner(root, geometryLocalToOwner, building);
+        }
+
+        /// <summary>Whether this owner has no physics of its own at all (a hull group's display member).</summary>
+        public bool IsDisplayOnly => Body == null && Shape == null && Group == null;
+
+        /// <summary>The fused building group this owner's colliders belong to (BuildingFusion), or none.</summary>
+        public FusedGroup Group { get; private set; }
+
+        /// <summary>Whether this owner's physics is a fused group's: it has no Rigidbody of its own.</summary>
+        public bool IsFused => Group != null;
+
+        /// <summary>
+        /// Becomes a member of a fused group: the body is gone (the caller destroyed it after moving the root under the
+        /// group), the mass it had is kept as this owner's, and the group is named. A member moving to another group
+        /// (a split, a merge) only changes the group.
+        /// </summary>
+        internal void FuseInto(FusedGroup group, float mass)
+        {
+            bool first = Group == null;
+            Group = group ?? throw new ArgumentNullException(nameof(group));
+            if (first)
+            {
+                _fusedMass = mass;
+                Body = null;   // destroyed by the caller already (a destroyed component compares equal to null)
+            }
         }
 
         /// <summary>
@@ -83,9 +151,21 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            geometryLocalToWorld = Root.transform.localToWorldMatrix * GeometryLocalToOwner.Value;
+            // The Root's Transform, held since the Root was given (a GameObject's Transform never changes; 2026-10-01): its
+            // world matrix is still read now, every time.
+            Transform rootTransform = rootTransformReadAgainForTest ? Root.transform : _rootTransform;
+            geometryLocalToWorld = rootTransform.localToWorldMatrix * GeometryLocalToOwner.Value;
             return true;
         }
+
+        // The Root's Transform: set with the Root and let go with it (Release), read only by the placement read above.
+        private Transform _rootTransform;
+
+        /// <summary>Tests only: the Root's Transform asked of the Root at every read (the read before 2026-10-01).</summary>
+        internal static bool rootTransformReadAgainForTest;
+
+        /// <summary>Tests only: whether the Root's Transform is still held.</summary>
+        internal bool HoldsRootTransformForTest => _rootTransform != null;
 
         /// <summary>Whether it has left the physics scene.</summary>
         public bool IsWithdrawn { get; private set; }
@@ -104,7 +184,7 @@ namespace Zantetsu.PhysicsCut
         /// The mass the solver has now, which DESIGN 7.2 makes the parent mass of the next cut of this fragment. It is
         /// read from the body rather than remembered, because the body is authoritative once it is published.
         /// </summary>
-        public float Mass => Body.mass;
+        public float Mass => Body != null ? Body.mass : _fusedMass;
 
         /// <summary>Where this owner is now. Read at the moment it is needed, never remembered from earlier.</summary>
         public PhysicsOwnerPlacement ReadPlacement()
@@ -120,6 +200,12 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public PhysicsOwnerMotion ReadMotion(float3 renderAnchor)
         {
+            if (Body == null)
+            {
+                // A fused member: its motion is the group's, which a cut of it does not inherit through here.
+                return new PhysicsOwnerMotion(Root.transform.position, float3.zero, float3.zero, renderAnchor);
+            }
+
             return new PhysicsOwnerMotion(
                 Body.worldCenterOfMass, Body.linearVelocity, Body.angularVelocity, renderAnchor);
         }
@@ -168,8 +254,9 @@ namespace Zantetsu.PhysicsCut
             IsReleased = true;
             PhysicsOwnerBuilder.DestroyObject(Root);
             Root = null;
+            _rootTransform = null;
             Body = null;
-            Shape.Dispose();
+            Shape?.Dispose();
             Shape = null;
         }
     }
@@ -472,6 +559,7 @@ namespace Zantetsu.PhysicsCut
             AddBody(pair.Positive, pair);
             AddBody(pair.Negative, pair);
             SystemConstraintCount += ConstraintsOf(pair);
+            ProvisionalAdded?.Invoke(pair);
         }
 
         private static int ConstraintsOf(ProvisionalOwnerPair pair)
@@ -545,6 +633,7 @@ namespace Zantetsu.PhysicsCut
             RemoveBody(pair.Positive);
             RemoveBody(pair.Negative);
             SystemConstraintCount -= ConstraintsOf(pair);
+            ProvisionalEnding?.Invoke(pair);
             pair.End();
             return true;
         }
@@ -586,6 +675,27 @@ namespace Zantetsu.PhysicsCut
             return owner;
         }
 
+        /// <summary>An owner has been added (a registered body, or a child at its Final publication).</summary>
+        internal event Action<LogicalFragmentId, PhysicsFragmentOwner> OwnerAdded;
+
+        /// <summary>An owner is about to be retired: withdrawn already, not yet released.</summary>
+        internal event Action<LogicalFragmentId, PhysicsFragmentOwner> OwnerRetiring;
+
+        /// <summary>A Provisional pair has been published; its source has been withdrawn by the caller.</summary>
+        internal event Action<ProvisionalOwnerPair> ProvisionalAdded;
+
+        /// <summary>A Provisional pair is about to be ended (abandoned): its actors are about to be destroyed.</summary>
+        internal event Action<ProvisionalOwnerPair> ProvisionalEnding;
+
+        /// <summary>A body that stops being a fragment's (the fragment's owner fused into a group): the way back goes.</summary>
+        internal void ForgetBody(Rigidbody body)
+        {
+            if (body != null)
+            {
+                _fragmentOfBody.Remove(body);
+            }
+        }
+
         internal void Add(LogicalFragmentId fragment, PhysicsFragmentOwner owner)
         {
             if (!fragment.IsSet)
@@ -611,6 +721,8 @@ namespace Zantetsu.PhysicsCut
                 // the pair left the correspondence.
                 _fragmentOfBody[owner.Body] = fragment;
             }
+
+            OwnerAdded?.Invoke(fragment, owner);
         }
 
         /// <summary>
@@ -653,6 +765,7 @@ namespace Zantetsu.PhysicsCut
                 SystemConstraintCount--;
             }
 
+            OwnerRetiring?.Invoke(fragment, owner);
             owner.Release();
             return true;
         }

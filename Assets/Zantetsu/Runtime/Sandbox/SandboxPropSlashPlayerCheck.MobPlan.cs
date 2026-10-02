@@ -240,6 +240,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 MobPlanModelsAdded(name, c, carried.Count > 0);
+                MobPlanReuseNoteAdded(name, c, id);
                 carried.Add(name);
                 s_mobPlanNames[c] = name;
                 _mpActorOf[c] = (id, replacement, Time.frameCount);
@@ -302,7 +303,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                return _probe != null && _probe.Body.IsSet && root == _probe.Body ? "box" : "other";
+                return PlayableCityRootName(root) ?? (_probe != null && _probe.Body.IsSet && root == _probe.Body ? "box" : "other");
             }
 
             // At the replay's start: what stands where, and what is under it.
@@ -312,6 +313,7 @@ namespace Zantetsu.Sandbox
                 _mpPublishedAtBegin = _crowd.PublishedCycles;
                 _mpStaleAtBegin = _crowd.StaleCycles;
                 _mpReplacementsAtBegin = _crowd.ReplacementsAdded;
+                PlayableCityBegin();
                 _mpPreviousPlayer = _mpInput.player.transform.position;
                 _multiRows = new StreamWriter(Path.Combine(directory, "multi.csv"));
                 _multiHits = new StreamWriter(Path.Combine(directory, "multi-hits.csv")) { AutoFlush = MobPlanLive };
@@ -381,6 +383,7 @@ namespace Zantetsu.Sandbox
             private void MobPlanFrameObserved(int frame)
             {
                 using (s_mpDisplayMarker.Auto()) MobPlanDisplayFrame(frame);
+                PlayableCityFrame(frame);
                 double t = MobPlanNow;
                 if (_mpNextSlash < _mpSlashes.Count && t >= _mpSlashes[_mpNextSlash].at && t < _mpEnd
                     && !_recorder.IsReplaying && _katana.WaveCount == 0)
@@ -537,8 +540,7 @@ namespace Zantetsu.Sandbox
             // Whether the scripted run is over: the script's end passed, every chunk fed through, no wave, every cut committed.
             private bool MobPlanFinished()
             {
-                return MobPlanNow >= _mpEnd && !_recorder.IsReplaying && _katana.WaveCount == 0
-                    && _accepted.TrueForAll(a => a.committedFrame >= 0);
+                return MobPlanNow >= _mpEnd && !_recorder.IsReplaying && _katana.WaveCount == 0 && CutsSettled();
             }
 
             private void MobPlanClose()
@@ -583,7 +585,20 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                MobPlanDisplaySummary();
+                Guarded("mobplan display summary", MobPlanDisplaySummary);
+                Guarded("playable city summary", PlayableCitySummary);
+                if (PlayableCity && _world != null && _world.Fusion != null)
+                {
+                    Guarded("building fusion summary", BuildingFusionSummarise);   // the coexistence run's fusion: its phases, Main, aggregation and hits
+                }
+
+                Guarded("capture camera and the game's view", CaptureClose);   // the game's view untouched; an image run's capture camera given back before the world ends
+                Guarded("hull required sections", HullRequiredJudge);   // judged whatever the run found (the scenario's own decision)
+                if (PlayableCity && _world != null && _world.Hulls != null)
+                {
+                    Guarded("building hull summary", BuildingHullSummarise);   // the coexistence run's always-kinematic building: bodies, hull updates, display, hits
+                    BuildingHullClose();
+                }
                 var misses = new List<long>();
                 foreach (KeyValuePair<long, SlashTally> s in _multiSlashes)
                 {
@@ -686,7 +701,10 @@ namespace Zantetsu.Sandbox
                 Expect(slotDirect == _crowd.SlotCount && directSinceBegin == 0,
                     "[scenario] each slot made its direct skin input once, before the start, and none was made again (" + slotDirect + ", " + directSinceBegin + ")");
                 Expect(_crowd.ReusedActivations >= 1, "[scenario] a released slot was activated again for a new individual (" + _crowd.ReusedActivations + ")");
-                Expect(reusedCut.Count >= 1, "[scenario] an individual on a reused slot was cut by a real hit and its geometry committed");
+                // The script's natural hits on reused individuals, counted as before but not judged (2026-10-01): the script does
+                // not guarantee such a hit. The reused-slot check after the script exercises it (its own lines, [reuse check: ...]).
+                Log("mobplan reuse (natural, the script's own hits): individuals on a reused slot cut by a real hit and their geometry committed " + reusedCut.Count
+                    + " [" + string.Join(" ", reusedCut) + "] (not judged; the reused-slot check exercises it with a synthetic Slash through the ordinary detector)");
                 Expect(_mpReuseViolations.Count == 0, "[scenario] no slot was reused before its previous individual's cut was published and committed: " + string.Join("; ", _mpReuseViolations));
                 Log("mobplan input gate: connectivity kept=" + _world.CutInputConnectivity.Count + " verified=" + _world.CutInputConnectivity.Kept
                     + " reused=" + _world.CutInputConnectivity.Reused);

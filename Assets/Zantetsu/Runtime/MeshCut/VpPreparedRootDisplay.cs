@@ -68,7 +68,7 @@ namespace Zantetsu.MeshCut
             slot = null;
             if (_halted || producer == null || producer.IsDisposed
                 || !_materials.TryGetValue(0, out var material) || material == null) return false;
-            var entry = new Shown { reflected = Array.Empty<VpClipBoundary>(), ranges = new VpGeometryRange[1],
+            var entry = new Shown { reflected = VpReflectedSet.Empty, ranges = new VpGeometryRange[1],
                 commands = new VpIndirectCommand[1], commandMaterials = new[] { material } };
             _shown.Capacity = Math.Max(_shown.Capacity, checked(_shown.Count + _preparedRootCount + 1));
             slot = new PreparedRoot { owner = this, producer = producer, entry = entry, next = _preparedRoots };

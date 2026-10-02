@@ -40,6 +40,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             ProvisionalCutAsk ask = Ask(source, plane);
             Assert.That(root.TryAsk(in ask), Is.True, "the cut was asked");
             yield return null;
+            if (root.Fusion != null)
+            {
+                yield return Until(() => root.Fusion.PreparationsInFlight == 0, "the preparation of a fused member's cut (a Step or more after the ask)");
+            }
+
             List<CutOperationId> admitted = AdmittedFor(root, new[] { source });
             Assert.That(admitted.Count, Is.EqualTo(1), "the cut was accepted");
             CutOperationId operation = admitted[0];

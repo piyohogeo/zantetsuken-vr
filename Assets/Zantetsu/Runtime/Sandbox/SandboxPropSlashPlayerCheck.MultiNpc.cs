@@ -274,7 +274,7 @@ namespace Zantetsu.Sandbox
                     if (!root && _world.Owners.TryGet(fragment, out PhysicsFragmentOwner owner) && !owner.IsWithdrawn)
                     {
                         pieces++;
-                        convexes += owner.Shape.ConvexCount;
+                        convexes += ConvexCountOf(owner);
                     }
                 }
 
@@ -328,6 +328,7 @@ namespace Zantetsu.Sandbox
                 _multiRows = null;
                 _multiHits?.Dispose();
                 _multiHits = null;
+                BuildingClose();
                 MobPlanClose();
             }
 
@@ -428,6 +429,23 @@ namespace Zantetsu.Sandbox
                 if (Done) return;
                 Log("INCOMPLETE: the Player is quitting before the scenario finished (phase " + _phase + ", frame " + Time.frameCount + ")");
                 if (multiNpc) MultiStorage("at quitting");
+                // The building rest's summary is still written when the world ended early (its counters and record survive the ending).
+                try { PlayableRestSummary(); } catch (System.Exception e) { Log("playable city rest summary at quitting failed: " + e.GetType().Name + ": " + e.Message); }
+                // So are the fusion's breakdown and the frame timeline (the snapshot's stages among its markers): a forced ending keeps the costs up to it.
+                // The cooking audit's final reconciliation needs the world's ordinary reclaim, which a forced ending does not make: it is not run here.
+                if (_world != null && _world.Fusion != null)
+                {
+                    try { BuildingFusionSummarise(); } catch (System.Exception e) { Log("building fusion summary at quitting failed: " + e.GetType().Name + ": " + e.Message); }
+                }
+
+                if (_world != null && _world.Hulls != null)
+                {
+                    try { BuildingHullSummarise(); } catch (System.Exception e) { Log("building hull summary at quitting failed: " + e.GetType().Name + ": " + e.Message); }
+                    BuildingHullClose();
+                }
+
+                try { WriteTimeline(false); } catch (System.Exception e) { Log("timeline at quitting failed: " + e.GetType().Name + ": " + e.Message); }
+                Log("cooking audit at quitting: not reconciled (the world is not reclaimed the ordinary way at a forced ending)");
                 MultiClose();
                 ReleaseLog();
             }

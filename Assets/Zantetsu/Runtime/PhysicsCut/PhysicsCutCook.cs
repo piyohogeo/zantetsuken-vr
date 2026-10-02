@@ -4,6 +4,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.LowLevelPhysics;
 using UnityEngine.Rendering;
 using Zantetsu.ConvexCut;
 using Zantetsu.MeshCut;
@@ -30,6 +31,12 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Given up, or the runner was closed. Everything it held has gone back.</summary>
         Abandoned = 5,
+
+        /// <summary>
+        /// Every bake returned; each produced convex is now read back from a collider, one mesh at a time under a Main
+        /// budget, over as many frames as that takes (2026-09-30). Nothing is handed over until the last one is read.
+        /// </summary>
+        Checking = 6,
     }
 
     /// <summary>How one owner's cut and cook ended.</summary>
@@ -49,8 +56,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The run reached its end but is not one that may be handed over: a produced convex got no collider mesh, a
-        /// mesh could not be applied, or a work came back failed from the dispatcher. It is not a claim about the
-        /// cooked hull, which no boundary here reports on.
+        /// mesh could not be applied, a work came back failed from the dispatcher, or PhysX refused to cook a produced
+        /// convex (<see cref="PhysicsCutRequest.HullRejection"/> says which: the cooked hull is checked before the
+        /// products are made, 2026-09-30).
         /// </summary>
         CookFailed = 4,
 
@@ -223,6 +231,34 @@ namespace Zantetsu.PhysicsCut
     /// One owner cut asked for through <see cref="PhysicsCutCook"/>: the caller's handle while it runs and its
     /// products when it is over. The input stays the caller's and must be held unchanged until the cut is over.
     /// </summary>
+    /// <summary>
+    /// One produced convex PhysX refused to cook (2026-09-30): which cut (the cook's request serial, which is in its
+    /// meshes' names), which input convex and side, which mesh, its vertex count and what the collider reported; the
+    /// operation, the member and the path are filled in once by the caller that consumes the failed cut.
+    /// </summary>
+    public sealed class PhysicsCutHullRejection
+    {
+        public int request;
+        public int convex;
+        public bool positive;
+        public int mesh;
+        public string meshName;
+        public int vertexCount;
+        public string geometry;
+        public int frame;
+        public CutOperationId operation;
+        public LogicalFragmentId fragment;
+        public string path;   // "driver" (the ordinary Final's abort) or "fusion" (the member's Fail); null until consumed
+
+        public bool IsAttributed => path != null;
+
+        public override string ToString()
+        {
+            return "cut " + request + " convex " + convex + " " + (positive ? "positive" : "negative") + " mesh " + mesh + " '" + meshName + "' (" + vertexCount + " vertices, "
+                + geometry + ") frame " + frame + (IsAttributed ? "; " + path + " operation " + operation.value + " member " + fragment.value : "; not consumed");
+        }
+    }
+
     public sealed class PhysicsCutRequest
     {
         internal ConvexCutOwnerInput input;
@@ -270,6 +306,20 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>What a work threw, when the dispatcher brought one back failed; null otherwise.</summary>
         public Exception Failure { get; internal set; }
+
+        /// <summary>The first produced convex PhysX refused to cook, when that is why this cut ended CookFailed; null otherwise.</summary>
+        public PhysicsCutHullRejection HullRejection => hullRejected != null && hullRejected.Count > 0 ? hullRejected[0] : null;
+
+        /// <summary>Every produced convex of this cut PhysX refused (the cut fails once, whatever their number).</summary>
+        public IReadOnlyList<PhysicsCutHullRejection> HullRejections => (IReadOnlyList<PhysicsCutHullRejection>)hullRejected ?? Array.Empty<PhysicsCutHullRejection>();
+
+        // The hull check: where it stands (the input convex, the side, the next mesh), who advances it, and what was refused.
+        internal int hullConvex, hullSide, hullMesh;
+        internal bool hullOwnerChecks;   // the caller advances the check under its own budget (the fusion); otherwise the cook's pump does
+        internal List<PhysicsCutHullRejection> hullRejected;
+
+        /// <summary>This cook's serial of the request, which its meshes' names carry ("Zantetsu Physics Cut serial.index").</summary>
+        public int Serial { get; internal set; }
 
         /// <summary>The products of a cut that ended Ok; null otherwise. They become the caller's.</summary>
         public PhysicsCutProducts Products { get; internal set; }
@@ -336,6 +386,158 @@ namespace Zantetsu.PhysicsCut
         private readonly List<PhysicsCutRequest> _requests = new List<PhysicsCutRequest>(2);
         private int _reserved;
         private bool _closed;
+        private int _lastSerial;
+
+        // The cooked-hull check: one convex collider, enabled for the time of a read only (the geometry exists only for an
+        // enabled collider on an active object: a disabled or inactive one reports Invalid for every mesh), far below the
+        // world; it holds no mesh between checks.
+        private GameObject _probeObject;
+        private MeshCollider _probe;
+        private readonly List<PhysicsCutHullRejection> _hullRejections = new List<PhysicsCutHullRejection>();
+        private readonly HashSet<string> _rejectedMeshNames = new HashSet<string>();
+
+        /// <summary>Hull rejections kept to identify them (every one is counted).</summary>
+        public const int KeptHullRejections = 64;
+
+        /// <summary>Produced convexes checked; cuts ended CookFailed because PhysX refused at least one of their convexes (once per cut); and the refused convexes themselves (each).</summary>
+        public int HullChecks { get; private set; }
+        public int HullRejectedCuts { get; private set; }
+        public int HullRejectedMeshes { get; private set; }
+
+        /// <summary>Of the refused cuts, the ones the consuming path has attributed to its operation and member (once per cut).</summary>
+        public int AttributedHullRejections { get; private set; }
+
+        /// <summary>Main seconds of the check stage (a mesh read, and the products or the failure at its end): in all, the longest single call, and the most in one frame.</summary>
+        public double HullCheckSeconds { get; private set; }
+        public double MaxHullCheckSeconds { get; private set; }
+        public double MaxFrameHullSeconds { get; private set; }
+        public int MaxFrameHullChecks { get; private set; }
+        public int HullCheckFrames { get; private set; }
+
+        /// <summary>
+        /// The pump's checks (the cuts the cook advances itself: the ordinary driver's): times the frame's Main budget
+        /// stopped them for the next frame; checks taken with the budget already spent, one a frame so that a cut is
+        /// never held for ever; and checks that began within the budget and ended past it (count, seconds past).
+        /// </summary>
+        public int HullChecksDeferred { get; private set; }
+        public int HullChecksForced { get; private set; }
+        public int HullCheckOverruns { get; private set; }
+        public double HullCheckOverrunSeconds { get; private set; }
+
+        /// <summary>The Main seconds left in this frame for the pump's checks (the driver's budget); none: unbounded.</summary>
+        internal Func<double> MainRemaining { get; set; }
+
+        /// <summary>
+        /// The probe's preparation at the world's build (<see cref="PrepareHullProbe"/>): its seconds and what a known
+        /// valid tetrahedron read as (ConvexMesh when the probe answers); and the first real check's seconds, apart.
+        /// </summary>
+        public double ProbePreparationSeconds { get; private set; }
+        public string ProbePreparedGeometry { get; private set; } = "not prepared";
+        public double FirstHullCheckSeconds { get; private set; } = double.NaN;
+
+        /// <summary>Cuts ended Abandoned after their meshes were applied (the bake may have run) and before their check read every mesh, and their meshes: not checked, never published, given back.</summary>
+        public int AbandonedUncheckedCuts { get; private set; }
+        public int AbandonedUncheckedMeshes { get; private set; }
+        private readonly HashSet<string> _abandonedUncheckedMeshNames = new HashSet<string>();
+
+        /// <summary>Whether a mesh of that name belonged to a cut abandoned before its check read it (its bake's errors are then not a refusal of a published cut: nothing of it was published and its meshes went back).</summary>
+        public bool WasAbandonedUnchecked(string meshName) => meshName != null && _abandonedUncheckedMeshNames.Contains(meshName);
+
+        /// <summary>
+        /// Makes the hull probe before any cut needs it (the world's build): the collider is created, enabled once on a
+        /// known valid tetrahedron baked with this cook's options, its geometry read, then disabled with no mesh held.
+        /// The first real check then pays only its own read.
+        /// </summary>
+        public void PrepareHullProbe()
+        {
+            if (_probe != null || _closed)
+            {
+                return;
+            }
+
+            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            var tetrahedron = new Mesh { name = "Zantetsu cut hull probe warm-up", hideFlags = HideFlags.HideAndDontSave };
+            try
+            {
+                tetrahedron.vertices = new[] { Vector3.zero, new Vector3(0.1f, 0f, 0f), new Vector3(0f, 0.1f, 0f), new Vector3(0f, 0f, 0.1f) };
+                tetrahedron.triangles = new[] { 0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3 };
+                Physics.BakeMesh(tetrahedron.GetEntityId(), true, _cooking);
+                ProbePreparedGeometry = ProbeHull(tetrahedron).ToString();
+            }
+            finally
+            {
+                DestroyMesh(tetrahedron);
+                ProbePreparationSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+            }
+        }
+
+        private int _hullFrame = -1;
+        private double _hullFrameSeconds;
+        private int _hullFrameChecks;
+
+        /// <summary>The first hull rejections, in order.</summary>
+        public IReadOnlyList<PhysicsCutHullRejection> HullRejections => _hullRejections;
+
+        /// <summary>Whether a mesh of that name was refused by the hull check (every refused one, not only the kept).</summary>
+        public bool WasRejected(string meshName) => meshName != null && _rejectedMeshNames.Contains(meshName);
+
+        /// <summary>Whether a mesh of that name belongs to a cut whose hull check is still going (its bake's errors are not yet a counted refusal).</summary>
+        public bool IsCheckPending(string meshName)
+        {
+            const string prefix = "Zantetsu Physics Cut ";
+            if (meshName == null || !meshName.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            int dot = meshName.IndexOf('.', prefix.Length);
+            if (dot < 0 || !int.TryParse(meshName.Substring(prefix.Length, dot - prefix.Length), out int serial)) return false;
+            foreach (PhysicsCutRequest r in _requests) if (r.Serial == serial && r.Stage == PhysicsCutStage.Checking) return true;
+            return false;
+        }
+
+        /// <summary>Cuts whose hull check is still going.</summary>
+        public int CutsChecking { get { int n = 0; foreach (PhysicsCutRequest r in _requests) if (r.Stage == PhysicsCutStage.Checking) n++; return n; } }
+
+        /// <summary>Tests only: asked for every produced mesh after it is applied and before it is baked; true when the hook replaced its contents (the bounds are then read back from the mesh).</summary>
+        internal Func<PhysicsCutRequest, int, Mesh, bool> meshOverrideForTest;
+
+        /// <summary>Tests only: while set, no hull check reads a mesh (a cut stays in its check), so that an ending in the middle of the checks can be made deterministically.</summary>
+        internal bool holdHullChecksForTest;
+
+        /// <summary>
+        /// The consuming path's attribution of a cut the hull check ended: its operation, its member and the path, once.
+        /// A second call for the same cut changes nothing.
+        /// </summary>
+        public void AttributeHullRejection(PhysicsCutRequest request, CutOperationId operation, LogicalFragmentId fragment, string path)
+        {
+            PhysicsCutHullRejection first = request?.HullRejection;
+            if (first == null || first.IsAttributed)
+            {
+                return;
+            }
+
+            foreach (PhysicsCutHullRejection hull in request.hullRejected)
+            {
+                hull.operation = operation;
+                hull.fragment = fragment;
+                hull.path = path;
+            }
+
+            AttributedHullRejections++;
+        }
+
+        /// <summary>One line for the end of a world: the hull checks, the rejected cuts and the kept records.</summary>
+        public string HullSummary()
+        {
+            var text = new System.Text.StringBuilder();
+            text.Append("hull checks ").Append(HullChecks).Append(" (").Append((HullCheckSeconds * 1000.0).ToString("F2")).Append(" ms, max ")
+                .Append((MaxHullCheckSeconds * 1000.0).ToString("F3")).Append(" ms a call, max ").Append((MaxFrameHullSeconds * 1000.0).ToString("F3")).Append(" ms and ")
+                .Append(MaxFrameHullChecks).Append(" checks a frame over ").Append(HullCheckFrames).Append(" frames; the pump's deferred ").Append(HullChecksDeferred)
+                .Append(", forced ").Append(HullChecksForced).Append(", over the budget ").Append(HullCheckOverruns).Append(" (").Append((HullCheckOverrunSeconds * 1000.0).ToString("F3"))
+                .Append(" ms)), cuts refused by PhysX ").Append(HullRejectedCuts).Append(" (meshes ").Append(HullRejectedMeshes).Append("), attributed ").Append(AttributedHullRejections)
+                .Append("; abandoned before their check ").Append(AbandonedUncheckedCuts).Append(" (meshes ").Append(AbandonedUncheckedMeshes).Append("); probe prepared in ")
+                .Append((ProbePreparationSeconds * 1000.0).ToString("F3")).Append(" ms (").Append(ProbePreparedGeometry).Append("), first check ")
+                .Append(double.IsNaN(FirstHullCheckSeconds) ? "none" : (FirstHullCheckSeconds * 1000.0).ToString("F3") + " ms");
+            foreach (PhysicsCutHullRejection r in _hullRejections) text.Append("; ").Append(r);
+            return text.ToString();
+        }
 
         /// <summary>
         /// Takes the dispatcher the work runs through, how many cuts may hold their reservation at once, and the
@@ -514,6 +716,13 @@ namespace Zantetsu.PhysicsCut
             }
 
             _closed = true;
+            if (_probeObject != null)
+            {
+                PhysicsOwnerBuilder.DestroyObject(_probeObject);   // nothing is checked after this: a cut still running ends Abandoned
+                _probeObject = null;
+                _probe = null;
+            }
+
             for (int i = _requests.Count - 1; i >= 0; i--)
             {
                 PhysicsCutRequest request = _requests[i];
@@ -562,6 +771,20 @@ namespace Zantetsu.PhysicsCut
 
                 case PhysicsCutStage.Baking:
                     TakeBake(request);
+                    return;
+
+                case PhysicsCutStage.Checking:
+                    if (_closed)
+                    {
+                        End(request, PhysicsCutOutcomeKind.Abandoned, PhysicsCutStage.Abandoned);
+                        return;
+                    }
+
+                    if (!request.hullOwnerChecks)
+                    {
+                        CheckUnderTheFrameBudget(request);
+                    }
+
                     return;
             }
         }
@@ -618,9 +841,10 @@ namespace Zantetsu.PhysicsCut
                 request.meshData = Mesh.AllocateWritableMeshData(meshes);
                 request.meshDataHeld = true;
                 request.meshes = new Mesh[meshes];
+                request.Serial = ++_lastSerial;
                 for (int m = 0; m < meshes; m++)
                 {
-                    request.meshes[m] = new Mesh { name = "Zantetsu Physics Cut " + m, hideFlags = HideFlags.HideAndDontSave };
+                    request.meshes[m] = new Mesh { name = "Zantetsu Physics Cut " + request.Serial + "." + m, hideFlags = HideFlags.HideAndDontSave };
                 }
             }
             catch
@@ -713,6 +937,12 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
+                if (meshOverrideForTest != null && meshOverrideForTest(request, m, request.meshes[m]))
+                {
+                    Bounds replaced = request.meshes[m].bounds;
+                    slot.bounds = new float3x2(replaced.min, replaced.max);
+                }
+
                 float3x2 bounds = slot.bounds;
                 float3 centre = (bounds.c0 + bounds.c1) * 0.5f;
                 request.meshes[m].bounds = new Bounds(centre, bounds.c1 - bounds.c0);
@@ -778,7 +1008,194 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            Finish(request);
+            // That every bake returned says nothing of what PhysX made of the shape: each produced convex is read back from
+            // a collider before anything is handed over, one at a time under a Main budget (the pump's, or its owner's).
+            // A refused convex ends the cut the way any failed cook does -- nothing is published of it, its meshes and
+            // working set go back -- and says which convexes they were.
+            request.hullConvex = 0;
+            request.hullSide = 0;
+            request.hullMesh = 0;
+            request.Stage = PhysicsCutStage.Checking;
+            if (!request.hullOwnerChecks)
+            {
+                CheckUnderTheFrameBudget(request);
+            }
+        }
+
+        /// <summary>
+        /// The pump's checks of one cut: a mesh at a time while the frame's Main budget lasts, the budget shared with
+        /// every other cut the pump checks in this frame; the first check of a frame is taken even with the budget spent
+        /// (and counted) so that a cut is never held for ever; the rest wait for the next frame.
+        /// </summary>
+        private void CheckUnderTheFrameBudget(PhysicsCutRequest request)
+        {
+            while (request.Stage == PhysicsCutStage.Checking)
+            {
+                bool firstOfTheFrame = _hullFrame != Time.frameCount || _hullFrameChecks == 0;
+                double before = MainRemaining != null ? MainRemaining() : double.PositiveInfinity;
+                if (!(before > 0.0))
+                {
+                    if (!firstOfTheFrame)
+                    {
+                        HullChecksDeferred++;
+                        return;
+                    }
+
+                    HullChecksForced++;
+                }
+
+                if (holdHullChecksForTest)
+                {
+                    return;
+                }
+
+                CheckNextHull(request);
+                if (before > 0.0 && MainRemaining != null)
+                {
+                    double after = MainRemaining();
+                    if (after < 0.0)
+                    {
+                        HullCheckOverruns++;
+                        HullCheckOverrunSeconds += -after;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// One step of a cut's hull check: the next produced convex read back from the probe collider (a refused one is
+        /// recorded and the check goes on to the others), or -- none left -- the end of the check: the products, or the
+        /// CookFailed of a cut with a refused convex. True when the check is over. Its Main time is counted by frame.
+        /// </summary>
+        public bool CheckNextHull(PhysicsCutRequest request)
+        {
+            if (request == null || request.Stage != PhysicsCutStage.Checking)
+            {
+                return true;
+            }
+
+            if (holdHullChecksForTest)
+            {
+                return false;
+            }
+
+            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                while (request.hullConvex < request.input.convexCount)
+                {
+                    ConvexCutOutcome outcome;
+                    unsafe
+                    {
+                        outcome = request.arena.Output.outcomes[request.hullConvex];
+                    }
+
+                    if (!outcome.IsSplit)
+                    {
+                        request.hullConvex++;   // inherited uncut: the input convex's own cooked shape, not this cut's
+                        continue;
+                    }
+
+                    while (request.hullMesh < request.meshes.Length && request.meshes[request.hullMesh] == null)
+                    {
+                        request.hullMesh++;
+                    }
+
+                    if (request.hullMesh >= request.meshes.Length)
+                    {
+                        break;   // a missing mesh is the products' own refusal, as before
+                    }
+
+                    Mesh made = request.meshes[request.hullMesh];
+                    bool firstRead = HullChecks == 0;
+                    HullChecks++;
+                    GeometryType geometry = ProbeHull(made);
+                    if (firstRead)
+                    {
+                        FirstHullCheckSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+                    }
+                    if (geometry != GeometryType.ConvexMesh)
+                    {
+                        var rejection = new PhysicsCutHullRejection
+                        {
+                            request = request.Serial, convex = request.hullConvex, positive = request.hullSide == 0, mesh = request.hullMesh, meshName = made.name,
+                            vertexCount = made.vertexCount, geometry = geometry.ToString(), frame = Time.frameCount,
+                        };
+                        (request.hullRejected ??= new List<PhysicsCutHullRejection>(2)).Add(rejection);
+                        HullRejectedMeshes++;
+                        _rejectedMeshNames.Add(made.name);
+                        if (_hullRejections.Count < KeptHullRejections) _hullRejections.Add(rejection);
+                    }
+
+                    request.hullMesh++;
+                    if (++request.hullSide == 2)
+                    {
+                        request.hullSide = 0;
+                        request.hullConvex++;
+                    }
+
+                    return false;
+                }
+
+                if (request.hullRejected != null)
+                {
+                    HullRejectedCuts++;
+                    End(request, PhysicsCutOutcomeKind.CookFailed, PhysicsCutStage.Finished);
+                }
+                else
+                {
+                    Finish(request);
+                }
+
+                return true;
+            }
+            finally
+            {
+                double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+                HullCheckSeconds += seconds;
+                MaxHullCheckSeconds = Math.Max(MaxHullCheckSeconds, seconds);
+                if (_hullFrame != Time.frameCount)
+                {
+                    _hullFrame = Time.frameCount;
+                    _hullFrameSeconds = 0.0;
+                    _hullFrameChecks = 0;
+                    HullCheckFrames++;
+                }
+
+                _hullFrameSeconds += seconds;
+                _hullFrameChecks++;
+                MaxFrameHullSeconds = Math.Max(MaxFrameHullSeconds, _hullFrameSeconds);
+                MaxFrameHullChecks = Math.Max(MaxFrameHullChecks, _hullFrameChecks);
+            }
+        }
+
+        /// <summary>The geometry PhysX made of the mesh for a convex collider with this cook's options (the baked data is used; a refused mesh is cooked again and refused again).</summary>
+        private GeometryType ProbeHull(Mesh mesh)
+        {
+            if (_probe == null)
+            {
+                _probeObject = new GameObject("Zantetsu cut hull probe") { hideFlags = HideFlags.HideAndDontSave };
+                _probeObject.transform.position = new Vector3(0f, -100000f, 0f);
+                _probe = _probeObject.AddComponent<MeshCollider>();
+                _probe.enabled = false;
+                _probe.cookingOptions = _cooking;
+                _probe.convex = true;
+            }
+
+            _probe.sharedMesh = mesh;
+            _probe.enabled = true;
+            GeometryType geometry;
+            try
+            {
+                geometry = _probe.GeometryHolder.Type;
+            }
+            finally
+            {
+                _probe.enabled = false;
+                _probe.sharedMesh = null;
+            }
+
+            return geometry;
         }
 
         /// <summary>
@@ -906,6 +1323,29 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Ends one cut without products, giving back everything it holds, exactly once.</summary>
         private void End(PhysicsCutRequest request, PhysicsCutOutcomeKind outcome, PhysicsCutStage stage)
         {
+            // A cut given up after its meshes were applied -- its bake may have run and PhysX may have logged a refusal --
+            // before its check read them all: the meshes' names are kept, as never checked, never published, given back.
+            if (outcome == PhysicsCutOutcomeKind.Abandoned && request.meshes != null
+                && (request.Stage == PhysicsCutStage.Applying || request.Stage == PhysicsCutStage.Baking || request.Stage == PhysicsCutStage.Checking))
+            {
+                int kept = 0;
+                // Mid-check, the meshes already read were accepted (a refused one ends the check with a failure, not here);
+                // those not read yet are the unchecked ones.
+                int from = request.Stage == PhysicsCutStage.Checking ? request.hullMesh : 0;
+                for (int m = from; m < request.meshes.Length; m++)
+                {
+                    if (request.meshes[m] == null) continue;
+                    _abandonedUncheckedMeshNames.Add(request.meshes[m].name);
+                    kept++;
+                }
+
+                if (kept > 0)
+                {
+                    AbandonedUncheckedCuts++;
+                    AbandonedUncheckedMeshes += kept;
+                }
+            }
+
             // A job that is still running is never interrupted: it is waited for here, on the main thread, before
             // anything it reads or writes goes back.
             CompleteAnyJob(request);

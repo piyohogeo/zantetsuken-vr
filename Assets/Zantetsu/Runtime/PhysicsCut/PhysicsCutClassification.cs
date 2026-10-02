@@ -36,6 +36,10 @@ namespace Zantetsu.PhysicsCut
         private NativeArray<byte> _block;
         private ConvexSide[] _sideValues;
         private ConvexCutOwnerInput _input;
+        private static int s_live;
+
+        /// <summary>Classifications holding a block right now (made and not disposed): a leak of one shows here.</summary>
+        public static int Live => System.Threading.Volatile.Read(ref s_live);
 
         private PhysicsCutClassification()
         {
@@ -67,6 +71,69 @@ namespace Zantetsu.PhysicsCut
             out PhysicsCutClassification classification)
         {
             classification = null;
+            int bytes = RequiredBlockBytes(shape);
+            if (bytes < 0)
+            {
+                return false;
+            }
+
+            return TryClassifyInto(shape, planeLocal, supportEpsilon, parentMass, vertexLimit, PhysicsCutBlocks.Take<byte>(bytes), out classification);
+        }
+
+        /// <summary>
+        /// The size of the block one classification of this shape needs, so that it can be allocated on the main thread
+        /// and the scan run elsewhere (<see cref="TryClassifyInto"/>). Negative for a shape that cannot be classified
+        /// at all: none, given back, without convexes, or with an empty convex.
+        /// </summary>
+        public static int RequiredBlockBytes(PhysicsOwnerShape shape)
+        {
+            if (shape == null || shape.IsFreed || shape.ConvexCount <= 0)
+            {
+                return -1;
+            }
+
+            int convexCount = shape.ConvexCount;
+            int vertices = 0;
+            for (int c = 0; c < convexCount; c++)
+            {
+                ConvexBrepRange range = shape.Convex(c);
+                if (range.vertexCount <= 0)
+                {
+                    return -1;
+                }
+
+                vertices = checked(vertices + range.vertexCount);
+            }
+
+            return checked((int)BlockBytes(convexCount, vertices));
+        }
+
+        private static long BlockBytes(int convexCount, int vertices)
+        {
+            long convexesAt = 0;
+            long banksAt = convexesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
+            long sidesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
+            long signedDistanceAt = sidesAt + Align16(convexCount);
+            long signClassAt = signedDistanceAt + Align16((long)vertices * sizeof(float));
+            long distanceBasesAt = signClassAt + Align16(vertices);
+            return distanceBasesAt + Align16((long)convexCount * sizeof(int));
+        }
+
+        /// <summary>
+        /// The same scan as <see cref="TryClassify"/> into a block the caller allocated (<see cref="RequiredBlockBytes"/>),
+        /// which lets the scan run off the main thread, the shape held for work by the caller. The block is this
+        /// classification's on every answer: given back on a refusal, owned on a success.
+        /// </summary>
+        public static bool TryClassifyInto(
+            PhysicsOwnerShape shape,
+            float4 planeLocal,
+            float supportEpsilon,
+            double parentMass,
+            int vertexLimit,
+            NativeArray<byte> given,
+            out PhysicsCutClassification classification)
+        {
+            classification = null;
             if (shape == null || shape.IsFreed || shape.ConvexCount <= 0
                 || !math.all(math.isfinite(planeLocal))
                 || math.lengthsq(planeLocal.xyz) <= 0f
@@ -74,6 +141,7 @@ namespace Zantetsu.PhysicsCut
                 || !(parentMass > 0.0) || double.IsNaN(parentMass) || double.IsInfinity(parentMass)
                 || vertexLimit <= 0)
             {
+                if (given.IsCreated) given.Dispose();
                 return false;
             }
 
@@ -84,10 +152,17 @@ namespace Zantetsu.PhysicsCut
                 ConvexBrepRange range = shape.Convex(c);
                 if (range.vertexCount <= 0)
                 {
+                    if (given.IsCreated) given.Dispose();
                     return false;
                 }
 
                 vertices = checked(vertices + range.vertexCount);
+            }
+
+            if (!given.IsCreated || given.Length < BlockBytes(convexCount, vertices))
+            {
+                if (given.IsCreated) given.Dispose();
+                return false;
             }
 
             var made = new PhysicsCutClassification();
@@ -99,10 +174,9 @@ namespace Zantetsu.PhysicsCut
                 long signedDistanceAt = sidesAt + Align16(convexCount);
                 long signClassAt = signedDistanceAt + Align16((long)vertices * sizeof(float));
                 long distanceBasesAt = signClassAt + Align16(vertices);
-                long blockBytes = distanceBasesAt + Align16((long)convexCount * sizeof(int));
                 // Every byte of this block that is read is written by the scan below, over the whole range each
                 // array is used across; a refusal part way reads none of it and gives it back.
-                made._block = PhysicsCutBlocks.Take<byte>(checked((int)blockBytes));
+                made._block = given;
                 made._sideValues = new ConvexSide[convexCount];
 
                 byte* block = (byte*)made._block.GetUnsafePtr();
@@ -198,6 +272,7 @@ namespace Zantetsu.PhysicsCut
                 throw;
             }
 
+            System.Threading.Interlocked.Increment(ref s_live);
             classification = made;
             return true;
         }
@@ -253,6 +328,7 @@ namespace Zantetsu.PhysicsCut
             IsDisposed = true;
             _input = default;
             _sideValues = null;
+            if (_block.IsCreated) System.Threading.Interlocked.Decrement(ref s_live);
             Free(ref _block);
         }
 

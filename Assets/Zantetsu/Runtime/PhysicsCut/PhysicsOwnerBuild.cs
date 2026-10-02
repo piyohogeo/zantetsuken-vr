@@ -781,7 +781,7 @@ namespace Zantetsu.PhysicsCut
 
             // The building constraints the sides need (DESIGN 7.2.2) are part of what is built, so whether they can be
             // made is judged with the rest, before anything is.
-            int constraints = BuildingWorldD6.Needed(
+            int constraints = BuildingWorldD6.Needed(in input.buildingWorld, 
                 in input.childLineage, input.anchors.IsPositiveFixed, input.anchors.IsNegativeFixed);
             if (constraints > 0 && !input.buildingWorld.IsValid
                 || input.constraintRoom.HasValue && constraints > input.constraintRoom.Value)
@@ -801,8 +801,8 @@ namespace Zantetsu.PhysicsCut
                 if (constraints > 0)
                 {
                     int depth = input.childLineage.SplitDepth;
-                    if (!positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
-                    if (!negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
+                    if (input.buildingWorld.enabled && !positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
+                    if (input.buildingWorld.enabled && !negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
                 }
             }
             catch (Exception)

@@ -72,14 +72,21 @@ namespace Zantetsu.PhysicsCut
             "The GPU copy's first capacity in vertices (DESIGN 4.5.4). When a transfer needs more, a larger buffer is made, "
             + "what is drawn is transferred into it and it replaces the old one at a drawing boundary; never more than the "
             + "CPU reservation or the device's largest buffer.")]
-        [SerializeField] private int gpuVertexInitialCapacity = 65536;
+        [SerializeField] private int gpuVertexInitialCapacity = 16777216;   // 2026-10-01: 256 MiB at 16 bytes a vertex, so that play does not grow it
 
         [Tooltip("The GPU copy's first capacity in indices, by the same rule.")]
-        [SerializeField] private int gpuIndexInitialCapacity = 262144;
+        [SerializeField] private int gpuIndexInitialCapacity = 67108864;   // 2026-10-01: 256 MiB at 4 bytes an index
 
-        [SerializeField] private int geometryDescriptorCapacity = 512;
-        [SerializeField] private int submeshCapacity = 2048;
-        [SerializeField] private int vertexBlockCapacity = 2048;
+        [Tooltip(
+            "The storage's fixed bookkeeping tables, allocated whole at the start (they do not grow): index-range descriptors "
+            + "(one per published geometry, two per open cut; about 112 bytes each), submesh spans (about 40 bytes each) and "
+            + "vertex-block spans (8-byte runs; a geometry at cut depth d holds d + 1, a cut of it takes d + 2 more, and they "
+            + "come back only with the whole lineage). Sized so that long play meets the display's own limits (4096) or the "
+            + "vertex and index reserves first -- a few MB in all -- not the tables (2026-09-29: 2048 blocks ran out with "
+            + "room to spare in vertices and indices).")]
+        [SerializeField] private int geometryDescriptorCapacity = 8192;
+        [SerializeField] private int submeshCapacity = 32768;
+        [SerializeField] private int vertexBlockCapacity = 65536;
 
         [Header("Shared dispatcher")]
         [Tooltip("How many works may wait to be submitted at once.")]
@@ -108,15 +115,25 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int displayInstanceCapacity = 512;
         [SerializeField] private int branchCapacity = 128;
         [SerializeField] private int candidateCapacity = 512;
-        [SerializeField] private int chainDepth = 16;
+        [Tooltip(
+            "The longest chain of cut boundaries one fragment may have (its cut depth): the multi-cut snapshot's own work "
+            + "arrays, a few entries a level, not per instance. It is not grown, and a deeper chain ends the Player, so it is "
+            + "sized past any lineage play reaches (2026-09-29: 16 was reached by re-cutting the playable city's building); "
+            + "the planes an instance clips with are still chosen, at most VpInstanceClip.PlaneCapacity, from the chain.")]
+        [SerializeField] private int chainDepth = 256;
 
-        [Tooltip("How far each display count may grow; at least its first capacity. Equal keeps that count fixed.")]
-        [SerializeField] private int drawCommandCapacityLimit = 2048;
-        [SerializeField] private int drawInstanceCapacityLimit = 4096;
-        [SerializeField] private int geometryReferenceCapacityLimit = 4096;
-        [SerializeField] private int displayInstanceCapacityLimit = 4096;
-        [SerializeField] private int branchCapacityLimit = 1024;
-        [SerializeField] private int candidateCapacityLimit = 4096;
+        [Tooltip(
+            "How far each display count may grow; at least its first capacity. Equal keeps that count fixed. 65536 each "
+            + "(TL, 2026-09-30: the coexistence run ended the Player at 2048 draw commands; the six are raised together). "
+            + "Room is still made only as needed, doubling from the first capacity; a room grown past 32768 instances "
+            + "is the full 65536 and holds several hundred MB of stencil and cap arrays per camera. The storage's fixed "
+            + "tables above (index-range descriptors first) bind before these do.")]
+        [SerializeField] private int drawCommandCapacityLimit = 65536;
+        [SerializeField] private int drawInstanceCapacityLimit = 65536;
+        [SerializeField] private int geometryReferenceCapacityLimit = 65536;
+        [SerializeField] private int displayInstanceCapacityLimit = 65536;
+        [SerializeField] private int branchCapacityLimit = 65536;   // 2026-09-29: 1024 was reached by the playable city's re-cut building (k1-k5) and ended the Player
+        [SerializeField] private int candidateCapacityLimit = 65536;
 
         [Header("Stencil caps")]
         [SerializeField] private int maxStencilColours = 4;
@@ -143,10 +160,88 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float pieceLifetimeMinRemainingMainSeconds = 0.004f;
         [SerializeField] private float pieceLifetimeMaxStepSeconds = 0.0005f;
 
+        [Header("Building rest (trial, 2026-09-29)")]
+        [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
+        [SerializeField] private bool buildingRestEnabled = false;
+
+        [Tooltip("Sleep: Rigidbody.Sleep once. Kinematic: velocities zeroed and isKinematic until the same building's next re-cut is published.")]
+        [SerializeField] private BuildingRestMode buildingRestMode = BuildingRestMode.Sleep;
+
+        [Tooltip("Physics seconds a cut's pieces must have been published for before they may rest.")]
+        [SerializeField] private double buildingRestTimeoutSeconds = 1.0;
+
+        [Tooltip("Consecutive physics steps a piece must be supported for (a from-below contact chain to the ground).")]
+        [SerializeField] private int buildingRestSupportSteps = 3;
+
+        [Tooltip("A contact counts as support when |normal.y| is at least this (0.5: within 60 degrees of the vertical) and lies under the piece's centre.")]
+        [SerializeField] private float buildingRestSupportNormalCos = 0.5f;
+
+        [Tooltip("Sleep and wake events kept in memory for the record.")]
+        [SerializeField] private int buildingRestEventRecords = 256;
+
+        [Header("Building fusion (trial, 2026-09-29)")]
+        [Tooltip("Fuse held building pieces into one kinematic group body and cut a group into two compound bodies (off by default; needs the kinematic rest and no building World D6).")]
+        [SerializeField] private bool buildingFusionEnabled = false;
+
+        [Tooltip("How many pieces one frame may fuse or move between groups (the switch is Main work).")]
+        [SerializeField] private int buildingFusionPerFrame = 8;
+
+        [Tooltip("Real playing seconds after a building's last cut before the groups it left are aggregated (at most one resting and one free group); a different Slash on the building aggregates at once. 0: only by the next Slash.")]
+        [SerializeField] private float buildingFusionDeadlineSeconds = 2f;
+
+        [Tooltip("The Main time (ms) one fusion Step may begin work within: Finals, aggregations, merges, fusions, publications. A unit begun runs to its end and the overrun is recorded.")]
+        [SerializeField] private float buildingFusionMainBudgetMs = 1.5f;
+
+        [Header("Building hull (trial, 2026-09-30)")]
+        [Tooltip("A building is one group with one convex hull: hits, cuts and fusions read that hull; the display members carry no physics (off by default; buildings only; needs the building World D6 off).")]
+        [SerializeField] private bool buildingHullEnabled = false;
+
+        [Tooltip("Real seconds after a hull cut before its two sides are fused back into one hull (a next Slash on the building fuses at once). 0: only by the next Slash.")]
+        [SerializeField] private float buildingHullDeadlineSeconds = 0.9f;
+
+        [Tooltip("The Main time (ms) one hull Step may begin units within (checks, publications, unions, adoptions).")]
+        [SerializeField] private float buildingHullMainBudgetMs = 1.5f;
+
+        /// <summary>The penetration a fused hull may add into anything outside its group (metres): a diagnostic value, not a product one (0.1 in the first Player run, 0.005 asked for the next).</summary>
+        [SerializeField] private float buildingHullMaxNewPenetrationMetres = 0.1f;
+
+        /// <summary>The sides' motion time after a hull cut (real seconds; 0: off, the rest decides as before): past it, or at the next Slash's hit on the building, the moving sides are fixed for show (velocity zero, kinematic), not by their support. A diagnostic value (0.25 asked first).</summary>
+        [SerializeField] private float buildingHullStageSeconds = 0f;
+
+        /// <summary>Whether the two sides of a hull cut are held by a short sibling constraint (the Provisional D6: along the normal 0 .. opening, the plane and the twist free) until they are fixed. Only with a motion time.</summary>
+        [SerializeField] private bool buildingHullSiblingD6 = false;
+
+        /// <summary>The opening the sibling constraint allows along the normal (metres). A diagnostic value (0.05 asked first).</summary>
+        [SerializeField] private float buildingHullSiblingOpeningMetres = 0.05f;
+
+        /// <summary>The always-kinematic mode (2026-09-30, Editor prototype, off by default): a building is one kinematic body, hull and collider for good; a hit cuts the display (animated: the upper side drops) and exchanges the hull best-effort.</summary>
+        [SerializeField] private bool buildingHullKinematicDisplay = false;
+
+        /// <summary>The display's drop time (real seconds). A diagnostic value (0.25 asked first).</summary>
+        [SerializeField] private float buildingHullAnimationSeconds = 0.25f;
+
+        /// <summary>How far the upper side drops for a horizontal cut / a vertical one (metres; interpolated in between). Diagnostic values (0.15 / 0.02 asked first).</summary>
+        [SerializeField] private float buildingHullDropHorizontalMetres = 0.15f;
+        [SerializeField] private float buildingHullDropVerticalMetres = 0.02f;
+
+        /// <summary>
+        /// A quality setting of the always-kinematic mode (2026-10-01; 0: off): N, the display geometries a building may be cut
+        /// into -- once its live, non-empty, committed display fragments reach N it is cut no more. An integer of 2 or more.
+        /// </summary>
+        [SerializeField] private int buildingHullGeometryLimit = 0;
+
+        /// <summary>Art settings of the always-kinematic mode with a cut limit: the drop D(n) = D0 (1 - log2 n / log2 N)^p, p (finite, above 0) and D0 (metres, above 0).</summary>
+        [SerializeField] private float buildingHullDropExponent = 1f;
+        [SerializeField] private float buildingHullDropBaseMetres = 0.5f;
+
         [Header("Ledger")]
-        [Tooltip("How many accepted cuts may be incomplete at once (DESIGN 7.1's incomplete budget).")]
+        [Tooltip(
+            "How many accepted cuts may be incomplete at once (DESIGN 7.1's incomplete budget): a count compared at "
+            + "acceptance, nothing is allocated for it. A group cut takes one per crossed member all at once, so it is "
+            + "sized past any group (2026-09-30: 32 refused a 34-member cut of the one-anchor college_001 even with the "
+            + "ledger empty). The cook's concurrency and the Main budget bound the work, not this.")]
         [SerializeField]
-        private int maxIncompleteCuts = 32;
+        private int maxIncompleteCuts = 4096;
 
         [Header("Separation impulse (DESIGN 7.2; provisional, mass only)")]
         [Tooltip(
@@ -170,6 +265,9 @@ namespace Zantetsu.PhysicsCut
         [SerializeField]
         private float buildingWorldFirstLimitMetres = 1f;
 
+        [Tooltip("Off (a trial comparison only): no building World D6 is made at all. On: as DESIGN 7.2.2.")]
+        [SerializeField] private bool buildingWorldEnabled = true;
+
         [Tooltip(
             "A1: the requested symmetric angle limit of a first-split building child, in degrees (0 to 180). The "
             + "current engine keeps a swing (Y, Z) limit at 3 degrees at least; twist (X) keeps the request (DESIGN 7.2.2).")]
@@ -182,9 +280,12 @@ namespace Zantetsu.PhysicsCut
 
         [Tooltip(
             "How many system constraints -- Provisional sibling constraints and building World D6 together -- the "
-            + "scene may hold. A cut whose constraints would not fit cannot be built.")]
+            + "scene may hold: a count compared at acceptance, nothing is allocated for it. A cut whose constraints may "
+            + "not fit is not accepted, and its source stays as it is (the room comes back as Provisional pairs end). "
+            + "Sized past what the display's limits can hold (one D6 at most per building piece, one sibling constraint "
+            + "per Provisional pair), so it is not what ends play (2026-09-29: 256 was reached in the playable city).")]
         [SerializeField]
-        private int systemConstraintCapacity = 256;
+        private int systemConstraintCapacity = 8192;
 
         [Header("Ending")]
         [Tooltip(
@@ -259,6 +360,18 @@ namespace Zantetsu.PhysicsCut
                 pieceLifetimeEnabled, pieceLifetimeThreshold, pieceLifetimeDistance, pieceLifetimeExaminePerFrame,
                 pieceLifetimeRetirePerFrame, pieceLifetimeMinRemainingMainSeconds, pieceLifetimeMaxStepSeconds);
 
+        /// <summary>The trial fusion of held building pieces (2026-09-29): off unless the profile switches it on.</summary>
+        public BuildingFusionSettings BuildingFusion => new BuildingFusionSettings(buildingFusionEnabled, buildingFusionPerFrame, buildingFusionDeadlineSeconds, buildingFusionMainBudgetMs * 0.001);
+
+        public BuildingHullSettings BuildingHull => new BuildingHullSettings(buildingHullEnabled, buildingHullDeadlineSeconds, buildingHullMainBudgetMs * 0.001, buildingHullMaxNewPenetrationMetres, buildingHullStageSeconds, buildingHullSiblingD6, buildingHullSiblingOpeningMetres, buildingHullKinematicDisplay, buildingHullAnimationSeconds, buildingHullDropHorizontalMetres, buildingHullDropVerticalMetres,
+            buildingHullGeometryLimit, buildingHullDropExponent, buildingHullDropBaseMetres);
+
+        /// <summary>The trial rest of building pieces (2026-09-29): off unless the profile switches it on.</summary>
+        public BuildingRestSettings BuildingRest =>
+            new BuildingRestSettings(
+                buildingRestEnabled, buildingRestMode, buildingRestTimeoutSeconds, buildingRestSupportSteps, buildingRestSupportNormalCos,
+                buildingRestEventRecords);
+
         /// <summary>How far the display's counts may grow, from the limits above.</summary>
         public VpLogicalCutDisplayLimits DisplayLimits =>
             new VpLogicalCutDisplayLimits(
@@ -269,7 +382,7 @@ namespace Zantetsu.PhysicsCut
         public int MaxIncompleteCuts => maxIncompleteCuts;
 
         public BuildingWorldD6Settings BuildingWorld =>
-            new BuildingWorldD6Settings(buildingWorldFirstLimitMetres, buildingWorldFirstAngleDegrees, buildingWorldRatio);
+            new BuildingWorldD6Settings(buildingWorldFirstLimitMetres, buildingWorldFirstAngleDegrees, buildingWorldRatio, buildingWorldEnabled);
 
         public int SystemConstraintCapacity => systemConstraintCapacity;
 
@@ -361,6 +474,10 @@ namespace Zantetsu.PhysicsCut
             else if (!PieceLifetime.IsValid)
             {
                 reason = "the piece lifetime's counts and times must be positive and its threshold and distance not negative";
+            }
+            else if (!BuildingRest.IsValid)
+            {
+                reason = "the building rest's timeout must not be negative, its support steps at least 1, its normal cosine in (0, 1] and its record count not negative";
             }
             else if (maxStencilColours <= 0 || stencilCameraCapacity <= 0)
             {

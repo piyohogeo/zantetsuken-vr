@@ -22,6 +22,8 @@ namespace Zantetsu.Sandbox
         [SerializeField] private PlayerLocomotion player;
         [SerializeField] private Transform view;
         [SerializeField] private Vector3 mapOffset = new Vector3(390, .1f, 150);
+        [Tooltip("The centre of the crowd's 300 m map window, in map coordinates (world minus the map offset): the player starts there and the crowd forms around it.")]
+        [SerializeField] private Vector2 mapCentre = new Vector2(-220, -170);
         [SerializeField] private SandboxNpcCharacter[] initialCharacters;
         [SerializeField] private GameObject replacementTemplate;
 
@@ -213,13 +215,17 @@ namespace Zantetsu.Sandbox
             var data = assets.dataset.bytes;
             var polygons = assets.polygons.bytes;
             var tables = assets.poseTables.Select(t => t.bytes).ToArray();
+            Vector2 centre = mapCentre;
             var load = new Work(() =>
             {
                 var dataset = ClipDataset.Read(data);
-                var map = PolygonWalkable.Read(polygons, -220, -170, 300, 300);
+                var map = PolygonWalkable.Read(polygons, centre.x, centre.y, 300, 300);
                 map.BuildAllTiles();
                 var made = new LocomotionSimulation(dataset, MobPlanPreset.Planner()) { AutoPlan = false, ExternalPlayer = true };
-                made.Reset(MobPlanPreset.Scenario(null), map);
+                var scenario = MobPlanPreset.Scenario(null);
+                scenario.sceneCenterX = centre.x;
+                scenario.sceneCenterZ = centre.y;
+                made.Reset(scenario, map);
                 return new Loaded { simulation = made, bank = new MobPoseBank(dataset, tables) };
             }, (work, completion) =>
             {
