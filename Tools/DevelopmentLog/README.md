@@ -43,6 +43,30 @@ The check's verdicts do not read this record. The required hit Trace (`slash-hit
 record says the record is complete, nothing more: a walk that ended early also ends its record, and whether its scenario
 passed is the check's own verdict (`PROP SLASH: ok` / `FAILED` in the log).
 
+A `CheckHits` recording of the multi-NPC or the building mode also holds `op` records, formerly `multi-ops.csv` /
+`building-ops.csv`: one per accepted cut, written at the run's summary, all of them before the recording's `summary`. They
+add no measurement: each carries what the check followed in memory.
+- `eventFrame` and `seconds`: when the record was made, at the summary. They are not the moment of any stage.
+- `acceptedFrame`, `provisionalFrame`, `finalFrame` and `committedFrame`: the frames the check observed each stage in, -1 when
+  not observed. The stages are the hit (the hit's `eventFrame`; for a held root, its take-up), the Provisional publication,
+  the operation leaving Admitted, and the geometry Committed. These are not the moments the product reached the stages.
+- `acceptedTime` .. `committedTime`: the check's clock at those observations, `Time.unscaledTimeAsDouble` since the replay's
+  start, in seconds, null when not observed. This clock is neither the Stopwatch of `seconds` nor the replay input clock of
+  `at`.
+- `ledgerState`, `positive` and `negative`: the ledger's values at the summary.
+- `of` and `child` belong to the multi-NPC mode. The source's depth, anchors and fixedness and the cut's kind and normal
+  belong to the building mode. They are null where the mode has none.
+- `name`, `hull` and `fusion` are the check's own. A held root's name ends in `-held`. `hull` / `fusion` mark a Pending
+  answered without an operation of its own, which is operation 0.
+- Repeated rows and operation-0 rows are kept as they are.
+
+The summary's ops tally keeps apart a mode that writes no ops from one that accepted none:
+- `opsApplicable` is 0 for a mode that writes no ops (the MobPlan mode).
+- `opsPlanned` is fixed from the accepted list before any op is written. It is null when the summary never reached the ops.
+- `opsAttempted` and `opsAccepted` count the op records tried and the ones the logger accepted.
+
+The end line adds `; ops planned P, attempted A, accepted C`, `; ops not applicable`, or `; ops applicable, not written`.
+
 ## Files
 
 - `check_writer_jsonl.py`: the completeness check, per writer.
@@ -53,6 +77,16 @@ passed is the check's own verdict (`PROP SLASH: ok` / `FAILED` in the log).
   frame against `eventFrame`, and the record's cost. It runs the check per recording first. `hits_for_run(run_dir,
   check_dir)` gives other readers one run's hits: it finds the recording whose `start` names `check_dir`, checks it against
   `run_dir/player.log`, and raises `NotComplete` otherwise.
+- `analyze_ops.py`: per recording, the ops checked against the summary's tally first; planned, attempted, accepted and saved
+  must agree. Then the stages, in observed frames and in check-clock milliseconds, and how the ops answer the recording's
+  hits. An op with an operation is matched by operation, slashId and source. A held root is matched by its Held hit, the
+  same slashId and source, observed no later than the op's acceptance. An operation-0 op is matched by an operation-0
+  Pending hit with the same slashId and source in the same frame, and operation 0 is never used as an id. One candidate by
+  operation id is confirmed. One candidate by the held or the operation-0 rule is a candidate: those fields agree, which
+  does not prove it is the same acceptance. None is unmatched, and several are ambiguous, which is reported and not picked. A hit with no op is
+  classified by its acceptance: no cut by the rule or not taken up are by specification; Published or Pending is a record
+  short. `ops_for_run(run_dir, check_dir)` gives other readers one run's ops, hits and matching, and raises `NotComplete`
+  unless the record and its ops are complete.
 - `analyze_step.py`: the step decisions inside `CutPhysicsStepPlayModeTests.TheStep_IsDecidedOncePerFrame...`, by reason, with the clock, budget and estimate they read. It runs the check first.
 
 ## Use
@@ -72,7 +106,7 @@ passed is the check's own verdict (`PROP SLASH: ok` / `FAILED` in the log).
    For `ViewDiagnosis`: `python check_writer_jsonl.py ViewDiagnosis "view diagnosis" <session.jsonl> <log> [--recording R]`,
    and for `CheckHits`: `python check_writer_jsonl.py CheckHits "check hits" <session.jsonl> <player.log> [--recording R]`.
    Each recording is checked on its own; the run is COMPLETE only if every recording is.
-4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, `python analyze_view.py <session.jsonl>:<log>`, or `python analyze_hits.py <session.jsonl>:<player.log>`. Give both, joined by `:`; absolute paths with drive
+4. Analyse: `python analyze_step.py <session.jsonl>:<editor.log>`, `python analyze_view.py <session.jsonl>:<log>`, `python analyze_hits.py <session.jsonl>:<player.log>`, or `python analyze_ops.py <session.jsonl>:<player.log>`. Give both, joined by `:`; absolute paths with drive
    letters are fine. Only a COMPLETE run is analysed; any other run is reported as "not analysed" with the check's verdict.
 
 ### The view diagnosis in the Player
@@ -86,7 +120,11 @@ check it against `player.log`. Each run of the diagnosis adds load: formatting e
 The check runs only in the Player, by its arguments. The hit record ends at the check's records' close, in its ending,
 before `Application.Quit`. An ending through `Application.quitting` (a forced one) comes after the logger has stopped, and
 leaves that recording NOT CONFIRMED. `CheckHitLogPlayModeTests` exercise the recording itself in the Editor: no hit, two
-iterations, an early end, a refusal, and after the end.
+iterations, an early end, a refusal, and after the end. `CheckOpLogPlayModeTests` exercise the op records: the multi-NPC and
+building columns, unobserved times written null, operation 0, repeated rows, none accepted against not applicable, a
+summary that never reached the ops, a refused op, and after the end. The op records come from the summary, so an ending
+that never runs it (an early ending with a fixed code, or a forced one) leaves `opsPlanned` null, and the ops are not
+analysed.
 
 ### In the Editor
 

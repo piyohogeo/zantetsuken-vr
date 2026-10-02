@@ -12,7 +12,7 @@ namespace Zantetsu.Sandbox
     // the city, registered by BuildingSlashE2E with its author's convex and anchors, cut again and again by replayed
     // katana input. With BuildingArgument the check does not ask for the box; it waits for the building's registration,
     // follows every Slash (hits, misses), every accepted cut to its Provisional publication, its Final/Logical
-    // publication and its geometry commit (building-ops.csv), and every building piece frame by frame (building-pieces.csv).
+    // publication and its geometry commit (the "op" records of the hit record, CheckHits), and every building piece frame by frame (building-pieces.csv).
     // It only reads: nothing is cut, hit, published, placed or completed from here.
     //
     // What is judged, in three kinds, each written with its own prefix:
@@ -650,20 +650,22 @@ namespace Zantetsu.Sandbox
                 MultiStorage("at the end");
                 _buildingRows?.Flush();
                 _eventRows?.Flush();
-                using (var ops = new StreamWriter(Path.Combine(directory, "building-ops.csv")))
+                // The cuts' stages by operation: one "op" record each in the hit record (formerly building-ops.csv).
+                HitLogOpsPlanned(_accepted.Count);
+                foreach (Accepted a in _accepted)
                 {
-                    ops.WriteLine("operation,slash,source,sourceDepth,sourceAnchors,sourceFixed,cut,normalX,normalY,normalZ,positive,negative,acceptance,"
-                        + "acceptedFrame,provisionalFrame,finalFrame,committedFrame,acceptedTime,provisionalTime,finalTime,committedTime,ledgerState,pendingEnd");
-                    foreach (Accepted a in _accepted)
+                    _buildingOps.TryGetValue(a.operation.value, out BuildingOp b);
+                    bool known = _world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op);
+                    HitLogOp(new OpRecord
                     {
-                        _buildingOps.TryGetValue(a.operation.value, out BuildingOp b);
-                        bool known = _world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op);
-                        ops.WriteLine(string.Join(",", a.operation.value, a.slash, a.fragment.value, b?.sourceDepth ?? -1, b?.sourceAnchors ?? -1, b?.sourceFixed ?? false,
-                            b?.kind ?? "", b != null ? F(b.worldNormal.x) : "", b != null ? F(b.worldNormal.y) : "", b != null ? F(b.worldNormal.z) : "",
-                            known ? op.positive.value : 0, known ? op.negative.value : 0, a.pending ? "Pending" : "Published",
-                            a.acceptedFrame, a.provisionalFrame, a.publishedFrame, a.committedFrame, T(a.acceptedTime), T(a.provisionalTime), T(a.finalTime), T(a.committedTime),
-                            known ? op.state.ToString() : "none", a.pendingEnd ?? ""));
-                    }
+                        name = a.name, operation = a.operation.value, slash = a.slash, source = a.fragment.value, acceptance = a.pending ? "Pending" : "Published",
+                        acceptedFrame = a.acceptedFrame, provisionalFrame = a.provisionalFrame, finalFrame = a.publishedFrame, committedFrame = a.committedFrame,
+                        acceptedTime = a.acceptedTime, provisionalTime = a.provisionalTime, finalTime = a.finalTime, committedTime = a.committedTime,
+                        ledgerState = known ? op.state.ToString() : "none", pendingEnd = a.pendingEnd, hull = a.hull, fusion = a.fusion,
+                        sourceDepth = b?.sourceDepth ?? -1, sourceAnchors = b?.sourceAnchors ?? -1, sourceFixed = b?.sourceFixed ?? false, cut = b?.kind,
+                        normalX = b?.worldNormal.x, normalY = b?.worldNormal.y, normalZ = b?.worldNormal.z,
+                        positive = known ? op.positive.value : 0, negative = known ? op.negative.value : 0,
+                    });
                 }
 
                 // Per Slash: latched, hit or missed, what each hit's acceptance said. A Slash latched with no hit is a miss.

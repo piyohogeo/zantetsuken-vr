@@ -14,7 +14,7 @@ namespace Zantetsu.Sandbox
     // box. With MultiNpcArgument the check does not ask for the box and does not judge the single target; instead it
     // follows every NPC's lineage, every hit's outcome by Slash, and every accepted cut -- Published or Pending -- to its
     // Provisional publication, its Final/Logical publication and its geometry commit, frame by frame (multi.csv,
-    // multi-ops.csv), and judges the benchmark's functional conditions at the end. It only reads: nothing is cut, hit,
+    // the "op" records of the hit record, CheckHits), and judges the benchmark's functional conditions at the end. It only reads: nothing is cut, hit,
     // published, reset or completed from here.
     public static partial class SandboxPropSlashPlayerCheck
     {
@@ -330,20 +330,22 @@ namespace Zantetsu.Sandbox
                 MobPlanClose();
             }
 
-            // The benchmark's functional judgements, and the cuts' stages by operation (multi-ops.csv).
+            // The benchmark's functional judgements, and the cuts' stages by operation (the "op" records).
             private void MultiSummarise()
             {
                 MultiStorage("at the end");
-                using (var ops = new StreamWriter(Path.Combine(directory, "multi-ops.csv")))
+                // The cuts' stages by operation: one "op" record each in the hit record (formerly multi-ops.csv).
+                HitLogOpsPlanned(_accepted.Count);
+                foreach (Accepted a in _accepted)
                 {
-                    ops.WriteLine("operation,slash,of,child,source,acceptance,acceptedFrame,provisionalFrame,finalFrame,committedFrame,acceptedTime,provisionalTime,finalTime,committedTime,ledgerState,pendingEnd");
-                    foreach (Accepted a in _accepted)
+                    string state = _world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op) ? op.state.ToString() : "none";
+                    HitLogOp(new OpRecord
                     {
-                        string state = _world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op) ? op.state.ToString() : "none";
-                        ops.WriteLine(string.Join(",", a.operation.value, a.slash, LineageOf(a.fragment), a.child, a.fragment.value, a.pending ? "Pending" : "Published",
-                            a.acceptedFrame, a.provisionalFrame, a.publishedFrame, a.committedFrame, T(a.acceptedTime), T(a.provisionalTime), T(a.finalTime), T(a.committedTime),
-                            state, a.pendingEnd ?? ""));
-                    }
+                        name = a.name, operation = a.operation.value, slash = a.slash, source = a.fragment.value, acceptance = a.pending ? "Pending" : "Published",
+                        acceptedFrame = a.acceptedFrame, provisionalFrame = a.provisionalFrame, finalFrame = a.publishedFrame, committedFrame = a.committedFrame,
+                        acceptedTime = a.acceptedTime, provisionalTime = a.provisionalTime, finalTime = a.finalTime, committedTime = a.committedTime,
+                        ledgerState = state, pendingEnd = a.pendingEnd, hull = a.hull, fusion = a.fusion, of = LineageOf(a.fragment), child = a.child,
+                    });
                 }
 
                 foreach (KeyValuePair<long, SlashTally> s in _multiSlashes)
@@ -390,8 +392,6 @@ namespace Zantetsu.Sandbox
                 Expect(_accepted.All(a => !_world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op) || op.state == LogicalCutOperationState.Completed),
                     "every accepted operation completed (none lost or aborted)");
             }
-
-            private static string T(double seconds) => double.IsNaN(seconds) ? "" : seconds.ToString("F6", Inv);
 
             private string MultiLineageOf(LogicalFragmentId root)
             {

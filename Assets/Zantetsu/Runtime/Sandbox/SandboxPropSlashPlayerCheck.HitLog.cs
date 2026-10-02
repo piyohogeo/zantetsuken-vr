@@ -66,16 +66,108 @@ namespace Zantetsu.Sandbox
             });
         }
 
-        /// <summary>Ends a recording of hits: the summary with the hits recorded, the last record.</summary>
-        internal static void EndHitLog(DevelopmentLogRecording log, int hits)
+        /// <summary>
+        /// One accepted cut as the check followed it to the end, an "op" record (formerly a row of multi-ops.csv /
+        /// building-ops.csv), written at the run's summary. Every stage is what the check observed: acceptedFrame the frame it
+        /// observed the hit in (the hit's eventFrame; for a held root taken up, the frame it observed the take-up), the
+        /// others the frames it observed the Provisional publication, the operation leaving Admitted (finalFrame) and the
+        /// geometry Committed, -1 when not observed; the times are the check's clock at those observations
+        /// (Time.unscaledTimeAsDouble since the replay's start, seconds; NaN when not observed, written null); ledgerState and
+        /// the children are the ledger's at the summary. Of the multi-NPC mode: of, child; of the building mode: the source's
+        /// depth, anchors and fixedness, the cut's kind and world normal as recorded at the acceptance. Null where the mode
+        /// has none. name, hull and fusion are the check's own (a held root's name ends "-held"; hull / fusion: a Pending
+        /// acceptance answered by a hull group or a fusion, with no operation of its own: operation 0).
+        /// </summary>
+        internal struct OpRecord
         {
-            log?.End(Time.frameCount, Stopwatch.GetTimestamp(), new object[] { "hits", hits }, "hits " + hits);
+            public string name;
+            public int operation;
+            public long slash;
+            public int source;
+            public string acceptance;
+            public int acceptedFrame, provisionalFrame, finalFrame, committedFrame;
+            public double acceptedTime, provisionalTime, finalTime, committedTime;
+            public string ledgerState, pendingEnd;
+            public bool hull, fusion;
+            public string of;
+            public bool? child;
+            public int? sourceDepth, sourceAnchors;
+            public bool? sourceFixed;
+            public string cut;
+            public float? normalX, normalY, normalZ;
+            public int? positive, negative;
+        }
+
+        /// <summary>The ops of a recording: whether its mode writes them, how many were to be written (fixed from the accepted
+        /// list before the writing), how many were tried and how many the logger accepted.</summary>
+        internal struct OpsTally
+        {
+            public bool applicable;
+            public int? planned;
+            public int attempted;
+            public long accepted;
+        }
+
+        /// <summary>One op record (at the summary: eventFrame and seconds are the summary's).</summary>
+        internal static void WriteOp(DevelopmentLogRecording log, in OpRecord r)
+        {
+            if (log == null || log.Ended)
+            {
+                return;
+            }
+
+            log.Write("op", Time.frameCount, Stopwatch.GetTimestamp(), new object[]
+            {
+                null, null, null, null, null, null, null, null,
+                "name", r.name, "operation", r.operation, "slash", r.slash, "source", r.source, "acceptance", r.acceptance,
+                "acceptedFrame", r.acceptedFrame, "provisionalFrame", r.provisionalFrame, "finalFrame", r.finalFrame, "committedFrame", r.committedFrame,
+                "acceptedTime", Seconds(r.acceptedTime), "provisionalTime", Seconds(r.provisionalTime), "finalTime", Seconds(r.finalTime), "committedTime", Seconds(r.committedTime),
+                "ledgerState", r.ledgerState, "pendingEnd", r.pendingEnd, "hull", r.hull ? 1 : 0, "fusion", r.fusion ? 1 : 0,
+                "of", r.of, "child", r.child.HasValue ? (object)(r.child.Value ? 1 : 0) : null,
+                "sourceDepth", r.sourceDepth, "sourceAnchors", r.sourceAnchors, "sourceFixed", r.sourceFixed.HasValue ? (object)(r.sourceFixed.Value ? 1 : 0) : null,
+                "cut", r.cut, "normalX", r.normalX, "normalY", r.normalY, "normalZ", r.normalZ, "positive", r.positive, "negative", r.negative,
+            });
+        }
+
+        private static object Seconds(double value) => double.IsNaN(value) ? null : (object)value;
+
+        /// <summary>Fixes how many ops are to be written (from the accepted list, before any is written); nothing when not applicable.</summary>
+        internal static void PlanOps(DevelopmentLogRecording log, ref OpsTally ops, int planned)
+        {
+            if (log == null || log.Ended || !ops.applicable) return;
+            ops.planned = planned;
+        }
+
+        /// <summary>One op record, counted: tried, and accepted by the logger or not.</summary>
+        internal static void WriteOpCounted(DevelopmentLogRecording log, ref OpsTally ops, in OpRecord r)
+        {
+            if (log == null || log.Ended || !ops.applicable) return;
+            ops.attempted++;
+            long before = log.Accepted;
+            WriteOp(log, in r);
+            ops.accepted += log.Accepted - before;
+        }
+
+        /// <summary>Ends a recording of hits with no ops in its mode (a test's, or the MobPlan mode's).</summary>
+        internal static void EndHitLog(DevelopmentLogRecording log, int hits) => EndHitLog(log, hits, default);
+
+        /// <summary>Ends a recording of hits: the summary, the last record, with the hits and the ops' tally.</summary>
+        internal static void EndHitLog(DevelopmentLogRecording log, int hits, in OpsTally ops)
+        {
+            string detail = "hits " + hits + "; ops " + (!ops.applicable ? "not applicable"
+                : !ops.planned.HasValue ? "applicable, not written (no summary reached them)"
+                : "planned " + ops.planned.Value + ", attempted " + ops.attempted + ", accepted " + ops.accepted);
+            log?.End(Time.frameCount, Stopwatch.GetTimestamp(), new object[]
+            {
+                "hits", hits, "opsApplicable", ops.applicable ? 1 : 0, "opsPlanned", ops.planned, "opsAttempted", ops.attempted, "opsAccepted", ops.accepted,
+            }, detail);
         }
 
         private sealed partial class Walk
         {
             private DevelopmentLogRecording _hitLog;
             private int _hitLogHits;
+            private OpsTally _ops;
 
             // One recording a walk: a second open (two modes at once) keeps the first rather than leave it without its end.
             private void HitLogOpen(string mode)
@@ -88,6 +180,8 @@ namespace Zantetsu.Sandbox
 
                 _hitLog = BeginHitLog(mode, iteration, directory);
                 _hitLogHits = 0;
+                // The modes whose summary wrote ops before (multi-ops.csv, building-ops.csv); the MobPlan mode never did.
+                _ops = new OpsTally { applicable = mode == "multiNpc" || mode == "building" };
             }
 
             private void HitLogHit(in SlashHitConfirmed hit, int frame, string of, bool child, int update)
@@ -101,9 +195,14 @@ namespace Zantetsu.Sandbox
                 WriteHit(_hitLog, hit, frame, of, child, update);
             }
 
+            // The ops of the summary: how many are to be written, fixed from the accepted list before any is written.
+            private void HitLogOpsPlanned(int planned) => PlanOps(_hitLog, ref _ops, planned);
+
+            private void HitLogOp(in OpRecord r) => WriteOpCounted(_hitLog, ref _ops, in r);
+
             private void HitLogEnd()
             {
-                EndHitLog(_hitLog, _hitLogHits);
+                EndHitLog(_hitLog, _hitLogHits, in _ops);
             }
         }
     }
