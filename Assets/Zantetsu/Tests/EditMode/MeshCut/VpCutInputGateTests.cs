@@ -433,5 +433,34 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(AppendCuttable(storage, closed, out _, out _), Is.True, "no refusal took any of the room for the second one");
             }
         }
+
+        // The two dictionaries' hash (2026-10-03): every accepted and every refused shape judged as before -- the same
+        // verdict, the same rejection, the same element -- against the gate as it was (VpCutInputGateBefore, the long's own hash).
+        [Test]
+        public void TheGatesHash_ChangesNoVerdict_OnEveryAcceptedAndRefusedShape()
+        {
+            int compared = 0;
+            foreach (Input input in Accepted())
+            {
+                VpCutInputVerdict now = input.Check();
+                VpCutInputVerdict before = VpCutInputGateBefore.Check(input.Vertices, input.Indices, input.TopologyOfVertex, input.TopologyVertexCount, input.Submeshes);
+                Assert.That(now.rejection, Is.EqualTo(before.rejection), input.Name);
+                Assert.That(now.element, Is.EqualTo(before.element), input.Name);
+                Assert.That(now.Accepted, Is.True, input.Name);
+                compared++;
+            }
+
+            foreach ((Input input, VpCutInputRejection expected) in Refused())
+            {
+                VpCutInputVerdict now = input.Check();
+                VpCutInputVerdict before = VpCutInputGateBefore.Check(input.Vertices, input.Indices, input.TopologyOfVertex, input.TopologyVertexCount, input.Submeshes);
+                Assert.That(now.rejection, Is.EqualTo(before.rejection), input.Name);
+                Assert.That(now.element, Is.EqualTo(before.element), input.Name + ": the element the refusal names");
+                Assert.That(now.rejection, Is.EqualTo(expected), input.Name);
+                compared++;
+            }
+
+            TestContext.Out.WriteLine("shapes compared with the gate as it was: " + compared);
+        }
     }
 }

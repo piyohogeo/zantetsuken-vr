@@ -197,7 +197,7 @@ namespace Zantetsu.Rendering
             int triangleCount, int indexCount)
         {
             // Every topology edge: exactly two faces, traversing it in opposite directions.
-            var edges = new Dictionary<long, EdgeUse>(indexCount);
+            var edges = new Dictionary<long, EdgeUse>(indexCount, TopologyPairComparer.Instance);
             for (int t = 0; t < triangleCount; t++)
             {
                 for (int k = 0; k < 3; k++)
@@ -238,7 +238,7 @@ namespace Zantetsu.Rendering
             // face (v, b, c) around v contributes the link step b -> c, every link vertex starts and ends exactly one
             // step, and the steps form cycles. One fan is one cycle through all of them; a vertex two fans share has
             // two or more.
-            var next = new Dictionary<long, int>(indexCount);
+            var next = new Dictionary<long, int>(indexCount, TopologyPairComparer.Instance);
             var facesAround = new int[topologyVertexCount];
             var startOf = new int[topologyVertexCount];
             for (int v = 0; v < topologyVertexCount; v++)
@@ -298,6 +298,23 @@ namespace Zantetsu.Rendering
             }
 
             return new VpCutInputVerdict(VpCutInputRejection.None, -1);
+        }
+
+        /// <summary>
+        /// The edge and fan checks' keys -- two topology ids packed into a long -- with the same equality (the long's own)
+        /// and a mixed hash (TL, 2026-10-03). The long's own hash is its two halves exclusive-or'ed, a ^ b, which puts a
+        /// mesh's keys on a few hundred values (the city walk's mall_001: 27036 fan keys on 776) so that the dictionaries'
+        /// work grew with their collisions -- most of a building's first hit. Nothing else of the checks changes: the same
+        /// keys, compared the same way; only where a key is filed.
+        /// </summary>
+        internal sealed class TopologyPairComparer : IEqualityComparer<long>
+        {
+            public static readonly TopologyPairComparer Instance = new TopologyPairComparer();
+
+            public bool Equals(long a, long b) => a == b;
+
+            // Fibonacci hashing: the key times 2^64 / golden ratio, its high half.
+            public int GetHashCode(long key) => (int)(((ulong)key * 0x9E3779B97F4A7C15UL) >> 32);
         }
 
         private static long EdgeKey(int a, int b)
