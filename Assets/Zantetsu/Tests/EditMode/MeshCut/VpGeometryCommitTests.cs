@@ -336,6 +336,45 @@ namespace Zantetsu.MeshCut.Tests
             return found;
         }
 
+        // ----- 0. showing ----------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// **An exception while showing leaves nothing registered** (2026-10-03): everything that can throw is made before
+        /// the table registration, so an exception from TryShow -- here thrown just before it -- leaves no registration,
+        /// no display instance and no shown entry, and the geometry is still the caller's to give back, once. The display
+        /// goes on showing.
+        /// </summary>
+        [Test]
+        public void AnExceptionWhileShowing_LeavesNothingRegistered_AndTheGeometryTheCallers()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                int geometries = f.table.LiveGeometryCount, instances = f.table.LiveDisplayInstanceCount;
+                VpLogicalCutDisplay.showBeforeRegistrationHookForTest = () => throw new InvalidOperationException("just before the registration");
+                try
+                {
+                    Assert.That(() => f.display.TryShow(fragment, body, Matrix4x4.identity), Throws.InvalidOperationException);
+                }
+                finally
+                {
+                    VpLogicalCutDisplay.showBeforeRegistrationHookForTest = null;
+                }
+
+                Assert.That(f.display.ShownCount, Is.Zero, "no shown entry");
+                Assert.That(f.table.LiveGeometryCount, Is.EqualTo(geometries), "no registration in the table");
+                Assert.That(f.table.LiveDisplayInstanceCount, Is.EqualTo(instances), "no display instance");
+
+                // The display goes on: another body is shown, and the first geometry is the caller's to give back, once.
+                VpStoredGeometry other = AppendBox(f.storage, new float3(3f, 0f, 0f));
+                Assert.That(f.display.TryShow(fragment, other, Matrix4x4.identity), Is.True, "the display shows again");
+                Assert.That(f.storage.TryRetireIndices(body.indexRange), Is.True, "the caller gives the unshown geometry back");
+                Assert.That(f.storage.TryRetireIndices(body.indexRange), Is.False, "once");
+                Assert.That(f.table.LiveGeometryCount, Is.EqualTo(geometries + 1), "only the shown one is registered");
+            }
+        }
+
         // ----- 1. one cut ----------------------------------------------------------------------------------------------
 
         /// <summary>

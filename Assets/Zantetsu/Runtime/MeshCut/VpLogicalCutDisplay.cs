@@ -2144,6 +2144,9 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>Tests only: called in TryShow just before the table registration, after everything that can throw was made.</summary>
+        internal static Action showBeforeRegistrationHookForTest;
+
         public bool TryShow(LogicalFragmentId fragment, VpStoredGeometry geometry, Matrix4x4 objectToWorld)
         {
             return TryShow(fragment, geometry, objectToWorld, Matrix4x4.identity, Array.Empty<VpClipBoundary>());
@@ -2168,6 +2171,12 @@ namespace Zantetsu.MeshCut
         /// The boundaries the geometry already reflects. Required: null is not "none". It is copied here.
         /// </param>
         /// <exception cref="ArgumentNullException"><paramref name="reflected"/> is null.</exception>
+        /// <remarks>
+        /// An exception from this call (an argument, a disposed, broken or preparing display, a failed GPU transfer --
+        /// which also marks the display broken -- or anything before the registration) leaves the geometry with no
+        /// registration in the table and no entry here: it is still the caller's to give back. Nothing after the
+        /// registration can throw.
+        /// </remarks>
         public bool TryShow(
             LogicalFragmentId fragment,
             VpStoredGeometry geometry,
@@ -2275,12 +2284,10 @@ namespace Zantetsu.MeshCut
             VertexTransfers += vertices > 0 ? 1 : 0;
             IndexTransfers += indices > 0 ? 1 : 0;
 
-            if (!_table.TryRegisterGeometryWithDisplayInstance(
-                    geometry, out VpGeometryReference reference, out VpDisplayInstanceReference instance))
-            {
-                return false;
-            }
-
+            // Everything that can throw -- the copies, the entry, the room in the lists -- is made before the
+            // registration (2026-10-03): once the table holds the geometry, only assignments and additions within the
+            // room made here follow, so an exception from this call never leaves a registration or an entry behind and
+            // the geometry stays the caller's.
             VpReflectedSet reflectedCopy = VpReflectedSet.Of(reflected, _reflectedSets);
 
             var ranges = coldEntry == null ? new VpGeometryRange[commands.Length] : coldEntry.ranges;
@@ -2290,6 +2297,24 @@ namespace Zantetsu.MeshCut
             }
 
             var entry = coldEntry ?? new Shown();
+            if (entry.instances.Count == entry.instances.Capacity)
+            {
+                entry.instances.Capacity = Math.Max(2, entry.instances.Capacity * 2);
+            }
+
+            if (_shown.Count == _shown.Capacity)
+            {
+                // The cold path refused a full list above, so this is the ordinary path's growth, made here.
+                _shown.Capacity = Math.Max(2, _shown.Capacity * 2);
+            }
+
+            showBeforeRegistrationHookForTest?.Invoke();
+            if (!_table.TryRegisterGeometryWithDisplayInstance(
+                    geometry, out VpGeometryReference reference, out VpDisplayInstanceReference instance))
+            {
+                return false;
+            }
+
             entry.fragment = fragment;
             entry.geometry = geometry;
             entry.reference = reference;
