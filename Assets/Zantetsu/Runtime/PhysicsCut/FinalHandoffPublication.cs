@@ -212,6 +212,8 @@ namespace Zantetsu.PhysicsCut
                 PhysicsOwnerShape negativeShape = null;
                 PreparedSideColliders positivePrepared = null;
                 PreparedSideColliders negativePrepared = null;
+                MassPropertiesBoundary.Pending positivePending = default;
+                MassPropertiesBoundary.Pending negativePending = default;
                 try
                 {
                     // Both sides' colliders, made and cooked on the actors they are for and **left disabled**: the
@@ -233,11 +235,33 @@ namespace Zantetsu.PhysicsCut
                     // its Provisional side, and each keeps the source's display correspondence: the actors are not
                     // moved, so what is drawn from them is drawn where it already was.
                     input.registry.Reserve(2);
+
+                    // The last of the preparation: the final mass properties checked, and only the mass written
+                    // (MassPropertiesBoundary.TryBegin). A refusal writes back what it wrote; the switch below only
+                    // commits what was begun here, so nothing it does is refused for the numbers.
+                    if (!positiveSide.TryBeginMassProperties(
+                            positiveMass, positiveCentre, positiveInertia, positiveInertiaRotation,
+                            out positivePending, out MassPropertiesRefusal _)
+                        || !negativeSide.TryBeginMassProperties(
+                            negativeMass, negativeCentre, negativeInertia, negativeInertiaRotation,
+                            out negativePending, out MassPropertiesRefusal _))
+                    {
+                        // Still the preparation: the begun mass goes back, and with it what this call had made. The final
+                        // set cannot be established, as at the mass step above.
+                        MassPropertiesBoundary.Revert(ref negativePending);
+                        MassPropertiesBoundary.Revert(ref positivePending);
+                        negativePrepared?.Withdraw();
+                        positivePrepared?.Withdraw();
+                        Discard(positiveShape, negativeShape);
+                        return PhysicsPublicationOutcome.PhysicsNotEstablished;
+                    }
                 }
                 catch (Exception)
                 {
                     // Still the preparation: nothing of the published pair has changed. Only what this call had made
-                    // goes back, and the error is passed on.
+                    // goes back -- a begun mass included -- and the error is passed on.
+                    MassPropertiesBoundary.Revert(ref negativePending);
+                    MassPropertiesBoundary.Revert(ref positivePending);
                     negativePrepared?.Withdraw();
                     positivePrepared?.Withdraw();
                     Discard(positiveShape, negativeShape);
@@ -256,11 +280,11 @@ namespace Zantetsu.PhysicsCut
                     // back, so the centre-of-mass velocity and the angular velocity are the ones the solver had a
                     // moment ago and nothing is converted for the centre of mass that has just changed.
                     Establish(
-                        positiveSide, positivePrepared, positiveMass, positiveCentre, positiveInertia,
+                        positiveSide, positivePrepared, ref positivePending, positiveMass, positiveCentre, positiveInertia,
                         positiveInertiaRotation, localRotation, localOffset);
                     establishedHook?.Invoke(true);
                     Establish(
-                        negativeSide, negativePrepared, negativeMass, negativeCentre, negativeInertia,
+                        negativeSide, negativePrepared, ref negativePending, negativeMass, negativeCentre, negativeInertia,
                         negativeInertiaRotation, localRotation, localOffset);
                     establishedHook?.Invoke(false);
 
@@ -270,7 +294,10 @@ namespace Zantetsu.PhysicsCut
                 {
                     // The switch has begun and there is no way back to what was there. Nothing is given back here:
                     // the pair holds the shapes the actors are on, and ending that pair -- which the caller does, with
-                    // the actors -- is what takes them back. The error is passed on as an internal error.
+                    // the actors -- is what takes them back. A mass begun and not committed is written back first, so
+                    // no body is left with a final mass and the old inertia. The error is passed on as an internal error.
+                    MassPropertiesBoundary.Revert(ref negativePending);
+                    MassPropertiesBoundary.Revert(ref positivePending);
                     positive = default;
                     negative = default;
                     throw;
@@ -336,6 +363,7 @@ namespace Zantetsu.PhysicsCut
         private static void Establish(
             PhysicsOwnerSide side,
             PreparedSideColliders prepared,
+            ref MassPropertiesBoundary.Pending pending,
             double mass,
             float3 centreOfMass,
             float3 inertia,
@@ -351,17 +379,11 @@ namespace Zantetsu.PhysicsCut
             // prepared colliders begin. The old ones are destroyed afterwards, having been disabled first.
             prepared.Adopt(localRotation, localOffset);
 
-            side.Mass = mass;
-            side.CenterOfMass = centreOfMass;
-            side.InertiaTensor = inertia;
-            side.InertiaRotation = inertiaRotation;
-            side.LinearVelocity = linear;
-            side.AngularVelocity = angular;
-
-            // The one place that writes a body, so the values it is published with are the values decided above. No
-            // impulse is added: the separation impulse was applied once, at the Provisional publication. The flags
-            // the publication set on this same actor (automatic mass off, kinematic as the anchors decided) stand.
-            side.ApplyMassAndMotionToBody();
+            // The one place that writes a body, so the values it is published with are the values decided above: the
+            // application begun in the preparation is committed (its numbers were all checked there). No impulse is
+            // added: the separation impulse was applied once, at the Provisional publication. The flags the
+            // publication set on this same actor (automatic mass off, kinematic as the anchors decided) stand.
+            side.CommitMassAndMotion(ref pending, mass, centreOfMass, inertia, inertiaRotation, linear, angular);
         }
 
         private static void Discard(PhysicsOwnerShape positive, PhysicsOwnerShape negative)

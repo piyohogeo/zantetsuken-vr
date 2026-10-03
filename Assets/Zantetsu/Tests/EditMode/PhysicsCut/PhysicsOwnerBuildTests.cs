@@ -634,7 +634,7 @@ namespace Zantetsu.PhysicsCut.Tests
                         side.Root.SetActive(true);
                         try
                         {
-                            side.ApplyToBody();
+                            Assert.That(side.TryApplyToBody(out MassPropertiesRefusal _), Is.True, "the mass properties were applied");
                             Assert.That(
                                 side.Body.mass, Is.EqualTo((float)side.Mass).Within(1e-5f), "the mass the solver took");
                             Assert.That(
@@ -660,6 +660,48 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         // ----- what a refusal and a discard leave behind ----------------------------------------------------------------
+
+        /// <summary>
+        /// A side whose mass properties are refused where they meet its body (MassPropertiesBoundary) is not a side that
+        /// was built: the build fails with its own reason, and nothing it made is left -- the first side, applied already,
+        /// included.
+        /// </summary>
+        [Test]
+        public void ARefusedMassApplication_FailsTheBuild_AndLeavesNothingBehind()
+        {
+            using (OwnerCutHarness h = OneStretchedBox())
+            using (Fixture f = NewFixture())
+            {
+                List<Mesh> inherited = InheritedMeshes(h.input.convexCount);
+                using (PhysicsCutProducts products = Cut(f, h, float4x4.identity))
+                {
+                    int objectsBefore = UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+                    int asked = 0;
+                    MassPropertiesBoundary.refuseAfterMassWriteForTest = b => ++asked == 2;   // the second side's body
+                    bool built;
+                    PhysicsOwnerCandidate candidate;
+                    PhysicsOwnerBuildOutcome outcome;
+                    try
+                    {
+                        built = PhysicsOwnerBuilder.TryBuild(Input(products, h, inherited, Distribute(h)), out candidate, out outcome);
+                    }
+                    finally
+                    {
+                        MassPropertiesBoundary.refuseAfterMassWriteForTest = null;
+                    }
+
+                    Assert.That(built, Is.False);
+                    Assert.That(outcome, Is.EqualTo(PhysicsOwnerBuildOutcome.MassPropertiesRefused));
+                    Assert.That(candidate, Is.Null);
+                    Assert.That(asked, Is.EqualTo(2), "the first side was applied and the second refused");
+                    Assert.That(
+                        UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length,
+                        Is.EqualTo(objectsBefore), "both sides' objects were destroyed");
+                }
+
+                DestroyMeshes(inherited);
+            }
+        }
 
         /// <summary>
         /// An inherited convex whose existing shape was not given is a refusal, and a refusal builds nothing: the

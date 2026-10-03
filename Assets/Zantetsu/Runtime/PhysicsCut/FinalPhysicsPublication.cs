@@ -408,7 +408,13 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 side.Root.SetActive(true);
-                side.ApplyToBody();
+
+                // A refusal of the mass properties (MassPropertiesBoundary) is a pair that cannot be established: the
+                // caller withdraws it and ends the cut the ordinary way of a physics failure.
+                if (!side.TryApplyToBody(out MassPropertiesRefusal _))
+                {
+                    return false;
+                }
             }
 
             return Standing(candidate.Positive) && Standing(candidate.Negative);
