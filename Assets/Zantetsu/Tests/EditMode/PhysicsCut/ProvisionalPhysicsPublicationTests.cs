@@ -935,6 +935,51 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         /// <summary>
+        /// A side whose mass properties are refused where they meet its body (MassPropertiesBoundary) is a side that
+        /// cannot be established: the same continuation as above -- the cut aborted, the source retired, nothing of the
+        /// pair in the scene -- with the refused body's mass written back and the candidate still the caller's.
+        /// </summary>
+        [Test]
+        public void AMassPropertiesRefusal_IsAPairThatCannotBeEstablished_AbortsTheCutAndRetiresTheSource()
+        {
+            using (World w = NewWorld())
+            {
+                CutOperationId operation = Admit(w);
+                ProvisionalOwnerCandidate candidate = Build(w, operation);
+
+                // The positive side is established after the negative one: the refusal comes with one side in the scene.
+                Rigidbody refused = candidate.Positive.Body;
+                float massBefore = refused.mass;
+                MassPropertiesBoundary.refuseAfterMassWriteForTest = b => ReferenceEquals(b, refused);
+                PhysicsPublicationOutcome outcome;
+                ProvisionalOwnerPair pair;
+                try
+                {
+                    ProvisionalPhysicsPublicationInput input = Publication(w, operation, candidate);
+                    outcome = ProvisionalPhysicsPublication.TryPublish(in input, out pair, out LogicalCutResultOutcome _);
+                }
+                finally
+                {
+                    MassPropertiesBoundary.refuseAfterMassWriteForTest = null;
+                }
+
+                Assert.That(outcome, Is.EqualTo(PhysicsPublicationOutcome.PhysicsNotEstablished));
+                Assert.That(pair, Is.Null);
+                Assert.That(candidate.Positive.LastRefusal, Is.EqualTo(MassPropertiesRefusal.RefusedForTest));
+                Assert.That(refused.mass, Is.EqualTo(massBefore), "the refused body's mass was written back");
+                Assert.That(w.registry.ProvisionalPairCount, Is.Zero);
+                Assert.That(
+                    w.ledger.TryGetFragmentState(w.source, out LogicalFragmentState state) && state == LogicalFragmentState.Live,
+                    Is.False,
+                    "the source was retired through the ledger");
+                Assert.That(w.registry.TryGet(w.source, out PhysicsFragmentOwner _), Is.False, "and its owner with it");
+                Assert.That(candidate.Positive.Root.activeInHierarchy, Is.False, "nothing of the pair is in the scene");
+                Assert.That(candidate.Negative.Root.activeInHierarchy, Is.False, "the side established first was taken back out");
+                Assert.That(candidate.IsDetached, Is.False, "and the candidate is still the caller's to give back");
+            }
+        }
+
+        /// <summary>
         /// After the switch there is nothing to convert: an unexpected exception is passed on as it is, and the pair
         /// it was raised after is published all the same.
         /// </summary>

@@ -301,7 +301,7 @@ namespace Zantetsu.PhysicsCut
         /// <para>
         /// The two automatic mass properties are declared **before** the side enters the scene, and the mass, the
         /// centre of mass, the inertia and the motion are written **after** it, as they were. Nothing is said here
-        /// about what a body out of the scene does with any property.
+        /// about what a body out of the scene does with any property. False when the mass properties are refused.
         /// </para>
         /// </summary>
         private static bool Establish(PhysicsOwnerSide side, bool carriesTheConstraint)
@@ -309,7 +309,7 @@ namespace Zantetsu.PhysicsCut
             side.DeclareMassPropertiesExplicit();
             side.Root.SetActive(true);
 
-            // The declaration above is this side's; what is left is the rest of what `ApplyToBody()` writes, in
+            // The declaration above is this side's; what is left is the rest of what `TryApplyToBody()` writes, in
             // its order: the same check for a body, `isKinematic` from the anchors, then the mass, the centre of
             // mass, the inertia and the motion.
             if (side.Body != null)
@@ -317,7 +317,13 @@ namespace Zantetsu.PhysicsCut
                 side.Body.isKinematic = side.FixedByAnchors;
             }
 
-            side.ApplyMassAndMotionToBody();
+            // A refusal of the mass properties (MassPropertiesBoundary) is a side that could not be established: the
+            // caller withdraws both and ends the cut the ordinary way of a physics failure.
+            if (!side.TryApplyMassAndMotionToBody(out MassPropertiesRefusal _))
+            {
+                return false;
+            }
+
             establishedHook?.Invoke(carriesTheConstraint);
             return side.Root.activeInHierarchy;
         }

@@ -54,6 +54,13 @@ namespace Zantetsu.PhysicsCut
         /// 7.2.2): the caller goes the way any build that cannot be made goes.
         /// </summary>
         BuildFailed = 7,
+
+        /// <summary>
+        /// A side's mass properties were refused where they are given to its body (<see cref="MassPropertiesBoundary"/>):
+        /// a value that is not a positive finite number, axes that are not a rotation, or moments that cannot be scaled to
+        /// the mass the body keeps. Everything this call had made is destroyed, as for <see cref="BuildFailed"/>.
+        /// </summary>
+        MassPropertiesRefused = 8,
     }
 
     /// <summary>
@@ -194,7 +201,7 @@ namespace Zantetsu.PhysicsCut
     /// **The values are kept here, and this is where they come from.** A Rigidbody on an inactive object has no body
     /// in the physics scene to hold them: its mass survives, but the centre of mass, the inertia and the velocities
     /// do not, and reading them back gives the automatic ones. So what this build decided is recorded here and
-    /// written onto the body by <see cref="ApplyToBody"/>, which the build calls once and the step that publishes the
+    /// written onto the body by <see cref="TryApplyToBody"/>, which the build calls once and the step that publishes the
     /// pair calls again with the owner in the scene. Nothing here reads the body to find out what it decided.
     /// </para>
     /// </summary>
@@ -256,6 +263,27 @@ namespace Zantetsu.PhysicsCut
         public quaternion InertiaRotation { get; internal set; }
 
         /// <summary>
+        /// The mass the body read back when the side's mass properties were last applied (<see cref="MassPropertiesBoundary"/>):
+        /// not less than the engine's floor, 1e-7 kg, so above <see cref="Mass"/> for a side lighter than that.
+        /// <see cref="Mass"/> and <see cref="InertiaTensor"/> stay the side's own. Zero before the first application; a
+        /// refused application leaves it as it was.
+        /// </summary>
+        public float EffectiveMass { get; private set; }
+
+        /// <summary>
+        /// The principal moments worked out and written at that application: <see cref="InertiaTensor"/> scaled to
+        /// <see cref="EffectiveMass"/>. The value applied, not one read back -- a body out of the scene reads its inertia
+        /// as zero until it is applied again in the scene.
+        /// </summary>
+        public float3 AppliedInertiaTensor { get; private set; }
+
+        /// <summary>EffectiveMass / Mass when the body did not hold the mass asked; exactly 1 otherwise (and before any application). A record.</summary>
+        public double InertiaScale { get; private set; } = 1.0;
+
+        /// <summary>Why the last application of this side's mass properties was refused; None when it was not.</summary>
+        public MassPropertiesRefusal LastRefusal { get; private set; }
+
+        /// <summary>
         /// The linear velocity of this side's centre of mass, from the first-split inheritance (DESIGN 7.2). Zero on
         /// a fixed side, which takes no offset and no impulse.
         /// </summary>
@@ -268,7 +296,7 @@ namespace Zantetsu.PhysicsCut
         /// Says that this body's centre of mass and inertia are given, not computed. **It may be called while the
         /// object is out of the scene**: these two flags keep what they are given there, which was measured on this
         /// path. Nothing is said here about any other property of a body that is out of the scene. It writes no
-        /// values -- the mass, the centre of mass, the inertia and the motion are <see cref="ApplyToBody"/>'s -- and
+        /// values -- the mass, the centre of mass, the inertia and the motion are <see cref="TryApplyToBody"/>'s -- and
         /// it touches nothing else about the body.
         /// </summary>
         internal void DeclareMassPropertiesExplicit()
@@ -283,49 +311,140 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Writes the mass properties and the first-split motion onto the body. It is called when the side is built
-        /// and must be called again at publication, when the owner is in the scene: the values below are written
-        /// there, and what an inactive body does with each of them is not something this relies on. It changes
-        /// nothing about the owner's place in the scene, and publishes nothing by itself.
+        /// Writes the flags, the mass properties and the first-split motion onto the body. It is called when the side is
+        /// built and must be called again at publication, when the owner is in the scene: the values below are written
+        /// there, and what an inactive body does with each of them is not something this relies on. It changes nothing
+        /// about the owner's place in the scene, and publishes nothing by itself.
+        /// <para>
+        /// False when the mass properties are refused (<see cref="MassPropertiesBoundary"/>): the body is then left as it
+        /// was -- its automatic flags, its kinematic flag, its mass properties and its velocities -- and
+        /// <see cref="LastRefusal"/> says why. The values asked are checked before the flags are touched.
+        /// </para>
         /// </summary>
-        public void ApplyToBody()
+        public bool TryApplyToBody(out MassPropertiesRefusal refusal)
         {
-            if (Body == null)
+            refusal = Body == null ? MassPropertiesRefusal.NoBody : MassPropertiesBoundary.Check(Mass, CenterOfMass, InertiaTensor, InertiaRotation);
+            if (refusal != MassPropertiesRefusal.None)
             {
-                return;
+                LastRefusal = refusal;
+                return false;
             }
 
+            bool automaticCentre = Body.automaticCenterOfMass, automaticInertia = Body.automaticInertiaTensor, kinematic = Body.isKinematic;
+            Vector3 linear = Body.linearVelocity, angular = Body.angularVelocity;
             Body.automaticCenterOfMass = false;
             Body.automaticInertiaTensor = false;
             Body.isKinematic = FixedByAnchors;
-            ApplyMassAndMotionToBody();
+            try
+            {
+                if (TryApplyMassAndMotionToBody(out refusal))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // Not a refusal, and passed on as it is -- after the flags and the motion are put back as on a refusal
+                // (the boundary has written back any mass it wrote).
+                PutBack(automaticCentre, automaticInertia, kinematic, linear, angular);
+                throw;
+            }
+
+            // Refused after the flags: the boundary has written the mass back, and the flags and the motion follow.
+            PutBack(automaticCentre, automaticInertia, kinematic, linear, angular);
+            return false;
+        }
+
+        private void PutBack(bool automaticCentre, bool automaticInertia, bool kinematic, Vector3 linear, Vector3 angular)
+        {
+            Body.isKinematic = kinematic;
+            Body.automaticInertiaTensor = automaticInertia;
+            Body.automaticCenterOfMass = automaticCentre;
+            if (!kinematic)
+            {
+                Body.linearVelocity = linear;
+                Body.angularVelocity = angular;
+            }
         }
 
         /// <summary>
-        /// Writes the mass properties and the motion onto a body whose flags <see cref="ApplyToBody"/> has already
-        /// set: the Final handoff's case, where the same actor keeps its automatic-mass and kinematic settings and
-        /// only what the final shape decides is written again.
+        /// Writes the mass properties and the motion onto a body whose flags <see cref="TryApplyToBody"/> (or the
+        /// publication) has already set. False when the mass properties are refused: nothing is then written -- the
+        /// boundary writes the mass back, and the motion is written only after the mass properties were given.
         /// </summary>
-        public void ApplyMassAndMotionToBody()
+        public bool TryApplyMassAndMotionToBody(out MassPropertiesRefusal refusal)
         {
-            if (Body == null)
+            // The mass the body keeps and the inertia that goes with it (TL, 2026-10-03): worked out from the side's own
+            // values on every application, so a later application again does not compound it.
+            if (!MassPropertiesBoundary.TryApply(Body, Mass, CenterOfMass, InertiaTensor, InertiaRotation, out MassPropertiesBoundary.Applied applied, out refusal))
             {
-                return;
+                LastRefusal = refusal;
+                return false;
             }
 
-            Body.mass = (float)Mass;
-            Body.centerOfMass = CenterOfMass;
-            Body.inertiaTensor = InertiaTensor;
-            Body.inertiaTensorRotation = InertiaRotation;
+            Record(in applied);
             if (FixedByAnchors)
             {
                 // A fixed side takes no offset and no impulse (DESIGN 7.2), and a kinematic body has no velocity to
                 // be given.
+                return true;
+            }
+
+            Body.linearVelocity = LinearVelocity;
+            Body.angularVelocity = AngularVelocity;
+            return true;
+        }
+
+        /// <summary>
+        /// The Final handoff's first half, before its switch: checks the final mass properties and writes the mass only
+        /// (<see cref="MassPropertiesBoundary.TryBegin"/>). Nothing of this side's own records changes. A refusal leaves
+        /// the body as it was.
+        /// </summary>
+        internal bool TryBeginMassProperties(
+            double mass, float3 centreOfMass, float3 inertia, quaternion inertiaRotation,
+            out MassPropertiesBoundary.Pending pending, out MassPropertiesRefusal refusal)
+        {
+            if (!MassPropertiesBoundary.TryBegin(Body, mass, centreOfMass, inertia, inertiaRotation, out pending, out refusal))
+            {
+                LastRefusal = refusal;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The Final handoff's second half, in its switch: the begun application is committed, this side takes the final
+        /// values as its own, and the motion read before is written back (not on a fixed side). No check of the numbers
+        /// refuses it; it can still fail as any engine call can, and then the side's records stay the ones it had.
+        /// </summary>
+        internal void CommitMassAndMotion(
+            ref MassPropertiesBoundary.Pending pending, double mass, float3 centreOfMass, float3 inertia,
+            quaternion inertiaRotation, float3 linearVelocity, float3 angularVelocity)
+        {
+            MassPropertiesBoundary.Applied applied = MassPropertiesBoundary.Commit(ref pending);
+            Mass = mass;
+            CenterOfMass = centreOfMass;
+            InertiaTensor = inertia;
+            InertiaRotation = inertiaRotation;
+            LinearVelocity = linearVelocity;
+            AngularVelocity = angularVelocity;
+            Record(in applied);
+            if (FixedByAnchors)
+            {
                 return;
             }
 
             Body.linearVelocity = LinearVelocity;
             Body.angularVelocity = AngularVelocity;
+        }
+
+        private void Record(in MassPropertiesBoundary.Applied applied)
+        {
+            EffectiveMass = applied.effectiveMass;
+            AppliedInertiaTensor = applied.appliedInertia;
+            InertiaScale = applied.inertiaScale;
+            LastRefusal = MassPropertiesRefusal.None;
         }
 
         /// <summary>
@@ -336,7 +455,7 @@ namespace Zantetsu.PhysicsCut
         /// <para>
         /// The mass, the centre of mass and the inertia do not change: they are quantities of the numerical local
         /// frame, and moving the owner does not touch them. What changes is where the owner stands and, on a free
-        /// side, its first velocity. <see cref="ApplyToBody"/> still has to be called once the owner is in the scene.
+        /// side, its first velocity. <see cref="TryApplyToBody"/> still has to be called once the owner is in the scene.
         /// </para>
         /// </summary>
         internal void Reposition(
@@ -721,6 +840,18 @@ namespace Zantetsu.PhysicsCut
     /// meshes. Nothing looks at the cooked hulls and nothing watches the owners afterwards.
     /// </para>
     /// </summary>
+    /// <summary>A side's mass properties refused while it was being built (<see cref="PhysicsOwnerBuildOutcome.MassPropertiesRefused"/>).</summary>
+    internal sealed class MassPropertiesRefusedException : Exception
+    {
+        internal MassPropertiesRefusedException(MassPropertiesRefusal refusal)
+            : base("the side's mass properties were refused: " + refusal)
+        {
+            Refusal = refusal;
+        }
+
+        internal MassPropertiesRefusal Refusal { get; }
+    }
+
     public static class PhysicsOwnerBuilder
     {
         /// <summary>How far the two sides' masses may be from the parent snapshot, relative to it.</summary>
@@ -804,6 +935,15 @@ namespace Zantetsu.PhysicsCut
                     if (input.buildingWorld.enabled && !positive.FixedByAnchors) BuildingWorldD6.Create(positive, in input.buildingWorld, depth);
                     if (input.buildingWorld.enabled && !negative.FixedByAnchors) BuildingWorldD6.Create(negative, in input.buildingWorld, depth);
                 }
+            }
+            catch (MassPropertiesRefusedException)
+            {
+                // A side's body refused its mass properties: the same ending as any build that cannot be made, with
+                // its own reason.
+                DestroySide(positive);
+                DestroySide(negative);
+                outcome = PhysicsOwnerBuildOutcome.MassPropertiesRefused;
+                return false;
             }
             catch (Exception)
             {
@@ -936,8 +1076,12 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 // After the colliders, and through the one place that writes them, so that the values the owner is
-                // published with are the values this build decided and not a second copy of them.
-                side.ApplyToBody();
+                // published with are the values this build decided and not a second copy of them. A refusal ends this
+                // side the way any failure here does (the root is destroyed below) and the build with its own reason.
+                if (!side.TryApplyToBody(out MassPropertiesRefusal refusal))
+                {
+                    throw new MassPropertiesRefusedException(refusal);
+                }
                 sideBuiltHook?.Invoke(positive);
             }
             catch
