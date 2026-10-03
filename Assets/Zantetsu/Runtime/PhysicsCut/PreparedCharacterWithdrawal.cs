@@ -5,6 +5,16 @@ using UnityEngine;
 namespace Zantetsu.PhysicsCut
 {
     /// <summary>
+    /// What an object drawn by its own renderers until its first cut (DESIGN 4.5.1: a prepared character, a placed
+    /// object) does when the owner its first cut was registered with is withdrawn -- that cut's publication, or the
+    /// world's ending: it stops being drawn, simulated and hit as itself, once. Nothing it holds is given back here.
+    /// </summary>
+    internal interface IPreparedSourceWithdrawal
+    {
+        void Withdraw();
+    }
+
+    /// <summary>
     /// How a prepared character's own hierarchy leaves at its first cut's publication (DESIGN 19.1.9): its drawing, the
     /// update that poses its bones and its motion body end there, once, and nothing it holds -- the
     /// bones, the meshes, the display input -- is given back.
@@ -19,7 +29,7 @@ namespace Zantetsu.PhysicsCut
     /// <see cref="BeginCutDisplay"/>; posing and motion still leave at the publication boundary.
     /// </para>
     /// </summary>
-    internal sealed class PreparedCharacterWithdrawal
+    internal sealed class PreparedCharacterWithdrawal : IPreparedSourceWithdrawal
     {
         private static readonly ProfilerMarker s_confirm = new ProfilerMarker("Zantetsu.CharacterCut.ConfirmWithdrawal");
 
@@ -131,7 +141,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>The withdrawal, once: the parts, or the whole root.</summary>
-        internal void Withdraw()
+        public void Withdraw()
         {
             if (IsWithdrawn)
             {

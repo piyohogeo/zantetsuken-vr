@@ -836,6 +836,50 @@ MobPlanシーンではPlayerをXZ円（初期半径1.5 m）、NPCを半径0.35 m
   - 検証Player：ms3（受入記録、2026-10-01）、pf3、pm4（code 0）。
   - 記録：`docs/diagnostics/building-groups-2026-09-30.md`、検証記録 RESULTS-fusion §37〜§73。
 
+#### 7.2.5 配置済み切断対象の遅延登録と初回切断
+
+配置済みの建物とPropを、最初の切断まで配置Instance自身のRendererとColliderで描画・衝突させ、最初の命中で初めて切断世界へ入れる経路とする（2026-10-03、4.5.1）。読み込み時に切断世界へ登録してVPで描く即時登録も残す。どちらを使うかは配置ごとに指定する。
+
+- **未切断時に保持するもの。** 切断対象は、入力（凸包、頂点、Index、Anchor）と、Instanceの配置における命中形状の複製を持つ。Propは配置における物理入力（凸包とcook済みMesh）を一度だけ準備して持つ。切断世界のStorage、表示、Owner、Ledger、物理には何も登録しない。InstanceのRenderer、Material、Colliderは配置のまま変更しない。LogicalFragmentは、命中が対象を識別した時点で発行する。
+- **Propの初回切断。** 命中時に次を同じ命中の処理内で行い、同じ要求で切断を依頼する。
+  - 凸包の分類と受付判定
+  - 表示入力の追加
+  - 表示
+  - Ownerの登録
+
+  Pendingでは描画だけを直ちに表示側へ移し、Colliderは公開まで残す。Instanceの退出は公開時に行う。
+- **建物の初回切断。** 7.2.4の常時Kinematic Hullでだけ受け付ける。
+  - 命中時に、群、Owner、基準Geometryを未表示で登録してから、群の受付を行う。
+  - PendingとHeldの間は、Instanceの描画とColliderを維持する。
+  - 表示側の最初の公開の直前に表示登録を行う。公開の直後に、InstanceのRendererとColliderを止める。
+  - 描画は二重にも空白にもしない。
+- **不受理と例外の扱い。**
+  - 準備段階での不受理：凸包の分類不能、Storageの拒否、表示の拒否、常時Kinematicでない建物が該当する。その試行で作ったものを返し、Instanceは配置のままとし、対象を以後切断しない。一時的な容量不足と空側は不受理とせず、候補のまま残す。
+  - 建物の命中に対する即時不受理：群を取り戻し、Fragmentを退役する。対象は新しいFragmentで再び候補とする。
+  - 後からの不受理：初回切断が公開されずに終わった場合をいう（公開時の表示登録の拒否と例外を含む）。Stepの終わりに群を取り戻し、対象を以後切断しない。
+  - 建物の群の受付での例外：その場で群を取り戻し、例外を呼出側へ渡し、対象を以後切断しない。記録済みのHitにも結果を一つ与え、結果のないHitを残さない。既に結果のあるHitは上書きせず、結果を二重に与えない。
+  - Propの初回切断でOwner登録後に起きた例外（Owner登録の通知、基準Geometry登録、切断依頼を含む）：例外は呼出側へ渡す。
+    - 切断が未受理の場合（Fragmentが対象のままで、その操作がない）：Fragmentを退役し、Owner（Actorと取り込んだ凸包）を退役し、基準Geometryを忘れる。Instanceは変更せず、対象を以後切断しない。Ownerの退役でInstanceを退出させない。
+    - 切断が受理済みの場合：切断は既存の記録が保持し、中止または世界の終了で閉じる。候補は何も返さない。表示が描画するため、Instanceの描画だけを止め、Colliderは公開での退出まで残す。
+  - 遅延建物のHull登録中の例外：例外は呼出側へ渡し、対象を以後切断しない。Hull試行の内部での例外では、Trialが自分の分を取り消し、Fragmentを退役する。登録後の例外（Owner登録、基準Geometry登録、取り戻し情報の作成）では、Owner、Fragment、基準Geometry、群を取り消す。
+  - 取り戻しの内容：保留中のHitを放棄し、Owner、Fragment、基準Geometry、Index範囲を退役し、群のActor、Collider、Hull、Meshを一度だけ破棄する。何も表示していないため、Instanceの描画は離れていない。
+- **形状データの所有権と回収。**
+  - 表示が受け取るまでは呼出側の所有とする。追加後・表示前の不受理と例外では、呼出側が返す（Index範囲の退役とVertex群の解放）。
+  - 表示が受け取った後は世界の所有とする。Fragmentの退役後に世界の回収が一度だけ返し、呼出側は返さない。VpLogicalCutDisplay.TryShowは、例外で終わった場合に登録を残さない。
+  - 即時登録の建物Hull：表示前の不受理と例外は呼出側の所有とする。次の場合は世界の所有とする。
+    - 表示後の例外（Hull登録の内部、およびHull登録後のOwner登録と基準Geometry登録を含む）
+    - 表示後のHull登録の不受理
+
+    Hull試行は、作ったもの（一覧、休止の追跡、Collider、Member、Hull、Mesh、Shape）を一度だけ取り消す。Actorはどの場合も呼出側が破棄する。
+  - 遅延登録の建物：基準GeometryをDAGへ登録するまでは呼出側の所有とし、それまでの例外では呼出側が返す。DAGへの登録後は世界の所有とし、取り戻しと例外ではIndex範囲を退役し、Vertex領域は世界の回収が一度だけ返す。即時登録では表示が受け取った時点で世界の所有に移るが、遅延登録では表示しないため、DAGへの登録を境目とする。
+  - 遅延登録のProp：表示が受け取った後は世界の所有とし、未受理の例外ではFragmentの退役後に世界の回収が一度だけ返す。受理済みの例外では切断の記録とともに回収する。
+  - 通常Bodyとしての即時登録で、表示後に例外が起きた場合の取り消しは実装しておらず、この節の契約に含めない。
+- **不受理となった候補。** 検出器の一覧に残るが、命中対象にならない。命中形状とPropの物理入力は、登録器の破棄まで保持する。登録器の破棄で一覧から外し、それらを返す。
+- **範囲外。** 次はこの節の契約に含めず、検証済みとも扱わない。
+  - スケールした配置（代替Transformによる登録）
+  - 街歩き固有の描画統一、Scene設定、計測
+- **根拠。** PlayMode `CutWorldRootPlayModeTests.PlacedDeferred`／`PlacedHullOwnership`／`PlacedRefusal`／`PlacedCompound`／`PlacedUnified`、EditMode `PlacedCuttableInputTests`。
+
 ### 7.3 Collider Cooking Profile
 
 初期製品は一つの明示的なCooking Profileだけで成立させる。具体的なcookingOptionsはPhase 4の実装で選び、`Physics.BakeMesh`と適用先`MeshCollider.cookingOptions`へ同じ構成を指定する。Bake後にMesh形状を変更しない。入力Gateと7.2の自前B-rep構築条件は維持する。

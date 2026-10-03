@@ -170,8 +170,8 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether it has left the physics scene.</summary>
         public bool IsWithdrawn { get; private set; }
 
-        // Dedicated first-cut bridge. Borrowed character hierarchy is stopped, never destroyed by this owner.
-        internal PreparedCharacterWithdrawal PreparedCharacterWithdrawal;
+        // Dedicated first-cut bridge. A borrowed character hierarchy or placed instance is stopped, never destroyed by this owner.
+        internal IPreparedSourceWithdrawal PreparedSourceWithdrawal;
 
         // The prepared character's own hierarchy leaving at its first cut's publication (inside that publication).
         private static readonly Unity.Profiling.ProfilerMarker s_withdrawPreparedRoot =
@@ -225,11 +225,11 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsWithdrawn = true;
-            if (PreparedCharacterWithdrawal != null)
+            if (PreparedSourceWithdrawal != null)
             {
                 using (s_withdrawPreparedRoot.Auto())
                 {
-                    PreparedCharacterWithdrawal.Withdraw();
+                    PreparedSourceWithdrawal.Withdraw();
                 }
             }
             if (Root != null)

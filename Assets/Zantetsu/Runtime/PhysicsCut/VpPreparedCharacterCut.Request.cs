@@ -338,7 +338,7 @@ namespace Zantetsu.PhysicsCut
                     actorTransferred=registered;
                 }
                 world.Geometry.RegisterBaseGeometry(Source,output.Geometry,Matrix4x4.identity);
-                owner.PreparedCharacterWithdrawal=withdrawal;
+                owner.PreparedSourceWithdrawal=withdrawal;
                 }
                 finally { actorScope.Dispose(); }
                 var ask=new ProvisionalCutAsk{source=Source,plane=plane,renderAnchor=renderAnchor,

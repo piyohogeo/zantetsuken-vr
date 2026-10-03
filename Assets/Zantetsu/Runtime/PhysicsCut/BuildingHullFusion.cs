@@ -120,6 +120,30 @@ namespace Zantetsu.PhysicsCut
 
         internal BuildingHullFusion owner;
 
+        /// <summary>
+        /// A building drawn by its own renderers until its first cut is published (TL, 2026-10-03; DESIGN 4.5.1): its
+        /// display is registered only at that publication, just before the display cut that takes the drawing over, and
+        /// the building's own drawing leaves right after it; a first cut that ends without a publication takes the group
+        /// back out (<see cref="BuildingHullFusion.TakeBackUncut"/>). Null for a group shown at its registration, and
+        /// once handed over or taken back.
+        /// </summary>
+        internal FirstCutHandover Handover;
+
+        /// <summary>Whether its first cut has still to take the drawing over (see <see cref="Handover"/>).</summary>
+        public bool AwaitsFirstCut => Handover != null;
+
+        internal sealed class FirstCutHandover
+        {
+            /// <summary>The display registration, at the first publication; false (or a throw) refuses that cut.</summary>
+            internal Func<bool> show;
+
+            /// <summary>Once the display has the cut: the building's own drawing and colliders leave.</summary>
+            internal Action handedOver;
+
+            /// <summary>The first cut ended without a publication: the world takes what it registered back (the group's own objects go here).</summary>
+            internal Action<string> takenBack;
+        }
+
         // ---- the hit target ----
         bool ISlashHullTarget.IsHitTarget => State != HullGroupState.Gone && Root != null && Shape != null && !Shape.IsFreed && !owner.IsCutStopped(Building);
         Transform ISlashHullTarget.Root => Root != null ? Root.transform : null;
@@ -242,9 +266,30 @@ namespace Zantetsu.PhysicsCut
             var points = new List<float3>();
             for (int c = 0; c < shape.ConvexCount; c++) HullBrep.CopyVertices(shape.BankOf(c), shape.Convex(c), points, shape.LocalToOwner);
             HullBrep brep = HullBrep.OfPoints(points, out refusal);
+
             if (brep == null) return null;
             if (brep.VertexCount > _vertexLimit) { brep.Dispose(); refusal = "the hull has " + brep.VertexCount + " vertices, past the limit " + _vertexLimit; return null; }
-            var group = new HullGroup(++_lastGroupId, ++_lastBuilding) { owner = this, Root = actor, Body = body, Generation = 1 };
+            HullGroup group = null;
+            try
+            {
+                group = new HullGroup(++_lastGroupId, ++_lastBuilding) { owner = this, Root = actor, Body = body, Generation = 1 };
+                return RegisterMade(group, brep, actor, body, displayFragment, anchors, mass);
+            }
+            catch
+            {
+                // Nothing of a registration that threw stays: what it had made goes, and the error is passed on (the
+                // actor is the caller's).
+                if (group != null) Unregister(group, "an exception while it was registered");
+                else brep.Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>Tests only: called in Register once the group's hull, mesh and collider are made, before it is listed.</summary>
+        internal static Action registerHookForTest;
+
+        private HullGroup RegisterMade(HullGroup group, HullBrep brep, GameObject actor, Rigidbody body, LogicalFragmentId displayFragment, IReadOnlyList<float3> anchors, double mass)
+        {
             group.OwnedBrep = brep;
             group.OwnedMesh = brep.MakeColliderMesh("Building hull " + group.Id, Cooking);
             MeshesBaked++;
@@ -257,6 +302,7 @@ namespace Zantetsu.PhysicsCut
             body.automaticInertiaTensor = false;
             SetMassFromHull(group, brep, mass);
             group.Members.Add(new HullGroup.DisplayMember { fragment = displayFragment, root = NewMemberRoot(actor.transform, actor.transform, "Display member " + displayFragment.value) });
+            registerHookForTest?.Invoke();
             _groups.Add(group);
             _byId[group.Id] = group;
             GroupsMade++;
@@ -267,6 +313,35 @@ namespace Zantetsu.PhysicsCut
             Record("registered group " + group.Id + " building " + group.Building + ": hull " + brep.VertexCount + " vertices " + brep.FaceCount + " faces, anchors " + group.AnchorCount + ", mass " + mass.ToString("F3") + (group.Anchored ? " (anchored)" : " (free)"));
             return group;
         }
+
+        /// <summary>
+        /// A group whose registration did not complete (2026-10-03): an exception in <see cref="Register"/>, or one the
+        /// world met after it. Everything the registration made goes -- its listing, the rest's tracking of its body, its
+        /// collider and display member objects, its hull, mesh and shape -- once; the actor stays the caller's. Nothing of
+        /// the display's is touched here.
+        /// </summary>
+        internal void Unregister(HullGroup group, string why)
+        {
+            if (group == null || group.State == HullGroupState.Gone) return;
+            group.State = HullGroupState.Gone;
+            bool listed = _groups.Remove(group);
+            _byId.Remove(group.Id);
+            if (group.Body != null) _rest.Untrack(group.Body, why);
+            if (group.Collider != null && group.Root != null) PhysicsOwnerBuilder.DestroyComponent(group.Collider, group.Root);
+            foreach (HullGroup.DisplayMember m in group.Members) PhysicsOwnerBuilder.DestroyObject(m.root);
+            group.Members.Clear();
+            group.Shape?.Dispose();
+            group.OwnedBrep?.Dispose();
+            if (group.OwnedMesh != null) PhysicsCutCook.DestroyMesh(group.OwnedMesh);
+            group.Root = null; group.Body = null; group.Collider = null;
+            group.Shape = null; group.OwnedBrep = null; group.OwnedMesh = null;
+            GroupsUnregistered++;
+            if (listed) NoteLiveHulls();
+            Record("group " + group.Id + " unregistered (" + why + ")");
+        }
+
+        /// <summary>Groups whose registration did not complete and were taken out again (<see cref="Unregister"/>).</summary>
+        public int GroupsUnregistered { get; private set; }
 
         // ---- the building rest's notices: the groups' holds and releases are the rest's, by its clock and support ----
 
@@ -737,6 +812,11 @@ namespace Zantetsu.PhysicsCut
 
         private void Finish(HullHit hit, string outcome, bool published)
         {
+            if (!published && _byId.TryGetValue(hit.group, out HullGroup awaiting) && awaiting.Handover != null && !_takeBack.Exists(t => ReferenceEquals(t.group, awaiting)))
+            {
+                _takeBack.Add((awaiting, outcome));   // taken back at the Step's end (or by the caller of an answer given at once)
+            }
+
             hit.outcome = outcome;
             hit.answeredAt = _realSeconds();
             if (hit.reservation != null) hit.reservation.open = false;   // collected: the lineage's consumption from here, until the Slash ends
@@ -774,6 +854,69 @@ namespace Zantetsu.PhysicsCut
         private readonly List<string> _overrunUnits = new List<string>();
 
         /// <summary>One turn a frame on Main, before the physics step: the cuts' preparations, checks and publications, the fusions' stages, the held hits. The groups' rest is the building rest's turn.</summary>
+        // ---- a first cut that did not take the drawing over: the group taken back out ----
+
+        private readonly List<(HullGroup group, string why)> _takeBack = new List<(HullGroup, string)>();
+
+        /// <summary>Groups taken back out after a first cut ended without a publication (see <see cref="HullGroup.Handover"/>).</summary>
+        public int UncutTakenBack { get; private set; }
+
+        /// <summary>Groups whose first cut took the drawing over (see <see cref="HullGroup.Handover"/>).</summary>
+        public int HandedOver { get; private set; }
+
+        private void TakeBackQueued()
+        {
+            for (int i = 0; i < _takeBack.Count; i++) TakeBackUncut(_takeBack[i].group, _takeBack[i].why);
+            _takeBack.Clear();
+        }
+
+        /// <summary>
+        /// A building whose first cut ended without a publication, taken back out once (TL, 2026-10-03): its hits held, and
+        /// any hit of it still unanswered, are abandoned (each its one outcome), the world's part given back by the hand-over's own take-back (its owner, fragment, geometry), then
+        /// the group's objects -- its Root (the actor), collider, hull mesh and shape. Nothing of it was ever shown, so its
+        /// own drawing never left. A group already handed over, taken back or gone is left as it is.
+        /// </summary>
+        internal void TakeBackUncut(HullGroup group, string why)
+        {
+            if (group == null || group.State == HullGroupState.Gone || group.Handover == null) return;
+            HullGroup.FirstCutHandover handover = group.Handover;
+            group.Handover = null;
+            for (int i = _held.Count - 1; i >= 0; i--)
+            {
+                if (!ReferenceEquals(_held[i].group, group)) continue;
+                Finish(_held[i].hit, "Abandoned: the building was taken back out before its first cut", false);
+                _held.RemoveAt(i);
+            }
+
+            // A hit recorded for the group but never answered (its acceptance threw after the record) gets its one outcome too.
+            foreach (HullHit h in _hits)
+            {
+                if (h.group == group.Id && h.IsPending) Finish(h, "Abandoned: the building was taken back out before its first cut", false);
+            }
+
+            _cuts.RemoveAll(c => ReferenceEquals(c.group, group));
+            _waitingRequest.Remove(group);
+            try
+            {
+                handover.takenBack?.Invoke(why);
+            }
+            finally
+            {
+                group.State = HullGroupState.Gone;
+                _byId.Remove(group.Id);
+                _groups.Remove(group);
+                PhysicsOwnerBuilder.DestroyObject(group.Root);
+                group.Root = null; group.Body = null; group.Collider = null;
+                group.Shape?.Dispose();
+                group.OwnedBrep?.Dispose();
+                if (group.OwnedMesh != null) PhysicsCutCook.DestroyMesh(group.OwnedMesh);
+                group.Shape = null; group.OwnedBrep = null; group.OwnedMesh = null;
+                UncutTakenBack++;
+                NoteLiveHulls();
+                Record("group " + group.Id + " taken back out before its first cut (" + why + "): nothing of it was shown, its building drawn as placed");
+            }
+        }
+
         public void Step()
         {
             if (!Enabled) return;
@@ -793,6 +936,7 @@ namespace Zantetsu.PhysicsCut
                 SettleDisplayOperations();
                 SettleLimits();
                 NoteSpeeds();
+                TakeBackQueued();
             }
             finally
             {

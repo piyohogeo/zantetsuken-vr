@@ -331,6 +331,30 @@ namespace Zantetsu.PhysicsCut
             Transform root = group.Root.transform;
             Vector3 dropLocal = root.InverseTransformVector((Vector3)(slide * distance));   // the display's and the hull's same move, in the plane
 
+            // A building drawn by its own renderers until now: its display registered here, just before the display cut that
+            // takes the drawing over (TL, 2026-10-03). Refused or thrown: the cut ends here, nothing changed, and the group
+            // is taken back out at the Step's end.
+            if (group.Handover != null)
+            {
+                bool shown;
+                try
+                {
+                    shown = group.Handover.show != null && group.Handover.show();
+                }
+                catch (Exception e)
+                {
+                    shown = false;
+                    Record("hit " + cut.hit.id + ": the building's display registration threw: " + e.Message);
+                }
+
+                if (!shown)
+                {
+                    EndWithoutCut(cut, "Refused: the display did not take the building at its first cut (nothing changed)");
+                    DisplayCutsRefused++;
+                    return PublishOutcome.Failed;
+                }
+            }
+
             // The display cuts admitted (judged possible above on this same state), then published: both children under the group's Root.
             var admitted = new Dictionary<MemberSide, CutOperationId>();
             foreach (MemberSide s in crossed)
@@ -379,6 +403,15 @@ namespace Zantetsu.PhysicsCut
             cut.hit.membersHeldAfter = group.MemberCount;
             cut.hit.publishMs = seconds * 1000;
             Finish(cut.hit, "Published", true);
+            if (group.Handover != null)
+            {
+                // The display has the cut from here: the building's own drawing and colliders leave, once.
+                HullGroup.FirstCutHandover handover = group.Handover;
+                group.Handover = null;
+                HandedOver++;
+                handover.handedOver?.Invoke();
+            }
+
             cut.hit.hullOutcome = "the hull's update asked for (" + (_hullWorks.Exists(w => ReferenceEquals(w.group, group)) ? "one running: this one waits" : "the next update") + (replaced ? "; the request waiting before it skipped" : "") + ")";
             Record("hit " + cut.hit.id + " published by the display t " + _physicsSeconds().ToString("F3") + ": group " + group.Id + ", display cuts " + admitted.Count + ", members dropping " + dropping.Count + " (" + (movingPositive ? "+" : "-") + " side, " + rule + "; " + distance.ToString("F4") + " m " + slideRule + " " + ((Vector3)slide).ToString("F3") + " over " + _settings.animationSeconds.ToString("F2") + " s); members held " + group.MemberCount + "; " + (seconds * 1000).ToString("F3") + " ms");
             return PublishOutcome.Published;

@@ -133,6 +133,12 @@ namespace Zantetsu.PhysicsCut
     /// for all the sweeps, before the exact test above -- which, and the cut after it, then read that pose.
     /// </para>
     /// <para>
+    /// **A placed object before its first cut** (DESIGN 4.5.1; <see cref="AddPlaced"/>, <see cref="ISlashPlacedTarget"/>) is a
+    /// candidate the same way: its convexes in its own frame as the instance stands, drawn and colliding meanwhile as the
+    /// scene placed it. A hit identifies it as its fragment, consumes it, and is passed once to its own acceptance, which
+    /// prepares its cut input then; it leaves the candidates when that says it is done.
+    /// </para>
+    /// <para>
     /// **Nothing of the blade.** Only the waves' sweeps are read: the blade's own pose, its gate and whether it may
     /// fire play no part, so a wave already flying keeps hitting while the gesture cannot fire (T-040).
     /// </para>
@@ -159,6 +165,8 @@ namespace Zantetsu.PhysicsCut
         private readonly List<VpPreparedCharacterCut> _characterTargets = new List<VpPreparedCharacterCut>(4);
         private readonly List<IPoseOnDemand> _characterPoses = new List<IPoseOnDemand>(4);
         private readonly List<ISlashHullTarget> _hullTargets = new List<ISlashHullTarget>(4);
+        private readonly List<ISlashPlacedTarget> _placed = new List<ISlashPlacedTarget>(8);
+        private readonly List<ISlashPlacedTarget> _placedTargets = new List<ISlashPlacedTarget>(8);
         private BuildingHullFusion _hulls;
         private readonly long[] _live = new long[SlashWaveCore.Capacity];
         private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.Capacity];
@@ -176,6 +184,7 @@ namespace Zantetsu.PhysicsCut
             public float3 renderAnchor;
             public VpPreparedCharacterCut character;
             public ISlashHullTarget hull;
+            public ISlashPlacedTarget placed;
             public long planeId;   // the sweep's adopted plane: one identity per sweep, shared by the hits it found
             public float4 planeWorld;
             public float3 travelWorld;   // the sweep's travel (hull targets)
@@ -266,6 +275,26 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// Makes a placed object before its first cut a candidate from now on (<see cref="ISlashPlacedTarget"/>), until its
+        /// own acceptance says it is done or it is taken away. Added once.
+        /// </summary>
+        public void AddPlaced(ISlashPlacedTarget placed)
+        {
+            if (placed == null) throw new ArgumentNullException(nameof(placed));
+            if (!_placed.Contains(placed)) _placed.Add(placed);
+        }
+
+        /// <summary>Whether a placed object is a candidate now, and how many are (observation).</summary>
+        public bool HasPlaced(ISlashPlacedTarget placed) => placed != null && _placed.Contains(placed);
+
+        public int PlacedCount => _placed.Count;
+
+        public void RemovePlaced(ISlashPlacedTarget placed)
+        {
+            _placed.Remove(placed);
+        }
+
+        /// <summary>
         /// The main thread's trace lane the hits are written into, from whoever composes the trace of a run. Until one
         /// is given nothing is written: a writer that was never made carries no event.
         /// </summary>
@@ -353,12 +382,19 @@ namespace Zantetsu.PhysicsCut
 
                 _hullTargets.Clear();
                 _hulls?.CollectTargets(_hullTargets);
+                _placedTargets.Clear();
+                for (int p = 0; p < _placed.Count; p++)
+                {
+                    if (_placed[p] != null && _placed[p].IsHitTarget) _placedTargets.Add(_placed[p]);
+                }
+
                 for (int s = 0; s < sweeps.Length; s++)
                 {
                     _adoptedPlanes++;   // this sweep's plane: the identity every hit it finds carries
                     Find(in sweeps[s]);
                     FindCharacters(in sweeps[s]);
                     FindHulls(in sweeps[s]);
+                    FindPlaced(in sweeps[s]);
                 }
             }
 
@@ -368,6 +404,12 @@ namespace Zantetsu.PhysicsCut
                 if (hit.character != null)
                 {
                     AcceptCharacter(in hit);
+                    continue;
+                }
+
+                if (hit.placed != null)
+                {
+                    AcceptPlaced(in hit);
                     continue;
                 }
 
@@ -401,6 +443,25 @@ namespace Zantetsu.PhysicsCut
                 _hits.Add(confirmed);
                 Trace(in confirmed);
             }
+        }
+
+        // A placed object's own acceptance: it prepares its cut input only now, and asks through the same driver (or the hull trial).
+        private void AcceptPlaced(in Pending hit)
+        {
+            SlashPlacedCutResult result;
+            result = hit.placed.TryCut(new SlashPlacedHit(hit.plane, hit.planeWorld, hit.renderAnchor, hit.slashId, hit.planeId, hit.at,
+                hit.travelWorld, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse));
+
+            if (result.Done)
+            {
+                // Its cut went on (it is its fragment's owner from here, or the hull trial's group) or it was refused for good.
+                RemovePlaced(hit.placed);
+            }
+
+            var confirmed = new SlashHitConfirmed(
+                hit.slashId, hit.at, hit.atLatch, hit.fragment, hit.side, result.Acceptance, result.Admission, result.Operation);
+            _hits.Add(confirmed);
+            Trace(in confirmed);
         }
 
         // A character's own acceptance: the prepared cut classifies, admits and publishes through the same driver.
@@ -561,6 +622,66 @@ namespace Zantetsu.PhysicsCut
                     character = character,
                     planeId = _adoptedPlanes,
                     planeWorld = worldPlane,
+                });
+            }
+        }
+
+        // The placed objects not cut yet: their convexes in their own frame, as the instance stands now.
+        private void FindPlaced(in SlashSweep sweep)
+        {
+            float3 n = sweep.SourceSlashPlane.normal;
+            float3 a0 = sweep.PreviousA;
+            float3 b0 = sweep.PreviousB;
+            float3 a1 = sweep.CurrentA;
+            float3 b1 = sweep.CurrentB;
+            if (_placedTargets.Count == 0 || !math.all(math.isfinite(n)) || math.lengthsq(n) <= 0f
+                || !math.all(math.isfinite(a0) & math.isfinite(b0) & math.isfinite(a1) & math.isfinite(b1)))
+            {
+                return;
+            }
+
+            var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
+            for (int p = 0; p < _placedTargets.Count; p++)
+            {
+                ISlashPlacedTarget target = _placedTargets[p];
+                if (target.Source.IsSet && _consumption.IsConsumed(sweep.SlashId, target.Source))
+                {
+                    continue;
+                }
+
+                float4x4 frameToWorld = target.FrameToWorld;
+                float4x4 worldToFrame = math.inverse(frameToWorld);
+                float3 la0 = math.transform(worldToFrame, a0);
+                float3 lb0 = math.transform(worldToFrame, b0);
+                float3 la1 = math.transform(worldToFrame, a1);
+                float3 lb1 = math.transform(worldToFrame, b1);
+                float3 qlo = math.min(math.min(la0, lb0), math.min(la1, lb1));
+                float3 qhi = math.max(math.max(la0, lb0), math.max(la1, lb1));
+                float4 plane = math.mul(math.transpose(frameToWorld), worldPlane);
+                plane /= math.length(plane.xyz);
+                VpCharacterHitShape shape = target.HitShape;
+                bool hit = false;
+                for (int k = 0; k < shape.ConvexCount && !hit; k++)
+                {
+                    shape.Bounds(k, out float3 lo, out float3 hi);
+                    if (math.any(qhi < lo) || math.any(hi < qlo))
+                    {
+                        continue;
+                    }
+
+                    hit = SlashSweepConvexQuery.Intersects(plane, la0, lb0, la1, lb1, shape.Bank, shape.Convex(k), ref _section);
+                }
+
+                if (!hit || !target.TryIdentify(out LogicalFragmentId fragment) || !_consumption.TryConsume(sweep.SlashId, fragment))
+                {
+                    continue;
+                }
+
+                _pending.Add(new Pending
+                {
+                    slashId = sweep.SlashId, at = sweep.At, atLatch = sweep.IsLatch, fragment = fragment, side = 0f,
+                    plane = plane, renderAnchor = frameToWorld.c3.xyz, placed = target, planeId = _adoptedPlanes, planeWorld = worldPlane,
+                    travelWorld = (float3)sweep.TravelAxis,
                 });
             }
         }
