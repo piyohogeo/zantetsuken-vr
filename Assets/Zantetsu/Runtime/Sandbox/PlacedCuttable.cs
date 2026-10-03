@@ -14,7 +14,8 @@ namespace Zantetsu.Sandbox
 {
     /// <summary>
     /// A private real-asset input for a placed cuttable (a Megacity building or prop): the author's drawn geometry,
-    /// topology, one convex, anchors and flags, as the scenario exporters write it. Not a product importer.
+    /// topology, its convexes (a building has one; a prop one or more), anchors and flags, as the scenario exporters write
+    /// it. Not a product importer.
     /// </summary>
     [Serializable] public sealed class PlacedCuttableInput
     {
@@ -25,7 +26,7 @@ namespace Zantetsu.Sandbox
         public uint[] indices;
         public int[] topology;
         public Hull[] hulls;
-        public Vector3[] anchors;
+        public Vector3[] anchors = new Vector3[0];   // none is a normal input (2026-10-03, TL): an input without the field has none
 
         public VpRenderVertex[] Vertices() => render.Select(v => new VpRenderVertex
             { position = v.position, normal = v.normal, uv0 = v.uv }).ToArray();
@@ -46,7 +47,7 @@ namespace Zantetsu.Sandbox
     {
         private readonly List<IDisposable> _native = new List<IDisposable>();
         private PhysicsOwnerShape _shape;
-        private Mesh _colliderMesh;
+        private readonly List<Mesh> _colliderMeshes = new List<Mesh>();
 
         public LogicalFragmentId Fragment { get; private set; }
         public GameObject Actor { get; private set; }
@@ -58,9 +59,12 @@ namespace Zantetsu.Sandbox
         public static PlacedCuttableRegistration Register(CutWorldRoot world, PlacedCuttableInput data, Transform target,
             Renderer[] instanceRenderers, Collider[] instanceColliders, float mass, bool expectBuilding, bool withoutBuildingWorld = false)
         {
-            if (!data.isCuttable || data.isBuilding != expectBuilding || data.hulls.Length != 1 || data.anchors.Length == 0)
+            // A prop may be an authored compound of several convexes (2026-10-03: the walk city's tree_012, six); a building
+            // registered here as an ordinary body keeps one.
+            // Anchors as authored, none included (2026-10-03, TL): what fixes a piece is the anchors it holds.
+            if (!data.isCuttable || data.isBuilding != expectBuilding || data.hulls.Length == 0 || (data.isBuilding && data.hulls.Length != 1))
             {
-                throw new InvalidOperationException(data.name + ": not a cuttable " + (expectBuilding ? "building" : "prop") + " with one convex and anchors");
+                throw new InvalidOperationException(data.name + ": not a cuttable " + (expectBuilding ? "building with one convex" : "prop with its convexes"));
             }
 
             if ((target.lossyScale - Vector3.one).sqrMagnitude > 1e-8f)
@@ -69,16 +73,51 @@ namespace Zantetsu.Sandbox
             }
 
             var made = new PlacedCuttableRegistration { IsBuilding = data.isBuilding, Name = data.name };
-            PlacedCuttableInput.Hull hull = data.hulls[0];
-            BuildEdges(hull.faceOffsets, hull.faceIndices, out int[] faceEdges, out BrepEdge[] edges);
-            made._shape = made.NewShape(hull.vertices.Select(v => (float3)v).ToArray(), hull.faceOffsets, hull.faceIndices, faceEdges, edges, out made._colliderMesh);
-            if (!world.Storage.TryAppendCuttable(data.Vertices(), data.indices, data.topology, data.topologyCount,
-                    new[] { new VpGeometrySubmesh(0, data.indices.Length, 0) }, out VpStoredGeometry geometry, out VpCutInputVerdict verdict))
+            VpStoredGeometry geometry = default;
+            bool stored = false;
+            LogicalFragmentId fragment;
+            Rigidbody body;
+            try
             {
-                throw new InvalidOperationException(data.name + ": the geometry was refused: " + verdict);
+                made._shape = made.NewShape(data.hulls);
+                bool appended = world.Storage.TryAppendCuttable(data.Vertices(), data.indices, data.topology, data.topologyCount,
+                    new[] { new VpGeometrySubmesh(0, data.indices.Length, 0) }, out geometry, out VpCutInputVerdict verdict);
+                if (!appended)
+                {
+                    throw new InvalidOperationException(data.name + ": the geometry was refused: " + verdict);
+                }
+
+                stored = true;
+                made.Actor = new GameObject((data.isBuilding ? "Building " : "Prop ") + data.name);
+                made.Actor.transform.SetPositionAndRotation(target.position, target.rotation);
+                body = made.Actor.AddComponent<Rigidbody>();
+                body.useGravity = true;
+                body.mass = mass;
+                body.isKinematic = true;   // standing as placed until it is cut, anchored or not
+                // One convex collider a convex, all on the actor (as a cut's side carries its convexes).
+                foreach (Mesh mesh in made._colliderMeshes)
+                {
+                    var collider = made.Actor.AddComponent<MeshCollider>();
+                    collider.cookingOptions = PhysicsCutCook.DefaultCooking;
+                    collider.convex = true;
+                    collider.sharedMesh = mesh;
+                }
+                // The world refuses only at its display, before anything of the body is its own (CutWorldRoot.TryAddBody):
+                // a refused geometry was never shown, and is given back below.
+                bool added = world.TryAddBody(made.Actor, made._shape, geometry, Matrix4x4.identity, Matrix4x4.identity,
+                    data.anchors.Length > 0 ? data.anchors.Select(v => (float3)v).ToArray() : null, data.isBuilding && !withoutBuildingWorld, out fragment);
+                if (!added)
+                {
+                    throw new InvalidOperationException(data.name + ": refused by the world");
+                }
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(e.Message + made.Abandon(world, stored ? geometry : (VpStoredGeometry?)null), e);
             }
 
-            // The instance's own drawing and colliders go; the registered actor stands exactly where the instance stood.
+            // The instance's own drawing and colliders go only now, the world having taken the actor; the registered actor
+            // stands exactly where the instance stood.
             foreach (Renderer r in instanceRenderers)
             {
                 if (r != null) r.enabled = false;
@@ -89,22 +128,6 @@ namespace Zantetsu.Sandbox
                 if (c != null) c.enabled = false;
             }
 
-            made.Actor = new GameObject((data.isBuilding ? "Building " : "Prop ") + data.name);
-            made.Actor.transform.SetPositionAndRotation(target.position, target.rotation);
-            var body = made.Actor.AddComponent<Rigidbody>();
-            body.useGravity = true;
-            body.mass = mass;
-            body.isKinematic = true;
-            var collider = made.Actor.AddComponent<MeshCollider>();
-            collider.cookingOptions = PhysicsCutCook.DefaultCooking;
-            collider.convex = true;
-            collider.sharedMesh = made._colliderMesh;
-            if (!world.TryAddBody(made.Actor, made._shape, geometry, Matrix4x4.identity, Matrix4x4.identity,
-                    data.anchors.Select(v => (float3)v).ToArray(), data.isBuilding && !withoutBuildingWorld, out LogicalFragmentId fragment))
-            {
-                throw new InvalidOperationException(data.name + ": refused by the world");
-            }
-
             made.Fragment = fragment;
             made.AnchorCount = data.anchors.Length;
             bool fixedByAnchors = world.Owners.TryGet(fragment, out PhysicsFragmentOwner owner) && owner.FixedByAnchors && body.isKinematic;
@@ -112,7 +135,7 @@ namespace Zantetsu.Sandbox
                 + " fixedByAnchors=" + fixedByAnchors + " building=" + (owner != null && owner.Building.IsBuildingDerived)
                 + " depth=" + (owner != null ? owner.Building.SplitDepth : -1)
                 + " position=" + made.Actor.transform.position.ToString("F3") + " rotation=" + made.Actor.transform.rotation.eulerAngles.ToString("F2")
-                + " mass=" + mass + " triangles=" + data.indices.Length / 3 + " hullVertices=" + hull.vertices.Length
+                + " mass=" + mass + " triangles=" + data.indices.Length / 3 + " convexes=" + data.hulls.Length + " hullVertices=" + string.Join("+", data.hulls.Select(h => h.vertices.Length))
                 + " instanceRenderersOff=" + instanceRenderers.Count(r => r != null && !r.enabled)
                 + " instanceCollidersOff=" + instanceColliders.Count(c => c != null && !c.enabled)
                 + " sourceSha256=" + data.sha256;
@@ -129,11 +152,11 @@ namespace Zantetsu.Sandbox
         /// The input's convex is only read: its shape and mesh are given back here.
         /// </summary>
         public static PlacedCuttableRegistration RegisterHull(CutWorldRoot world, PlacedCuttableInput data, Transform target,
-            Renderer[] instanceRenderers, Collider[] instanceColliders, float mass, int materialIndex = 0)
+            Renderer[] instanceRenderers, Collider[] instanceColliders, float mass, int materialIndex = 0, LogicalFragmentId issued = default)
         {
-            if (!data.isCuttable || !data.isBuilding || data.hulls.Length != 1 || data.anchors.Length == 0)
+            if (!data.isCuttable || !data.isBuilding || data.hulls.Length != 1)
             {
-                throw new InvalidOperationException(data.name + ": not a cuttable building with one convex and anchors");
+                throw new InvalidOperationException(data.name + ": not a cuttable building with one convex");
             }
 
             if ((target.lossyScale - Vector3.one).sqrMagnitude > 1e-8f)
@@ -143,15 +166,44 @@ namespace Zantetsu.Sandbox
 
             var made = new PlacedCuttableRegistration { IsBuilding = true, Name = data.name };
             PlacedCuttableInput.Hull hull = data.hulls[0];
-            BuildEdges(hull.faceOffsets, hull.faceIndices, out int[] faceEdges, out BrepEdge[] edges);
-            made._shape = made.NewShape(hull.vertices.Select(v => (float3)v).ToArray(), hull.faceOffsets, hull.faceIndices, faceEdges, edges, out made._colliderMesh);
-            if (!world.Storage.TryAppendCuttable(data.Vertices(), data.indices, data.topology, data.topologyCount,
-                    new[] { new VpGeometrySubmesh(0, data.indices.Length, materialIndex) }, out VpStoredGeometry geometry, out VpCutInputVerdict verdict))
+            VpStoredGeometry geometry = default;
+            bool stored = false, displayed = false;
+            LogicalFragmentId fragment;
+            HullGroup group;
+            try
             {
-                made.Dispose();
-                throw new InvalidOperationException(data.name + ": the geometry was refused: " + verdict);
+                made._shape = made.NewShape(data.hulls);
+                bool appended = world.Storage.TryAppendCuttable(data.Vertices(), data.indices, data.topology, data.topologyCount,
+                    new[] { new VpGeometrySubmesh(0, data.indices.Length, materialIndex) }, out geometry, out VpCutInputVerdict verdict);
+                if (!appended)
+                {
+                    throw new InvalidOperationException(data.name + ": the geometry was refused: " + verdict);
+                }
+
+                stored = true;
+                made.Actor = new GameObject("Building " + data.name);
+                made.Actor.transform.SetPositionAndRotation(target.position, target.rotation);
+                var body = made.Actor.AddComponent<Rigidbody>();
+                body.useGravity = true;
+                body.mass = mass;
+                body.isKinematic = true;
+                // The world says whether its display took the geometry, however the call ends (CutWorldRoot.TryAddBuildingHull):
+                // one it never showed is still ours to give back -- a refusal before the display, the display's own refusal, or
+                // an exception before it -- and one it showed is the world's, retired with the fragment and taken back by it.
+                bool added = world.TryAddBuildingHull(made.Actor, made._shape, geometry, Matrix4x4.identity, data.anchors.Select(v => (float3)v).ToArray(), mass, issued, ref displayed, out fragment, out group);
+                if (!added)
+                {
+                    throw new InvalidOperationException(data.name + ": refused by the hull trial");
+                }
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(e.Message + made.Abandon(world, stored && !displayed ? geometry : (VpStoredGeometry?)null)
+                    + (displayed ? "; its stored geometry left to the world (shown, then refused: the world takes it back)" : ""), e);
             }
 
+            made.Dispose();   // the convex was only read
+            // The instance's own drawing and colliders go only now, the world having taken the building.
             foreach (Renderer r in instanceRenderers)
             {
                 if (r != null) r.enabled = false;
@@ -160,19 +212,6 @@ namespace Zantetsu.Sandbox
             foreach (Collider c in instanceColliders)
             {
                 if (c != null) c.enabled = false;
-            }
-
-            made.Actor = new GameObject("Building " + data.name);
-            made.Actor.transform.SetPositionAndRotation(target.position, target.rotation);
-            var body = made.Actor.AddComponent<Rigidbody>();
-            body.useGravity = true;
-            body.mass = mass;
-            body.isKinematic = true;
-            bool added = world.TryAddBuildingHull(made.Actor, made._shape, geometry, Matrix4x4.identity, data.anchors.Select(v => (float3)v).ToArray(), mass, out LogicalFragmentId fragment, out HullGroup group);
-            made.Dispose();   // the convex was only read
-            if (!added)
-            {
-                throw new InvalidOperationException(data.name + ": refused by the hull trial");
             }
 
             made.Fragment = fragment;
@@ -188,6 +227,114 @@ namespace Zantetsu.Sandbox
             return made;
         }
 
+        /// <summary>
+        /// A building into the hull trial at its first hit, drawn by its own renderers until that cut takes the drawing over
+        /// (TL, 2026-10-03; <see cref="CutWorldRoot.TryAddBuildingHullDeferred"/>): the same input, display geometry, actor
+        /// and group as <see cref="RegisterHull"/>, but nothing shown and the instance not touched here --
+        /// <paramref name="handedOver"/> is told when the first cut's display has the building (the caller switches the
+        /// instance off there), <paramref name="takenBack"/> when that cut ended without a publication and the world took
+        /// it back out. Refused here (the storage, the trial): the actor and the convex given back, the geometry too (it was
+        /// never shown), the instance as it was.
+        /// </summary>
+        public static PlacedCuttableRegistration RegisterHullDeferred(CutWorldRoot world, PlacedCuttableInput data, Transform target, float mass, int materialIndex,
+            LogicalFragmentId issued, Action handedOver, Action<string> takenBack)
+        {
+            if (!data.isCuttable || !data.isBuilding || data.hulls.Length != 1)
+            {
+                throw new InvalidOperationException(data.name + ": not a cuttable building with one convex");
+            }
+
+            if ((target.lossyScale - Vector3.one).sqrMagnitude > 1e-8f)
+            {
+                throw new InvalidOperationException(data.name + ": the placed instance is scaled: " + target.lossyScale);
+            }
+
+            var made = new PlacedCuttableRegistration { IsBuilding = true, Name = data.name };
+            VpStoredGeometry geometry = default;
+            bool stored = false, taken = false;
+            LogicalFragmentId fragment;
+            HullGroup group;
+            try
+            {
+                made._shape = made.NewShape(data.hulls);
+                VpRenderVertex[] vertices;
+                VpGeometrySubmesh[] submeshes;
+                vertices = data.Vertices();
+                submeshes = new[] { new VpGeometrySubmesh(0, data.indices.Length, materialIndex) };
+
+                bool appended = world.Storage.TryAppendCuttable(vertices, data.indices, data.topology, data.topologyCount, submeshes, out geometry, out VpCutInputVerdict verdict);
+                if (!appended)
+                {
+                    throw new InvalidOperationException(data.name + ": the geometry was refused: " + verdict);
+                }
+
+                stored = true;
+                Rigidbody body;
+                made.Actor = new GameObject("Building " + data.name);
+                made.Actor.transform.SetPositionAndRotation(target.position, target.rotation);
+                body = made.Actor.AddComponent<Rigidbody>();
+                body.useGravity = true;
+                body.mass = mass;
+                body.isKinematic = true;
+
+                bool added = world.TryAddBuildingHullDeferred(made.Actor, made._shape, geometry, Matrix4x4.identity, data.anchors.Select(v => (float3)v).ToArray(), mass,
+                    issued, handedOver, takenBack, ref taken, out fragment, out group, out string refusal);
+                if (!added)
+                {
+                    throw new InvalidOperationException(data.name + ": refused by the hull trial: " + refusal);
+                }
+            }
+            catch (Exception e)
+            {
+                // The geometry is given back here only while it is still ours: once the world took it (its base geometry
+                // registered) the world gives it back.
+                throw new InvalidOperationException(e.Message + made.Abandon(world, stored && !taken ? geometry : (VpStoredGeometry?)null), e);
+            }
+
+            made.Dispose();   // the convex was only read
+            made.Fragment = fragment;
+            made.Group = group;
+            made.AnchorCount = data.anchors.Length;
+            made.Description = "name=" + data.name + " fragment=" + fragment + " hull group=" + group.Id + " anchors=" + data.anchors.Length
+                + " anchored=" + group.Anchored + " hull vertices=" + group.VertexCount + " faces=" + group.FaceCount + " (input convex " + data.hulls[0].vertices.Length + ")"
+                + " position=" + made.Actor.transform.position.ToString("F3") + " rotation=" + made.Actor.transform.rotation.eulerAngles.ToString("F2")
+                + " mass=" + mass + " triangles=" + data.indices.Length / 3 + " (shown at its first cut's publication) sourceSha256=" + data.sha256;
+            return made;
+        }
+
+        /// <summary>
+        /// A registration that failed leaves the scene as it found it (2026-10-03): the actor goes at once -- deactivated, so
+        /// no body or collider of it stays in the physics scene for a step, and destroyed -- the convex's shape, arrays and
+        /// mesh are given back, and a geometry the world never showed is given back to the storage (its index range
+        /// retired, its vertex group released). The instance was never touched: its renderers and colliders are switched
+        /// off only after the world has taken the actor. Returns what was given back, for the refusal's message.
+        /// </summary>
+        private string Abandon(CutWorldRoot world, VpStoredGeometry? unshown)
+        {
+            string what = "; given back: ";
+            if (Actor != null)
+            {
+                Actor.SetActive(false);
+                UnityEngine.Object.Destroy(Actor);
+                Actor = null;
+                what += "the actor, ";
+            }
+
+            Dispose();
+            what += "the convex";
+            if (unshown.HasValue && world != null && world.Storage != null)
+            {
+                VpCpuGeometryStorage storage = world.Storage;
+                // The group is read before the retirement: a Free range's metadata is refused.
+                bool grouped = storage.TryGetVertexGroup(unshown.Value, out int vertexGroup);
+                bool retired = storage.TryRetireIndices(unshown.Value.indexRange);
+                bool released = grouped && retired && storage.TryReleaseVertexGroup(vertexGroup);
+                what += ", the stored geometry (indices retired " + retired + ", vertex room released " + released + ")";
+            }
+
+            return what;
+        }
+
         /// <summary>Gives back the shape, its arrays and the collider mesh; only once the world no longer uses them (released or gone).</summary>
         public void Dispose()
         {
@@ -195,25 +342,82 @@ namespace Zantetsu.Sandbox
             _shape = null;
             foreach (IDisposable array in _native) array.Dispose();
             _native.Clear();
-            if (_colliderMesh != null) UnityEngine.Object.Destroy(_colliderMesh);
-            _colliderMesh = null;
+            foreach (Mesh mesh in _colliderMeshes) if (mesh != null) UnityEngine.Object.Destroy(mesh);
+            _colliderMeshes.Clear();
         }
 
-        private unsafe PhysicsOwnerShape NewShape(
-            float3[] corners, int[] faceOffsets, int[] faceIndices, int[] faceEdges, BrepEdge[] edges, out Mesh colliderMesh)
+        // The input's convexes as one authored shape (2026-10-03: one or more): one bank holding them one after another
+        // (BuildBank), and one cooked collider mesh a convex.
+        private unsafe PhysicsOwnerShape NewShape(PlacedCuttableInput.Hull[] hulls)
         {
-            var vertices = new NativeArray<float3>(corners, Allocator.Persistent);
-            var offsets = new NativeArray<int>(faceOffsets, Allocator.Persistent);
-            var indices = new NativeArray<int>(faceIndices, Allocator.Persistent);
-            var edgesOfFaces = new NativeArray<int>(faceEdges, Allocator.Persistent);
-            var edgeTable = new NativeArray<BrepEdge>(edges, Allocator.Persistent);
-            _native.Add(vertices);
-            _native.Add(offsets);
-            _native.Add(indices);
-            _native.Add(edgesOfFaces);
-            _native.Add(edgeTable);
+            ConvexBrepBank bank = BuildBank(hulls, _native, out List<ConvexBrepRange> ranges);
+            foreach (PlacedCuttableInput.Hull hull in hulls)
+            {
+                var colliderMesh = new Mesh { name = "Placed cuttable convex " + ranges.Count, hideFlags = HideFlags.HideAndDontSave };
+                colliderMesh.vertices = hull.vertices;
+                var triangles = new List<int>();
+                for (int f = 0; f + 1 < hull.faceOffsets.Length; f++)
+                {
+                    for (int k = hull.faceOffsets[f] + 1; k + 1 < hull.faceOffsets[f + 1]; k++)
+                    {
+                        triangles.Add(hull.faceIndices[hull.faceOffsets[f]]);
+                        triangles.Add(hull.faceIndices[k + 1]);
+                        triangles.Add(hull.faceIndices[k]);
+                    }
+                }
 
-            var bank = new ConvexBrepBank
+                colliderMesh.triangles = triangles.ToArray();
+                UnityEngine.Physics.BakeMesh(colliderMesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking);
+                _colliderMeshes.Add(colliderMesh);
+            }
+
+            return PhysicsOwnerShape.Authored(bank, ranges, new List<Mesh>(_colliderMeshes), PhysicsShapeSource.External(), float4x4.identity);
+        }
+
+        /// <summary>
+        /// The input's convexes as one B-rep bank: them one after another, one range a convex with its own data local to it
+        /// (vertex numbers, face offsets and edges counted from its own start). The bank's arrays are added to
+        /// <paramref name="natives"/>, the caller's to give back once nothing reads the bank (a shape or a hit shape made from
+        /// it copies what it keeps).
+        /// </summary>
+        internal static unsafe ConvexBrepBank BuildBank(PlacedCuttableInput.Hull[] hulls, List<IDisposable> natives, out List<ConvexBrepRange> ranges)
+        {
+            var corners = new List<float3>();
+            var faceOffsets = new List<int>();
+            var faceIndices = new List<int>();
+            var faceEdges = new List<int>();
+            var edges = new List<BrepEdge>();
+            ranges = new List<ConvexBrepRange>(hulls.Length);
+            foreach (PlacedCuttableInput.Hull hull in hulls)
+            {
+                BuildEdges(hull.faceOffsets, hull.faceIndices, out int[] localFaceEdges, out BrepEdge[] localEdges);
+                ranges.Add(new ConvexBrepRange
+                {
+                    vertexBase = corners.Count, vertexCount = hull.vertices.Length,
+                    faceBase = faceOffsets.Count, faceCount = hull.faceOffsets.Length - 1,
+                    faceIndexBase = faceIndices.Count, faceIndexCount = hull.faceIndices.Length,
+                    edgeBase = edges.Count, edgeCount = localEdges.Length,
+                    maxFaceLoop = Enumerable.Range(0, hull.faceOffsets.Length - 1).Max(i => hull.faceOffsets[i + 1] - hull.faceOffsets[i]),
+                });
+                corners.AddRange(hull.vertices.Select(v => (float3)v));
+                faceOffsets.AddRange(hull.faceOffsets);
+                faceIndices.AddRange(hull.faceIndices);
+                faceEdges.AddRange(localFaceEdges);
+                edges.AddRange(localEdges);
+            }
+
+            var vertices = new NativeArray<float3>(corners.ToArray(), Allocator.Persistent);
+            var offsets = new NativeArray<int>(faceOffsets.ToArray(), Allocator.Persistent);
+            var indices = new NativeArray<int>(faceIndices.ToArray(), Allocator.Persistent);
+            var edgesOfFaces = new NativeArray<int>(faceEdges.ToArray(), Allocator.Persistent);
+            var edgeTable = new NativeArray<BrepEdge>(edges.ToArray(), Allocator.Persistent);
+            natives.Add(vertices);
+            natives.Add(offsets);
+            natives.Add(indices);
+            natives.Add(edgesOfFaces);
+            natives.Add(edgeTable);
+
+            return new ConvexBrepBank
             {
                 vertices = (float3*)vertices.GetUnsafePtr(),
                 faceOffsets = (int*)offsets.GetUnsafePtr(),
@@ -221,33 +425,6 @@ namespace Zantetsu.Sandbox
                 faceEdges = (int*)edgesOfFaces.GetUnsafePtr(),
                 edges = (BrepEdge*)edgeTable.GetUnsafePtr(),
             };
-
-            var range = new ConvexBrepRange
-            {
-                vertexBase = 0, vertexCount = corners.Length,
-                faceBase = 0, faceCount = faceOffsets.Length - 1,
-                faceIndexBase = 0, faceIndexCount = faceIndices.Length,
-                edgeBase = 0, edgeCount = edges.Length,
-                maxFaceLoop = Enumerable.Range(0, faceOffsets.Length - 1).Max(i => faceOffsets[i + 1] - faceOffsets[i]),
-            };
-
-            colliderMesh = new Mesh { name = "Placed cuttable convex", hideFlags = HideFlags.HideAndDontSave };
-            colliderMesh.vertices = corners.Select(c => (Vector3)c).ToArray();
-            var triangles = new List<int>();
-            for (int f = 0; f + 1 < faceOffsets.Length; f++)
-            {
-                for (int k = faceOffsets[f] + 1; k + 1 < faceOffsets[f + 1]; k++)
-                {
-                    triangles.Add(faceIndices[faceOffsets[f]]);
-                    triangles.Add(faceIndices[k + 1]);
-                    triangles.Add(faceIndices[k]);
-                }
-            }
-
-            colliderMesh.triangles = triangles.ToArray();
-            UnityEngine.Physics.BakeMesh(colliderMesh.GetEntityId(), true, PhysicsCutCook.DefaultCooking);
-            return PhysicsOwnerShape.Authored(
-                bank, new[] { range }, new List<Mesh> { colliderMesh }, PhysicsShapeSource.External(), float4x4.identity);
         }
 
         // One edge per unordered vertex pair: f0 is the face that runs it from its lower vertex to its higher one, f1 the
