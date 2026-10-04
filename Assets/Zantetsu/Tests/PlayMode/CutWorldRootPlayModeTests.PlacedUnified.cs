@@ -275,6 +275,94 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+        [UnityTest]
+        public IEnumerator UnifiedLook_TheSameSurface_DrawnByItsMeshRendererAndByTheCutWorld_IsTheSameColour()
+        {
+            if (!File.Exists(RefusalPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + RefusalPropInputPath);
+            var data = JsonUtility.FromJson<PlacedCuttableInput>(File.ReadAllText(RefusalPropInputPath));
+            // One texture and colour for both: a ramp, so that a wrong texel or a wrong shade shows.
+            var ramp = Track(new Texture2D(256, 256, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear, name = "ramp" });
+            var pixels = new Color32[256 * 256];
+            for (int v = 0; v < 256; v++) for (int u = 0; u < 256; u++) pixels[v * 256 + u] = new Color32((byte)u, (byte)v, (byte)((u + v) / 2), 255);
+            ramp.SetPixels32(pixels);
+            ramp.Apply();
+            Material display = null;
+            CutWorldRoot root = NewHullWorld(0.9f, null, 0.3f, r =>
+            {
+                var field = typeof(CutWorldRoot).GetField("materials", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var bound = (CutWorldRoot.MaterialBinding[])field.GetValue(r);
+                display = Track(new Material(Shader.Find("Zantetsu/VP Indexed Indirect Unlit")) { name = "display" });
+                display.SetTexture("_BaseMap", ramp);
+                display.SetColor("_BaseColor", Color.white);
+                display.SetFloat("_VpUsePaletteAtlas", 0f);
+                field.SetValue(r, bound.Concat(new[] { new CutWorldRoot.MaterialBinding { sourceIndex = 0, material = display } }).ToArray());
+                // The display's shadow casters, as the city's world has them (CutWorldShadowCaster / the immediate one).
+                Shader caster = Shader.Find("Zantetsu/VP Indexed Indirect Shadow Caster");
+                Material stable = Track(new Material(caster) { name = "stable caster" });
+                stable.SetFloat("_Cull", (float)CullMode.Back);
+                Material immediate = Track(new Material(caster) { name = "immediate caster" });
+                immediate.SetFloat("_Cull", (float)CullMode.Off);
+                SetPrivate(r, "shadowMaterial", stable);
+                SetPrivate(r, "provisionalShadowMaterial", immediate);
+            });
+            yield return null;
+            ShadowStage stage = NewShadowStage();
+            stage.camera.orthographicSize = 1.5f;
+            stage.camera.transform.SetPositionAndRotation(new Vector3(-2f, 4f, -3f), Quaternion.LookRotation(new Vector3(2f, -3.6f, 3f)));
+            var surface = Track(new Material(Shader.Find("Zantetsu/VP Mesh Surface")) { name = "mesh surface" });
+            surface.SetTexture("_BaseMap", ramp);
+            surface.SetColor("_BaseColor", display.GetColor("_BaseColor"));
+            surface.SetFloat("_VpUsePaletteAtlas", 0f);
+
+            // The bench as its MeshRenderer draws it (the input's own triangles, positions, normals and UVs).
+            var mesh = Track(new Mesh { name = "bench" });
+            mesh.SetVertices(data.render.Select(v => v.position).ToArray());
+            mesh.SetNormals(data.render.Select(v => v.normal).ToArray());
+            mesh.SetUVs(0, data.render.Select(v => v.uv).ToArray());
+            mesh.SetTriangles(data.indices.Select(i => (int)i).ToArray(), 0);
+            GameObject instance = TrackActor(new GameObject("bench as placed"));
+            instance.transform.position = new Vector3(0f, 0.01f, 0f);
+            instance.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = instance.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = surface;
+            Color32[] before = null, after = null, beforeNoShadow = null, afterNoShadow = null;
+            yield return DrawStageAfterTheCollection(root, stage, LightShadows.Hard, d => before = d);
+            yield return DrawStageAfterTheCollection(root, stage, LightShadows.None, d => beforeNoShadow = d);
+
+            // Its first cut's moment: the cut world draws it, the renderer off.
+            PlacedCuttableRegistration made = PlacedCuttableRegistration.Register(root, data, instance.transform, new Renderer[] { renderer }, new Collider[0], 50f, false);
+            _actors.Add(made.Actor);
+            Assert.That(renderer.enabled, Is.False);
+            yield return DrawStageAfterTheCollection(root, stage, LightShadows.Hard, d => after = d);
+            yield return DrawStageAfterTheCollection(root, stage, LightShadows.None, d => afterNoShadow = d);
+            // The object's pixels: those differing from the ground in both images.
+            (int compared, float mean, int p95, int largest) Compare(Color32[] x, Color32[] y)
+            {
+                int ground = Mode(x);
+                var differences = new List<int>();
+                for (int i = 0; i < x.Length; i++)
+                {
+                    if (Mathf.Abs(Grey(x[i]) - ground) <= 6 || Mathf.Abs(Grey(y[i]) - ground) <= 6) continue;   // the ground (or an edge with it)
+                    differences.Add(Mathf.Max(Mathf.Abs(x[i].r - y[i].r), Mathf.Max(Mathf.Abs(x[i].g - y[i].g), Mathf.Abs(x[i].b - y[i].b))));
+                }
+
+                differences.Sort();
+                return (differences.Count, differences.Count > 0 ? (float)differences.Average() : 0f, differences.Count > 0 ? differences[(int)(0.95f * (differences.Count - 1))] : 0, differences.Count > 0 ? differences[differences.Count - 1] : 0);
+            }
+
+            var shading = Compare(beforeNoShadow, afterNoShadow);
+            var shadowed = Compare(before, after);
+            TestContext.Out.WriteLine("without shadows: object pixels " + shading.compared + ", mean channel difference " + shading.mean.ToString("F2") + ", 95th percentile " + shading.p95 + ", largest " + shading.largest);
+            TestContext.Out.WriteLine("with the light's shadows: object pixels " + shadowed.compared + ", mean channel difference " + shadowed.mean.ToString("F2") + ", 95th percentile " + shadowed.p95 + ", largest " + shadowed.largest);
+            Assert.That(shading.compared, Is.GreaterThan(200), "the bench covers the image");
+            Assert.That(shading.mean, Is.LessThanOrEqualTo(2f), "the same colour on average (the shading)");
+            Assert.That(shading.p95, Is.LessThanOrEqualTo(6), "and nearly everywhere (edges and the normal's quantisation aside)");
+            Assert.That(shadowed.mean, Is.LessThanOrEqualTo(2f), "the same with the light's shadows (cast and received alike)");
+            Assert.That(shadowed.p95, Is.LessThanOrEqualTo(6), "nearly everywhere");
+            yield return EndWorld(root);
+        }
+
+        // Every owner of a lineage now, its root excepted (each fragment walked up through the operations that made it).
         private static List<PhysicsFragmentOwner> LineagePieces(CutWorldRoot root, LogicalFragmentId lineage)
         {
             var fragments = new List<LogicalFragmentId>();
@@ -288,6 +376,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             return pieces;
+        }
+
+        private static int Grey(Color32 c) => (c.r + c.g + c.b) / 3;
+
+        private static int Mode(Color32[] image)
+        {
+            var histogram = new int[256];
+            foreach (Color32 p in image) histogram[Grey(p)]++;
+            int best = 0;
+            for (int v = 1; v < 256; v++) if (histogram[v] > histogram[best]) best = v;
+            return best;
         }
     }
 }

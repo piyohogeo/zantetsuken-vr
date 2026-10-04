@@ -118,13 +118,13 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             if (!File.Exists(PlacedPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + PlacedPropInputPath);
             var input = new TextAsset(File.ReadAllText(PlacedPropInputPath)) { name = "bench_001" };
-            PlacedCuttableInput data = JsonUtility.FromJson<PlacedCuttableInput>(input.text);
+            PlacedCuttableInput data = PlayableCityCuttable.ParsedInput(input);
             CutWorldRoot root = NewPlacedHullWorld();
             try
             {
                 yield return null;
                 var detector = new SlashHitDetector(root, in k_hitSettings);
-                const float scale = 1f;   // unscaled: the registrar's scaling is the city walk's unit
+                const float scale = 1.25f;
                 var at = new Vector3(0f, -1f, 0f);
                 GameObject instance = RefusalInstance("bench_001 registrar deferred", at, out Renderer[] renderers, out Collider[] colliders);
                 instance.transform.localScale = Vector3.one * scale;
@@ -140,6 +140,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(c.Failure, Is.Null);
                 Assert.That(c.Candidate, Is.Not.Null);
                 Assert.That(c.IsRegistered, Is.False, "nothing registered into the world");
+                Assert.That(c.RegisteredScale, Is.EqualTo(scale).Within(1e-5f), "at the instance's scale");
                 Assert.That(detector.HasPlaced(c.Candidate), Is.True, "a candidate of the detector");
                 Assert.That(root.Storage.VertexGroupCount, Is.EqualTo(groups), "nothing stored");
                 Assert.That(root.Display.ShownCount, Is.EqualTo(shown), "nothing shown");
