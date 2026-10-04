@@ -435,6 +435,10 @@ namespace Zantetsu.Rendering
             return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, false, out geometry);
         }
 
+        // A cuttable's append: its cut input gate, and the whole append, for the Profiler.
+        private static readonly Unity.Profiling.ProfilerMarker s_cutInputGateMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Storage.CutInputGate");
+        private static readonly Unity.Profiling.ProfilerMarker s_appendMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.Storage.Append");
+
         /// <summary>
         /// Appends a prepared geometry as a cut input: the arrays are first put through <see cref="VpCutInputGate"/>,
         /// DESIGN 6.2's input contract, and only a geometry that passes is appended, exactly as
@@ -459,13 +463,20 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             geometry = default;
-            verdict = VpCutInputGate.Check(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes);
+            using (s_cutInputGateMarker.Auto())
+            {
+                verdict = VpCutInputGate.Check(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes);
+            }
+
             if (!verdict.Accepted)
             {
                 return false;
             }
 
-            return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, true, out geometry);
+            using (s_appendMarker.Auto())
+            {
+                return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, true, out geometry);
+            }
         }
 
         private bool AppendPrepared(
