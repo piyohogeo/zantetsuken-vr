@@ -8,12 +8,17 @@
 .DESCRIPTION
     Layout under <Root>\Working\Phase0.21 (the private asset repository):
 
-      blobs\<sha256><ext>              immutable content-addressed entities (FBX, textures, reference materials)
-      registry\manifests\<assetSha>.json immutable description of one asset content: fbx + textures (+ references)
+      blobs\<sha256><ext>              immutable content-addressed entities (FBX, textures, inputs, reference materials)
+      registry\manifests\<assetSha>.json immutable description of one asset content: fbx + textures + inputs (+ references)
       registry\assets\<name>.json       display registration: current asset SHA, history, notes
       registry\datasets\<name>.json     current revision and retained revisions (each a sorted set of asset SHAs)
 
     Asset SHA = SHA-256 of the canonical text "fbx:<sha>\n" + "texture:<file name>:<sha>\n" (textures sorted by name).
+    With -Inputs, append ordinally sorted lines input:<compact JSON [role,target,file,sha256]>\n. Without inputs,
+    including an empty descriptor, the legacy FBX + texture identity is unchanged. -Inputs names a JSON array
+    [{"role":"physics-proxy","target":"render-object-name","path":"proxy.json"}]. Paths are relative to the
+    descriptor (absolute paths are also accepted); role and target explicitly describe the input's correspondence.
+    The descriptor's location is not identity. Its registered input entities, roles, targets and file names are.
     Display names, placement and reference materials (.blend copies, export manifests, notes) do not enter it.
     Dataset revision = SHA-256 of the sorted asset SHAs joined by "\n". Registering here grants neither product
     adoption nor sharing permission; the licence boundary of DESIGN 10.8 applies to everything stored.
@@ -32,6 +37,7 @@ param(
     [string]$Name,
     [string]$Fbx,
     [string[]]$Textures = @(),
+    [string]$Inputs,
     [string[]]$References = @(),
     [string]$Note = '',
     [string[]]$Assets = @(),
@@ -42,6 +48,17 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Assert-RegistryName([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value) -or $value.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0 -or
+        $value.EndsWith('.') -or $value.EndsWith(' ')) {
+        throw "registration name must be one file name, not a path: '$value'"
+    }
+}
+if ($Name) { Assert-RegistryName $Name }
+if ($Dataset) { Assert-RegistryName $Dataset }
+foreach ($a in $Assets) { Assert-RegistryName $a }
+if ($AssetSha -and $AssetSha -notmatch '^[0-9a-fA-F]{64}$') { throw '-AssetSha must be a SHA-256 hex digest' }
 
 $base = Join-Path $Root 'Working\Phase0.21'
 $blobs = Join-Path $base 'blobs'
@@ -62,6 +79,7 @@ function Add-Blob([string]$path) {
     $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
     $target = Join-Path $blobs ($sha + $ext)
     if (-not (Test-Path -LiteralPath $target)) { Copy-Item -LiteralPath $path -Destination $target }
+    elseif ((Get-Sha256 $target) -ne $sha) { throw "existing blob does not match its hash: $target" }
     [pscustomobject]@{ file = [System.IO.Path]::GetFileName($path); sha256 = $sha; bytes = (Get-Item -LiteralPath $path).Length; blob = ($sha + $ext) }
 }
 
@@ -70,7 +88,7 @@ function Write-Json($object, [string]$path) {
     [System.IO.File]::WriteAllText($path, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
-function Read-Json([string]$path) { Get-Content -LiteralPath $path -Raw | ConvertFrom-Json }
+function Read-Json([string]$path) { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
 
 $now = (Get-Date).ToUniversalTime().ToString('o')
 
@@ -83,6 +101,37 @@ switch ($Command) {
         $textureEntries = @($textureEntries | Sort-Object file)
         $canonical = "fbx:$($fbxEntry.sha256)`n"
         foreach ($t in $textureEntries) { $canonical += "texture:$($t.file):$($t.sha256)`n" }
+        $inputEntries = @()
+        if ($Inputs) {
+            $descriptorPath = (Resolve-Path -LiteralPath $Inputs).ProviderPath
+            $descriptorDir = [System.IO.Path]::GetDirectoryName($descriptorPath)
+            $descriptorText = Get-Content -LiteralPath $descriptorPath -Raw -Encoding UTF8
+            if (-not $descriptorText.TrimStart().StartsWith('[')) { throw '-Inputs must contain a JSON array' }
+            $inputRecords = [System.Collections.Generic.SortedDictionary[string,object]]::new([System.StringComparer]::Ordinal)
+            $inputKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            $inputSpecs = ConvertFrom-Json -InputObject $descriptorText
+            foreach ($spec in $inputSpecs) {
+                foreach ($field in @('role', 'target', 'path')) {
+                    if ($null -eq $spec -or $null -eq $spec.PSObject.Properties[$field] -or
+                        $spec.$field -isnot [string] -or [string]::IsNullOrWhiteSpace($spec.$field)) {
+                        throw "each input needs a non-empty string '$field'"
+                    }
+                }
+                $inputPath = if ([System.IO.Path]::IsPathRooted($spec.path)) { $spec.path } else { Join-Path $descriptorDir $spec.path }
+                $e = Add-Blob $inputPath
+                $key = ConvertTo-Json -InputObject @($spec.role, $spec.target, $e.file) -Compress
+                if (-not $inputKeys.Add($key)) { throw "duplicate input role/target/file: $key" }
+                $record = ConvertTo-Json -InputObject @($spec.role, $spec.target, $e.file, $e.sha256) -Compress
+                $inputRecords.Add($record, [pscustomobject]@{
+                    role = $spec.role; target = $spec.target; file = $e.file
+                    sha256 = $e.sha256; bytes = $e.bytes; blob = $e.blob
+                })
+            }
+            foreach ($record in $inputRecords.Keys) {
+                $canonical += "input:$record`n"
+                $inputEntries += $inputRecords[$record]
+            }
+        }
         $assetSha = Get-TextSha256 $canonical
         $referenceEntries = @()
         foreach ($r in $References) {
@@ -92,7 +141,7 @@ switch ($Command) {
         }
         $manifest = [pscustomobject]@{
             assetSha = $assetSha; canonical = $canonical; fbx = $fbxEntry; textures = $textureEntries
-            references = $referenceEntries; registeredUtc = $now; name = $Name; note = $Note
+            inputs = $inputEntries; references = $referenceEntries; registeredUtc = $now; name = $Name; note = $Note
         }
         $manifestPath = Join-Path $manifests ($assetSha + '.json')
         # the manifest of one content is immutable: a later registration of the same content (any name, any note) keeps it
@@ -142,6 +191,10 @@ switch ($Command) {
             Write-Output "asset $sha ($($m.name))"
             Write-Output "  fbx      $(Join-Path $blobs $m.fbx.blob)"
             foreach ($t in $m.textures) { Write-Output "  texture  $(Join-Path $blobs $t.blob)  ($($t.file))" }
+            # Old manifests do not have an inputs property and remain readable without re-registration.
+            if ($null -ne $m.PSObject.Properties['inputs']) {
+                foreach ($i in $m.inputs) { Write-Output "  input    $(Join-Path $blobs $i.blob)  (role=$($i.role), target=$($i.target), file=$($i.file))" }
+            }
             foreach ($r in $m.references) { Write-Output "  $($r.kind.PadRight(8)) $(Join-Path $blobs $r.blob)  ($($r.file))" }
         }
     }
