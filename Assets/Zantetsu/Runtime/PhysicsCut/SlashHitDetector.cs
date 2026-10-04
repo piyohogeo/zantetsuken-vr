@@ -150,6 +150,7 @@ namespace Zantetsu.PhysicsCut
         // Inside Evaluate, apart from each other: the enumeration, and a character's acceptance.
         private static readonly ProfilerMarker s_find = new ProfilerMarker("Zantetsu.SlashHit.Find");
         private static readonly ProfilerMarker s_acceptCharacter = new ProfilerMarker("Zantetsu.SlashHit.AcceptCharacter");
+        private static readonly ProfilerMarker s_acceptPlaced = new ProfilerMarker("Zantetsu.SlashHit.AcceptPlaced");
 
         private readonly PhysicsOwnerRegistry _registry;
         private readonly LogicalCutLedger _ledger;
@@ -449,8 +450,11 @@ namespace Zantetsu.PhysicsCut
         private void AcceptPlaced(in Pending hit)
         {
             SlashPlacedCutResult result;
-            result = hit.placed.TryCut(new SlashPlacedHit(hit.plane, hit.planeWorld, hit.renderAnchor, hit.slashId, hit.planeId, hit.at,
-                hit.travelWorld, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse));
+            using (s_acceptPlaced.Auto())
+            {
+                result = hit.placed.TryCut(new SlashPlacedHit(hit.plane, hit.planeWorld, hit.renderAnchor, hit.slashId, hit.planeId, hit.at,
+                    hit.travelWorld, _settings.positiveSeparationImpulse, _settings.negativeSeparationImpulse));
+            }
 
             if (result.Done)
             {

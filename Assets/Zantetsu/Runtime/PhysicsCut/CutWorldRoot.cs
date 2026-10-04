@@ -266,6 +266,10 @@ namespace Zantetsu.PhysicsCut
         private static readonly Unity.Profiling.ProfilerMarker s_lifetimeMarker =
             new Unity.Profiling.ProfilerMarker("Zantetsu.PieceLifetime.Step");
 
+        // A registered body's display and its owner: the registration's coarse cost, for the Profiler.
+        private static readonly Unity.Profiling.ProfilerMarker s_addShowMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.World.Add.Show");
+        private static readonly Unity.Profiling.ProfilerMarker s_addOwnerMarker = new Unity.Profiling.ProfilerMarker("Zantetsu.World.Add.Owner");
+
         /// <summary>
         /// Builds the world from the profile. It is done once, in <c>Awake</c>, before the driver's first update: this
         /// component runs earlier than the driver by its execution order, so a cut asked for in the first frame finds
@@ -527,9 +531,15 @@ namespace Zantetsu.PhysicsCut
             // has been told about yet. The physics and the geometry follow only once the display has taken it, so a
             // refusal never leaves a body half in the world for a caller to register a second time.
             fragment = Ledger.AddFragment(anchorArray);
-            if (!Display.TryShow(
+            bool shown;
+            using (s_addShowMarker.Auto())
+            {
+                shown = Display.TryShow(
                     fragment, geometry, root.transform.localToWorldMatrix, lineageToGeometryLocal,
-                    Array.Empty<VpClipBoundary>()))
+                    Array.Empty<VpClipBoundary>());
+            }
+
+            if (!shown)
             {
                 Ledger.Retire(fragment);
                 fragment = default;
@@ -538,10 +548,14 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            Owners.RegisterAuthored(
-                fragment, root, body, shape, anchorArray != null && anchorArray.Length > 0, geometryLocalToOwner,
-                isBuildingDerived);
-            Geometry.RegisterBaseGeometry(fragment, geometry, lineageToGeometryLocal);
+            using (s_addOwnerMarker.Auto())
+            {
+                Owners.RegisterAuthored(
+                    fragment, root, body, shape, anchorArray != null && anchorArray.Length > 0, geometryLocalToOwner,
+                    isBuildingDerived);
+                Geometry.RegisterBaseGeometry(fragment, geometry, lineageToGeometryLocal);
+            }
+
             return true;
         }
 

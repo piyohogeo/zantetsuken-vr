@@ -153,7 +153,10 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 addBuildingHullHookForTest?.Invoke("before display");
-                shown = Display.TryShow(fragment, geometry, actor.transform.localToWorldMatrix, lineageToGeometryLocal, Array.Empty<VpClipBoundary>());
+                using (s_addShowMarker.Auto())
+                {
+                    shown = Display.TryShow(fragment, geometry, actor.transform.localToWorldMatrix, lineageToGeometryLocal, Array.Empty<VpClipBoundary>());
+                }
             }
             catch
             {
@@ -177,7 +180,10 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 addBuildingHullHookForTest?.Invoke("after display");
-                group = Hulls.Register(actor, body, shape, fragment, anchors, mass, out refusal);
+                using (s_addOwnerMarker.Auto())
+                {
+                    group = Hulls.Register(actor, body, shape, fragment, anchors, mass, out refusal);
+                }
             }
             catch
             {
@@ -275,7 +281,10 @@ namespace Zantetsu.PhysicsCut
             LogicalFragmentId at = fragment;
             try
             {
-                group = Hulls.Register(actor, body, shape, fragment, anchors, mass, out refusal);
+                using (s_addOwnerMarker.Auto())
+                {
+                    group = Hulls.Register(actor, body, shape, fragment, anchors, mass, out refusal);
+                }
             }
             catch
             {
@@ -307,7 +316,10 @@ namespace Zantetsu.PhysicsCut
                 {
                     show = () =>
                     {
-                        return actor != null && Display.TryShow(at, geometry, actor.transform.localToWorldMatrix, lineageToGeometryLocal, Array.Empty<VpClipBoundary>());
+                        using (s_addShowMarker.Auto())
+                        {
+                            return actor != null && Display.TryShow(at, geometry, actor.transform.localToWorldMatrix, lineageToGeometryLocal, Array.Empty<VpClipBoundary>());
+                        }
                     },
                     handedOver = handedOver,
                     takenBack = why =>
