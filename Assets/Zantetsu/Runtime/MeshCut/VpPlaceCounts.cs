@@ -17,6 +17,10 @@ namespace Zantetsu.MeshCut
         public long sectionsFoundHere, sectionsReused, sectionsBuilt, sectionEntriesCompared;
         public long capClips, capInputVertices, capOutputVertices;
 
+        // Render fragments of a placement-only pass kept as they were taken over from the structure -- nothing selected,
+        // standing bit for bit where the structure placed them -- and so neither placed nor built again (2026-10-05).
+        public long keptAsSettled;
+
         // The diagnosis's blocks (VpMultiCutSnapshot.PlacePhasedDiagnosis; 0 otherwise): every query of the pass, every check
         // of their answers, everything built after them -- each block timed whole.
         public double providerSeconds, checkSeconds, restSeconds;
@@ -29,6 +33,7 @@ namespace Zantetsu.MeshCut
             selected = planeTransforms = clipsKept = 0;
             sectionsFoundHere = sectionsReused = sectionsBuilt = sectionEntriesCompared = 0;
             capClips = capInputVertices = capOutputVertices = 0;
+            keptAsSettled = 0;
             providerSeconds = checkSeconds = restSeconds = 0.0;
         }
 
@@ -52,6 +57,7 @@ namespace Zantetsu.MeshCut
             capClips += a.capClips - b.capClips;
             capInputVertices += a.capInputVertices - b.capInputVertices;
             capOutputVertices += a.capOutputVertices - b.capOutputVertices;
+            keptAsSettled += a.keptAsSettled - b.keptAsSettled;
             providerSeconds += a.providerSeconds - b.providerSeconds;
             checkSeconds += a.checkSeconds - b.checkSeconds;
             restSeconds += a.restSeconds - b.restSeconds;
@@ -69,7 +75,7 @@ namespace Zantetsu.MeshCut
 
         public string Describe() =>
             "passes " + passes + " (" + (seconds * 1000).ToString("F3") + " ms); render fragments " + renderFragments + ", queries " + queries + " (following " + following + ", static " + staticPlacements + "), placement checks " + placementChecks
-            + "; selected " + selected + " (plane transforms " + planeTransforms + "), clips kept " + clipsKept
+            + "; selected " + selected + " (plane transforms " + planeTransforms + "), clips kept " + clipsKept + ", kept as taken over " + keptAsSettled
             + "; sections found in the build " + sectionsFoundHere + ", reused " + sectionsReused + ", built " + sectionsBuilt + " (entries compared " + sectionEntriesCompared + ")"
             + "; cap clips " + capClips + " (vertices in " + capInputVertices + ", out " + capOutputVertices + ")"
             + (providerSeconds + checkSeconds + restSeconds > 0.0 ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + ", checks " + (checkSeconds * 1000).ToString("F3") + ", the rest " + (restSeconds * 1000).ToString("F3") : "");
