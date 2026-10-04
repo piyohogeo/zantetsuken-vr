@@ -39,6 +39,7 @@ namespace Zantetsu.Sandbox
         private readonly CutWorldRoot _world;
         private readonly PlacedCuttableInput _data;
         private readonly Transform _target;
+        private readonly GameObject _instance;   // the target's GameObject: a Transform's never changes, so it is held, not asked for again
         private readonly Renderer[] _renderers;
         private readonly Collider[] _colliders;
         private readonly float _mass;
@@ -73,8 +74,43 @@ namespace Zantetsu.Sandbox
 
         public float4x4 FrameToWorld => float4x4.TRS(_target.position, _target.rotation, new float3(1f));
 
-        public bool IsHitTarget => State == CandidateState.Candidate && !_disposed && _target != null && _target.gameObject.activeInHierarchy
+        // Whether the instance stands and is active is asked of the engine each time; only the way to its GameObject is
+        // held. (A Transform and its GameObject are destroyed together, so asking either whether it exists is the same.)
+        public bool IsHitTarget => State == CandidateState.Candidate && !_disposed
+            && (stateFromHeldObject ? _instance != null && _instance.activeInHierarchy : _target != null && _target.gameObject.activeInHierarchy)
             && _world != null && _world.IsReady && !_world.IsEnding;
+
+        /// <summary>Off, the state is asked through the Transform as before (three engine calls, not two) -- kept for the comparison.</summary>
+        internal static bool stateFromHeldObject = true;
+
+        public bool TryGetHitFrame(out float4x4 frameToWorld)
+        {
+            if (!IsHitTarget)
+            {
+                frameToWorld = default;
+                return false;
+            }
+
+            // The instance's position and rotation in one reading, as FrameToWorld reads them one after the other.
+            _target.GetPositionAndRotation(out Vector3 position, out Quaternion rotation);
+            frameToWorld = float4x4.TRS(position, rotation, new float3(1f));
+            return true;
+        }
+
+        public bool TryGetHitPose(out float3 position, out quaternion rotation)
+        {
+            if (!IsHitTarget)
+            {
+                position = default;
+                rotation = default;
+                return false;
+            }
+
+            _target.GetPositionAndRotation(out Vector3 p, out Quaternion r);
+            position = p;
+            rotation = r;
+            return true;
+        }
 
         /// <param name="data">The input at the instance's size (a uniform scale already in it); <paramref name="target"/> places it, unscaled.</param>
         public PlacedCuttableCandidate(CutWorldRoot world, PlacedCuttableInput data, Transform target, Renderer[] instanceRenderers, Collider[] instanceColliders,
@@ -90,6 +126,7 @@ namespace Zantetsu.Sandbox
             _world = world;
             _data = data;
             _target = target;
+            _instance = target.gameObject;
             _renderers = instanceRenderers ?? Array.Empty<Renderer>();
             _colliders = instanceColliders ?? Array.Empty<Collider>();
             _mass = mass;

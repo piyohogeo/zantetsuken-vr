@@ -282,7 +282,11 @@ namespace Zantetsu.PhysicsCut
         public void AddPlaced(ISlashPlacedTarget placed)
         {
             if (placed == null) throw new ArgumentNullException(nameof(placed));
-            if (!_placed.Contains(placed)) _placed.Add(placed);
+            if (!_placed.Contains(placed))
+            {
+                _placed.Add(placed);
+                _placedBoxes.Add(new PlacedBox());
+            }
         }
 
         /// <summary>Whether a placed object is a candidate now, and how many are (observation).</summary>
@@ -292,7 +296,185 @@ namespace Zantetsu.PhysicsCut
 
         public void RemovePlaced(ISlashPlacedTarget placed)
         {
-            _placed.Remove(placed);
+            int at = _placed.IndexOf(placed);
+            if (at < 0) return;
+            _placed.RemoveAt(at);
+            _placedBoxes.RemoveAt(at);
+        }
+
+        /// <summary>
+        /// Whether a placed target is passed over, before anything of its own frame is worked out, when the world box of
+        /// its convexes and the world box of the sweep's four points are apart (see <see cref="PlacedBox"/>). On by
+        /// default; off, every placed target goes through the test in its own frame as before -- kept so that the two
+        /// can be compared on the same sweeps.
+        /// </summary>
+        internal bool placedBoxReject = true;
+
+        /// <summary>How many times a placed target was passed over by its world box, since this detector was made (observation).</summary>
+        internal long PlacedPassedOver { get; private set; }
+
+        /// <summary>
+        /// A placed target's world box for one update: the box of all its convexes (in its frame, kept while its hit
+        /// shape is the same object) carried into the world by the frame read from the target in this update -- so it
+        /// follows the instance wherever it stands now: moved, turned, re-parented. A scale is not in that frame (it is
+        /// in the convexes, <see cref="ISlashPlacedTarget.FrameToWorld"/>), and the test in the frame does not read it
+        /// either. The frame and its inverse are kept for the update's sweeps: nothing moves a target between them.
+        /// <para>
+        /// The box only ever passes a target over: it is widened by a margin for the rounding of the two ways of
+        /// computing (touching counts in the query), and a box that cannot be made -- no shape, no convex, a frame or a
+        /// corner that is not finite -- passes nothing over: that target takes the test in its frame as before.
+        /// </para>
+        /// </summary>
+        private sealed class PlacedBox
+        {
+            public VpCharacterHitShape shape;      // whose local box is held
+            public bool localValid;
+            public float3 localCentre, localHalf;
+            public long update;                    // the update the world values below are of
+            public bool worldValid;
+            public float3 lo, hi;
+            public float4x4 frameToWorld, worldToFrame;
+            public bool hasInverse;
+            public long frameUpdate;               // the update frameToWorld was read in together with the target's state
+            public long poseUpdate;                // the update position and rotation were read in together with its state
+            public float3 position;
+            public quaternion rotation;
+            public bool hasFrame;                  // frameToWorld is this update's (read, or made from the pose when first needed)
+        }
+
+        private readonly List<PlacedBox> _placedBoxes = new List<PlacedBox>(8);
+        private readonly List<PlacedBox> _placedTargetBoxes = new List<PlacedBox>(8);
+        private long _placedUpdate;
+
+        /// <summary>
+        /// Whether a fragment's shape is passed over, before its frame is inverted and the sweep carried into it, when the
+        /// world box of its convexes (<see cref="PhysicsOwnerShape.TryLocalBounds"/>, carried by its frame) and the world
+        /// box of the sweep's four points are apart -- as a placed target is (<see cref="placedBoxReject"/>, the same
+        /// margin). The shape's frame is read once an update and kept for that update's sweeps: nothing moves an owner
+        /// between them, the acceptances coming after every sweep. A shape with no usable box, or whose world box is not
+        /// finite, is passed over by nothing. On by default; off, every shape is tested in its frame at every sweep as
+        /// before -- kept so that the two can be compared on the same sweeps.
+        /// </summary>
+        internal bool fragmentBoxReject = true;
+
+        /// <summary>
+        /// Tests only: every shape passed over by its box takes the test in its frame all the same, and one that would
+        /// have been a hit is counted in <see cref="FragmentBoxDisagreements"/>; the kept frame is compared, value for
+        /// value, with the one read again, and a difference counted in <see cref="FragmentFrameDifferences"/>.
+        /// </summary>
+        internal bool fragmentBoxCheckForTest;
+
+        internal long FragmentBoxDisagreements { get; private set; }
+        internal long FragmentFrameDifferences { get; private set; }
+        internal long FragmentsPassedOver { get; private set; }
+
+        // One shape's frame and world box for one update; the index is the shape's in _shapes.
+        private struct ShapeFrame
+        {
+            public long update;          // the update the values below are of
+            public bool worldValid, hasInverse;
+            public float3 lo, hi;
+            public float4x4 shapeToWorld, worldToShape;
+        }
+
+        private ShapeFrame[] _shapeFrames = Array.Empty<ShapeFrame>();
+        private long _shapeUpdate;
+
+        // The shape's frame of this update, read once, and its world box from it.
+        private static void ReadShapeFrame(ref ShapeFrame frame, long update, Transform owner, PhysicsOwnerShape shape)
+        {
+            frame.update = update;
+            frame.hasInverse = false;
+            frame.worldValid = false;
+            float4x4 m = math.mul((float4x4)owner.localToWorldMatrix, shape.LocalToOwner);
+            frame.shapeToWorld = m;
+            if (!shape.TryLocalBounds(out float3 lo, out float3 hi)) return;
+            float3 centre = math.transform(m, 0.5f * (lo + hi));
+            float3 half = math.mul(new float3x3(math.abs(m.c0.xyz), math.abs(m.c1.xyz), math.abs(m.c2.xyz)), 0.5f * (hi - lo));
+            if (!math.all(math.isfinite(centre) & math.isfinite(half))) return;
+            frame.lo = centre - half;
+            frame.hi = centre + half;
+            frame.worldValid = true;
+        }
+
+        /// <summary>
+        /// Whether a placed target's state and frame are read from its instance in one call an update
+        /// (<see cref="ISlashPlacedTarget.TryGetHitFrame"/>), where the list of targets is made; the box and the test in
+        /// the frame then use that frame. Only with <see cref="placedBoxReject"/>. Off, the state is asked there and the
+        /// frame read again when the box is made, as before -- kept for the comparison. Nothing is kept from one update
+        /// to the next either way.
+        /// </summary>
+        internal bool placedMergedRead = true;
+
+        /// <summary>
+        /// Whether that one reading gives the position and rotation (<see cref="ISlashPlacedTarget.TryGetHitPose"/>) in
+        /// place of the frame as a matrix: the box is made from them directly, and the matrix -- the same
+        /// TRS(position, rotation, 1) -- only for a target whose box a sweep meets. Only with
+        /// <see cref="placedMergedRead"/>. Off, the frame is read as a matrix as before.
+        /// </summary>
+        internal bool placedPoseRead = true;
+
+        // The target's frame of this update, read once, and its world box from it.
+        private void RefreshPlacedBox(PlacedBox box, ISlashPlacedTarget target)
+        {
+            box.update = _placedUpdate;
+            box.hasInverse = false;
+            box.worldValid = false;
+            bool pose = box.poseUpdate == _placedUpdate;   // position and rotation were read with its state: the frame is made only if a sweep comes near
+            float4x4 frame = default;
+            if (pose)
+            {
+                box.hasFrame = false;
+            }
+            else
+            {
+                frame = box.frameUpdate == _placedUpdate ? box.frameToWorld : target.FrameToWorld;   // already read with its state, or read now
+                box.frameToWorld = frame;
+                box.hasFrame = true;
+            }
+            VpCharacterHitShape shape = target.HitShape;
+            if (!ReferenceEquals(shape, box.shape))
+            {
+                box.shape = shape;
+                box.localValid = false;
+                if (shape != null && !shape.IsDisposed && shape.ConvexCount > 0)
+                {
+                    shape.Bounds(0, out float3 lo, out float3 hi);
+                    for (int k = 1; k < shape.ConvexCount; k++)
+                    {
+                        shape.Bounds(k, out float3 klo, out float3 khi);
+                        lo = math.min(lo, klo);
+                        hi = math.max(hi, khi);
+                    }
+
+                    box.localCentre = 0.5f * (lo + hi);
+                    box.localHalf = 0.5f * (hi - lo);
+                    box.localValid = math.all(math.isfinite(lo) & math.isfinite(hi));
+                }
+            }
+
+            if (!box.localValid || shape == null || shape.IsDisposed) return;
+            // The frame is TRS(position, rotation, 1): its three axes are the rotation's, its fourth column the position. The
+            // box is carried by those, whichever way they came.
+            float3 centre;
+            float3x3 r;
+            if (pose)
+            {
+                var axes = new float3x3(box.rotation);
+                centre = math.mul(axes, box.localCentre) + box.position;
+                r = new float3x3(math.abs(axes.c0), math.abs(axes.c1), math.abs(axes.c2));
+            }
+            else
+            {
+                centre = math.transform(frame, box.localCentre);
+                r = new float3x3(math.abs(frame.c0.xyz), math.abs(frame.c1.xyz), math.abs(frame.c2.xyz));
+            }
+
+            float3 half = math.mul(r, box.localHalf);
+            if (!math.all(math.isfinite(centre) & math.isfinite(half))) return;
+            box.lo = centre - half;
+            box.hi = centre + half;
+            box.worldValid = true;
         }
 
         /// <summary>
@@ -357,6 +539,8 @@ namespace Zantetsu.PhysicsCut
             using (s_find.Auto())
             {
                 _registry.CollectCurrentShapes(_shapes);
+                _shapeUpdate++;   // the frames kept below are of this list and this update
+                if (_shapeFrames.Length < _shapes.Count) _shapeFrames = new ShapeFrame[Math.Max(_shapes.Count, _shapeFrames.Length * 2)];
                 _characterTargets.Clear();
                 for (int c = 0; c < _characters.Count; c++)
                 {
@@ -384,9 +568,38 @@ namespace Zantetsu.PhysicsCut
                 _hullTargets.Clear();
                 _hulls?.CollectTargets(_hullTargets);
                 _placedTargets.Clear();
+                _placedTargetBoxes.Clear();
+                _placedUpdate++;
+                bool merged = placedBoxReject && placedMergedRead;
+                bool posed = merged && placedPoseRead;
                 for (int p = 0; p < _placed.Count; p++)
                 {
-                    if (_placed[p] != null && _placed[p].IsHitTarget) _placedTargets.Add(_placed[p]);
+                    ISlashPlacedTarget placed = _placed[p];
+                    if (placed == null) continue;
+                    if (merged)
+                    {
+                        // Whether it is a target and where it stands, read from the instance once for this update: the
+                        // box and the test in its frame use this frame, and nothing reads the instance again for them.
+                        PlacedBox box = _placedBoxes[p];
+                        if (posed)
+                        {
+                            if (!placed.TryGetHitPose(out box.position, out box.rotation)) continue;
+                            box.poseUpdate = _placedUpdate;
+                        }
+                        else
+                        {
+                            if (!placed.TryGetHitFrame(out box.frameToWorld)) continue;
+                            box.frameUpdate = _placedUpdate;
+                        }
+
+                        _placedTargets.Add(placed);
+                        _placedTargetBoxes.Add(box);
+                    }
+                    else if (placed.IsHitTarget)
+                    {
+                        _placedTargets.Add(placed);
+                        _placedTargetBoxes.Add(_placedBoxes[p]);
+                    }
                 }
 
                 for (int s = 0; s < sweeps.Length; s++)
@@ -645,16 +858,60 @@ namespace Zantetsu.PhysicsCut
             }
 
             var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
+
+            // The sweep's four points in the world, widened for the rounding of the two computations (the box below is in
+            // the world, the test in each target's frame): by a part in ten thousand of the largest coordinate in play.
+            float3 sweepLo = math.min(math.min(a0, b0), math.min(a1, b1));
+            float3 sweepHi = math.max(math.max(a0, b0), math.max(a1, b1));
+            float sweepReach = math.cmax(math.max(math.abs(sweepLo), math.abs(sweepHi)));
             for (int p = 0; p < _placedTargets.Count; p++)
             {
                 ISlashPlacedTarget target = _placedTargets[p];
+                PlacedBox box = null;
+                if (placedBoxReject)
+                {
+                    box = _placedTargetBoxes[p];
+                    if (box.update != _placedUpdate) RefreshPlacedBox(box, target);
+                    if (box.worldValid)
+                    {
+                        float margin = 1e-4f * math.max(sweepReach, math.cmax(math.max(math.abs(box.lo), math.abs(box.hi)))) + 1e-4f;
+                        if (math.any(sweepHi < box.lo - margin) || math.any(box.hi + margin < sweepLo))
+                        {
+                            PlacedPassedOver++;
+                            continue;
+                        }
+                    }
+                }
+
                 if (target.Source.IsSet && _consumption.IsConsumed(sweep.SlashId, target.Source))
                 {
                     continue;
                 }
 
-                float4x4 frameToWorld = target.FrameToWorld;
-                float4x4 worldToFrame = math.inverse(frameToWorld);
+                float4x4 frameToWorld, worldToFrame;
+                if (box != null)
+                {
+                    if (!box.hasFrame)
+                    {
+                        box.frameToWorld = float4x4.TRS(box.position, box.rotation, new float3(1f));   // the frame, made for the target a sweep comes near
+                        box.hasFrame = true;
+                    }
+
+                    if (!box.hasInverse)
+                    {
+                        box.worldToFrame = math.inverse(box.frameToWorld);
+                        box.hasInverse = true;
+                    }
+
+                    frameToWorld = box.frameToWorld;
+                    worldToFrame = box.worldToFrame;
+                }
+                else
+                {
+                    frameToWorld = target.FrameToWorld;
+                    worldToFrame = math.inverse(frameToWorld);
+                }
+
                 float3 la0 = math.transform(worldToFrame, a0);
                 float3 lb0 = math.transform(worldToFrame, b0);
                 float3 la1 = math.transform(worldToFrame, a1);
@@ -772,20 +1029,71 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+            // The sweep's four points in the world, widened as for the placed targets (FindPlaced): the box is in the world,
+            // the test in each shape's frame.
+            float3 sweepLo = math.min(math.min(a0, b0), math.min(a1, b1));
+            float3 sweepHi = math.max(math.max(a0, b0), math.max(a1, b1));
+            float sweepReach = math.cmax(math.max(math.abs(sweepLo), math.abs(sweepHi)));
             for (int c = 0; c < _shapes.Count; c++)
             {
                 CurrentShape current = _shapes[c];
                 LogicalFragmentId fragment = current.Fragment;
                 PhysicsOwnerShape shape = current.Shape;
                 Transform owner = current.Owner;
-                if (owner == null || shape.IsFreed || _consumption.IsConsumed(sweep.SlashId, fragment))
+                if (owner == null || shape.IsFreed)
                 {
                     continue;
                 }
 
                 // Into the convexes' own numerical frame: the owner's world transform with the shape's placement on it.
-                float4x4 shapeToWorld = math.mul((float4x4)owner.localToWorldMatrix, shape.LocalToOwner);
-                float4x4 worldToShape = math.inverse(shapeToWorld);
+                float4x4 shapeToWorld, worldToShape;
+                bool passedOver = false;
+                if (fragmentBoxReject)
+                {
+                    ref ShapeFrame frame = ref _shapeFrames[c];
+                    if (frame.update != _shapeUpdate) ReadShapeFrame(ref frame, _shapeUpdate, owner, shape);
+                    if (frame.worldValid)
+                    {
+                        float margin = 1e-4f * math.max(sweepReach, math.cmax(math.max(math.abs(frame.lo), math.abs(frame.hi)))) + 1e-4f;
+                        passedOver = math.any(sweepHi < frame.lo - margin) || math.any(frame.hi + margin < sweepLo);
+                    }
+
+                    if (passedOver)
+                    {
+                        FragmentsPassedOver++;
+                        if (!fragmentBoxCheckForTest) continue;
+                    }
+
+                    if (_consumption.IsConsumed(sweep.SlashId, fragment))
+                    {
+                        continue;
+                    }
+
+                    if (!frame.hasInverse)
+                    {
+                        frame.worldToShape = math.inverse(frame.shapeToWorld);
+                        frame.hasInverse = true;
+                    }
+
+                    shapeToWorld = frame.shapeToWorld;
+                    worldToShape = frame.worldToShape;
+                    if (fragmentBoxCheckForTest
+                        && !shapeToWorld.Equals(math.mul((float4x4)owner.localToWorldMatrix, shape.LocalToOwner)))
+                    {
+                        FragmentFrameDifferences++;
+                    }
+                }
+                else
+                {
+                    if (_consumption.IsConsumed(sweep.SlashId, fragment))
+                    {
+                        continue;
+                    }
+
+                    shapeToWorld = math.mul((float4x4)owner.localToWorldMatrix, shape.LocalToOwner);
+                    worldToShape = math.inverse(shapeToWorld);
+                }
+
                 var worldPlane = new float4(n, sweep.SourceSlashPlane.distance);
                 float4 plane = math.mul(math.transpose(shapeToWorld), worldPlane);
                 plane /= math.length(plane.xyz);
@@ -808,6 +1116,13 @@ namespace Zantetsu.PhysicsCut
 
                     hit = SlashSweepConvexQuery.Intersects(
                         plane, la0, lb0, la1, lb1, shape.BankOf(k), shape.Convex(k), ref _section);
+                }
+
+                if (passedOver)
+                {
+                    // Tests only (fragmentBoxCheckForTest): passed over by its box, and tested in its frame to see.
+                    if (hit) FragmentBoxDisagreements++;
+                    continue;
                 }
 
                 if (!hit || !_consumption.TryConsume(sweep.SlashId, fragment))

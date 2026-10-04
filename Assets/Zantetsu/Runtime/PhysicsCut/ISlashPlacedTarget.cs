@@ -22,6 +22,20 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         float4x4 FrameToWorld { get; }
 
+        /// <summary>
+        /// Both answers at once, for a caller that needs them in the same update: whether it is a hit target now
+        /// (<see cref="IsHitTarget"/>) and, when it is, its frame as it stands now (<see cref="FrameToWorld"/>). The
+        /// same answers as the two members give at that moment; only the reading of the instance is done once.
+        /// </summary>
+        bool TryGetHitFrame(out float4x4 frameToWorld);
+
+        /// <summary>
+        /// The same answers with the frame as its two parts: the instance's position and rotation in the world as it
+        /// stands now (its parents' transforms are in them; a scale is not part of the frame). The frame is exactly
+        /// <c>TRS(position, rotation, 1)</c>, which is what <see cref="FrameToWorld"/> gives.
+        /// </summary>
+        bool TryGetHitPose(out float3 position, out quaternion rotation);
+
         /// <summary>Its convexes in its frame (<see cref="FrameToWorld"/>), with their boxes.</summary>
         VpCharacterHitShape HitShape { get; }
 
