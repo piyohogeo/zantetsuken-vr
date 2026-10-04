@@ -101,6 +101,35 @@ namespace Zantetsu.Sandbox
             RenderPipelineManager.endCameraRendering += _endCamera;
         }
 
+        // The display refuses to give a camera's stencil slot back in the frame it drew for it (its buffers are read until the
+        // frame is drawn) -- the frame a picture is read in. Such a camera is kept, disabled, and given back from a later frame,
+        // destroyed only once the display has let it go: otherwise each picture kept one of the display's few slots and the
+        // later cameras were refused (2026-10-03: the city walk's walk shots, taken by the display False). Given back as the
+        // pipeline begins a later frame's rendering, before any camera of it is drawn (the kept camera is drawn no more).
+        private static readonly List<(CutWorldRoot world, Camera camera)> s_pending = new List<(CutWorldRoot, Camera)>();
+        private static bool s_draining;
+
+        /// <summary>Capture cameras disposed whose slot the display has not let go yet (given back from a later frame).</summary>
+        public static int PendingUnregistrations => s_pending.Count;
+
+        private static void Drain(ScriptableRenderContext context, List<Camera> cameras)
+        {
+            for (int i = s_pending.Count - 1; i >= 0; i--)
+            {
+                (CutWorldRoot world, Camera camera) = s_pending[i];
+                bool displayGone = world == null || world.Display == null || world.Display.IsDisposed;
+                if (!displayGone && world.Display.TryGetCameraStencil(camera, out _, out _) && !world.Display.TryUnregisterCamera(camera)) continue;
+                if (camera != null) UnityEngine.Object.Destroy(camera.gameObject);
+                s_pending.RemoveAt(i);
+            }
+
+            if (s_pending.Count == 0 && s_draining)
+            {
+                RenderPipelineManager.beginContextRendering -= Drain;
+                s_draining = false;
+            }
+        }
+
         /// <summary>A fixed shot: placed now, and never moved until the next switch.</summary>
         public void SetShot(int index, string why)
         {
@@ -150,9 +179,20 @@ namespace Zantetsu.Sandbox
             Application.onBeforeRender -= _beforeRender;
             RenderPipelineManager.endCameraRendering -= _endCamera;
             if (_drawing != null && s_drawingCameras != null && ListedWithDrawing) s_drawingCameras.SetValue(_drawing, _drawingCamerasBefore);
-            if (_world != null && _world.Display != null && !_world.Display.IsDisposed && _world.Display.TryGetCameraStencil(Camera, out _, out _)) _world.Display.TryUnregisterCamera(Camera);
+            bool kept = _world != null && _world.Display != null && !_world.Display.IsDisposed && _world.Display.TryGetCameraStencil(Camera, out _, out _)
+                && !_world.Display.TryUnregisterCamera(Camera);
             Camera.targetTexture = null;
-            UnityEngine.Object.Destroy(Camera.gameObject);
+            if (kept)
+            {
+                Camera.enabled = false;
+                s_pending.Add((_world, Camera));
+                if (!s_draining) { RenderPipelineManager.beginContextRendering += Drain; s_draining = true; }
+            }
+            else
+            {
+                UnityEngine.Object.Destroy(Camera.gameObject);
+            }
+
             Camera = null;
             if (sink != null)
             {
