@@ -567,13 +567,18 @@ namespace Zantetsu.MeshCut
     /// history once, the first time a build meets it; a build over an unchanged history allocates nothing for them.
     /// </para>
     /// </summary>
-    public sealed class VpMultiCutSnapshot
+    public sealed class VpMultiCutSnapshot : IDisposable
     {
-        private readonly VpMultiCutCapacities _capacities;
-        private readonly VpMultiCutBranch[] _branches;
-        private readonly VpClipCandidate[] _candidates;
-        private readonly VpClipSelectionState[] _states;
-        private readonly VpMultiCutRenderFragment[] _renderFragments;
+        // The room (TL, 2026-10-05). The large arrays of plain numbers are rooms (VpNumericRoom): on reserved address
+        // space when the snapshot was made for a display (TryCreateOnBacking), where growing is more pages committed
+        // behind the same base, and in managed arrays when it was made on its own. The arrays whose items hold a
+        // reference -- a candidate's, a condition's, a cap's and a section's face names its ledger -- cannot stand on
+        // native memory and stay managed arrays; they are replaced by larger ones when the room grows.
+        private VpMultiCutCapacities _capacities;
+        private VpNumericRoom<VpMultiCutBranch> _branches;
+        private VpClipCandidate[] _candidates;
+        private VpClipSelectionState[] _states;
+        private VpNumericRoom<VpMultiCutRenderFragment> _renderFragments;
 
         /// <summary>
         /// Who each render fragment stands where, settled with the structure: the branch that puts it there, named by
@@ -589,12 +594,12 @@ namespace Zantetsu.MeshCut
         /// often none at all. Asking where something stands with that record would ask about the wrong one.
         /// </para>
         /// </summary>
-        private readonly VpMultiCutStandsAs[] _standsAs;
+        private VpNumericRoom<VpMultiCutStandsAs> _standsAs;
 
-        private readonly VpMultiCutSideIdentity[] _sideIdentity;
-        private readonly VpMultiCutCapIdentity[] _capIdentity;
-        private readonly VpCapConstraint[] _conditions;
-        private readonly VpMultiCutCap[] _caps;
+        private VpNumericRoom<VpMultiCutSideIdentity> _sideIdentity;
+        private VpNumericRoom<VpMultiCutCapIdentity> _capIdentity;
+        private VpCapConstraint[] _conditions;
+        private VpMultiCutCap[] _caps;
 
         // Validate's own tables, filled at each structural validation and read only inside it: which registration each
         // root is (so a fragment on a chain is matched by one lookup, not by comparing it with every registration), and
@@ -605,7 +610,7 @@ namespace Zantetsu.MeshCut
         private readonly Dictionary<LogicalFragmentId, int> _lineageOf = new Dictionary<LogicalFragmentId, int>();
         private readonly HashSet<LogicalFragmentId> _rootsRegisteredTwice = new HashSet<LogicalFragmentId>();   // roots two registrations or more have: filled with the root table, read once per registration
         private readonly List<LogicalFragmentId> _lineageWalk = new List<LogicalFragmentId>();
-        private readonly Vector3[] _capVertices;
+        private VpNumericRoom<Vector3> _capVertices;
 
         // Work room, made once.
         private readonly VpClipBoundary[] _chain;
@@ -614,26 +619,27 @@ namespace Zantetsu.MeshCut
         // candidates kept: a chain has no more candidates than boundaries, so the chain depth is room enough.
         private readonly VpClipCandidate[] _checkCandidates;
         private readonly VpClipSelectionState[] _checkStates;
-        private readonly LogicalFragmentId[] _stack;
+        private VpNumericRoom<LogicalFragmentId> _stack;
         private readonly float4[] _localPlanes = new float4[VpClipCandidates.Capacity];
         private readonly float4[] _worldPlanes = new float4[VpClipCandidates.Capacity];
         private readonly VpClipHalfSpace[] _halfSpaces = new VpClipHalfSpace[VpClipCandidates.Capacity];
         private readonly Vector3[] _initial = new Vector3[VpCapBoundsPolygon.MaxVertices];
         private readonly Vector3[] _clipped = new Vector3[VpCapPolygonClip.MaxVertices];
         private readonly VpCapBoundsPolygon _section = new VpCapBoundsPolygon();
-        private readonly RangeList<VpClipCandidate> _selectedCandidates;
-        private readonly RangeList<VpClipSelectionState> _selectedStates;
+        private RangeList<VpClipCandidate> _selectedCandidates;
+        private RangeList<VpClipSelectionState> _selectedStates;
         private readonly RangeList<float4> _selectedPlanes;
         private readonly RangeList<VpClipHalfSpace> _selectedHalfSpaces;
 
         // The sections taken in this build, one per key, and their vertices: at most one per cap.
-        private readonly Section[] _sections;
-        private readonly Vector3[] _sectionVertices;
+        private Section[] _sections;
+        private VpNumericRoom<Vector3> _sectionVertices;
         private readonly VpMultiCutRegistration[] _single = new VpMultiCutRegistration[1];
 
         // Which section each cap was built from: the slot in _sections, so that the section kept for a drawn cap can be
         // read as it is (InitialSection) without being taken again.
-        private readonly int[] _capSection;
+        private VpNumericRoom<int> _capSection;
+        private bool _disposed;
         private int _registrationCount;
         private long _buildGeneration;
 
@@ -663,6 +669,78 @@ namespace Zantetsu.MeshCut
         /// </summary>
         /// <exception cref="ArgumentOutOfRangeException">A capacity is not positive, or a derived size does not fit.</exception>
         public VpMultiCutSnapshot(VpMultiCutCapacities capacities)
+            : this(capacities, null, capacities)
+        {
+        }
+
+        /// <summary>
+        /// A snapshot whose numeric rooms stand on address space reserved for <paramref name="reserve"/> and committed
+        /// for <paramref name="capacities"/>, every page of the committed part written before this returns. It grows
+        /// in place up to the reservation (<see cref="TryGrowTo"/>) and is disposed by whoever made it. False, holding
+        /// nothing, when a reservation or a first commit is refused or the sizes do not hold together.
+        /// </summary>
+        internal static bool TryCreateOnBacking(
+            IVpPageBacking backing, VpMultiCutCapacities capacities, VpMultiCutCapacities reserve,
+            out VpMultiCutSnapshot snapshot, out string failure)
+        {
+            snapshot = null;
+            failure = null;
+            if (backing == null)
+            {
+                throw new ArgumentNullException(nameof(backing));
+            }
+
+            try
+            {
+                snapshot = new VpMultiCutSnapshot(capacities, backing, reserve);
+                return true;
+            }
+            catch (RoomNotMadeException exception)
+            {
+                failure = exception.Message;
+                return false;
+            }
+            catch (OutOfMemoryException exception)
+            {
+                failure = "memory could not be had: " + exception.Message;
+                return false;
+            }
+        }
+
+        private sealed class RoomNotMadeException : Exception
+        {
+            public RoomNotMadeException(string message)
+                : base(message)
+            {
+            }
+        }
+
+        /// <summary>The numbers every room follows from: what one capacity makes of each derived size.</summary>
+        internal readonly struct RoomSizes
+        {
+            public RoomSizes(in VpMultiCutCapacities capacities)
+            {
+                branches = capacities.branches;
+                candidates = capacities.candidates;
+                renderFragments = capacities.renderFragments;
+                caps = capacities.caps;
+                capVertices = (long)capacities.caps * VpCapPolygonClip.MaxVertices;
+                sectionVertices = (long)capacities.caps * VpCapBoundsPolygon.MaxVertices;
+                stack = ((long)capacities.branches * 2) + 2;
+            }
+
+            public readonly int branches;
+            public readonly int candidates;
+            public readonly int renderFragments;
+            public readonly int caps;
+            public readonly long capVertices;
+            public readonly long sectionVertices;
+            public readonly long stack;
+
+            public bool FitsInt => capVertices <= int.MaxValue && sectionVertices <= int.MaxValue && stack <= int.MaxValue;
+        }
+
+        private VpMultiCutSnapshot(VpMultiCutCapacities capacities, IVpPageBacking backing, VpMultiCutCapacities reserve)
         {
             if (capacities.branches <= 0 || capacities.candidates < 0 || capacities.renderFragments <= 0
                 || capacities.caps < 0 || capacities.chainDepth <= 0)
@@ -670,36 +748,310 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentOutOfRangeException(nameof(capacities));
             }
 
-            long capVertices = (long)capacities.caps * VpCapPolygonClip.MaxVertices;
-            long sectionVertices = (long)capacities.caps * VpCapBoundsPolygon.MaxVertices;
-            long stack = ((long)capacities.branches * 2) + 2;
-            if (capVertices > int.MaxValue || sectionVertices > int.MaxValue || stack > int.MaxValue)
+            var sizes = new RoomSizes(capacities);
+            var reserved = new RoomSizes(reserve);
+            if (!sizes.FitsInt || !reserved.FitsInt)
             {
                 throw new ArgumentOutOfRangeException(nameof(capacities), "a derived size does not fit an int");
             }
 
+            if (reserve.branches < capacities.branches || reserve.candidates < capacities.candidates
+                || reserve.renderFragments < capacities.renderFragments || reserve.caps < capacities.caps
+                || reserve.chainDepth != capacities.chainDepth)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reserve), "the reservation holds the first room, and the chain depth is not grown");
+            }
+
             _capacities = capacities;
-            _branches = new VpMultiCutBranch[capacities.branches];
-            _candidates = new VpClipCandidate[capacities.candidates];
-            _capIdentity = new VpMultiCutCapIdentity[capacities.candidates];
-            _states = new VpClipSelectionState[capacities.candidates];
-            _renderFragments = new VpMultiCutRenderFragment[capacities.renderFragments];
-            _standsAs = new VpMultiCutStandsAs[capacities.renderFragments];
-            _sideIdentity = new VpMultiCutSideIdentity[capacities.renderFragments];
-            _conditions = new VpCapConstraint[capacities.caps];
-            _caps = new VpMultiCutCap[capacities.caps];
-            _capVertices = new Vector3[(int)capVertices];
-            _sections = new Section[capacities.caps];
-            _sectionVertices = new Vector3[(int)sectionVertices];
-            _capSection = new int[capacities.caps];
-            _chain = new VpClipBoundary[capacities.chainDepth];
-            _checkCandidates = new VpClipCandidate[capacities.chainDepth];
-            _checkStates = new VpClipSelectionState[capacities.chainDepth];
-            _stack = new LogicalFragmentId[(int)stack];
+            try
+            {
+                _branches = Room<VpMultiCutBranch>(backing, reserved.branches, sizes.branches);
+                _capIdentity = Room<VpMultiCutCapIdentity>(backing, reserved.candidates, sizes.candidates);
+                _renderFragments = Room<VpMultiCutRenderFragment>(backing, reserved.renderFragments, sizes.renderFragments);
+                _standsAs = Room<VpMultiCutStandsAs>(backing, reserved.renderFragments, sizes.renderFragments);
+                _sideIdentity = Room<VpMultiCutSideIdentity>(backing, reserved.renderFragments, sizes.renderFragments);
+                _capVertices = Room<Vector3>(backing, (int)reserved.capVertices, (int)sizes.capVertices);
+                _sectionVertices = Room<Vector3>(backing, (int)reserved.sectionVertices, (int)sizes.sectionVertices);
+                _capSection = Room<int>(backing, reserved.caps, sizes.caps);
+                _stack = Room<LogicalFragmentId>(backing, (int)reserved.stack, (int)sizes.stack);
+                _candidates = new VpClipCandidate[capacities.candidates];
+                _states = new VpClipSelectionState[capacities.candidates];
+                _conditions = new VpCapConstraint[capacities.caps];
+                _caps = new VpMultiCutCap[capacities.caps];
+                _sections = new Section[capacities.caps];
+                _chain = new VpClipBoundary[capacities.chainDepth];
+                _checkCandidates = new VpClipCandidate[capacities.chainDepth];
+                _checkStates = new VpClipSelectionState[capacities.chainDepth];
+            }
+            catch
+            {
+                // Whatever was reserved before the one that failed is given back: nothing of a snapshot that was not made is held.
+                DisposeRooms();
+                throw;
+            }
+
             _selectedCandidates = new RangeList<VpClipCandidate>(_candidates);
             _selectedStates = new RangeList<VpClipSelectionState>(_states);
             _selectedPlanes = new RangeList<float4>(_worldPlanes);
             _selectedHalfSpaces = new RangeList<VpClipHalfSpace>(_halfSpaces);
+            if (backing != null)
+            {
+                PresizeForRoom(capacities.renderFragments);
+            }
+        }
+
+        /// <summary>
+        /// For a snapshot made for a display: the arrays kept per registration and per render fragment -- what was
+        /// validated, what was placed, the reflected indexes, the segments -- are made for the room now, so that play up
+        /// to the room makes none of them. They hold what the builds remember and stay managed arrays; one made on its
+        /// own grows them as it meets the need, as before. Memory that cannot be had here is left to that same growth.
+        /// </summary>
+        private void PresizeForRoom(int count)
+        {
+            try
+            {
+                if (_validatedHas.Length < count)
+                {
+                    Array.Resize(ref _validatedHas, count);
+                    Array.Resize(ref _validatedNow, count);
+                    Array.Resize(ref _validatedBounds, count);
+                    Array.Resize(ref _validatedPlacement, count);
+                    Array.Resize(ref _validatedLineage, count);
+                    Array.Resize(ref _validatedEpsilon, count);
+                }
+
+                if (_placedHas.Length < count)
+                {
+                    Array.Resize(ref _placedHas, count);
+                    Array.Resize(ref _placedPassed, count);
+                }
+
+                if (_reflected.Length < count)
+                {
+                    var more = new VpReflectedIndex[count];
+                    Array.Copy(_reflected, more, _reflected.Length);
+                    for (int i = _reflected.Length; i < count; i++) more[i] = new VpReflectedIndex();
+                    _reflected = more;
+                }
+
+                if (_segOf.Length < count)
+                {
+                    Array.Resize(ref _segOf, count);
+                }
+            }
+            catch (OutOfMemoryException)
+            {
+            }
+        }
+
+        private static VpNumericRoom<T> Room<T>(IVpPageBacking backing, int reserved, int length) where T : unmanaged
+        {
+            if (backing == null)
+            {
+                return VpNumericRoom<T>.Managed(length);
+            }
+
+            if (!VpNumericRoom<T>.TryCreateNative(backing, reserved, length, out VpNumericRoom<T> room, out string failure))
+            {
+                throw new RoomNotMadeException(failure);
+            }
+
+            return room;
+        }
+
+        private void DisposeRooms()
+        {
+            _branches?.Dispose();
+            _capIdentity?.Dispose();
+            _renderFragments?.Dispose();
+            _standsAs?.Dispose();
+            _sideIdentity?.Dispose();
+            _capVertices?.Dispose();
+            _sectionVertices?.Dispose();
+            _capSection?.Dispose();
+            _stack?.Dispose();
+        }
+
+        /// <summary>
+        /// Gives the numeric rooms back, once. For a snapshot on reserved address space this is its owner's to call,
+        /// after the last reader of a look taken from it; one made on its own holds only managed arrays and need not be
+        /// disposed. Nothing of a disposed snapshot is readable.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            IsBuilt = false;
+            DisposeRooms();
+        }
+
+        /// <summary>Whether the numeric rooms stand on reserved address space.</summary>
+        internal bool IsOnBacking => _branches.IsNative;
+
+        /// <summary>
+        /// Makes this snapshot's room at least <paramref name="room"/>, in place: every count that is short is taken
+        /// together, in one step that either takes all of them or changes nothing a reader can see. On reserved
+        /// address space the numeric rooms keep their base and what was written; the arrays that hold references are
+        /// replaced by larger ones with what they held copied. What was built stays built and readable. False, with the
+        /// room as it was, when a count is past the reservation, a commit is refused, memory cannot be had, or the chain
+        /// depth differs (it is not grown).
+        /// </summary>
+        internal bool TryGrowTo(in VpMultiCutCapacities room, out string failure)
+        {
+            ThrowIfDisposed();
+            failure = null;
+            if (room.chainDepth > _capacities.chainDepth)
+            {
+                failure = "the chain depth is not grown";
+                return false;
+            }
+
+            var target = new VpMultiCutCapacities(
+                Math.Max(_capacities.branches, room.branches), Math.Max(_capacities.candidates, room.candidates),
+                Math.Max(_capacities.renderFragments, room.renderFragments), Math.Max(_capacities.caps, room.caps),
+                _capacities.chainDepth);
+            var sizes = new RoomSizes(target);
+            if (!sizes.FitsInt)
+            {
+                failure = "a derived size does not fit an int";
+                return false;
+            }
+
+            // 1. Everything made available, nothing made usable: a refusal here leaves the snapshot as it was.
+            VpClipCandidate[] candidates = _candidates;
+            VpClipSelectionState[] states = _states;
+            VpCapConstraint[] conditions = _conditions;
+            VpMultiCutCap[] caps = _caps;
+            Section[] sections = _sections;
+            if (!_branches.TryPrepare(sizes.branches, out failure)
+                || !_capIdentity.TryPrepare(sizes.candidates, out failure)
+                || !_renderFragments.TryPrepare(sizes.renderFragments, out failure)
+                || !_standsAs.TryPrepare(sizes.renderFragments, out failure)
+                || !_sideIdentity.TryPrepare(sizes.renderFragments, out failure)
+                || !_capVertices.TryPrepare((int)sizes.capVertices, out failure)
+                || !_sectionVertices.TryPrepare((int)sizes.sectionVertices, out failure)
+                || !_capSection.TryPrepare(sizes.caps, out failure)
+                || !_stack.TryPrepare((int)sizes.stack, out failure))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (target.candidates > _candidates.Length)
+                {
+                    candidates = new VpClipCandidate[target.candidates];
+                    states = new VpClipSelectionState[target.candidates];
+                }
+
+                if (target.caps > _caps.Length)
+                {
+                    conditions = new VpCapConstraint[target.caps];
+                    caps = new VpMultiCutCap[target.caps];
+                    sections = new Section[target.caps];
+                }
+            }
+            catch (OutOfMemoryException exception)
+            {
+                failure = "memory could not be had: " + exception.Message;
+                return false;
+            }
+
+            // 2. Made usable; nothing below can fail.
+            _branches.Grant(sizes.branches);
+            _capIdentity.Grant(sizes.candidates);
+            _renderFragments.Grant(sizes.renderFragments);
+            _standsAs.Grant(sizes.renderFragments);
+            _sideIdentity.Grant(sizes.renderFragments);
+            _capVertices.Grant((int)sizes.capVertices);
+            _sectionVertices.Grant((int)sizes.sectionVertices);
+            _capSection.Grant(sizes.caps);
+            _stack.Grant((int)sizes.stack);
+            if (!ReferenceEquals(candidates, _candidates))
+            {
+                Array.Copy(_candidates, candidates, _candidateCount);
+                Array.Copy(_states, states, _candidateCount);
+                _candidates = candidates;
+                _states = states;
+                _selectedCandidates = new RangeList<VpClipCandidate>(_candidates);
+                _selectedStates = new RangeList<VpClipSelectionState>(_states);
+            }
+
+            if (!ReferenceEquals(caps, _caps))
+            {
+                Array.Copy(_conditions, conditions, _conditionCount);
+                Array.Copy(_caps, caps, _capCount);
+                Array.Copy(_sections, sections, _sectionCount);
+                _conditions = conditions;
+                _caps = caps;
+                _sections = sections;
+            }
+
+            _capacities = target;
+            if (IsOnBacking)
+            {
+                PresizeForRoom(target.renderFragments);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// What this snapshot's room is made of, in bytes: the managed arrays (those of the numeric rooms when they are
+        /// managed, and the arrays that hold references), and the reserved and committed address space.
+        /// </summary>
+        internal VpRoomBytes RoomBytes()
+        {
+            var lines = new List<VpRoomLine>();
+            DescribeRooms(lines, "snapshot");
+            return VpRoomBytes.Of(lines);
+        }
+
+        /// <summary>Every array of this snapshot's room, one line each: the numeric rooms, then the arrays that hold references.</summary>
+        internal void DescribeRooms(List<VpRoomLine> into, string owner)
+        {
+            into.Add(VpRoomLine.Of(owner + ".branches", _branches));
+            into.Add(VpRoomLine.Of(owner + ".capIdentity", _capIdentity));
+            into.Add(VpRoomLine.Of(owner + ".renderFragments", _renderFragments));
+            into.Add(VpRoomLine.Of(owner + ".standsAs", _standsAs));
+            into.Add(VpRoomLine.Of(owner + ".sideIdentity", _sideIdentity));
+            into.Add(VpRoomLine.Of(owner + ".capVertices", _capVertices));
+            into.Add(VpRoomLine.Of(owner + ".sectionVertices", _sectionVertices));
+            into.Add(VpRoomLine.Of(owner + ".capSection", _capSection));
+            into.Add(VpRoomLine.Of(owner + ".stack", _stack));
+            into.Add(VpRoomLine.OfManaged(owner + ".candidates (ref)", _candidates));
+            into.Add(VpRoomLine.OfManaged(owner + ".states", _states));
+            into.Add(VpRoomLine.OfManaged(owner + ".conditions (ref)", _conditions));
+            into.Add(VpRoomLine.OfManaged(owner + ".caps (ref)", _caps));
+            into.Add(VpRoomLine.OfManaged(owner + ".sections (ref)", _sections));
+            into.Add(VpRoomLine.OfManaged(owner + ".chain (ref)", _chain));
+            into.Add(VpRoomLine.OfManaged(owner + ".checkCandidates (ref)", _checkCandidates));
+            into.Add(VpRoomLine.OfManaged(owner + ".checkStates", _checkStates));
+
+            // Kept per registration and per render fragment: what the builds remember (they grow with the count met).
+            into.Add(VpRoomLine.OfManaged(owner + ".validated (per registration)", 2 + 24 + 64 + 64 + 4, _validatedHas.Length));
+            into.Add(VpRoomLine.OfManaged(owner + ".placed (per render fragment)", 1 + 64, _placedHas.Length));
+            into.Add(VpRoomLine.OfManaged(owner + ".reflected (ref)", IntPtr.Size, _reflected.Length));
+            into.Add(VpRoomLine.OfManaged(owner + ".segments (per registration)", SegmentRecordBytes, _segOf.Length));
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(VpMultiCutSnapshot));
+            }
+        }
+
+        private static VpArrayRange<Vector3> RangeOf(VpNumericRoom<Vector3> room, int start, int count)
+        {
+            return room.IsNative
+                ? VpArrayRange<Vector3>.OfNative(room.BaseAddress, sizeof(float) * 3, room.Length, start, count)
+                : new VpArrayRange<Vector3>(room.ManagedArray, start, count);
         }
 
         public VpMultiCutCapacities Capacities => _capacities;
@@ -960,7 +1312,7 @@ namespace Zantetsu.MeshCut
         /// This snapshot's own cap vertex array, for an upload that reads the first <see cref="CapVertexCount"/> of them
         /// by count. Not copied; good only until this snapshot is built again.
         /// </summary>
-        internal Vector3[] CapVertexArray => _capVertices;
+        internal VpNumericRoom<Vector3> CapVertexArray => _capVertices;
 
         /// <summary>
         /// A look at one cap's vertices (world space) in this snapshot's own array: nothing is copied,
@@ -973,7 +1325,7 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentOutOfRangeException(nameof(capIndex));
             }
 
-            return new VpArrayRange<Vector3>(_capVertices, cap.vertexStart, cap.vertexCount);
+            return RangeOf(_capVertices, cap.vertexStart, cap.vertexCount);
         }
 
         /// <summary>
@@ -992,8 +1344,7 @@ namespace Zantetsu.MeshCut
             }
 
             int slot = _capSection[capIndex];
-            return new VpArrayRange<Vector3>(
-                _sectionVertices, slot * VpCapBoundsPolygon.MaxVertices, _sections[slot].vertexCount);
+            return RangeOf(_sectionVertices, slot * VpCapBoundsPolygon.MaxVertices, _sections[slot].vertexCount);
         }
 
         /// <summary>How many registrations the last successful build was given, in the order given; 0 otherwise.</summary>
@@ -1327,16 +1678,16 @@ namespace Zantetsu.MeshCut
                 return Fail(Short(VpMultiCutShortage.RenderFragments));
             }
 
-            Array.Copy(structure._branches, _branches, structure._branchCount);
+            _branches.CopyFrom(structure._branches, 0, 0, structure._branchCount);
             Array.Copy(structure._candidates, _candidates, structure._candidateCount);
 
             // What each candidate was decided to be -- Selected or Ignored -- is part of the structure, and the caps
             // are clipped by it. Leaving it behind would cut every cap by the wrong half-spaces.
             Array.Copy(structure._states, _states, structure._candidateCount);
-            Array.Copy(structure._capIdentity, _capIdentity, structure._candidateCount);
-            Array.Copy(structure._renderFragments, _renderFragments, structure._renderFragmentCount);
-            Array.Copy(structure._standsAs, _standsAs, structure._renderFragmentCount);
-            Array.Copy(structure._sideIdentity, _sideIdentity, structure._renderFragmentCount);
+            _capIdentity.CopyFrom(structure._capIdentity, 0, 0, structure._candidateCount);
+            _renderFragments.CopyFrom(structure._renderFragments, 0, 0, structure._renderFragmentCount);
+            _standsAs.CopyFrom(structure._standsAs, 0, 0, structure._renderFragmentCount);
+            _sideIdentity.CopyFrom(structure._sideIdentity, 0, 0, structure._renderFragmentCount);
             _branchCount = structure._branchCount;
             _candidateCount = structure._candidateCount;
             _renderFragmentCount = structure._renderFragmentCount;
@@ -2650,7 +3001,7 @@ namespace Zantetsu.MeshCut
                 _placeInto.sectionsFoundHere++;
                 sectionSlot = found;
                 vertexCount = _sections[found].vertexCount;
-                Array.Copy(_sectionVertices, found * stride, _initial, 0, vertexCount);
+                _sectionVertices.CopyTo(found * stride, _initial, 0, vertexCount);
                 return VpMultiCutBuildOutcome.Built;
             }
 
@@ -2665,18 +3016,21 @@ namespace Zantetsu.MeshCut
             {
                 _placeInto.sectionsReused++;
                 vertexCount = reuseFrom._sections[reused].vertexCount;
-                Array.Copy(reuseFrom._sectionVertices, reused * stride, _sectionVertices, slot * stride, vertexCount);
+                _sectionVertices.CopyFrom(reuseFrom._sectionVertices, reused * stride, slot * stride, vertexCount);
             }
             else
             {
                 SectionBuildCount++;
                 _placeInto.sectionsBuilt++;
+                // Taken into the work room (at most a section's six vertices), then kept in the sections' own room.
                 if (!_section.TryBuild(
                         registration.localBounds, localPlane, geometryLocalToWorld,
-                        registration.vertexEpsilon, _sectionVertices, slot * stride, out vertexCount, out _))
+                        registration.vertexEpsilon, _initial, 0, out vertexCount, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.SectionNotTaken);
                 }
+
+                _sectionVertices.CopyFrom(_initial, 0, slot * stride, vertexCount);
             }
 
             _sections[slot] = new Section
@@ -2690,7 +3044,7 @@ namespace Zantetsu.MeshCut
             };
             _sectionCount++;
             sectionSlot = slot;
-            Array.Copy(_sectionVertices, slot * stride, _initial, 0, vertexCount);
+            _sectionVertices.CopyTo(slot * stride, _initial, 0, vertexCount);
             return VpMultiCutBuildOutcome.Built;
         }
 

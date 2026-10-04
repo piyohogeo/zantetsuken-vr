@@ -451,6 +451,9 @@ namespace Zantetsu.Sandbox
                 public string lodPhases;
                 // The display's collections of this very frame, stamped where they ran (-1: not known).
                 public long displayCollections = -1, displayBuilds = -1, displayValidations = -1, displayPlacements = -1, displayRoomGrowths = -1, displaySnapshotRegrowths = -1;
+
+                // What the display drew from when this row was taken, and how many of its GPU objects had been replaced by then.
+                public int displayFragments = -1, displayGpuReplacements = -1;
                 public VpValidateCounts validate;   // the validations' parts of this frame (a copy), null when not known
                 public VpPlaceCounts placeStructural, placePlacementOnly;   // the Place passes of this frame, structural and placement-only (copies), null when not known
             }
@@ -895,6 +898,7 @@ namespace Zantetsu.Sandbox
                     + " debugColours=" + debugColours + " light=" + light + " iteration=" + iteration);
                 RequestPicture("0-start");
 
+                LogDisplayRoom("when the script begins");
                 float deadline = StageBegin("script and the cuts' completion", MobPlanMode ? (float)_mpEnd + 30f : 120f);
                 bool cutsComplete = false;
                 while (Time.realtimeSinceStartup < deadline)
@@ -1018,6 +1022,7 @@ namespace Zantetsu.Sandbox
                     parts.Add(new CheckEnding.Part("trace", FinishTrace));
                 }
 
+                parts.Add(new CheckEnding.Part("display room", () => LogDisplayRoom("at the end")));
                 parts.Add(new CheckEnding.Part("end shadows", () =>
                 {
                     Log("added shadows at the end: frame=" + Time.frameCount + " " + DisplayCasters());
@@ -1028,6 +1033,9 @@ namespace Zantetsu.Sandbox
                 yield return ending.Run(_world, parts, 15f);   // the ordinary ending, carried by the ordinary frames
                 StageEnd(!ending.WorldReleased, "world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
                 _failures += ending.Failures;
+                Log("after the world's release: native rooms alive " + VpNumericRoomCensus.LiveNativeRooms + ", whole-write arrays alive " + VpWholeWrite.LiveArrays
+                    + "; the whole writes of the session took " + VpWholeWrite.ArraysTaken + " temporary arrays, " + VpWholeWrite.BytesTaken + " B in all, the largest "
+                    + VpWholeWrite.LargestBytes + " B (temporary: not part of the room's bytes)");
                 Log("expectations not judged here: not applicable " + _notApplicable + ", not exercised " + _notExercised + " (neither counted as passed); failed " + _failures);
                 yield return null;
                 Finish(ending, null);
@@ -1172,6 +1180,29 @@ namespace Zantetsu.Sandbox
                 _timing = true;
             }
 
+            /// <summary>The display's room as it stands: how it was prepared, the most it has drawn from, its bytes by kind and its GPU buffers.</summary>
+            private void LogDisplayRoom(string when)
+            {
+                if (_world == null || _world.Display == null || _world.Display.IsDisposed)
+                {
+                    Log("display room " + when + ": no display");
+                    return;
+                }
+
+                VpLogicalCutDisplay d = _world.Display;
+                double perMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                VpRoomBytes bytes = d.RoomBytes();
+                Log("display room " + when + ": made in " + d.RoomPreparationMilliseconds.ToString("F2", Inv) + " ms; the last camera's room in "
+                    + d.LastCameraRoomMilliseconds.ToString("F2", Inv) + " ms; the first camera's room stood "
+                    + (d.FirstCameraRoomAt != 0 ? ((d.FirstCameraRoomAt - d.RoomReadyAt) * perMs).ToString("F1", Inv) + " ms" : "never") + " after the display's, the first draw "
+                    + (d.FirstRenderAt != 0 ? ((d.FirstRenderAt - d.RoomReadyAt) * perMs).ToString("F1", Inv) + " ms" : "never") + " after it"
+                    + "; most used: render fragments " + d.MostRenderFragments + ", commands " + d.MostCommands + ", branches " + d.MostBranches + ", candidates " + d.MostCandidates
+                    + ", caps " + d.MostCaps + ", cap vertices " + d.MostCapVertices
+                    + "; counts grown " + d.RoomGrowths + ", snapshots grown " + d.SnapshotRegrowths + ", GPU objects replaced " + d.GpuReplacements + " (awaiting release " + d.RetiredGpuObjects + ")"
+                    + "; native in use " + bytes.nativeInUse + " B, committed " + bytes.nativeCommitted + " B, reserved " + bytes.nativeReserved + " B; managed arrays of the room (elements only) "
+                    + bytes.managed + " B; GPU buffers of the room " + d.RoomGpuBytes + " B; managed heap in use " + GC.GetTotalMemory(false) + " B; " + d.DescribeRoom());
+            }
+
             // One row for this frame, and the markers of the frame before into that frame's row.
             private void RecordFrame()
             {
@@ -1220,7 +1251,14 @@ namespace Zantetsu.Sandbox
                     pictures = _picturesAsked,
                 });
                 _picturesAsked = 0;
-                FillExtras(_timeline[_timeline.Count - 1]);
+                FrameRow taken = _timeline[_timeline.Count - 1];
+                if (_world != null && _world.Display != null && !_world.Display.IsDisposed)
+                {
+                    taken.displayFragments = _world.Display.RenderFragmentCount;
+                    taken.displayGpuReplacements = _world.Display.GpuReplacements;
+                }
+
+                FillExtras(taken);
                 ReleaseGeometryHoldWhenDue();
             }
 
@@ -1305,7 +1343,7 @@ namespace Zantetsu.Sandbox
 
                 var text = new StringBuilder(_timeline.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
-                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs");
+                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs");
                 foreach ((ProfilerCategory _, string name) in _timelineMarkers)
                 {
                     text.Append(',').Append(name);
@@ -1332,7 +1370,8 @@ namespace Zantetsu.Sandbox
                         .Append(',').Append(r.lodUpdated).Append(',').Append(r.lodForced).Append(',').Append(r.lodTarget)
                         .Append(',').Append(r.lodPhases ?? "")
                         .Append(',').Append(r.displayCollections).Append(',').Append(r.displayBuilds).Append(',').Append(r.displayValidations)
-                        .Append(',').Append(r.displayPlacements).Append(',').Append(r.displayRoomGrowths).Append(',').Append(r.displaySnapshotRegrowths);
+                        .Append(',').Append(r.displayPlacements).Append(',').Append(r.displayRoomGrowths).Append(',').Append(r.displaySnapshotRegrowths)
+                        .Append(',').Append(r.displayFragments).Append(',').Append(r.displayGpuReplacements);
                     VpValidateCounts v = r.validate;
                     if (v != null)
                     {

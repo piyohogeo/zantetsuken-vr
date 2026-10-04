@@ -1,4 +1,5 @@
 using System;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -63,8 +64,14 @@ namespace Zantetsu.Rendering
         private readonly MaterialPropertyBlock _capProperties = new MaterialPropertyBlock();
         private readonly MaterialPropertyBlock _initProperties = new MaterialPropertyBlock();
         private readonly VpStencilCapColor[] _colors;
-        private readonly Vector4[] _capVertices;
-        private readonly uint[] _capIndices;
+
+        // The cap vertices are sent as float4, so they are staged: in a managed array, or -- for a batch made with a page
+        // backing -- in a room on reserved address space made and written at construction. The indices are staged only
+        // for an array upload; a native upload sends the caller's own.
+        private Vector4[] _capVertices;
+        private uint[] _capIndices;
+        private readonly VpNumericRoom<Vector4> _capVertexStaging;
+        private bool _uploaded;
         private int _colorCount;
         private bool _broken;
         private bool _disposed;
@@ -78,6 +85,18 @@ namespace Zantetsu.Rendering
         /// </para>
         /// </summary>
         public VpStencilCapBatch(int colorCapacity, int commandCapacity, int instanceCapacity, int capVertexCapacity, int capIndexCapacity)
+            : this(colorCapacity, commandCapacity, instanceCapacity, capVertexCapacity, capIndexCapacity, null)
+        {
+        }
+
+        /// <summary>
+        /// The same batch with its staging on <paramref name="stagingBacking"/> (reserved and committed whole here, every
+        /// page written), for an owner that uploads native views; null keeps the staging in managed arrays.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The backing refused the staging's room.</exception>
+        public VpStencilCapBatch(
+            int colorCapacity, int commandCapacity, int instanceCapacity, int capVertexCapacity, int capIndexCapacity,
+            IVpPageBacking stagingBacking)
         {
             if (colorCapacity <= 0 || capVertexCapacity <= 0 || capIndexCapacity <= 0)
             {
@@ -87,15 +106,24 @@ namespace Zantetsu.Rendering
             // The plain arrays first, so that nothing holding a GPU resource can be lost to an allocation failure
             // afterwards. From the first GPU resource onwards everything is inside one recovery.
             _colors = new VpStencilCapColor[colorCapacity];
-            _capVertices = new Vector4[capVertexCapacity];
-            _capIndices = new uint[capIndexCapacity];
+            VpNumericRoom<Vector4> capVertexStaging = null;
+            if (stagingBacking == null)
+            {
+                _capVertices = new Vector4[capVertexCapacity];
+                _capIndices = new uint[capIndexCapacity];
+            }
+            else if (!VpNumericRoom<Vector4>.TryCreateNative(
+                         stagingBacking, capVertexCapacity, capVertexCapacity, out capVertexStaging, out string failure))
+            {
+                throw new InvalidOperationException("the batch's staging could not be made: " + failure);
+            }
 
             VpIndexedIndirectDrawBatch volumes = null;
             GraphicsBuffer capVertexBuffer = null;
             GraphicsBuffer capIndexBuffer = null;
             try
             {
-                volumes = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
+                volumes = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity, stagingBacking);
                 capVertexBuffer = new GraphicsBuffer(
                     GraphicsBuffer.Target.Structured, capVertexCapacity, sizeof(float) * 4);
                 capVertexBuffer.name = "VP Stencil Cap Vertices";
@@ -108,14 +136,181 @@ namespace Zantetsu.Rendering
                 _volumes = volumes;
                 _capVertexBuffer = capVertexBuffer;
                 _capIndexBuffer = capIndexBuffer;
+                _capVertexStaging = capVertexStaging;
             }
             catch
             {
                 capIndexBuffer?.Dispose();
                 capVertexBuffer?.Dispose();
                 volumes?.Dispose();
+                capVertexStaging?.Dispose();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Writes every GPU buffer of this batch once, whole, with zeros, so that each stands on the device before the
+        /// first upload of a frame. Only before the first upload; nothing uploaded and no count changes.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Something was uploaded already.</exception>
+        public void WriteWholeOnce()
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (_uploaded)
+            {
+                throw new InvalidOperationException("the buffers are written whole only before the first upload");
+            }
+
+            _volumes.WriteWholeOnce();
+
+            // Each array is taken inside the protection: one that cannot be had, or a write that throws, leaves none of
+            // the others behind.
+            NativeArray<Vector4> vertices = default;
+            NativeArray<uint> indices = default;
+            try
+            {
+                vertices = VpWholeWrite.Zeros<Vector4>("cap vertices", CapVertexCapacity);
+                indices = VpWholeWrite.Zeros<uint>("cap indices", CapIndexCapacity);
+                VpWholeWrite.Step("write cap vertices");
+                _capVertexBuffer.SetData(vertices, 0, 0, CapVertexCapacity);
+                VpWholeWrite.Step("write cap indices");
+                _capIndexBuffer.SetData(indices, 0, 0, CapIndexCapacity);
+            }
+            finally
+            {
+                VpWholeWrite.Release(ref vertices);
+                VpWholeWrite.Release(ref indices);
+            }
+        }
+
+        /// <summary>The bytes of this batch's GPU buffers: the volumes' four, the cap vertices and the cap indices.</summary>
+        public long GpuBytes => _volumes.GpuBytes + ((long)CapVertexCapacity * sizeof(float) * 4) + ((long)CapIndexCapacity * sizeof(uint));
+
+        /// <summary>What this batch's staging is made of, in bytes.</summary>
+        public void DescribeStaging(System.Collections.Generic.List<VpRoomLine> into, string owner)
+        {
+            _volumes.DescribeStaging(into, owner + ".volumes");
+            if (_capVertexStaging != null) into.Add(VpRoomLine.Of(owner + ".capVertices", _capVertexStaging));
+            if (_capVertices != null) into.Add(VpRoomLine.OfManaged(owner + ".capVertices", _capVertices));
+            if (_capIndices != null) into.Add(VpRoomLine.OfManaged(owner + ".capIndices", _capIndices));
+            into.Add(VpRoomLine.OfManaged(owner + ".colours", _colors));
+        }
+
+        /// <summary>
+        /// The counted upload from native views: the first <paramref name="commandCount"/> volume commands and the
+        /// instances they name, the first <paramref name="capVertexCount"/> cap vertices and the first
+        /// <paramref name="capIndexCount"/> cap indices. The views are the valid part of their owner's room and may be
+        /// longer. The transforms, the clips and the indices go to the GPU from the views themselves; the cap vertices
+        /// are made float4 in this batch's staging. Accepted and refused as the array upload is, by the same judgement.
+        /// </summary>
+        public bool TryUpload(
+            NativeArray<VpIndirectCommand> commands,
+            int commandCount,
+            NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips,
+            NativeArray<Vector3> capVertices,
+            int capVertexCount,
+            NativeArray<int> capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool singlePassInstanced)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (!commands.IsCreated || !objectToWorlds.IsCreated || !clips.IsCreated || !capVertices.IsCreated || !capIndices.IsCreated)
+            {
+                return false;
+            }
+
+            if (!IsWellFormed(
+                    commands.AsReadOnlySpan(), commandCount, capVertices.Length, capVertexCount, capIndices.AsReadOnlySpan(),
+                    capIndexCount, colors, colorCount, out int volumeWrites))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!_volumes.TryUpload(commands, commandCount, objectToWorlds, clips, singlePassInstanced))
+                {
+                    return false;
+                }
+
+                BufferWrites += volumeWrites;
+                if (capVertexCount > 0)
+                {
+                    if (_capVertexStaging != null)
+                    {
+                        Span<Vector4> staged = _capVertexStaging.AsSpan(0, capVertexCount);
+                        for (int i = 0; i < capVertexCount; i++)
+                        {
+                            Vector3 vertex = capVertices[i];
+                            staged[i] = new Vector4(vertex.x, vertex.y, vertex.z, 1f);
+                        }
+
+                        _capVertexBuffer.SetData(_capVertexStaging.First(capVertexCount), 0, 0, capVertexCount);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < capVertexCount; i++)
+                        {
+                            Vector3 vertex = capVertices[i];
+                            _capVertices[i] = new Vector4(vertex.x, vertex.y, vertex.z, 1f);
+                        }
+
+                        _capVertexBuffer.SetData(_capVertices, 0, 0, capVertexCount);
+                    }
+
+                    BufferWrites++;
+                }
+
+                if (capIndexCount > 0)
+                {
+                    // The indices were checked to be within the vertices, so none is negative: read as unsigned as they stand.
+                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount);
+                    BufferWrites++;
+                }
+            }
+            catch
+            {
+                _broken = true;
+                throw;
+            }
+
+            Array.Copy(colors, _colors, colorCount);
+            _colorCount = colorCount;
+            SinglePassInstanced = singlePassInstanced;
+            _uploaded = true;
+            Uploads++;
+            return true;
+        }
+
+        /// <summary>Whether the native upload would accept this input, decided without writing anything and by the same judgement.</summary>
+        public bool CanUpload(
+            NativeArray<VpIndirectCommand> commands,
+            int commandCount,
+            NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips,
+            NativeArray<Vector3> capVertices,
+            int capVertexCount,
+            NativeArray<int> capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (!commands.IsCreated || !objectToWorlds.IsCreated || !clips.IsCreated || !capVertices.IsCreated || !capIndices.IsCreated)
+            {
+                return false;
+            }
+
+            return IsWellFormed(
+                       commands.AsReadOnlySpan(), commandCount, capVertices.Length, capVertexCount, capIndices.AsReadOnlySpan(),
+                       capIndexCount, colors, colorCount, out _)
+                   && _volumes.CanUpload(commands, commandCount, objectToWorlds, clips);
         }
 
         public int ColorCapacity { get; }
@@ -318,6 +513,17 @@ namespace Zantetsu.Rendering
 
                 BufferWrites += volumeWrites;
 
+                // An array upload stages in managed arrays; a batch made for native uploads makes them only if asked this way.
+                if (_capVertices == null)
+                {
+                    _capVertices = new Vector4[CapVertexCapacity];
+                }
+
+                if (_capIndices == null)
+                {
+                    _capIndices = new uint[CapIndexCapacity];
+                }
+
                 for (int i = 0; i < capVertexCount; i++)
                 {
                     Vector3 vertex = capVertices[i];
@@ -352,6 +558,7 @@ namespace Zantetsu.Rendering
             Array.Copy(colors, _colors, colorCount);
             _colorCount = colorCount;
             SinglePassInstanced = singlePassInstanced;
+            _uploaded = true;
             Uploads++;
             return true;
         }
@@ -465,7 +672,31 @@ namespace Zantetsu.Rendering
             out int volumeWrites)
         {
             volumeWrites = 0;
-            if (colors == null || capVertices == null || capIndices == null)
+            if (capVertices == null || capIndices == null)
+            {
+                return false;
+            }
+
+            return IsWellFormed(
+                new ReadOnlySpan<VpIndirectCommand>(commands), commandCount, capVertices.Length, capVertexCount,
+                new ReadOnlySpan<int>(capIndices), capIndexCount, colors, colorCount, out volumeWrites);
+        }
+
+        // The same judgement for an array upload and a native one: the commands and the indices as they stand, and how
+        // many cap vertices were handed over.
+        private bool IsWellFormed(
+            ReadOnlySpan<VpIndirectCommand> commands,
+            int commandCount,
+            int capVertexLength,
+            int capVertexCount,
+            ReadOnlySpan<int> capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            out int volumeWrites)
+        {
+            volumeWrites = 0;
+            if (colors == null)
             {
                 return false;
             }
@@ -475,7 +706,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            if (capVertexCount < 0 || capVertexCount > CapVertexCapacity || capVertexCount > capVertices.Length
+            if (capVertexCount < 0 || capVertexCount > CapVertexCapacity || capVertexCount > capVertexLength
                 || capIndexCount < 0 || capIndexCount > CapIndexCapacity || capIndexCount > capIndices.Length)
             {
                 return false;
@@ -490,7 +721,7 @@ namespace Zantetsu.Rendering
             }
 
             // Only the commands counted are read; a null array holds none.
-            if (commandCount < 0 || commandCount > (commands == null ? 0 : commands.Length))
+            if (commandCount < 0 || commandCount > commands.Length)
             {
                 return false;
             }
@@ -634,6 +865,7 @@ namespace Zantetsu.Rendering
             _volumes.Dispose();
             _capVertexBuffer.Dispose();
             _capIndexBuffer.Dispose();
+            _capVertexStaging?.Dispose();
         }
 
         // These draws are screen-wide or already in world space and must not be culled away by a bound that does not

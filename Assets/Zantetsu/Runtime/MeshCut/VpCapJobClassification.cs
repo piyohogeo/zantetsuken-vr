@@ -214,30 +214,34 @@ namespace Zantetsu.MeshCut
     /// change while a classification reads it. A result that stops being readable lets go of every ledger it named.
     /// </para>
     /// </summary>
-    public sealed class VpCapJobClassification
+    public sealed class VpCapJobClassification : IDisposable
     {
         private const int SectionVertices = VpCapBoundsPolygon.MaxVertices;
 
-        private readonly VpMultiCutCapacities _capacities;
-        private readonly VpCapJob[] _jobs;
-        private readonly VpCapVolumeGroup[] _groups;
-        private readonly VpCapJobColour[] _colours;
+        // The room (TL, 2026-10-05). The jobs and the volume groups hold a reference -- their boundary's face names its
+        // ledger -- and are managed arrays, replaced by larger ones when the room grows. Everything else is plain
+        // numbers in rooms (VpNumericRoom): on reserved address space when made for a display, grown by committing
+        // more pages behind the same base, and in managed arrays when made on its own.
+        private VpMultiCutCapacities _capacities;
+        private VpCapJob[] _jobs;
+        private VpCapVolumeGroup[] _groups;
+        private VpNumericRoom<VpCapJobColour> _colours;
 
         // Working room.
-        private readonly int[] _groupOfJob;
-        private readonly int[] _groupFirstJob;
-        private readonly int[] _groupJobCount;
-        private readonly int[] _jobOfGroup;
-        private readonly int[] _colourOfGroup;
-        private readonly int[] _groupOfColour;
-        private readonly int[] _colourGroupCount;
-        private readonly Projection[] _leftState;
-        private readonly Projection[] _rightState;
-        private readonly bool[] _sectionValid;
-        private readonly Vector2[] _leftPoints;
-        private readonly Vector2[] _rightPoints;
-        private readonly int[] _lastRenderFragments;
-        private readonly bool[] _renderFragmentListed;
+        private VpNumericRoom<int> _groupOfJob;
+        private VpNumericRoom<int> _groupFirstJob;
+        private VpNumericRoom<int> _groupJobCount;
+        private VpNumericRoom<int> _jobOfGroup;
+        private VpNumericRoom<int> _colourOfGroup;
+        private VpNumericRoom<int> _groupOfColour;
+        private VpNumericRoom<Projection> _leftState;
+        private VpNumericRoom<Projection> _rightState;
+        private VpNumericRoom<bool> _sectionValid;
+        private VpNumericRoom<Vector2> _leftPoints;
+        private VpNumericRoom<Vector2> _rightPoints;
+        private VpNumericRoom<int> _lastRenderFragments;
+        private VpNumericRoom<bool> _renderFragmentListed;
+        private bool _disposed;
 
         // Held only while a classification runs.
         private VpMultiCutSnapshot _reading;
@@ -262,6 +266,53 @@ namespace Zantetsu.MeshCut
         /// </summary>
         /// <exception cref="ArgumentOutOfRangeException">A capacity is not positive, or a derived size does not fit.</exception>
         public VpCapJobClassification(VpMultiCutCapacities capacities)
+            : this(capacities, null, capacities)
+        {
+        }
+
+        /// <summary>
+        /// A classification whose numeric rooms stand on address space reserved for <paramref name="reserve"/> and
+        /// committed for <paramref name="capacities"/>, every page of the committed part written before this returns. It
+        /// grows in place up to the reservation (<see cref="TryGrowTo"/>) and is disposed by whoever made it. False,
+        /// holding nothing, when a reservation or a first commit is refused or the sizes do not hold together.
+        /// </summary>
+        internal static bool TryCreateOnBacking(
+            IVpPageBacking backing, VpMultiCutCapacities capacities, VpMultiCutCapacities reserve,
+            out VpCapJobClassification classification, out string failure)
+        {
+            classification = null;
+            failure = null;
+            if (backing == null)
+            {
+                throw new ArgumentNullException(nameof(backing));
+            }
+
+            try
+            {
+                classification = new VpCapJobClassification(capacities, backing, reserve);
+                return true;
+            }
+            catch (RoomNotMadeException exception)
+            {
+                failure = exception.Message;
+                return false;
+            }
+            catch (OutOfMemoryException exception)
+            {
+                failure = "memory could not be had: " + exception.Message;
+                return false;
+            }
+        }
+
+        private sealed class RoomNotMadeException : Exception
+        {
+            public RoomNotMadeException(string message)
+                : base(message)
+            {
+            }
+        }
+
+        private VpCapJobClassification(VpMultiCutCapacities capacities, IVpPageBacking backing, VpMultiCutCapacities reserve)
         {
             if (capacities.renderFragments <= 0 || capacities.caps <= 0)
             {
@@ -269,30 +320,207 @@ namespace Zantetsu.MeshCut
             }
 
             long points = (long)capacities.caps * SectionVertices;
-            if (points > int.MaxValue)
+            long reservedPoints = (long)reserve.caps * SectionVertices;
+            if (points > int.MaxValue || reservedPoints > int.MaxValue)
             {
                 throw new ArgumentOutOfRangeException(nameof(capacities), "a derived size does not fit an int");
             }
 
+            if (reserve.caps < capacities.caps || reserve.renderFragments < capacities.renderFragments)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reserve), "the reservation holds the first room");
+            }
+
             int caps = capacities.caps;
             _capacities = capacities;
-            _jobs = new VpCapJob[caps];
-            _groups = new VpCapVolumeGroup[caps];
-            _colours = new VpCapJobColour[caps];
-            _groupOfJob = new int[caps];
-            _groupFirstJob = new int[caps];
-            _groupJobCount = new int[caps];
-            _jobOfGroup = new int[caps];
-            _colourOfGroup = new int[caps];
-            _groupOfColour = new int[caps];
-            _colourGroupCount = new int[caps];
-            _leftState = new Projection[caps];
-            _rightState = new Projection[caps];
-            _sectionValid = new bool[caps];
-            _leftPoints = new Vector2[(int)points];
-            _rightPoints = new Vector2[(int)points];
-            _lastRenderFragments = new int[capacities.renderFragments];
-            _renderFragmentListed = new bool[capacities.renderFragments];
+            try
+            {
+                _colours = Room<VpCapJobColour>(backing, reserve.caps, caps);
+                _groupOfJob = Room<int>(backing, reserve.caps, caps);
+                _groupFirstJob = Room<int>(backing, reserve.caps, caps);
+                _groupJobCount = Room<int>(backing, reserve.caps, caps);
+                _jobOfGroup = Room<int>(backing, reserve.caps, caps);
+                _colourOfGroup = Room<int>(backing, reserve.caps, caps);
+                _groupOfColour = Room<int>(backing, reserve.caps, caps);
+                _leftState = Room<Projection>(backing, reserve.caps, caps);
+                _rightState = Room<Projection>(backing, reserve.caps, caps);
+                _sectionValid = Room<bool>(backing, reserve.caps, caps);
+                _leftPoints = Room<Vector2>(backing, (int)reservedPoints, (int)points);
+                _rightPoints = Room<Vector2>(backing, (int)reservedPoints, (int)points);
+                _lastRenderFragments = Room<int>(backing, reserve.renderFragments, capacities.renderFragments);
+                _renderFragmentListed = Room<bool>(backing, reserve.renderFragments, capacities.renderFragments);
+                _jobs = new VpCapJob[caps];
+                _groups = new VpCapVolumeGroup[caps];
+            }
+            catch
+            {
+                // Whatever was reserved before the one that failed is given back.
+                DisposeRooms();
+                throw;
+            }
+        }
+
+        private static VpNumericRoom<T> Room<T>(IVpPageBacking backing, int reserved, int length) where T : unmanaged
+        {
+            if (backing == null)
+            {
+                return VpNumericRoom<T>.Managed(length);
+            }
+
+            if (!VpNumericRoom<T>.TryCreateNative(backing, reserved, length, out VpNumericRoom<T> room, out string failure))
+            {
+                throw new RoomNotMadeException(failure);
+            }
+
+            return room;
+        }
+
+        private void DisposeRooms()
+        {
+            _colours?.Dispose();
+            _groupOfJob?.Dispose();
+            _groupFirstJob?.Dispose();
+            _groupJobCount?.Dispose();
+            _jobOfGroup?.Dispose();
+            _colourOfGroup?.Dispose();
+            _groupOfColour?.Dispose();
+            _leftState?.Dispose();
+            _rightState?.Dispose();
+            _sectionValid?.Dispose();
+            _leftPoints?.Dispose();
+            _rightPoints?.Dispose();
+            _lastRenderFragments?.Dispose();
+            _renderFragmentListed?.Dispose();
+        }
+
+        /// <summary>
+        /// Lets go of what was classified and gives the numeric rooms back, once. Its owner's to call; refused while a
+        /// classification of this instance is running, as <see cref="Release"/> is.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            Release();
+            _disposed = true;
+            DisposeRooms();
+        }
+
+        /// <summary>
+        /// Makes the room at least what snapshots made with <paramref name="room"/> need, in place, all of it or none.
+        /// What was classified is let go first (as <see cref="Release"/>): a classification is one preparation's, and is
+        /// made again. On reserved address space the numeric rooms keep their base. False, with the room as it was,
+        /// when a count is past the reservation, a commit is refused or memory cannot be had.
+        /// </summary>
+        internal bool TryGrowTo(in VpMultiCutCapacities room, out string failure)
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(VpCapJobClassification));
+            }
+
+            if (_classifying)
+            {
+                throw new InvalidOperationException("a classification of this instance is running");
+            }
+
+            failure = null;
+            int caps = Math.Max(_capacities.caps, room.caps);
+            int renderFragments = Math.Max(_capacities.renderFragments, room.renderFragments);
+            long points = (long)caps * SectionVertices;
+            if (points > int.MaxValue)
+            {
+                failure = "a derived size does not fit an int";
+                return false;
+            }
+
+            if (!_colours.TryPrepare(caps, out failure)
+                || !_groupOfJob.TryPrepare(caps, out failure)
+                || !_groupFirstJob.TryPrepare(caps, out failure)
+                || !_groupJobCount.TryPrepare(caps, out failure)
+                || !_jobOfGroup.TryPrepare(caps, out failure)
+                || !_colourOfGroup.TryPrepare(caps, out failure)
+                || !_groupOfColour.TryPrepare(caps, out failure)
+                || !_leftState.TryPrepare(caps, out failure)
+                || !_rightState.TryPrepare(caps, out failure)
+                || !_sectionValid.TryPrepare(caps, out failure)
+                || !_leftPoints.TryPrepare((int)points, out failure)
+                || !_rightPoints.TryPrepare((int)points, out failure)
+                || !_lastRenderFragments.TryPrepare(renderFragments, out failure)
+                || !_renderFragmentListed.TryPrepare(renderFragments, out failure))
+            {
+                return false;
+            }
+
+            VpCapJob[] jobs = _jobs;
+            VpCapVolumeGroup[] groups = _groups;
+            if (caps > _jobs.Length)
+            {
+                try
+                {
+                    jobs = new VpCapJob[caps];
+                    groups = new VpCapVolumeGroup[caps];
+                }
+                catch (OutOfMemoryException exception)
+                {
+                    failure = "memory could not be had: " + exception.Message;
+                    return false;
+                }
+            }
+
+            Reset();
+            _colours.Grant(caps);
+            _groupOfJob.Grant(caps);
+            _groupFirstJob.Grant(caps);
+            _groupJobCount.Grant(caps);
+            _jobOfGroup.Grant(caps);
+            _colourOfGroup.Grant(caps);
+            _groupOfColour.Grant(caps);
+            _leftState.Grant(caps);
+            _rightState.Grant(caps);
+            _sectionValid.Grant(caps);
+            _leftPoints.Grant((int)points);
+            _rightPoints.Grant((int)points);
+            _lastRenderFragments.Grant(renderFragments);
+            _renderFragmentListed.Grant(renderFragments);
+            _jobs = jobs;
+            _groups = groups;
+            _capacities = new VpMultiCutCapacities(
+                Math.Max(_capacities.branches, room.branches), Math.Max(_capacities.candidates, room.candidates),
+                renderFragments, caps, Math.Max(_capacities.chainDepth, room.chainDepth));
+            return true;
+        }
+
+        /// <summary>What this room is made of, in bytes: the managed arrays and the reserved and committed address space.</summary>
+        internal VpRoomBytes RoomBytes()
+        {
+            var lines = new List<VpRoomLine>();
+            DescribeRooms(lines, "capJobs");
+            return VpRoomBytes.Of(lines);
+        }
+
+        /// <summary>Every array of this room, one line each: the numeric rooms, then the two arrays that hold references.</summary>
+        internal void DescribeRooms(List<VpRoomLine> into, string owner)
+        {
+            into.Add(VpRoomLine.Of(owner + ".colours", _colours));
+            into.Add(VpRoomLine.Of(owner + ".groupOfJob", _groupOfJob));
+            into.Add(VpRoomLine.Of(owner + ".groupFirstJob", _groupFirstJob));
+            into.Add(VpRoomLine.Of(owner + ".groupJobCount", _groupJobCount));
+            into.Add(VpRoomLine.Of(owner + ".jobOfGroup", _jobOfGroup));
+            into.Add(VpRoomLine.Of(owner + ".colourOfGroup", _colourOfGroup));
+            into.Add(VpRoomLine.Of(owner + ".groupOfColour", _groupOfColour));
+            into.Add(VpRoomLine.Of(owner + ".leftState", _leftState));
+            into.Add(VpRoomLine.Of(owner + ".rightState", _rightState));
+            into.Add(VpRoomLine.Of(owner + ".sectionValid", _sectionValid));
+            into.Add(VpRoomLine.Of(owner + ".leftPoints", _leftPoints));
+            into.Add(VpRoomLine.Of(owner + ".rightPoints", _rightPoints));
+            into.Add(VpRoomLine.Of(owner + ".lastRenderFragments", _lastRenderFragments));
+            into.Add(VpRoomLine.Of(owner + ".renderFragmentListed", _renderFragmentListed));
+            into.Add(VpRoomLine.OfManaged(owner + ".jobs (ref)", _jobs));
+            into.Add(VpRoomLine.OfManaged(owner + ".groups (ref)", _groups));
         }
 
         public VpMultiCutCapacities Capacities => _capacities;
@@ -547,7 +775,7 @@ namespace Zantetsu.MeshCut
             _sourceGeneration = 0;
             Array.Clear(_jobs, 0, _jobCount);
             Array.Clear(_groups, 0, _groupCount);
-            Array.Clear(_colours, 0, _colourCount);
+            _colours.Clear(0, _colourCount);
             _jobCount = 0;
             _groupCount = 0;
             _colourCount = 0;
@@ -752,7 +980,7 @@ namespace Zantetsu.MeshCut
             int listed = 0;
             if (last >= 0)
             {
-                Array.Clear(_renderFragmentListed, 0, snapshot.RenderFragmentCount);
+                _renderFragmentListed.Clear(0, snapshot.RenderFragmentCount);
                 VpCapJobColour lastColour = _colours[last];
                 for (int p = lastColour.groupStart; p < lastColour.groupStart + lastColour.groupCount; p++)
                 {
@@ -792,7 +1020,7 @@ namespace Zantetsu.MeshCut
         }
 
         private static Projection ProjectFor(
-            VpArrayRange<Vector3> section, in VpCapEye eye, Vector2 margin, int job, Vector2[] points)
+            VpArrayRange<Vector3> section, in VpCapEye eye, Vector2 margin, int job, VpNumericRoom<Vector2> points)
         {
             if (!VpScreenProjection.IsFinite(eye.worldToClip))
             {
@@ -800,7 +1028,7 @@ namespace Zantetsu.MeshCut
             }
 
             return VpScreenProjection.Project(
-                section.AsSpan(), eye.worldToClip, margin, new Span<Vector2>(points, job * SectionVertices, section.Count));
+                section.AsSpan(), eye.worldToClip, margin, points.AsSpan(job * SectionVertices, section.Count));
         }
 
         /// <summary>Whether any job of one group may overlap any job of the other on the screen, in either eye.</summary>
@@ -822,7 +1050,7 @@ namespace Zantetsu.MeshCut
             return false;
         }
 
-        private bool MayOverlapInEye(int a, int b, Projection[] state, Vector2[] points, Vector2 margin)
+        private bool MayOverlapInEye(int a, int b, VpNumericRoom<Projection> state, VpNumericRoom<Vector2> points, Vector2 margin)
         {
             if (!_sectionValid[a] || !_sectionValid[b])
             {
@@ -846,8 +1074,8 @@ namespace Zantetsu.MeshCut
                 return true;
             }
 
-            var pa = new ReadOnlySpan<Vector2>(points, a * SectionVertices, _jobs[a].initialVertexCount);
-            var pb = new ReadOnlySpan<Vector2>(points, b * SectionVertices, _jobs[b].initialVertexCount);
+            ReadOnlySpan<Vector2> pa = points.AsSpan(a * SectionVertices, _jobs[a].initialVertexCount);
+            ReadOnlySpan<Vector2> pb = points.AsSpan(b * SectionVertices, _jobs[b].initialVertexCount);
             return !VpScreenProjection.PolygonsApart(pa, pb, margin);
         }
 

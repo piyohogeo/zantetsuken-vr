@@ -18,6 +18,34 @@ namespace Zantetsu.MeshCut
     {
         private readonly T[] _items;
 
+        // The other kind of owner: numbers on reserved address space (a VpNumericRoom), looked at where they are. The
+        // address is that of the range's first item; it does not move while the room lives.
+        private readonly IntPtr _native;
+
+        private VpArrayRange(IntPtr native, int start, int count)
+        {
+            _items = null;
+            _native = native;
+            Start = start;
+            Count = count;
+        }
+
+        /// <summary>
+        /// A range of numbers that stand at <paramref name="baseAddress"/>, each <paramref name="itemBytes"/> long,
+        /// of which <paramref name="length"/> may be read. For a type of plain numbers only; the owner keeps the
+        /// memory for as long as the range is read.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">The range is not inside what may be read.</exception>
+        public static unsafe VpArrayRange<T> OfNative(IntPtr baseAddress, int itemBytes, int length, int start, int count)
+        {
+            if (baseAddress == IntPtr.Zero || itemBytes <= 0 || start < 0 || count < 0 || start > length - count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count), "The range lies inside the room in use.");
+            }
+
+            return new VpArrayRange<T>((IntPtr)((byte*)baseAddress + ((long)start * itemBytes)), start, count);
+        }
+
         /// <summary>
         /// A range of <paramref name="items"/>. A null array gives the null range, and then the start and the count
         /// must be zero.
@@ -32,6 +60,7 @@ namespace Zantetsu.MeshCut
             }
 
             _items = items;
+            _native = IntPtr.Zero;
             Start = start;
             Count = count;
         }
@@ -49,7 +78,7 @@ namespace Zantetsu.MeshCut
         public int Count { get; }
 
         /// <summary>Whether there is no array behind this range at all.</summary>
-        public bool IsNull => _items == null;
+        public bool IsNull => _items == null && _native == IntPtr.Zero;
 
         /// <summary>The item at <paramref name="index"/> within this range, read from the owner's array now.</summary>
         /// <exception cref="ArgumentOutOfRangeException">The index is not inside the range.</exception>
@@ -62,14 +91,19 @@ namespace Zantetsu.MeshCut
                     throw new ArgumentOutOfRangeException(nameof(index));
                 }
 
-                return _items[Start + index];
+                return _items != null ? _items[Start + index] : AsSpan()[index];
             }
         }
 
         /// <summary>The same items as a span, read from the owner's array; empty for the null range.</summary>
-        public ReadOnlySpan<T> AsSpan()
+        public unsafe ReadOnlySpan<T> AsSpan()
         {
-            return _items == null ? ReadOnlySpan<T>.Empty : new ReadOnlySpan<T>(_items, Start, Count);
+            if (_items != null)
+            {
+                return new ReadOnlySpan<T>(_items, Start, Count);
+            }
+
+            return _native == IntPtr.Zero ? ReadOnlySpan<T>.Empty : new ReadOnlySpan<T>((void*)_native, Count);
         }
     }
 

@@ -120,6 +120,68 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             TestContext.WriteLine(root.Display.LastRoomFailure);
         }
 
+        /// <summary>
+        /// **Pages the display's room is refused during play are the common termination, once.** The world's display
+        /// reserves its room on a backing of its own; here that backing lets the first room be made -- the world starts
+        /// and draws -- and from then on refuses every page past a reservation's first. The first cut needs a larger
+        /// room: the commit is refused, the record says so, the termination API is called once, the display stops
+        /// rather than keep drawing the older snapshot, nothing the refused collection took is left taken, no further
+        /// cut is taken in, and the cut that was asked is neither published nor committed afterwards.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator PagesRefusedForTheDisplaysRoomDuringPlay_AreTheTermination_Once()
+        {
+            ExpectTermination();
+            int terminations = 0;
+            var pages = new TestPagedBacking();
+            CutWorldRoot.nextWorldDisplayPageBacking = pages;
+            CutWorldRoot root = NewWorld(out Shader _, null, () => terminations++, SmallDisplayRoom(1024));
+            Assert.That(CutWorldRoot.nextWorldDisplayPageBacking, Is.Null, "the world took the display's backing");
+            Assert.That(pages.Commits, Is.GreaterThan(0), "the layout: the display's first room was committed on it");
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            LogicalFragmentId first = AddBody(root, new Vector3(0f, 0f, 0f));
+            LogicalFragmentId second = AddBody(root, new Vector3(3f, 0f, 0f));
+            yield return null;
+            yield return null;
+            Assert.That(root.TerminationRequested, Is.False, "the layout: the first room was made and two bodies fit what it grew to");
+            Assert.That(IsDrawn(root, first) && IsDrawn(root, second), Is.True, "the layout: the world draws");
+            int references = root.References.LiveDisplayInstanceCount;
+            int commits = pages.Commits;
+
+            // From here no reservation of the display's takes a page past its first 4 KiB.
+            pages.CommitLimitBytes = 4096;
+            LogAssert.Expect(LogType.Error, new Regex("the Player is being ended -- the display's .* could not be given room"));
+            ProvisionalCutAsk ask = Ask(first, new float4(0f, 1f, 0f, 0f));
+            Assert.That(root.TryAsk(in ask), Is.True);
+            yield return Until(() => root.TerminationRequested, "the refused commit requested the termination");
+            Assert.That(root.Display.IsHalted, Is.True);
+            Assert.That(root.Display.HaltReason, Is.EqualTo(LogicalCutDisplayHaltReason.RoomNotEstablished));
+            StringAssert.Contains("refused", root.Display.LastRoomFailure);
+            StringAssert.Contains("commit past 4096", root.Display.LastRoomFailure);
+            Assert.That(pages.Commits, Is.EqualTo(commits), "no page was committed after the refusal began");
+            Assert.That(root.Display.IsFrameOpen, Is.False, "nothing older is drawn");
+            Assert.That(root.References.LiveDisplayInstanceCount, Is.EqualTo(references), "nothing the refused collection took is held");
+
+            // After the request: no cut is taken in, and the one that was asked is neither published nor committed.
+            ProvisionalCutAsk another = Ask(second, new float4(1f, 0f, 0f, 0f));
+            Assert.That(root.TryAsk(in another), Is.False, "no cut is taken in after the request");
+            List<CutOperationId> admitted = AdmittedFor(root, new[] { first });
+            yield return null;
+            yield return null;
+            yield return null;
+            Assert.That(terminations, Is.EqualTo(1), "the Player's termination API was called once");
+            Assert.That(root.TerminationCalls, Is.EqualTo(1));
+            Assert.That(root.Ledger.TryGetFragmentState(first, out LogicalFragmentState state) && state == LogicalFragmentState.Live, Is.True,
+                "the cut that was asked was not published: its source is not replaced");
+            foreach (CutOperationId operation in admitted)
+            {
+                Assert.That(root.Geometry.StageOf(operation), Is.Not.EqualTo(CutGeometryStage.Committed), "and its geometry was not committed");
+            }
+
+            Assert.That(AdmittedFor(root, new[] { second }).Count, Is.Zero, "and nothing was admitted for the second body");
+            TestContext.WriteLine(root.Display.LastRoomFailure);
+        }
+
         /// <summary>Asks for one cut, waits for its geometry commit, and says which operation it was in <paramref name="taken"/>.</summary>
         private static IEnumerator CutAndCommit(CutWorldRoot root, LogicalFragmentId source, float4 plane, CutOperationId[] taken)
         {
