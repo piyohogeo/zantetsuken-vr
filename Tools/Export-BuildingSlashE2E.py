@@ -65,8 +65,35 @@ def main():
             render.append(dict(position=dict(x=p.x, y=p.y, z=p.z), normal=dict(x=n.x, y=n.y, z=n.z), uv=dict(x=uv.x, y=uv.y)))
             topology.append(loop.vertex_index)
             indices.append(len(indices))
-    hulls, anchors, anchor_names, hull_names = [], [], [], []
     inverse = owner.matrix_world.inverted()
+    # 2026-10-03: the drawn object is the owner's mesh and every mesh under it that is not a convex (UCX_) -- a vehicle's
+    # wheels are meshes of their own under the body. Each part's triangles follow the owner's, in the owner's frame, its
+    # vertex numbers after the ones before it (one topology over all the parts).
+    drawn_parts = []
+    vertex_base = len(mesh.vertices)
+    for part in sorted((o for o in owner.children_recursive if o.type == 'MESH' and not o.name.startswith('UCX_')), key=lambda x: x.name):
+        part_mesh = part.evaluated_get(bpy.context.evaluated_depsgraph_get()).to_mesh()
+        if ([tuple(v.co) for v in part_mesh.vertices] != [tuple(v.co) for v in part.data.vertices]
+                or [tuple(p.vertices) for p in part_mesh.polygons] != [tuple(p.vertices) for p in part.data.polygons]):
+            raise ValueError('A modifier changes the authored geometry of a part: ' + part.name)
+        if part_mesh.uv_layers.active is None:
+            raise ValueError('A drawn part has no UV: ' + part.name)
+        part_mesh.calc_loop_triangles()
+        to_owner = basis @ inverse @ part.matrix_world
+        normal_matrix = to_owner.to_3x3().inverted().transposed()
+        part_reflect = to_owner.to_3x3().determinant() < 0
+        for triangle in part_mesh.loop_triangles:
+            for loop_index in (reversed(triangle.loops) if part_reflect else triangle.loops):
+                loop = part_mesh.loops[loop_index]
+                p = to_owner @ part_mesh.vertices[loop.vertex_index].co
+                n = (normal_matrix @ part_mesh.corner_normals[loop_index].vector).normalized()
+                uv = part_mesh.uv_layers.active.data[loop_index].uv
+                render.append(dict(position=dict(x=p.x, y=p.y, z=p.z), normal=dict(x=n.x, y=n.y, z=n.z), uv=dict(x=uv.x, y=uv.y)))
+                topology.append(vertex_base + loop.vertex_index)
+                indices.append(len(indices))
+        drawn_parts.append(dict(name=part.name, vertices=len(part_mesh.vertices), triangles=len(part_mesh.loop_triangles)))
+        vertex_base += len(part_mesh.vertices)
+    hulls, anchors, anchor_names, hull_names = [], [], [], []
     for obj in sorted(bpy.data.objects, key=lambda x: x.name):
         if obj.parent != owner:
             continue
@@ -88,8 +115,10 @@ def main():
             p = local.translation
             anchors.append(dict(x=p.x, y=p.y, z=p.z))
             anchor_names.append(obj.name)
-    if not hulls or not anchors:
-        raise ValueError('Authored convexes and anchors are required: ' + NAME)
+    # The authored anchors as they are (2026-10-03, TL): none is a normal input, whatever the asset's family -- nothing is
+    # made up for it, and whether it is fixed is the anchors' business alone, piece by piece. Convexes are required.
+    if not hulls:
+        raise ValueError('Authored convexes are required: ' + NAME)
     # Unity's front faces: a closed outward surface has a positive signed volume (sum a.(b x c)/6). Checked for the
     # drawn triangles and every convex before anything is written.
     def signed(points, triangles):
@@ -115,14 +144,15 @@ def main():
     if hashlib.sha256(source.read_bytes()).hexdigest() != before:
         raise ValueError('The source changed')
     fixture = dict(schemaVersion=1, name=NAME, source=str(source), sha256=before,
-                   isBuilding=BUILDING, isCuttable=True,
-                   render=render, indices=indices, topology=topology, topologyCount=len(mesh.vertices),
+                   isBuilding=BUILDING, isCuttable=True, drawnParts=drawn_parts,
+                   render=render, indices=indices, topology=topology, topologyCount=vertex_base,
                    hulls=hulls, hullNames=hull_names, anchors=anchors, anchorNames=anchor_names)
     target = out / (NAME + '.json')
     if target.exists():
         raise ValueError('Refusing to overwrite ' + str(target))
     target.write_text(json.dumps(fixture, allow_nan=False), encoding='utf-8')
-    print('EXPORTED', NAME, 'render', len(render), 'topology', len(mesh.vertices), 'hulls', len(hulls), 'anchors', len(anchors))
+    print('EXPORTED', NAME, 'render', len(render), 'topology', vertex_base, 'hulls', len(hulls), 'anchors', len(anchors),
+          'drawn parts', [d['name'] for d in drawn_parts])
 
 
 if __name__ == '__main__':
