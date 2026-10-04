@@ -1,4 +1,5 @@
 using System;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -44,16 +45,33 @@ namespace Zantetsu.Rendering
         private static readonly int InstanceClipId = Shader.PropertyToID("_VpInstanceClip");
         private static readonly int InstanceMultiplierId = Shader.PropertyToID("_VpInstanceMultiplier");
 
-        private readonly GraphicsBuffer.IndirectDrawIndexedArgs[] _forwardArguments;
-        private readonly GraphicsBuffer.IndirectDrawIndexedArgs[] _shadowArguments;
+        // The arguments are made here from the commands, so they are staged before they are sent: in managed arrays, or
+        // -- for a batch made with a page backing -- in rooms on reserved address space, made and written at
+        // construction. The clips are staged only for an array upload (which may omit them); a native upload sends the
+        // caller's own.
+        private GraphicsBuffer.IndirectDrawIndexedArgs[] _forwardArguments;
+        private GraphicsBuffer.IndirectDrawIndexedArgs[] _shadowArguments;
+        private readonly VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> _forwardStaging;
+        private readonly VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> _shadowStaging;
         private readonly GraphicsBuffer _forwardArgumentBuffer;
         private readonly GraphicsBuffer _shadowArgumentBuffer;
         private readonly GraphicsBuffer _instanceBuffer;
         private readonly GraphicsBuffer _instanceClipBuffer;
-        private readonly VpInstanceClip[] _instanceClips;
+        private VpInstanceClip[] _instanceClips;
+        private bool _uploaded;
         private bool _disposed;
 
         public VpIndexedIndirectDrawBatch(int commandCapacity, int instanceCapacity)
+            : this(commandCapacity, instanceCapacity, null)
+        {
+        }
+
+        /// <summary>
+        /// The same batch with its staging on <paramref name="stagingBacking"/> (reserved and committed whole here, every
+        /// page written), for an owner that uploads native views; null keeps the staging in managed arrays.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The backing refused the staging's room.</exception>
+        public VpIndexedIndirectDrawBatch(int commandCapacity, int instanceCapacity, IVpPageBacking stagingBacking)
         {
             if (commandCapacity <= 0)
             {
@@ -65,9 +83,22 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(instanceCapacity), instanceCapacity, "Must be positive.");
             }
 
-            _forwardArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
-            _shadowArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
-            _instanceClips = new VpInstanceClip[instanceCapacity];
+            VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> forwardStaging = null;
+            VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> shadowStaging = null;
+            if (stagingBacking == null)
+            {
+                _forwardArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+                _shadowArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+                _instanceClips = new VpInstanceClip[instanceCapacity];
+            }
+            else if (!VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
+                         stagingBacking, commandCapacity, commandCapacity, out forwardStaging, out string failure)
+                     || !VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
+                         stagingBacking, commandCapacity, commandCapacity, out shadowStaging, out failure))
+            {
+                forwardStaging?.Dispose();
+                throw new InvalidOperationException("the batch's staging could not be made: " + failure);
+            }
 
             // Each buffer is held in a local the moment it exists and named afterwards, so a failure anywhere in
             // here can release every buffer that was already made. The fields are set only once all four stand.
@@ -92,9 +123,13 @@ namespace Zantetsu.Rendering
                 shadowArgumentBuffer?.Dispose();
                 instanceBuffer?.Dispose();
                 instanceClipBuffer?.Dispose();
+                forwardStaging?.Dispose();
+                shadowStaging?.Dispose();
                 throw;
             }
 
+            _forwardStaging = forwardStaging;
+            _shadowStaging = shadowStaging;
             _forwardArgumentBuffer = forwardArgumentBuffer;
             _shadowArgumentBuffer = shadowArgumentBuffer;
             _instanceBuffer = instanceBuffer;
@@ -215,6 +250,21 @@ namespace Zantetsu.Rendering
             bool exactLengths,
             out long instanceTotal)
         {
+            return Accepts(
+                new ReadOnlySpan<VpIndirectCommand>(commands), commandCount, objectToWorlds.Length, clips == null ? -1 : clips.Length,
+                exactLengths, out instanceTotal);
+        }
+
+        // The same judgement for an array upload and a native one: the commands as they stand, and how many transforms
+        // and clip records were handed over (clips negative: none given).
+        private bool Accepts(
+            ReadOnlySpan<VpIndirectCommand> commands,
+            int commandCount,
+            long transforms,
+            long clips,
+            bool exactLengths,
+            out long instanceTotal)
+        {
             instanceTotal = 0;
             if (commandCount < 0 || commandCount > commands.Length || commandCount > CommandCapacity)
             {
@@ -238,8 +288,113 @@ namespace Zantetsu.Rendering
             }
 
             return exactLengths
-                ? objectToWorlds.Length == instanceTotal && (clips == null || clips.Length == instanceTotal)
-                : objectToWorlds.Length >= instanceTotal && (clips == null || clips.Length >= instanceTotal);
+                ? transforms == instanceTotal && (clips < 0 || clips == instanceTotal)
+                : transforms >= instanceTotal && (clips < 0 || clips >= instanceTotal);
+        }
+
+        /// <summary>
+        /// Whether <see cref="TryUpload(NativeArray{VpIndirectCommand}, int, NativeArray{Matrix4x4}, NativeArray{VpInstanceClip}, bool)"/>
+        /// would accept the first <paramref name="commandCount"/> commands and the instances they name, decided without
+        /// writing anything and by the same judgement that upload makes.
+        /// </summary>
+        public bool CanUpload(
+            NativeArray<VpIndirectCommand> commands, int commandCount, NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips)
+        {
+            ThrowIfDisposed();
+            return commands.IsCreated && objectToWorlds.IsCreated && clips.IsCreated
+                && Accepts(commands.AsReadOnlySpan(), commandCount, objectToWorlds.Length, clips.Length, false, out _);
+        }
+
+        /// <summary>
+        /// The counted upload from native views: the first <paramref name="commandCount"/> commands and, of the
+        /// transforms and the clip records, one per instance those commands name. The views are the valid part of their
+        /// owner's room and may be longer; what lies past the counts is neither checked nor transferred. The transforms
+        /// and the clips go to the GPU from the views themselves: nothing is copied on the way. Accepted and refused as
+        /// the array upload is, by the same judgement.
+        /// </summary>
+        public bool TryUpload(
+            NativeArray<VpIndirectCommand> commands, int commandCount, NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips, bool singlePassInstanced)
+        {
+            ThrowIfDisposed();
+            if (!commands.IsCreated || !objectToWorlds.IsCreated || !clips.IsCreated)
+            {
+                throw new ArgumentException("the commands, the transforms and the clips are all given to a native upload");
+            }
+
+            if (!Accepts(commands.AsReadOnlySpan(), commandCount, objectToWorlds.Length, clips.Length, false, out long instanceTotal))
+            {
+                return false;
+            }
+
+            WriteArguments(commands.AsReadOnlySpan(), commandCount, objectToWorlds.AsReadOnlySpan(), singlePassInstanced, out Bounds worldBounds);
+            if (instanceTotal > 0)
+            {
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal);
+            }
+
+            _uploaded = true;
+            CommandCount = commandCount;
+            InstanceCount = (int)instanceTotal;
+            SinglePassInstanced = singlePassInstanced;
+            WorldBounds = worldBounds;
+            return true;
+        }
+
+        /// <summary>
+        /// Writes every GPU buffer of this batch once, whole, with zeros, so that each stands on the device before the
+        /// first upload of a frame. Only before the first upload; nothing uploaded, no count and no bound changes.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Something was uploaded already.</exception>
+        public void WriteWholeOnce()
+        {
+            ThrowIfDisposed();
+            if (_uploaded)
+            {
+                throw new InvalidOperationException("the buffers are written whole only before the first upload");
+            }
+
+            // Each array is taken inside the protection: one that cannot be had, or a write that throws, leaves none of
+            // the others behind.
+            NativeArray<GraphicsBuffer.IndirectDrawIndexedArgs> arguments = default;
+            NativeArray<Matrix4x4> transforms = default;
+            NativeArray<VpInstanceClip> clips = default;
+            try
+            {
+                arguments = VpWholeWrite.Zeros<GraphicsBuffer.IndirectDrawIndexedArgs>("arguments", CommandCapacity);
+                transforms = VpWholeWrite.Zeros<Matrix4x4>("transforms", InstanceCapacity);
+                clips = VpWholeWrite.Zeros<VpInstanceClip>("clips", InstanceCapacity);
+                VpWholeWrite.Step("write forward arguments");
+                _forwardArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                VpWholeWrite.Step("write shadow arguments");
+                _shadowArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                VpWholeWrite.Step("write transforms");
+                _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity);
+                VpWholeWrite.Step("write clips");
+                _instanceClipBuffer.SetData(clips, 0, 0, InstanceCapacity);
+            }
+            finally
+            {
+                VpWholeWrite.Release(ref arguments);
+                VpWholeWrite.Release(ref transforms);
+                VpWholeWrite.Release(ref clips);
+            }
+        }
+
+        /// <summary>The bytes of this batch's GPU buffers: two argument buffers, the transforms and the clips.</summary>
+        public long GpuBytes =>
+            ((long)CommandCapacity * GraphicsBuffer.IndirectDrawIndexedArgs.size * 2) + ((long)InstanceCapacity * (InstanceStride + InstanceClipStride));
+
+        /// <summary>What this batch's staging is made of, in bytes.</summary>
+        public void DescribeStaging(System.Collections.Generic.List<VpRoomLine> into, string owner)
+        {
+            if (_forwardStaging != null) into.Add(VpRoomLine.Of(owner + ".forwardArguments", _forwardStaging));
+            if (_shadowStaging != null) into.Add(VpRoomLine.Of(owner + ".shadowArguments", _shadowStaging));
+            if (_forwardArguments != null) into.Add(VpRoomLine.OfManaged(owner + ".forwardArguments", _forwardArguments));
+            if (_shadowArguments != null) into.Add(VpRoomLine.OfManaged(owner + ".shadowArguments", _shadowArguments));
+            if (_instanceClips != null) into.Add(VpRoomLine.OfManaged(owner + ".instanceClips", _instanceClips));
         }
 
         /// <summary>
@@ -317,15 +472,55 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            WriteArguments(commands, commandCount, objectToWorlds, singlePassInstanced, out Bounds worldBounds);
+            if (instanceTotal > 0)
+            {
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
 
+                // No clips given is the ordinary display: every instance takes a record that clips nothing and
+                // moves nothing. Each record is written whole, count and all eight planes together, so a record
+                // that now carries fewer planes — or none — leaves no plane of an earlier upload in force.
+                if (_instanceClips == null)
+                {
+                    _instanceClips = new VpInstanceClip[InstanceCapacity];
+                }
+
+                for (int i = 0; i < instanceTotal; i++)
+                {
+                    _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
+                }
+
+                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
+            }
+
+            _uploaded = true;
+            CommandCount = commandCount;
+            InstanceCount = (int)instanceTotal;
+            SinglePassInstanced = singlePassInstanced;
+            WorldBounds = worldBounds;
+            return true;
+        }
+
+        // The two argument buffers made from the commands and sent, and the bounds of every instance at its own transform.
+        // Staged where this batch keeps its staging; the commands and the transforms are read as they stand.
+        private void WriteArguments(
+            ReadOnlySpan<VpIndirectCommand> commands, int commandCount, ReadOnlySpan<Matrix4x4> objectToWorlds,
+            bool singlePassInstanced, out Bounds worldBounds)
+        {
+            Span<GraphicsBuffer.IndirectDrawIndexedArgs> shadowArguments = _shadowStaging != null
+                ? _shadowStaging.AsSpan(0, commandCount)
+                : new Span<GraphicsBuffer.IndirectDrawIndexedArgs>(_shadowArguments, 0, commandCount);
+            Span<GraphicsBuffer.IndirectDrawIndexedArgs> forwardArguments = _forwardStaging != null
+                ? _forwardStaging.AsSpan(0, commandCount)
+                : new Span<GraphicsBuffer.IndirectDrawIndexedArgs>(_forwardArguments, 0, commandCount);
             uint multiplier = singlePassInstanced ? 2u : 1u;
             int startInstance = 0;
             bool anyInstance = false;
-            Bounds worldBounds = default;
+            worldBounds = default;
             for (int c = 0; c < commandCount; c++)
             {
                 VpIndirectCommand command = commands[c];
-                _shadowArguments[c] = new GraphicsBuffer.IndirectDrawIndexedArgs
+                shadowArguments[c] = new GraphicsBuffer.IndirectDrawIndexedArgs
                 {
                     indexCountPerInstance = (uint)command.range.indexCount,
                     instanceCount = (uint)command.instanceCount,
@@ -333,7 +528,7 @@ namespace Zantetsu.Rendering
                     baseVertexIndex = 0,
                     startInstance = (uint)startInstance,
                 };
-                _forwardArguments[c] = new GraphicsBuffer.IndirectDrawIndexedArgs
+                forwardArguments[c] = new GraphicsBuffer.IndirectDrawIndexedArgs
                 {
                     indexCountPerInstance = (uint)command.range.indexCount,
                     instanceCount = (uint)command.instanceCount * multiplier,
@@ -362,30 +557,17 @@ namespace Zantetsu.Rendering
 
             if (commandCount > 0)
             {
-                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount);
-                _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount);
-            }
-
-            if (instanceTotal > 0)
-            {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
-
-                // No clips given is the ordinary display: every instance takes a record that clips nothing and
-                // moves nothing. Each record is written whole, count and all eight planes together, so a record
-                // that now carries fewer planes — or none — leaves no plane of an earlier upload in force.
-                for (int i = 0; i < instanceTotal; i++)
+                if (_forwardStaging != null)
                 {
-                    _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
+                    _forwardArgumentBuffer.SetData(_forwardStaging.First(commandCount), 0, 0, commandCount);
+                    _shadowArgumentBuffer.SetData(_shadowStaging.First(commandCount), 0, 0, commandCount);
                 }
-
-                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
+                else
+                {
+                    _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount);
+                    _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount);
+                }
             }
-
-            CommandCount = commandCount;
-            InstanceCount = (int)instanceTotal;
-            SinglePassInstanced = singlePassInstanced;
-            WorldBounds = worldBounds;
-            return true;
         }
 
         /// <summary>
@@ -506,6 +688,8 @@ namespace Zantetsu.Rendering
             _shadowArgumentBuffer.Dispose();
             _instanceBuffer.Dispose();
             _instanceClipBuffer.Dispose();
+            _forwardStaging?.Dispose();
+            _shadowStaging?.Dispose();
         }
 
         /// <summary>

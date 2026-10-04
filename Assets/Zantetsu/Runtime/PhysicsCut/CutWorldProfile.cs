@@ -109,12 +109,15 @@ namespace Zantetsu.PhysicsCut
             "Where each display count starts. A collection that needs more grows it -- at least doubling, never past its "
             + "limit below -- and switches to the larger room whole at a drawing boundary. A need past a limit ends the "
             + "Player (DESIGN 4).")]
-        [SerializeField] private int drawCommandCapacity = 256;
-        [SerializeField] private int drawInstanceCapacity = 512;
-        [SerializeField] private int geometryReferenceCapacity = 512;
-        [SerializeField] private int displayInstanceCapacity = 512;
-        [SerializeField] private int branchCapacity = 128;
-        [SerializeField] private int candidateCapacity = 512;
+        // 1024 each (TL, 2026-10-05; they were 256, 512, 512, 512, 128, 512): the first room is what a scene reaches,
+        // made, committed and written before play, so that crossing 128, 256 or 512 pieces is no longer a growth inside
+        // a frame. The reservation behind the display's numeric rooms is made from the limits below.
+        [SerializeField] private int drawCommandCapacity = 1024;
+        [SerializeField] private int drawInstanceCapacity = 1024;
+        [SerializeField] private int geometryReferenceCapacity = 1024;
+        [SerializeField] private int displayInstanceCapacity = 1024;
+        [SerializeField] private int branchCapacity = 1024;
+        [SerializeField] private int candidateCapacity = 1024;
         [Tooltip(
             "The longest chain of cut boundaries one fragment may have (its cut depth): the multi-cut snapshot's own work "
             + "arrays, a few entries a level, not per instance. It is not grown, and a deeper chain ends the Player, so it is "

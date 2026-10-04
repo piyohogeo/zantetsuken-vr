@@ -358,7 +358,7 @@ namespace Zantetsu.PhysicsCut
                     profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
                     profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
                     profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
-                    out VpLogicalCutDisplay display))
+                    TakeNextDisplayPageBacking(), out VpLogicalCutDisplay display))
             {
                 // The room the display needs, or the stencil configuration it requires, could not be established.
                 // Those are causes of the common Player termination of DESIGN 4, and the latch is here from before
@@ -367,7 +367,8 @@ namespace Zantetsu.PhysicsCut
                 // not.
                 enabled = false;
                 RequestTermination("the display could not be created: the room or the stencil configuration it needs "
-                                   + "could not be established");
+                                   + "could not be established"
+                                   + (VpLogicalCutDisplay.LastCreationFailure != null ? " (" + VpLogicalCutDisplay.LastCreationFailure + ")" : ""));
                 Storage.Dispose();
                 Storage = null;
                 return;
@@ -748,6 +749,21 @@ namespace Zantetsu.PhysicsCut
         {
             IVpPageBacking pages = nextWorldPageBacking ?? VpWindowsPageBacking.Instance;
             nextWorldPageBacking = null;
+            return pages;
+        }
+
+        /// <summary>
+        /// The page backing the next world's display reserves its room on (TL, 2026-10-05): the system's own unless a
+        /// test names another. It is a seam of its own, apart from the storage's above: the display's first room is
+        /// committed whole when the world is made, which a backing that a test made to refuse the storage's later pages
+        /// would refuse at once.
+        /// </summary>
+        internal static IVpPageBacking nextWorldDisplayPageBacking;
+
+        private static IVpPageBacking TakeNextDisplayPageBacking()
+        {
+            IVpPageBacking pages = nextWorldDisplayPageBacking ?? VpWindowsPageBacking.Instance;
+            nextWorldDisplayPageBacking = null;
             return pages;
         }
 
