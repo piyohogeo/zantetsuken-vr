@@ -1697,7 +1697,16 @@ namespace Zantetsu.MeshCut
             _placeInto = PlacementOnlyPlaceCounts;
             using (s_place.Auto())
             {
-                placed = TryApplyPlacements(ledger, registrations, placement, structure);
+                // The render fragments here were copied from the structure with what it settled for each of them.
+                _renderFragmentsTakenOver = true;
+                try
+                {
+                    placed = TryApplyPlacements(ledger, registrations, placement, structure);
+                }
+                finally
+                {
+                    _renderFragmentsTakenOver = false;
+                }
             }
 
             LastPlaceSeconds = SecondsSince(placeBegin);
@@ -1839,6 +1848,24 @@ namespace Zantetsu.MeshCut
                         placement, registration, _standsAs[r], _placeInto, r, out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+
+                if (_renderFragmentsTakenOver && !placementRebuildUnchangedForTest
+                    && renderFragment.conditionCount == 0 && renderFragment.capCount == 0
+                    && renderFragment.clip.PlaneCount == 0
+                    && renderFragment.conditionStart == _conditionCount && renderFragment.capStart == _capCount
+                    && _branches[renderFragment.branchStart].selectedCount == 0
+                    && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld))
+                {
+                    // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
+                    // standing, bit for bit, where the structure placed it: placing it again and building it again
+                    // would write this very render fragment back (the same placement, an empty clip, the same empty
+                    // ranges at the same places). It is kept as it was copied (2026-10-05). It was asked where it
+                    // stands, and that answer checked or remembered, above, as for any other.
+                    _placeInto.clipsKept++;
+                    _placeInto.keptAsSettled++;
+                    PlacementsKeptAsSettled++;
+                    continue;
                 }
 
                 _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
@@ -2717,6 +2744,25 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Observation: Following placements passed without being checked again.</summary>
         public long PlacementChecksRemembered { get; private set; }
+
+        /// <summary>For tests: a render fragment taken over unchanged is placed and built again all the same, as before 2026-10-05.</summary>
+        internal static bool placementRebuildUnchangedForTest;
+
+        // Set while a placement-only build places the render fragments it copied from its structure: only then does a
+        // render fragment already hold what a build settled for it.
+        private bool _renderFragmentsTakenOver;
+
+        /// <summary>Observation: render fragments kept as they were taken over, neither placed nor built again.</summary>
+        public long PlacementsKeptAsSettled { get; private set; }
+
+        // Bit for bit, so that what is kept is exactly what would have been written: -0 and 0 are different here.
+        private static bool SameBits(in Matrix4x4 a, in Matrix4x4 b) =>
+            math.asuint(a.m03) == math.asuint(b.m03) && math.asuint(a.m13) == math.asuint(b.m13) && math.asuint(a.m23) == math.asuint(b.m23)
+            && math.asuint(a.m00) == math.asuint(b.m00) && math.asuint(a.m01) == math.asuint(b.m01) && math.asuint(a.m02) == math.asuint(b.m02)
+            && math.asuint(a.m10) == math.asuint(b.m10) && math.asuint(a.m11) == math.asuint(b.m11) && math.asuint(a.m12) == math.asuint(b.m12)
+            && math.asuint(a.m20) == math.asuint(b.m20) && math.asuint(a.m21) == math.asuint(b.m21) && math.asuint(a.m22) == math.asuint(b.m22)
+            && math.asuint(a.m30) == math.asuint(b.m30) && math.asuint(a.m31) == math.asuint(b.m31) && math.asuint(a.m32) == math.asuint(b.m32)
+            && math.asuint(a.m33) == math.asuint(b.m33);
 
         private bool TryPlacementOf(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
