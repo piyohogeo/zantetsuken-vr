@@ -1472,13 +1472,20 @@ namespace Zantetsu.MeshCut
                 return TryApplyPlacementsPhased(ledger, registrations, placement, reuseFrom);
             }
 
+            if (_placedHas.Length < _renderFragmentCount)
+            {
+                int room = Math.Max(_renderFragmentCount, _placedHas.Length * 2);
+                Array.Resize(ref _placedHas, room);
+                Array.Resize(ref _placedPassed, room);
+            }
+
             for (int r = 0; r < _renderFragmentCount; r++)
             {
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 VpMultiCutRegistration registration = registrations[renderFragment.registration];
                 _placeInto.renderFragments++;
                 if (!TryPlacementOf(
-                        placement, registration, _standsAs[r], _placeInto, out Matrix4x4 geometryLocalToWorld))
+                        placement, registration, _standsAs[r], _placeInto, r, out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
@@ -1580,14 +1587,69 @@ namespace Zantetsu.MeshCut
             }
         }
 
+        /// <summary>For tests: every registration is checked at every placement-only validation, as before 2026-10-04.</summary>
+        internal static bool validateEveryRegistrationForTest;
+
+        // What each registration passed its placement-only validation with, value for value: its bounds, placement, lineage
+        // frame and epsilon. The contract checks and the section extent are functions of those values alone, so a
+        // registration that comes again with the same values passes again and is not checked. Only what passed is kept.
+        private bool[] _validatedHas = Array.Empty<bool>(), _validatedNow = Array.Empty<bool>();
+        private Bounds[] _validatedBounds = Array.Empty<Bounds>();
+        private Matrix4x4[] _validatedPlacement = Array.Empty<Matrix4x4>(), _validatedLineage = Array.Empty<Matrix4x4>();
+        private float[] _validatedEpsilon = Array.Empty<float>();
+
+        /// <summary>Observation: registrations a placement-only validation passed without checking them again.</summary>
+        public long ValidationsRemembered { get; private set; }
+
+        private void ValidatedRoom(int count)
+        {
+            if (_validatedHas.Length >= count) return;
+            int room = Math.Max(count, _validatedHas.Length * 2);
+            Array.Resize(ref _validatedHas, room);
+            Array.Resize(ref _validatedNow, room);
+            Array.Resize(ref _validatedBounds, room);
+            Array.Resize(ref _validatedPlacement, room);
+            Array.Resize(ref _validatedLineage, room);
+            Array.Resize(ref _validatedEpsilon, room);
+        }
+
+        // Every element the same value (the matrix read by field, not through its indexer).
+        private static bool SameValues(in Matrix4x4 a, in Matrix4x4 b) =>
+            a.m00 == b.m00 && a.m01 == b.m01 && a.m02 == b.m02 && a.m03 == b.m03
+            && a.m10 == b.m10 && a.m11 == b.m11 && a.m12 == b.m12 && a.m13 == b.m13
+            && a.m20 == b.m20 && a.m21 == b.m21 && a.m22 == b.m22 && a.m23 == b.m23
+            && a.m30 == b.m30 && a.m31 == b.m31 && a.m32 == b.m32 && a.m33 == b.m33;
+
+        private static bool SameValues(Bounds a, Bounds b)
+        {
+            Vector3 ac = a.center, bc = b.center, ae = a.extents, be = b.extents;
+            return ac.x == bc.x && ac.y == bc.y && ac.z == bc.z && ae.x == be.x && ae.y == be.y && ae.z == be.z;
+        }
+
         private VpMultiCutBuildOutcome ValidateCore(
             LogicalCutLedger ledger,
             IReadOnlyList<VpMultiCutRegistration> registrations,
             bool structureAlreadySettled)
         {
+            bool remember = structureAlreadySettled && !validateEveryRegistrationForTest;
+            if (remember) ValidatedRoom(registrations.Count);
             for (int g = 0; g < registrations.Count; g++)
             {
                 VpMultiCutRegistration registration = registrations[g];
+                if (remember)
+                {
+                    _validatedNow[g] = _validatedHas[g]
+                        && _validatedEpsilon[g] == registration.vertexEpsilon
+                        && SameValues(_validatedPlacement[g], registration.geometryLocalToWorld)
+                        && SameValues(_validatedLineage[g], registration.lineageToGeometryLocal)
+                        && SameValues(_validatedBounds[g], registration.localBounds);
+                    if (_validatedNow[g])
+                    {
+                        ValidationsRemembered++;
+                        continue;
+                    }
+                }
+
                 if (!IsWithinContract(registration.localBounds)
                     || !IsPlacement(registration.geometryLocalToWorld)
                     || !IsRigid(registration.lineageToGeometryLocal))
@@ -1639,6 +1701,11 @@ namespace Zantetsu.MeshCut
             int steps = ledger.OperationCount + 1;
             for (int g = 0; g < registrations.Count; g++)
             {
+                if (remember && _validatedNow[g])
+                {
+                    continue;   // the same values it passed with: the extent below is a function of them
+                }
+
                 VpMultiCutRegistration registration = registrations[g];
                 if (!structureAlreadySettled && !ledger.TryGetFragmentState(registration.root, out _))
                 {
@@ -1658,7 +1725,20 @@ namespace Zantetsu.MeshCut
                 {
                     // The rest of this is what the ledger and the lineage say, and it was settled when the structure
                     // was. Only these checks are skipped; the order of the ones that remain is untouched.
-                    Lap(ref _vInput);
+                    if (remember)
+                    {
+                        // It passed the contract above and the extent here: remembered with the values it passed with.
+                        _validatedHas[g] = true;
+                        _validatedBounds[g] = registration.localBounds;
+                        _validatedPlacement[g] = registration.geometryLocalToWorld;
+                        _validatedLineage[g] = registration.lineageToGeometryLocal;
+                        _validatedEpsilon[g] = registration.vertexEpsilon;
+                    }
+                    else
+                    {
+                        Lap(ref _vInput);   // as before: the clock read once a registration
+                    }
+
                     continue;
                 }
 
@@ -1723,6 +1803,8 @@ namespace Zantetsu.MeshCut
                 ValidateCounts.segmentEntries += _segCount - segmentStart;
                 Lap(ref _vAncestors);
             }
+
+            if (remember) Lap(ref _vInput);   // the registrations' input checks, timed once for all of them
 
             if (!structureAlreadySettled)
             {
@@ -2271,9 +2353,23 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        private static bool TryPlacementOf(
+        /// <summary>For tests: a Static placement is checked again where it is placed, as before 2026-10-04.</summary>
+        internal static bool placementCheckStaticForTest;
+
+        /// <summary>For tests: a Following placement is checked at every build, as before 2026-10-04.</summary>
+        internal static bool placementCheckEveryFollowingForTest;
+
+        // The Following placement each render fragment last passed the placement check with, value for value. The check is
+        // a function of the matrix alone, so the same matrix passes again and is not checked. Only what passed is kept.
+        private bool[] _placedHas = Array.Empty<bool>();
+        private Matrix4x4[] _placedPassed = Array.Empty<Matrix4x4>();
+
+        /// <summary>Observation: Following placements passed without being checked again.</summary>
+        public long PlacementChecksRemembered { get; private set; }
+
+        private bool TryPlacementOf(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
-            VpPlaceCounts counts, out Matrix4x4 geometryLocalToWorld)
+            VpPlaceCounts counts, int r, out Matrix4x4 geometryLocalToWorld)
         {
             if (placement == null)
             {
@@ -2296,12 +2392,32 @@ namespace Zantetsu.MeshCut
             }
 
             Matrix4x4 baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            if (kind != VpFragmentPlacementKind.Following && !placementCheckStaticForTest)
+            {
+                // A Static placement is the registration's own matrix, and every build validates each registration's
+                // placement before any render fragment is placed (ValidateCore: IsPlacement of this same matrix). It is
+                // not checked a second time (2026-10-04).
+                geometryLocalToWorld = baseline;
+                return true;
+            }
+
+            if (!placementCheckEveryFollowingForTest && _placedHas[r] && SameValues(_placedPassed[r], baseline))
+            {
+                // The matrix that passed this check for this render fragment before, value for value (2026-10-04).
+                PlacementChecksRemembered++;
+                geometryLocalToWorld = baseline;
+                return true;
+            }
+
             counts.placementChecks++;
             if (!IsPlacement(baseline))
             {
                 geometryLocalToWorld = default;
                 return false;
             }
+
+            _placedHas[r] = true;
+            _placedPassed[r] = baseline;
 
             // The checked baseline is the placement as it is: checked once (2026-10-01; it was checked again here, the same
             // matrix, the same answer).
