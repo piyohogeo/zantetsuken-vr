@@ -158,8 +158,12 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
-        // The Root's Transform: set with the Root and let go with it (Release), read only by the placement read above.
+        // The Root's Transform: set with the Root and let go with it (Release), read by the placement read above and by
+        // the collection of the hit shapes (2026-10-04).
         private Transform _rootTransform;
+
+        /// <summary>The Root's Transform, held since the Root was given; null once released.</summary>
+        internal Transform RootTransform => _rootTransform;
 
         /// <summary>Tests only: the Root's Transform asked of the Root at every read (the read before 2026-10-01).</summary>
         internal static bool rootTransformReadAgainForTest;
@@ -483,7 +487,10 @@ namespace Zantetsu.PhysicsCut
                 PhysicsFragmentOwner owner = entry.Value;
                 if (!owner.IsWithdrawn && owner.Root != null && owner.Shape != null && !owner.Shape.IsFreed)
                 {
-                    into.Add(new CurrentShape(entry.Key, 0f, owner.Shape, owner.Root.transform));
+                    // The Transform held since the Root was given (a GameObject's Transform never changes), not asked of the
+                    // Root at every collection (2026-10-04); the Root's being there is asked above, as before.
+                    into.Add(new CurrentShape(entry.Key, 0f, owner.Shape,
+                        PhysicsFragmentOwner.rootTransformReadAgainForTest ? owner.Root.transform : owner.RootTransform));
                 }
             }
 
