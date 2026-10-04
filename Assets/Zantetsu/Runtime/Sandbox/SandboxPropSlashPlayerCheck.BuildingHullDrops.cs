@@ -77,6 +77,9 @@ namespace Zantetsu.Sandbox
                 }
             }
 
+            // Whether the synthetic re-cut during a drop ran (HullMidDropRecut, or the coexistence run's required section).
+            private bool _bhMidDropRecutRan;
+
             private void HullDropsSummary(BuildingHullFusion h)
             {
                 int completed = 0, stopped = 0, running = 0, cleared = 0, midReads = 0, arcReads = 0;
@@ -108,8 +111,23 @@ namespace Zantetsu.Sandbox
                 // The stop's transition: the stopped members held, the stopping hit's children born there, the next drop's start checked once and kept.
                 foreach (string line in _bhStarts.Lines()) Log("building hull drop stop: " + line);
                 bool startsPassed = _bhStarts.Judge(out string startDetail);
-                Expect(stopped > 0 && (stoppedRead == 0 || stoppedError < DropTolerance) && h.MaxDropPositionError < DropTolerance && startsPassed,
-                    "[hull drop] a drop stopped by a re-cut kept its point on the curve, its members held there until moved, and the next drop started from it (" + stopped + " stopped, " + stoppedRead + " read after, most off " + stoppedError.ToString("R") + " m; " + startDetail + ")");
+                string stopWhat = "[hull drop] a drop stopped by a re-cut kept its point on the curve, its members held there until moved, and the next drop started from it (" + stopped + " stopped, " + stoppedRead + " read after, most off " + stoppedError.ToString("R") + " m; " + startDetail + ")";
+                // TL, 2026-10-03: that a drop is stopped at all is the synthetic re-cut section's to bring about -- required only
+                // where it ran. Elsewhere (a city walk) a stop the katana's own re-cut made is still judged; with none, the
+                // expectation is said not to apply, and is not counted as passed.
+                bool stopsKept = (stoppedRead == 0 || stoppedError < DropTolerance) && h.MaxDropPositionError < DropTolerance && startsPassed;
+                switch (CheckJudgement.HullDropStop(_bhMidDropRecutRan || _hullMidDrop.Started, stopped))
+                {
+                    case CheckJudgement.Kind.Required:
+                        Expect(stopped > 0 && stopsKept, stopWhat);
+                        break;
+                    case CheckJudgement.Kind.JudgedWhereItArose:
+                        Expect(stopsKept, stopWhat + " -- stops made by the run's own re-cuts");
+                        break;
+                    default:
+                        NotApplicable(stopWhat + ": the synthetic re-cut during a drop did not run here and no re-cut of the run stopped a drop");
+                        break;
+                }
                 Expect(rotation < 1e-3 && h.MaxDropRotationDegrees < 1e-3,
                     "[hull drop] no member's nor body's rotation changed (most " + rotation.ToString("R") + " deg read each frame, " + h.MaxDropRotationDegrees.ToString("R") + " deg by the trial at each end)");
             }

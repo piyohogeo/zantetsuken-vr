@@ -261,7 +261,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 int live = 0, pieces = 0, convexes = 0, uncut = 0;
-                for (int id = 1; id < 256; id++)
+                for (int id = 1; id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state)) break;

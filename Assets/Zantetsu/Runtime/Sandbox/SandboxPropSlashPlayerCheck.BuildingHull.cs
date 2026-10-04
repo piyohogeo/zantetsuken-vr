@@ -42,19 +42,29 @@ namespace Zantetsu.Sandbox
 
             private static double RestSeconds(BuildingRest rest) => rest == null ? 0.0 : rest.ContactSeconds + rest.SupportSeconds + rest.SleepSeconds + rest.ReleaseSeconds;
 
-            /// <summary>The colliders and bodies that belong to the building's hull groups (under their Roots), and, apart, the enabled mesh colliders of everything else in the scene (the city, the floor).</summary>
-            private void CountBuildingPhysics(BuildingHullFusion h, out int colliders, out int bodies, out int others)
+            private readonly List<Collider> _bhColliders = new List<Collider>();
+            private readonly HashSet<Collider> _bhOwn = new HashSet<Collider>();
+            private bool _bhSettingsLogged;
+
+            /// <summary>
+            /// The colliders and bodies that belong to the building's hull groups (under their Roots), and, apart, the enabled
+            /// mesh colliders of everything else in the scene (the city, the floor) -- unless <paramref name="withOthers"/> is
+            /// false (the city walk's frames: a city's every collider found each frame; -1 then).
+            /// </summary>
+            private void CountBuildingPhysics(BuildingHullFusion h, out int colliders, out int bodies, out int others, bool withOthers = true)
             {
-                colliders = 0; bodies = 0; others = 0;
-                var own = new HashSet<Collider>();
+                colliders = 0; bodies = 0; others = withOthers ? 0 : -1;
+                _bhOwn.Clear();
                 foreach (HullGroup g in h.Groups)
                 {
                     if (g.Root == null) continue;
-                    foreach (Collider c in g.Root.GetComponentsInChildren<Collider>(true)) { if (c.enabled) colliders++; own.Add(c); }
+                    g.Root.GetComponentsInChildren(true, _bhColliders);
+                    foreach (Collider c in _bhColliders) { if (c.enabled) colliders++; _bhOwn.Add(c); }
                     if (g.Body != null) bodies++;
                 }
 
-                foreach (MeshCollider c in UnityEngine.Object.FindObjectsByType<MeshCollider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)) if (c.enabled && !own.Contains(c)) others++;
+                if (!withOthers) return;
+                foreach (MeshCollider c in UnityEngine.Object.FindObjectsByType<MeshCollider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)) if (c.enabled && !_bhOwn.Contains(c)) others++;
             }
 
             // At the replay's start: the settings and the registration as the hull trial made them.
@@ -64,10 +74,13 @@ namespace Zantetsu.Sandbox
             {
                 BuildingHullFusion h = _world.Hulls;
                 CutWorldProfile p = _world.Profile;
-                Log("building hull settings from the world's profile (" + p.name + "): hull on=" + p.BuildingHull.enabled + " deadline=" + p.BuildingHull.deadlineSeconds.ToString("R", Inv) + " s budget=" + (p.BuildingHull.mainBudgetSeconds * 1000).ToString("R", Inv)
+                // The settings and the scene around are the world's, the same for every building: written and judged once (a city holds hundreds).
+                bool first = !_bhSettingsLogged;
+                _bhSettingsLogged = true;
+                if (first) Log("building hull settings from the world's profile (" + p.name + "): hull on=" + p.BuildingHull.enabled + " deadline=" + p.BuildingHull.deadlineSeconds.ToString("R", Inv) + " s budget=" + (p.BuildingHull.mainBudgetSeconds * 1000).ToString("R", Inv)
                     + " ms; rest on=" + p.BuildingRest.enabled + " mode=" + p.BuildingRest.mode + " timeout=" + p.BuildingRest.timeoutSeconds.ToString("R", Inv) + " s supportSteps=" + p.BuildingRest.supportSteps
                     + "; fusion on=" + p.BuildingFusion.enabled + "; World D6 on=" + p.BuildingWorld.enabled + "; world: hulls " + (h != null) + " fusion " + (_world.Fusion != null) + " rest " + (_world.Rest != null && _world.Rest.Enabled) + " (" + (_world.Rest != null ? _world.Rest.Settings.mode.ToString() : "none") + ")");
-                Expect(p.BuildingHull.enabled && p.BuildingRest.enabled && p.BuildingRest.mode == BuildingRestMode.Kinematic && !p.BuildingFusion.enabled && !p.BuildingWorld.enabled
+                if (first) Expect(p.BuildingHull.enabled && p.BuildingRest.enabled && p.BuildingRest.mode == BuildingRestMode.Kinematic && !p.BuildingFusion.enabled && !p.BuildingWorld.enabled
                         && h != null && _world.Fusion == null && _world.Rest != null && _world.Rest.Enabled,
                     "[hull] the world runs the hull trial with the kinematic rest, the old fusion off and the World D6 off, as its profile says");
                 bool rootOwned = _world.Owners.TryGet(fragment, out PhysicsFragmentOwner root);
@@ -85,10 +98,11 @@ namespace Zantetsu.Sandbox
                     Expect(group != null && group.Anchored && group.Kinematic && group.Body != null && group.Body.isKinematic && colliders == 1 && group.MemberCount == 1 && rootOwned && root.IsDisplayOnly && _world.Rest.TrackedAnchored == 1,
                         "[hull] the building is registered as one anchored hull group with one collider and one display-only member, followed by the rest as ground");
                 }
+                if (!first) return;
                 CountBuildingPhysics(h, out _, out _, out int cityColliders);
                 int staticBodies = 0;
                 foreach (Rigidbody b in UnityEngine.Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)) if (group == null || b != group.Body) staticBodies++;
-                Log("building hull configuration: one building (college_001, one anchor), the floor, and the scene around it: enabled mesh colliders not the building's " + cityColliders + " (the city's and the floor's, static), other rigidbodies " + staticBodies
+                Log("building hull configuration: " + (cityWalk ? "the city walk's buildings (" + h.GroupCount + " groups made so far)" : "one building (college_001, one anchor)") + ", the floor, and the scene around it: enabled mesh colliders not the building's " + cityColliders + " (the city's and the floor's, static), other rigidbodies " + staticBodies
                     + "; the trial's settings: max new penetration " + h.Settings.maxNewPenetrationMetres.ToString("F3", Inv) + " m (a diagnostic value), vertex limit " + p.VertexLimit + "; always kinematic " + h.Settings.kinematicDisplay + " (drop " + h.Settings.animationSeconds.ToString("R", Inv) + " s, " + h.Settings.dropHorizontalMetres.ToString("R", Inv) + " m horizontal, " + h.Settings.dropVerticalMetres.ToString("R", Inv) + " m vertical); a candidate hull is judged before any body merges; staged stop " + h.Settings.stageSeconds.ToString("R", Inv) + " s, sibling constraint " + h.Settings.siblingD6 + " opening " + h.Settings.siblingOpeningMetres.ToString("R", Inv) + " m");
             }
 
@@ -130,7 +144,7 @@ namespace Zantetsu.Sandbox
                 bool stepped = _bhLastStepId >= 0 && stepId != _bhLastStepId;
                 if (_bhLastStepId >= 0) { if (stepped) { _bhStepped++; _bhSkips = 0; } else { _bhSkipped++; _bhSkips++; _bhMaxSkips = Math.Max(_bhMaxSkips, _bhSkips); } }
                 _bhLastStepId = stepId;
-                CountBuildingPhysics(h, out int colliders, out int bodies, out int _);
+                CountBuildingPhysics(h, out int colliders, out int bodies, out int _, withOthers: !cityWalk);
                 _bhMaxBodies = Math.Max(_bhMaxBodies, bodies);
                 _bhMaxColliders = Math.Max(_bhMaxColliders, colliders);
                 int kinematic = 0, free = 0, members = 0, anchoredGroups = 0, stagedGroups = 0;
@@ -151,7 +165,7 @@ namespace Zantetsu.Sandbox
                         if (g.State == HullGroupState.Gone) continue;
                         groupsOf.TryGetValue(g.Building, out int n); groupsOf[g.Building] = n + 1;
                         int enabled = 0;
-                        if (g.Root != null) foreach (Collider c in g.Root.GetComponentsInChildren<Collider>(true)) if (c.enabled) enabled++;
+                        if (g.Root != null) { g.Root.GetComponentsInChildren(true, _bhColliders); foreach (Collider c in _bhColliders) if (c.enabled) enabled++; }
                         if (g.Body == null || enabled != 1 || g.HullCount != 1 || g.Shape == null) why = "group " + g.Id + ": body " + (g.Body != null) + ", enabled colliders " + enabled + ", hulls " + g.HullCount;
                     }
 
@@ -318,6 +332,7 @@ namespace Zantetsu.Sandbox
             /// </summary>
             private IEnumerator HullMidDropRecut()
             {
+                _bhMidDropRecutRan = true;
                 BuildingHullFusion h = _world.Hulls;
                 Log("hull mid-drop re-cut: the script's part ended at frame " + Time.frameCount + ": " + HitTally(h, 0) + "; display cuts " + h.DisplayCuts + ", drops started " + h.AnimationsStarted + " completed " + h.AnimationsCompleted + " stopped by a re-cut " + h.AnimationsStoppedByReCut
                     + ", hull updates exchanged " + h.HullUpdatesAdopted + " refused " + h.HullUpdatesRefused + ", Main ms: classification " + (h.PrepareDisplaySeconds * 1000).ToString("F2", Inv) + " publication " + (h.PublishDisplaySeconds * 1000).ToString("F2", Inv) + " (the figures below include this section)");
@@ -638,9 +653,11 @@ namespace Zantetsu.Sandbox
                 Expect(h.HitsPending == 0 && h.Hits.Count == h.HitsPublished + h.HitsRefused && h.HeldNow == 0 && h.CutsInProgress == 0, "[hull] every hit has its one outcome (" + h.Hits.Count + ": published " + h.HitsPublished + ", refused " + h.HitsRefused + ", pending " + h.HitsPending + ")");
                 Expect(h.DisplayOperationsOpen == 0 && h.DisplayOperationsFailed == 0 && notCompleted == 0 && notCommitted == 0 && chained == publishedHits, "[hull] every published hit's display operations reached the ledger's end with their geometry committed (" + chained + " of " + publishedHits + ")");
                 Expect(h.IsSettledWithoutFailure, "[hull] the trial is settled without failure: " + h.DescribeUnsettled());
+                // At most one fixed and one free group a building (2026-10-03: per building, for a city of many; the same for one).
                 int kinematicGroups = h.Groups.Count(g => g.Kinematic), freeGroups = h.Groups.Count(g => !g.Kinematic);
-                Expect(h.IsOneHullAchieved && h.GroupCount >= 1 && kinematicGroups <= 1 && freeGroups <= 1 && hulls == h.GroupCount && sceneBodies == h.GroupCount && sceneColliders == h.LiveColliders && h.LiveColliders == hulls,
-                    "[hull] one hull achieved on the real counts: at the end at most one fixed and one free group, each one hull on one real body with one collider (" + h.DescribeCounts() + "; the building's bodies " + sceneBodies + ", colliders " + sceneColliders + "; not achieved " + h.HullsNotAchieved + ", given up " + h.FusionsGivenUp + ")");
+                int buildingsPastOne = BuildingsPastOneEach(h.Groups.Select(g => (g.Building, g.Kinematic)));
+                Expect(h.IsOneHullAchieved && h.GroupCount >= 1 && buildingsPastOne == 0 && hulls == h.GroupCount && sceneBodies == h.GroupCount && sceneColliders == h.LiveColliders && h.LiveColliders == hulls,
+                    "[hull] one hull achieved on the real counts: at the end at most one fixed and one free group a building, each one hull on one real body with one collider (" + h.DescribeCounts() + "; fixed groups " + kinematicGroups + ", free " + freeGroups + ", buildings past one of either " + buildingsPastOne + "; the buildings' bodies " + sceneBodies + ", colliders " + sceneColliders + "; not achieved " + h.HullsNotAchieved + ", given up " + h.FusionsGivenUp + ")");
                 Expect(h.MaxGroupSpeed < 20f && _bhMaxSpeed < 20f, "[hull] no group moved faster than 20 m/s after a cut or an exchange (fastest " + h.MaxGroupSpeed.ToString("F2", Inv) + " m/s at " + (h.MaxGroupSpeedAt ?? "none") + ")");
                 Expect(_bhMaxSkips < 2 * CutPhysicsStep.VerifyAfterSkippedFrames, "[hull] the physics never stopped: the longest run of skipped frames " + _bhMaxSkips + " is under " + 2 * CutPhysicsStep.VerifyAfterSkippedFrames);
             }

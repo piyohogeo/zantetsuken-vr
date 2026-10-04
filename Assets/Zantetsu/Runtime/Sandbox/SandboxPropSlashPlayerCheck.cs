@@ -202,6 +202,9 @@ namespace Zantetsu.Sandbox
 
             // A check Player keeps running when its window is not in focus (the project setting stays as it is).
             Application.runInBackground = true;
+            // The city walk: no placed cuttable registers before the check's registration stage (after scene load, before any
+            // Start or Update of the scene).
+            PlayableCityCuttable.Held = Has(CityWalkArgument);
             var host = new GameObject("Prop slash player check");
             UnityEngine.Object.DontDestroyOnLoad(host);
             Runner runner = host.AddComponent<Runner>();
@@ -258,6 +261,8 @@ namespace Zantetsu.Sandbox
                     walk.rows = int.TryParse(Value(RowsArgument), NumberStyles.Integer, CultureInfo.InvariantCulture, out int rowLimit) && rowLimit > 0
                         ? Math.Min(rowLimit, SandboxSlashPoseRecorder.Capacity) : SandboxSlashPoseRecorder.Capacity;
                     walk.hullScenario = Has(HullScenarioArgument);
+                    walk.cityWalk = Has(CityWalkArgument);
+                    walk.cityWalkBudget = float.TryParse(Value(CityWalkBudgetArgument), NumberStyles.Float, CultureInfo.InvariantCulture, out float budget) ? budget : 565f;
                     string[] turn = (Value(ViewTurnArgument) ?? "").Split(',');
                     if (turn.Length == 4 && int.TryParse(turn[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int turnIteration) && turnIteration == i)
                     {
@@ -569,6 +574,7 @@ namespace Zantetsu.Sandbox
             private IEnumerator Start()
             {
                 Directory.CreateDirectory(directory);
+                if (cityWalk) StartCoroutine(CityWalkHeadOrderWatch());   // the VRS's order against ready: the head's first move, from here
                 Application.quitting += MultiQuitting;
                 yield return null;
 
@@ -656,11 +662,15 @@ namespace Zantetsu.Sandbox
                     // The characters' loading frames: each cold preparation finishes, then it is a target. Bounded; a
                     // target character that does not become one ends the check.
                     int until = Time.frameCount + 1200;
+                    // The city walk: a deadline in time as well (StageBegin), within the run's budget.
+                    float npcBy = cityWalk ? StageBegin("npc preparation", 60f) : float.PositiveInfinity;
                     // A dormant prepared slot (the MobPlan crowd's spares) is ready without being a target.
-                    while (_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null) && Time.frameCount < until)
+                    while (_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null) && Time.frameCount < until && Time.realtimeSinceStartup < npcBy)
                     {
                         yield return null;
                     }
+
+                    StageEnd(_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null), "frames " + Time.frameCount + " of the bound " + until);
 
                     var prepFrames = new List<int>();
                     var confirmMs = new List<double>();
@@ -719,6 +729,17 @@ namespace Zantetsu.Sandbox
                     {
                         Log("FAILED: the building was not registered: " + (_building != null ? _building.Registration : "no scenario"));
                         Finish(15);
+                        yield break;
+                    }
+                }
+
+                // The city walk: every placed cuttable registered or refused before the script (bounded; the refused ones named).
+                if (cityWalk && MobPlanMode)
+                {
+                    yield return CityWalkWaitRegistered();
+                    if (_cwRegistrationCutShort)
+                    {
+                        yield return CityWalkEndRegistrationCutShort();   // no script: the ordinary ending, then the run's completion
                         yield break;
                     }
                 }
@@ -783,7 +804,12 @@ namespace Zantetsu.Sandbox
                     var wait = new StringBuilder("frame,time,x,y,z,yaw,pitch,unsimulated,stepId\n");
                     bool moved = false;
                     int looks = 0;
-                    while (Time.unscaledTimeAsDouble < readyTime + headWaitSeconds)
+                    // The city walk: the check is ready here (the preparation and the registration are done, each its own stage);
+                    // the head's first move is not a condition of that, only the synchronisation with the moving VRS's replay.
+                    if (cityWalk) Log("city walk: ready at frame " + Time.frameCount + " (preparation and registration done); the VRS synchronisation follows: the script begins on the replayed head's first move");
+                    bool vrsBeforeReady = cityWalk && CityWalkVrsBeganBeforeReady();
+                    float headBy = StageBegin(cityWalk ? "VRS synchronisation (the head's first move)" : "head wait", (float)headWaitSeconds);
+                    while (Time.unscaledTimeAsDouble < readyTime + headWaitSeconds && (!cityWalk || Time.realtimeSinceStartup < headBy))
                     {
                         Vector3 at = head.transform.position;
                         Vector3 e = head.transform.eulerAngles;
@@ -801,10 +827,18 @@ namespace Zantetsu.Sandbox
                         yield return null;
                     }
 
+                    StageEnd(!moved, moved ? looks + " looks" : "the head did not move");
                     File.WriteAllText(Path.Combine(directory, "head-wait.csv"), wait.ToString());
                     // Moved already at the second look (one frame after ready): the replay was under way before the check was
                     // ready, so the run is not under the comparison's condition. It goes on, and is written down as such.
                     _replayBeforeReady = moved && looks <= 2;
+                    // The city walk: a replay that began before ready is never a synchronisation (TL, 2026-10-03), whatever this wait saw.
+                    if (cityWalk)
+                    {
+                        _replayBeforeReady |= vrsBeforeReady;
+                        Expect(!vrsBeforeReady, "[city walk] the VRS began after the check was ready (the head's first move "
+                            + (float.IsNaN(_cwHeadMovedAt) ? "at the synchronisation" : "at " + _cwHeadMovedAt.ToString("F2", Inv) + " s during " + _cwHeadMovedStage) + ")");
+                    }
                     if (_replayBeforeReady)
                     {
                         Log("[condition] head wait: the head was already moving " + looks + " look(s) after ready: the VRS replay began before the check was ready");
@@ -832,6 +866,7 @@ namespace Zantetsu.Sandbox
                 if (!MobPlanMode) _npcPose?.Restart();
                 if (MobPlanMode)
                 {
+                    CityWalkBegin();
                     MobPlanBegin();
                 }
 
@@ -860,7 +895,7 @@ namespace Zantetsu.Sandbox
                     + " debugColours=" + debugColours + " light=" + light + " iteration=" + iteration);
                 RequestPicture("0-start");
 
-                float deadline = Time.realtimeSinceStartup + (MobPlanMode ? (float)_mpEnd + 30f : 120f);
+                float deadline = StageBegin("script and the cuts' completion", MobPlanMode ? (float)_mpEnd + 30f : 120f);
                 bool cutsComplete = false;
                 while (Time.realtimeSinceStartup < deadline)
                 {
@@ -897,6 +932,8 @@ namespace Zantetsu.Sandbox
                         + " stepId=" + (stepClock != null ? stepClock.StepId : -1) + "; " + DescribeWaiting());
                     Expect(false, "[scenario] the cuts completed before the waiting deadline (" + DescribeWaiting() + ")");
                 }
+
+                StageEnd(!cutsComplete, cutsComplete ? "script seconds " + (Time.unscaledTimeAsDouble - _clockStart).ToString("F1", Inv) : DescribeWaiting());
                 if (building)
                 {
                     BuildingStepBack();
@@ -915,11 +952,13 @@ namespace Zantetsu.Sandbox
                 float observeCap = building ? Mathf.Max(BuildingObservationRealCap, 2f * BuildingObserveSeconds + 10f) : 10f;
                 long observeSteps = stepClock != null ? (long)Math.Round(observeSeconds * stepClock.FrequencyHz) : 0;
                 int observeFrame = Time.frameCount;
-                float observeBy = Time.realtimeSinceStartup + observeCap;
+                float observeBy = StageBegin("observation", observeCap);
                 while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Time.realtimeSinceStartup < observeBy)
                 {
                     yield return null;
                 }
+
+                StageEnd(!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps, light ? "a light run observes nothing" : "steps " + ((stepClock != null ? stepClock.StepId : 0) - observeFrom) + " of " + observeSteps);
 
                 _observedSteps = (stepClock != null ? stepClock.StepId : 0) - observeFrom;
                 _askedSteps = observeSteps;
@@ -950,15 +989,21 @@ namespace Zantetsu.Sandbox
                     // building past N is shown cut no more. Not run (the world ending or without its trial) is judged at the summary.
                     if (_world != null && _world.Hulls != null && !_world.IsEnding) yield return HullLimitCheck();
                 }
-                else if (MobPlanMode && PlayableCity && _world != null && _world.Hulls != null && _world.Hulls.Settings.kinematicDisplay && !_world.IsEnding)
+                else if (MobPlanMode && PlayableCity && !cityWalk && _world != null && _world.Hulls != null && _world.Hulls.Settings.kinematicDisplay && !_world.IsEnding)
                 {
                     yield return HullMidDropRecut();
                 }
 
                 // The MobPlan crowd's reused slots: one live individual on a reused slot, hit once through the ordinary detector by a synthetic Slash at its current shape (a section of its own after the script).
-                if (MobPlanMode && !MobPlanLive && _crowd != null && _world != null && !_world.IsEnding)
+                if (MobPlanMode && !MobPlanLive && !cityWalk && _crowd != null && _world != null && !_world.IsEnding)
                 {
                     yield return MobPlanReuseCheck();
+                }
+
+                if (cityWalk)
+                {
+                    Log("city walk: no synthetic section after the script (no mid-drop re-cut, no hull limit check, no reused-slot check): only the katana's own Slashes cut");
+                    yield return CityWalkAfterScript();
                 }
 
                 yield return CaptureDrain();   // image runs: the capture camera given back and its sink finished (bounded by the sink's deadline)
@@ -979,8 +1024,11 @@ namespace Zantetsu.Sandbox
                     _phase = "ending";
                 }));
                 var ending = new CheckEnding(Log);
+                StageBegin("ending (the summary, then the world's reclaim)", 15f);
                 yield return ending.Run(_world, parts, 15f);   // the ordinary ending, carried by the ordinary frames
+                StageEnd(!ending.WorldReleased, "world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
                 _failures += ending.Failures;
+                Log("expectations not judged here: not applicable " + _notApplicable + ", not exercised " + _notExercised + " (neither counted as passed); failed " + _failures);
                 yield return null;
                 Finish(ending, null);
             }
@@ -1001,6 +1049,7 @@ namespace Zantetsu.Sandbox
                         new CheckEnding.Part("capture sinks cancelled if still live", CaptureCancel),
                         new CheckEnding.Part("cooking audit after the reclaim", CookingAuditFinal),
                         new CheckEnding.Part("records close", MultiClose),
+                        new CheckEnding.Part("city walk stages close", CityWalkClose),
                         new CheckEnding.Part("timeline", () => WriteTimeline(true)),
                         new CheckEnding.Part("view target", ReleaseTarget),
                     };
@@ -1455,7 +1504,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 // Any piece moving faster than 20 m/s, the first time it does: which, how heavy, where (not in a light run).
-                for (int id = 1; !light && id < 256; id++)
+                for (int id = 1; !light && id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
@@ -2073,7 +2122,7 @@ namespace Zantetsu.Sandbox
                 Guarded("cooking audit", CookingAuditSummary);
 
                 // Where the pieces rest: every live fragment's owner, above the floor.
-                for (int id = 1; id < 256; id++)
+                for (int id = 1; id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
@@ -2129,7 +2178,7 @@ namespace Zantetsu.Sandbox
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 long step = clock != null ? clock.StepId : -1;
                 int frame = Time.frameCount;
-                for (int id = 1; id < 256; id++)
+                for (int id = 1; id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
@@ -2364,6 +2413,22 @@ namespace Zantetsu.Sandbox
             {
                 if (!held) _failures++;
                 Log((held ? "ok: " : "FAILED: ") + what);
+            }
+
+            // Expectations that are not judged here (TL, 2026-10-03): written down as such, neither passed nor failed --
+            // "not applicable" for one whose section did not run in this scenario, "not exercised" for one whose case did not arise.
+            private int _notApplicable, _notExercised;
+
+            private void NotApplicable(string what)
+            {
+                _notApplicable++;
+                Log("not applicable: " + what);
+            }
+
+            private void NotExercised(string what)
+            {
+                _notExercised++;
+                Log("not exercised: " + what);
             }
         }
     }

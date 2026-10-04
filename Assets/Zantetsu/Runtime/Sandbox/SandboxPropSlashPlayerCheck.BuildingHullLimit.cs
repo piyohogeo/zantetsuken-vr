@@ -29,8 +29,9 @@ namespace Zantetsu.Sandbox
             private void HullRequiredDecide()
             {
                 bool profileSays = _world != null && _world.Profile.BuildingHull.enabled && _world.Profile.BuildingHull.LimitOn;
-                bool required = MobPlanMode && profileSays;
-                string because = "the coexistence scenario (MobPlan) " + MobPlanMode + ", the world's profile: hull on " + (_world != null && _world.Profile.BuildingHull.enabled)
+                // The city walk (TL, 2026-10-03) runs no synthetic section: the katana's own Slashes only.
+                bool required = MobPlanMode && profileSays && !cityWalk;
+                string because = "the coexistence scenario (MobPlan) " + MobPlanMode + ", the city walk " + cityWalk + ", the world's profile: hull on " + (_world != null && _world.Profile.BuildingHull.enabled)
                     + ", always kinematic " + (_world != null && _world.Profile.BuildingHull.kinematicDisplay) + ", cut limit N " + (_world != null ? _world.Profile.BuildingHull.geometryLimit : 0);
                 _hullMidDrop = new HullMidDropSection(required, because);
                 if (MobPlanMode) Log("hull required sections: the re-cut during a drop before the script and the limit check after it " + (required ? "REQUIRED" : "not required") + " (" + because + ")");
