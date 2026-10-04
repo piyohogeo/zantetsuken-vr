@@ -136,6 +136,8 @@ namespace Zantetsu.Sandbox
             private static readonly System.Text.RegularExpressions.Regex s_pcRoom = new System.Text.RegularExpressions.Regex(
                 @"descriptors reserved (\d+) published (\d+) retiring (\d+) free \d+ of (\d+); submeshes used (\d+) of (\d+); vertex blocks used (\d+) of (\d+)");
             private bool PlayableCity => _pcCuttables.Length > 0;
+            private int _pcDeferredAtStart, _pcDeferredLogged;
+            private readonly List<string> _pcDeferredNotTarget = new List<string>();
 
             private void PlayableCityBegin()
             {
@@ -147,6 +149,27 @@ namespace Zantetsu.Sandbox
                 Log("place diagnosis (queries, checks and the rest as three timed blocks): " + (VpMultiCutSnapshot.PlacePhasedDiagnosis ? "ON (-zantetsuPlacePhased)" : "off"));
                 foreach (PlayableCityCuttable c in _pcCuttables)
                 {
+                    if (c != null && c.IsRegistered) _pcNames[c.Registration.Fragment] = PlayableCityName(c);
+                }
+
+                foreach (PlayableCityCuttable c in _pcCuttables)
+                {
+                    // Deferred (TL, 2026-10-03): a cut target only, the instance the scene's own until its first cut.
+                    if (c.Candidate != null && !c.IsRegistered)
+                    {
+                        int renderersOn = c.instanceRenderers.Count(r => r != null && r.enabled), collidersOn = c.instanceColliders.Count(k => k != null && k.enabled);
+                        if (_pcDeferredLogged < 8)
+                        {
+                            _pcDeferredLogged++;
+                            Log("playable city: " + (c.building ? "building " : "prop ") + c.gameObject.name + " a cut target, drawn and colliding as the scene placed it until its first cut (renderers on "
+                                + renderersOn + " of " + c.instanceRenderers.Length + ", colliders on " + collidersOn + " of " + c.instanceColliders.Length + ")");
+                        }
+
+                        _pcDeferredAtStart++;
+                        if (!c.Candidate.IsHitTarget || c.Candidate.IsWithdrawn) _pcDeferredNotTarget.Add(c.gameObject.name);
+                        continue;
+                    }
+
                     if (c.building && c.IsRegistered && c.Registration.Group != null && _world.Hulls != null)
                     {
                         // The building in the hull trial (2026-09-30): one kinematic group, one body, one collider, one hull, its
@@ -163,6 +186,41 @@ namespace Zantetsu.Sandbox
                     Log("playable city: " + (c.building ? "building " : "prop ") + (c.IsRegistered ? c.Registration.Description : "NOT registered")
                         + (owner != null ? "; anchors judged " + (FixedByItsAnchors(owner, out string judged) ? "fixed" : "NOT fixed") + " (" + judged + ")" : ""));
                     Expect(fixedAtStart, "[scenario] the " + (c.building ? "building" : "prop") + " is registered in the crowd's cut world, fixed by its anchors");
+                }
+
+                if (_pcDeferredAtStart > 0)
+                {
+                    // Before any cut (TL, 2026-10-03): every placed cuttable a candidate only -- no fragment, no registration
+                    // (no VP geometry, no display, no owner, no hull group), no body of the cut world; the instances as placed.
+                    int candidates = 0, targets = 0, withFragment = 0, registered = 0, instanceBodies = 0;
+                    foreach (PlayableCityCuttable c in _pcCuttables)
+                    {
+                        if (c == null || c.Candidate == null) continue;
+                        candidates++;
+                        if (c.Candidate.IsHitTarget) targets++;
+                        if (c.Candidate.Source.IsSet) withFragment++;
+                        if (c.Registration != null) registered++;
+                        if (c.target != null) instanceBodies += c.target.GetComponentsInChildren<Rigidbody>(true).Length;
+                    }
+
+                    int groups = _world.Hulls != null ? _world.Hulls.GroupsMade : 0;
+                    Log("playable city before any cut: " + candidates + " candidates of " + _pcCuttables.Length + " placed cuttables, hit targets " + targets + ", with a fragment " + withFragment
+                        + ", registered " + registered + "; the cut world: owners " + _world.Owners.Count + ", hull groups made " + groups + ", storage vertices " + _world.Storage.VertexCount
+                        + " (the crowd's prepared characters included); Rigidbodies on the placed instances " + instanceBodies);
+                    Expect(candidates == _pcCuttables.Length && targets == candidates, "[scenario] every placed cuttable is prepared as a candidate and a hit target (" + targets + " of " + _pcCuttables.Length + ")");
+                    Expect(withFragment == 0 && registered == 0 && groups == 0, "[scenario] before any cut no placed cuttable has VP geometry or a cut-world body (fragments " + withFragment
+                        + ", registrations " + registered + ", hull groups " + groups + ")");
+                    var scenario = Object.FindFirstObjectByType<ScenarioRenderPipeline>();
+                    string inEffect = ScenarioRenderPipeline.Describe(UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline);
+                    Log("rendering in effect at the walk's start: " + inEffect + "; the scene's scenario pipeline " + (scenario == null ? "none" : (scenario.pipeline != null ? scenario.pipeline.name : "unset") + (scenario.Applied ? " applied" : " NOT applied")));
+                    if (scenario != null)
+                    {
+                        Expect(scenario.Applied && UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline == scenario.pipeline && inEffect.Contains("ScreenSpaceAmbientOcclusion=inactive")
+                            && !inEffect.Contains("ScreenSpaceAmbientOcclusion=active"), "[scenario] the scenario's render pipeline is in effect with its SSAO inactive");
+                    }
+
+                    Expect(_pcDeferredNotTarget.Count == 0, "[scenario] every deferred placed cuttable stands as the scene placed it, a cut target until its first cut (" + _pcDeferredAtStart
+                        + " deferred; not a target " + _pcDeferredNotTarget.Count + (_pcDeferredNotTarget.Count > 0 ? ": " + string.Join(" ", _pcDeferredNotTarget.Take(8)) : "") + ")");
                 }
 
                 _crowd.ActorRetired += PlayableCityRetired;
@@ -201,14 +259,31 @@ namespace Zantetsu.Sandbox
                 return string.Join("; ", found.Distinct());
             }
 
-            // The kind of a lineage root that is one of the placed cuttables, or null.
+            // The kind of a lineage root that is one of the placed cuttables, or null. The names are made once a cuttable is
+            // seen registered (the city walk, 2026-10-03: hundreds of them, many of one asset, so the name of each is its
+            // placement's own -- the scene builder's "building-<asset>#<k>@<x>,<z>" -- where it has one).
+            private readonly Dictionary<LogicalFragmentId, string> _pcNames = new Dictionary<LogicalFragmentId, string>();
+
+            private static string PlayableCityName(PlayableCityCuttable c)
+            {
+                string kind = c.building ? "building-" : "prop-";
+                return c.gameObject.name.StartsWith(kind, System.StringComparison.Ordinal) ? c.gameObject.name : kind + (c.Registration != null ? c.Registration.Name : c.Candidate.Name);
+            }
+
             private string PlayableCityRootName(LogicalFragmentId root)
             {
+                if (_pcNames.TryGetValue(root, out string named)) return named;
                 foreach (PlayableCityCuttable c in _pcCuttables)
                 {
                     if (c != null && c.IsRegistered && c.Registration.Fragment == root)
                     {
-                        return (c.building ? "building-" : "prop-") + c.Registration.Name;
+                        return _pcNames[root] = PlayableCityName(c);
+                    }
+
+                    // A deferred one: the fragment a hit identified it as.
+                    if (c != null && c.Candidate != null && c.Candidate.Source.IsSet && c.Candidate.Source == root)
+                    {
+                        return _pcNames[root] = PlayableCityName(c);
                     }
                 }
 
@@ -341,7 +416,9 @@ namespace Zantetsu.Sandbox
                 var bySlash = slashKinds.GroupBy(a => a.slash).Select(g => (slash: g.Key, kinds: g.Select(a => a.kind).Distinct().OrderBy(k => k).ToList())).ToList();
                 var mixed = bySlash.Where(s => s.kinds.Count > 1).ToList();
                 foreach ((long slash, List<string> k) in mixed) Log("playable city slash " + slash + " accepted on " + string.Join("+", k));
-                Expect(mixed.Count > 0, "[scenario] one Slash was accepted on two kinds of target or more (" + mixed.Count + " such Slashes)");
+                // The city walk aims no Slash at two kinds at once (its route stands before one target at a time): written down, not judged.
+                if (cityWalk) Log("playable city: one Slash accepted on two kinds of target or more: " + mixed.Count + " such Slashes (not judged in the city walk)");
+                else Expect(mixed.Count > 0, "[scenario] one Slash was accepted on two kinds of target or more (" + mixed.Count + " such Slashes)");
                 Expect(_accepted.Any(a => a.child && a.committedFrame >= 0), "[scenario] a piece made by a cut was cut again and committed");
 
                 // The pieces: anchored ones stayed fixed where they were cut; free ones were dynamic. Gone ones: only by a cut.

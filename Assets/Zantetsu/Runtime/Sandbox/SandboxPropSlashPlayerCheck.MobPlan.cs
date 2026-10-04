@@ -43,8 +43,18 @@ namespace Zantetsu.Sandbox
             internal Func<(float forward, float turn)?> command;
             internal MobPlanPlayerInput input;
 
+            // The city walk (2026-10-03): the script's spans given exactly instead (each span for the time this frame
+            // overlaps it), through the same Submit.
+            internal Action drive;
+
             private void Update()
             {
+                if (drive != null)
+                {
+                    drive();
+                    return;
+                }
+
                 (float forward, float turn)? c = command?.Invoke();
                 if (c.HasValue && input != null)
                 {
@@ -132,7 +142,10 @@ namespace Zantetsu.Sandbox
             // twenty are seen being taken in. Then waits (bounded) for the crowd to be ready.
             private System.Collections.IEnumerator MobPlanWaitReady()
             {
-                foreach (string raw in MobPlanLive ? new string[0] : File.ReadAllLines(mobPlan))
+                string[] scriptLines = MobPlanLive ? new string[0] : File.ReadAllLines(mobPlan);
+                // The city walk's step script (2026-10-03): followed by the player's position, parsed once the player is found.
+                bool steps = CityWalkSteps.IsStepScript(scriptLines);
+                foreach (string raw in steps ? new string[0] : scriptLines)
                 {
                     string line = raw.Split('#')[0].Trim();
                     if (line.Length == 0) continue;
@@ -173,6 +186,21 @@ namespace Zantetsu.Sandbox
                     yield break;
                 }
 
+                if (steps)
+                {
+                    Vector3 at = _mpInput.player.transform.position;
+                    _mpSteps = CityWalkSteps.Parse(scriptLines, new Vector2(at.x, at.z));
+                    _mpEnd = _mpSteps.Budget;
+                    if (cityWalk && Has(CityWalkHitShotsArgument)) _mpSteps.HoldBeforeSlash = CityWalkHoldBeforeSlash;
+                    Log("mobplan: pictures before and after each visit's Slashes " + (_mpSteps.HoldBeforeSlash != null ? "ON (" + CityWalkHitShotsArgument + ")" : "off"));
+                    Log("mobplan: attacks on the NPCs met " + (_mpSteps.Engage == null ? "off (no engage line)" : "ON: range " + _mpSteps.Engage.range.ToString("R", Inv) + " m, half angle "
+                        + _mpSteps.Engage.halfAngle.ToString("R", Inv) + " deg, face within " + _mpSteps.Engage.faceTolerance.ToString("R", Inv) + " deg in " + _mpSteps.Engage.turnSeconds.ToString("R", Inv)
+                        + " s, cooldown " + _mpSteps.Engage.cooldown.ToString("R", Inv) + " s, at most " + _mpSteps.Engage.maxAttacks + " attacks and " + _mpSteps.Engage.totalSeconds.ToString("R", Inv)
+                        + " s, none within " + _mpSteps.Engage.nearStand.ToString("R", Inv) + " m of the plan's next stand, rows " + _mpSteps.Engage.start + "+" + _mpSteps.Engage.rows));
+                    Log("mobplan: the step script (followed by the player's position): " + _mpSteps.Steps.Count + " steps, slashes " + _mpSteps.SlashSteps
+                        + ", planned " + _mpSteps.PlannedMetres.ToString("F1", Inv) + " m from " + at.ToString("F2") + ", budget " + _mpSteps.Budget.ToString("R", Inv) + " s");
+                }
+
                 _mpSubscribedLate = _crowd.IsReady;
                 _crowd.ActorAdded += MobPlanAdded;
                 _crowd.ActorRetired += MobPlanRetired;
@@ -182,18 +210,23 @@ namespace Zantetsu.Sandbox
                     _mpStick = gameObject.AddComponent<MobPlanScriptedStick>();
                     _mpStick.input = _mpInput;
                     _mpStick.command = MobPlanCommand;
+                    if (cityWalk) _mpStick.drive = MobPlanDrive;
+                    if (_mpSteps != null) _mpStick.drive = MobPlanStepDrive;
                 }
 
                 _mpEvents = new StreamWriter(Path.Combine(directory, "mobplan-events.csv")) { AutoFlush = MobPlanLive };
                 _mpEvents.WriteLine("frame,t,event,id,name,detail");
                 Log("mobplan: script moves=" + _mpMoves.Count + " slashes=" + _mpSlashes.Count + " end=" + _mpEnd.ToString("R", Inv)
                     + " input=" + input + " (" + _mpInputLines.Length + " lines); live stick off, scripted stick at order -100"
+                    + (cityWalk ? " (the city walk: each span given for exactly the time a frame overlaps it)" : "")
                     + (_mpSubscribedLate ? "; WARNING: the crowd was ready before the check subscribed" : ""));
-                float until = Time.realtimeSinceStartup + 120f;
+                float until = StageBegin("crowd ready", 120f);
                 while (!_crowd.IsReady && Time.realtimeSinceStartup < until)
                 {
                     yield return null;
                 }
+
+                StageEnd(!_crowd.IsReady, "live " + _crowd.LiveCount);
 
                 Log("mobplan: crowd ready=" + _crowd.IsReady + " live=" + _crowd.LiveCount + " at frame " + Time.frameCount
                     + " player=" + _mpInput.player.transform.position.ToString("F3"));
@@ -217,6 +250,180 @@ namespace Zantetsu.Sandbox
                 }
 
                 return (0f, 0f);
+            }
+
+            // The city walk (2026-10-03): a held stick sampled once a frame turns or walks a whole frame more or less than its
+            // span (some 1.3 degrees a turn at 90 fps, more in a long frame), which over a walk of many turns leaves the
+            // player off the route. Here each span of the script is given for exactly the part of the frame's interval
+            // [the previous frame's script time, this one's) that it covers -- the same stick values, through the same
+            // Submit, only the seconds told apart -- so the script's turns and distances add up as written.
+            private double _mpDrivenTo = double.NaN;
+
+            private void MobPlanDrive()
+            {
+                if (!_replaying || _clockStart <= 0.0)
+                {
+                    _mpDrivenTo = double.NaN;
+                    return;
+                }
+
+                double now = MobPlanNow;
+                double since = double.IsNaN(_mpDrivenTo) ? now : _mpDrivenTo;
+                _mpDrivenTo = now;
+                foreach ((double from, double to, float forward, float turn) m in _mpMoves)
+                {
+                    double a = Math.Max(since, m.from), b = Math.Min(now, m.to);
+                    if (b > a) _mpInput.Submit(m.forward, m.turn, (float)(b - a));
+                }
+            }
+
+            // The step script (2026-10-03): each frame the current step judged against where the player stands and faces now,
+            // the stick it asks for given through the same Submit, and a Slash's chunk begun when its step comes and the
+            // katana is idle. Once the steps are done (or halted) the script's end is now.
+            private CityWalkSteps _mpSteps;
+
+            // The NPCs the walk may attack (TL, 2026-10-03): each live individual still a hit target, replacements included,
+            // within 1.3 x the attack range of the head, with whether a line from the head to its chest (1.2 m up) is clear of
+            // anything but the individual itself -- the city's colliders, a piece's -- as the caller's view of who is seen.
+            private readonly List<CityWalkSteps.Seen> _cwSeen = new List<CityWalkSteps.Seen>();
+
+            private List<CityWalkSteps.Seen> CityWalkSeen()
+            {
+                _cwSeen.Clear();
+                Transform head = Camera.main != null ? Camera.main.transform : _mpInput.player.transform;
+                Vector3 from = head.position;
+                float reach = _mpSteps.Engage.range * 1.3f;
+                foreach (KeyValuePair<SandboxNpcCharacter, (int id, bool replacement, int addedFrame)> a in _mpActorOf)
+                {
+                    SandboxNpcCharacter c = a.Key;
+                    if (c == null || _mpRetired.ContainsKey(a.Value.id) || !c.IsTarget || c.CharacterRoot == null || !c.CharacterRoot.activeInHierarchy) continue;
+                    Vector3 p = c.CharacterRoot.transform.position;
+                    var flat = new Vector2(p.x, p.z);
+                    if (Vector2.Distance(flat, new Vector2(from.x, from.z)) > reach) continue;
+                    bool visible = !Physics.Linecast(from, p + Vector3.up * 1.2f, out RaycastHit hit, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
+                        || hit.transform.IsChildOf(c.CharacterRoot.transform);
+                    _cwSeen.Add(new CityWalkSteps.Seen { id = a.Value.id, position = flat, visible = visible, replacement = a.Value.replacement });
+                }
+
+                return _cwSeen;
+            }
+
+            // The frames of each attack's chunk and end, for the summary's attribution of hits.
+            private void CityWalkEngagementFrames()
+            {
+                foreach (CityWalkSteps.Engagement e in _mpSteps.Engagements)
+                {
+                    if (!double.IsNaN(e.chunkAt) && e.chunkFrame < 0) e.chunkFrame = Time.frameCount;
+                    if (!double.IsNaN(e.endedAt) && e.endFrame < 0) e.endFrame = Time.frameCount;
+                }
+            }
+
+            /// <summary>
+            /// The attacks on the NPCs met (TL, 2026-10-03), told apart: met (seen in range, in view, unoccluded), attacked
+            /// (an attack begun), struck (a chunk fed), hit (an NPC's root or piece accepted between its chunk and its end),
+            /// the target itself hit, cut (an NPC root's cut committed), a replacement cut, and missed (fed with no NPC hit).
+            /// Each attack to city-walk-attacks.csv; the totals to the log. Nothing is required of them.
+            /// </summary>
+            private void CityWalkEngagementSummary()
+            {
+                if (_mpSteps == null || _mpSteps.Engage == null) return;
+                int fed = 0, lost = 0, unfaced = 0, other = 0, struckAndHit = 0, targetHit = 0, missed = 0, rootCuts = 0, replacementCuts = 0, pieceHits = 0, propOrBuildingHits = 0;
+                try
+                {
+                    using (var csv = new StreamWriter(Path.Combine(directory, "city-walk-attacks.csv")))
+                    {
+                        csv.WriteLine("attack,npc,replacement,visit,begunAt,chunkAt,endedAt,chunkFrame,endFrame,distance,angle,outcome,npcRootHits,npcPieceHits,targetHit,npcRootCutsCommitted,replacementCutsCommitted,otherHits");
+                        for (int i = 0; i < _mpSteps.Engagements.Count; i++)
+                        {
+                            CityWalkSteps.Engagement e = _mpSteps.Engagements[i];
+                            if (e.outcome == "fed") fed++;
+                            else if (e.outcome != null && e.outcome.StartsWith("lost", System.StringComparison.Ordinal)) lost++;
+                            else if (e.outcome != null && e.outcome.StartsWith("not faced", System.StringComparison.Ordinal)) unfaced++;
+                            else other++;
+                            int roots = 0, pieces = 0, cuts = 0, replacementsCut = 0, others = 0;
+                            bool target = false;
+                            string targetName = "npc-" + (e.replacement ? "r" : "a") + e.id.ToString(Inv);
+                            if (e.chunkFrame >= 0)
+                            {
+                                int last = e.endFrame >= 0 ? e.endFrame : int.MaxValue;
+                                foreach (Accepted a in _accepted)
+                                {
+                                    if (a.acceptedFrame < e.chunkFrame || a.acceptedFrame > last) continue;
+                                    string lineage = LineageOf(a.fragment);
+                                    if (KindOf(lineage) != "npc") { others++; continue; }
+                                    if (a.child) { pieces++; continue; }
+                                    roots++;
+                                    if (lineage == targetName) target = true;
+                                    if (a.committedFrame >= 0)
+                                    {
+                                        cuts++;
+                                        if (lineage.StartsWith("npc-r", System.StringComparison.Ordinal)) replacementsCut++;
+                                    }
+                                }
+                            }
+
+                            if (e.outcome == "fed")
+                            {
+                                if (roots + pieces > 0) struckAndHit++; else missed++;
+                            }
+
+                            if (target) targetHit++;
+                            rootCuts += cuts;
+                            replacementCuts += replacementsCut;
+                            pieceHits += pieces;
+                            propOrBuildingHits += others;
+                            csv.WriteLine((i + 1).ToString(Inv) + "," + e.id.ToString(Inv) + "," + e.replacement + "," + e.visit + "," + e.begunAt.ToString("F3", Inv) + "," + e.chunkAt.ToString("F3", Inv) + ","
+                                + e.endedAt.ToString("F3", Inv) + "," + e.chunkFrame.ToString(Inv) + "," + e.endFrame.ToString(Inv) + "," + e.distance.ToString("F2", Inv) + "," + e.angle.ToString("F1", Inv) + ","
+                                + (e.outcome ?? "running").Replace(",", ";") + "," + roots + "," + pieces + "," + target + "," + cuts + "," + replacementsCut + "," + others);
+                        }
+                    }
+                }
+                catch (IOException ex)
+                {
+                    Log("city walk attacks file: " + ex.Message);
+                }
+
+                // Whether the walk struck at what it met (TL, 2026-10-03): the frames each NPC was seen eligible and no attack
+                // began, by reason; the individuals never attacked, each under its most frequent reason and every reason it met.
+                var neverAttacked = _mpSteps.Encountered.Where(id => !_mpSteps.Attacked.Contains(id)).ToList();
+                var primary = new SortedDictionary<string, int>(System.StringComparer.Ordinal);
+                var anyReason = new SortedDictionary<string, int>(System.StringComparer.Ordinal);
+                foreach (int id in neverAttacked)
+                {
+                    if (!_mpSteps.PassedOverById.TryGetValue(id, out SortedDictionary<string, long> by) || by.Count == 0) { primary["(no frame passed over)"] = primary.TryGetValue("(no frame passed over)", out int z) ? z + 1 : 1; continue; }
+                    string top = by.OrderByDescending(kv => kv.Value).First().Key;
+                    primary[top] = primary.TryGetValue(top, out int n) ? n + 1 : 1;
+                    foreach (string r in by.Keys) anyReason[r] = anyReason.TryGetValue(r, out int m) ? m + 1 : 1;
+                }
+
+                long passedFrames = _mpSteps.PassedOverFrames.Values.Sum();
+                Log("city walk attacks, met and passed over: met " + _mpSteps.Encountered.Count + " individuals over " + _mpSteps.EncounterFrames + " NPC-frames (an NPC seen eligible on a frame counts once a frame); attacked "
+                    + _mpSteps.Attacked.Count + " individuals; never attacked " + neverAttacked.Count + "; NPC-frames passed over " + passedFrames + " by reason: "
+                    + string.Join(", ", _mpSteps.PassedOverFrames.Select(kv => kv.Key + " " + kv.Value + " (" + (passedFrames > 0 ? 100.0 * kv.Value / passedFrames : 0).ToString("F1", Inv) + "%)"))
+                    + "; the never attacked by their most frequent reason: " + string.Join(", ", primary.Select(kv => kv.Key + " " + kv.Value))
+                    + "; by every reason they met: " + string.Join(", ", anyReason.Select(kv => kv.Key + " " + kv.Value)));
+                Log("city walk attacks: met " + _mpSteps.Encountered.Count + " NPCs (in range, in view, unoccluded); attacks begun " + _mpSteps.Engagements.Count + " (struck " + fed + ", target lost " + lost
+                    + ", not faced in time " + unfaced + ", other " + other + "); struck with an NPC hit " + struckAndHit + " (the target itself hit in " + targetHit + "), missed " + missed
+                    + "; NPC root cuts committed from the attacks " + rootCuts + " (replacements " + replacementCuts + "), NPC pieces hit " + pieceHits + ", props or buildings hit " + propOrBuildingHits
+                    + "; seconds attacking " + _mpSteps.EngagedSeconds.ToString("F1", Inv) + " of " + _mpSteps.Engage.totalSeconds.ToString("R", Inv) + " (rule: range " + _mpSteps.Engage.range.ToString("R", Inv)
+                    + " m, half angle " + _mpSteps.Engage.halfAngle.ToString("R", Inv) + " deg, at most " + _mpSteps.Engage.maxAttacks + " attacks, cooldown " + _mpSteps.Engage.cooldown.ToString("R", Inv) + " s)");
+            }
+
+            private void MobPlanStepDrive()
+            {
+                if (!_replaying || _clockStart <= 0.0 || _mpSteps == null || _mpSteps.Done) return;
+                double now = MobPlanNow;
+                Transform player = _mpInput.player.transform;
+                var at = new Vector2(player.position.x, player.position.z);
+                bool idle = !_recorder.IsReplaying && _katana.WaveCount == 0;
+                float seconds = Time.unscaledDeltaTime;
+                (int start, int rows)? chunk = _mpSteps.Advance(now, at, player.eulerAngles.y, idle, _mpInput.speed, _mpInput.turnDegreesPerSecond, seconds,
+                    out (float forward, float turn)? stick, line => { Log("city walk " + line); MobPlanRecord(line); }, _mpSteps.Engage != null ? CityWalkSeen() : null);
+                if (_mpSteps.Engage != null) CityWalkEngagementFrames();
+                if (stick.HasValue) _mpInput.Submit(stick.Value.forward, stick.Value.turn, seconds);
+                if (chunk.HasValue) MobPlanBeginChunk((now, chunk.Value.start, chunk.Value.rows));
+                if (_mpSteps.HoldBeforeSlash != null) CityWalkHitShotsAfter(now);
+                if (_mpSteps.Done && _mpEnd > now) _mpEnd = now;
             }
 
             private void MobPlanAdded(int id, SandboxNpcCharacter c, bool replacement)
@@ -293,6 +500,12 @@ namespace Zantetsu.Sandbox
                 if (_mpRootNames.TryGetValue(root, out string named))
                 {
                     return "npc-" + named;
+                }
+
+                // A placed cuttable's root, by the names made once at the replay's start (a city holds hundreds of them).
+                if (_pcNames.TryGetValue(root, out string placed))
+                {
+                    return placed;
                 }
 
                 foreach (SandboxNpcCharacter c in _npcs)
@@ -567,6 +780,7 @@ namespace Zantetsu.Sandbox
                 if (_mpStick != null)
                 {
                     _mpStick.command = null;
+                    _mpStick.drive = null;
                 }
             }
 
@@ -585,6 +799,7 @@ namespace Zantetsu.Sandbox
 
                 Guarded("mobplan display summary", MobPlanDisplaySummary);
                 Guarded("playable city summary", PlayableCitySummary);
+                Guarded("city walk summary", CityWalkSummary);   // the city walk only: what was cut by name, the re-cuts, the walk, the stages' deadlines
                 if (PlayableCity && _world != null && _world.Fusion != null)
                 {
                     Guarded("building fusion summary", BuildingFusionSummarise);   // the coexistence run's fusion: its phases, Main, aggregation and hits
@@ -698,7 +913,22 @@ namespace Zantetsu.Sandbox
                     + ", slots prepared again=" + _crowd.Slots.Sum(s => s != null ? s.Reprepared : 0));
                 Expect(slotDirect == _crowd.SlotCount && directSinceBegin == 0,
                     "[scenario] each slot made its direct skin input once, before the start, and none was made again (" + slotDirect + ", " + directSinceBegin + ")");
-                Expect(_crowd.ReusedActivations >= 1, "[scenario] a released slot was activated again for a new individual (" + _crowd.ReusedActivations + ")");
+                // A released slot taken again (TL, 2026-10-03): required of the MobPlan scenarios, not of a city walk, whose cuts may
+                // leave never-used slots enough for every replacement; there a reuse is counted, and none is "not exercised". What
+                // a reuse must keep (no slot reused before its previous individual's cut was committed, below) is judged everywhere.
+                string reuseWhat = "[scenario] a released slot was activated again for a new individual (" + _crowd.ReusedActivations + ")";
+                switch (CheckJudgement.SlotReuse(cityWalk, _crowd.ReusedActivations))
+                {
+                    case CheckJudgement.Kind.Required:
+                        Expect(_crowd.ReusedActivations >= 1, reuseWhat);
+                        break;
+                    case CheckJudgement.Kind.Counted:
+                        Log("city walk: " + reuseWhat + " (counted, not required of a city walk)");
+                        break;
+                    default:
+                        NotExercised(reuseWhat + ": a city walk does not require it; no released slot was taken again in this run");
+                        break;
+                }
                 // The script's natural hits on reused individuals, counted as before but not judged (2026-10-01): the script does
                 // not guarantee such a hit. The reused-slot check after the script exercises it (its own lines, [reuse check: ...]).
                 Log("mobplan reuse (natural, the script's own hits): individuals on a reused slot cut by a real hit and their geometry committed " + reusedCut.Count

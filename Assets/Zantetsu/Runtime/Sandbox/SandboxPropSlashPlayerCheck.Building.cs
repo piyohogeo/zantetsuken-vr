@@ -358,7 +358,7 @@ namespace Zantetsu.Sandbox
                 BuildingWorldD6Settings d6 = _world.Profile.BuildingWorld;
                 var live = new HashSet<int>();
                 _bodyFragment.Clear();
-                for (int id = 1; id < 256; id++)
+                for (int id = 1; id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState s)) break;
@@ -368,7 +368,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                for (int id = 1; id < 256; id++)
+                for (int id = 1; id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
