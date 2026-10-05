@@ -112,6 +112,28 @@ MonoBehaviour:
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
+--- !u!114 &-4424310928879365037
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0dc9ca30f8c84fa9aa3f1e5e6d14233d, type: 3}
+  m_Name: XrAudioGuidDiagnosisFeature Standalone
+  m_EditorClassIdentifier: Zantetsu.XrDiagnosis::Zantetsu.XrDiagnosis.XrAudioGuidDiagnosisFeature
+  m_enabled: 0
+  nameUi: 'Zantetsu: audio device id diagnosis (off unless asked by argument)'
+  version: 0.0.1
+  featureIdInternal: com.zantetsu.xr.audioguid.diagnosis
+  openxrExtensionStrings: 
+  company: Zantetsu
+  priority: 0
+  targetOpenXRApiVersion: 
+  required: 0
+  customRuntimeLoaderName: 
 --- !u!114 &-4261049365777600417
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -535,6 +557,7 @@ MonoBehaviour:
   - {fileID: 7341254451680742806}
   - {fileID: -1322078726450858203}
   - {fileID: -5257750194161832838}
+  - {fileID: -4424310928879365037}
   customLoaderName: 
   m_renderMode: 1
   m_latencyOptimization: 0
