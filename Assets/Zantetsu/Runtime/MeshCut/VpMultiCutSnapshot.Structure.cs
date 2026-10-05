@@ -176,10 +176,113 @@ namespace Zantetsu.MeshCut
             }
         }
 
+        // What this snapshot's structure was settled from, as its builder counts it (the ledger's Revision and the
+        // display's own input revision): equal numbers mean nothing a structure is made from has changed since.
+        private long _stampLedger = -1, _stampInputs = -1;
+        private bool _stampValid;
+
+        /// <summary>Observation: builds that kept the whole structure, and builds that went through every registration.</summary>
+        internal long StructuresKeptWhole { get; private set; }
+        internal long StructureWalks { get; private set; }
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>Development diagnosis: a structure that was to be kept whole and whose parts were not the adopted one's.</summary>
+        internal long KeptStructureMismatches { get; private set; }
+#endif
+
+        // The render fragments the last placement pass did not keep as settled (placed anew, their clip and caps made
+        // again), in order; or all of them, when the pass was one that does not tell them apart.
+        private int[] _placedAnew = Array.Empty<int>();
+        private int _placedAnewCount;
+        private bool _allPlacedAnew = true;
+        internal bool AllRenderFragmentsPlacedAnew => _allPlacedAnew;
+        internal int PlacedAnewCount => _placedAnewCount;
+        internal int PlacedAnewAt(int index) => _placedAnew[index];
+
+        private bool CanKeepStructure(StructurePool pool, VpMultiCutSnapshot previous, int registrations, long stampLedger, long stampInputs)
+        {
+            if (!(IsBuilt && _composite && _stampValid && _structurePool == pool
+                  && _stampLedger == stampLedger && _stampInputs == stampInputs && _registrationCount == registrations
+                  && previous != null && previous.IsBuilt && previous._composite && previous._stampValid && previous._structurePool == pool
+                  && previous._stampLedger == stampLedger && previous._stampInputs == stampInputs
+                  && previous._registrationCount == registrations && previous._partCount == _partCount
+                  && previous._renderFragmentCount == _renderFragmentCount))
+            {
+                return false;
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The stamp is what says the two are of one structure. Where the diagnosis is compiled, that is looked at too.
+            for (int g = 0; g < _partCount; g++)
+            {
+                if (!ReferenceEquals(previous._parts[g].part, _parts[g].part) || previous._parts[g].render != _parts[g].render)
+                {
+                    KeptStructureMismatches++;
+                    return false;
+                }
+            }
+#endif
+            return true;
+        }
+
+        // The structure as it stands -- the parts, where each begins, every render fragment's own record -- with only
+        // where things stand settled again. What Clear resets of a placement pass is reset; nothing of the structure is.
+        private VpMultiCutBuildOutcome TryPlaceOnKeptStructure(VpMultiCutSnapshot previous, LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement)
+        {
+            IsBuilt = false;
+            _conditionCount = 0; _capCount = 0; _capVertexCount = 0; _sectionCount = 0;
+            _buildGeneration++;
+            _invalid = VpMultiCutInvalidInput.None; _shortage = VpMultiCutShortage.None; SectionBuildCount = 0;
+            StructuresKeptWhole++;
+            try
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                VpMultiCutBuildOutcome valid;
+                using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
+                if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+#endif
+                // Each render fragment starts where the adopted snapshot placed it, with nothing of a placement on it
+                // yet: the same record the structure's assembly would write, read from the two records side by side.
+                for (int r = 0; r < _renderFragmentCount; r++)
+                {
+                    VpMultiCutRenderFragment kept = _renderFragments[r];
+                    _renderFragments[r] = new VpMultiCutRenderFragment(kept.registration, kept.localBounds,
+                        previous._renderFragments[r].geometryLocalToWorld, kept.root, kept.rootPendingSide, kept.aggregated,
+                        kept.branchStart, kept.branchCount, 0, 0, default, 0, 0);
+                }
+                _placeInto = PlacementOnlyPlaceCounts;
+                long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+                _renderFragmentsTakenOver = true;
+                VpMultiCutBuildOutcome placed;
+                try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }
+                finally { _renderFragmentsTakenOver = false; }
+                LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
+                if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
+                IsBuilt = true;
+                return VpMultiCutBuildOutcome.Built;
+            }
+            catch { Clear(); throw; }
+        }
+
+        /// <summary>
+        /// <paramref name="stampLedger"/> and <paramref name="stampInputs"/>, when given (not negative), are what the
+        /// caller counts of everything a structure is settled from -- the ledger's Revision, and its own count of the
+        /// registrations and the placement lookup changing. A snapshot built for those very numbers, beside an adopted
+        /// one built for them too, keeps its structure whole: no registration is asked of the ledger, matched or
+        /// assembled again, and only where things stand is settled. Any other case goes through every registration as
+        /// before -- taking a structure over is never what decides whether a frame is right.
+        /// </summary>
         internal VpMultiCutBuildOutcome TryBuildIncremental(StructurePool pool, VpMultiCutSnapshot previous,
-            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement)
+            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement,
+            long stampLedger = -1, long stampInputs = -1)
         {
             if (previous == this) throw new ArgumentException("the adopted snapshot must be separate", nameof(previous));
+            if (stampLedger >= 0 && stampInputs >= 0 && CanKeepStructure(pool, previous, registrations.Count, stampLedger, stampInputs))
+            {
+                return TryPlaceOnKeptStructure(previous, ledger, registrations, placement);
+            }
+
+            StructureWalks++;
             Clear(); _structurePool = pool; _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None; _shortage = VpMultiCutShortage.None; SectionBuildCount = 0;
             pool.Prepare(registrations.Count); pool.Begin();
@@ -302,6 +405,7 @@ namespace Zantetsu.MeshCut
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
                 if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
                 _registrationCount = registrations.Count; IsBuilt = true;
+                _stampLedger = stampLedger; _stampInputs = stampInputs; _stampValid = stampLedger >= 0 && stampInputs >= 0;
                 return VpMultiCutBuildOutcome.Built;
             }
             catch { Clear(); throw; }
@@ -343,6 +447,60 @@ namespace Zantetsu.MeshCut
         { if (!_composite) return _sideIdentity[index]; var r = _parts[RangeOf(index, 2)]; return r.part.sides[index - r.render]; }
         private VpMultiCutStandsAs StandsAt(int index)
         { if (!_composite) return _standsAs[index]; var r = _parts[RangeOf(index, 2)]; return r.part.stands[index - r.render]; }
+
+        // The placement pass's two readings, a render fragment at a time, without a search (TL, 2026-10-05). The parts
+        // are held in registration order -- _parts[g] is registration g's own part, with where its branches and its
+        // render fragments begin in this snapshot's numbering -- and a render fragment's record names its registration
+        // and its branch by that numbering. So the part is the one at the registration's index, and the place inside
+        // it is the number less where the part begins. The answers are StandsAt's and BranchAt's own; the shared part
+        // is only read.
+        private VpMultiCutStandsAs StandsOf(int renderFragment, int registration)
+        {
+            if (!_composite) return _standsAs[renderFragment];
+            ref readonly PartRange range = ref _parts[registration];
+            return range.part.stands[renderFragment - range.render];
+        }
+
+        private int SelectedCountOf(int branch, int registration)
+        {
+            if (!_composite) return _branches[branch].selectedCount;
+            ref readonly PartRange range = ref _parts[registration];
+            return range.part.branches[branch - range.branch].selectedCount;
+        }
+
+        /// <summary>
+        /// Tests only: over every render fragment of this snapshot, how many of the placement pass's readings by the
+        /// registration differ from the searched ones (what it stands as; its branch's selected count; and, of a
+        /// snapshot of shared parts, that the registration's part is the part a search finds). Also how many render
+        /// fragments were looked at, how many of them are of a part that does not begin at this snapshot's zero (their
+        /// places inside the part are not their numbers), and how many are not the first of their part.
+        /// </summary>
+        internal int PlacementReadingsDifferingForTest(out int lookedAt, out int offset, out int notFirst)
+        {
+            lookedAt = offset = notFirst = 0;
+            if (!IsBuilt) return 0;
+            int differing = 0;
+            for (int r = 0; r < _renderFragmentCount; r++)
+            {
+                VpMultiCutRenderFragment renderFragment = _renderFragments[r];
+                int g = renderFragment.registration;
+                lookedAt++;
+                VpMultiCutStandsAs direct = StandsOf(r, g), searched = StandsAt(r);
+                if (direct.fragment != searched.fragment || !direct.operation.Equals(searched.operation) || direct.side != searched.side) differing++;
+                if (SelectedCountOf(renderFragment.branchStart, g) != BranchAt(renderFragment.branchStart).selectedCount) differing++;
+                if (_composite)
+                {
+                    if (g < 0 || g >= _partCount || RangeOf(r, 2) != g || RangeOf(renderFragment.branchStart, 0) != g) differing++;
+                    else
+                    {
+                        if (_parts[g].render > 0) offset++;
+                        if (r > _parts[g].render) notFirst++;
+                    }
+                }
+            }
+
+            return differing;
+        }
         private void SetSelectedRange(int index, int count)
         {
             if (_composite && count != 0)

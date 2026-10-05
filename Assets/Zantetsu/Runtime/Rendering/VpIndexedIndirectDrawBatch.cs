@@ -333,6 +333,9 @@ namespace Zantetsu.Rendering
             {
                 _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
                 _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal);
+                InstanceSetDataCalls += 2;
+                InstanceTransfers++;
+                InstanceElementsTransferred += instanceTotal;
             }
 
             _uploaded = true;
@@ -341,6 +344,137 @@ namespace Zantetsu.Rendering
             SinglePassInstanced = singlePassInstanced;
             WorldBounds = worldBounds;
             return true;
+        }
+
+        /// <summary>
+        /// Observation: how many times the two argument buffers were sent and how many commands in all; how many times
+        /// the transforms and the clips were sent (the two together counted once) and how many instances in all.
+        /// </summary>
+        public long ArgumentTransfers { get; private set; }
+        public long ArgumentElementsTransferred { get; private set; }
+        public long InstanceTransfers { get; private set; }
+        public long InstanceElementsTransferred { get; private set; }
+
+        /// <summary>
+        /// Observation: the buffer writes themselves (SetData calls) -- two for one sending of the arguments (the
+        /// forward and the shadow buffer), two for one sending of instances (the transforms and the clips).
+        /// </summary>
+        public long ArgumentSetDataCalls { get; private set; }
+        public long InstanceSetDataCalls { get; private set; }
+
+        /// <summary>
+        /// The upload of **what changed** since the last one: the commands as they stand now, and of the transforms and
+        /// the clip records the one range [<paramref name="instanceStart"/>, <paramref name="instanceEnd"/>) -- every
+        /// instance outside it is taken to hold on the GPU what the views hold. The views are the whole valid part of
+        /// their owner's room, complete and current, as for the counted upload.
+        /// <para>
+        /// The two argument buffers are made and sent again, whole, only when <paramref name="commandsChanged"/> says
+        /// the commands differ from the last upload's, when the stereo condition does, or when nothing was uploaded
+        /// yet; otherwise they are left as they stand. A batch that was never uploaded to takes every instance, whatever
+        /// range is named. The draw's bounds are gathered again, over every instance, whenever anything was sent, and
+        /// kept as they were when nothing was. An empty range with nothing else to send transfers nothing at all.
+        /// </para>
+        /// <para>
+        /// Accepted and refused by the same judgement as the counted upload when the commands are sent; when they are
+        /// not, the counts are the last upload's and only the range is judged. False changes nothing.
+        /// </para>
+        /// </summary>
+        public bool TryUploadChanged(
+            NativeArray<VpIndirectCommand> commands, int commandCount, NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips, bool singlePassInstanced, bool commandsChanged, int instanceStart, int instanceEnd)
+        {
+            ThrowIfDisposed();
+            if (!commands.IsCreated || !objectToWorlds.IsCreated || !clips.IsCreated)
+            {
+                throw new ArgumentException("the commands, the transforms and the clips are all given to a native upload");
+            }
+
+            bool first = !_uploaded;
+            bool arguments = first || commandsChanged || singlePassInstanced != SinglePassInstanced || commandCount != CommandCount;
+            long instanceTotal;
+            if (arguments)
+            {
+                if (!Accepts(commands.AsReadOnlySpan(), commandCount, objectToWorlds.Length, clips.Length, false, out instanceTotal))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                instanceTotal = InstanceCount;
+                if (objectToWorlds.Length < instanceTotal || clips.Length < instanceTotal)
+                {
+                    return false;
+                }
+            }
+
+            if (first)
+            {
+                instanceStart = 0;
+                instanceEnd = (int)instanceTotal;
+            }
+
+            if (instanceStart < 0 || instanceEnd < instanceStart || instanceEnd > instanceTotal)
+            {
+                return false;
+            }
+
+            bool instances = instanceEnd > instanceStart;
+            if (arguments)
+            {
+                WriteArguments(commands.AsReadOnlySpan(), commandCount, objectToWorlds.AsReadOnlySpan(), singlePassInstanced, out Bounds worldBounds);
+                WorldBounds = worldBounds;
+            }
+            else if (instances)
+            {
+                WorldBounds = BoundsOfInstances(commands.AsReadOnlySpan(), commandCount, objectToWorlds.AsReadOnlySpan());
+            }
+
+            if (instances)
+            {
+                int count = instanceEnd - instanceStart;
+                _instanceBuffer.SetData(objectToWorlds, instanceStart, instanceStart, count);
+                _instanceClipBuffer.SetData(clips, instanceStart, instanceStart, count);
+                InstanceSetDataCalls += 2;
+                InstanceTransfers++;
+                InstanceElementsTransferred += count;
+            }
+
+            _uploaded = true;
+            CommandCount = commandCount;
+            InstanceCount = (int)instanceTotal;
+            SinglePassInstanced = singlePassInstanced;
+            return true;
+        }
+
+        // The bounds of every instance at its own transform, as WriteArguments gathers them: for an upload that sends
+        // instances and no commands.
+        private static Bounds BoundsOfInstances(ReadOnlySpan<VpIndirectCommand> commands, int commandCount, ReadOnlySpan<Matrix4x4> objectToWorlds)
+        {
+            int startInstance = 0;
+            bool anyInstance = false;
+            Bounds worldBounds = default;
+            for (int c = 0; c < commandCount; c++)
+            {
+                VpIndirectCommand command = commands[c];
+                for (int i = startInstance; i < startInstance + command.instanceCount; i++)
+                {
+                    Bounds instanceBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorlds[i]);
+                    if (anyInstance)
+                    {
+                        worldBounds.Encapsulate(instanceBounds);
+                    }
+                    else
+                    {
+                        worldBounds = instanceBounds;
+                        anyInstance = true;
+                    }
+                }
+
+                startInstance += command.instanceCount;
+            }
+
+            return worldBounds;
         }
 
         /// <summary>
@@ -491,6 +625,9 @@ namespace Zantetsu.Rendering
                 }
 
                 _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
+                InstanceSetDataCalls += 2;
+                InstanceTransfers++;
+                InstanceElementsTransferred += instanceTotal;
             }
 
             _uploaded = true;
@@ -567,6 +704,10 @@ namespace Zantetsu.Rendering
                     _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount);
                     _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount);
                 }
+
+                ArgumentSetDataCalls += 2;
+                ArgumentTransfers++;
+                ArgumentElementsTransferred += commandCount;
             }
         }
 

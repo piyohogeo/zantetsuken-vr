@@ -191,8 +191,43 @@ namespace Zantetsu.MeshCut
         /// <summary>Records that something a reader could see has changed here.</summary>
         private void Changed(LogicalFragmentId fragment)
         {
+            Family family = _fragments[fragment.value - 1].family;
+            _changedFamilies[(int)(Revision & (ChangedFamiliesKept - 1))] = family.root;   // the change that takes Revision to Revision + 1
             Revision++;
-            _fragments[fragment.value - 1].family.revision++;
+            family.revision++;
+        }
+
+        // The family of each of the last changes, by the Revision it was counted at: a ring of a fixed length, written
+        // where Revision is counted and nowhere else.
+        private const int ChangedFamiliesKept = 1024;   // a power of two
+        private readonly LogicalFragmentId[] _changedFamilies = new LogicalFragmentId[ChangedFamiliesKept];
+
+        /// <summary>
+        /// The families (by their root) changed since a reader last read at <paramref name="since"/> -- one entry per
+        /// change counted, in order, so a family changed twice is there twice -- added to <paramref name="into"/>.
+        /// <para>
+        /// This is the notice of **which** fragments' state may differ: every change a reader could see goes through
+        /// the one place <see cref="Revision"/> is counted, and that place writes the changed fragment's family here.
+        /// A reader that keeps what it read per family reads again only the families named, and asks nothing of the
+        /// others. False, with nothing added, when more changes were counted since than are kept (or
+        /// <paramref name="since"/> is not a value read from this ledger): the reader then reads everything again,
+        /// once. Nothing is allocated here beyond what <paramref name="into"/> grows by.
+        /// </para>
+        /// </summary>
+        internal bool TryReadChangedFamilies(long since, List<LogicalFragmentId> into)
+        {
+            long changes = Revision - since;
+            if (since < 0 || changes < 0 || changes > ChangedFamiliesKept)
+            {
+                return false;
+            }
+
+            for (long r = since; r < Revision; r++)
+            {
+                into.Add(_changedFamilies[(int)(r & (ChangedFamiliesKept - 1))]);
+            }
+
+            return true;
         }
 
         // A descendant keeps its original family directly: invalidation never walks history.

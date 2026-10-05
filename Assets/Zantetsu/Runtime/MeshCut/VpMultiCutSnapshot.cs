@@ -666,6 +666,45 @@ namespace Zantetsu.MeshCut
             public Matrix4x4 placement;
             public float epsilon;
             public int vertexCount;
+
+            // The slot of this very section in the snapshot it was taken from (found there under exactly the same
+            // key), or -1 when it was built here.
+            public int previousSlot;
+        }
+
+        // The one range of caps whose normals may differ from the caps of the snapshot this one was placed beside
+        // (the one sections are taken from): recorded where each cap is made, by the placement pass. A cap is outside
+        // it only when it is that snapshot's own cap at the same index -- the same boundary, built from the very
+        // section it was taken from, lying at the same vertices. Empty: from >= to.
+        private int _capsChangedFrom = int.MaxValue, _capsChangedTo;
+        private VpMultiCutSnapshot _capsChangedBeside;
+
+        /// <summary>
+        /// The range of caps [<paramref name="from"/>, <paramref name="to"/>) whose outward normals or vertex places may
+        /// differ from the same caps of <paramref name="beside"/>; every cap outside it has the normal, the first
+        /// vertex and the vertex count that cap has there. All of this snapshot's caps when it was not placed beside
+        /// that snapshot. Caps <paramref name="beside"/> holds past this snapshot's last are not in the range.
+        /// </summary>
+        internal void ChangedCaps(VpMultiCutSnapshot beside, out int from, out int to)
+        {
+            if (!IsBuilt)
+            {
+                from = to = 0;
+            }
+            else if (beside == null || !ReferenceEquals(beside, _capsChangedBeside))
+            {
+                from = 0;
+                to = _capCount;
+            }
+            else if (_capsChangedTo <= _capsChangedFrom)
+            {
+                from = to = 0;
+            }
+            else
+            {
+                from = _capsChangedFrom;
+                to = _capsChangedTo;
+            }
         }
 
         /// <summary>
@@ -971,7 +1010,8 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // 2. Made usable; nothing below can fail.
+            // 2. Made usable; nothing below can fail. A structure settled in the room before is not one to keep whole.
+            _stampValid = false;
             _branches.Grant(sizes.branches);
             _capIdentity.Grant(sizes.candidates);
             _renderFragments.Grant(sizes.renderFragments);
@@ -1852,9 +1892,20 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot reuseFrom)
         {
             PlacementPasses++;
+            _placedAnewCount = 0;
+            _capsChangedFrom = int.MaxValue;
+            _capsChangedTo = 0;
+            _capsChangedBeside = reuseFrom != null && reuseFrom.IsBuilt ? reuseFrom : null;
             if (PlacePhasedDiagnosis && !placeQueriesOnlyForTest)
             {
+                _allPlacedAnew = true;   // the phased diagnosis does not tell them apart
                 return TryApplyPlacementsPhased(ledger, registrations, placement, reuseFrom);
+            }
+
+            _allPlacedAnew = false;
+            if (_placedAnew.Length < _renderFragmentCount)
+            {
+                _placedAnew = new int[Math.Max(_renderFragmentCount, _placedAnew.Length * 2)];
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1873,9 +1924,9 @@ namespace Zantetsu.MeshCut
                 _placeInto.renderFragments++;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 if (!TryPlacementOf(
-                        placement, registration, StandsAt(r), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
+                        placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
 #else
-                if (!TryPlacementOf(placement, registration, StandsAt(r), _placeInto, out Matrix4x4 geometryLocalToWorld))
+                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out Matrix4x4 geometryLocalToWorld))
 #endif
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
@@ -1885,7 +1936,7 @@ namespace Zantetsu.MeshCut
                     && renderFragment.conditionCount == 0 && renderFragment.capCount == 0
                     && renderFragment.clip.PlaneCount == 0
                     && renderFragment.conditionStart == _conditionCount && renderFragment.capStart == _capCount
-                    && BranchAt(renderFragment.branchStart).selectedCount == 0
+                    && SelectedCountOf(renderFragment.branchStart, renderFragment.registration) == 0
                     && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld))
                 {
                     // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
@@ -1900,6 +1951,7 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
+                _placedAnew[_placedAnewCount++] = r;   // not kept as settled: placed anew, its clip and caps made again
                 _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
                 if (placeQueriesOnlyForTest) continue;
                 VpMultiCutBuildOutcome outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
@@ -1917,6 +1969,10 @@ namespace Zantetsu.MeshCut
         private void Clear()
         {
             ReleaseStructure();
+            _stampValid = false;   // whatever structure there was is no longer one to keep
+            _allPlacedAnew = true;
+            _placedAnewCount = 0;
+            _capsChangedBeside = null;
             IsBuilt = false;
             _branchCount = 0;
             _candidateCount = 0;
@@ -3132,6 +3188,23 @@ namespace Zantetsu.MeshCut
 
                 float4 plane = _worldPlanes[j];
                 var normal = new Vector3(plane.x, plane.y, plane.z);
+
+                // This cap is the same as the cap of that index in the snapshot this one is placed beside when it is
+                // the same boundary's, its section is the very one that cap was built from -- taken from there under
+                // exactly the same key (face, plane, box and placement), so its plane in world is the same -- and it
+                // lies at the same vertices. Any other cap -- standing elsewhere, cut otherwise, new, or moved along by
+                // one before it -- widens the one range of changed caps. Nothing is compared vertex by vertex.
+                int sectionBefore = _sections[sectionSlot].previousSlot;
+                if (!(sectionBefore >= 0 && _capsChangedBeside != null && _capCount < _capsChangedBeside._capCount
+                      && _capsChangedBeside._capSection[_capCount] == sectionBefore
+                      && _capsChangedBeside._caps[_capCount].boundary == boundary
+                      && _capsChangedBeside._caps[_capCount].vertexStart == _capVertexCount
+                      && _capsChangedBeside._caps[_capCount].vertexCount == clipped))
+                {
+                    if (_capCount < _capsChangedFrom) _capsChangedFrom = _capCount;
+                    _capsChangedTo = _capCount + 1;
+                }
+
                 _capSection[_capCount] = sectionSlot;
                 _caps[_capCount++] = new VpMultiCutCap(
                     index, boundary, plane, -boundary.side * normal, _capVertexCount, initial, clipped);
@@ -3206,6 +3279,7 @@ namespace Zantetsu.MeshCut
                 placement = geometryLocalToWorld,
                 epsilon = registration.vertexEpsilon,
                 vertexCount = vertexCount,
+                previousSlot = reused,
             };
             _sectionCount++;
             sectionSlot = slot;
