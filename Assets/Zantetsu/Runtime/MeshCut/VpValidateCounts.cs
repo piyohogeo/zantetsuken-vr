@@ -9,9 +9,15 @@ namespace Zantetsu.MeshCut
     /// </summary>
     public sealed class VpValidateCounts
     {
-        public long structural, placementOnly, registrations, placementRegistrations;
-        public double indexSeconds, inputSeconds, ancestorSeconds, operationsSeconds, placementInputSeconds;
-        public double contractSeconds, placementContractSeconds;   // of the input checks: the registrations' contract (bounds, placement, rigid lineage frame)
+        public long structural, registrations;
+        public double indexSeconds, inputSeconds, ancestorSeconds, operationsSeconds;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // The numeric input-contract diagnosis's own counts (DESIGN 5.6; the Editor and Development Players only): the
+        // placement-only validations, which are nothing else, and of the input checks the registrations' contract
+        // (bounds, placement, rigid lineage frame).
+        public long placementOnly, placementRegistrations;
+        public double placementInputSeconds, contractSeconds, placementContractSeconds;
+#endif
         public long ancestorSteps, ancestorLookups, planeChecks, operations, ownerLookups, ownerSteps, ownerCacheHits, unreflectedSteps;
         public long indexesBuilt, indexesReused;   // the registrations' reflected sets indexed at the build, and a display's own sets taken by their lookup
         public long ancestorReads;   // the validation's ancestors' ledger facts read (the rest of the steps took them from the build's arrays)
@@ -36,8 +42,12 @@ namespace Zantetsu.MeshCut
 
         public void Clear()
         {
-            structural = placementOnly = registrations = placementRegistrations = 0;
-            indexSeconds = inputSeconds = ancestorSeconds = operationsSeconds = placementInputSeconds = contractSeconds = placementContractSeconds = 0.0;
+            structural = registrations = 0;
+            indexSeconds = inputSeconds = ancestorSeconds = operationsSeconds = 0.0;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            placementOnly = placementRegistrations = 0;
+            placementInputSeconds = contractSeconds = placementContractSeconds = 0.0;
+#endif
             ancestorSteps = ancestorLookups = planeChecks = operations = ownerLookups = ownerSteps = ownerCacheHits = unreflectedSteps = 0;
             indexesBuilt = indexesReused = ancestorReads = 0;
             collectSeconds = collectIntoSeconds = selectSeconds = capIdentitySeconds = 0.0;
@@ -51,16 +61,18 @@ namespace Zantetsu.MeshCut
         public void AddDifference(VpValidateCounts a, VpValidateCounts b)
         {
             structural += a.structural - b.structural;
-            placementOnly += a.placementOnly - b.placementOnly;
             registrations += a.registrations - b.registrations;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            placementOnly += a.placementOnly - b.placementOnly;
             placementRegistrations += a.placementRegistrations - b.placementRegistrations;
+            placementInputSeconds += a.placementInputSeconds - b.placementInputSeconds;
+            contractSeconds += a.contractSeconds - b.contractSeconds;
+            placementContractSeconds += a.placementContractSeconds - b.placementContractSeconds;
+#endif
             indexSeconds += a.indexSeconds - b.indexSeconds;
             inputSeconds += a.inputSeconds - b.inputSeconds;
             ancestorSeconds += a.ancestorSeconds - b.ancestorSeconds;
             operationsSeconds += a.operationsSeconds - b.operationsSeconds;
-            placementInputSeconds += a.placementInputSeconds - b.placementInputSeconds;
-            contractSeconds += a.contractSeconds - b.contractSeconds;
-            placementContractSeconds += a.placementContractSeconds - b.placementContractSeconds;
             ancestorSteps += a.ancestorSteps - b.ancestorSteps;
             ancestorLookups += a.ancestorLookups - b.ancestorLookups;
             planeChecks += a.planeChecks - b.planeChecks;
@@ -104,12 +116,19 @@ namespace Zantetsu.MeshCut
         private static readonly VpValidateCounts s_zero = new VpValidateCounts();
 
         public string Describe() =>
-            "structural " + structural + " (registrations " + registrations + ", indexes built " + indexesBuilt + " reused " + indexesReused + "; ms: index " + (indexSeconds * 1000).ToString("F3") + ", input " + (inputSeconds * 1000).ToString("F3") + " (contract " + (contractSeconds * 1000).ToString("F3") + ")"
+            "structural " + structural + " (registrations " + registrations + ", indexes built " + indexesBuilt + " reused " + indexesReused + "; ms: index " + (indexSeconds * 1000).ToString("F3") + ", input " + (inputSeconds * 1000).ToString("F3")
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            + " (contract " + (contractSeconds * 1000).ToString("F3") + ")"
+#endif
             + ", ancestors " + (ancestorSeconds * 1000).ToString("F3") + ", operations " + (operationsSeconds * 1000).ToString("F3") + "; ancestor steps " + ancestorSteps + " (ledger reads " + ancestorReads + ", kept " + ancestorHits + "), their reflected lookups " + ancestorLookups
             + ", plane checks " + planeChecks + ", operations " + operations + ", owner lookups " + ownerLookups + " (steps " + ownerSteps + ", answered by the cache " + ownerCacheHits + "), unreflected steps " + unreflectedSteps
             + "); collect ms " + (collectSeconds * 1000).ToString("F3") + " (chains " + (collectIntoSeconds * 1000).ToString("F3") + ", selection " + (selectSeconds * 1000).ToString("F3") + ", cap identities " + (capIdentitySeconds * 1000).ToString("F3")
             + "; branches " + branches + ", collections " + collectCalls + ", chain boundaries " + chainSteps + ", operations read " + operationReads + ", candidates " + candidatesMade + ", cap identities " + capIdentities
             + "; chain ancestors " + collectVisits + " (ledger reads " + collectReads + ", kept " + collectHits + "), reflected lookups " + collectLookups + ", segments taken in " + collectSplices + " (" + collectSegmentBoundaries + " boundaries; kept by the validation " + segmentEntries + ")); structure ms " + (structureSeconds * 1000).ToString("F3")
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             + "; placement only " + placementOnly + " (registrations " + placementRegistrations + ", input ms " + (placementInputSeconds * 1000).ToString("F3") + " (contract " + (placementContractSeconds * 1000).ToString("F3") + "))";
+#else
+            ;
+#endif
     }
 }

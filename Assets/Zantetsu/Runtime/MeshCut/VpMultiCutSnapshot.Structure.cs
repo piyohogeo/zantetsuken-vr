@@ -271,9 +271,13 @@ namespace Zantetsu.MeshCut
                 if (_candidateCount > _candidates.Length) return Fail(Short(VpMultiCutShortage.Candidates));
                 if (_renderFragmentCount > _renderFragments.Length) return Fail(Short(VpMultiCutShortage.RenderFragments));
                 _composite = true;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // The numeric input-contract diagnosis of every registration (DESIGN 5.6): not compiled for a
+                // non-Development Player.
                 VpMultiCutBuildOutcome valid;
-                using (s_validate.Auto()) valid = Validate(ledger, registrations, true);
+                using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
                 if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+#endif
                 // The drawing array remains snapshot-local. The branches/candidates/selection arrays are never copied here.
                 for (int g = 0; g < _partCount; g++)
                 {

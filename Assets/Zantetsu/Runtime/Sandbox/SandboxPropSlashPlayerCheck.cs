@@ -1375,10 +1375,19 @@ namespace Zantetsu.Sandbox
                     VpValidateCounts v = r.validate;
                     if (v != null)
                     {
-                        text.Append(',').Append(v.structural).Append(',').Append(v.placementOnly).Append(',').Append(v.registrations).Append(',').Append(v.placementRegistrations)
-                            .Append(',').Append((v.indexSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.inputSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.contractSeconds * 1000).ToString("R", Inv))
-                            .Append(',').Append((v.ancestorSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.operationsSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.placementInputSeconds * 1000).ToString("R", Inv))
-                            .Append(',').Append((v.placementContractSeconds * 1000).ToString("R", Inv)).Append(',').Append(v.ancestorSteps).Append(',').Append(v.ancestorLookups).Append(',').Append(v.planeChecks)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        // The numeric input-contract diagnosis's own counts (DESIGN 5.6).
+                        string vPlacementOnly = v.placementOnly.ToString(Inv), vPlacementRegistrations = v.placementRegistrations.ToString(Inv);
+                        string vContractMs = (v.contractSeconds * 1000).ToString("R", Inv), vPlacementInputMs = (v.placementInputSeconds * 1000).ToString("R", Inv);
+                        string vPlacementContractMs = (v.placementContractSeconds * 1000).ToString("R", Inv);
+#else
+                        // The numeric input-contract diagnosis is not compiled here: its columns keep their places, empty.
+                        const string vPlacementOnly = "", vPlacementRegistrations = "", vContractMs = "", vPlacementInputMs = "", vPlacementContractMs = "";
+#endif
+                        text.Append(',').Append(v.structural).Append(',').Append(vPlacementOnly).Append(',').Append(v.registrations).Append(',').Append(vPlacementRegistrations)
+                            .Append(',').Append((v.indexSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.inputSeconds * 1000).ToString("R", Inv)).Append(',').Append(vContractMs)
+                            .Append(',').Append((v.ancestorSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.operationsSeconds * 1000).ToString("R", Inv)).Append(',').Append(vPlacementInputMs)
+                            .Append(',').Append(vPlacementContractMs).Append(',').Append(v.ancestorSteps).Append(',').Append(v.ancestorLookups).Append(',').Append(v.planeChecks)
                             .Append(',').Append(v.operations).Append(',').Append(v.ownerLookups).Append(',').Append(v.ownerSteps).Append(',').Append(v.ownerCacheHits).Append(',').Append(v.unreflectedSteps)
                             .Append(',').Append(v.indexesBuilt).Append(',').Append(v.indexesReused).Append(',').Append(v.ancestorReads)
                             .Append(',').Append((v.collectSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.collectIntoSeconds * 1000).ToString("R", Inv)).Append(',').Append((v.selectSeconds * 1000).ToString("R", Inv))
@@ -1397,8 +1406,13 @@ namespace Zantetsu.Sandbox
                     foreach (VpPlaceCounts p in new[] { r.placeStructural, r.placePlacementOnly })
                     {
                         if (p == null) { text.Append(",,,,,,,,,,,"); continue; }
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        string checksColumn = p.placementChecks.ToString(Inv);
+#else
+                        const string checksColumn = "";   // the diagnosis's count: not compiled here, its column left empty
+#endif
                         text.Append(',').Append(p.passes).Append(',').Append((p.seconds * 1000).ToString("R", Inv)).Append(',').Append(p.renderFragments).Append(',').Append(p.queries)
-                            .Append(',').Append(p.placementChecks).Append(',').Append(p.planeTransforms).Append(',').Append(p.sectionsFoundHere).Append(',').Append(p.sectionsReused)
+                            .Append(',').Append(checksColumn).Append(',').Append(p.planeTransforms).Append(',').Append(p.sectionsFoundHere).Append(',').Append(p.sectionsReused)
                             .Append(',').Append(p.sectionsBuilt).Append(',').Append(p.sectionEntriesCompared).Append(',').Append(p.capClips);
                     }
 
@@ -1406,7 +1420,12 @@ namespace Zantetsu.Sandbox
                     foreach (VpPlaceCounts p in new[] { r.placeStructural, r.placePlacementOnly })
                     {
                         if (p == null) { text.Append(",,,"); continue; }
-                        text.Append(',').Append((p.providerSeconds * 1000).ToString("R", Inv)).Append(',').Append((p.checkSeconds * 1000).ToString("R", Inv)).Append(',').Append((p.restSeconds * 1000).ToString("R", Inv));
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        string checkMs = (p.checkSeconds * 1000).ToString("R", Inv);
+#else
+                        const string checkMs = "";   // the diagnosis's block: not compiled here, its column left empty
+#endif
+                        text.Append(',').Append((p.providerSeconds * 1000).ToString("R", Inv)).Append(',').Append(checkMs).Append(',').Append((p.restSeconds * 1000).ToString("R", Inv));
                     }
 
                     // Render fragments kept as taken over in this frame's passes (2026-10-05), structural (none: nothing is
