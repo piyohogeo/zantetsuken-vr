@@ -37,6 +37,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             public int answers;
             public List<string> log;
             public Func<StandInPlaced, SlashPlacedCutResult> answer;
+            public Action<StandInPlaced> onIdentify;   // given: something done when a hit identifies it, inside the update's enumeration
 
             public GameObject held;            // the Transform's GameObject, held as the real candidate holds it
             public static bool heldObject;     // the state through the held GameObject (two engine calls) or through the Transform (three)
@@ -73,6 +74,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 if (!IsHitTarget) return false;
                 Source = ledger.AddFragment();
                 fragment = Source;
+                onIdentify?.Invoke(this);
                 return true;
             }
 
@@ -197,13 +199,27 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         // The script: sweeps and changes, the same for both sets. Everything seen goes into the set's log.
-        private static void RunPlacedBoxScript(SlashHitDetector detector, StandInSet set, PlacedCuttableInput data, out int hits, out int boundaryHits)
+        // With standing given (the index, 2026-10-05): the targets it says are added as ones whose placement is told, and
+        // every change the script makes to where one of them stands is told to the detector; the others are added as before.
+        private static void RunPlacedBoxScript(SlashHitDetector detector, StandInSet set, PlacedCuttableInput data, out int hits, out int boundaryHits,
+            Func<StandInPlaced, bool> standing = null, Action<int> afterUpdate = null)
         {
             hits = 0; boundaryHits = 0;
             var random = new System.Random(977);
             var live = new List<long>();
             long slash = 0;
-            foreach (StandInPlaced t in set.targets) detector.AddPlaced(t);
+            void Add(StandInPlaced t)
+            {
+                if (standing != null && standing(t)) detector.AddPlacedStanding(t);
+                else detector.AddPlaced(t);
+            }
+
+            void Tell(StandInPlaced t)
+            {
+                if (standing != null && standing(t)) detector.PlacedChanged(t);
+            }
+
+            foreach (StandInPlaced t in set.targets) Add(t);
             Quaternion RandomTurn() => Quaternion.Euler((float)(random.NextDouble() * 360.0), (float)(random.NextDouble() * 360.0), (float)(random.NextDouble() * 360.0));
 
             int Update(params SlashSweep[] sweeps)
@@ -214,6 +230,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 var line = new System.Text.StringBuilder("update sweeps " + sweeps.Length + " hits " + detector.HitCount + " placed " + detector.PlacedCount + ":");
                 for (int i = 0; i < detector.HitCount; i++) line.Append(' ').Append(detector.HitAt(i).SlashId).Append('/').Append(detector.HitAt(i).Acceptance).Append('/').Append(detector.HitAt(i).Admission);
                 set.log.Add(line.ToString());
+                afterUpdate?.Invoke(sweeps.Length);
                 return detector.HitCount;
             }
 
@@ -247,18 +264,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Vector3 before = t.at.position;
                     switch (random.Next(9))
                     {
-                        case 0: t.at.position += new Vector3((float)(random.NextDouble() * 6.0 - 3.0), (float)random.NextDouble(), (float)(random.NextDouble() * 6.0 - 3.0)); break;
-                        case 1: t.at.rotation = RandomTurn(); break;
-                        case 2: t.at.SetParent(set.parents[random.Next(set.parents.Count)], random.Next(2) == 0); break;
-                        case 3: t.at.localScale = new Vector3(1f + (float)random.NextDouble() * 3f, 1f, 0.5f); break;
-                        case 4: t.at.gameObject.SetActive(!t.at.gameObject.activeSelf); break;
+                        case 0: t.at.position += new Vector3((float)(random.NextDouble() * 6.0 - 3.0), (float)random.NextDouble(), (float)(random.NextDouble() * 6.0 - 3.0)); Tell(t); break;
+                        case 1: t.at.rotation = RandomTurn(); Tell(t); break;
+                        case 2: t.at.SetParent(set.parents[random.Next(set.parents.Count)], random.Next(2) == 0); Tell(t); break;
+                        case 3: t.at.localScale = new Vector3(1f + (float)random.NextDouble() * 3f, 1f, 0.5f); Tell(t); break;
+                        case 4: t.at.gameObject.SetActive(!t.at.gameObject.activeSelf); break;   // its state is read when a sweep comes near: nothing to tell
                         case 5: if (round == 4) UnityEngine.Object.DestroyImmediate(t.at.gameObject); break;
                         case 6: detector.RemovePlaced(t); break;
-                        case 7: t.candidate = true; t.Source = default; t.answers = 0; detector.AddPlaced(t); break;   // taken back, a candidate again
+                        case 7: t.candidate = true; t.Source = default; t.answers = 0; Add(t); break;   // taken back, a candidate again
                         default:
                             Transform parent = set.parents[random.Next(set.parents.Count)];
                             parent.SetPositionAndRotation(parent.position + new Vector3(0.7f, 0.1f, -0.4f), parent.rotation * Quaternion.Euler(3f, 11f, 2f));
                             parent.localScale *= 1.1f;
+                            foreach (StandInPlaced under in set.targets) if (under.at != null && under.at.IsChildOf(parent)) Tell(under);   // a parent moved: every one under it stands elsewhere
                             break;
                     }
 

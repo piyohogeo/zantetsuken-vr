@@ -139,6 +139,14 @@ namespace Zantetsu.PhysicsCut
     /// prepares its cut input then; it leaves the candidates when that says it is done.
     /// </para>
     /// <para>
+    /// **A placed object whose placement is told** (DESIGN 19.1.7, D-192; <see cref="AddPlacedStanding"/>,
+    /// <see cref="PlacedChanged"/>) is not read every update: its world box is held in an index
+    /// (<see cref="SlashPlacedIndex{T}"/>), an update asks that index once -- with the box of all its sweeps -- for the
+    /// targets a sweep could meet at all, and only those have their state and pose read and take the tests above, in the
+    /// order the targets were added. One whose placement can change untold stays with <see cref="AddPlaced"/> and is read
+    /// every update as before; so does one whose box cannot be made.
+    /// </para>
+    /// <para>
     /// **Nothing of the blade.** Only the waves' sweeps are read: the blade's own pose, its gate and whether it may
     /// fire play no part, so a wave already flying keeps hitting while the gesture cannot fire (T-040).
     /// </para>
@@ -282,11 +290,94 @@ namespace Zantetsu.PhysicsCut
         public void AddPlaced(ISlashPlacedTarget placed)
         {
             if (placed == null) throw new ArgumentNullException(nameof(placed));
-            if (!_placed.Contains(placed))
+            if (_finding)
             {
-                _placed.Add(placed);
-                _placedBoxes.Add(new PlacedBox());
+                _placedDeferred.Add(new PlacedChange { kind = PlacedChangeKind.Add, target = placed });
+                return;
             }
+
+            AddPlacedNow(placed, false);
+        }
+
+        /// <summary>
+        /// The same, for a placed object **whose placement is told** (DESIGN 19.1.7, D-192): whoever adds it undertakes
+        /// that it stands where it stood when it was added until <see cref="PlacedChanged"/> is called for it -- moved,
+        /// turned, placed elsewhere, put under another parent, a parent of it moved, its hit shape replaced -- and calls
+        /// that before the next <see cref="Evaluate"/> after the change. "Not cut yet" is no such undertaking: an object
+        /// that physics, an animation or a script can move without telling is added with <see cref="AddPlaced"/> and
+        /// read every update.
+        /// <para>
+        /// **Whose duty the telling is (the contract, DESIGN 19.1.7).** Whoever adds processing that changes the
+        /// placement of such a target or of a parent of it -- or any other state that decides whether and where the
+        /// index finds it -- is the one who connects that change to <see cref="PlacedChanged"/> (or takes the target
+        /// away), so that it has taken effect before the next search of the index. The detector watches nothing: no
+        /// target is polled to catch a change that was not told, and none is to be.
+        /// </para>
+        /// <para>
+        /// Its world box (as the per-update test makes it, from its convexes and its position and rotation) is held in
+        /// an index, and an update reads its state and pose only when the index finds its box near the update's sweeps.
+        /// Whether it is switched on, in the scene, still a candidate is still read then, each time: none of that needs
+        /// telling. True when it is in the index now; false when its box could not be made (no shape, no convex, not a
+        /// hit target at this moment, a pose or a corner that is not finite) -- it is then read every update like any
+        /// other, and tried again when it is told changed, or by itself after the first update that reads it as a hit
+        /// target with a finite pose. Added once; false too while an update is enumerating (it is added, and the index
+        /// tried, right after).
+        /// </para>
+        /// </summary>
+        public bool AddPlacedStanding(ISlashPlacedTarget placed)
+        {
+            if (placed == null) throw new ArgumentNullException(nameof(placed));
+            if (_finding)
+            {
+                _placedDeferred.Add(new PlacedChange { kind = PlacedChangeKind.AddStanding, target = placed });
+                return false;
+            }
+
+            return AddPlacedNow(placed, true);
+        }
+
+        /// <summary>
+        /// Told: the placement (or the hit shape) of a target added with <see cref="AddPlacedStanding"/> has changed or
+        /// is changing. **It takes effect at one boundary: the start of the next <see cref="Evaluate"/>'s enumeration,
+        /// before the index is searched** -- its box is made again there, from where it stands then. So it may be called
+        /// before, during or after the move, any number of times, as long as it is called before the first evaluation
+        /// that follows the change; nothing of the instance is read by the call itself. One whose box cannot be made
+        /// then leaves the index and is read every update, and one that was read every update for that reason is tried
+        /// again. Nothing for a target added with <see cref="AddPlaced"/> (it is read every update anyway) or not added.
+        /// </summary>
+        public void PlacedChanged(ISlashPlacedTarget placed)
+        {
+            if (placed == null) return;
+            if (_finding)
+            {
+                _placedDeferred.Add(new PlacedChange { kind = PlacedChangeKind.Changed, target = placed });
+                return;
+            }
+
+            int at = _placed.IndexOf(placed);
+            if (at >= 0) Told(_placedBoxes[at]);
+        }
+
+        private void Told(PlacedBox box)
+        {
+            if (!box.standing || box.told) return;
+            box.told = true;
+            _placedTold.Add(box);
+        }
+
+        // The start of an update's enumeration: every box told changed since the last one is made again, from where its
+        // target stands now -- before anything is searched.
+        private void TakeToldPlacements()
+        {
+            for (int i = 0; i < _placedTold.Count; i++)
+            {
+                PlacedBox box = _placedTold[i];
+                if (!box.told) continue;   // taken away since
+                box.told = false;
+                PlacedChangedNow(box);
+            }
+
+            _placedTold.Clear();
         }
 
         /// <summary>Whether a placed object is a candidate now, and how many are (observation).</summary>
@@ -294,13 +385,190 @@ namespace Zantetsu.PhysicsCut
 
         public int PlacedCount => _placed.Count;
 
+        /// <summary>Whether a placed object is found through the index now (observation).</summary>
+        public bool IsPlacedIndexed(ISlashPlacedTarget placed)
+        {
+            int at = placed != null ? _placed.IndexOf(placed) : -1;
+            return at >= 0 && _placedBoxes[at].slot >= 0;
+        }
+
+        /// <summary>How many placed objects are in the index, and how many are read every update (observation).</summary>
+        public int PlacedIndexedCount => _index.Count;
+
+        public int PlacedReadEveryUpdateCount => _placedPolled.Count;
+
         public void RemovePlaced(ISlashPlacedTarget placed)
         {
+            if (_finding)
+            {
+                if (placed != null) _placedDeferred.Add(new PlacedChange { kind = PlacedChangeKind.Remove, target = placed });
+                return;
+            }
+
             int at = _placed.IndexOf(placed);
             if (at < 0) return;
+            PlacedBox box = _placedBoxes[at];
             _placed.RemoveAt(at);
             _placedBoxes.RemoveAt(at);
+            box.told = false;
+            if (box.slot >= 0) TakeOutOfIndex(box);
+            else _placedPolled.Remove(box);
         }
+
+        // Added once, at the end of the order. A standing one goes into the index when its box can be made now.
+        private bool AddPlacedNow(ISlashPlacedTarget placed, bool standing)
+        {
+            int at = _placed.IndexOf(placed);
+            if (at >= 0) return _placedBoxes[at].slot >= 0;
+            var box = new PlacedBox { target = placed, order = ++_placedOrder, standing = standing };
+            _placed.Add(placed);
+            _placedBoxes.Add(box);
+            if (!standing || !TryIndex(box)) _placedPolled.Add(box);   // the newest: last in the order
+            return box.slot >= 0;
+        }
+
+        private void PlacedChangedNow(PlacedBox box)
+        {
+            if (!box.standing) return;
+            if (box.slot >= 0)
+            {
+                if (TryStandingBox(box, out float3 lo, out float3 hi) && _index.TryChange(box.slot, lo, hi)) return;
+                // No box can be made of it now: it is read every update until it is told again.
+                TakeOutOfIndex(box);
+                int at = 0;
+                while (at < _placedPolled.Count && _placedPolled[at].order < box.order) at++;
+                _placedPolled.Insert(at, box);   // where its order puts it
+            }
+            else if (TryIndex(box))
+            {
+                _placedPolled.Remove(box);
+            }
+        }
+
+        private bool TryIndex(PlacedBox box)
+        {
+            return TryStandingBox(box, out float3 lo, out float3 hi) && _index.TryAdd(box, lo, hi, out box.slot);
+        }
+
+        private void TakeOutOfIndex(PlacedBox box)
+        {
+            PlacedBox moved = _index.RemoveAt(box.slot, out int movedTo);
+            if (moved != null) moved.slot = movedTo;
+            box.slot = -1;
+        }
+
+        // The world box a standing target has now, as the per-update test makes it from a pose: read from the target
+        // (its state with it -- one that is no hit target at this moment gives no pose), and remembered as the pose the
+        // index holds it at.
+        private bool TryStandingBox(PlacedBox box, out float3 lo, out float3 hi)
+        {
+            lo = hi = default;
+            ISlashPlacedTarget target = box.target;
+            if (!target.TryGetHitPose(out float3 position, out quaternion rotation)) return false;
+            if (!LocalBox(box, target.HitShape)) return false;
+            if (!PosedBox(position, rotation, box.localCentre, box.localHalf, out lo, out hi)) return false;
+            box.toldPosition = position;
+            box.toldRotation = rotation;
+            return true;
+        }
+
+        // The box of all the convexes of a hit shape, in its frame: kept while the shape is the same object.
+        private static bool LocalBox(PlacedBox box, VpCharacterHitShape shape)
+        {
+            if (!ReferenceEquals(shape, box.shape))
+            {
+                box.shape = shape;
+                box.localValid = false;
+                if (shape != null && !shape.IsDisposed && shape.ConvexCount > 0)
+                {
+                    shape.Bounds(0, out float3 lo, out float3 hi);
+                    for (int k = 1; k < shape.ConvexCount; k++)
+                    {
+                        shape.Bounds(k, out float3 klo, out float3 khi);
+                        lo = math.min(lo, klo);
+                        hi = math.max(hi, khi);
+                    }
+
+                    box.localCentre = 0.5f * (lo + hi);
+                    box.localHalf = 0.5f * (hi - lo);
+                    box.localValid = math.all(math.isfinite(lo) & math.isfinite(hi));
+                }
+            }
+
+            return box.localValid && shape != null && !shape.IsDisposed;
+        }
+
+        // A local box carried into the world by a position and a rotation (the frame TRS(position, rotation, 1)).
+        private static bool PosedBox(float3 position, quaternion rotation, float3 localCentre, float3 localHalf, out float3 lo, out float3 hi)
+        {
+            var axes = new float3x3(rotation);
+            float3 centre = math.mul(axes, localCentre) + position;
+            float3 half = math.mul(new float3x3(math.abs(axes.c0), math.abs(axes.c1), math.abs(axes.c2)), localHalf);
+            lo = centre - half;
+            hi = centre + half;
+            return math.all(math.isfinite(centre) & math.isfinite(half));
+        }
+
+        /// <summary>
+        /// Whether the placed targets whose placement is told are found through the index (see <see cref="AddPlacedStanding"/>).
+        /// On by default, with <see cref="placedBoxReject"/>; off, every placed target is read every update in the order
+        /// they were added, as before -- kept so that the two can be compared on the same sweeps.
+        /// </summary>
+        internal bool placedIndex = true;
+
+        /// <summary>Observation: placed targets whose state (and pose) was read from the instance, and placed targets listed for an update's sweeps, since this detector was made.</summary>
+        internal long PlacedStateReads { get; private set; }
+
+        internal long PlacedListed { get; private set; }
+
+        /// <summary>
+        /// Observation: indexed targets that were found standing elsewhere than the index held them (moved and not told).
+        /// Such a one is tested where it stands in that update and its box made again after it -- but only one the index
+        /// still finds is noticed at all: this is no check of the undertaking.
+        /// </summary>
+        internal long PlacedMovedUntold { get; private set; }
+
+        /// <summary>Observation: the index's own counts.</summary>
+        internal long PlacedIndexBuilds => _index.Builds;
+
+        internal long PlacedIndexSearches => _index.Searches;
+        internal long PlacedIndexNodesVisited => _index.NodesVisited;
+        internal long PlacedIndexEntriesTested => _index.EntriesTested;
+        internal long PlacedIndexEntriesFound => _index.EntriesFound;
+        internal double PlacedIndexLastBuildSeconds => _index.LastBuildSeconds;
+        internal double PlacedIndexBuildSecondsInAll => _index.BuildSecondsInAll;
+        internal int PlacedIndexNodes => _index.Nodes;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// Observation, development configurations only: the time the updates spent making the told boxes again (and
+        /// in how many updates there was one to make), and the time they spent searching the index -- the builds
+        /// (<see cref="PlacedIndexBuildSecondsInAll"/>) are inside the searches that made them.
+        /// </summary>
+        internal double PlacedToldSeconds => _placedToldTicks / (double)System.Diagnostics.Stopwatch.Frequency;
+
+        internal long PlacedToldUpdates { get; private set; }
+        internal double PlacedSearchSeconds => _placedSearchTicks / (double)System.Diagnostics.Stopwatch.Frequency;
+        private long _placedToldTicks, _placedSearchTicks;
+#endif
+
+        private enum PlacedChangeKind { Add, AddStanding, Remove, Changed }
+
+        private struct PlacedChange
+        {
+            public PlacedChangeKind kind;
+            public ISlashPlacedTarget target;
+        }
+
+        // The placed targets read every update, in the order they were added; the index of the others; what a search found.
+        private readonly List<PlacedBox> _placedPolled = new List<PlacedBox>(8);
+        private readonly SlashPlacedIndex<PlacedBox> _index = new SlashPlacedIndex<PlacedBox>();
+        private PlacedBox[] _indexFound = new PlacedBox[16];
+        private readonly List<PlacedBox> _placedRetold = new List<PlacedBox>(4);
+        private readonly List<PlacedBox> _placedTold = new List<PlacedBox>(4);   // told changed, their boxes not made again yet
+        private readonly List<PlacedChange> _placedDeferred = new List<PlacedChange>(4);
+        private long _placedOrder;
+        private bool _finding;   // an update is enumerating: the set of candidates stands until it has
 
         /// <summary>
         /// Whether a placed target is passed over, before anything of its own frame is worked out, when the world box of
@@ -327,6 +595,13 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private sealed class PlacedBox
         {
+            public ISlashPlacedTarget target;
+            public long order;                     // the order it was added in: the order targets are tested in
+            public bool standing;                  // its placement is told (AddPlacedStanding)
+            public int slot = -1;                  // in the index, or -1: read every update
+            public bool told;                      // told changed: its box is made again at the start of the next enumeration
+            public float3 toldPosition;            // the pose the index holds it at
+            public quaternion toldRotation;
             public VpCharacterHitShape shape;      // whose local box is held
             public bool localValid;
             public float3 localCentre, localHalf;
@@ -432,44 +707,17 @@ namespace Zantetsu.PhysicsCut
                 box.frameToWorld = frame;
                 box.hasFrame = true;
             }
-            VpCharacterHitShape shape = target.HitShape;
-            if (!ReferenceEquals(shape, box.shape))
-            {
-                box.shape = shape;
-                box.localValid = false;
-                if (shape != null && !shape.IsDisposed && shape.ConvexCount > 0)
-                {
-                    shape.Bounds(0, out float3 lo, out float3 hi);
-                    for (int k = 1; k < shape.ConvexCount; k++)
-                    {
-                        shape.Bounds(k, out float3 klo, out float3 khi);
-                        lo = math.min(lo, klo);
-                        hi = math.max(hi, khi);
-                    }
-
-                    box.localCentre = 0.5f * (lo + hi);
-                    box.localHalf = 0.5f * (hi - lo);
-                    box.localValid = math.all(math.isfinite(lo) & math.isfinite(hi));
-                }
-            }
-
-            if (!box.localValid || shape == null || shape.IsDisposed) return;
+            if (!LocalBox(box, target.HitShape)) return;
             // The frame is TRS(position, rotation, 1): its three axes are the rotation's, its fourth column the position. The
-            // box is carried by those, whichever way they came.
-            float3 centre;
-            float3x3 r;
+            // box is carried by those, whichever way they came (from a pose, by the very function the index's box is made by).
             if (pose)
             {
-                var axes = new float3x3(box.rotation);
-                centre = math.mul(axes, box.localCentre) + box.position;
-                r = new float3x3(math.abs(axes.c0), math.abs(axes.c1), math.abs(axes.c2));
-            }
-            else
-            {
-                centre = math.transform(frame, box.localCentre);
-                r = new float3x3(math.abs(frame.c0.xyz), math.abs(frame.c1.xyz), math.abs(frame.c2.xyz));
+                box.worldValid = PosedBox(box.position, box.rotation, box.localCentre, box.localHalf, out box.lo, out box.hi);
+                return;
             }
 
+            float3 centre = math.transform(frame, box.localCentre);
+            float3x3 r = new float3x3(math.abs(frame.c0.xyz), math.abs(frame.c1.xyz), math.abs(frame.c2.xyz));
             float3 half = math.mul(r, box.localHalf);
             if (!math.all(math.isfinite(centre) & math.isfinite(half))) return;
             box.lo = centre - half;
@@ -538,77 +786,16 @@ namespace Zantetsu.PhysicsCut
             // present state, and the acceptances below change the correspondence, not this list.
             using (s_find.Auto())
             {
-                _registry.CollectCurrentShapes(_shapes);
-                _shapeUpdate++;   // the frames kept below are of this list and this update
-                if (_shapeFrames.Length < _shapes.Count) _shapeFrames = new ShapeFrame[Math.Max(_shapes.Count, _shapeFrames.Length * 2)];
-                _characterTargets.Clear();
-                for (int c = 0; c < _characters.Count; c++)
+                // The placed candidates stand as this update found them: a change told meanwhile is taken after it.
+                _finding = true;
+                try
                 {
-                    if (_characters[c] == null || !_characters[c].IsHitTarget)
-                    {
-                        continue;
-                    }
-
-                    // A character whose bones may be behind: only if a sweep can meet its range, and then with its
-                    // whole current pose on the bones before anything reads them.
-                    IPoseOnDemand pose = _characterPoses[c];
-                    if (pose != null && pose.IsLive)
-                    {
-                        if (!AnySweepMeets(pose, sweeps))
-                        {
-                            continue;
-                        }
-
-                        pose.EnsureCurrentFullPose();
-                    }
-
-                    _characterTargets.Add(_characters[c]);
+                    Enumerate(sweeps);
                 }
-
-                _hullTargets.Clear();
-                _hulls?.CollectTargets(_hullTargets);
-                _placedTargets.Clear();
-                _placedTargetBoxes.Clear();
-                _placedUpdate++;
-                bool merged = placedBoxReject && placedMergedRead;
-                bool posed = merged && placedPoseRead;
-                for (int p = 0; p < _placed.Count; p++)
+                finally
                 {
-                    ISlashPlacedTarget placed = _placed[p];
-                    if (placed == null) continue;
-                    if (merged)
-                    {
-                        // Whether it is a target and where it stands, read from the instance once for this update: the
-                        // box and the test in its frame use this frame, and nothing reads the instance again for them.
-                        PlacedBox box = _placedBoxes[p];
-                        if (posed)
-                        {
-                            if (!placed.TryGetHitPose(out box.position, out box.rotation)) continue;
-                            box.poseUpdate = _placedUpdate;
-                        }
-                        else
-                        {
-                            if (!placed.TryGetHitFrame(out box.frameToWorld)) continue;
-                            box.frameUpdate = _placedUpdate;
-                        }
-
-                        _placedTargets.Add(placed);
-                        _placedTargetBoxes.Add(box);
-                    }
-                    else if (placed.IsHitTarget)
-                    {
-                        _placedTargets.Add(placed);
-                        _placedTargetBoxes.Add(_placedBoxes[p]);
-                    }
-                }
-
-                for (int s = 0; s < sweeps.Length; s++)
-                {
-                    _adoptedPlanes++;   // this sweep's plane: the identity every hit it finds carries
-                    Find(in sweeps[s]);
-                    FindCharacters(in sweeps[s]);
-                    FindHulls(in sweeps[s]);
-                    FindPlaced(in sweeps[s]);
+                    _finding = false;
+                    TakeDeferredPlacedChanges();
                 }
             }
 
@@ -657,6 +844,208 @@ namespace Zantetsu.PhysicsCut
                 _hits.Add(confirmed);
                 Trace(in confirmed);
             }
+        }
+
+        // One update's enumeration: what the fragments are made of now, the characters, the hull groups and the placed
+        // targets a sweep could meet, then every sweep against them. Nothing is accepted here.
+        private void Enumerate(ReadOnlySpan<SlashSweep> sweeps)
+        {
+            _registry.CollectCurrentShapes(_shapes);
+            _shapeUpdate++;   // the frames kept below are of this list and this update
+            if (_shapeFrames.Length < _shapes.Count) _shapeFrames = new ShapeFrame[Math.Max(_shapes.Count, _shapeFrames.Length * 2)];
+            _characterTargets.Clear();
+            for (int c = 0; c < _characters.Count; c++)
+            {
+                if (_characters[c] == null || !_characters[c].IsHitTarget)
+                {
+                    continue;
+                }
+
+                // A character whose bones may be behind: only if a sweep can meet its range, and then with its
+                // whole current pose on the bones before anything reads them.
+                IPoseOnDemand pose = _characterPoses[c];
+                if (pose != null && pose.IsLive)
+                {
+                    if (!AnySweepMeets(pose, sweeps))
+                    {
+                        continue;
+                    }
+
+                    pose.EnsureCurrentFullPose();
+                }
+
+                _characterTargets.Add(_characters[c]);
+            }
+
+            _hullTargets.Clear();
+            _hulls?.CollectTargets(_hullTargets);
+            _placedTargets.Clear();
+            _placedTargetBoxes.Clear();
+            _placedUpdate++;
+            bool merged = placedBoxReject && placedMergedRead;
+            bool posed = merged && placedPoseRead;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            bool anyTold = _placedTold.Count > 0;
+            long toldBegin = anyTold ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+#endif
+            TakeToldPlacements();   // the boundary: what was told changed has its box made again before the search
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (anyTold)
+            {
+                _placedToldTicks += System.Diagnostics.Stopwatch.GetTimestamp() - toldBegin;
+                PlacedToldUpdates++;
+            }
+#endif
+            if (!(placedBoxReject && placedIndex) || _index.Count == 0)
+            {
+                // Every placed target, in the order they were added.
+                for (int p = 0; p < _placedBoxes.Count; p++) ListPlaced(_placedBoxes[p], merged, posed);
+            }
+            else
+            {
+                // The targets read every update, and of the indexed ones those the index finds near this update's
+                // sweeps (searched once, with the box of all of them; the tree built first if a box was added or
+                // told changed since) -- together in the order they were added, which is the order of the list above.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                long searchBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
+                int found = SearchPlaced(sweeps);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                _placedSearchTicks += System.Diagnostics.Stopwatch.GetTimestamp() - searchBegin;
+#endif
+                int i = 0, j = 0;
+                while (i < _placedPolled.Count || j < found)
+                {
+                    PlacedBox next = j >= found || (i < _placedPolled.Count && _placedPolled[i].order < _indexFound[j].order)
+                        ? _placedPolled[i++]
+                        : _indexFound[j++];
+                    ListPlaced(next, merged, posed);
+                }
+
+                Array.Clear(_indexFound, 0, found);
+            }
+
+            for (int s = 0; s < sweeps.Length; s++)
+            {
+                _adoptedPlanes++;   // this sweep's plane: the identity every hit it finds carries
+                Find(in sweeps[s]);
+                FindCharacters(in sweeps[s]);
+                FindHulls(in sweeps[s]);
+                FindPlaced(in sweeps[s]);
+            }
+        }
+
+        // One placed target for this update's sweeps: whether it is a target and where it stands, read from the instance
+        // once for this update -- the box and the test in its frame use this reading, and nothing reads the instance again
+        // for them.
+        private void ListPlaced(PlacedBox box, bool merged, bool posed)
+        {
+            ISlashPlacedTarget placed = box.target;
+            if (merged)
+            {
+                PlacedStateReads++;
+                if (posed)
+                {
+                    if (!placed.TryGetHitPose(out box.position, out box.rotation)) return;
+                    box.poseUpdate = _placedUpdate;
+                    if (box.slot >= 0 && (math.any(box.position != box.toldPosition) || math.any(box.rotation.value != box.toldRotation.value)))
+                    {
+                        // Found by the index, and not standing where the index holds it: moved and not told. It is
+                        // tested where it stands, as read just now, and taken as told: its box is made again before
+                        // the next search.
+                        PlacedMovedUntold++;
+                        _placedRetold.Add(box);
+                    }
+                    else if (box.slot < 0 && box.standing && !box.told
+                             && math.all(math.isfinite(box.position) & math.isfinite(box.rotation.value.xyz)) && LocalBox(box, placed.HitShape))
+                    {
+                        // Its placement is told, and no box could be made of it when it was added or last told (it was
+                        // no hit target at that moment: switched off, say). It is one now: tried again before the next
+                        // search, with nobody having to tell.
+                        _placedRetold.Add(box);
+                    }
+                }
+                else
+                {
+                    if (!placed.TryGetHitFrame(out box.frameToWorld)) return;
+                    box.frameUpdate = _placedUpdate;
+                }
+            }
+            else
+            {
+                PlacedStateReads++;
+                if (!placed.IsHitTarget) return;
+            }
+
+            PlacedListed++;
+            _placedTargets.Add(placed);
+            _placedTargetBoxes.Add(box);
+        }
+
+        // The indexed targets whose box is not apart from the box of all this update's sweeps (the sweeps FindPlaced
+        // would test: finite, with a plane), in the order they were added; how many, in _indexFound.
+        private int SearchPlaced(ReadOnlySpan<SlashSweep> sweeps)
+        {
+            bool any = false;
+            float3 lo = default, hi = default;
+            for (int s = 0; s < sweeps.Length; s++)
+            {
+                float3 n = sweeps[s].SourceSlashPlane.normal;
+                float3 a0 = sweeps[s].PreviousA, b0 = sweeps[s].PreviousB, a1 = sweeps[s].CurrentA, b1 = sweeps[s].CurrentB;
+                if (!math.all(math.isfinite(n)) || math.lengthsq(n) <= 0f
+                    || !math.all(math.isfinite(a0) & math.isfinite(b0) & math.isfinite(a1) & math.isfinite(b1)))
+                {
+                    continue;   // a sweep that finds nothing
+                }
+
+                float3 slo = math.min(math.min(a0, b0), math.min(a1, b1));
+                float3 shi = math.max(math.max(a0, b0), math.max(a1, b1));
+                lo = any ? math.min(lo, slo) : slo;
+                hi = any ? math.max(hi, shi) : shi;
+                any = true;
+            }
+
+            if (!any) return 0;
+            int found = _index.Search(lo, hi, SlashPlacedIndex<PlacedBox>.Reach(lo, hi), ref _indexFound);
+            for (int a = 1; a < found; a++)
+            {
+                PlacedBox moving = _indexFound[a];
+                int b = a - 1;
+                while (b >= 0 && _indexFound[b].order > moving.order)
+                {
+                    _indexFound[b + 1] = _indexFound[b];
+                    b--;
+                }
+
+                _indexFound[b + 1] = moving;
+            }
+
+            return found;
+        }
+
+        // After an update's enumeration: the targets found moved untold, and the standing ones a box can be made of at
+        // last, are taken as told; and what was told, added or taken away meanwhile is taken in the order it came.
+        private void TakeDeferredPlacedChanges()
+        {
+            for (int i = 0; i < _placedRetold.Count; i++)
+            {
+                Told(_placedRetold[i]);
+            }
+
+            _placedRetold.Clear();
+            for (int i = 0; i < _placedDeferred.Count; i++)
+            {
+                PlacedChange change = _placedDeferred[i];
+                switch (change.kind)
+                {
+                    case PlacedChangeKind.Add: AddPlacedNow(change.target, false); break;
+                    case PlacedChangeKind.AddStanding: AddPlacedNow(change.target, true); break;
+                    case PlacedChangeKind.Remove: RemovePlaced(change.target); break;
+                    default: PlacedChanged(change.target); break;
+                }
+            }
+
+            _placedDeferred.Clear();
         }
 
         // A placed object's own acceptance: it prepares its cut input only now, and asks through the same driver (or the hull trial).
