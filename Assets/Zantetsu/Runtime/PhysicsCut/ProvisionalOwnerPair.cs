@@ -57,6 +57,71 @@ namespace Zantetsu.PhysicsCut
             GeometryLocalToOwner = geometryLocalToOwner;
             ChildLineage = childLineage;
             BuildingWorldCount = (positive?.BuildingWorld != null ? 1 : 0) + (negative?.BuildingWorld != null ? 1 : 0);
+            SettleHitReach(true);
+            SettleHitReach(false);
+        }
+
+        /// <summary>
+        /// How far from that side's own Root's position that side's own shape can reach in the world (DESIGN 19.1.7,
+        /// D-193; <see cref="FragmentHitReach"/>), or <see cref="FragmentHitReach.None"/>. **Each side has its own**: its
+        /// Root is the origin the hit detector reads for it, and its shape (with that shape's placement on that Root) is
+        /// what is measured -- nothing of the source owner's or of the other side's is used for it.
+        /// <para>
+        /// Settled when the pair is made and when its shapes are replaced (<see cref="TakeFinalShapes"/>), and again by
+        /// <see cref="RefreshHitReach"/>. A side whose shape is not the one the value was settled for, or whose shape's
+        /// local box was written again since, is settled again here before the value is given. A side's Root is made
+        /// unscaled under no parent and only moved and turned afterwards; whoever adds processing that scales it or
+        /// puts it under a scaled parent calls <see cref="RefreshHitReach"/> in that same change.
+        /// </para>
+        /// </summary>
+        internal float HitReach(bool positive)
+        {
+            PhysicsOwnerShape shape = positive ? PositiveShape : NegativeShape;
+            if (shape == null || IsEnded)
+            {
+                return FragmentHitReach.None;
+            }
+
+            if (positive)
+            {
+                if (!ReferenceEquals(shape, _positiveReachOf) || _positiveReachVersion != shape.LocalBoundsVersion) SettleHitReach(true);
+                return _positiveReach;
+            }
+
+            if (!ReferenceEquals(shape, _negativeReachOf) || _negativeReachVersion != shape.LocalBoundsVersion) SettleHitReach(false);
+            return _negativeReach;
+        }
+
+        /// <summary>Settles both sides' <see cref="HitReach"/> again, from their shapes and their Roots' stretch as they are now.</summary>
+        internal void RefreshHitReach()
+        {
+            SettleHitReach(true);
+            SettleHitReach(false);
+        }
+
+        private float _positiveReach = FragmentHitReach.None, _negativeReach = FragmentHitReach.None;
+        private int _positiveReachVersion = -1, _negativeReachVersion = -1;
+        private PhysicsOwnerShape _positiveReachOf, _negativeReachOf;
+
+        private void SettleHitReach(bool positive)
+        {
+            PhysicsFragmentOwner.HitReachSettles++;
+            PhysicsOwnerShape shape = positive ? PositiveShape : NegativeShape;
+            PhysicsOwnerSide side = positive ? Positive : Negative;
+            float reach = shape != null && side?.Root != null ? FragmentHitReach.Settle(shape, side.Root.transform) : FragmentHitReach.None;
+            int version = shape != null ? shape.LocalBoundsVersion : -1;
+            if (positive)
+            {
+                _positiveReach = reach;
+                _positiveReachVersion = version;
+                _positiveReachOf = shape;
+            }
+            else
+            {
+                _negativeReach = reach;
+                _negativeReachVersion = version;
+                _negativeReachOf = shape;
+            }
         }
 
         /// <summary>
@@ -156,6 +221,8 @@ namespace Zantetsu.PhysicsCut
             PositiveShape = positive;
             NegativeShape = negative;
             HoldsFinalShapes = true;
+            SettleHitReach(true);    // the shapes are others from here: neither side keeps the reach of the one it had
+            SettleHitReach(false);
             wasPositive?.Dispose();
             wasNegative?.Dispose();
         }

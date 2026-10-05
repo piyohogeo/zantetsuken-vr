@@ -643,11 +643,48 @@ namespace Zantetsu.PhysicsCut
         internal long FragmentFrameDifferences { get; private set; }
         internal long FragmentsPassedOver { get; private set; }
 
+        /// <summary>
+        /// Whether a fragment's shape is passed over **before its frame is read at all** when the sweep is certainly
+        /// beyond its reach (DESIGN 19.1.7, D-193; <see cref="FragmentHitReach"/>): the owner's position is read -- once
+        /// an update, for every shape as before -- and the squared distance from it to the box of the sweep's four
+        /// points is compared with the square of the reach its owner keeps for it, widened by the world-box test's own
+        /// margin. Only a shape that is not certainly beyond has its owner's world matrix read, composed with its
+        /// placement and its world box made, and goes on to the tests above. A shape with no reach, a position that is
+        /// not finite or a square that overflows is passed over by nothing here. Only with
+        /// <see cref="fragmentBoxReject"/>. On by default; off, every shape's frame is read as before -- kept so that
+        /// the two can be compared on the same sweeps.
+        /// </summary>
+        internal bool fragmentReachReject = true;
+
+        /// <summary>
+        /// Tests only: every shape passed over by its reach takes everything after it all the same, and one that would
+        /// have been a hit is counted in <see cref="FragmentReachDisagreements"/> (one the world box would have kept, in
+        /// <see cref="FragmentsBeyondReachKeptByBox"/> -- the reach is a ball, the box a box: that is no fault).
+        /// </summary>
+        internal bool fragmentReachCheckForTest;
+
+        internal long FragmentReachDisagreements { get; private set; }
+        internal long FragmentsBeyondReachKeptByBox { get; private set; }
+
+        /// <summary>
+        /// Observation, since this detector was made: sweep-by-shape visits of a live shape; owners' positions read (once
+        /// an update a shape with a reach); visits passed over by the reach; and shapes' frames read (the owner's world
+        /// matrix, its composition with the shape's placement, the world box: once an update a shape that got there).
+        /// </summary>
+        internal long FragmentsVisited { get; private set; }
+
+        internal long FragmentPositionsRead { get; private set; }
+        internal long FragmentsBeyondReach { get; private set; }
+        internal long FragmentFramesRead { get; private set; }
+
         // One shape's frame and world box for one update; the index is the shape's in _shapes.
         private struct ShapeFrame
         {
             public long update;          // the update the values below are of
             public bool worldValid, hasInverse;
+            public bool hasFrame;        // the frame and the box below were read in this update
+            public float reach;          // the reach kept for the shape, when its owner's position was read; negative: none
+            public float3 position;      // the owner's position, read once in this update
             public float3 lo, hi;
             public float4x4 shapeToWorld, worldToShape;
         }
@@ -655,10 +692,27 @@ namespace Zantetsu.PhysicsCut
         private ShapeFrame[] _shapeFrames = Array.Empty<ShapeFrame>();
         private long _shapeUpdate;
 
-        // The shape's frame of this update, read once, and its world box from it.
-        private static void ReadShapeFrame(ref ShapeFrame frame, long update, Transform owner, PhysicsOwnerShape shape)
+        // A shape's first visit in an update: nothing of its frame yet; its owner's position, when it has a reach.
+        private void BeginShapeFrame(ref ShapeFrame frame, Transform owner, float reach)
         {
-            frame.update = update;
+            frame.update = _shapeUpdate;
+            frame.hasFrame = false;
+            frame.hasInverse = false;
+            frame.worldValid = false;
+            frame.reach = FragmentHitReach.None;
+            if (fragmentReachReject && reach >= 0f)
+            {
+                frame.position = owner.position;
+                frame.reach = reach;
+                FragmentPositionsRead++;
+            }
+        }
+
+        // The shape's frame of this update, read once, and its world box from it.
+        private void ReadShapeFrame(ref ShapeFrame frame, Transform owner, PhysicsOwnerShape shape)
+        {
+            FragmentFramesRead++;
+            frame.hasFrame = true;
             frame.hasInverse = false;
             frame.worldValid = false;
             float4x4 m = math.mul((float4x4)owner.localToWorldMatrix, shape.LocalToOwner);
@@ -1436,18 +1490,34 @@ namespace Zantetsu.PhysicsCut
 
                 // Into the convexes' own numerical frame: the owner's world transform with the shape's placement on it.
                 float4x4 shapeToWorld, worldToShape;
-                bool passedOver = false;
+                bool passedOver = false, beyondReach = false;
+                FragmentsVisited++;
                 if (fragmentBoxReject)
                 {
                     ref ShapeFrame frame = ref _shapeFrames[c];
-                    if (frame.update != _shapeUpdate) ReadShapeFrame(ref frame, _shapeUpdate, owner, shape);
+                    if (frame.update != _shapeUpdate) BeginShapeFrame(ref frame, owner, current.Reach);
+
+                    // Certainly beyond its reach from where its owner stands: nothing more of it is read for this sweep.
+                    if (frame.reach >= 0f && FragmentHitReach.IsBeyond(frame.position, frame.reach, sweepLo, sweepHi, sweepReach))
+                    {
+                        FragmentsBeyondReach++;
+                        if (!fragmentReachCheckForTest) continue;
+                        beyondReach = true;
+                    }
+
+                    if (!frame.hasFrame) ReadShapeFrame(ref frame, owner, shape);
                     if (frame.worldValid)
                     {
                         float margin = 1e-4f * math.max(sweepReach, math.cmax(math.max(math.abs(frame.lo), math.abs(frame.hi)))) + 1e-4f;
                         passedOver = math.any(sweepHi < frame.lo - margin) || math.any(frame.hi + margin < sweepLo);
                     }
 
-                    if (passedOver)
+                    if (beyondReach && !passedOver)
+                    {
+                        FragmentsBeyondReachKeptByBox++;   // tests only: the ball and the box are not the same test
+                    }
+
+                    if (passedOver && !beyondReach)
                     {
                         FragmentsPassedOver++;
                         if (!fragmentBoxCheckForTest) continue;
@@ -1505,6 +1575,13 @@ namespace Zantetsu.PhysicsCut
 
                     hit = SlashSweepConvexQuery.Intersects(
                         plane, la0, lb0, la1, lb1, shape.BankOf(k), shape.Convex(k), ref _section);
+                }
+
+                if (beyondReach)
+                {
+                    // Tests only (fragmentReachCheckForTest): passed over by its reach, and tested all the way to see.
+                    if (hit) FragmentReachDisagreements++;
+                    continue;
                 }
 
                 if (passedOver)
