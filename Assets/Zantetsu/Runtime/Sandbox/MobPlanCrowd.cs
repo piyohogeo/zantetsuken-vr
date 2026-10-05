@@ -447,8 +447,8 @@ namespace Zantetsu.Sandbox
             var actor = new Actor { character = character, pose = pose, plan = plan };
             pose.PlanSource = (double target, out PoseTable table, out double source) =>
                 bank.TryEvaluate(actor.plan, target - epoch, simulation.Dataset, out table, out source, out _);
-            // Placed where the plan has it first; then posed, drawn, given its level of detail and made a hit target;
-            // then its motion is taken again from the plan with its body in the scene; then its plan is registered.
+            // Placed where the plan has it first, its motion given with the placement; then posed, drawn, given its level
+            // of detail and made a hit target; then its plan is registered.
             ApplyRoot(actor, PlanTime);
             bool reused = character.Activations > 0;
             if (!character.Activate())
@@ -457,7 +457,6 @@ namespace Zantetsu.Sandbox
                 pool.MarkBroken(character);
                 return false;
             }
-            ApplyRoot(actor, PlanTime);
             if (reused) ReusedActivations++;
             actors.Add(id, actor);
             ActorAdded?.Invoke(id, character, replacement);
@@ -490,15 +489,16 @@ namespace Zantetsu.Sandbox
         {
             if (!bank.TryEvaluate(actor.plan, now, simulation.Dataset, out _, out _, out var root)) return;
             actor.character.CharacterRoot.transform.SetPositionAndRotation(root.position + mapOffset, root.rotation);
-            // Kinematic Rigidbody velocity setters are unsupported. Supply the cut's inherited motion explicitly.
+            // The motion a cut of it inherits, given as numbers with the placement (DESIGN 9, D-197): the velocity of the
+            // root's origin and the angular velocity, estimated from the plan over the next 0.01 s as before. No body is
+            // read or written; the prepared cut carries the velocity to the centre of mass when a cut is accepted.
             if (actor.character.Handle != null && bank.TryEvaluate(actor.plan, now + .01, simulation.Dataset, out _, out _, out var future))
             {
                 Quaternion delta = future.rotation * Quaternion.Inverse(root.rotation);
                 delta.ToAngleAxis(out float angle, out Vector3 axis);
                 if (angle > 180) angle -= 360;
                 Vector3 angular = float.IsFinite(axis.x) ? axis * (angle * Mathf.Deg2Rad * 100) : Vector3.zero;
-                Vector3 comOffset = actor.character.MotionBody.worldCenterOfMass - (root.position + mapOffset);
-                actor.character.Handle.SetPlannedMotion((future.position - root.position) * 100 + Vector3.Cross(angular, comOffset), angular);
+                actor.character.Handle.SetRootMotion((future.position - root.position) * 100, angular);
             }
         }
 

@@ -53,7 +53,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             int[] topology = { 0, 1, 2, 3 };
             Assert.That(VpDirectSkinInput.TryCreate(r, topology, 4, root.CutInputConnectivity, out VpDirectSkinInput probe), Is.True, "the display input is taken");
             probe.Dispose();
-            Assert.That(root.TryPrepareCharacterCut(r, topology, 4, shape.BankOf(0), new[] { shape.Convex(0) }, new[] { bone }, warm, actor, motion, out VpPreparedCharacterCut handle), Is.True, "the character prepared");
+            Assert.That(root.TryPrepareCharacterCut(r, topology, 4, shape.BankOf(0), new[] { shape.Convex(0) }, new[] { bone }, warm, actor, VpCharacterMassProperties.FromBody(motion, actor.transform), out VpPreparedCharacterCut handle), Is.True, "the character prepared");
             for (int i = 0; i < 120 && !(handle.IsReady || handle.TryFinishPreparation()); i++) yield return null;
             Assert.That(handle.IsReady, Is.True, "and ready");
             into.Add(handle);

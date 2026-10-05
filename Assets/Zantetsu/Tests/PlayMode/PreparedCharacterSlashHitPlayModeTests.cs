@@ -288,7 +288,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         // A character whose bone is its own Transform under the root, apart from the renderer, so a pose moves the
-        // convex without moving the renderer's frame.
+        // convex without moving the renderer's frame. Its mass settings are authored on a body and read once into
+        // numbers (DESIGN 9, D-197). With the body on an object of its own, the character is left as the product's
+        // preparation leaves it: the body out of the character and out of the physics, the hierarchy holding none.
         private VpPreparedCharacterCut PrepareBonedCharacter(out Transform bone, out GameObject root, bool motionOnItsOwn = false)
         {
             root = ColdTrack(new GameObject("U8 character root"));
@@ -328,8 +330,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             if (_vertices.IsCreated) _disposables.Insert(0, new EarlierBank { arrays = new IDisposable[] { _vertices, _faceOffsets, _faceIndices, _faceEdges, _edges } });
             var source = NewAuthoredShape(1);
             CompleteRequestBoxEdges(source);
+            VpCharacterMassProperties mass = VpCharacterMassProperties.FromBody(motion, root.transform);
+            if (motionOnItsOwn)
+            {
+                motion.gameObject.SetActive(false);
+                motion.transform.SetParent(ColdTrack(new GameObject("U8 character motion body, aside")).transform, false);
+            }
+
             Assert.That(coldWorld.TryPrepareCharacterCut(r, new[] { 0, 1, 2, 3 }, 4, source.BankOf(0), new[] { source.Convex(0) },
-                new[] { bone }, coldWarm, root, motion, out var handle), Is.True);
+                new[] { bone }, coldWarm, root, mass, out var handle), Is.True);
             coldHandles.Add(handle);
             return handle;
         }
@@ -486,14 +495,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         [UnityTest]
-        public IEnumerator Withdrawal_OfParts_StopsTheDrawingThePoseAndTheBody_AtThePublication_AndTheCutsGoOn()
+        public IEnumerator Withdrawal_OfParts_StopsTheDrawingAndThePose_AtThePublication_AndTheCutsGoOn()
         {
             ColdWorld();
             coldWarm = new VpPhysicsColdPreparation();
             var handle = PrepareBonedCharacter(out Transform _, out GameObject root, motionOnItsOwn: true);
             var pose = root.AddComponent<WithdrawalPoseStandIn>();
             SkinnedMeshRenderer renderer = root.GetComponentInChildren<SkinnedMeshRenderer>();
-            Rigidbody motion = root.GetComponentInChildren<Rigidbody>();
+            Assert.That(root.GetComponentsInChildren<Rigidbody>(true), Is.Empty, "the character holds no body: none follows it before its cut");
             Assert.That(handle.TryWithdrawParts(new Behaviour[] { pose }, out string whyNot), Is.True, whyNot);
             Assert.That(handle.WithdrawsParts, Is.True);
             yield return null;
@@ -504,10 +513,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             List<SlashHitConfirmed> cut = Evaluate(detector, CharacterLevel(1, 0.3f, -3f, 3f), 1);
             Assert.That(cut.Count, Is.EqualTo(1));
             Assert.That(cut[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
-            // In the frame of the publication: not drawn, not a hit target, not posed, its body out of the physics.
+            // In the frame of the publication: not drawn, not a hit target, not posed.
             Assert.That(renderer.enabled, Is.False, "not drawn");
             Assert.That(pose.enabled, Is.False, "not posed");
-            Assert.That(motion.gameObject.activeInHierarchy, Is.False, "its motion body left the physics");
             Assert.That(handle.IsDisposed || !handle.IsHitTarget, Is.True, "not a hit target");
             Assert.That(root.activeInHierarchy, Is.True, "the hierarchy itself stays: only its parts left");
             Assert.That(renderer.sharedMesh, Is.Not.Null, "nothing it held was given back");

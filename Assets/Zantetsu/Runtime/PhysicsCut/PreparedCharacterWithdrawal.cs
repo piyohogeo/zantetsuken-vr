@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Unity.Profiling;
 using UnityEngine;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -15,18 +16,20 @@ namespace Zantetsu.PhysicsCut
     }
 
     /// <summary>
-    /// How a prepared character's own hierarchy leaves at its first cut's publication (DESIGN 19.1.9): its drawing, the
-    /// update that poses its bones and its motion body end there, once, and nothing it holds -- the
-    /// bones, the meshes, the display input -- is given back.
+    /// How a prepared character's own hierarchy leaves at its first cut's publication (DESIGN 19.1.9): its drawing and
+    /// the update that poses its bones end there, once, and nothing it holds -- the bones, the meshes, the display
+    /// input -- is given back. No body is among them: a character not yet cut has none in the physics (DESIGN 9, D-197).
     /// <para>
     /// By default the whole character root is deactivated. A registration that names the updates posing its bones may
     /// ask for the parts instead (<see cref="TryUseParts"/>): the hierarchy is checked once, at preparation, to hold
-    /// nothing live beyond the renderer drawing it, those updates and the motion body -- no other enabled renderer,
-    /// collider, joint, other body, or MonoBehaviour with an OnDisable of its own -- and if it holds anything more, the
-    /// whole root is kept. Withdrawing the parts then turns off the renderer and those updates and deactivates the
-    /// motion body's own object, and the character is no longer a hit target.
+    /// nothing live beyond the renderer drawing it and those updates -- no other enabled renderer, no collider, joint
+    /// or body, no MonoBehaviour with an OnDisable of its own -- and if it holds anything more, the whole root is kept.
+    /// Withdrawing the parts then turns off the renderer and those updates, and the character is no longer a hit target.
+    /// The character's complete bone correspondence (<see cref="VpSkinBones"/>, DESIGN 9, D-195) is passed over by that
+    /// check and left as it is by the withdrawal: it is data -- it runs nothing and does nothing on being enabled or
+    /// disabled -- and the slot's next individual resolves its bones by it again. It is the one type so treated.
     /// If publication is Pending, the admitted cut display replaces the original mesh drawing earlier through
-    /// <see cref="BeginCutDisplay"/>; posing and motion still leave at the publication boundary.
+    /// <see cref="BeginCutDisplay"/>; posing still leaves at the publication boundary.
     /// </para>
     /// </summary>
     internal sealed class PreparedCharacterWithdrawal : IPreparedSourceWithdrawal
@@ -40,14 +43,12 @@ namespace Zantetsu.PhysicsCut
 
         private readonly GameObject _root;
         private readonly Renderer _renderer;
-        private readonly Rigidbody _motionBody;
         private Behaviour[] _updates;
 
-        internal PreparedCharacterWithdrawal(GameObject root, Renderer renderer, Rigidbody motionBody)
+        internal PreparedCharacterWithdrawal(GameObject root, Renderer renderer)
         {
             _root = root;
             _renderer = renderer;
-            _motionBody = motionBody;
         }
 
         /// <summary>Whether the character has left: after this, it is not drawn, posed, simulated or hit as itself.</summary>
@@ -57,28 +58,22 @@ namespace Zantetsu.PhysicsCut
         internal bool UsesParts => _updates != null;
 
         /// <summary>
-        /// Confirms that the parts are all that is live in the hierarchy, and uses them if so. The motion body has to be
-        /// on its own object under the root, holding nothing but itself. Returns why not otherwise.
+        /// Confirms that the parts are all that is live in the hierarchy, and uses them if so. A hierarchy holding a
+        /// body, a collider or a joint keeps its whole root: deactivating the root is what takes those out of the
+        /// physics. Returns why not otherwise.
         /// </summary>
         internal bool TryUseParts(IReadOnlyList<Behaviour> updates, out string whyNot)
         {
             using (s_confirm.Auto())
             {
                 whyNot = null;
-                if (IsWithdrawn || _root == null || _renderer == null || _motionBody == null || updates == null)
+                if (IsWithdrawn || _root == null || _renderer == null || updates == null)
                 {
                     whyNot = "nothing to confirm";
                     return false;
                 }
 
-                GameObject motion = _motionBody.gameObject;
-                if (motion == _root || motion.transform.childCount > 0 || motion.GetComponents<Component>().Length != 2)
-                {
-                    whyNot = "the motion body is not on an object of its own";
-                    return false;
-                }
-
-                var named = new HashSet<Component> { _renderer, _motionBody };
+                var named = new HashSet<Component> { _renderer };
                 foreach (Behaviour update in updates)
                 {
                     if (update == null || !update.transform.IsChildOf(_root.transform))
@@ -93,6 +88,15 @@ namespace Zantetsu.PhysicsCut
                 foreach (Component component in _root.GetComponentsInChildren<Component>(true))
                 {
                     if (component == null || named.Contains(component) || component is Transform)
+                    {
+                        continue;
+                    }
+
+                    // The character's complete bone correspondence is data, not an update: a sealed type that
+                    // declares no Unity message, so nothing of it runs and nothing happens when it is enabled or
+                    // disabled. There is nothing of it to stop, and the withdrawal leaves it as it is. This type
+                    // alone, by name: any other MonoBehaviour meets the refusals below as before.
+                    if (component is VpSkinBones)
                     {
                         continue;
                     }
@@ -133,7 +137,7 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// An admitted cut already has its frozen display input registered. While physics publication is Pending,
-        /// that display owns the mesh drawing; keep posing and motion alive until the normal withdrawal boundary.
+        /// that display owns the mesh drawing; keep posing alive until the normal withdrawal boundary.
         /// </summary>
         internal void BeginCutDisplay()
         {
@@ -160,8 +164,6 @@ namespace Zantetsu.PhysicsCut
             {
                 if (update != null) update.enabled = false;
             }
-
-            if (_motionBody != null) _motionBody.gameObject.SetActive(false);
         }
     }
 }

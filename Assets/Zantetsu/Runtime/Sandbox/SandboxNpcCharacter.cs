@@ -43,9 +43,10 @@ namespace Zantetsu.Sandbox
         [SerializeField] private CutWorldRoot world;
         [SerializeField] private SandboxSlashPropHit hit;
 
-        [Tooltip("The character's root: the model, the motion body and the pose player are under it; a cut withdraws it.")]
+        [Tooltip("The character's root: the model and the pose player are under it; a cut withdraws it.")]
         [SerializeField] private GameObject characterRoot;
 
+        [Tooltip("The body holding the character's mass settings (mass, centre of mass, inertia). Read once when the character is prepared; it does not follow the character after that.")]
         [SerializeField] private Rigidbody motionBody;
         [SerializeField] private TextAsset intake;
         [SerializeField] private TextAsset hulls;
@@ -76,8 +77,44 @@ namespace Zantetsu.Sandbox
 
         public GameObject CharacterRoot => characterRoot;
 
-        /// <summary>The character's motion body.</summary>
+        /// <summary>
+        /// The body the character's mass settings were authored on. Its settings are read once, at the preparation
+        /// (<see cref="MassProperties"/>); nothing reads or moves it after that (DESIGN 9, D-197).
+        /// </summary>
         public Rigidbody MotionBody => motionBody;
+
+        /// <summary>
+        /// What the character weighs, as numbers in the character root's frame: read once from the motion body's
+        /// settings when the character is prepared, kept for every cut prepared for this character's individuals.
+        /// </summary>
+        public VpCharacterMassProperties MassProperties { get; private set; }
+
+        /// <summary>
+        /// Whether the motion body was set aside at the preparation: out of the physics and out of the character, held
+        /// under this component's own object. False for a body that shares its object with anything else and so stays
+        /// where it is (the character's withdrawal then takes its whole root).
+        /// </summary>
+        public bool MotionBodyAside { get; private set; }
+
+        // The motion body is not what a cut reads any more, and nothing is to move it. On an object of its own it is
+        // taken out of the physics and out of the character, once, here: deactivated, and held under this component's
+        // own object, which no character's placement moves and which it goes with. It is never brought back: the body
+        // a cut needs is the prepared cut's own source. A body sharing its object with anything else -- the root itself,
+        // say -- cannot be taken out alone and stays where it is.
+        private void SetMotionBodyAside()
+        {
+            MotionBodyAside = false;
+            GameObject held = motionBody.gameObject;
+            if (held == characterRoot || held == gameObject || held.transform.childCount > 0 || held.GetComponents<Component>().Length != 2
+                || transform.IsChildOf(characterRoot.transform))
+            {
+                return;
+            }
+
+            held.SetActive(false);
+            held.transform.SetParent(transform, false);
+            MotionBodyAside = true;
+        }
 
         /// <summary>Whether its parts (not the whole root) are withdrawn at its first cut, and why not if not.</summary>
         public bool WithdrawsParts { get; private set; }
@@ -99,8 +136,8 @@ namespace Zantetsu.Sandbox
         public int HullCount { get; private set; }
 
         // ----- a prepared slot of a crowd (MobPlan) ---------------------------------------------------------------------
-        // A slot is prepared once, before the scenario, and then kept dormant: not drawn, not posed, no motion body, no
-        // hit target, no level of detail, no plan. The crowd activates it for an individual -- placed and posed first --
+        // A slot is prepared once, before the scenario, and then kept dormant: not drawn, not posed, no hit target, no
+        // level of detail, no plan (and, dormant or not, no body in the physics). The crowd activates it for an individual -- placed and posed first --
         // and, once that individual's cut no longer refers to anything of it, prepares a new cut for it again, so the same
         // objects can carry a new individual. Outside a crowd (PrepareAsSlot never called) nothing of this applies.
 
@@ -319,7 +356,6 @@ namespace Zantetsu.Sandbox
             return true;
         }
         private static readonly ProfilerMarker s_activate = new ProfilerMarker("Zantetsu.Npc.Activate");
-        private static readonly ProfilerMarker s_activateBody = new ProfilerMarker("Zantetsu.Npc.Activate.Body");
         private static readonly ProfilerMarker s_activatePose = new ProfilerMarker("Zantetsu.Npc.Activate.Pose");
         private static readonly ProfilerMarker s_activateDraw = new ProfilerMarker("Zantetsu.Npc.Activate.Draw");
         private static readonly ProfilerMarker s_activateLod = new ProfilerMarker("Zantetsu.Npc.Activate.Lod");
@@ -622,6 +658,20 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // What the character weighs, once, as numbers in its root's frame (DESIGN 9, D-197). From here on no body
+            // follows the character: where it stands and how it moves reach its cut as numbers, and the body the
+            // settings were authored on is set aside. The body is in the scene here, as its settings' read needs.
+            MassProperties = VpCharacterMassProperties.FromBody(motionBody, characterRoot.transform);
+            if (!MassProperties.IsUsable)
+            {
+                Failure = motionBody.gameObject.activeInHierarchy
+                    ? "the motion body's mass settings cannot be given to a body"
+                    : "the motion body is out of the scene: its mass settings cannot be read";
+                return;
+            }
+
+            SetMotionBodyAside();
+
             if (Pooled)
             {
                 // One fixed-scale mesh for every slot of the crowd.
@@ -879,7 +929,7 @@ namespace Zantetsu.Sandbox
             using (s_prepareCut.Auto())
             {
                 prepared = world.TryPrepareCharacterCut(_fixedInput.Renderer, _entry.topologyMap, _entry.topologyCount, bank, _ranges, _convexBones,
-                    _cold, lent, _baked, characterRoot, motionBody, out handle);
+                    _cold, lent, _baked, characterRoot, MassProperties, out handle);
             }
 
             if (!prepared)
@@ -890,8 +940,8 @@ namespace Zantetsu.Sandbox
 
             Handle = handle;
 
-            // Its withdrawal at the first cut: the renderer, the Pose Table's update and the motion body, if the hierarchy
-            // is confirmed to hold nothing else live; the whole root otherwise.
+            // Its withdrawal at the first cut: the renderer and the Pose Table's update, if the hierarchy is confirmed to
+            // hold nothing else live; the whole root otherwise.
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             string whyNot;
             using (s_prepareWithdraw.Auto())
@@ -904,12 +954,11 @@ namespace Zantetsu.Sandbox
             return true;
         }
 
-        // Dormant: not drawn, not posed, no motion body. A hit target it is not, and nothing registers it.
+        // Dormant: not drawn, not posed. A hit target it is not, and nothing registers it.
         private void Dormant()
         {
             if (_fixedInput != null && _fixedInput.Renderer != null) _fixedInput.Renderer.enabled = false;
             if (_pose != null) _pose.enabled = false;
-            if (motionBody != null) motionBody.gameObject.SetActive(false);
         }
 
         /// <summary>How many activations registered the level of detail in full because no prepared plan held.</summary>
@@ -952,11 +1001,6 @@ namespace Zantetsu.Sandbox
 
             using (s_activate.Auto())
             {
-                using (s_activateBody.Auto())
-                {
-                    if (motionBody != null) motionBody.gameObject.SetActive(true);
-                }
-
                 using (s_activatePose.Auto())
                 {
                     _pose.enabled = true;
