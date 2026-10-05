@@ -262,6 +262,7 @@ namespace Zantetsu.Sandbox
                 if (!cityWalk) return;
                 _cwRealAtScriptStart = Time.realtimeSinceStartupAsDouble;
                 if (Has(CityWalkWalkShotsArgument)) StartCoroutine(CityWalkWalkShots(Value(CityWalkWalkShotsArgument)));
+                StartCoroutine(CityWalkSkinningWatch());
             }
 
             private bool _cwRegistrationCutShort;
@@ -303,6 +304,102 @@ namespace Zantetsu.Sandbox
                     + (d.BodyArgumentElementsTransferred * argumentBytes) + " bytes; transforms and clips " + d.BodyInstanceTransfers + " updates, " + d.BodyInstanceSetDataCalls + " SetData calls, "
                     + d.BodyInstanceElementsTransferred + " records, " + (d.BodyInstanceElementsTransferred * instanceBytes) + " bytes; cap normals " + d.CapNormalTransfers + " SetData calls, "
                     + d.CapNormalVerticesTransferred + " vertices, " + (d.CapNormalVerticesTransferred * 16L) + " bytes (made on the CPU " + d.CapNormalsMade + ")";
+            }
+
+            // Unity's skinning of the uncut characters (DESIGN 9, D-196), for the log. The counts are of this check's own
+            // frames; the times and calls are the Profiler's recorders of Unity's own markers, each frame's read in the next.
+            private long _cwSkinFrames, _cwSkinLive, _cwSkinDrawn, _cwSkinVisible, _cwSkinOnlyWhenSeen, _cwSkinVisibleOnlyWhenSeen;
+            private long _cwSkinBoundsSamples, _cwSkinBoundsOutside;
+            private float _cwSkinBoundsLargest = float.NegativeInfinity;
+            private string _cwSkinBoundsWorst = "";
+            private static readonly string[] k_cwSkinMarkers = { "MeshSkinning.CalcMatrices", "MeshSkinning.Update", "PostLateUpdate.UpdateAllSkinnedMeshes", "MeshSkinning.SkinOnGPU" };
+            private readonly Unity.Profiling.ProfilerRecorder[] _cwSkinRecorders = new Unity.Profiling.ProfilerRecorder[k_cwSkinMarkers.Length];
+            private readonly double[] _cwSkinNanoseconds = new double[k_cwSkinMarkers.Length];
+            private readonly long[] _cwSkinCalls = new long[k_cwSkinMarkers.Length];
+            private readonly long[] _cwSkinFramesWithCalls = new long[k_cwSkinMarkers.Length];
+
+            private IEnumerator CityWalkSkinningWatch()
+            {
+                SandboxNpcCharacter[] slots = Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                var handles = new List<Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle>();
+                Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetAvailable(handles);
+                foreach (Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle handle in handles)
+                {
+                    int m = System.Array.IndexOf(k_cwSkinMarkers, Unity.Profiling.LowLevel.Unsafe.ProfilerRecorderHandle.GetDescription(handle).Name);
+                    if (m >= 0 && !_cwSkinRecorders[m].Valid)
+                    {
+                        _cwSkinRecorders[m] = new Unity.Profiling.ProfilerRecorder(handle, 1, Unity.Profiling.ProfilerRecorderOptions.Default);
+                        _cwSkinRecorders[m].Start();
+                    }
+                }
+
+                while (true)
+                {
+                    for (int m = 0; m < k_cwSkinMarkers.Length; m++)
+                    {
+                        if (!_cwSkinRecorders[m].Valid || _cwSkinRecorders[m].Count == 0) continue;
+                        Unity.Profiling.ProfilerRecorderSample sample = _cwSkinRecorders[m].GetSample(_cwSkinRecorders[m].Count - 1);
+                        _cwSkinNanoseconds[m] += sample.Value;
+                        _cwSkinCalls[m] += sample.Count;
+                        if (sample.Count > 0) _cwSkinFramesWithCalls[m]++;
+                    }
+
+                    _cwSkinFrames++;
+                    for (int i = 0; i < slots.Length; i++)
+                    {
+                        SandboxNpcCharacter c = slots[i];
+                        if (c == null || !c.IsTarget) continue;
+                        _cwSkinLive++;
+                        SkinnedMeshRenderer r = c.Renderer;
+                        if (r == null || !r.enabled) continue;
+                        _cwSkinDrawn++;
+                        bool visible = r.isVisible;
+                        if (visible) _cwSkinVisible++;
+                        if (c.SkinsOnlyWhenSeen)
+                        {
+                            _cwSkinOnlyWhenSeen++;
+                            if (visible) _cwSkinVisibleOnlyWhenSeen++;
+                        }
+
+                        if ((Time.frameCount + i) % 8 == 0 && c.TryDrawBoundsExcess(out float excess))
+                        {
+                            _cwSkinBoundsSamples++;
+                            if (excess > 0f) _cwSkinBoundsOutside++;
+                            if (excess > _cwSkinBoundsLargest)
+                            {
+                                _cwSkinBoundsLargest = excess;
+                                _cwSkinBoundsWorst = c.name;
+                            }
+                        }
+                    }
+
+                    yield return null;
+                }
+            }
+
+            private string CityWalkSkinning()
+            {
+                var text = new System.Text.StringBuilder();
+                text.Append("skinned when unseen: ").Append(SandboxNpcCharacter.SkinWhenUnseen ? "kept (every frame)" : "skipped")
+                    .Append("; frames watched ").Append(_cwSkinFrames).Append("; characters, summed over those frames: live ").Append(_cwSkinLive).Append(", drawn (renderer enabled) ").Append(_cwSkinDrawn)
+                    .Append(", visible to Unity (a camera or a shadow pass) ").Append(_cwSkinVisible).Append(", drawn and not visible ").Append(_cwSkinDrawn - _cwSkinVisible)
+                    .Append(", skinned only when seen ").Append(_cwSkinOnlyWhenSeen).Append(" (of them visible ").Append(_cwSkinVisibleOnlyWhenSeen).Append(")");
+                for (int m = 0; m < k_cwSkinMarkers.Length; m++)
+                {
+                    text.Append("; ").Append(k_cwSkinMarkers[m]).Append(": ");
+                    if (!_cwSkinRecorders[m].Valid) text.Append("no recorder");
+                    else text.Append((_cwSkinNanoseconds[m] / 1e6).ToString("F2", Inv)).Append(" ms in all, ").Append(_cwSkinCalls[m]).Append(" calls, frames with a call ").Append(_cwSkinFramesWithCalls[m]);
+                    if (_cwSkinRecorders[m].Valid) _cwSkinRecorders[m].Dispose();
+                }
+
+                text.Append("; Unity's bounds against the draw bounds (characters skinned every frame, one in eight a frame): samples ").Append(_cwSkinBoundsSamples)
+                    .Append(", outside ").Append(_cwSkinBoundsOutside);
+                if (_cwSkinBoundsSamples > 0)
+                {
+                    text.Append(", the farthest ").Append(_cwSkinBoundsLargest.ToString("F4", Inv)).Append(" m (").Append(_cwSkinBoundsWorst).Append("; below zero: inside)");
+                }
+
+                return text.ToString();
             }
 
             // The scene detector's fragment reach (DESIGN 19.1.7, D-193), for the log: of the fragment shapes it went through
@@ -636,6 +733,7 @@ namespace Zantetsu.Sandbox
                 Log("city walk placed search (the run): " + CityWalkPlacedSearch());
                 Log("city walk display collection (the run): " + CityWalkDisplayCollection());
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
+                Log("city walk skinning (the run): " + CityWalkSkinning());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");
                 Expect(propRoots.Count > 0, "[city walk] a prop was cut by the katana's Slash and its geometry committed (" + propRoots.Count + " props)");
                 Expect(npcRoots.Count > 0, "[city walk] an NPC was cut by the katana's Slash and its geometry committed (" + npcRoots.Count + " NPCs)");
