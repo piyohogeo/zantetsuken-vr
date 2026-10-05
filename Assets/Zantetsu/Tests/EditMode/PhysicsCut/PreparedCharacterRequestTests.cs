@@ -123,7 +123,7 @@ namespace Zantetsu.PhysicsCut.Tests
             body.centerOfMass=Vector3.zero;body.inertiaTensor=Vector3.one*4;
             var h=Bank();var cold=Keep(new VpPhysicsColdPreparation());
             Assert.That(world.TryPrepareCharacterCut(rig,new[]{0,1,2,3},4,h.input.bank,Ranges(h),new[]{bone.transform},
-                cold,rig.gameObject,body,out var handle),Is.True);return Keep(handle);
+                cold,rig.gameObject,VpCharacterMassProperties.FromBody(body,rig.transform),out var handle),Is.True);return Keep(handle);
         }
         [Test] public void D6T_Synchronous_Publication_TransfersOnce_KeepsBorrowedRig()
         {

@@ -41,24 +41,32 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Cold first-cut binding. characterRoot must contain the borrowed rig, old hit physics and motion body,
-        /// but not this world. Withdrawal disables that entire hierarchy once; it is never destroyed or reactivated.
+        /// Cold first-cut binding. characterRoot must contain the borrowed rig and old hit physics, but not this
+        /// world. Withdrawal disables that entire hierarchy once; it is never destroyed or reactivated.
         /// One live handle per character is the caller's contract; recreate after hierarchy/binding changes.
+        /// <para>
+        /// **What the character weighs and how it moves are numbers** (DESIGN 9, D-197). <paramref name="mass"/> is in
+        /// characterRoot's frame and is copied into the handle: no body is borrowed, so none can be another
+        /// character's. Where the character stands is characterRoot's own placement, read when a cut is accepted --
+        /// the placement the renderer and the bones the hit met stand under -- and how it moves is what
+        /// <see cref="VpPreparedCharacterCut.SetRootMotion"/> was last given. Refused when the numbers cannot be given
+        /// to a body.
+        /// </para>
         /// </summary>
         public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
             ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
-            VpPhysicsColdPreparation sharedCold, GameObject characterRoot, Rigidbody motionBody,
+            VpPhysicsColdPreparation sharedCold, GameObject characterRoot, VpCharacterMassProperties mass,
             out VpPreparedCharacterCut prepared)
             => TryPrepareCharacterCut(renderer, topology, topologyCount, bank, convexes, convexBones, sharedCold, null,
-                characterRoot, motionBody, out prepared);
+                characterRoot, mass, out prepared);
 
         /// <summary>The same, borrowing the caller's direct skin input for this handle's life (see the overload above).</summary>
         public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
             ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
-            VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, GameObject characterRoot, Rigidbody motionBody,
+            VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, GameObject characterRoot, VpCharacterMassProperties mass,
             out VpPreparedCharacterCut prepared)
             => TryPrepareCharacterCut(renderer, topology, topologyCount, bank, convexes, convexBones, sharedCold, lentDirect, null,
-                characterRoot, motionBody, out prepared);
+                characterRoot, mass, out prepared);
 
         /// <summary>
         /// The same, also taking the caller's baked collider meshes (<see cref="VpBakedConvexMeshes"/>, a crowd slot's
@@ -68,15 +76,16 @@ namespace Zantetsu.PhysicsCut
         public bool TryPrepareCharacterCut(SkinnedMeshRenderer renderer, int[] topology, int topologyCount,
             ConvexBrepBank bank, IReadOnlyList<ConvexBrepRange> convexes, IReadOnlyList<Transform> convexBones,
             VpPhysicsColdPreparation sharedCold, VpDirectSkinInput lentDirect, VpBakedConvexMeshes bakedMeshes,
-            GameObject characterRoot, Rigidbody motionBody, out VpPreparedCharacterCut prepared)
+            GameObject characterRoot, VpCharacterMassProperties mass, out VpPreparedCharacterCut prepared)
         {
             prepared = null;
-            if (renderer == null || characterRoot == null || motionBody == null
+            // The renderer under the root: the root's withdrawal takes its drawing, and the root's placement is the one
+            // the renderer and its bones stand under. The world outside it: a withdrawal must not take the world.
+            if (renderer == null || characterRoot == null || !mass.IsUsable
                 || !renderer.transform.IsChildOf(characterRoot.transform)
-                || !motionBody.transform.IsChildOf(characterRoot.transform)
                 || transform.IsChildOf(characterRoot.transform)) return false;
             if (!VpPreparedCharacterCut.TryCreate(this,renderer,topology,topologyCount,bank,convexes,convexBones,sharedCold,lentDirect,bakedMeshes,out var made)) return false;
-            try { made.BindSource(characterRoot,motionBody); prepared=made; return true; }
+            try { made.BindSource(characterRoot,mass); prepared=made; return true; }
             catch { made.Dispose(); throw; }
         }
     }
@@ -85,7 +94,9 @@ namespace Zantetsu.PhysicsCut
     {
         bool busy, terminal, disposeRequested, actorTransferred;
         GameObject characterRoot, actor;
-        Rigidbody motionBody, actorBody;
+        Rigidbody actorBody;
+        // What the character weighs, in characterRoot's frame: this handle's own copy, from its binding to its end.
+        VpCharacterMassProperties massProperties;
         public LogicalFragmentId Source { get; private set; }
         public CutOperationId Operation { get; private set; }
 
@@ -115,8 +126,8 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// Asks for the character's parts, not its whole root, to be withdrawn at its first cut's publication: the renderer
-        /// drawing it, <paramref name="updates"/> (the updates posing its bones) and its motion body. The hierarchy is
-        /// confirmed to hold nothing else live, once, here; if it does, the whole root is kept and the reason is given.
+        /// drawing it and <paramref name="updates"/> (the updates posing its bones). The hierarchy is confirmed to hold
+        /// nothing else live, once, here; if it does, the whole root is kept and the reason is given.
         /// </summary>
         internal bool TryWithdrawParts(System.Collections.Generic.IReadOnlyList<Behaviour> updates, out string whyNot)
         {
@@ -129,10 +140,25 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Whether the character has been withdrawn.</summary>
         public string LastFailure { get; private set; }
-        private bool hasPlannedMotion;
-        private Vector3 plannedVelocity, plannedAngularVelocity;
-        public void SetPlannedMotion(Vector3 velocity, Vector3 angularVelocity)
-        { hasPlannedMotion = true; plannedVelocity = velocity; plannedAngularVelocity = angularVelocity; }
+        // How the character moves as it now stands: the velocity of characterRoot's origin and the angular velocity, in
+        // the world. At rest until given.
+        private Vector3 rootVelocity, rootAngularVelocity;
+
+        /// <summary>
+        /// Says how the character moves as it now stands (DESIGN 9, D-197): the velocity of the character root's origin
+        /// and the angular velocity, both in the world. Whoever places the character gives them with the placement; a
+        /// character never given any is at rest. They are read once, together with the root's placement, when a cut of
+        /// the character is accepted -- a hit's, or a held request's resume -- and the cut's source body is given the
+        /// velocity of its centre of mass from them. What is given after the acceptance reaches nothing of that cut.
+        /// </summary>
+        public void SetRootMotion(Vector3 originVelocity, Vector3 angularVelocity)
+        {
+            if (disposed || terminal) return;
+            rootVelocity = originVelocity; rootAngularVelocity = angularVelocity;
+        }
+
+        /// <summary>What the character weighs, in the character root's frame (this handle's copy).</summary>
+        public VpCharacterMassProperties MassProperties => massProperties;
 
         public bool IsWithdrawn => withdrawal != null && withdrawal.IsWithdrawn;
 
@@ -144,14 +170,16 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The frame a cut plane is given in (renderer-local, see <see cref="TryCut"/>).</summary>
         internal Transform RendererTransform => renderer != null ? renderer.transform : null;
 
-        internal void BindSource(GameObject root, Rigidbody motion)
+        internal void BindSource(GameObject root, VpCharacterMassProperties mass)
         {
-            characterRoot=root; motionBody=motion;
-            withdrawal=new PreparedCharacterWithdrawal(root,renderer,motion);
+            characterRoot=root; massProperties=mass;
+            withdrawal=new PreparedCharacterWithdrawal(root,renderer);
             actor=new GameObject("Prepared character cut source"); actor.SetActive(false);
             actorBody=actor.AddComponent<Rigidbody>(); actorBody.useGravity=false; actorBody.detectCollisions=false;
             actorBody.automaticCenterOfMass=actorBody.automaticInertiaTensor=false;
             // No intermediate Collider, Mesh or cook. This collider-free body is only a synchronous source of motion.
+            // It stands inactive at the scene's root, under no character, so nothing a character does moves it; it is
+            // placed, brought into the scene and given its values where a cut is accepted, and nowhere before.
         }
 
         VpCharacterCutResult Result(VpCharacterCutOutcome outcome,
@@ -175,7 +203,7 @@ namespace Zantetsu.PhysicsCut
         public VpCharacterCutResult TryCut(float4 plane, float3 renderAnchor,
             float positiveSeparationImpulse=0, float negativeSeparationImpulse=0)
         {
-            if (!IsReady || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn || motionBody==null
+            if (!IsReady || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn
                 || actor==null || actorBody==null || renderer==null) return Result(VpCharacterCutOutcome.Unavailable);
             if (!math.all(math.isfinite(plane)) || math.lengthsq(plane.xyz)<=0 || !math.all(math.isfinite(renderAnchor))
                 || !float.IsFinite(positiveSeparationImpulse) || positiveSeparationImpulse<0
@@ -217,7 +245,7 @@ namespace Zantetsu.PhysicsCut
         {
             if (!held) return Result(VpCharacterCutOutcome.Unavailable);
             if (disposed || disposeRequested || !Usable(world) || !sharedCold.IsPrepared || slot==null || slot.IsDisposed || slot.IsConsumed
-                || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn || motionBody==null
+                || characterRoot==null || !characterRoot.activeInHierarchy || IsWithdrawn
                 || actor==null || actorBody==null || renderer==null)
             {
                 EndHold();
@@ -247,7 +275,7 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 Matrix4x4 inverse=renderer.transform.worldToLocalMatrix;
-                float mass=motionBody.mass;
+                float mass=massProperties.Mass;
                 var poseScope=s_pose.Auto();
                 if(fromHit)
                 {
@@ -309,13 +337,20 @@ namespace Zantetsu.PhysicsCut
                 var actorScope=s_actor.Auto();
                 try
                 {
-                actor.transform.SetPositionAndRotation(renderer.transform.position,renderer.transform.rotation);
+                // The source body's values, from numbers (DESIGN 9, D-197): where the character root stands now -- the
+                // placement the renderer and the bones of this pose stand under -- places the kept centre of mass and
+                // principal axes in the world, and the renderer's frame, which is the body's, takes them from there.
+                // A body's velocity is its centre of mass's: the root origin's, carried to that centre by the rotation.
+                renderer.transform.GetPositionAndRotation(out Vector3 rendererPosition,out Quaternion rendererRotation);
+                characterRoot.transform.GetPositionAndRotation(out Vector3 rootPosition,out Quaternion rootRotation);
+                Vector3 centre=massProperties.CentreOfMassAt(rootPosition,rootRotation);
+                actor.transform.SetPositionAndRotation(rendererPosition,rendererRotation);
                 actor.SetActive(true);
                 actorBody.mass=mass;
-                actorBody.centerOfMass=inverse.MultiplyPoint3x4(motionBody.worldCenterOfMass);
-                actorBody.inertiaTensor=motionBody.inertiaTensor;
-                actorBody.inertiaTensorRotation=Quaternion.Inverse(renderer.transform.rotation)*motionBody.rotation*motionBody.inertiaTensorRotation;
-                actorBody.linearVelocity=hasPlannedMotion ? plannedVelocity : motionBody.linearVelocity;actorBody.angularVelocity=hasPlannedMotion ? plannedAngularVelocity : motionBody.angularVelocity;
+                actorBody.centerOfMass=inverse.MultiplyPoint3x4(centre);
+                actorBody.inertiaTensor=massProperties.InertiaTensor;
+                actorBody.inertiaTensorRotation=Quaternion.Inverse(rendererRotation)*rootRotation*massProperties.InertiaTensorRotation;
+                actorBody.linearVelocity=rootVelocity+Vector3.Cross(rootAngularVelocity,centre-rootPosition);actorBody.angularVelocity=rootAngularVelocity;
                 // Issued here unless a hit already identified this character; either way the cut names that fragment.
                 if(!Source.IsSet)Source=world.Ledger.AddFragment();
                 if(!world.Display.TryShowPreparedRoot(slot,output,Source,renderer.transform.localToWorldMatrix,Matrix4x4.identity))

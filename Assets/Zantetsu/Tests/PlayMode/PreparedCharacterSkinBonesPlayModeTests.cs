@@ -37,10 +37,26 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// and the mesh are shortened to the weighted bone, as a model's preparation does
         /// (<see cref="VpSkinBoneCompaction"/>); <paramref name="map"/>: 1 gives it the model's complete correspondence
         /// (<see cref="VpSkinBones"/>), 2 one whose Transforms are in another order, 0 none.
+        /// <paramref name="bodyOnItsOwn"/>: the motion body on an object of its own under the root, as the scenes build
+        /// their characters (it is then set aside at the preparation, and the hierarchy holds no body).
         /// </summary>
-        private SandboxNpcCharacter BonesSlot(bool shortened, int map, Vector3 at, PoseLodDirector lod, out GameObject setup, out Transform hullOnly)
+        private SandboxNpcCharacter BonesSlot(bool shortened, int map, Vector3 at, PoseLodDirector lod, out GameObject setup, out Transform hullOnly, bool bodyOnItsOwn = false)
         {
             SkinnedMeshRenderer r = LentBonedRig(out Transform bone, out GameObject root, out Rigidbody motion);
+            if (bodyOnItsOwn)
+            {
+                Object.DestroyImmediate(motion);
+                var motionObject = new GameObject("NPC motion body");
+                motionObject.transform.SetParent(root.transform, false);
+                motion = motionObject.AddComponent<Rigidbody>();
+                motion.isKinematic = true;
+                motion.useGravity = false;
+                motion.automaticCenterOfMass = motion.automaticInertiaTensor = false;
+                motion.mass = 12f;
+                motion.centerOfMass = Vector3.up;
+                motion.inertiaTensor = Vector3.one * 4f;
+            }
+
             Transform Extra(string name, Vector3 local)
             {
                 Transform t = new GameObject(name).transform;
@@ -94,6 +110,148 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         private static T SlotField<T>(SandboxNpcCharacter slot, string name) =>
             (T)typeof(SandboxNpcCharacter).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(slot);
+
+        /// <summary>
+        /// **The bone correspondence is data.** The withdrawal's check of a character's parts passes over
+        /// <see cref="VpSkinBones"/> by its type (DESIGN 9, D-195), which holds only while the type runs nothing: it is
+        /// sealed, a MonoBehaviour directly, and declares these members and no other -- no Unity message among them
+        /// (no update, nothing on being enabled, disabled or destroyed). A member added to it has to be weighed
+        /// against that exemption, and this case is where that shows.
+        /// </summary>
+        [Test]
+        public void TheBoneCorrespondence_IsData_ItDeclaresNoUnityMessage_AndNothingBeyondItsReaders()
+        {
+            System.Type type = typeof(VpSkinBones);
+            Assert.That(type.IsSealed, Is.True, "no type derived from it can add a message");
+            Assert.That(type.BaseType, Is.EqualTo(typeof(MonoBehaviour)));
+            string[] declared = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                .Select(m => m.Name).OrderBy(n => n, System.StringComparer.Ordinal).ToArray();
+            Assert.That(declared, Is.EqualTo(new[] { "BoneAt", "Find", "IsConsistentWith", "Set", "get_BoneCount", "get_Map" }), "its readers and its one setter, nothing else");
+            string[] messages =
+            {
+                "Awake", "Start", "Update", "LateUpdate", "FixedUpdate", "OnEnable", "OnDisable", "OnDestroy", "OnValidate", "Reset", "OnGUI",
+                "OnTransformParentChanged", "OnTransformChildrenChanged", "OnBecameVisible", "OnBecameInvisible", "OnWillRenderObject", "OnRenderObject",
+                "OnPreCull", "OnPreRender", "OnPostRender", "OnAnimatorMove", "OnAnimatorIK", "OnApplicationQuit", "OnApplicationPause", "OnApplicationFocus",
+                "OnDrawGizmos", "OnDrawGizmosSelected", "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit", "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit",
+                "OnJointBreak", "OnParticleCollision", "OnBeforeTransformParentChanged", "OnRectTransformDimensionsChange", "OnDidApplyAnimationProperties",
+            };
+            Assert.That(declared.Intersect(messages), Is.Empty, "it declares no Unity message");
+            FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields.Select(f => f.Name).OrderBy(n => n, System.StringComparer.Ordinal).ToArray(), Is.EqualTo(new[] { "bones", "map" }), "it holds its map and its Transforms, nothing else");
+        }
+
+        // The correspondence as it stands: its map and every Transform, in order.
+        private static (VpSkinBoneMap map, Transform[] bones, bool enabled) Correspondence(VpSkinBones bones) =>
+            (bones.Map, Enumerable.Range(0, bones.BoneCount).Select(bones.BoneAt).ToArray(), bones.enabled);
+
+        /// <summary>
+        /// **A character with its bone correspondence is withdrawn by its parts, keeps the correspondence, and is
+        /// reused** (TL, 2026-10-05: the connection D-195 left out). A slot built as the scenes build their characters
+        /// -- the motion body on an object of its own, the shortened renderer with its model's complete correspondence
+        /// beside it -- is prepared with its parts as what its cut withdraws; before, the correspondence, an enabled
+        /// MonoBehaviour, was taken for an update not named and the whole root was kept. The individual is cut through
+        /// the ordinary detector and published; the character leaves by its parts -- the hierarchy stays, not drawn,
+        /// not posed -- and the correspondence is as it was: there, enabled, its map and every Transform the same, one
+        /// correspondence with the model's renderer. The slot comes back, is prepared again by its parts, and its next
+        /// individual is cut on the hull whose bone the renderer does not list, resolved by that correspondence.
+        /// <para>
+        /// **What is not that type is refused as before.** The same slot holding an update nobody named keeps its whole
+        /// root, and so does one holding a component with an OnDisable of its own, each with the reason it had.
+        /// </para>
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ACharacterWithItsBoneCorrespondence_LeavesByItsParts_KeepsTheCorrespondence_AndIsReused_AndAnUnknownUpdateIsStillRefused()
+        {
+            ColdWorld();
+            coldWorld.Driver.RemainingMainSeconds = () => 1.0;
+            SandboxNpcCharacter slot = BonesSlot(true, 1, Vector3.zero, null, out GameObject setup, out Transform hullOnly, bodyOnItsOwn: true);
+            SandboxNpcCharacter withUpdate = BonesSlot(true, 1, new Vector3(0f, 0f, 40f), null, out GameObject updateSetup, out Transform _, bodyOnItsOwn: true);
+            SandboxNpcCharacter withListener = BonesSlot(true, 1, new Vector3(0f, 0f, 80f), null, out GameObject listenerSetup, out Transform _, bodyOnItsOwn: true);
+            SandboxNpcCharacter without = BonesSlot(false, 0, new Vector3(0f, 0f, 120f), null, out GameObject withoutSetup, out Transform _, bodyOnItsOwn: true);
+            // Before any of them is prepared (their Start comes with the next frame): an update nobody names on one, a
+            // component with an OnDisable of its own -- turned off, so that only the OnDisable is what refuses it -- on another.
+            withUpdate.CharacterRoot.AddComponent<WithdrawalPoseStandIn>();
+            withListener.CharacterRoot.AddComponent<WithdrawalDisableListener>().enabled = false;
+            yield return UntilPrepared(slot, withUpdate, withListener, without);
+            Assert.That(new[] { slot.Failure, withUpdate.Failure, withListener.Failure, without.Failure }, Is.All.Null);
+
+            VpSkinBones bones = slot.CharacterRoot.GetComponentInChildren<VpSkinBones>(true);
+            Assert.That(bones, Is.Not.Null, "the character carries its model's complete bone correspondence");
+            SkinnedMeshRenderer model = bones.GetComponent<SkinnedMeshRenderer>();
+            Assert.That(bones.enabled && bones.gameObject.activeInHierarchy, Is.True, "an enabled component of a live object, as the scenes have it");
+            Assert.That(bones.IsConsistentWith(model, out string why), Is.True, why);
+            Assert.That(slot.MotionBodyAside, Is.True);
+            Assert.That(slot.WithdrawsParts, Is.True, "its parts are what its cut withdraws: " + slot.WholeRootReason);
+            Assert.That(without.WithdrawsParts, Is.True, "as for a character with no correspondence: " + without.WholeRootReason);
+            Assert.That(withUpdate.WithdrawsParts, Is.False, "an update nobody named still keeps the whole root");
+            Assert.That(withUpdate.WholeRootReason, Does.StartWith("an update not named is running: WithdrawalPoseStandIn"));
+            Assert.That(withListener.WithdrawsParts, Is.False, "and so does a component with an OnDisable of its own");
+            Assert.That(withListener.WholeRootReason, Does.StartWith("a component has an OnDisable of its own: WithdrawalDisableListener"));
+            TestContext.Out.WriteLine("with the correspondence: by parts " + slot.WithdrawsParts + "; with an update not named: " + withUpdate.WholeRootReason + "; with an OnDisable: " + withListener.WholeRootReason);
+            var before = Correspondence(bones);
+            Assert.That(before.bones.Length, Is.EqualTo(4));
+
+            // The first individual: cut, published, withdrawn by its parts.
+            ActivateStill(slot);
+            VpPreparedCharacterCut first = slot.Handle;
+            var detector = new SlashHitDetector(coldWorld, in k_characterHitSettings);
+            detector.AddCharacter(first);
+            yield return null;
+            List<SlashHitConfirmed> cut = Evaluate(detector, PlaneSweep(1, new double3(0, 1, 0), new double3(0.125, 0.125, 0.125), new double3(1, 0, 0)), 1);
+            Assert.That(cut.Count, Is.EqualTo(1), "the Slash through the body hits it");
+            Assert.That(cut[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
+            Assert.That(first.IsWithdrawn && first.WithdrawsParts, Is.True, "withdrawn at the publication, by its parts");
+            Assert.That(slot.CharacterRoot.activeInHierarchy, Is.True, "the hierarchy stays");
+            Assert.That(slot.Renderer.enabled, Is.False, "not drawn");
+            Assert.That(slot.CharacterRoot.GetComponent<PoseTablePlayer>().enabled, Is.False, "not posed");
+            void SameCorrespondence(string when)
+            {
+                Assert.That(bones != null && bones.enabled && bones.gameObject.activeInHierarchy, Is.True, when + ": the correspondence is there, as it was");
+                var now = Correspondence(bones);
+                Assert.That(now.map, Is.SameAs(before.map), when + ": its map");
+                Assert.That(now.bones, Is.EqualTo(before.bones), when + ": every Transform, in order");
+                Assert.That(bones.IsConsistentWith(model, out string broken), Is.True, when + ": " + broken);
+            }
+
+            SameCorrespondence("after the withdrawal by parts");
+            yield return UntilCommitted(cut[0].Operation);
+            SameCorrespondence("after the commit");
+
+            // The slot again: prepared by its parts, and the next individual cut on the hull the correspondence resolves.
+            for (int i = 0; i < 60 && !slot.IsReturnReady; i++) yield return null;
+            Assert.That(slot.IsReturnReady, Is.True);
+            Assert.That(slot.TryReprepare(), Is.True, slot.Failure);
+            yield return UntilPrepared(slot);
+            Assert.That(slot.IsPrepared, Is.True, slot.Failure);
+            Assert.That(slot.WithdrawsParts, Is.True, "prepared again, by its parts again: " + slot.WholeRootReason);
+            SameCorrespondence("after the slot was prepared again");
+            ActivateStill(slot);
+            VpPreparedCharacterCut second = slot.Handle;
+            Assert.That(slot.Activations, Is.EqualTo(2));
+            Assert.That(second, Is.Not.SameAs(first));
+            Assert.That(slot.Renderer.enabled, Is.True, "drawn again");
+            Assert.That(SlotField<Transform[]>(slot, "_convexBones")[1], Is.SameAs(hullOnly), "its second hull is on the bone the renderer does not list");
+            Assert.That(slot.Renderer.bones.Contains(hullOnly), Is.False);
+            detector.AddCharacter(second);
+            yield return null;
+            // Aimed at the hull on the unweighted bone, four metres along z: through its centre, level.
+            Vector3 centre = hullOnly.position;
+            List<SlashHitConfirmed> mine = Evaluate(detector, PlaneSweep(2, new double3(0, 1, 0), new double3(centre.x + 0.125, centre.y + 0.125, centre.z + 0.125), new double3(1, 0, 0)), 2)
+                .FindAll(h => h.Fragment == second.Source);
+            Assert.That(mine.Count, Is.EqualTo(1), "the second individual is hit on the hull its correspondence resolved");
+            Assert.That(mine[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Published));
+            Assert.That(second.IsWithdrawn && second.WithdrawsParts, Is.True, "and it too leaves by its parts");
+            SameCorrespondence("after the second individual's withdrawal");
+            yield return UntilCommitted(mine[0].Operation);
+
+            Object.Destroy(setup);
+            Object.Destroy(updateSetup);
+            Object.Destroy(listenerSetup);
+            Object.Destroy(withoutSetup);
+            yield return null;
+            for (int i = 0; i < 120 && !coldWorld.Shutdown(); i++) yield return null;
+            Assert.That(coldWorld.IsReleased, Is.True);
+        }
 
         /// <summary>
         /// **A hull on a bone the renderer no longer lists** (TL, 2026-10-05). A slot whose renderer lists the weighted

@@ -102,7 +102,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             if(_vertices.IsCreated)_disposables.Insert(0,new EarlierBank{arrays=new IDisposable[]{_vertices,_faceOffsets,_faceIndices,_faceEdges,_edges}});
             var source=NewAuthoredShape(1);CompleteRequestBoxEdges(source);
             Assert.That(coldWorld.TryPrepareCharacterCut(rig,new[]{0,1,2,3},4,source.BankOf(0),new[]{source.Convex(0)},
-                new[]{rig.transform},coldWarm,rig.gameObject,motion,out var handle),Is.True);
+                new[]{rig.transform},coldWarm,rig.gameObject,VpCharacterMassProperties.FromBody(motion,rig.transform),out var handle),Is.True);
             coldHandles.Add(handle);return handle;
         }
         ProvisionalCutTransaction Transaction(CutOperationId operation)
@@ -157,7 +157,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var source=NewAuthoredShape(1);coldWarm=new VpPhysicsColdPreparation();
             if(completeEdges)CompleteRequestBoxEdges(source);
             Assert.That(coldWorld.TryPrepareCharacterCut(rig,new[]{0,1,2,3},4,source.BankOf(0),new[]{source.Convex(0)},
-                new[]{rig.transform},coldWarm,rig.gameObject,motion,out var handle),Is.True);coldHandles.Add(handle);
+                new[]{rig.transform},coldWarm,rig.gameObject,VpCharacterMassProperties.FromBody(motion,rig.transform),out var handle),Is.True);coldHandles.Add(handle);
             var plane=new float4(1,0,0,-.25f);
             Assert.That(handle.TryCut(plane,float3.zero).Outcome,Is.EqualTo(VpCharacterCutOutcome.Unavailable));
             Assert.That(oldHit.gameObject.activeInHierarchy,Is.True);yield return null;

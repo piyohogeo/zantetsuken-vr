@@ -53,7 +53,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var source = NewAuthoredShape(1);
             CompleteRequestBoxEdges(source);
             if (!coldWorld.TryPrepareCharacterCut(r, new[] { 0, 1, 2, 3 }, 4, source.BankOf(0), new[] { source.Convex(0) },
-                    new[] { bone }, coldWarm, lent, root, motion, out var handle)) return null;
+                    new[] { bone }, coldWarm, lent, root, VpCharacterMassProperties.FromBody(motion, root.transform), out var handle)) return null;
             coldHandles.Add(handle);
             return handle;
         }
