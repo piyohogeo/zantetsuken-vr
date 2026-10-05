@@ -842,6 +842,8 @@ namespace Zantetsu.Sandbox
 
                 int published = _crowd.PublishedCycles - _mpPublishedAtBegin;
                 double seconds = MobPlanNow;
+                // The reuse mode says its counts once, at the instance's end, and nothing here.
+                if (XrAudioGuidDiagnosis.Current.Mode != XrAudioGuidDiagnosis.DiagnosisMode.Reuse) Log("xr audio guid diagnosis: " + XrAudioGuidDiagnosis.Current.Describe());
                 Log("mobplan summary: seconds=" + seconds.ToString("F2", Inv) + " liveAtBegin=" + _mpLiveAtBegin + " liveAtEnd=" + _crowd.LiveCount
                     + " cyclesPublished=" + published + " stale=" + (_crowd.StaleCycles - _mpStaleAtBegin) + " failed=" + _crowd.FailedCycles
                     + " replacements=" + (_crowd.ReplacementsAdded - _mpReplacementsAtBegin) + " playerTravel=" + _mpTravel.ToString("F2", Inv)
