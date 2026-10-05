@@ -567,7 +567,7 @@ namespace Zantetsu.MeshCut
     /// history once, the first time a build meets it; a build over an unchanged history allocates nothing for them.
     /// </para>
     /// </summary>
-    public sealed class VpMultiCutSnapshot : IDisposable
+    public sealed partial class VpMultiCutSnapshot : IDisposable
     {
         // The room (TL, 2026-10-05). The large arrays of plain numbers are rooms (VpNumericRoom): on reserved address
         // space when the snapshot was made for a display (TryCreateOnBacking), where growing is more pages committed
@@ -810,6 +810,8 @@ namespace Zantetsu.MeshCut
         {
             try
             {
+                Room(ref _parts, count);
+                _partByRoot.EnsureCapacity(count);
                 if (_validatedHas.Length < count)
                 {
                     Array.Resize(ref _validatedHas, count);
@@ -885,7 +887,7 @@ namespace Zantetsu.MeshCut
             }
 
             _disposed = true;
-            IsBuilt = false;
+            Clear();
             DisposeRooms();
         }
 
@@ -1154,7 +1156,7 @@ namespace Zantetsu.MeshCut
         private bool[] _phasedAnswered = Array.Empty<bool>(), _phasedChecked = Array.Empty<bool>();
 
         /// <summary>Tests only: what render fragment <paramref name="index"/> stands as (the placement it asks for).</summary>
-        internal (LogicalFragmentId fragment, CutOperationId operation, float side) StandsAsForTest(int index) => (_standsAs[index].fragment, _standsAs[index].operation, _standsAs[index].side);
+        internal (LogicalFragmentId fragment, CutOperationId operation, float side) StandsAsForTest(int index) => (StandsAt(index).fragment, StandsAt(index).operation, StandsAt(index).side);
 
         /// <summary>Tests only (a cost split): each render fragment's placement is asked and set, and nothing more is built from it.</summary>
         internal bool placeQueriesOnlyForTest;
@@ -1384,15 +1386,15 @@ namespace Zantetsu.MeshCut
         public bool TryGetBranch(int index, out VpMultiCutBranch branch)
         {
             bool ok = IsBuilt && index >= 0 && index < _branchCount;
-            branch = ok ? _branches[index] : default;
+            branch = ok ? BranchAt(index) : default;
             return ok;
         }
 
         public bool TryGetCandidate(int index, out VpClipCandidate candidate, out VpClipSelectionState state)
         {
             bool ok = IsBuilt && index >= 0 && index < _candidateCount;
-            candidate = ok ? _candidates[index] : default;
-            state = ok ? _states[index] : default;
+            candidate = ok ? CandidateAt(index) : default;
+            state = ok ? StateAt(index) : default;
             return ok;
         }
 
@@ -1407,7 +1409,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            identity = _sideIdentity[index];
+            identity = SideAt(index);
             return true;
         }
 
@@ -1420,7 +1422,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            identity = _capIdentity[index];
+            identity = CapIdentityAt(index);
             return true;
         }
 
@@ -1645,6 +1647,9 @@ namespace Zantetsu.MeshCut
                     "there is no settled structure to take, or it was settled over other registrations");
             }
 
+            if (structure._composite)
+                return TryBuildIncremental(structure._structurePool, structure, ledger, registrations, placement);
+
             Clear();
             _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None;
@@ -1845,7 +1850,7 @@ namespace Zantetsu.MeshCut
                 VpMultiCutRegistration registration = registrations[renderFragment.registration];
                 _placeInto.renderFragments++;
                 if (!TryPlacementOf(
-                        placement, registration, _standsAs[r], _placeInto, r, out Matrix4x4 geometryLocalToWorld))
+                        placement, registration, StandsAt(r), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
@@ -1854,7 +1859,7 @@ namespace Zantetsu.MeshCut
                     && renderFragment.conditionCount == 0 && renderFragment.capCount == 0
                     && renderFragment.clip.PlaneCount == 0
                     && renderFragment.conditionStart == _conditionCount && renderFragment.capStart == _capCount
-                    && _branches[renderFragment.branchStart].selectedCount == 0
+                    && BranchAt(renderFragment.branchStart).selectedCount == 0
                     && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld))
                 {
                     // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
@@ -1884,6 +1889,7 @@ namespace Zantetsu.MeshCut
 
         private void Clear()
         {
+            ReleaseStructure();
             IsBuilt = false;
             _branchCount = 0;
             _candidateCount = 0;
@@ -2189,7 +2195,7 @@ namespace Zantetsu.MeshCut
                 // Everything below reads the ledger and nothing else: every operation in the order it was
                 // admitted, and for each one the lineage of the fragment it cut. It is as structural as the walk
                 // above, and is skipped for the same reason -- a settled structure has answered it already.
-                for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+                for (int position = 0; TryReadStructureOperation(ledger, position, out LogicalCutOperation operation); position++)
                 {
                     ValidateCounts.operations++;
                     VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
@@ -2667,7 +2673,7 @@ namespace Zantetsu.MeshCut
             {
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 _placeInto.renderFragments++;
-                _phasedAnswered[r] = TryQueryPlacement(placement, registrations[renderFragment.registration], _standsAs[r], _placeInto, out _phasedPlacements[r], out _phasedChecked[r]);
+                _phasedAnswered[r] = TryQueryPlacement(placement, registrations[renderFragment.registration], StandsAt(r), _placeInto, out _phasedPlacements[r], out _phasedChecked[r]);
                 if (!_phasedAnswered[r] && refusedAt == n) refusedAt = r;
             }
 
@@ -2916,7 +2922,7 @@ namespace Zantetsu.MeshCut
             // This render fragment's own placement, decided when it was made: the world planes of its boundaries and
             // its cap polygons are all made with that one matrix.
             Matrix4x4 geometryLocalToWorld = renderFragment.geometryLocalToWorld;
-            VpMultiCutBranch representative = _branches[renderFragment.branchStart];
+            VpMultiCutBranch representative = BranchAt(renderFragment.branchStart);
 
             // 1. The selected boundaries: the geometry's own plane, the world plane, the condition and the half-space.
             int selected = representative.selectedCount;
@@ -2928,7 +2934,7 @@ namespace Zantetsu.MeshCut
             int conditionStart = _conditionCount;
             for (int j = 0; j < selected; j++)
             {
-                VpClipCandidate candidate = _candidates[representative.candidateStart + j];
+                VpClipCandidate candidate = CandidateAt(representative.candidateStart + j);
                 if (!VpCutPlane.TryGeometryLocalToWorld(candidate.plane, lineageToGeometryLocal, out float4 local)
                     || !VpCutPlane.TryGeometryLocalToWorld(local, geometryLocalToWorld, out float4 world))
                 {
@@ -2961,13 +2967,12 @@ namespace Zantetsu.MeshCut
             }
 
             // 3. One cap per selected boundary, cut by the other selected half-spaces.
-            _selectedCandidates.Set(representative.candidateStart, selected);
-            _selectedStates.Set(representative.candidateStart, selected);
+            SetSelectedRange(representative.candidateStart, selected);
             _selectedPlanes.Set(0, selected);
             int capStart = _capCount;
             for (int j = 0; j < selected; j++)
             {
-                VpClipBoundary boundary = _candidates[representative.candidateStart + j].boundary;
+                VpClipBoundary boundary = CandidateAt(representative.candidateStart + j).boundary;
                 VpMultiCutBuildOutcome sectioned = TryTakeSection(
                     boundary.face, _localPlanes[j], registration, geometryLocalToWorld, reuseFrom, out int initial,
                     out int sectionSlot);
@@ -3379,7 +3384,7 @@ namespace Zantetsu.MeshCut
         /// <summary>A read-only look at part of an array this snapshot owns, for the calls that take lists.</summary>
         private sealed class RangeList<T> : IReadOnlyList<T>
         {
-            private readonly T[] _items;
+            private T[] _items;
             private int _start;
             private int _count;
 
@@ -3402,6 +3407,8 @@ namespace Zantetsu.MeshCut
                     return _items[_start + index];
                 }
             }
+
+            public void Use(T[] items) { _items = items; }
 
             public void Set(int start, int count)
             {

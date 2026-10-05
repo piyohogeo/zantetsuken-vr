@@ -209,6 +209,9 @@ namespace Zantetsu.MeshCut.Tests
                     Is.True,
                     "show the body");
                 scene.placements.of[root] = k_geometryLocalToOwner;
+                var unrelated = ledger.AddFragment();
+                Assert.That(scene.display.TryShow(unrelated, AppendCube(scene.storage), k_geometryLocalToOwner), Is.True);
+                scene.placements.of[unrelated] = k_geometryLocalToOwner;
 
                 var plane = new float4(0f, 1f, 0f, 0f);
                 var (cut, positive, negative) = Cut(scene, root, plane);
@@ -216,6 +219,7 @@ namespace Zantetsu.MeshCut.Tests
                 scene.placements.of[negative] = k_geometryLocalToOwner;
                 Collect(scene);
 
+                object unrelatedStructure = scene.display.StructureForTest(unrelated);
                 // A collection that changes nothing settles no structure again.
                 long structures = scene.display.StructureBuilds;
                 long validations = scene.display.StructureValidations;
@@ -236,6 +240,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(
                     scene.display.StructureBuilds, Is.GreaterThan(structures),
                     "so the structure was settled again, at the ordinary boundary and not before it");
+                Assert.That(scene.display.StructureForTest(unrelated), Is.SameAs(unrelatedStructure), "unrelated registration survives real Geometry Commit and split");
                 AssertDrawn(scene, positive, "the positive child after the commit");
                 AssertDrawn(scene, negative, "the negative child after the commit");
 

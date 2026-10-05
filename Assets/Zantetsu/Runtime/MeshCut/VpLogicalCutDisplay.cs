@@ -425,6 +425,8 @@ namespace Zantetsu.MeshCut
         internal sealed class Shown
         {
             public LogicalFragmentId fragment;
+            internal long readFamilyRevision = -1;
+            internal LogicalFragmentId readFragment;
             public VpStoredGeometry geometry;
             public VpGeometryReference reference;
 
@@ -717,18 +719,18 @@ namespace Zantetsu.MeshCut
         private bool _hasSnapshot;
 
         /// <summary>
-        /// What the adopted snapshot's structure was settled from: the ledger's revision then, and this display's own.
-        /// Both must still hold for that structure to be taken over instead of settled again. -1 means nothing has
-        /// been settled yet.
+        /// Reusable immutable structural results, shared by the adopted and building snapshots. Dirty families are
+        /// found from the ledger's family revisions and registration inputs, never the display-wide revision.
         /// </summary>
-        private long _structureLedgerRevision = -1;
-        private long _structureInputRevision = -1;
+        private readonly VpMultiCutSnapshot.StructurePool _structurePool;
+        internal object StructureForTest(LogicalFragmentId root) => _snapshot.StructureForTest(root);
+        internal long FamiliesRebuiltForTest => _snapshot.FamiliesRebuilt + _building.FamiliesRebuilt;
 
         /// <summary>
         /// Counts the changes to what this display itself puts into a snapshot: a registration shown or let go, a
         /// geometry commit changing what a body is and reflects, a placement lookup being changed. The ledger counts
-        /// its own; this counts the rest, so that between them nothing a structure was settled from can change
-        /// unnoticed.
+        /// its own. This remains a diagnostic counter; structural invalidation compares family revisions and
+        /// registration inputs directly, so a placement change cannot invalidate unrelated families.
         /// </summary>
         private long _inputRevision;
         private bool _drawRegisteredThisFrame;
@@ -774,6 +776,7 @@ namespace Zantetsu.MeshCut
             _settings = settings;
             _snapshot = snapshot;
             _building = building;
+            _structurePool = new VpMultiCutSnapshot.StructurePool(instanceCapacity);
             _capJobs = capJobs;
             _geometries = new GeometryTable(instanceCapacity);
             _candidateGeometries = new GeometryTable(instanceCapacity);
@@ -3660,6 +3663,11 @@ namespace Zantetsu.MeshCut
             {
                 return TryCollectAndUploadStages();
             }
+            catch (OutOfMemoryException exception)
+            {
+                return FailRoom("snapshot structure", _shown.Count, _instanceCapacity, _limits.instances,
+                    "memory could not be had: " + exception.Message);
+            }
             finally
             {
                 if (_collectStage >= 0) s_collectStages[_collectStage].End();
@@ -3693,8 +3701,14 @@ namespace Zantetsu.MeshCut
                 // Let go when retired, or when replaced by cuts whose every piece has been retired before a geometry
                 // commit took the registration over (DESIGN 4.5.3, 7.10): nothing of it can be drawn or cut again, and
                 // holding it would hold its lineage's room for good. One whose pieces still live is kept, as before.
-                entry.dropping = !known || state == LogicalFragmentState.Retired
-                    || (state == LogicalFragmentState.Replaced && !HasLiveDescendant(entry.fragment));
+                _ledger.TryGetFamily(entry.fragment, out _, out long familyRevision);
+                if (entry.readFamilyRevision != familyRevision || entry.readFragment != entry.fragment)
+                {
+                    entry.dropping = !known || state == LogicalFragmentState.Retired
+                        || (state == LogicalFragmentState.Replaced && !HasLiveDescendant(entry.fragment));
+                    entry.readFamilyRevision = familyRevision;
+                    entry.readFragment = entry.fragment;
+                }
                 entry.awaiting = known && state == LogicalFragmentState.Live
                     && _ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active)
                     && !_ledger.TryGetPreparedAnchorDistribution(active, out _);
@@ -3723,23 +3737,8 @@ namespace Zantetsu.MeshCut
                 return FailRoom("room for the registrations", _shown.Count, _instanceCapacity, _limits.instances, registrationsFailure);
             }
 
-            long ledgerRevision = _ledger.Revision;
-            long inputRevision = _inputRevision;
-            bool structureStillHolds = _hasSnapshot
-                && _snapshot.IsBuilt
-                && _structureLedgerRevision == ledgerRevision
-                && _structureInputRevision == inputRevision
-                && _snapshot.RegistrationCount == _registrations.Count;
-            VpMultiCutBuildOutcome outcome = structureStillHolds
-                ? _building.TryBuildPlacementsFrom(_snapshot, _ledger, _registrations, Placement)
-                : _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
-            if (structureStillHolds && outcome == VpMultiCutBuildOutcome.CapacityExceeded)
-            {
-                // The candidate could not hold that structure. Settling it again is what answers that, and only then
-                // is a shortage this display's to answer.
-                structureStillHolds = false;
-                outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
-            }
+            VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
+                _structurePool, _snapshot, _ledger, _registrations, Placement);
 
             // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
             // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
@@ -3761,7 +3760,7 @@ namespace Zantetsu.MeshCut
                     return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
                 }
 
-                outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
+                outcome = _building.TryBuildIncremental(_structurePool, _snapshot, _ledger, _registrations, Placement);
             }
 
             CapPolygonBuilds += _building.SectionBuildCount;
@@ -3964,13 +3963,9 @@ namespace Zantetsu.MeshCut
             }
 
             EnterCollectStage(8);
-            // 8. Everything the GPU needed has arrived: the candidate becomes the adopted snapshot, and the arrays and
-            //    the snapshots change places. The revisions this structure answers to are recorded **here**, where the
-            //    update is really taken: a build that was refused anywhere above leaves them as they were, so the next
-            //    frame settles the structure again rather than treating an update it never took as dealt with.
+            // 8. Only the complete candidate is adopted. Shared family results stay owned by both snapshots
+            //    until the old reader is cleared on the next build; GPU resources keep their existing retirement.
             Adopt(commands);
-            _structureLedgerRevision = ledgerRevision;
-            _structureInputRevision = inputRevision;
             CommandUploads++;
 
             EnterCollectStage(9);
