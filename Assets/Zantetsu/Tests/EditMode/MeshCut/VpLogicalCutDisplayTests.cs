@@ -524,9 +524,8 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "and so was the publication");
                     Assert.That(positive.IsSet && negative.IsSet, Is.True);
 
-                    // A fragment retired, which nothing of the display was told about either. It is added and then
-                    // settled **before** the retirement, so that what the next settlement answers to is the
-                    // retirement alone and not the addition that came with it.
+                    // A different, unregistered family does not invalidate the displayed structure, whether
+                    // it is added or retired. Global ledger Revision is not a dirty flag for this display.
                     LogicalFragmentId other = ledger.AddFragment();
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True, "settle with that fragment added");
@@ -536,8 +535,14 @@ namespace Zantetsu.MeshCut.Tests
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True, "settle after the retirement");
                     Assert.That(
-                        display.StructureBuilds, Is.GreaterThan(structures),
-                        "the retirement on its own was noticed, though nothing of the display made it");
+                        display.StructureBuilds, Is.EqualTo(structures),
+                        "an unrelated family's retirement does not rebuild the displayed family");
+
+                    Assert.That(ledger.Retire(positive), Is.True, "retire a displayed descendant without notifying the display");
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "settle after the relevant retirement");
+                    Assert.That(display.StructureBuilds, Is.GreaterThan(structures), "the displayed family did change");
+                    Assert.That(display.RenderFragmentCount, Is.EqualTo(1), "only the live sibling remains");
                 }
             }
         }

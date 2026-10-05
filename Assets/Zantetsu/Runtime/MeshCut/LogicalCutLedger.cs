@@ -69,8 +69,16 @@ namespace Zantetsu.MeshCut
     /// </summary>
     public sealed class LogicalCutLedger
     {
+        private sealed class Family
+        {
+            internal LogicalFragmentId root;
+            internal long revision;
+            internal readonly List<int> operations = new List<int>();
+        }
+
         private struct Fragment
         {
+            public Family family;
             public LogicalFragmentState state;
             public CutOperationId activeOperation;
 
@@ -181,9 +189,27 @@ namespace Zantetsu.MeshCut
         public long Revision { get; private set; }
 
         /// <summary>Records that something a reader could see has changed here.</summary>
-        private void Changed()
+        private void Changed(LogicalFragmentId fragment)
         {
             Revision++;
+            _fragments[fragment.value - 1].family.revision++;
+        }
+
+        // A descendant keeps its original family directly: invalidation never walks history.
+        internal bool TryGetFamily(LogicalFragmentId fragment, out LogicalFragmentId root, out long revision)
+        {
+            if (!TryIndex(fragment, out int index)) { root = default; revision = 0; return false; }
+            Family family = _fragments[index].family;
+            root = family.root;
+            revision = family.revision;
+            return true;
+        }
+
+        internal bool TryGetFamilyOperation(LogicalFragmentId root, int position, out LogicalCutOperation operation)
+        {
+            Family family = _fragments[root.value - 1].family;
+            if ((uint)position >= (uint)family.operations.Count) { operation = default; return false; }
+            return TryGetOperationAtAdmission(family.operations[position], out operation);
         }
 
         /// <summary>
@@ -430,7 +456,7 @@ namespace Zantetsu.MeshCut
             });
             fragment.activeOperation = operation;
             _fragments[sourceIndex] = fragment;
-            Changed();
+            Changed(source);
             Budget.Take();
             return LogicalCutAdmission.Admitted;
         }
@@ -517,7 +543,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = positive;
             operation.preparedNegative = negative;
             _operations[operationIndex] = operation;
-            Changed();
+            Changed(operation.source);
 
             distribution = result;
             return AnchorPreparationOutcome.Prepared;
@@ -616,7 +642,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = null;
             operation.preparedNegative = null;
             _operations[operationIndex] = operation;
-            Changed();
+            Changed(operation.source);
 
             Fragment source = _fragments[sourceIndex];
             source.state = LogicalFragmentState.Replaced;
@@ -627,7 +653,7 @@ namespace Zantetsu.MeshCut
             // for the lifetime of the ledger. The list itself is not cleared — the children's sets are separate lists.
             source.anchors = null;
             _fragments[sourceIndex] = source;
-            Changed();
+            Changed(operation.source);
 
             return LogicalCutResultOutcome.Applied;
         }
@@ -671,7 +697,7 @@ namespace Zantetsu.MeshCut
             // A retired source is nothing's target any more, so it lets its set go as well. Nothing inherited it.
             source.anchors = null;
             _fragments[sourceIndex] = source;
-            Changed();
+            Changed(new LogicalFragmentId(sourceIndex + 1));
 
             return LogicalCutResultOutcome.Applied;
         }
@@ -727,7 +753,7 @@ namespace Zantetsu.MeshCut
             record.activeOperation = default;
             record.anchors = null;
             _fragments[index] = record;
-            Changed();
+            Changed(fragment);
             return true;
         }
 
@@ -747,7 +773,7 @@ namespace Zantetsu.MeshCut
             Fragment record = _fragments[index];
             record.authority = checked(record.authority + 1);
             _fragments[index] = record;
-            Changed();
+            Changed(fragment);
         }
 
         // The authority check every result goes through (DESIGN 8: Source生存性、SourceのActive CutOperationId、当該
@@ -798,7 +824,7 @@ namespace Zantetsu.MeshCut
                 {
                     source.activeOperation = default;
                     _fragments[sourceIndex] = source;
-                    Changed();
+                    Changed(operation.source);
                 }
 
                 return LogicalCutResultOutcome.Stale;
@@ -828,7 +854,7 @@ namespace Zantetsu.MeshCut
             operation.preparedPositive = null;
             operation.preparedNegative = null;
             _operations[operationIndex] = operation;
-            Changed();
+            Changed(operation.source);
             Budget.Return();
         }
 
@@ -919,14 +945,18 @@ namespace Zantetsu.MeshCut
         private LogicalFragmentId NewFragment(List<float3> anchors, CutOperationId origin = default, float originSide = 0f)
         {
             int id = _fragments.Count + 1;
+            Family family = origin.IsSet
+                ? _fragments[_operations[origin.value - 1].source.value - 1].family
+                : new Family { root = new LogicalFragmentId(id) };
             _fragments.Add(new Fragment
             {
+                family = family,
                 state = LogicalFragmentState.Live,
                 anchors = anchors,
                 origin = origin,
                 originSide = originSide,
             });
-            Changed();
+            Changed(new LogicalFragmentId(id));
             return new LogicalFragmentId(id);
         }
 
@@ -934,8 +964,11 @@ namespace Zantetsu.MeshCut
         private CutOperationId NewOperation(Operation record)
         {
             int id = _operations.Count + 1;
+            List<int> admissions = _fragments[record.source.value - 1].family.operations;
+            if (admissions.Capacity == admissions.Count) admissions.Capacity = Math.Max(4, checked(admissions.Count * 2));
             _operations.Add(record);
-            Changed();
+            admissions.Add(id - 1);
+            Changed(record.source);
             return new CutOperationId(id);
         }
 
