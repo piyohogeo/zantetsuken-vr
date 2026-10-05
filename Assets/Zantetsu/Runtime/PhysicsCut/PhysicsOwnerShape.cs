@@ -363,6 +363,42 @@ namespace Zantetsu.PhysicsCut
                 && math.all(_localHi >= _localLo);
         }
 
+        /// <summary>
+        /// How far from the **owner frame's origin** this shape can reach, in the owner's frame (DESIGN 19.1.7, D-193):
+        /// the largest distance from that origin to a corner of the local box above carried by
+        /// <see cref="LocalToOwner"/> -- the box's centre, the shape's offset in its owner and any turn or scale of that
+        /// placement are all in it. The owner's own Transform is not: whoever holds this shape on an owner puts that
+        /// owner's scale and its parents' into it (<see cref="FragmentHitReach.Settle"/>).
+        /// <para>
+        /// Worked out from the box this shape already holds -- eight corners, **no vertex read** -- the first time it
+        /// is asked after the box last changed, and kept. The box changes only while the shape is being built and when
+        /// a prepared pose is written (<see cref="LocalBoundsVersion"/> counts those), never when an owner moves.
+        /// False, with no reach, when the shape has no usable box or its placement is not finite: such a shape is not
+        /// passed over early by anything.
+        /// </para>
+        /// </summary>
+        internal bool TryOwnerReach(out float reach)
+        {
+            if (_ownerReachVersion != _localBoundsVersion)
+            {
+                _ownerReachVersion = _localBoundsVersion;
+                float4x4 placement = LocalToOwner;
+                _ownerReach = TryLocalBounds(out float3 lo, out float3 hi) && FragmentHitReach.TryOwnerReach(lo, hi, in placement, out float r)
+                    ? r
+                    : FragmentHitReach.None;
+            }
+
+            reach = _ownerReach;
+            return reach >= 0f;
+        }
+
+        /// <summary>Counts every change of the local box: what is kept from it elsewhere is of one count.</summary>
+        internal int LocalBoundsVersion => _localBoundsVersion;
+
+        private int _localBoundsVersion;
+        private int _ownerReachVersion = -1;
+        private float _ownerReach = FragmentHitReach.None;
+
         /// <summary>How many pieces of work are still reading this bank.</summary>
         public int WorkUsers => _workUsers;
 
@@ -795,6 +831,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void AddToLocalBounds(float3 lo, float3 hi)
         {
+            _localBoundsVersion++;   // whatever was kept from the box before this is no longer of it
             if (!_localBoundsUsable)
             {
                 return;

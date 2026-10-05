@@ -33,6 +33,7 @@ namespace Zantetsu.PhysicsCut
             GeometryLocalToOwner = geometryLocalToOwner;
             Building = building;
             BuildingWorldConstraint = buildingWorld;
+            SettleHitReach();
         }
 
         // A member of a fused building group (BuildingFusion, 2026-09-29): no Rigidbody of its own -- its colliders
@@ -49,6 +50,7 @@ namespace Zantetsu.PhysicsCut
             Building = building;
             Group = group ?? throw new ArgumentNullException(nameof(group));
             _fusedMass = mass;
+            SettleHitReach();
         }
 
         /// <summary>A member owner of a fused group: made body-less, its mass the value the fusion computed for it.</summary>
@@ -100,6 +102,73 @@ namespace Zantetsu.PhysicsCut
                 _fusedMass = mass;
                 Body = null;   // destroyed by the caller already (a destroyed component compares equal to null)
             }
+
+            SettleHitReach();   // the Root stands under another parent from here: its stretch is read again
+        }
+
+        /// <summary>
+        /// How far from the Root's position this owner's shape can reach in the world (DESIGN 19.1.7, D-193;
+        /// <see cref="FragmentHitReach"/>), or <see cref="FragmentHitReach.None"/> when that cannot be vouched for.
+        /// <para>
+        /// **Settled where the shape and its placement are settled, not while the owner moves**: when this owner is made
+        /// (its shape and its Root given together -- an owner's shape is never replaced; a different shape is a
+        /// different owner), when its Root is put under another parent (<see cref="FuseInto"/>), and whenever
+        /// <see cref="RefreshHitReach"/> is called. A shape whose local box was written again since
+        /// (<see cref="PhysicsOwnerShape.LocalBoundsVersion"/>) is noticed here and settled again before the value is
+        /// given, so a box that changed never leaves an old reach in use. Moving or turning the Root changes nothing of
+        /// it, and nothing reads the Root for it between those moments.
+        /// </para>
+        /// <para>
+        /// **The stretch of the Root is the one read at those moments.** Nothing in the system scales an owner's Root or
+        /// an object above it after the owner is made; whoever adds processing that does -- a scale, or a parent with
+        /// one -- calls <see cref="RefreshHitReach"/> in that same change, before the next evaluation of the Slash hits.
+        /// </para>
+        /// </summary>
+        internal float HitReach
+        {
+            get
+            {
+                if (Shape == null)
+                {
+                    return FragmentHitReach.None;
+                }
+
+                if (_hitReachVersion != Shape.LocalBoundsVersion)
+                {
+                    SettleHitReach();
+                }
+
+                return _hitReach;
+            }
+        }
+
+        /// <summary>Settles <see cref="HitReach"/> again from the shape and from the Root's stretch as it is now.</summary>
+        internal void RefreshHitReach()
+        {
+            SettleHitReach();
+        }
+
+        /// <summary>Observation: how many times a reach was settled for any owner or Provisional side since the session began.</summary>
+        internal static long HitReachSettles;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetHitReachSettles() => HitReachSettles = 0;
+
+        private float _hitReach = FragmentHitReach.None;
+        private int _hitReachVersion = -1;
+
+        private void SettleHitReach()
+        {
+            HitReachSettles++;
+            if (Shape == null)
+            {
+                _hitReach = FragmentHitReach.None;
+                _hitReachVersion = -1;
+                return;
+            }
+
+            _hitReachVersion = Shape.LocalBoundsVersion;
+            _hitReach = FragmentHitReach.Settle(Shape, _rootTransform);
         }
 
         /// <summary>
@@ -287,13 +356,20 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public readonly struct CurrentShape
     {
-        public CurrentShape(LogicalFragmentId fragment, float side, PhysicsOwnerShape shape, Transform owner)
+        public CurrentShape(LogicalFragmentId fragment, float side, PhysicsOwnerShape shape, Transform owner, float reach = -1f)
         {
             Fragment = fragment;
             Side = side;
             Shape = shape;
             Owner = owner;
+            Reach = reach;
         }
+
+        /// <summary>
+        /// How far from <see cref="Owner"/>'s position <see cref="Shape"/> can reach in the world, as its owner (or its
+        /// Provisional side) keeps it (DESIGN 19.1.7, D-193); negative when none can be vouched for.
+        /// </summary>
+        public float Reach { get; }
 
         public LogicalFragmentId Fragment { get; }
 
@@ -490,7 +566,7 @@ namespace Zantetsu.PhysicsCut
                     // The Transform held since the Root was given (a GameObject's Transform never changes), not asked of the
                     // Root at every collection (2026-10-04); the Root's being there is asked above, as before.
                     into.Add(new CurrentShape(entry.Key, 0f, owner.Shape,
-                        PhysicsFragmentOwner.rootTransformReadAgainForTest ? owner.Root.transform : owner.RootTransform));
+                        PhysicsFragmentOwner.rootTransformReadAgainForTest ? owner.Root.transform : owner.RootTransform, owner.HitReach));
                 }
             }
 
@@ -503,7 +579,8 @@ namespace Zantetsu.PhysicsCut
                     PhysicsOwnerShape shape = positive ? pair.PositiveShape : pair.NegativeShape;
                     if (pair.IsStanding(positive) && shape != null && !shape.IsFreed)
                     {
-                        into.Add(new CurrentShape(pair.Source, positive ? 1f : -1f, shape, pair.Side(positive).Root.transform));
+                        // The side's own Root and the side's own shape -- and the reach kept for that pair of them.
+                        into.Add(new CurrentShape(pair.Source, positive ? 1f : -1f, shape, pair.Side(positive).Root.transform, pair.HitReach(positive)));
                     }
                 }
             }

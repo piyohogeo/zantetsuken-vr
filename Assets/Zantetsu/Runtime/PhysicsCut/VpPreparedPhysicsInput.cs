@@ -41,6 +41,7 @@ namespace Zantetsu.PhysicsCut
             _preparedPoseWritten = true;
             _localLo = new float3(float.PositiveInfinity); _localHi = new float3(float.NegativeInfinity);
             _localBoundsUsable = true;
+            _localBoundsVersion++;   // the box is made again from here: nothing kept from the one before is of it
             for (int c = 0; c < ConvexCount; c++)
             {
                 var range = _convexes[c]; var bank = _banks[c]; var frame = frames[c];

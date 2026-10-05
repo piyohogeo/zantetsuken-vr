@@ -223,6 +223,7 @@ namespace Zantetsu.Sandbox
                     + " (at a uniform scale other than 1: " + scaled + "); refused " + refused.Count + ", still waiting " + open.Count + ", never run (inactive or disabled) " + idle.Count
                     + "; hull groups " + (_world.Hulls != null ? _world.Hulls.GroupCount : 0) + "; storage: " + _world.Storage.DescribeRoom());
                 Log("city walk placed search (after the registrations): placement told for " + all.Count(c => c.PlacementTold) + " of " + all.Count(c => c.Candidate != null) + " deferred cut targets; " + CityWalkPlacedSearch());
+                Log("city walk fragment reach (after the registrations): " + CityWalkFragmentReach());
                 foreach (PlayableCityCuttable c in refused) Log("city walk NOT registered: " + c.gameObject.name + ": " + c.Failure);
                 foreach (PlayableCityCuttable c in open) Log("city walk NOT registered: " + c.gameObject.name + ": still waiting at the deadline");
                 foreach (PlayableCityCuttable c in idle) Log("city walk NOT registered: " + c.gameObject.name + ": its registrar never ran (inactive or disabled)");
@@ -281,6 +282,15 @@ namespace Zantetsu.Sandbox
                     + (d.PlacedToldSeconds * 1e6).ToString("F0", Inv) + " us"
 #endif
                     + "; found moved untold " + d.PlacedMovedUntold;
+            }
+
+            private static string CityWalkFragmentReach()
+            {
+                SandboxSlashPropHit hit = Object.FindAnyObjectByType<SandboxSlashPropHit>();
+                SlashHitDetector d = hit != null ? hit.Detector : null;
+                if (d == null) return "no detector";
+                return "fragment shapes gone through (a shape a sweep) " + d.FragmentsVisited + ", positions read " + d.FragmentPositionsRead + ", passed over by their reach " + d.FragmentsBeyondReach
+                    + ", frames read " + d.FragmentFramesRead;
             }
 
             /// <summary>
@@ -601,6 +611,7 @@ namespace Zantetsu.Sandbox
                     + (_mpSteps != null ? " from the walk's start " + _mpSteps.PlannedFrom.ToString("F2") : "") + " at " + speed.ToString("R", Inv) + " m/s); script seconds " + MobPlanNow.ToString("F1", Inv)
                     + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Time.realtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
                 Log("city walk placed search (the run): " + CityWalkPlacedSearch());
+                Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");
                 Expect(propRoots.Count > 0, "[city walk] a prop was cut by the katana's Slash and its geometry committed (" + propRoots.Count + " props)");
                 Expect(npcRoots.Count > 0, "[city walk] an NPC was cut by the katana's Slash and its geometry committed (" + npcRoots.Count + " NPCs)");
