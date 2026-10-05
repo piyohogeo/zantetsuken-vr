@@ -223,6 +223,7 @@ namespace Zantetsu.Sandbox
                     + " (at a uniform scale other than 1: " + scaled + "); refused " + refused.Count + ", still waiting " + open.Count + ", never run (inactive or disabled) " + idle.Count
                     + "; hull groups " + (_world.Hulls != null ? _world.Hulls.GroupCount : 0) + "; storage: " + _world.Storage.DescribeRoom());
                 Log("city walk placed search (after the registrations): placement told for " + all.Count(c => c.PlacementTold) + " of " + all.Count(c => c.Candidate != null) + " deferred cut targets; " + CityWalkPlacedSearch());
+                Log("city walk display collection (after the registrations): " + CityWalkDisplayCollection());
                 Log("city walk fragment reach (after the registrations): " + CityWalkFragmentReach());
                 foreach (PlayableCityCuttable c in refused) Log("city walk NOT registered: " + c.gameObject.name + ": " + c.Failure);
                 foreach (PlayableCityCuttable c in open) Log("city walk NOT registered: " + c.gameObject.name + ": still waiting at the deadline");
@@ -284,6 +285,28 @@ namespace Zantetsu.Sandbox
                     + "; found moved untold " + d.PlacedMovedUntold;
             }
 
+            // The display's collections (DESIGN 5.6, D-194), for the log: what they have read, assembled, written and sent
+            // since the display was made. An update is one sending (the arguments: two buffers; the transforms and the
+            // clips: two buffers, the same range); the SetData calls are the buffer writes themselves.
+            private string CityWalkDisplayCollection()
+            {
+                if (_world == null || _world.Display == null || _world.Display.IsDisposed) return "no display";
+                VpLogicalCutDisplay d = _world.Display;
+                long argumentBytes = 2L * Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<GraphicsBuffer.IndirectDrawIndexedArgs>();
+                long instanceBytes = Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<Matrix4x4>()
+                    + (long)Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<Zantetsu.Rendering.VpInstanceClip>();
+                return "collections " + d.SettledCollections + "; now shown " + d.ShownCount + ", render fragments " + d.RenderFragmentCount + ", instances " + d.SideCount
+                    + "; so far ledger state reads " + d.LedgerStateReads + ", registration lists " + d.RegistrationListBuilds + ", structures kept whole " + d.StructuresKeptWhole
+                    + ", structure walks " + d.StructureWalks + ", draw arrangements " + d.DrawArrangements + ", draw data assemblies " + d.CandidateAssemblies
+                    + ", instance records written " + d.InstanceRecordsWritten + ", given from the other side " + d.InstanceRecordsCaughtUp
+                    + "; sent: arguments " + d.BodyArgumentTransfers + " updates, " + d.BodyArgumentSetDataCalls + " SetData calls, " + d.BodyArgumentElementsTransferred + " commands, "
+                    + (d.BodyArgumentElementsTransferred * argumentBytes) + " bytes; transforms and clips " + d.BodyInstanceTransfers + " updates, " + d.BodyInstanceSetDataCalls + " SetData calls, "
+                    + d.BodyInstanceElementsTransferred + " records, " + (d.BodyInstanceElementsTransferred * instanceBytes) + " bytes; cap normals " + d.CapNormalTransfers + " SetData calls, "
+                    + d.CapNormalVerticesTransferred + " vertices, " + (d.CapNormalVerticesTransferred * 16L) + " bytes (made on the CPU " + d.CapNormalsMade + ")";
+            }
+
+            // The scene detector's fragment reach (DESIGN 19.1.7, D-193), for the log: of the fragment shapes it went through
+            // for its sweeps, how many it passed over by their reach before reading their frame.
             private static string CityWalkFragmentReach()
             {
                 SandboxSlashPropHit hit = Object.FindAnyObjectByType<SandboxSlashPropHit>();
@@ -611,6 +634,7 @@ namespace Zantetsu.Sandbox
                     + (_mpSteps != null ? " from the walk's start " + _mpSteps.PlannedFrom.ToString("F2") : "") + " at " + speed.ToString("R", Inv) + " m/s); script seconds " + MobPlanNow.ToString("F1", Inv)
                     + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Time.realtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
                 Log("city walk placed search (the run): " + CityWalkPlacedSearch());
+                Log("city walk display collection (the run): " + CityWalkDisplayCollection());
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");
                 Expect(propRoots.Count > 0, "[city walk] a prop was cut by the katana's Slash and its geometry committed (" + propRoots.Count + " props)");

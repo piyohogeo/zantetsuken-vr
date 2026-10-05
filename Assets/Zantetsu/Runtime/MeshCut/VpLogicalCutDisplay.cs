@@ -467,6 +467,13 @@ namespace Zantetsu.MeshCut
             public bool clipped;
             public int renderFragments;
             public int firstRenderFragment;
+
+            // Where its instances begin in the draw data, for the structure it was last arranged for: command c's
+            // instance of its k-th render fragment is firstInstance + c * renderFragments + k.
+            public int firstInstance;
+
+            // The next registration of the same family in _shown, or -1: the chain a ledger notice is followed along.
+            internal int familyNext = -1;
         }
 
         private readonly VpCpuGeometryStorage _storage;
@@ -2225,8 +2232,16 @@ namespace Zantetsu.MeshCut
         /// room was fixed when this display was made and the count was found to fit a moment ago; it is checked here
         /// all the same, before anything is written, and a snapshot with no cap vertex writes nothing at all. Nothing
         /// is allocated.
+        /// <para>
+        /// What the room and the buffer hold is the adopted snapshot's normals, vertex for vertex. Only the one range
+        /// of caps the snapshot's placement pass recorded as changed beside the adopted one (where each cap is made:
+        /// <see cref="VpMultiCutSnapshot.ChangedCaps"/>) has its normals made again and sent -- the vertices from the
+        /// first of those caps to the end of the last, unchanged caps between them included. No changed cap: nothing is
+        /// made and nothing is sent. <paramref name="everything"/> -- a buffer that was never written to, or the test
+        /// switch -- makes and sends every cap's.
+        /// </para>
         /// </summary>
-        private void UploadCapNormals(VpMultiCutSnapshot snapshot, GraphicsBuffer into)
+        private void UploadCapNormals(VpMultiCutSnapshot snapshot, GraphicsBuffer into, bool everything)
         {
             int vertices = snapshot.CapVertexCount;
             if (vertices < 0 || vertices > _capNormals.Length || vertices > into.count)
@@ -2234,9 +2249,22 @@ namespace Zantetsu.MeshCut
                 throw new InvalidOperationException("the snapshot holds more cap vertices than this display's room");
             }
 
-            for (int c = 0; c < snapshot.CapCount; c++)
+            int from = 0, to = snapshot.CapCount;
+            if (!everything)
+            {
+                snapshot.ChangedCaps(_snapshot, out from, out to);
+            }
+
+            int first = 0, end = 0;
+            for (int c = from; c < to; c++)
             {
                 snapshot.TryGetCap(c, out VpMultiCutCap cap);
+                if (c == from)
+                {
+                    first = cap.vertexStart;
+                }
+
+                end = cap.vertexStart + cap.vertexCount;
                 Vector3 outward = cap.outwardNormal;
                 var normal = new Vector4(outward.x, outward.y, outward.z, 0f);
                 for (int v = 0; v < cap.vertexCount; v++)
@@ -2245,9 +2273,12 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            if (vertices > 0)
+            if (end > first)
             {
-                into.SetData(_capNormals.First(vertices), 0, 0, vertices);
+                into.SetData(_capNormals.First(vertices), first, first, end - first);
+                CapNormalTransfers++;
+                CapNormalVerticesTransferred += end - first;
+                CapNormalsMade += end - first;
             }
 
             _capNormalCount = vertices;
@@ -3534,7 +3565,12 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            side = _sides[index];
+            // What the side is was settled with the structure and is kept; its clip is where it stands now, kept with
+            // the instances' own.
+            LogicalCutDisplaySide kept = _sides[index];
+            side = new LogicalCutDisplaySide(
+                kept.source, kept.renderFragment, kept.operation, kept.side, kept.published, kept.fragment, kept.fixedByAnchors,
+                _clips[index]);
             return true;
         }
 
@@ -3679,6 +3715,157 @@ namespace Zantetsu.MeshCut
             _collectStage = stage;
         }
 
+        // ----- what a collection keeps from the one before (DESIGN 5.6) -----------------------------------------------
+        //
+        // What a structure is settled from is counted by two numbers: the ledger's Revision (every change a reader could
+        // see, whoever made it) and this display's own input revision (a registration taken in, replaced by a commit or
+        // let go; the placement lookup replaced). Whatever was worked out for those two numbers stands while they do.
+
+        // The registrations' ledger state and the registration list: what they were read at.
+        private long _readInputRevision = -1, _readLedgerRevision = -1;
+        private readonly List<LogicalFragmentId> _changedFamilies = new List<LogicalFragmentId>(32);
+        private readonly Dictionary<LogicalFragmentId, int> _familyHead = new Dictionary<LogicalFragmentId, int>();
+
+        // What each registration is drawn as (stage 3): what it was worked out for, and what it came to.
+        private long _drawnLedger = -1, _drawnInputs = -1, _drawnCommands, _drawnInstances;
+
+        // Each side of the draw data -- the adopted one and the one a collection builds in: what its commands,
+        // materials, draw ranges and sides were assembled for (negative: not to be relied on), and its counts.
+        private long _sideLedger = -1, _sideInputs = -1, _candidateSideLedger = -1, _candidateSideInputs = -1;
+        private int _sideCommands, _sideInstances, _candidateSideCommands, _candidateSideInstances;
+
+        // The one range of instances, and of render fragments, over which the two sides may differ: what the side last
+        // built was written over. It is what the next collection gives the other side before writing, and -- for the
+        // side being built -- what this collection sends to the GPU. Empty: start = end = 0.
+        private int _instanceDiffStart, _instanceDiffEnd, _renderFragmentDiffStart, _renderFragmentDiffEnd;
+
+        /// <summary>
+        /// Observation, since this display was made: registrations whose state was read from the ledger; times the
+        /// registration list was made again; times what each registration is drawn as was worked out; times a side's
+        /// commands, materials, draw ranges and sides were assembled; instance records (a transform and a clip) written
+        /// by a collection; instance records given to a side from the other before it was written; and cap-normal
+        /// transfers with their vertices.
+        /// </summary>
+        public long LedgerStateReads { get; private set; }
+        public long RegistrationListBuilds { get; private set; }
+        public long DrawArrangements { get; private set; }
+        public long CandidateAssemblies { get; private set; }
+        public long InstanceRecordsWritten { get; private set; }
+        public long InstanceRecordsCaughtUp { get; private set; }
+        public long CapNormalTransfers { get; private set; }
+        public long CapNormalVerticesTransferred { get; private set; }
+
+        /// <summary>Observation: cap-vertex normals made again on the CPU (each cap's, a normal a vertex).</summary>
+        public long CapNormalsMade { get; private set; }
+
+        /// <summary>Observation: the body batches' buffer writes themselves (SetData calls), since this display was made.</summary>
+        public long BodyArgumentSetDataCalls => _pastArgumentCalls + _batch.ArgumentSetDataCalls;
+        public long BodyInstanceSetDataCalls => _pastInstanceCalls + _batch.InstanceSetDataCalls;
+
+        /// <summary>Tests only: the cap normals' GPU buffer now drawn from.</summary>
+        internal GraphicsBuffer CapNormalBufferForTest => _capNormalBuffer;
+
+        /// <summary>
+        /// Observation, since this display was made (the batches replaced by larger ones included): how many times the
+        /// body's arguments were sent (one update: the forward and the shadow buffer) and how many commands in all; how
+        /// many times its instances were (one update: the transforms and the clips, the same range of both) and how
+        /// many instance records in all.
+        /// </summary>
+        public long BodyArgumentTransfers => _pastArgumentTransfers + _batch.ArgumentTransfers;
+        public long BodyArgumentElementsTransferred => _pastArgumentElements + _batch.ArgumentElementsTransferred;
+        public long BodyInstanceTransfers => _pastInstanceTransfers + _batch.InstanceTransfers;
+        public long BodyInstanceElementsTransferred => _pastInstanceElements + _batch.InstanceElementsTransferred;
+        private long _pastArgumentTransfers, _pastArgumentElements, _pastInstanceTransfers, _pastInstanceElements, _pastArgumentCalls, _pastInstanceCalls;
+
+        /// <summary>Observation: snapshot builds that kept the whole structure, and builds that went through every registration.</summary>
+        public long StructuresKeptWhole => _snapshot.StructuresKeptWhole + _building.StructuresKeptWhole;
+        public long StructureWalks => _snapshot.StructureWalks + _building.StructureWalks;
+
+        /// <summary>Tests only: every collection assembles the candidate whole and sends it whole, as before the keeping.</summary>
+        internal bool collectEverythingForTest;
+
+        /// <summary>Tests only: the body's batch now drawn from, and the adopted transform of one instance.</summary>
+        internal VpIndexedIndirectDrawBatch BodyBatchForTest => _batch;
+        internal Matrix4x4 InstanceTransformForTest(int instance) => _transforms[instance];
+
+        // The side being built is not one to keep: its next collection assembles it whole.
+        private void InvalidateCandidateSide()
+        {
+            _candidateSideLedger = -1;
+        }
+
+        // One registration's state, read from the ledger, changing nothing there.
+        private void ReadLedgerState(Shown entry, out LogicalFragmentId family)
+        {
+            LedgerStateReads++;
+            bool known = _ledger.TryGetFragmentState(entry.fragment, out LogicalFragmentState state);
+            // Let go when retired, or when replaced by cuts whose every piece has been retired before a geometry
+            // commit took the registration over (DESIGN 4.5.3, 7.10): nothing of it can be drawn or cut again, and
+            // holding it would hold its lineage's room for good. One whose pieces still live is kept, as before.
+            _ledger.TryGetFamily(entry.fragment, out family, out long familyRevision);
+            entry.dropping = !known || state == LogicalFragmentState.Retired
+                || (state == LogicalFragmentState.Replaced && !HasLiveDescendant(entry.fragment));
+            entry.readFamilyRevision = familyRevision;
+            entry.readFragment = entry.fragment;
+            entry.awaiting = known && state == LogicalFragmentState.Live
+                && _ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active)
+                && !_ledger.TryGetPreparedAnchorDistribution(active, out _);
+        }
+
+        // Every registration read, the registration list made again, and the families' chains with it: when this
+        // display's own inputs changed (the list is of them), at the first collection, and when the ledger's notice
+        // does not reach back far enough.
+        private void ReadEveryRegistration()
+        {
+            RegistrationListBuilds++;
+            _registrations.Clear();
+            _familyHead.Clear();
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                ReadLedgerState(entry, out LogicalFragmentId family);
+                entry.familyNext = -1;
+                if (family.IsSet)
+                {
+                    if (_familyHead.TryGetValue(family, out int head))
+                    {
+                        entry.familyNext = head;
+                    }
+
+                    _familyHead[family] = g;
+                }
+
+                _registrations.Add(new VpMultiCutRegistration(
+                    entry.fragment, entry.localBounds, entry.objectToWorld, entry.lineageToGeometryLocal, entry.reflected,
+                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
+            }
+        }
+
+        // Only the registrations of the families the ledger's notice names; the registration list stands.
+        private void ReadChangedFamilies()
+        {
+            LogicalFragmentId last = default;
+            for (int i = 0; i < _changedFamilies.Count; i++)
+            {
+                LogicalFragmentId family = _changedFamilies[i];
+                if (family == last)
+                {
+                    continue;   // named again by the very next change
+                }
+
+                last = family;
+                if (!_familyHead.TryGetValue(family, out int g))
+                {
+                    continue;   // no registration of this display is of that family
+                }
+
+                for (; g >= 0; g = _shown[g].familyNext)
+                {
+                    ReadLedgerState(_shown[g], out _);
+                }
+            }
+        }
+
         private bool TryCollectAndUpload()
         {
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
@@ -3717,35 +3904,30 @@ namespace Zantetsu.MeshCut
             }
 
             EnterCollectStage(1);
-            // 1. What each registration is now, read from the ledger, changing nothing.
-            _registrations.Clear();
-            for (int g = 0; g < _shown.Count; g++)
+            // 1. What each registration is now, read from the ledger, changing nothing. What was read is kept: the
+            //    ledger says which families changed since (LogicalCutLedger.TryReadChangedFamilies), and only their
+            //    registrations are read again; a change of this display's own inputs reads every one again and makes
+            //    the registration list again. No registration is asked anything to find out whether something changed.
+            long ledgerRevision = _ledger.Revision;
+            bool readEvery = collectEverythingForTest || _readInputRevision != _inputRevision || _readLedgerRevision < 0;
+            if (!readEvery && _readLedgerRevision != ledgerRevision)
             {
-                Shown entry = _shown[g];
-                bool known = _ledger.TryGetFragmentState(entry.fragment, out LogicalFragmentState state);
-                // Let go when retired, or when replaced by cuts whose every piece has been retired before a geometry
-                // commit took the registration over (DESIGN 4.5.3, 7.10): nothing of it can be drawn or cut again, and
-                // holding it would hold its lineage's room for good. One whose pieces still live is kept, as before.
-                _ledger.TryGetFamily(entry.fragment, out _, out long familyRevision);
-                if (entry.readFamilyRevision != familyRevision || entry.readFragment != entry.fragment)
-                {
-                    entry.dropping = !known || state == LogicalFragmentState.Retired
-                        || (state == LogicalFragmentState.Replaced && !HasLiveDescendant(entry.fragment));
-                    entry.readFamilyRevision = familyRevision;
-                    entry.readFragment = entry.fragment;
-                }
-                entry.awaiting = known && state == LogicalFragmentState.Live
-                    && _ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active)
-                    && !_ledger.TryGetPreparedAnchorDistribution(active, out _);
-                entry.split = false;
-                entry.clipped = false;
-                entry.renderFragments = 0;
-                entry.firstRenderFragment = 0;
-                entry.takenThisPass = 0;
-                _registrations.Add(new VpMultiCutRegistration(
-                    entry.fragment, entry.localBounds, entry.objectToWorld, entry.lineageToGeometryLocal, entry.reflected,
-                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
+                _changedFamilies.Clear();
+                readEvery = !_ledger.TryReadChangedFamilies(_readLedgerRevision, _changedFamilies);
             }
+
+            if (readEvery)
+            {
+                ReadEveryRegistration();
+            }
+            else if (_readLedgerRevision != ledgerRevision)
+            {
+                ReadChangedFamilies();
+            }
+
+            _readInputRevision = _inputRevision;
+            _readLedgerRevision = ledgerRevision;
+            long stampLedger = collectEverythingForTest ? -1 : ledgerRevision;
 
             EnterCollectStage(2);
             // 2. One snapshot of every registration together, beside the adopted one. Room short is grown below, or
@@ -3763,7 +3945,7 @@ namespace Zantetsu.MeshCut
             }
 
             VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
-                _structurePool, _snapshot, _ledger, _registrations, Placement);
+                _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
 
             // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
             // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
@@ -3785,7 +3967,8 @@ namespace Zantetsu.MeshCut
                     return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
                 }
 
-                outcome = _building.TryBuildIncremental(_structurePool, _snapshot, _ledger, _registrations, Placement);
+                outcome = _building.TryBuildIncremental(
+                    _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
             }
 
             CapPolygonBuilds += _building.SectionBuildCount;
@@ -3802,33 +3985,63 @@ namespace Zantetsu.MeshCut
             }
 
             EnterCollectStage(3);
-            // 3. What each registration is drawn as; the commands and instances that takes.
-            int renderFragments = _building.RenderFragmentCount;
-            for (int r = 0; r < renderFragments; r++)
+            // 3. What each registration is drawn as; the commands and instances that takes. All of it follows from the
+            //    structure -- which render fragments a registration has, whether any carries a plane (as many planes as
+            //    it has selected boundaries), whether it is split -- so it is worked out again only when what a
+            //    structure is settled from has changed, and stands otherwise.
+            long commandCount;
+            long instanceCount;
+            if (stampLedger >= 0 && _drawnLedger == stampLedger && _drawnInputs == _inputRevision)
             {
-                _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                Shown entry = _shown[rf.registration];
-                if (entry.renderFragments == 0)
-                {
-                    entry.firstRenderFragment = r;
-                }
-
-                entry.renderFragments++;
-                entry.clipped |= rf.clip.PlaneCount > 0;
-                entry.split |= rf.root != entry.fragment || rf.rootPendingSide != 0f || rf.aggregated;
+                commandCount = _drawnCommands;
+                instanceCount = _drawnInstances;
             }
-
-            long commandCount = 0;
-            long instanceCount = 0;
-            for (int g = 0; g < _shown.Count; g++)
+            else
             {
-                Shown entry = _shown[g];
-                entry.split |= entry.renderFragments > 1;
-                if (entry.renderFragments > 0)
+                DrawArrangements++;
+                _drawnLedger = -1;
+                for (int g = 0; g < _shown.Count; g++)
                 {
-                    commandCount += entry.commands.Length;
-                    instanceCount += (long)entry.commands.Length * entry.renderFragments;
+                    Shown entry = _shown[g];
+                    entry.split = false;
+                    entry.clipped = false;
+                    entry.renderFragments = 0;
+                    entry.firstRenderFragment = 0;
+                    entry.takenThisPass = 0;
                 }
+
+                int renderFragments = _building.RenderFragmentCount;
+                for (int r = 0; r < renderFragments; r++)
+                {
+                    _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                    Shown entry = _shown[rf.registration];
+                    if (entry.renderFragments == 0)
+                    {
+                        entry.firstRenderFragment = r;
+                    }
+
+                    entry.renderFragments++;
+                    entry.clipped |= rf.clip.PlaneCount > 0;
+                    entry.split |= rf.root != entry.fragment || rf.rootPendingSide != 0f || rf.aggregated;
+                }
+
+                commandCount = 0;
+                instanceCount = 0;
+                for (int g = 0; g < _shown.Count; g++)
+                {
+                    Shown entry = _shown[g];
+                    entry.split |= entry.renderFragments > 1;
+                    if (entry.renderFragments > 0)
+                    {
+                        commandCount += entry.commands.Length;
+                        instanceCount += (long)entry.commands.Length * entry.renderFragments;
+                    }
+                }
+
+                _drawnCommands = commandCount;
+                _drawnInstances = instanceCount;
+                _drawnInputs = _inputRevision;
+                _drawnLedger = stampLedger;
             }
 
             // Capacity, decided before anything is taken or uploaded, and grown to fit when short -- the snapshot just
@@ -3865,8 +4078,9 @@ namespace Zantetsu.MeshCut
             }
 
             EnterCollectStage(5);
-            // 5. The candidate, beside the adopted draw data.
-            BuildCandidate(out int commands, out int instances);
+            // 5. The candidate, beside the adopted draw data: assembled whole when its structure is not the one this
+            //    side holds, and otherwise only written where the placement pass placed something anew.
+            BuildCandidate(stampLedger, out int commands, out int instances, out bool candidateWhole);
 
             EnterCollectStage(6);
             // 6. The largest stencil arrangement this candidate could need -- every non-empty cap a job of its own, its
@@ -3889,7 +4103,7 @@ namespace Zantetsu.MeshCut
                     commands, instances, capVertices, out grownBatch, out grownNormals, out string gpuFailure))
             {
                 GiveBackInstancesTakenThisPass();
-                _candidateSides.Clear();
+                InvalidateCandidateSide();
                 return FailRoom("GPU buffers", instances, _batch.InstanceCapacity, _limits.instances, gpuFailure);
             }
 
@@ -3921,7 +4135,7 @@ namespace Zantetsu.MeshCut
                 grownBatch?.Dispose();
                 grownNormals?.Dispose();
                 GiveBackInstancesTakenThisPass();
-                _candidateSides.Clear();
+                InvalidateCandidateSide();
                 return FailRoom("stencil arrangement", stencilCommands, _stencilCommandCapacity, _stencilCommandCapacity,
                     "cap vertices " + capVertices + " of " + _stencilCapVertexCapacity + ", cap indices " + capIndexCount
                     + " of " + _stencilCapIndexCapacity + ", or a batch refused the counts");
@@ -3944,15 +4158,23 @@ namespace Zantetsu.MeshCut
                     throw new InvalidOperationException("the cap normals' upload was refused for a test");
                 }
 
-                UploadCapNormals(_building, grownNormals ?? _capNormalBuffer);
+                // A larger buffer made a moment ago holds nothing yet: it takes every cap's normals.
+                UploadCapNormals(_building, grownNormals ?? _capNormalBuffer, grownNormals != null || collectEverythingForTest);
+
+                // The commands go only when this side was assembled whole (or the batch needs them: a new one, another
+                // stereo condition); of the transforms and the clips, the one range this collection wrote. Everything
+                // outside it is on the GPU already, as the adopted side has it -- a batch never sent to takes it all.
+                int sendFrom = candidateWhole ? 0 : _instanceDiffStart, sendTo = candidateWhole ? instances : _instanceDiffEnd;
                 uploaded = RefuseBodyUploadForTest != null && RefuseBodyUploadForTest()
                     ? false
-                    : bodyBatch.TryUpload(_candidateCommands.Valid, commands, _candidateTransforms.Valid, _candidateClips.Valid, singlePassInstanced);
+                    : bodyBatch.TryUploadChanged(
+                        _candidateCommands.Valid, commands, _candidateTransforms.Valid, _candidateClips.Valid, singlePassInstanced,
+                        candidateWhole, sendFrom, sendTo);
             }
             catch
             {
                 _broken = true;
-                _candidateSides.Clear();
+                InvalidateCandidateSide();
                 grownBatch?.Dispose();
                 grownNormals?.Dispose();
                 throw;
@@ -3961,7 +4183,7 @@ namespace Zantetsu.MeshCut
             if (!uploaded)
             {
                 _broken = true;
-                _candidateSides.Clear();
+                InvalidateCandidateSide();
                 grownBatch?.Dispose();
                 grownNormals?.Dispose();
                 throw new InvalidOperationException(
@@ -3984,6 +4206,12 @@ namespace Zantetsu.MeshCut
             if (grownBatch != null)
             {
                 RetireLater(_batch, _batch.RetirementFence);
+                _pastArgumentTransfers += _batch.ArgumentTransfers;
+                _pastArgumentElements += _batch.ArgumentElementsTransferred;
+                _pastInstanceTransfers += _batch.InstanceTransfers;
+                _pastInstanceElements += _batch.InstanceElementsTransferred;
+                _pastArgumentCalls += _batch.ArgumentSetDataCalls;
+                _pastInstanceCalls += _batch.InstanceSetDataCalls;
                 _batch = grownBatch;
             }
 
@@ -4084,14 +4312,105 @@ namespace Zantetsu.MeshCut
         /// every selected face; where each render fragment's commands and transform are, which a stencil volume is later
         /// drawn from with its own face's clip; every registration's draw ranges; and one cap record per snapshot cap.
         /// </summary>
-        private void BuildCandidate(out int commandCount, out int instanceCount)
+        private void BuildCandidate(long stampLedger, out int commandCount, out int instanceCount, out bool whole)
         {
+            // This side keeps what it was assembled with when that was for the very structure this collection is of,
+            // the adopted side is of it too (so the two differ only over the one range kept), and the placement pass
+            // told the render fragments it placed anew apart.
+            whole = !(stampLedger >= 0
+                      && _candidateSideLedger == stampLedger && _candidateSideInputs == _inputRevision
+                      && _sideLedger == stampLedger && _sideInputs == _inputRevision
+                      && _candidateSideCommands == _sideCommands && _candidateSideInstances == _sideInstances
+                      && !_building.AllRenderFragmentsPlacedAnew);
+            if (whole)
+            {
+                AssembleCandidate(stampLedger, out commandCount, out instanceCount);
+            }
+            else
+            {
+                WritePlacedAnew(out commandCount, out instanceCount);
+            }
+
+            // One cap record per snapshot cap: where a cap is -- its plane, its normal, its vertices -- is of this frame.
+            int caps = _building.CapCount;
+            for (int i = 0; i < caps; i++)
+            {
+                _candidateCapRecords[i] = CapRecordOf(i);
+            }
+        }
+
+        /// <summary>
+        /// The structure this side holds stands: nothing of its commands, materials, draw ranges or sides is touched.
+        /// First the side is given what the other side was written over and it was not -- one range, copied; then the
+        /// render fragments the placement pass placed anew have their transforms and clips written, each instance of
+        /// them, with no comparison. The range written is what is sent, and what the other side is given next time.
+        /// </summary>
+        private void WritePlacedAnew(out int commandCount, out int instanceCount)
+        {
+            if (_instanceDiffEnd > _instanceDiffStart)
+            {
+                int count = _instanceDiffEnd - _instanceDiffStart;
+                _candidateTransforms.CopyFrom(_transforms, _instanceDiffStart, _instanceDiffStart, count);
+                _candidateClips.CopyFrom(_clips, _instanceDiffStart, _instanceDiffStart, count);
+                InstanceRecordsCaughtUp += count;
+            }
+
+            if (_renderFragmentDiffEnd > _renderFragmentDiffStart)
+            {
+                _candidateRfTransform.CopyFrom(
+                    _rfTransform, _renderFragmentDiffStart, _renderFragmentDiffStart, _renderFragmentDiffEnd - _renderFragmentDiffStart);
+            }
+
+            int from = int.MaxValue, to = 0, rfFrom = int.MaxValue, rfTo = 0;
+            int anew = _building.PlacedAnewCount;
+            for (int a = 0; a < anew; a++)
+            {
+                int r = _building.PlacedAnewAt(a);
+                _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                Shown entry = _shown[rf.registration];
+                int first = entry.firstInstance + (r - entry.firstRenderFragment);
+                int stride = entry.renderFragments;
+                int count = entry.commands.Length;
+                for (int c = 0; c < count; c++)
+                {
+                    int i = first + c * stride;
+                    _candidateTransforms[i] = rf.geometryLocalToWorld;
+                    _candidateClips[i] = rf.clip;
+                }
+
+                if (count > 0)
+                {
+                    if (first < from) from = first;
+                    int last = first + (count - 1) * stride + 1;
+                    if (last > to) to = last;
+                    InstanceRecordsWritten += count;
+                }
+
+                _candidateRfTransform[r] = rf.geometryLocalToWorld;
+                if (r < rfFrom) rfFrom = r;
+                if (r + 1 > rfTo) rfTo = r + 1;
+            }
+
+            _instanceDiffStart = to > 0 ? from : 0;
+            _instanceDiffEnd = to;
+            _renderFragmentDiffStart = rfTo > 0 ? rfFrom : 0;
+            _renderFragmentDiffEnd = rfTo;
+            commandCount = _candidateSideCommands;
+            instanceCount = _candidateSideInstances;
+        }
+
+        /// <summary>The candidate side assembled whole, as every collection did before: commands, materials, draw ranges, sides, transforms and clips.</summary>
+        private void AssembleCandidate(long stampLedger, out int commandCount, out int instanceCount)
+        {
+            CandidateAssemblies++;
+            InvalidateCandidateSide();   // until it is whole
             _candidateSides.Clear();
             int command = 0;
             int instance = 0;
             for (int g = 0; g < _shown.Count; g++)
             {
                 Shown entry = _shown[g];
+                entry.firstInstance = instance;
                 if (entry.renderFragments == 0)
                 {
                     continue;
@@ -4141,14 +4460,19 @@ namespace Zantetsu.MeshCut
                 _candidateGeometries.Add(_shown[g].ranges);
             }
 
-            int caps = _building.CapCount;
-            for (int i = 0; i < caps; i++)
-            {
-                _candidateCapRecords[i] = CapRecordOf(i);
-            }
-
             commandCount = command;
             instanceCount = instance;
+            InstanceRecordsWritten += instance;
+
+            // Whole: the two sides may differ anywhere, and everything of this one is to be sent.
+            _instanceDiffStart = 0;
+            _instanceDiffEnd = instance;
+            _renderFragmentDiffStart = 0;
+            _renderFragmentDiffEnd = _building.RenderFragmentCount;
+            _candidateSideCommands = command;
+            _candidateSideInstances = instance;
+            _candidateSideInputs = _inputRevision;
+            _candidateSideLedger = stampLedger;
         }
 
         /// <summary>
@@ -4251,7 +4575,13 @@ namespace Zantetsu.MeshCut
             Swap(ref _roots, ref _candidateRoots);
             Swap(ref _geometries, ref _candidateGeometries);
             Swap(ref _sides, ref _candidateSides);
-            _candidateSides.Clear();
+
+            // What each side was assembled for goes with it; the side just replaced keeps what it holds, to be given
+            // the one range it lacks -- or assembled whole -- by the collection that builds in it next.
+            Swap(ref _sideLedger, ref _candidateSideLedger);
+            Swap(ref _sideInputs, ref _candidateSideInputs);
+            Swap(ref _sideCommands, ref _candidateSideCommands);
+            Swap(ref _sideInstances, ref _candidateSideInstances);
 
             _commandCount = commandCount;
             _capRecordCount = _snapshot.CapCount;
@@ -4358,6 +4688,14 @@ namespace Zantetsu.MeshCut
             if (!Holds(_capJobs.Capacities, room) && !_capJobs.TryGrowTo(room, out failure))
             {
                 return false;
+            }
+
+            // A side whose room is made larger is assembled whole in it: what holds a reference is made again, empty.
+            if (_candidateCommands.Length < _commandCapacity || _candidateTransforms.Length < _instanceCapacity
+                || _candidateRfTransform.Length < derived.renderFragments || _candidateCommandMaterials.Length < _commandCapacity
+                || _candidateGeometries.Capacity < _instanceCapacity)
+            {
+                InvalidateCandidateSide();
             }
 
             if (!_candidateCommands.TryGrow(_commandCapacity, out failure)
