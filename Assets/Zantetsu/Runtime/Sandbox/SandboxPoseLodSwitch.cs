@@ -20,6 +20,12 @@ namespace Zantetsu.Sandbox
     {
         public const string Argument = "-zantetsuPoseLod";
 
+        /// <summary>
+        /// <c>-zantetsuSkinUnseen keep</c>: Unity skins every uncut character every frame, seen or not, as before.
+        /// <c>skip</c> (or nothing): only while a camera sees its renderer (<see cref="SandboxNpcCharacter.SkinWhenUnseen"/>).
+        /// </summary>
+        public const string SkinArgument = "-zantetsuSkinUnseen";
+
         [SerializeField] private PoseLodDirector director;
 
         [Tooltip("Whether the director is on when the command line says nothing.")]
@@ -42,6 +48,19 @@ namespace Zantetsu.Sandbox
                     value = arguments[i + 1];
                 }
             }
+
+            string skin = null;
+            for (int i = 0; i < arguments.Length - 1; i++)
+            {
+                if (string.Equals(arguments[i], SkinArgument, StringComparison.OrdinalIgnoreCase))
+                {
+                    skin = arguments[i + 1];
+                }
+            }
+
+            SandboxNpcCharacter.SkinWhenUnseen = skin != null && string.Equals(skin, "keep", StringComparison.OrdinalIgnoreCase);
+            Debug.Log("SKIN UNSEEN: " + (SandboxNpcCharacter.SkinWhenUnseen ? "keep (skinned every frame)" : "skip (skinned only while a camera sees the renderer, under the level of detail)")
+                + " (" + SkinArgument + " " + (skin ?? "not given") + ")");
 
             NeededOnly = value != null && string.Equals(value, "needed", StringComparison.OrdinalIgnoreCase);
             On = NeededOnly || (value != null ? string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) : onByDefault);

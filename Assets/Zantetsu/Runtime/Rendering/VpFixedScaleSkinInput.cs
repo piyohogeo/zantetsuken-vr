@@ -131,6 +131,11 @@ namespace Zantetsu.Rendering
         // The same once-only basis conversion applies to authoring Renderer-bind physics points.
         public Vector3 PrepareBindPoint(Vector3 point) => point*FixedScale;
 
+        // And to a bind pose of the source mesh's basis that the prepared mesh does not list (a bone no vertex is
+        // weighted to): the very product the prepared mesh's own bind poses were made by.
+        public Matrix4x4 PrepareBindPose(Matrix4x4 sourceBindPose)
+            => FixedScale == 1f ? sourceBindPose : sourceBindPose*Matrix4x4.Scale(Vector3.one/FixedScale);
+
         public void Dispose()
         {
             if (cache == null) return;

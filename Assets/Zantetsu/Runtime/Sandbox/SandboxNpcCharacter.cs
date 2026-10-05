@@ -112,12 +112,101 @@ namespace Zantetsu.Sandbox
             internal VpFixedScaleSkinCache scaleCache;
             internal int users;
 
+            // How far the model's skin stands outside its hulls' box at the bind pose (metres); NaN until a slot found it.
+            internal float skinMargin = float.NaN;
+
             /// <summary>How many slots read the parsed intake and hulls from here rather than parsing them.</summary>
             public int SharedReads { get; internal set; }
         }
 
         private SlotShare _share;
         private bool Pooled => _share != null;
+
+        /// <summary>
+        /// Whether Unity skins an uncut character every frame even when no camera sees its renderer, as it did before
+        /// (DESIGN 9, D-196). False -- the default -- lets Unity skin it only while the renderer is visible to a camera, a
+        /// shadow pass included, under bounds this class gives it; that holds only for a character under the bone level
+        /// of detail, whose range the bounds come from. Read when a character is given its level of detail. A run sets
+        /// it once, before any character is prepared (<see cref="SandboxPoseLodSwitch"/>).
+        /// </summary>
+        public static bool SkinWhenUnseen { get; set; }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetSkinWhenUnseen() => SkinWhenUnseen = false;
+
+        // How far the skin stands outside the hulls' box at the bind pose (this model's; metres).
+        private float _skinMargin;
+
+        /// <summary>
+        /// The character's bounds for drawing, in the character root's frame: the level of detail's range -- every hull
+        /// at every pose of the table, widened between samples -- widened again by how far the skin stands outside the
+        /// hulls at the bind pose. False without a level of detail.
+        /// </summary>
+        public bool TryGetDrawBounds(out Bounds inRootFrame)
+        {
+            inRootFrame = default;
+            if (Lod == null) return false;
+            inRootFrame = Lod.RangeBounds;
+            inRootFrame.Expand(2f * _skinMargin);
+            return true;
+        }
+
+        /// <summary>Whether this character's renderer is skinned only while a camera sees it, under the draw bounds.</summary>
+        public bool SkinsOnlyWhenSeen { get; private set; }
+
+        // Given its level of detail, the drawn renderer is told how to be culled and when to be skinned. The renderer is
+        // this class's own unit-scale object, rigid under the character root: the draw bounds go into its frame once and
+        // stay right wherever the root is put, and no table bone carries them (it is given no root bone). Unity then
+        // skins it only when a camera's culling -- the view's or a shadow pass's -- finds those bounds, and on the first
+        // frame it does, from the bones as they then stand. Kept as before when the run says so.
+        private void SettleHowTheRendererIsSeen()
+        {
+            SkinnedMeshRenderer skin = _fixedInput != null ? _fixedInput.Renderer : null;
+            SkinsOnlyWhenSeen = false;
+            if (skin == null || SkinWhenUnseen || !TryGetDrawBounds(out Bounds range)) return;
+            Matrix4x4 toRenderer = skin.transform.worldToLocalMatrix * Lod.Root.localToWorldMatrix;
+            Vector3 lo = range.min, hi = range.max;
+            var local = new Bounds(toRenderer.MultiplyPoint3x4(lo), Vector3.zero);
+            for (int c = 1; c < 8; c++)
+            {
+                local.Encapsulate(toRenderer.MultiplyPoint3x4(new Vector3((c & 1) == 0 ? lo.x : hi.x, (c & 2) == 0 ? lo.y : hi.y, (c & 4) == 0 ? lo.z : hi.z)));
+            }
+
+            skin.rootBone = null;
+            skin.localBounds = local;
+            skin.updateWhenOffscreen = false;
+            SkinsOnlyWhenSeen = true;
+
+            // The level of detail judges the view by these very bounds: whenever a camera's culling can see the box
+            // Unity culls, the character counts as in view and is given its pose in that frame, before it is drawn.
+            Lod.SetDrawBounds(skin.transform, local);
+        }
+
+        /// <summary>
+        /// Observation, for a character still skinned every frame (<see cref="SkinWhenUnseen"/>): how far the bounds
+        /// Unity makes from the bones this frame reach outside the draw bounds (metres; 0 or less when inside). False
+        /// when the character is not drawn, has no level of detail, or is skinned only when seen (Unity's bounds are
+        /// then the draw bounds themselves).
+        /// </summary>
+        public bool TryDrawBoundsExcess(out float metres)
+        {
+            metres = 0f;
+            SkinnedMeshRenderer skin = _fixedInput != null ? _fixedInput.Renderer : null;
+            if (skin == null || !skin.enabled || SkinsOnlyWhenSeen || !skin.updateWhenOffscreen || !TryGetDrawBounds(out Bounds range)) return false;
+            Bounds made = skin.bounds;
+            Matrix4x4 toRoot = Lod.Root.worldToLocalMatrix;
+            Vector3 lo = made.min, hi = made.max;
+            float excess = float.NegativeInfinity;
+            for (int c = 0; c < 8; c++)
+            {
+                Vector3 p = toRoot.MultiplyPoint3x4(new Vector3((c & 1) == 0 ? lo.x : hi.x, (c & 2) == 0 ? lo.y : hi.y, (c & 4) == 0 ? lo.z : hi.z));
+                Vector3 beyond = Vector3.Max(range.min - p, p - range.max);
+                excess = Mathf.Max(excess, Mathf.Max(beyond.x, Mathf.Max(beyond.y, beyond.z)));
+            }
+
+            metres = excess;
+            return true;
+        }
 
         /// <summary>Whether this dormant slot is prepared and may be activated.</summary>
         public bool IsPrepared { get; private set; }
@@ -470,6 +559,18 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // The model's complete bone correspondence, when its renderer's bone list was shortened to the bones that
+            // carry a skin weight (DESIGN 9, D-195): every bone the model has, by name, with its bind pose, and this
+            // individual's Transform for each. What resolves a bone by name below -- the hulls, the wrists and the
+            // ankles -- reads it, and so does not depend on which bones the renderer still lists. The renderer's own
+            // list and its mesh's weights stay one index space, read together wherever they are read.
+            VpSkinBones allBones = original.GetComponent<VpSkinBones>();
+            if (allBones != null && !allBones.IsConsistentWith(original, out string boneFailure))
+            {
+                Failure = "the character's bones and its model's bone map are not of one correspondence: " + boneFailure;
+                return;
+            }
+
             // The bones the character is drawn and cut with must all be driven by its Pose Table.
             _pose = characterRoot.GetComponent<PoseTablePlayer>();
             if (_pose == null)
@@ -499,7 +600,13 @@ namespace Zantetsu.Sandbox
                 // A constant renderer/container need not be animated. If the table drives it, retain its channel.
                 if (drivenBones.Contains(original.transform)) Require(original.transform);
                 if (original.rootBone != null && drivenBones.Contains(original.rootBone)) Require(original.rootBone);
-                foreach (var hull in fixture.hulls) Require(originalBones.First(b => b != null && b.name == hull.boneName));
+                foreach (var hull in fixture.hulls)
+                {
+                    int named = allBones != null ? allBones.Find(hull.boneName) : -1;
+                    Require(allBones != null
+                        ? (named >= 0 ? allBones.BoneAt(named) : null)
+                        : originalBones.FirstOrDefault(b => b != null && b.name == hull.boneName));
+                }
                 driven = _pose.TryRequireBones(requiredBones.ToArray(), out missing);
             }
 
@@ -546,18 +653,37 @@ namespace Zantetsu.Sandbox
             var ranges = new List<ConvexBrepRange>();
             var convexBones = new Transform[fixture.hulls.Length];
             var hitBoxes = new List<(Transform bone, Bounds box)>(fixture.hulls.Length);
+            var hullsAtBind = new Bounds();   // every hull point, in the renderer's bind frame
+            bool anyHullPoint = false;
             for (int c = 0; c < fixture.hulls.Length; c++)
             {
                 Hull h = fixture.hulls[c];
-                int bone = Array.FindIndex(bones, b => b != null && b.name == h.boneName);
-                if (bone < 0)
+
+                // The hull's bone and that bone's bind pose in the prepared (fixed-scale) basis: from the model's
+                // complete correspondence when the character carries one, else from the renderer's own arrays.
+                Transform hullBone;
+                Matrix4x4 hullBind;
+                if (allBones != null)
+                {
+                    int named = allBones.Find(h.boneName);
+                    hullBone = named >= 0 ? allBones.BoneAt(named) : null;
+                    hullBind = named >= 0 ? _fixedInput.PrepareBindPose(allBones.Map.BindPose(named)) : default;
+                }
+                else
+                {
+                    int bone = Array.FindIndex(bones, b => b != null && b.name == h.boneName);
+                    hullBone = bone >= 0 ? bones[bone] : null;
+                    hullBind = bone >= 0 ? binds[bone] : default;
+                }
+
+                if (hullBone == null)
                 {
                     s_prepareHulls.End();
                     Failure = "no bone " + h.boneName;
                     return;
                 }
 
-                convexBones[c] = bones[bone];
+                convexBones[c] = hullBone;
                 BuildEdges(h.faceOffsets, h.faceIndices, out int[] localFaceEdges, out BrepEdge[] localEdges);
                 int maxLoop = 0;
                 for (int f = 0; f + 1 < h.faceOffsets.Length; f++) maxLoop = Math.Max(maxLoop, h.faceOffsets[f + 1] - h.faceOffsets[f]);
@@ -572,17 +698,39 @@ namespace Zantetsu.Sandbox
                 for (int v = 0; v < h.rendererBindVertices.Length / 3; v++)
                 {
                     var p = new Vector3((float)h.rendererBindVertices[3 * v], (float)h.rendererBindVertices[3 * v + 1], (float)h.rendererBindVertices[3 * v + 2]);
-                    Vector3 local = binds[bone].MultiplyPoint3x4(_fixedInput.PrepareBindPoint(p));
+                    Vector3 atBind = _fixedInput.PrepareBindPoint(p);
+                    if (anyHullPoint) hullsAtBind.Encapsulate(atBind); else hullsAtBind = new Bounds(atBind, Vector3.zero);
+                    anyHullPoint = true;
+                    Vector3 local = hullBind.MultiplyPoint3x4(atBind);
                     points.Add(local);
                     if (v == 0) box = new Bounds(local, Vector3.zero); else box.Encapsulate(local);
                 }
 
-                hitBoxes.Add((bones[bone], box));
+                hitBoxes.Add((hullBone, box));
 
                 offsets.AddRange(h.faceOffsets);
                 indices.AddRange(h.faceIndices);
                 faceEdges.AddRange(localFaceEdges);
                 edges.AddRange(localEdges);
+            }
+
+            // How far the skin stands outside the hulls' box at the bind pose: once a model (a pooled slot reads its
+            // model's share), from the prepared mesh's own vertices -- never per individual again, never per frame.
+            if (Pooled && !float.IsNaN(_share.skinMargin))
+            {
+                _skinMargin = _share.skinMargin;
+            }
+            else
+            {
+                float margin = 0f;
+                foreach (Vector3 vertex in skin.sharedMesh.vertices)
+                {
+                    Vector3 beyond = Vector3.Max(hullsAtBind.min - vertex, vertex - hullsAtBind.max);
+                    margin = Mathf.Max(margin, Mathf.Max(beyond.x, Mathf.Max(beyond.y, beyond.z)));
+                }
+
+                _skinMargin = margin;
+                if (Pooled) _share.skinMargin = margin;
             }
 
             HullCount = ranges.Count;
@@ -615,7 +763,15 @@ namespace Zantetsu.Sandbox
                 }
 
                 _lodReferences = references;
-                _lodOmissions = LodOmissions(bones);
+                Transform[] named = bones;
+                if (allBones != null)
+                {
+                    // The wrists and the ankles are found by name among every bone of the model.
+                    named = new Transform[allBones.BoneCount];
+                    for (int i = 0; i < named.Length; i++) named[i] = allBones.BoneAt(i);
+                }
+
+                _lodOmissions = LodOmissions(named);
                 if (Pooled)
                 {
                     Dormant();
@@ -623,6 +779,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 Lod = poseLod.Register(_pose, references, _lodOmissions, hitBoxes, out string refused);
+                SettleHowTheRendererIsSeen();
                 if (Lod == null)
                 {
                     Failure = "the bone level of detail did not take the character: " + refused;
@@ -823,6 +980,8 @@ namespace Zantetsu.Sandbox
                             Lod = poseLod.Register(_pose, _lodReferences, _lodOmissions, _hitBoxes, out string refused);
                             if (Lod == null) Debug.LogWarning(characterRoot.name + ": the bone level of detail did not take the slot: " + refused, this);
                         }
+
+                        SettleHowTheRendererIsSeen();
                     }
                 }
 

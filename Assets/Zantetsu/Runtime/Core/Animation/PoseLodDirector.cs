@@ -107,6 +107,25 @@ namespace Zantetsu.Core.Animation
 
         public Bounds RangeBounds { get; }
 
+        /// <summary>
+        /// The bounds the character's renderer is culled by, when they are fixed ones: a box in
+        /// <paramref name="frame"/>'s own coordinates (DESIGN 9, D-196). The view is then judged by the sphere about
+        /// that box as it stands in the world -- about the world-axis box a camera's culling tests -- so that whatever
+        /// a culling can see of it, the judgement counts as in view. The caller gives bounds that hold the range; the
+        /// sphere then holds the range's own sphere too. A null frame: the range's sphere again, as without this.
+        /// </summary>
+        public void SetDrawBounds(Transform frame, Bounds local)
+        {
+            DrawFrame = frame;
+            DrawBounds = local;
+        }
+
+        internal Transform DrawFrame { get; private set; }
+        internal Bounds DrawBounds { get; private set; }
+
+        /// <summary>The view's part of the last decision: 0 in view, up to 3 the farthest outside.</summary>
+        public int ViewStrength { get; internal set; }
+
         public bool IsLive => Player != null && Player.IsPlaying;
 
         /// <summary>The level of the last decision (0 = every frame, every needed bone .. 3 = the fewest).</summary>
@@ -798,11 +817,17 @@ namespace Zantetsu.Core.Animation
                         continue;
                     }
 
-                    int level = character.LevelOverride >= 0 ? Math.Min(character.LevelOverride, Levels - 1) : Decide(character);
+                    int view = character.ViewStrength;
+                    int level = character.LevelOverride >= 0 ? Math.Min(character.LevelOverride, Levels - 1) : Decide(character, out view);
                     bool dropped = level < character.Level;
+
+                    // Come into view this frame: its pose is put on now, before it is drawn, whether or not its level
+                    // went down (a far character's level stays where the distance puts it).
+                    bool cameIntoView = view == 0 && character.ViewStrength > 0;
+                    character.ViewStrength = view;
                     character.Level = level;
                     int interval = IntervalOf(level);
-                    character.Due = dropped || character.LastUpdateFrame < 0 || (frame + character.Phase) % interval == 0;
+                    character.Due = dropped || cameIntoView || character.LastUpdateFrame < 0 || (frame + character.Phase) % interval == 0;
                 }
             }
 
@@ -817,9 +842,34 @@ namespace Zantetsu.Core.Animation
             }
         }
 
+        private Matrix4x4[] _eyesForTest;
+        private Vector3[] _eyePositionsForTest;
+
+        /// <summary>
+        /// The eyes the decisions use in place of the camera's -- for each, the matrix from world to its clip space and
+        /// where it is; null for the camera's again. For tests and diagnostics (two eyes without an XR device).
+        /// </summary>
+        public void OverrideEyes(Matrix4x4[] worldToClip, Vector3[] positions)
+        {
+            _eyesForTest = worldToClip;
+            _eyePositionsForTest = positions;
+        }
+
         // Both eyes' frusta and positions (one when the camera is not stereo), once per frame.
         private void ReadEyes()
         {
+            if (_eyesForTest != null)
+            {
+                _eyes = Math.Min(2, _eyesForTest.Length);
+                for (int e = 0; e < _eyes; e++)
+                {
+                    GeometryUtility.CalculateFrustumPlanes(_eyesForTest[e], _eyePlanes[e]);
+                    _eyePositions[e] = _eyePositionsForTest[e];
+                }
+
+                return;
+            }
+
             Camera camera = viewCamera != null ? viewCamera : Camera.main;
             _eyes = 0;
             if (camera == null)
@@ -847,18 +897,38 @@ namespace Zantetsu.Core.Animation
             }
         }
 
-        private int Decide(PoseLodCharacter character)
+        private int Decide(PoseLodCharacter character, out int view)
         {
+            view = 0;
             if (_eyes == 0)
             {
                 return 0;
             }
 
-            Transform root = character.Root;
-            Bounds range = character.RangeBounds;
-            Vector3 centre = root.TransformPoint(range.center);
-            Vector3 scale = root.lossyScale;
-            float radius = range.extents.magnitude * Mathf.Max(Mathf.Abs(scale.x), Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
+            Vector3 centre;
+            float radius;
+            if (character.DrawFrame != null)
+            {
+                // The sphere about the world-axis box about the bounds the renderer is culled by: a culling tests
+                // that box, and the sphere holds it.
+                Matrix4x4 m = character.DrawFrame.localToWorldMatrix;
+                Bounds drawn = character.DrawBounds;
+                Vector3 e = drawn.extents;
+                centre = m.MultiplyPoint3x4(drawn.center);
+                var world = new Vector3(
+                    Mathf.Abs(m.m00) * e.x + Mathf.Abs(m.m01) * e.y + Mathf.Abs(m.m02) * e.z,
+                    Mathf.Abs(m.m10) * e.x + Mathf.Abs(m.m11) * e.y + Mathf.Abs(m.m12) * e.z,
+                    Mathf.Abs(m.m20) * e.x + Mathf.Abs(m.m21) * e.y + Mathf.Abs(m.m22) * e.z);
+                radius = world.magnitude;
+            }
+            else
+            {
+                Transform root = character.Root;
+                Bounds range = character.RangeBounds;
+                centre = root.TransformPoint(range.center);
+                Vector3 scale = root.lossyScale;
+                radius = range.extents.magnitude * Mathf.Max(Mathf.Abs(scale.x), Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
+            }
 
             float outside = float.PositiveInfinity; // degrees outside the nearer eye's view
             float nearest = float.PositiveInfinity; // metres from an eye to the range's surface
@@ -869,7 +939,7 @@ namespace Zantetsu.Core.Animation
                 outside = Mathf.Min(outside, DegreesOutside(_eyePlanes[e], centre, radius, distance));
             }
 
-            int view = outside <= 0f ? 0 : Mathf.Clamp(Mathf.CeilToInt(3f * outside / settings.viewFullAngleDegrees), 1, 3);
+            view = outside <= 0f ? 0 : Mathf.Clamp(Mathf.CeilToInt(3f * outside / settings.viewFullAngleDegrees), 1, 3);
             float span = Mathf.Max(1e-3f, settings.farMetres - settings.nearMetres);
             int far = nearest <= settings.nearMetres ? 0 : Mathf.Clamp(Mathf.CeilToInt(3f * (nearest - settings.nearMetres) / span), 1, 3);
             return Math.Max(view, far);
