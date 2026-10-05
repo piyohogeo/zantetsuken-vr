@@ -10,6 +10,7 @@
         "Zantetsu.MeshCut",
         "Zantetsu.ConvexCut",
         "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Urp",
         "Unity.Mathematics",
         "Unity.Collections",
         "Unity.Burst",

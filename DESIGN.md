@@ -326,8 +326,9 @@ GPUはPhase 0.92で採用する固定設定の初期容量を確保し、不足�
 | 1 | Direct・非indexed draw＋shader-side indexing＋属性Pulling | 基本表示・Meshからの移行。Phase 0.92。DirectはMeshRendererを意味しない |
 | 2 | Indirect・非indexed draw＋shader-side indexing＋属性Pulling | 描画要求集約・引数管理・個別発行を見直す。Phase 0.94でPhase 1前に実装・比較する |
 | 3 | Indexed Indirect＋属性Pulling | hardware vertex reuse。D-178により現在の採用経路とする |
+| 3C | Stage 3＋Compute Shaderによる視錐台選別とGPU生成の描画引数 | 本体と影のInstance選別（4.5.7）。D-198により、引数なしの製品経路の既定とする。Stage 3の選別なしの本体描画は、起動時指定で選べる切戻し経路として残す |
 
-**現在の採用経路はStage 3とする（D-178、2026-09-18の人間判断）。** 追加のStage 2／3比較を採用条件にしない。Stage 2の実装・試験は削除せず、性能改善を断定しない。
+**現在の採用経路はStage 3とする（D-178、2026-09-18の人間判断）。** 追加のStage 2／3比較を採用条件にしない。Stage 2の実装・試験は削除せず、性能改善を断定しない。 Stage 3Cは、Stage 3のIndexed Indirect描画・Geometry・Clip・Stencilの上に、本体と影のInstance選別とGPU生成の描画引数を載せるものであり、D-178の経路選択を置き換えない。本体描画の既定はD-198によりStage 3Cとする（4.5.7）。
 
 Stage 2はAPI置換だけで改善とみなさず、実際の発行経路と主スレッドへの効果を測る。全異種Geometryの単一native draw化、頂点再利用・ベイク・転送の改善をStage 2へ要求しない。固定改善率・全Scene高速化をPhase 1着手条件にせず、効果が乏しければ人間判断でStage 1を採用したまま進める。実行時自動Fallbackは設けない。GRDは通常Mesh側の比較候補でありForward+を必要とするが、独自VP描画の集約機構とは同一視しない。
 
@@ -364,6 +365,28 @@ A正側だけがBで再切断されていれば、A負側はGA-へ、B枝はGA+�
 採否は8章のPending／Branch authorityで照合し、別Fragmentの世代更新や子孫切断だけで祖先Geometryを失効させない。共用Geometryの予期しない内部エラーは4章の共通Player終了へ送り、後続へ代替Geometryを推測適用しない。
 
 Phase 5.6の追加分割で必要になる面の配分、新Index領域への振り分けコピー・転送・旧範囲退役は7.9へ置く。通常切断へ全島列挙を前倒ししない。配置・転送回数は既存計測で確認し、新しいRuntime監視、品質Gate、数値SLAを追加しない。
+
+#### 4.5.7 VP描画のGPU選別（Stage 3C、本体描画の既定）
+
+**位置づけ。** Stage 3の本体描画（表面とShadow Caster）について、Instanceごとの視錐台判定と描画引数の生成をCompute Shaderで行う経路をStage 3Cとする。**引数なしの製品経路はStage 3Cで本体を描く（D-198）。** 経路は世界の表示を構築するときに一度だけ決まり、実行中の切替は設けない。URPはForward、GRDなし、GPU Occlusionなしのままとする。
+
+**切戻しとFallback。** Playerを `-zantetsuVp3` 付きで起動すると、選別なしのStage 3で本体を描く。これが明示的な切戻し手段であり、以前の選択用引数 `-zantetsuVp3cGpuCull` と両方が指定された場合もStage 3になる（`-zantetsuVp3cGpuCull` は受け付けるが、既定と同じで何も変えない）。URPがRender Graphで記録しない構成、Compute Shaderを持たない装置、対応Variantを持たないMaterial等でStage 3Cを構築できないときは、Stage 3で構築し、その理由をログへ出す。どの経路で構築されたかは毎回 `VP BODY ROUTE:` の1行で分かる。Stage 3へ戻った実行、Stage 3を指定した実行を、Stage 3Cの計測・確認として扱わない。
+
+**採用の理由と限界（D-198）。** 既定化は、GPU性能の優位を確定したからではない。Main Thread側の追加費用が小さいという観測を踏まえ、通常運用の中でStage 3Cの費用と問題を確認していくためである。その観測は「Stage 3Cの計測マーカー内の費用が街歩きで1フレーム0.033 ms」であり、間接費用まで含む総増分とは断定しない。確認済みの環境は、PC（Direct3D 11）上のMeta XR Simulator、XR Single Pass Instancedである。**Quest実機（Vulkan）では未確認**で、実機での計測を既定化の前提条件にしていない。XR Single Pass InstancedのPlayerでのStage 3との画素単位の一致、Compute単独のGPU時間、容量拡張時の費用も未確認である（記録は `perf/gpu-cull/ADOPT-GPU-CULL.md`）。既知の制限は次のとおり。描画Command数とDraw Call数は減らない（選別前と同じCommandを発行し、残らなかったCommandはinstance count 0で描かれる）。影はCascadeごとのIndirect件数を減らさない（下の「影」）。Single PassでないXR Passでは本体を選別しない。主光源以外に影を落とす可視光源がある場合とSplitが4を超える場合は影を選別しない。一つのCommandのInstance列は1 Threadが走査する。
+
+**責務範囲。** Stage 3Cが選別するのは、本体の表面描画とShadow CasterのInstanceだけである。仮断面のStencil初期化・Volume・Cap（5.2、5.6）はStage 3のまま各カメラのStencil Batchが選別なしで描き、本体の選別結果に依存しない。遮蔽判定、Hi-Z、LOD、動的な空間索引は含めない。通常経路でCPUとGPUの二重選別は行わず、CPU側の同じ判定は試験での基準としてだけ使う。
+
+**CPUからGPUへ渡すもの、GPUから戻さないもの。** CPUは表示収集の結果（配置、Clip Record、描画Command）を従来どおり保持し、変更範囲だけを転送する。Stage 3で送っていた2本の描画引数Bufferの代わりに、Commandごとの選別用Record（Index範囲、Instance列の開始と個数、Geometry自身の枠でのBounds）を、Commandが変わったときに1回だけ送る。Instanceの配置とClip RecordはStage 3と同じBufferへ同じ範囲で送る。可視Instance番号の列と描画引数はGPUが書き、CPUは描画件数を決めるために読み戻さない。CPUは選別結果にかかわらず同じCommand群を発行し、何も残らなかったCommandはinstance count 0で描かれる。1回の選別は全Commandの引数を書き直すので、描画が以前の選別の件数を読むことはない。各Commandは自分のInstance列と同じ位置の枠へ、残ったInstance番号を前詰めで書く。Command間で書込み先は重ならない。選別結果の読み戻しは、限定した試験と証拠用の実行だけで行う。
+
+**判定。** CommandのBoundsをInstanceの配置で運んだ箱（軸平行の箱へ広げない）を各平面と比べ、いずれかの平面の外側へ余裕1 mmを超えて完全に出たInstanceだけを外す。接しているもの、判定できないものは残す。Boundsは切断のClipで縮めず、移動・回転・切断・Geometry Commit後の配置とCommandから得る。毎フレームの頂点走査によるBounds更新は行わない。
+
+**発行位置。** 選別はカメラごとに、URPのそのカメラのフレームの最初のPassとして発行され、同じカメラの影と本体の描画より前に実行される。条件（各眼のView／Projection、影のSplit）は、そのPassを記録する時点でURPが実際に描画へ使う値から取る。CPUの同期待ち、固定フレーム数の待ちは置かない。選別をフレームへ入れられないカメラは、そのフレームは本体を描かない。以前のフレームの選別結果では描かない。
+
+**眼。** 本体は、描画に使う各眼の視錐台6面のうち、どれか一つの眼に入り得るInstanceを残す。XR Single Pass Instancedでは左右眼の両方を条件とし、片眼にしか見えないInstanceは残る。Single PassでないXR Passでは本体を選別せず、全Instanceを残す。
+
+**影。** 影は本体とは別の可視列と引数を持ち、カメラの可視判定を使わない。主光源Shadow Mapの各Split（Cascade）について、URPが使う入力から求めたShadow Casterのカリング面を条件とし、どれか一つのSplitの体積に入り得るInstanceを残す。光源側を向く面は使わない（近平面より光源側のCasterもURPが近平面へ寄せて描くため）。カメラの外にあって視界へ影を落とすCasterは残る。主光源以外に影を落とす可視光源がある場合、Splitが4を超える場合、主光源Shadow Mapが描かれないフレームは、全Instanceを残す。Stable片面／即時切断中の両面のCaster区分（5.4）と影側のClipはStage 3と同じで、同じCommand範囲を同じMaterial区分で発行する。一つの引数Bufferが全SliceへそのままDrawされるため、Splitごとの引数は持たない。その代わり、Shadow Casterの頂点段で、描画中のSliceの投影範囲から箱ごと外れているInstanceをClip Recordや法線の評価より前に捨てる（方向光のSliceだけ）。これはInstance単位の除外であり、Drawのinstance countを減らすものではない。 まとめると、影の選別は「全Splitに共通の影候補（どれか一つのSplitに入り得るInstance）をGPUが選ぶ」ことと「頂点段でのSplit別の除外」の二段であり、SplitごとにIndirectの件数を減らす方式ではない。
+
+**カメラ別の資源と寿命。** 可視列と引数は、カメラ枠ごとに本体用と影用を持つ。そのカメラの選別だけが書き、そのカメラの描画だけが読むので、他のカメラ・眼・Splitの選別で上書きされない。本体Batchを大きいものへ交換するとき（4.5.4）、可視列と引数も新しいBatchのものへ替わり、引数は0（何も描かない）で初期化する。旧Batchは既存の退役規則に従い、GPUが使い終えたことを確認してから解放する。Stage 3C用に表示が複製したMaterial（対応Variantを有効にしたもの）は表示が所有し、表示の解放時に破棄する。
 
 ## 5. 即時表示レンダラ
 
@@ -1395,6 +1418,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-195 | スキニング用骨配列の縮小と骨対応 | 群衆NPCのモデルは、モデル単位の事前準備で一度だけ、描画用Meshの骨配列を、0より大きいweightを持つ骨だけに詰め直す。Rendererの骨配列・Bind Pose・weightの骨番号を同じ対応で揃え、同じRendererから一緒に読む。weightの値・数・順序・対応先、頂点属性、SubMesh、BlendShapeは変えず、微小なweightも切り捨てない。骨Transformと祖先階層は削除しない。詰め直し前の全骨の名前・Bind Pose・詰め直し後の位置を持つ完全な骨対応をモデル単位で共有し、各個体は自分のTransform参照を持つ。骨名で解決する処理（Hull、Pose LODの手首・足首）は完全な骨対応を読み、Rendererの縮小した配列だけに依存しない。NPCごと・切断ごとの詰め直しはしない（9章）。 | 2026-10-05、TL指示。49モデルの実Meshで、Rendererの骨とBind Poseは各358、使用骨は各63（同じ骨名の集合）、最大4 weight、BlendShapeなし、SubMesh 1。Hullの19骨はすべて使用骨だったが、解決は完全な骨対応で行う。Unityの`SetBoneWeights`はweightを正規化し直して値を変えるため使わない（保存前の照合で検出）。街歩き1回ずつの観測で、`MeshSkinning.CalcMatrices`は呼び出し回数が同程度のまま1回あたり11.7 µsから1.7 µs。別の実行同士の並びであり確定した改善率ではない（`perf\skin-bones\SKIN-BONES-1.md`）。TL採用、2026-10-05。mainの街シーンへも反映し、差分が対象NPC 49体だけであることを確認した（`perf\skin-bones\SKIN-BONES-2.md`）。接続漏れの修正（同日、TL指示）：`VpSkinBones`が有効なMonoBehaviourであるため、部品単位の退出の確認が「名指しされていない更新」と判定し、街歩きシーンの49体すべてがRootごとの退出になっていた。確認がこの型だけを名指しで通すようにした。街歩きシーンをEditorで動かして、49体すべてが部品単位の退出になること、歩行中の1体の切断・公開・部品単位の退出、群衆による再準備、同じスロットの次の個体の切断、その間の骨対応の保持を確認した。名指しされていない更新と、独自のOnDisableを持つコンポーネントは、引き続き拒否される（`perf\skin-bones\SKIN-BONES-3.md`）。 |
 | D-196 | 視界外のUnity側スキニング更新 | Pose LODの下にある未切断NPCは、Rendererがカメラのカリング（影のためのカリングを含む）で見えている間だけUnity側でスキニングする。カリング用Boundsは固定値で、Pose LODの保守的な範囲にBind PoseでのSkinの張り出しを加え、描画Renderer自身の座標系に置く（ルートの移動に追従）。再表示の最初の描画は、その時点の骨Transformからスキニングされる。Pose LODは視界の判定をUnityがカリングに使う箱を包む球で行い、視界へ入ったフレームにPoseを骨へ適用する。斬撃は現在の全Poseを骨へ適用し、切断入力を骨Transformから直接作る。影が視界へ落ちるNPCは影のカリングで見えているものとして更新と影の描画が続き、影は消えない。実行時の指定で従来の毎フレーム更新を選べる。MobPlan・ルート移動・寿命管理は変えない（9章）。 | 2026-10-05、TL指示。設定（`updateWhenOffscreen`の無効と固定Bounds）で目的を満たせることを、Unityの計測区間の呼び出し回数と描画結果で確認した：視界外では更新0回、再表示の最初の描画は現在の骨Pose、影が視界へ落ちる視界外のものは影が同じ大きさで残り更新も続く。街歩き1回ずつの観測で、生存NPC 1フレーム約20体のうちUnityが更新したのは約4体（従来は約20体）、従来の動作でUnityが毎フレーム作るBoundsは、標本14万件余りのすべてで固定Boundsの内側（最小でも0.30 m内側）にあった。別の実行同士の並びであり確定した改善率ではない。TLの確認事項（2026-10-05）：保守的な範囲の球だけで判定すると、箱の角だけが視界へ掛かる場合にUnityは描くがPose LODは視界外と判定した。判定をカリングの箱を包む球に改め、視界へ入ったフレームの適用を加え、角だけの場合・片眼だけの場合・遠方での再進入を限定試験で確認した。この修正後のPlayerでの実行は行っていない。TL採用、2026-10-05（復帰の修正を含む）。限定試験で確認したのは、1台のカメラでのUnityのカリングと描画に対する角だけの場合と、与えた2眼に対するPose LODの判定である。SPIでUnityが実際に行うカリングとの一致、描画直前に更新される頭部姿勢との一致は未確認であり、確認済みの範囲とは区別する。修正後のPlayerでの確認は次の街歩き計測に相乗りする（`perf\skin-bones\ADOPT-SKIN-BONES.md`）。 |
 | D-197 | 切断前NPCの切断入力の数値化 | 切断前のNPCには追従するRigidbodyを置かず、準備済み切断へ配置・運動・質量特性を数値で渡す。質量特性（質量、重心、慣性の主モーメント、主軸）はNPCのRootの剛体座標系で表し、既存の設定を準備時に一度だけ読んで準備済み切断が複写を持つ。運動は配置する側がRoot原点の速度と角速度で渡し、配置は受付時にRootから読む。切断元へは重心の速度（Root原点の速度 + 角速度 × 重心までの腕）を渡す。切断に使うRigidbodyは準備済み切断の切断元1個で、受付まではシーンの最上位に非アクティブで保持する。質量設定のRigidbodyは準備時にNPCの階層から外して非アクティブにし、以後は使わない。準備の入口が求めていた「運動用RigidbodyがRoot配下にあること」は廃止した（その目的だった配置の追従と個体への帰属は、Rootから読む配置と複写した数値が担う）。9章。 | 2026-10-05、TL指示。街歩きの群衆NPCの製品経路（`SandboxNpcCharacter`の準備・起動・再準備、`MobPlanCrowd`の配置更新）へ接続した。限定試験：準備済み切断の受付経路で、静止・並進・回転・両方（傾き付き）の4ケースとも、切断元へ渡る質量・重心・慣性・主軸・速度・角速度が、Root配下で追従するRigidbodyを物理側の同期後に読んだ値と一致した（Root・Renderer・質量設定の原点と軸をすべてずらした構成）。群衆スロットの製品経路で、追従のないこと、Pending中の入力の保持、公開、退出、再利用を確認した。関連試験はPlayMode 55件、EditMode 18名（35ケース）で、予定と実行は同じ集合、すべて合格。街歩きシーンをEditorで動かした確認では、準備済み49体すべてで質量設定のRigidbodyが退避済み、切断前にシーン内のRigidbodyは0個、歩行中のNPCの実切断で切断元の重心と速度が数値どおりだった。従来の読取りは、物理側がTransformの新しい姿勢を取り込む前には、移動前の姿勢に基づく値を返した（試験で観測）。数値計算ではこのずれが生じない。このずれの製品での大きさ、Playerでの動作、性能への効果は未測定。街歩きシーンのNPC 49体は、D-195で加えた`VpSkinBones`のためRootごとの退出になっていた（この変更によるものではない。同日、D-195の接続漏れとして修正した）。記録は`perf\motion-input\MOTION-INPUT-1.md`。TL採用、2026-10-05。Playerでの動作、街歩きシーンでの再利用、性能は未確認として残し、次の街歩き計測で確認する（`perf\motion-input\ADOPT-MOTION-INPUT.md`）。 |
+| D-198 | VP本体描画の既定（Stage 3C） | 引数なしの製品経路は、本体（表面とShadow Caster）を4.5.7のGPU選別（Stage 3C）で描く。選別なしのStage 3は `-zantetsuVp3` で選べる切戻し経路として残し、Stage 3Cを構築できない場合のStage 3へのFallbackと理由のログも維持する。URPはForward、GRDなし、GPU Occlusionなしのまま。Cap／StencilはStage 3の経路のまま。影は、全Cascadeに共通の影候補のGPU選別と頂点段のCascade別除外であり、CascadeごとのIndirect件数削減ではない。以後の通常の街歩き計測はStage 3Cを基準とする | TL判断、2026-10-06（O-051を解決）。理由はGPU性能の優位の確定ではなく、Main Thread側の追加費用が小さいという観測（計測マーカー内で0.033 ms／フレーム。総増分とは断定しない）を踏まえ、通常運用で費用と問題を確認していくため。Quest実機（Vulkan）は未確認で、既定化の前提条件にしない。街歩きでのMain Thread約1 msの差は原因未確認、PlayModeの失敗1件（`ARendererNoEyeSees_WhoseShadowFallsIntoView_StillCastsIt`）は未解決のまま残し、この採用を全試験合格としては記録しない。記録は `perf\gpu-cull\GPU-CULL-1.md`、`perf\gpu-cull\ADOPT-GPU-CULL.md` |
 
 ## 13. 未決事項
 
@@ -1428,6 +1452,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-048 | Building World D6設定 | L1=1 m、A1=30°、共通減衰率r=0.5は2026-09-28の人間判断で確定。残件は建物D6を含む既存Constraint容量の製品値 | 拘束挙動、Joint数、生成・退役・Physics Step費用。swingのエンジン下限は7.2.2に従う。薄片の大きな往復運動は未解決で、採用値による改善済みとは扱わない。倒壊防止率・最大変位・性能SLAは追加しない | 設定値の比較証跡はcollege_001 Slash E2E。残る容量はPhase 4.3／T-094の少数FixtureとProfilerで判断 |
 | O-049 | Stencil Color上限超過時の描画スケジュール | 解決済み：方式選定はD-185（人間判断）とD-186（TL具体化）で解決した。Color上限だけによるカメラ準備の拒否を撤回し、通常Colorに入らないCap仕事を最後のColorで旧方式により描き、その誤描画を5.2の品質例外8として許容する。 | 最後のColorへ送るCap仕事とRenderFragmentの数、通常ColorのVolume Group数、使用Color数、Stencil GPU時間 | 2026-09-20 |
 | O-050 | 視界外NPCのPose更新頻度 | Pose LODは視界外でも、最も強い段階で約9 Hzの骨更新を一部の骨について続ける。視界外で骨の更新そのものを止めるか、止める場合の復帰・斬撃・影の条件をどうするか。Unity側スキニングの省略（D-196）とは別の事項であり、D-196では変更していない | Pose評価とTransform書込みの費用、視界外の影のPose、再表示時のPoseの新しさ | 未定（TL判断） |
+| O-051 | Stage 3C（GPU選別）の製品既定採否 | 解決済み：D-198（TL判断）で、引数なしの製品経路の既定とした。Stage 3は `-zantetsuVp3` で選べる切戻し経路として残す。Quest実機（Vulkan）での確認は既定化の前提条件にせず、未確認として残す | 通常運用でのStage 3Cの費用と問題（Main Thread、描画上の問題）を街歩き計測で見ていく。未確認事項と限界は4.5.7と `perf/gpu-cull/ADOPT-GPU-CULL.md` | 2026-10-06 |
 
 ## 14. 技術検証項目
 

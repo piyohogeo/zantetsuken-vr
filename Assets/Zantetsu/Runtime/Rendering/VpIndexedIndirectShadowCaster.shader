@@ -10,6 +10,14 @@
 // the two-sided caster of a provisionally clipped body, Cull Off, where the back of the shell behind the opening is
 // what occludes, because no cap is drawn into the shadow map. One shader, two materials, two draws: NOT one draw with
 // every caster turned two-sided, which DESIGN 5.4 refuses without measuring the back-face raster it would add.
+//
+// VP_GPU_CULLED is the variant of a batch that selects its instances on the GPU (VP Stage 3C, DESIGN 4.5.7). The draw's
+// instances are the slots of the list the compute pass wrote for this view's casters -- a selection of its own, by the
+// shadow splits' culling volumes, not the camera's -- and each slot names the logical instance. The one argument buffer
+// is drawn into every slice of the shadow map, so the list holds what any slice needs; the vertex stage then passes over
+// an instance whose bounds, as carried by its transform, lie wholly outside the slice being rendered (a directional
+// light's, where the projection is a box): every vertex of it is rejected before its clip record or its bias is
+// evaluated. Nothing is rejected for a punctual light. _Cull, the clip record and the bias are unchanged.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
     Properties
@@ -39,6 +47,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             HLSLPROGRAM
             #pragma target 4.5
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
+            #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_instancing
@@ -65,6 +74,50 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+
+        #if defined(VP_GPU_CULLED)
+            // The instances the compute pass kept as casters for this view, as the forward pass reads its own list.
+            StructuredBuffer<uint> _VpVisible;
+
+            // Matches Zantetsu.Rendering.VpCullCommand: 40 bytes. The bounds of a command's range in the geometry's
+            // own frame, read by the command's number.
+            struct VpCullCommand
+            {
+                uint indexCount;
+                uint startIndex;
+                uint startInstance;
+                uint instanceCount;
+                float3 centre;
+                float3 extents;
+            };
+
+            StructuredBuffer<VpCullCommand> _VpCullCommands;
+
+            // 1 when an instance outside the slice being rendered is passed over, 0 when every kept caster is drawn
+            // into every slice.
+            float _VpShadowSliceSelection;
+
+            // Whether the command's bounds, carried by the instance's transform, lie wholly outside the slice's
+            // projection to its left, right, bottom or top. The bias may move a vertex by no more than its two terms,
+            // (_ShadowBias, x the depth term and y the normal term, as URP sets them for the slice), which are added to the
+            // box's reach. Depth is not asked: a caster nearer the light than the slice's near
+            // plane still casts into it.
+            bool VpOutsideSlice(VpCullCommand command, float4x4 objectToWorld)
+            {
+                float3 centreWS = mul(objectToWorld, float4(command.centre, 1.0)).xyz;
+                float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * command.extents.x;
+                float3 axisY = float3(objectToWorld._m01, objectToWorld._m11, objectToWorld._m21) * command.extents.y;
+                float3 axisZ = float3(objectToWorld._m02, objectToWorld._m12, objectToWorld._m22) * command.extents.z;
+                float4x4 viewProjection = UNITY_MATRIX_VP;
+                float bias = abs(_ShadowBias.x) + abs(_ShadowBias.y);
+                float4 centreCS = mul(viewProjection, float4(centreWS, 1.0));
+                float3 rowX = viewProjection[0].xyz;
+                float3 rowY = viewProjection[1].xyz;
+                float reachX = abs(dot(rowX, axisX)) + abs(dot(rowX, axisY)) + abs(dot(rowX, axisZ)) + bias * length(rowX);
+                float reachY = abs(dot(rowY, axisX)) + abs(dot(rowY, axisY)) + abs(dot(rowY, axisZ)) + bias * length(rowY);
+                return abs(centreCS.x) - reachX > centreCS.w || abs(centreCS.y) - reachY > centreCS.w;
+            }
+        #endif
 
             // As in the forward pass: one clip distance per plane, the region kept is their intersection, and past
             // the valid count the component is a positive constant so an unused plane clips nothing at any vertex.
@@ -126,7 +179,23 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
                 VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint logicalInstance = GetIndirectInstanceID_Base(input.instanceID);
+            #if defined(VP_GPU_CULLED)
+                logicalInstance = _VpVisible[logicalInstance];
+            #endif
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
+            #if defined(VP_GPU_CULLED) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
+                // A directional slice projects a box (w is 1 everywhere), which is the only projection the test is
+                // written for; anything else draws every kept caster.
+                if (_VpShadowSliceSelection > 0.5 && UNITY_MATRIX_P[3][3] == 1.0
+                    && VpOutsideSlice(_VpCullCommands[GetCommandID(0)], objectToWorld))
+                {
+                    // The position alone rejects the instance; the clip distances stay positive (DESIGN 5.2).
+                    output.positionCS = float4(2.0, 2.0, 2.0, 1.0);
+                    output.clipDistance0 = 1.0;
+                    output.clipDistance1 = 1.0;
+                    return output;
+                }
+            #endif
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 
                 // As in the forward pass: every plane is tested on the world position the transform leaves, so

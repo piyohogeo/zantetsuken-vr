@@ -13,6 +13,9 @@
 // pass has: no normal map, no transparency, no alpha clipping, and no attempt to stand in for an arbitrary URP
 // material. Leaving _BaseMap unset gives Unity's default white texture, so a caller that sets only a colour sees
 // exactly what it saw before this was added.
+// VP_GPU_CULLED is the variant of a batch that selects its instances on the GPU (VP Stage 3C, DESIGN 4.5.7): the draw's
+// instances are then the slots of a list the compute pass wrote, and each slot names the logical instance to draw.
+// Everything after that -- transform, clip record, shading -- is the same. Without the keyword nothing here changes.
 Shader "Zantetsu/VP Indexed Indirect Unlit"
 {
     Properties
@@ -43,6 +46,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             HLSLPROGRAM
             #pragma target 4.5
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
+            #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
@@ -73,6 +77,12 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+
+        #if defined(VP_GPU_CULLED)
+            // The instances the compute pass kept for this view's body: each command's in the slots of its own
+            // instance run, the kept ones first. The arguments it wrote count and start those slots.
+            StructuredBuffer<uint> _VpVisible;
+        #endif
 
             // One clip distance per plane, so the region kept is the intersection of the valid half-spaces: the
             // hardware drops a fragment wherever any component is negative. Past the valid count the component is a
@@ -194,6 +204,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint physicalInstance = GetIndirectInstanceID_Base(input.instanceID);
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
+            #if defined(VP_GPU_CULLED)
+                logicalInstance = _VpVisible[logicalInstance];
+            #endif
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 

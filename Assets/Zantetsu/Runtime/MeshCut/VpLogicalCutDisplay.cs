@@ -420,7 +420,7 @@ namespace Zantetsu.MeshCut
         public readonly long generation;
     }
 
-    public sealed partial class VpLogicalCutDisplay : IDisposable
+    public sealed partial class VpLogicalCutDisplay : IDisposable, IVpGpuCullTarget
     {
         internal sealed class Shown
         {
@@ -485,6 +485,14 @@ namespace Zantetsu.MeshCut
         private readonly VpGpuIndexedGeometryBuffers _buffers;
         // Replaced only at adoption, by one written whole for the candidate (see the class notes on room).
         private VpIndexedIndirectDrawBatch _batch;
+
+        // Selecting on the GPU (DESIGN 4.5.7): what the body batch -- and every larger one that replaces it -- is made
+        // with, or null for VP Stage 3; and the materials this display made for it, copies of the ones it was given
+        // with the variant that reads the selection's list switched on, which are its own to destroy.
+        private VpGpuCullSetup _cull;
+        private List<Material> _ownedMaterials;
+        private bool _cullMissLogged;
+        private long _pastCullDispatches;
         private readonly VpStencilCapMaterials _stencilMaterials;
         private readonly VpStencilSettings _settings;
 
@@ -705,6 +713,14 @@ namespace Zantetsu.MeshCut
             public long preparedGeneration = -1;
             public int drawnFrame = int.MinValue;
             public VpStencilPreparation preparation;
+
+            // Selecting on the GPU (DESIGN 4.5.7): which of the body batch's views is this camera's -- its slot -- and,
+            // for the frame it last registered draws in, the batch those draws read and whether their selection was
+            // issued.
+            public int view;
+            public VpIndexedIndirectDrawBatch cullBatch;
+            public int cullRequestedFrame = int.MinValue;
+            public int cullIssuedFrame = int.MinValue;
         }
 
         private static readonly int CapNormalsId = Shader.PropertyToID("_VpCapNormals");
@@ -1407,6 +1423,126 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// The same, drawing the body through the GPU selection of DESIGN 4.5.7 when <paramref name="culling"/> is given:
+        /// the body batch is made to select, and the surface and caster materials are replaced by copies of them with
+        /// the variant that reads the selection's list switched on, owned and destroyed by the display. The caps and
+        /// the stencil work are drawn as they always are. False, with <see cref="LastCreationFailure"/>, when the
+        /// setup has fewer views than the cameras the stencil settings allow, or a material's shader has no such
+        /// variant; nothing is made then, and the caller may make the display without it. Null is the display as it
+        /// always was.
+        /// </summary>
+        public static bool TryCreate(
+            VpCpuGeometryStorage storage,
+            VpGeometryReferenceTable table,
+            LogicalCutLedger ledger,
+            IReadOnlyDictionary<int, Material> materialsBySourceIndex,
+            Material shadowMaterial,
+            Material provisionalShadowMaterial,
+            int commandCapacity,
+            int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
+            VpStencilSettings stencilSettings,
+            int gpuVertexInitialCapacity,
+            int gpuIndexInitialCapacity,
+            VpLogicalCutDisplayLimits limits,
+            IVpPageBacking pages,
+            VpGpuCullSetup culling,
+            out VpLogicalCutDisplay display)
+        {
+            return TryCreateCore(
+                storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth, stencilSettings, null,
+                gpuVertexInitialCapacity, gpuIndexInitialCapacity, out display, limits, pages, culling);
+        }
+
+        // The materials of a display that selects on the GPU: one copy per material given, the same copy wherever the
+        // same material was given (so commands still group by material), with the variant switched on. Every copy
+        // made is put in `owned`, whatever the outcome, for the caller to destroy or to hand to the display.
+        private static bool TryMakeCulledMaterials(
+            IReadOnlyDictionary<int, Material> given, ref Material shadowMaterial, ref Material provisionalShadowMaterial,
+            List<Material> owned, out Dictionary<int, Material> culled, out string failure)
+        {
+            culled = new Dictionary<int, Material>(given.Count);
+            failure = null;
+            var copies = new Dictionary<Material, Material>(given.Count);
+            foreach (KeyValuePair<int, Material> entry in given)
+            {
+                if (entry.Value == null)
+                {
+                    culled[entry.Key] = null;
+                    continue;
+                }
+
+                if (!TryCulledCopy(entry.Value, copies, owned, out Material copy, out failure))
+                {
+                    return false;
+                }
+
+                culled[entry.Key] = copy;
+            }
+
+            if (shadowMaterial != null && !TryCulledCopy(shadowMaterial, copies, owned, out shadowMaterial, out failure))
+            {
+                return false;
+            }
+
+            return provisionalShadowMaterial == null
+                || TryCulledCopy(provisionalShadowMaterial, copies, owned, out provisionalShadowMaterial, out failure);
+        }
+
+        private static bool TryCulledCopy(
+            Material source, Dictionary<Material, Material> copies, List<Material> owned, out Material copy, out string failure)
+        {
+            failure = null;
+            if (copies.TryGetValue(source, out copy))
+            {
+                return true;
+            }
+
+            if (source.shader == null || !source.shader.keywordSpace.FindKeyword(VpGpuCullSetup.Keyword).isValid)
+            {
+                failure = "the material '" + source.name + "' has no variant that reads the GPU selection ("
+                          + VpGpuCullSetup.Keyword + ")";
+                return false;
+            }
+
+            copy = new Material(source) { name = source.name + " (GPU culled)" };
+            copy.EnableKeyword(VpGpuCullSetup.Keyword);
+            owned.Add(copy);
+            copies[source] = copy;
+            return true;
+        }
+
+        private static void DestroyMaterials(List<Material> materials)
+        {
+            if (materials == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < materials.Count; i++)
+            {
+                if (materials[i] == null)
+                {
+                    continue;
+                }
+
+                if (Application.isPlaying)
+                {
+                    UnityEngine.Object.Destroy(materials[i]);
+                }
+                else
+                {
+                    UnityEngine.Object.DestroyImmediate(materials[i]);
+                }
+            }
+
+            materials.Clear();
+        }
+
+        /// <summary>
         /// The same, with the frame counter given by the caller instead of taken from the engine. It exists for tests,
         /// which have no frame loop to advance.
         /// </summary>
@@ -1453,7 +1589,8 @@ namespace Zantetsu.MeshCut
             int gpuIndexInitialCapacity,
             out VpLogicalCutDisplay display,
             VpLogicalCutDisplayLimits limits = default,
-            IVpPageBacking pages = null)
+            IVpPageBacking pages = null,
+            VpGpuCullSetup culling = null)
         {
             display = null;
             LastCreationFailure = null;
@@ -1511,6 +1648,31 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            // Selecting on the GPU: a view per camera slot, and the materials' copies. Nothing else is made before
+            // these are known to stand.
+            List<Material> ownedMaterials = null;
+            if (culling != null)
+            {
+                if (culling.ViewCapacity < stencilSettings.cameraCapacity)
+                {
+                    LastCreationFailure = "the GPU selection has " + culling.ViewCapacity + " views for "
+                                          + stencilSettings.cameraCapacity + " cameras";
+                    return false;
+                }
+
+                ownedMaterials = new List<Material>(materialsBySourceIndex.Count + 2);
+                if (!TryMakeCulledMaterials(
+                        materialsBySourceIndex, ref shadowMaterial, ref provisionalShadowMaterial, ownedMaterials,
+                        out Dictionary<int, Material> culledMaterials, out string materialFailure))
+                {
+                    DestroyMaterials(ownedMaterials);
+                    LastCreationFailure = "the GPU selection cannot be drawn: " + materialFailure;
+                    return false;
+                }
+
+                materialsBySourceIndex = culledMaterials;
+            }
+
             VpGpuIndexedGeometryBuffers buffers = null;
             VpIndexedIndirectDrawBatch batch = null;
             VpStencilCapMaterials stencilMaterials = null;
@@ -1536,7 +1698,7 @@ namespace Zantetsu.MeshCut
                 buffers = new VpGpuIndexedGeometryBuffers(gpuVertexInitialCapacity, gpuIndexInitialCapacity, gpuVertexLimit, gpuIndexLimit);
                 try
                 {
-                    batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity, pages);
+                    batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity, pages, culling);
                 }
                 catch (InvalidOperationException exception)
                 {
@@ -1589,6 +1751,8 @@ namespace Zantetsu.MeshCut
                     return false;
                 }
 
+                display._cull = culling;
+                display._ownedMaterials = ownedMaterials;
                 display.RoomReadyAt = System.Diagnostics.Stopwatch.GetTimestamp();
                 display.RoomPreparationMilliseconds = (display.RoomReadyAt - preparationBegin) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 taken = true;
@@ -1598,6 +1762,7 @@ namespace Zantetsu.MeshCut
             {
                 if (!taken)
                 {
+                    DestroyMaterials(ownedMaterials);
                     capNormals?.Dispose();
                     stencilMaterials?.Dispose();
                     batch?.Dispose();
@@ -1662,7 +1827,7 @@ namespace Zantetsu.MeshCut
                         _settings.maxStencilColors, _stencilCommandCapacity, _stencilCommandCapacity,
                         _stencilCapVertexCapacity, _stencilCapIndexCapacity, _pages);
                     batch.WriteWholeOnce();
-                    _cameraStencils[i] = new CameraStencil { camera = camera, batch = batch };
+                    _cameraStencils[i] = new CameraStencil { camera = camera, batch = batch, view = i };
                     handedOver = true;
                 }
                 catch (Exception exception)
@@ -3395,6 +3560,15 @@ namespace Zantetsu.MeshCut
             }
             cameraStencil.drawnFrame = CurrentFrame;
 
+            // Selecting on the GPU: these draws read what this camera's selection writes, which whoever put this
+            // display in the frame issues before the camera's passes run (IssueCull). The batch they read is noted
+            // here, so that the selection is issued for that very batch.
+            bool culled = _batch.CullsOnGpu;
+            if (culled)
+            {
+                NoteCullRequest(cameraStencil);
+            }
+
             // The surfaces, grouped by material: one forward call per run of commands sharing one.
             int start = 0;
             while (start < _commandCount)
@@ -3405,7 +3579,16 @@ namespace Zantetsu.MeshCut
                     end++;
                 }
 
-                _batch.RenderForward(_commandMaterials[start], _properties, _buffers, layer, start, end - start, camera);
+                if (culled)
+                {
+                    _batch.RenderForward(
+                        _commandMaterials[start], _properties, _buffers, layer, start, end - start, camera, cameraStencil.view);
+                }
+                else
+                {
+                    _batch.RenderForward(_commandMaterials[start], _properties, _buffers, layer, start, end - start, camera);
+                }
+
                 start = end;
             }
 
@@ -3423,9 +3606,19 @@ namespace Zantetsu.MeshCut
                         end++;
                     }
 
-                    _batch.RenderShadows(
-                        provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
-                        start, end - start, camera);
+                    if (culled)
+                    {
+                        _batch.RenderShadows(
+                            provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
+                            start, end - start, camera, cameraStencil.view);
+                    }
+                    else
+                    {
+                        _batch.RenderShadows(
+                            provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
+                            start, end - start, camera);
+                    }
+
                     if (provisional)
                     {
                         TwoSidedShadowIssues++;
@@ -3441,6 +3634,97 @@ namespace Zantetsu.MeshCut
 
             // The counting and the caps, after the surfaces: their queues put them after the opaque bodies.
             cameraStencil.batch.Render(_stencilMaterials, _buffers, layer, camera);
+        }
+
+        /// <summary>Whether the body is drawn through the GPU selection of DESIGN 4.5.7. Fixed when the display is made.</summary>
+        public bool CullsOnGpu => _cull != null;
+
+        /// <summary>
+        /// Observation: selections issued for a camera's registered draws; and frames in which a camera registered
+        /// draws whose selection had not been issued when it next drew -- its draws then read the selection of an
+        /// earlier frame, which is a fault of whoever puts the selection in the frame, told once in the log.
+        /// </summary>
+        public long CullSelectionsIssued { get; private set; }
+        public long CullSelectionsMissed { get; private set; }
+
+        /// <summary>Observation: selections dispatched by the body batches since this display was made. GPU work, not transfers.</summary>
+        public long CullDispatches => _pastCullDispatches + _batch.CullDispatches;
+
+        /// <summary>The bytes the selection's results take on the GPU now, every camera's together; zero for VP Stage 3.</summary>
+        public long CullViewBytes => _batch.CullViewBytes;
+
+        /// <summary>
+        /// Diagnosis only -- tests and evidence runs: reads back, **waiting for the GPU**, what the last selection
+        /// issued for <paramref name="camera"/> kept: of how many instances, how many for the body and how many as
+        /// casters. The product never calls this. False when the display does not select on the GPU, no selection has
+        /// been issued for that camera, or the batch it was issued for has since been replaced.
+        /// </summary>
+        public bool TryReadCullCountsForDiagnosis(Camera camera, out int instances, out int forwardKept, out int shadowKept)
+        {
+            instances = 0;
+            forwardKept = 0;
+            shadowKept = 0;
+            if (_disposed || _cull == null)
+            {
+                return false;
+            }
+
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null || slot.cullIssuedFrame == int.MinValue || !ReferenceEquals(slot.cullBatch, _batch))
+            {
+                return false;
+            }
+
+            instances = _batch.InstanceCount;
+            _batch.ReadCullCountsForDiagnosis(slot.view, out forwardKept, out shadowKept);
+            return true;
+        }
+
+        private void NoteCullRequest(CameraStencil slot)
+        {
+            if (slot.cullRequestedFrame != int.MinValue && slot.cullRequestedFrame != CurrentFrame
+                && slot.cullIssuedFrame != slot.cullRequestedFrame)
+            {
+                CullSelectionsMissed++;
+                if (!_cullMissLogged)
+                {
+                    _cullMissLogged = true;
+                    Debug.LogError(
+                        "VpLogicalCutDisplay: " + (slot.camera != null ? slot.camera.name : "a camera") + " drew frame "
+                        + slot.cullRequestedFrame + " without its GPU selection having been issued; its draws read an "
+                        + "earlier frame's selection. Told once.");
+                }
+            }
+
+            slot.cullRequestedFrame = CurrentFrame;
+            slot.cullBatch = _batch;
+        }
+
+        /// <summary>
+        /// Issues, into <paramref name="commands"/>, the selection for the draws <see cref="Render"/> registered for
+        /// <paramref name="camera"/> in this frame, from <paramref name="conditions"/> (DESIGN 4.5.7). The commands must
+        /// be executed before that camera's shadow maps and colour are drawn; it is the caller that puts them there.
+        /// It may be issued again in the same frame, for a camera that renders more than one pass: each issue serves
+        /// the draws that follow it. False, issuing nothing, when the display does not select on the GPU, has ended,
+        /// or registered no draw for that camera in this frame.
+        /// </summary>
+        public bool IssueCull(UnityEngine.Rendering.CommandBuffer commands, Camera camera, VpCullConditions conditions)
+        {
+            if (_disposed || _cull == null)
+            {
+                return false;
+            }
+
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null || slot.cullBatch == null || slot.cullRequestedFrame != CurrentFrame)
+            {
+                return false;
+            }
+
+            slot.cullBatch.IssueCull(commands, slot.view, conditions);
+            slot.cullIssuedFrame = CurrentFrame;
+            CullSelectionsIssued++;
+            return true;
         }
 
         // ----- what is shown ---------------------------------------------------------------------------------------
@@ -3667,6 +3951,7 @@ namespace Zantetsu.MeshCut
             _capNormalBuffer.Dispose();
             _batch.Dispose();
             _buffers.Dispose();
+            DestroyMaterials(_ownedMaterials);
 
             // Teardown alone waits: for each replaced object's readback, so the GPU is past it when it is released.
             foreach (RetiredGpu retired in _retiredGpu)
@@ -4212,6 +4497,7 @@ namespace Zantetsu.MeshCut
                 _pastInstanceElements += _batch.InstanceElementsTransferred;
                 _pastArgumentCalls += _batch.ArgumentSetDataCalls;
                 _pastInstanceCalls += _batch.InstanceSetDataCalls;
+                _pastCullDispatches += _batch.CullDispatches;
                 _batch = grownBatch;
             }
 
@@ -5056,7 +5342,8 @@ namespace Zantetsu.MeshCut
             {
                 if (bodyShort)
                 {
-                    grownBatch = new VpIndexedIndirectDrawBatch(_commandCapacity, _instanceCapacity, _pages);
+                    grownBatch = new VpIndexedIndirectDrawBatch(_commandCapacity, _instanceCapacity, _pages, _cull);
+                    grownBatch.WriteCullArgumentsZero();
                 }
 
                 if (normalsShort)

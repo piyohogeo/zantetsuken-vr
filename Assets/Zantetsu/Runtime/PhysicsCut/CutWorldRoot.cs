@@ -142,6 +142,13 @@ namespace Zantetsu.PhysicsCut
         public VpLogicalCutDisplay Display { get; private set; }
 
         /// <summary>
+        /// Why this world draws its bodies as VP Stage 3 although it was to draw them through the GPU selection (the
+        /// default, DESIGN 4.5.7, D-198); null when VP Stage 3 was asked for, or when the world draws through the
+        /// selection. A world that fell back is not a world that selects on the GPU, and what it measures is VP Stage 3's.
+        /// </summary>
+        public string GpuCullFallback { get; private set; }
+
+        /// <summary>
         /// The input connectivity the characters prepared in this world have passed (DESIGN 6.2's edge and fan checks), so
         /// that another character of the same model -- a replacement -- is not checked again for it; each character's own
         /// values are still checked. Kept for this world's lifetime and let go at its release.
@@ -353,12 +360,56 @@ namespace Zantetsu.PhysicsCut
                 Storage, profile.GeometryReferenceCapacity, profile.DisplayInstanceCapacity,
                 profile.GeometryReferenceCapacityLimit, profile.DisplayInstanceCapacityLimit);
 
-            if (!VpLogicalCutDisplay.TryCreate(
+            // The body's route (DESIGN 4.5.7, D-198), settled here once and never changed: the GPU selection, or -- when
+            // the Player was started asking for it -- VP Stage 3. A pipeline, a device or a material that cannot select
+            // leaves VP Stage 3, and the log says which was taken and why, so that no run takes one for the other.
+            IVpPageBacking displayPages = TakeNextDisplayPageBacking();
+            VpGpuCullSetup culling = null;
+            GpuCullFallback = null;
+            if (VpGpuCullSetup.Requested)
+            {
+                GpuCullFallback = Zantetsu.Rendering.Urp.VpGpuCullCameraRoute.CheckEnvironment();
+                if (GpuCullFallback == null
+                    && !VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, out culling, out string cullFailure))
+                {
+                    GpuCullFallback = cullFailure;
+                }
+            }
+
+            VpLogicalCutDisplay display = null;
+            if (culling != null && !VpLogicalCutDisplay.TryCreate(
                     Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
                     profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
                     profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
                     profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
-                    TakeNextDisplayPageBacking(), out VpLogicalCutDisplay display))
+                    displayPages, culling, out display))
+            {
+                GpuCullFallback = VpLogicalCutDisplay.LastCreationFailure ?? "the display could not be made with it";
+                culling = null;
+            }
+
+            if (VpGpuCullSetup.Requested)
+            {
+                UnityEngine.Debug.Log(
+                    culling != null
+                        ? "VP BODY ROUTE: VP3C -- GPU selection (compute frustum culling, GPU-written indirect arguments), "
+                          + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
+                          + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off")
+                        : "VP BODY ROUTE: VP3 -- FALLBACK, the GPU selection (the default) is not used: " + GpuCullFallback,
+                    this);
+            }
+            else
+            {
+                UnityEngine.Debug.Log(
+                    "VP BODY ROUTE: VP3 (asked for: " + VpGpuCullSetup.Vp3Argument + ", or set so by the caller; no GPU selection)", this);
+            }
+
+            if (display == null && !VpLogicalCutDisplay.TryCreate(
+                    Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                    profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
+                    profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
+                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
+                    displayPages, out display))
             {
                 // The room the display needs, or the stencil configuration it requires, could not be established.
                 // Those are causes of the common Player termination of DESIGN 4, and the latch is here from before
