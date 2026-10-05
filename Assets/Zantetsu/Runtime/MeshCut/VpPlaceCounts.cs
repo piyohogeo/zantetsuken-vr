@@ -12,7 +12,10 @@ namespace Zantetsu.MeshCut
     {
         public long passes;
         public double seconds;
-        public long renderFragments, queries, following, staticPlacements, placementChecks;
+        public long renderFragments, queries, following, staticPlacements;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        public long placementChecks;   // the numeric contract diagnosis's checks of the answers (these configurations only)
+#endif
         public long selected, planeTransforms, clipsKept;
         public long sectionsFoundHere, sectionsReused, sectionsBuilt, sectionEntriesCompared;
         public long capClips, capInputVertices, capOutputVertices;
@@ -23,18 +26,25 @@ namespace Zantetsu.MeshCut
 
         // The diagnosis's blocks (VpMultiCutSnapshot.PlacePhasedDiagnosis; 0 otherwise): every query of the pass, every check
         // of their answers, everything built after them -- each block timed whole.
-        public double providerSeconds, checkSeconds, restSeconds;
+        public double providerSeconds, restSeconds;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        public double checkSeconds;
+#endif
 
         public void Clear()
         {
             passes = 0;
             seconds = 0.0;
-            renderFragments = queries = following = staticPlacements = placementChecks = 0;
+            renderFragments = queries = following = staticPlacements = 0;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            placementChecks = 0;
+            checkSeconds = 0.0;
+#endif
             selected = planeTransforms = clipsKept = 0;
             sectionsFoundHere = sectionsReused = sectionsBuilt = sectionEntriesCompared = 0;
             capClips = capInputVertices = capOutputVertices = 0;
             keptAsSettled = 0;
-            providerSeconds = checkSeconds = restSeconds = 0.0;
+            providerSeconds = restSeconds = 0.0;
         }
 
         /// <summary>This plus <paramref name="a"/> minus <paramref name="b"/>, field by field.</summary>
@@ -46,7 +56,10 @@ namespace Zantetsu.MeshCut
             queries += a.queries - b.queries;
             following += a.following - b.following;
             staticPlacements += a.staticPlacements - b.staticPlacements;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             placementChecks += a.placementChecks - b.placementChecks;
+            checkSeconds += a.checkSeconds - b.checkSeconds;
+#endif
             selected += a.selected - b.selected;
             planeTransforms += a.planeTransforms - b.planeTransforms;
             clipsKept += a.clipsKept - b.clipsKept;
@@ -59,7 +72,6 @@ namespace Zantetsu.MeshCut
             capOutputVertices += a.capOutputVertices - b.capOutputVertices;
             keptAsSettled += a.keptAsSettled - b.keptAsSettled;
             providerSeconds += a.providerSeconds - b.providerSeconds;
-            checkSeconds += a.checkSeconds - b.checkSeconds;
             restSeconds += a.restSeconds - b.restSeconds;
         }
 
@@ -74,10 +86,17 @@ namespace Zantetsu.MeshCut
         private static readonly VpPlaceCounts s_zero = new VpPlaceCounts();
 
         public string Describe() =>
-            "passes " + passes + " (" + (seconds * 1000).ToString("F3") + " ms); render fragments " + renderFragments + ", queries " + queries + " (following " + following + ", static " + staticPlacements + "), placement checks " + placementChecks
+            "passes " + passes + " (" + (seconds * 1000).ToString("F3") + " ms); render fragments " + renderFragments + ", queries " + queries + " (following " + following + ", static " + staticPlacements + ")"
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            + ", placement checks " + placementChecks
+#endif
             + "; selected " + selected + " (plane transforms " + planeTransforms + "), clips kept " + clipsKept + ", kept as taken over " + keptAsSettled
             + "; sections found in the build " + sectionsFoundHere + ", reused " + sectionsReused + ", built " + sectionsBuilt + " (entries compared " + sectionEntriesCompared + ")"
             + "; cap clips " + capClips + " (vertices in " + capInputVertices + ", out " + capOutputVertices + ")"
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             + (providerSeconds + checkSeconds + restSeconds > 0.0 ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + ", checks " + (checkSeconds * 1000).ToString("F3") + ", the rest " + (restSeconds * 1000).ToString("F3") : "");
+#else
+            + (providerSeconds + restSeconds > 0.0 ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + ", the rest " + (restSeconds * 1000).ToString("F3") : "");
+#endif
     }
 }

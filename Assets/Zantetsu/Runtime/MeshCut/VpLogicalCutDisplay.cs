@@ -2551,16 +2551,23 @@ namespace Zantetsu.MeshCut
             bool ready = prepared == null
                 ? TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
                 : TryPrepareRootCommand(prepared, geometry, out commands, out commandMaterials, out localBounds);
-            if (!ready
-                || !VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
+            if (!ready)
+            {
+                return false;
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The numeric input-contract diagnosis (DESIGN 5.6; not compiled for a non-Development Player): what the
+            // registration settles by itself -- its box, its placement and the epsilon it will be built with -- is
+            // refused here, before anything is transferred, registered or taken; the collection asks the same
+            // function again.
+            if (!VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
                 || !VpMultiCutSnapshot.IsWithinSectionBounds(
                     localBounds, objectToWorld, VpCapBoundsPolygon.EpsilonFor(localBounds)))
             {
-                // What the registration settles by itself -- its box, its placement and the epsilon it will be built
-                // with -- is refused here, before anything is transferred, registered or taken; the collection asks the
-                // same function again.
                 return false;
             }
+#endif
 
             // Room for the body now, and for a second render fragment it may take later: within the limits, since a
             // collection grows the room to what it needs. Past a limit is told, not only refused.
@@ -2830,9 +2837,13 @@ namespace Zantetsu.MeshCut
             {
                 if (!positiveFragment.IsSet
                     || !TrySidePlacements(positiveFragment, body, out positivePlacements)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                     || !TryPrepareSide(
                         positive.geometry, body, in positivePlacements, out positiveCommands, out positiveMaterials,
                         out positiveBounds))
+#else
+                    || !TryPrepareSide(positive.geometry, out positiveCommands, out positiveMaterials, out positiveBounds))
+#endif
                 {
                     _commitNow.outcome = "refused: the positive side's placement or preparation";
                     CommitLap(ref _commitNow.prepare);
@@ -2847,9 +2858,13 @@ namespace Zantetsu.MeshCut
             {
                 if (!negativeFragment.IsSet
                     || !TrySidePlacements(negativeFragment, body, out negativePlacements)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                     || !TryPrepareSide(
                         negative.geometry, body, in negativePlacements, out negativeCommands, out negativeMaterials,
                         out negativeBounds))
+#else
+                    || !TryPrepareSide(negative.geometry, out negativeCommands, out negativeMaterials, out negativeBounds))
+#endif
                 {
                     _commitNow.outcome = "refused: the negative side's placement or preparation";
                     CommitLap(ref _commitNow.prepare);
@@ -3094,20 +3109,30 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        /// <summary>One side of a commit, judged where it will really stand: the placement it is drawn at.</summary>
+        /// <summary>
+        /// One side of a commit: its draw commands and its box. Where the numeric input-contract diagnosis is compiled
+        /// (the Editor and Development Players, DESIGN 5.6) it is also judged where it will really stand -- the placement
+        /// it is drawn at -- and the body and the placements are taken for that judgement alone.
+        /// </summary>
         private bool TryPrepareSide(
             VpStoredGeometry geometry,
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Shown body,
             in SidePlacements placements,
+#endif
             out VpIndirectCommand[] commands,
             out Material[] commandMaterials,
             out Bounds localBounds)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Matrix4x4 placement = placements.drawn;
             return TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
                 && VpMultiCutSnapshot.IsWithinInputContract(localBounds, placement, body.lineageToGeometryLocal)
                 && VpMultiCutSnapshot.IsWithinSectionBounds(
                     localBounds, placement, VpCapBoundsPolygon.EpsilonFor(localBounds));
+#else
+            return TryPrepare(geometry, out commands, out commandMaterials, out localBounds);
+#endif
         }
 
         /// <summary>

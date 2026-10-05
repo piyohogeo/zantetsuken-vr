@@ -134,6 +134,9 @@ namespace Zantetsu.MeshCut
         DrawnCapVertex = 9,
     }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+    // The numeric input-contract diagnosis's bounds (DESIGN 5.6, D-191): this class exists for the Editor and for Development
+    // Players only. A non-Development Player has neither of its two judgements.
     /// <summary>
     /// Bounds, in double, on what taking a box-and-plane section (<see cref="VpCapBoundsPolygon.TryBuild"/>), clipping it
     /// (<see cref="VpCapPolygonClip"/>) and moving it by an offset can produce in float, so that a conservative check can
@@ -244,6 +247,13 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        private static double Row(float a, float b, float c, float t, double3 local)
+        {
+            double row = (Math.Abs((double)a) * local.x) + (Math.Abs((double)b) * local.y) + (Math.Abs((double)c) * local.z)
+                + Math.Abs((double)t);
+            return (((row * FloatGrowth) + FloatSlack) * DoubleGrowth);
+        }
+
         /// <summary>
         /// Whether a corner's distance to <paramref name="localPlane"/>, and the difference of two, stay within float for
         /// the section of <paramref name="localBounds"/> -- after the section normalizes the plane again by its float length.
@@ -279,19 +289,13 @@ namespace Zantetsu.MeshCut
             return 2.0 * distance * FloatGrowth <= FloatMax;
         }
 
-        private static double Row(float a, float b, float c, float t, double3 local)
-        {
-            double row = (Math.Abs((double)a) * local.x) + (Math.Abs((double)b) * local.y) + (Math.Abs((double)c) * local.z)
-                + Math.Abs((double)t);
-            return (((row * FloatGrowth) + FloatSlack) * DoubleGrowth);
-        }
-
         private static bool IsFinite(Vector3 v)
         {
             return !float.IsNaN(v.x) && !float.IsInfinity(v.x) && !float.IsNaN(v.y) && !float.IsInfinity(v.y)
                 && !float.IsNaN(v.z) && !float.IsInfinity(v.z);
         }
     }
+#endif
 
     /// <summary>
     /// One registration a snapshot is built for: a root fragment and the geometry it is drawn with. Every field is the
@@ -514,7 +518,8 @@ namespace Zantetsu.MeshCut
     /// </para>
     /// <para>
     /// **The numeric check, conservative by contract.** Also before the walk and whatever the room, from bounds and never by
-    /// taking a section (<see cref="VpSectionBounds"/>): for each registration, that a section of its box can be computed in
+    /// taking a section (<c>VpSectionBounds</c>; a diagnosis compiled for the Editor and Development Players only, DESIGN
+    /// 5.6): for each registration, that a section of its box can be computed in
     /// float at all -- the box's width, the vertex epsilon squared, the placed box's coordinates and the sums the ordering
     /// takes -- giving a bound W on every cap vertex's placed coordinates on each axis; and, for every plane of the lineage
     /// checked above, that a corner's distance to it and the difference of two such distances stay finite. Anything else is
@@ -812,6 +817,8 @@ namespace Zantetsu.MeshCut
             {
                 Room(ref _parts, count);
                 _partByRoot.EnsureCapacity(count);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // What the numeric contract diagnosis remembers (it and its room exist in these configurations only).
                 if (_validatedHas.Length < count)
                 {
                     Array.Resize(ref _validatedHas, count);
@@ -827,6 +834,7 @@ namespace Zantetsu.MeshCut
                     Array.Resize(ref _placedHas, count);
                     Array.Resize(ref _placedPassed, count);
                 }
+#endif
 
                 if (_reflected.Length < count)
                 {
@@ -1035,8 +1043,10 @@ namespace Zantetsu.MeshCut
             into.Add(VpRoomLine.OfManaged(owner + ".checkStates", _checkStates));
 
             // Kept per registration and per render fragment: what the builds remember (they grow with the count met).
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             into.Add(VpRoomLine.OfManaged(owner + ".validated (per registration)", 2 + 24 + 64 + 64 + 4, _validatedHas.Length));
             into.Add(VpRoomLine.OfManaged(owner + ".placed (per render fragment)", 1 + 64, _placedHas.Length));
+#endif
             into.Add(VpRoomLine.OfManaged(owner + ".reflected (ref)", IntPtr.Size, _reflected.Length));
             into.Add(VpRoomLine.OfManaged(owner + ".segments (per registration)", SegmentRecordBytes, _segOf.Length));
         }
@@ -1141,7 +1151,9 @@ namespace Zantetsu.MeshCut
         private VpPlaceCounts _placeInto;
 
         /// <summary>Tests only: a query's answer checked a second time once it is the placement (the pass before 2026-10-01's change).</summary>
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
         internal static bool placementCheckTwiceForTest;
+#endif
 
         /// <summary>
         /// DIAGNOSIS ONLY, off by default (2026-10-01): each Place pass makes the same calls in three blocks, each timed whole
@@ -1153,7 +1165,10 @@ namespace Zantetsu.MeshCut
 
         // The diagnosis's answers, one a render fragment (made on its first use).
         private Matrix4x4[] _phasedPlacements = Array.Empty<Matrix4x4>();
-        private bool[] _phasedAnswered = Array.Empty<bool>(), _phasedChecked = Array.Empty<bool>();
+        private bool[] _phasedAnswered = Array.Empty<bool>();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private bool[] _phasedChecked = Array.Empty<bool>();   // which answers the numeric contract diagnosis is to check
+#endif
 
         /// <summary>Tests only: what render fragment <paramref name="index"/> stands as (the placement it asks for).</summary>
         internal (LogicalFragmentId fragment, CutOperationId operation, float side) StandsAsForTest(int index) => (StandsAt(index).fragment, StandsAt(index).operation, StandsAt(index).side);
@@ -1278,7 +1293,10 @@ namespace Zantetsu.MeshCut
         }
 
         // The parts of the validation running now, added to the sums when it ends (whichever way).
-        private double _vIndex, _vInput, _vAncestors, _vOperations, _vContract;
+        private double _vIndex, _vInput, _vAncestors, _vOperations;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private double _vContract;   // the numeric contract diagnosis's part of the input checks
+#endif
         private long _vMark;
 
         private void Lap(ref double into)
@@ -1655,18 +1673,20 @@ namespace Zantetsu.MeshCut
             _invalid = VpMultiCutInvalidInput.None;
             _shortage = VpMultiCutShortage.None;
             SectionBuildCount = 0;
-            // The same validation the ordinary build makes, in the same order, with only the checks the settled
-            // structure has already answered left out.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The numeric input-contract diagnosis of the registrations: what is left of the ordinary build's
+            // validation when the settled structure has answered the rest. Not compiled for a non-Development Player.
             VpMultiCutBuildOutcome checkedInputs;
             using (s_validate.Auto())
             {
-                checkedInputs = Validate(ledger, registrations, true);
+                checkedInputs = ValidatePlacementInputs(registrations);
             }
 
             if (checkedInputs != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(checkedInputs);
             }
+#endif
 
             if (structure._branchCount > _branches.Length)
             {
@@ -1740,7 +1760,7 @@ namespace Zantetsu.MeshCut
             VpMultiCutBuildOutcome outcome;
             using (s_validate.Auto())
             {
-                outcome = Validate(ledger, registrations, false);
+                outcome = Validate(ledger, registrations);
             }
 
             if (outcome != VpMultiCutBuildOutcome.Built)
@@ -1837,20 +1857,26 @@ namespace Zantetsu.MeshCut
                 return TryApplyPlacementsPhased(ledger, registrations, placement, reuseFrom);
             }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_placedHas.Length < _renderFragmentCount)
             {
                 int room = Math.Max(_renderFragmentCount, _placedHas.Length * 2);
                 Array.Resize(ref _placedHas, room);
                 Array.Resize(ref _placedPassed, room);
             }
+#endif
 
             for (int r = 0; r < _renderFragmentCount; r++)
             {
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 VpMultiCutRegistration registration = registrations[renderFragment.registration];
                 _placeInto.renderFragments++;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                 if (!TryPlacementOf(
                         placement, registration, StandsAt(r), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
+#else
+                if (!TryPlacementOf(placement, registration, StandsAt(r), _placeInto, out Matrix4x4 geometryLocalToWorld))
+#endif
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
@@ -1866,7 +1892,8 @@ namespace Zantetsu.MeshCut
                     // standing, bit for bit, where the structure placed it: placing it again and building it again
                     // would write this very render fragment back (the same placement, an empty clip, the same empty
                     // ranges at the same places). It is kept as it was copied (2026-10-05). It was asked where it
-                    // stands, and that answer checked or remembered, above, as for any other.
+                    // stands above, as any other (and, where the numeric diagnosis is compiled, that answer checked or
+                    // remembered there).
                     _placeInto.clipsKept++;
                     _placeInto.keptAsSettled++;
                     PlacementsKeptAsSettled++;
@@ -1937,37 +1964,59 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome Validate(
             LogicalCutLedger ledger,
-            IReadOnlyList<VpMultiCutRegistration> registrations,
-            bool structureAlreadySettled)
+            IReadOnlyList<VpMultiCutRegistration> registrations)
         {
             long validateBegin = System.Diagnostics.Stopwatch.GetTimestamp();
-            _vIndex = _vInput = _vAncestors = _vOperations = _vContract = 0.0;
+            _vIndex = _vInput = _vAncestors = _vOperations = 0.0;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _vContract = 0.0;
+#endif
             _vMark = validateBegin;
             try
             {
-                return ValidateCore(ledger, registrations, structureAlreadySettled);
+                return ValidateCore(ledger, registrations);
             }
             finally
             {
-                if (structureAlreadySettled)
-                {
-                    ValidateCounts.placementOnly++;
-                    ValidateCounts.placementRegistrations += registrations.Count;
-                    ValidateCounts.placementInputSeconds += _vInput;
-                    ValidateCounts.placementContractSeconds += _vContract;
-                }
-                else
-                {
-                    ValidateCounts.structural++;
-                    ValidateCounts.registrations += registrations.Count;
-                    ValidateCounts.indexSeconds += _vIndex;
-                    ValidateCounts.inputSeconds += _vInput;
-                    ValidateCounts.contractSeconds += _vContract;
-                    ValidateCounts.ancestorSeconds += _vAncestors;
-                    ValidateCounts.operationsSeconds += _vOperations;
-                }
+                ValidateCounts.structural++;
+                ValidateCounts.registrations += registrations.Count;
+                ValidateCounts.indexSeconds += _vIndex;
+                ValidateCounts.inputSeconds += _vInput;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                ValidateCounts.contractSeconds += _vContract;
+#endif
+                ValidateCounts.ancestorSeconds += _vAncestors;
+                ValidateCounts.operationsSeconds += _vOperations;
+                LastStructureValidateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - validateBegin) / (double)System.Diagnostics.Stopwatch.Frequency;
+            }
+        }
 
-                if (!structureAlreadySettled) LastStructureValidateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - validateBegin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // ----- the numeric input-contract diagnosis of a placement-only build (DESIGN 5.6) ------------------------------
+        // Compiled for the Editor and for Development Players only, with everything that exists for it alone: what each
+        // registration last passed with and the comparisons that let it pass again unasked, their room, the counts and the
+        // times. A non-Development Player has none of this and asks nothing here: a number outside the contract goes on
+        // into the build there, and what is drawn from it is not defined.
+
+        /// <summary>
+        /// What a placement-only build asks of its registrations: that each one's box, placement and lineage frame are
+        /// within the input contract, and that a section of its box, placed, can be computed at all. Nothing of the
+        /// structure is read: the settled structure has answered that.
+        /// </summary>
+        private VpMultiCutBuildOutcome ValidatePlacementInputs(IReadOnlyList<VpMultiCutRegistration> registrations)
+        {
+            _vIndex = _vInput = _vAncestors = _vOperations = _vContract = 0.0;
+            _vMark = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                return ValidatePlacementInputsCore(registrations);
+            }
+            finally
+            {
+                ValidateCounts.placementOnly++;
+                ValidateCounts.placementRegistrations += registrations.Count;
+                ValidateCounts.placementInputSeconds += _vInput;
+                ValidateCounts.placementContractSeconds += _vContract;
             }
         }
 
@@ -2010,12 +2059,9 @@ namespace Zantetsu.MeshCut
             return ac.x == bc.x && ac.y == bc.y && ac.z == bc.z && ae.x == be.x && ae.y == be.y && ae.z == be.z;
         }
 
-        private VpMultiCutBuildOutcome ValidateCore(
-            LogicalCutLedger ledger,
-            IReadOnlyList<VpMultiCutRegistration> registrations,
-            bool structureAlreadySettled)
+        private VpMultiCutBuildOutcome ValidatePlacementInputsCore(IReadOnlyList<VpMultiCutRegistration> registrations)
         {
-            bool remember = structureAlreadySettled && !validateEveryRegistrationForTest;
+            bool remember = !validateEveryRegistrationForTest;
             if (remember) ValidatedRoom(registrations.Count);
             for (int g = 0; g < registrations.Count; g++)
             {
@@ -2044,45 +2090,6 @@ namespace Zantetsu.MeshCut
 
             _vContract = (System.Diagnostics.Stopwatch.GetTimestamp() - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
             Lap(ref _vInput);
-            if (!structureAlreadySettled)
-            {
-                StructureValidations++;
-                long indexBegin = System.Diagnostics.Stopwatch.GetTimestamp();
-                if (_reflected.Length < registrations.Count)
-                {
-                    int grown = System.Math.Max(registrations.Count, _reflected.Length * 2);
-                    var more = new VpReflectedIndex[grown];
-                    System.Array.Copy(_reflected, more, _reflected.Length);
-                    for (int i = _reflected.Length; i < grown; i++) more[i] = new VpReflectedIndex();
-                    _reflected = more;
-                }
-
-                long builtBefore = _reflectedCounts.built, reusedBefore = _reflectedCounts.reused;
-                for (int g = 0; g < registrations.Count; g++)
-                {
-                    _reflected[g].Fill(registrations[g].reflected, reflectedByScanForTest, _reflectedCounts, reflectedIndexAgainForTest);
-                }
-
-                ValidateCounts.indexesBuilt += _reflectedCounts.built - builtBefore;
-                ValidateCounts.indexesReused += _reflectedCounts.reused - reusedBefore;
-
-                LastReflectedIndexSeconds = SecondsSince(indexBegin);
-                PrepareLineage(ledger);
-                OpenSegments(ledger, registrations.Count);
-                Lap(ref _vIndex);
-                _registrationOfRoot.Clear();
-                _lineageOf.Clear();
-                _rootsRegisteredTwice.Clear();
-                for (int g = 0; g < registrations.Count; g++)
-                {
-                    // Two registrations of one root are refused below, in the order that check always had; the table
-                    // notes here which roots are registered more than once, so that each registration asks once.
-                    if (!_registrationOfRoot.ContainsKey(registrations[g].root)) _registrationOfRoot.Add(registrations[g].root, g);
-                    else _rootsRegisteredTwice.Add(registrations[g].root);
-                }
-            }
-
-            int steps = ledger.OperationCount + 1;
             for (int g = 0; g < registrations.Count; g++)
             {
                 if (remember && _validatedNow[g])
@@ -2090,41 +2097,109 @@ namespace Zantetsu.MeshCut
                     continue;   // the same values it passed with: the extent below is a function of them
                 }
 
-                VpMultiCutRegistration registration = registrations[g];
-                if (!structureAlreadySettled && !ledger.TryGetFragmentState(registration.root, out _))
-                {
-                    return Invalid(VpMultiCutInvalidInput.Lineage);
-                }
-
                 // A section of this box, placed, can be computed in float at all, and every cap vertex it gives is
-                // bounded. Where the box stands decides it, so it is asked again whenever that changes -- here, where
-                // it has always been asked, so that which refusal comes first is what it always was.
+                // bounded. Where the box stands decides it, so it is asked again whenever that changes.
+                VpMultiCutRegistration registration = registrations[g];
                 if (!VpSectionBounds.TryPlacedExtent(
                         registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.ConservativeSection);
                 }
 
-                if (structureAlreadySettled)
+                if (remember)
                 {
-                    // The rest of this is what the ledger and the lineage say, and it was settled when the structure
-                    // was. Only these checks are skipped; the order of the ones that remain is untouched.
-                    if (remember)
-                    {
-                        // It passed the contract above and the extent here: remembered with the values it passed with.
-                        _validatedHas[g] = true;
-                        _validatedBounds[g] = registration.localBounds;
-                        _validatedPlacement[g] = registration.geometryLocalToWorld;
-                        _validatedLineage[g] = registration.lineageToGeometryLocal;
-                        _validatedEpsilon[g] = registration.vertexEpsilon;
-                    }
-                    else
-                    {
-                        Lap(ref _vInput);   // as before: the clock read once a registration
-                    }
-
-                    continue;
+                    // It passed the contract above and the extent here: remembered with the values it passed with.
+                    _validatedHas[g] = true;
+                    _validatedBounds[g] = registration.localBounds;
+                    _validatedPlacement[g] = registration.geometryLocalToWorld;
+                    _validatedLineage[g] = registration.lineageToGeometryLocal;
+                    _validatedEpsilon[g] = registration.vertexEpsilon;
                 }
+                else
+                {
+                    Lap(ref _vInput);   // as before: the clock read once a registration
+                }
+            }
+
+            if (remember) Lap(ref _vInput);   // the registrations' input checks, timed once for all of them
+            return VpMultiCutBuildOutcome.Built;
+        }
+#endif
+
+        private VpMultiCutBuildOutcome ValidateCore(
+            LogicalCutLedger ledger,
+            IReadOnlyList<VpMultiCutRegistration> registrations)
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The numeric input-contract diagnosis of every registration, before anything of the structure is read.
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                VpMultiCutRegistration registration = registrations[g];
+                if (!IsWithinContract(registration.localBounds)
+                    || !IsPlacement(registration.geometryLocalToWorld)
+                    || !IsRigid(registration.lineageToGeometryLocal))
+                {
+                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+            }
+
+            _vContract = (System.Diagnostics.Stopwatch.GetTimestamp() - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
+            Lap(ref _vInput);
+            StructureValidations++;
+            long indexBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_reflected.Length < registrations.Count)
+            {
+                int grown = System.Math.Max(registrations.Count, _reflected.Length * 2);
+                var more = new VpReflectedIndex[grown];
+                System.Array.Copy(_reflected, more, _reflected.Length);
+                for (int i = _reflected.Length; i < grown; i++) more[i] = new VpReflectedIndex();
+                _reflected = more;
+            }
+
+            long builtBefore = _reflectedCounts.built, reusedBefore = _reflectedCounts.reused;
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                _reflected[g].Fill(registrations[g].reflected, reflectedByScanForTest, _reflectedCounts, reflectedIndexAgainForTest);
+            }
+
+            ValidateCounts.indexesBuilt += _reflectedCounts.built - builtBefore;
+            ValidateCounts.indexesReused += _reflectedCounts.reused - reusedBefore;
+
+            LastReflectedIndexSeconds = SecondsSince(indexBegin);
+            PrepareLineage(ledger);
+            OpenSegments(ledger, registrations.Count);
+            Lap(ref _vIndex);
+            _registrationOfRoot.Clear();
+            _lineageOf.Clear();
+            _rootsRegisteredTwice.Clear();
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                // Two registrations of one root are refused below, in the order that check always had; the table
+                // notes here which roots are registered more than once, so that each registration asks once.
+                if (!_registrationOfRoot.ContainsKey(registrations[g].root)) _registrationOfRoot.Add(registrations[g].root, g);
+                else _rootsRegisteredTwice.Add(registrations[g].root);
+            }
+
+            int steps = ledger.OperationCount + 1;
+            for (int g = 0; g < registrations.Count; g++)
+            {
+                VpMultiCutRegistration registration = registrations[g];
+                if (!ledger.TryGetFragmentState(registration.root, out _))
+                {
+                    return Invalid(VpMultiCutInvalidInput.Lineage);
+                }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // The numeric diagnosis: a section of this box, placed, can be computed in float at all, and every cap
+                // vertex it gives is bounded -- asked here, where it has always been asked, so that which refusal comes
+                // first is what it always was.
+                if (!VpSectionBounds.TryPlacedExtent(
+                        registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon, out _))
+                {
+                    return Invalid(VpMultiCutInvalidInput.ConservativeSection);
+                }
+#endif
 
                 // No root on another's lineage: not the same root, and no other root above this one. Another registration
                 // of this root is one the table noted (2026-09-30: each registration used to compare its root with every
@@ -2188,75 +2263,69 @@ namespace Zantetsu.MeshCut
                 Lap(ref _vAncestors);
             }
 
-            if (remember) Lap(ref _vInput);   // the registrations' input checks, timed once for all of them
-
-            if (!structureAlreadySettled)
+            // Everything below reads the ledger and nothing else: every operation in the order it was
+            // admitted, and for each one the lineage of the fragment it cut. It is as structural as the walk above.
+            for (int position = 0; TryReadStructureOperation(ledger, position, out LogicalCutOperation operation); position++)
             {
-                // Everything below reads the ledger and nothing else: every operation in the order it was
-                // admitted, and for each one the lineage of the fragment it cut. It is as structural as the walk
-                // above, and is skipped for the same reason -- a settled structure has answered it already.
-                for (int position = 0; TryReadStructureOperation(ledger, position, out LogicalCutOperation operation); position++)
+                ValidateCounts.operations++;
+                VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
+                if (found != VpMultiCutBuildOutcome.Built)
                 {
-                    ValidateCounts.operations++;
-                    VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
-                    if (found != VpMultiCutBuildOutcome.Built)
-                    {
-                        return found;
-                    }
+                    return found;
+                }
 
-                    if (g < 0)
-                    {
-                        continue;
-                    }
+                if (g < 0)
+                {
+                    continue;
+                }
 
-                    VpMultiCutRegistration registration = registrations[g];
-                    switch (operation.state)
+                VpMultiCutRegistration registration = registrations[g];
+                switch (operation.state)
+                {
+                    case LogicalCutOperationState.Aborted:
                     {
-                        case LogicalCutOperationState.Aborted:
+                        // The source is retired: past an Ignored boundary when more of its chain is unreflected than the
+                        // selection can take. Every requirement is the previous candidate, so nothing is Ignored for order.
+                        VpMultiCutBuildOutcome counted = CountUnreflected(
+                            ledger, operation.source, _reflected[g], steps, out int unreflected);
+                        if (counted != VpMultiCutBuildOutcome.Built)
                         {
-                            // The source is retired: past an Ignored boundary when more of its chain is unreflected than the
-                            // selection can take. Every requirement is the previous candidate, so nothing is Ignored for order.
-                            VpMultiCutBuildOutcome counted = CountUnreflected(
-                                ledger, operation.source, _reflected[g], steps, out int unreflected);
-                            if (counted != VpMultiCutBuildOutcome.Built)
-                            {
-                                return counted;
-                            }
-
-                            if (unreflected > VpClipCandidates.Capacity)
-                            {
-                                return VpMultiCutBuildOutcome.RetiredInsideAggregate;
-                            }
-
-                            break;
+                            return counted;
                         }
 
-                        case LogicalCutOperationState.Published:
-                        case LogicalCutOperationState.Completed:
-                        case LogicalCutOperationState.Terminated:
+                        if (unreflected > VpClipCandidates.Capacity)
+                        {
+                            return VpMultiCutBuildOutcome.RetiredInsideAggregate;
+                        }
+
+                        break;
+                    }
+
+                    case LogicalCutOperationState.Published:
+                    case LogicalCutOperationState.Completed:
+                    case LogicalCutOperationState.Terminated:
+                    {
+                        VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
+                        if (planed != VpMultiCutBuildOutcome.Built)
+                        {
+                            return planed;
+                        }
+
+                        break;
+                    }
+
+                    case LogicalCutOperationState.Admitted:
+                    {
+                        if (ledger.TryGetPreparedAnchorDistribution(operation.id, out _))
                         {
                             VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
                             if (planed != VpMultiCutBuildOutcome.Built)
                             {
                                 return planed;
                             }
-
-                            break;
                         }
 
-                        case LogicalCutOperationState.Admitted:
-                        {
-                            if (ledger.TryGetPreparedAnchorDistribution(operation.id, out _))
-                            {
-                                VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
-                                if (planed != VpMultiCutBuildOutcome.Built)
-                                {
-                                    return planed;
-                                }
-                            }
-
-                            break;
-                        }
+                        break;
                     }
                 }
             }
@@ -2266,8 +2335,11 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// One plane of the lineage: carried by the mapping and the placement as the build carries it, and, in the
-        /// geometry's coordinates the section is taken in, within the section bounds of the registration's box.
+        /// One plane of the lineage: carried by the mapping and the placement as the build carries it -- the cut plane's
+        /// own check: a plane or a carried plane that is not finite, or has no normal left, is refused in every
+        /// configuration. Where the numeric input-contract diagnosis is compiled (the Editor and Development Players,
+        /// DESIGN 5.6) the plane is also judged, in the geometry's coordinates the section is taken in, against the
+        /// registration's box: whether it stays within a float there.
         /// </summary>
         private VpMultiCutBuildOutcome CheckPlane(float4 plane, in VpMultiCutRegistration registration)
         {
@@ -2278,9 +2350,14 @@ namespace Zantetsu.MeshCut
                 return Invalid(VpMultiCutInvalidInput.PlaneNotCarried);
             }
 
-            return VpSectionBounds.IsPlaneWithin(local, registration.localBounds)
-                ? VpMultiCutBuildOutcome.Built
-                : Invalid(VpMultiCutInvalidInput.ConservativeSection);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (!VpSectionBounds.IsPlaneWithin(local, registration.localBounds))
+            {
+                return Invalid(VpMultiCutInvalidInput.ConservativeSection);
+            }
+#endif
+
+            return VpMultiCutBuildOutcome.Built;
         }
 
         /// <summary>
@@ -2664,7 +2741,9 @@ namespace Zantetsu.MeshCut
             {
                 _phasedPlacements = new Matrix4x4[n];
                 _phasedAnswered = new bool[n];
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                 _phasedChecked = new bool[n];
+#endif
             }
 
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -2673,11 +2752,17 @@ namespace Zantetsu.MeshCut
             {
                 VpMultiCutRenderFragment renderFragment = _renderFragments[r];
                 _placeInto.renderFragments++;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                 _phasedAnswered[r] = TryQueryPlacement(placement, registrations[renderFragment.registration], StandsAt(r), _placeInto, out _phasedPlacements[r], out _phasedChecked[r]);
+#else
+                _phasedAnswered[r] = TryQueryPlacement(placement, registrations[renderFragment.registration], StandsAt(r), _placeInto, out _phasedPlacements[r]);
+#endif
                 if (!_phasedAnswered[r] && refusedAt == n) refusedAt = r;
             }
 
             long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The numeric diagnosis of the answers, as a block of its own.
             for (int r = 0; r < refusedAt; r++)
             {
                 if (!_phasedChecked[r]) continue;
@@ -2690,6 +2775,9 @@ namespace Zantetsu.MeshCut
             }
 
             long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            long t2 = t1;   // no check block here: the builds follow the queries
+#endif
             VpMultiCutBuildOutcome outcome = VpMultiCutBuildOutcome.Built;
             for (int r = 0; r < refusedAt; r++)
             {
@@ -2702,19 +2790,27 @@ namespace Zantetsu.MeshCut
             long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
             double f = 1.0 / System.Diagnostics.Stopwatch.Frequency;
             _placeInto.providerSeconds += (t1 - t0) * f;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             _placeInto.checkSeconds += (t2 - t1) * f;
+#endif
             _placeInto.restSeconds += (t3 - t2) * f;
             if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
             return refusedAt < n ? Invalid(VpMultiCutInvalidInput.InputContract) : VpMultiCutBuildOutcome.Built;
         }
 
-        // A render fragment's placement as its query answers it, and whether that answer is to be checked: the
-        // registration's own with no provider (unchecked, as TryPlacementOf has it); false when it is Missing.
+        // A render fragment's placement as its query answers it -- the registration's own with no provider; false when it
+        // is Missing -- and, where the numeric diagnosis is compiled, whether that answer is to be checked (not with no
+        // provider, as TryPlacementOf has it).
         private static bool TryQueryPlacement(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             VpPlaceCounts counts, out Matrix4x4 baseline, out bool check)
         {
             check = false;
+#else
+            VpPlaceCounts counts, out Matrix4x4 baseline)
+        {
+#endif
             if (placement == null)
             {
                 baseline = registration.geometryLocalToWorld;
@@ -2733,9 +2829,14 @@ namespace Zantetsu.MeshCut
             }
 
             baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             check = true;
+#endif
             return true;
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // The numeric diagnosis of a placement a query answers, and what it remembers (DESIGN 5.6): these configurations only.
 
         /// <summary>For tests: a Static placement is checked again where it is placed, as before 2026-10-04.</summary>
         internal static bool placementCheckStaticForTest;
@@ -2750,6 +2851,7 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Observation: Following placements passed without being checked again.</summary>
         public long PlacementChecksRemembered { get; private set; }
+#endif
 
         /// <summary>For tests: a render fragment taken over unchanged is placed and built again all the same, as before 2026-10-05.</summary>
         internal static bool placementRebuildUnchangedForTest;
@@ -2770,9 +2872,16 @@ namespace Zantetsu.MeshCut
             && math.asuint(a.m30) == math.asuint(b.m30) && math.asuint(a.m31) == math.asuint(b.m31) && math.asuint(a.m32) == math.asuint(b.m32)
             && math.asuint(a.m33) == math.asuint(b.m33);
 
+        // Where one render fragment stands: its query's answer, or the registration's own placement. Where the numeric
+        // diagnosis is compiled, a Following answer is also checked to be a placement (r names the render fragment whose
+        // last passed answer is remembered); a non-Development Player takes the answer as it is.
         private bool TryPlacementOf(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, in VpMultiCutStandsAs stands,
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             VpPlaceCounts counts, int r, out Matrix4x4 geometryLocalToWorld)
+#else
+            VpPlaceCounts counts, out Matrix4x4 geometryLocalToWorld)
+#endif
         {
             if (placement == null)
             {
@@ -2794,6 +2903,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Matrix4x4 baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
             if (kind != VpFragmentPlacementKind.Following && !placementCheckStaticForTest)
             {
@@ -2832,6 +2942,10 @@ namespace Zantetsu.MeshCut
             }
 
             return true;
+#else
+            geometryLocalToWorld = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            return true;
+#endif
         }
 
         /// <summary>
@@ -3285,6 +3399,9 @@ namespace Zantetsu.MeshCut
             return new Vector4(value.x, value.y, value.z, value.w);
         }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // ----- the numeric input contract's own functions (DESIGN 5.6): the Editor and Development Players only ---------
+
         /// <summary>
         /// Whether a box, a placement and a mapping are inside the input contract a build checks first, so that a caller
         /// can refuse them where it takes them in.
@@ -3369,6 +3486,7 @@ namespace Zantetsu.MeshCut
                 && math.all(math.isfinite(new float4(m.m02, m.m12, m.m22, m.m32)))
                 && math.all(math.isfinite(new float4(m.m03, m.m13, m.m23, m.m33)));
         }
+#endif
 
         private static bool IsFiniteNonNegative(float value)
         {
