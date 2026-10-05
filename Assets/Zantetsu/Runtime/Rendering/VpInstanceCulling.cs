@@ -77,5 +77,72 @@ namespace Zantetsu.Rendering
 
             return true;
         }
+
+        /// <summary>
+        /// The same judgement on bounds given in their own frame and carried by <paramref name="objectToWorld"/>, against
+        /// planes held as an inward normal in xyz and a distance in w: kept unless the carried box lies wholly on the
+        /// outer side of one plane by more than <see cref="Margin"/>. This is the test the GPU selection makes
+        /// (VpInstanceCull.compute), written here once more as its reference: the box is tested as it is turned, not by
+        /// the axis-aligned bounds around it.
+        /// </summary>
+        public static bool MayIntersect(Bounds local, Matrix4x4 objectToWorld, Vector4[] planes, int firstPlane, int planeCount)
+        {
+            Vector3 centre = objectToWorld.MultiplyPoint3x4(local.center);
+            Vector3 extents = local.extents;
+            Vector3 axisX = new Vector3(objectToWorld.m00, objectToWorld.m10, objectToWorld.m20) * extents.x;
+            Vector3 axisY = new Vector3(objectToWorld.m01, objectToWorld.m11, objectToWorld.m21) * extents.y;
+            Vector3 axisZ = new Vector3(objectToWorld.m02, objectToWorld.m12, objectToWorld.m22) * extents.z;
+            for (int i = firstPlane; i < firstPlane + planeCount; i++)
+            {
+                Vector3 normal = new Vector3(planes[i].x, planes[i].y, planes[i].z);
+                float radius = Mathf.Abs(Vector3.Dot(normal, axisX)) + Mathf.Abs(Vector3.Dot(normal, axisY)) + Mathf.Abs(Vector3.Dot(normal, axisZ));
+                if (Vector3.Dot(normal, centre) + planes[i].w + radius < -Margin)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>Whether the GPU selection keeps the instance for the body: it may intersect either eye, or no eye is given.</summary>
+        public static bool KeptForBody(Bounds local, Matrix4x4 objectToWorld, VpCullConditions conditions)
+        {
+            if (conditions.eyeCount == 0)
+            {
+                return true;
+            }
+
+            for (int eye = 0; eye < conditions.eyeCount; eye++)
+            {
+                if (MayIntersect(local, objectToWorld, conditions.eyePlanes, eye * VpCullConditions.EyePlaneCount, VpCullConditions.EyePlaneCount))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether the GPU selection keeps the instance as a caster: it may intersect any split's volume, or no split is given.</summary>
+        public static bool KeptAsCaster(Bounds local, Matrix4x4 objectToWorld, VpCullConditions conditions)
+        {
+            if (conditions.shadowSplitCount == 0)
+            {
+                return true;
+            }
+
+            for (int split = 0; split < conditions.shadowSplitCount; split++)
+            {
+                if (MayIntersect(
+                        local, objectToWorld, conditions.shadowPlanes, split * VpCullConditions.SplitPlaneCapacity,
+                        (int)conditions.shadowPlaneCounts[split]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }

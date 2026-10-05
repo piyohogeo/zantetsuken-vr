@@ -27,6 +27,16 @@ namespace Zantetsu.Rendering
     /// owns its two argument buffers and its instance buffer; after <see cref="Dispose"/>, uploading and rendering throw,
     /// and disposing again does nothing.
     /// </para>
+    /// <para>
+    /// **Selecting on the GPU (VP Stage 3C, DESIGN 4.5.7).** A batch made with a <see cref="VpGpuCullSetup"/> draws only
+    /// the instances a compute pass keeps. The CPU then sends no arguments: it sends one <see cref="VpCullCommand"/>
+    /// per command, when the commands change, and the transforms and clips exactly as before. For each of its views
+    /// the batch owns a list of kept instances and an argument buffer for the body and the same pair for the casters;
+    /// <see cref="IssueCull"/> writes them on the GPU for one view from that view's conditions, and the draws of that
+    /// view read them. No count is read back: the CPU issues the same commands whatever was kept, and a command that
+    /// keeps nothing is drawn with an instance count of zero. Every dispatch writes every command's arguments, so no
+    /// draw reads what an earlier dispatch left. Such a batch draws only through the overloads that name a view.
+    /// </para>
     /// </summary>
     public sealed class VpIndexedIndirectDrawBatch : IDisposable
     {
@@ -44,6 +54,20 @@ namespace Zantetsu.Rendering
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");
         private static readonly int InstanceClipId = Shader.PropertyToID("_VpInstanceClip");
         private static readonly int InstanceMultiplierId = Shader.PropertyToID("_VpInstanceMultiplier");
+        private static readonly int VisibleId = Shader.PropertyToID("_VpVisible");
+        private static readonly int CullCommandsId = Shader.PropertyToID("_VpCullCommands");
+        private static readonly int ShadowSliceSelectionId = Shader.PropertyToID("_VpShadowSliceSelection");
+        private static readonly int CommandCountId = Shader.PropertyToID("_VpCommandCount");
+        private static readonly int ForwardMultiplierId = Shader.PropertyToID("_VpForwardMultiplier");
+        private static readonly int EyeCountId = Shader.PropertyToID("_VpEyeCount");
+        private static readonly int EyePlanesId = Shader.PropertyToID("_VpEyePlanes");
+        private static readonly int ShadowSplitCountId = Shader.PropertyToID("_VpShadowSplitCount");
+        private static readonly int ShadowPlaneCountsId = Shader.PropertyToID("_VpShadowPlaneCounts");
+        private static readonly int ShadowPlanesId = Shader.PropertyToID("_VpShadowPlanes");
+        private static readonly int ForwardVisibleId = Shader.PropertyToID("_VpForwardVisible");
+        private static readonly int ForwardArgumentsId = Shader.PropertyToID("_VpForwardArguments");
+        private static readonly int ShadowVisibleId = Shader.PropertyToID("_VpShadowVisible");
+        private static readonly int ShadowArgumentsId = Shader.PropertyToID("_VpShadowArguments");
 
         // The arguments are made here from the commands, so they are staged before they are sent: in managed arrays, or
         // -- for a batch made with a page backing -- in rooms on reserved address space, made and written at
@@ -58,8 +82,35 @@ namespace Zantetsu.Rendering
         private readonly GraphicsBuffer _instanceBuffer;
         private readonly GraphicsBuffer _instanceClipBuffer;
         private VpInstanceClip[] _instanceClips;
+
+        // Selecting on the GPU: the commands as the selection reads them take the arguments' place -- staged as the
+        // arguments are, sent when they would be -- and each view holds what the selection writes for it. The two
+        // argument buffers above and their staging are not made for such a batch.
+        private readonly VpGpuCullSetup _cull;
+        private VpCullCommand[] _cullCommands;
+        private readonly VpNumericRoom<VpCullCommand> _cullStaging;
+        private readonly GraphicsBuffer _cullCommandBuffer;
+        private readonly CullView[] _cullViews;
         private bool _uploaded;
         private bool _disposed;
+
+        // What the selection writes for one view: for the body and for the casters, the kept instances' numbers (each
+        // command's in the slots of its own instance run) and the indexed arguments that draw them.
+        private struct CullView
+        {
+            public GraphicsBuffer forwardVisible;
+            public GraphicsBuffer forwardArguments;
+            public GraphicsBuffer shadowVisible;
+            public GraphicsBuffer shadowArguments;
+
+            public void Dispose()
+            {
+                forwardVisible?.Dispose();
+                forwardArguments?.Dispose();
+                shadowVisible?.Dispose();
+                shadowArguments?.Dispose();
+            }
+        }
 
         public VpIndexedIndirectDrawBatch(int commandCapacity, int instanceCapacity)
             : this(commandCapacity, instanceCapacity, null)
@@ -72,6 +123,18 @@ namespace Zantetsu.Rendering
         /// </summary>
         /// <exception cref="InvalidOperationException">The backing refused the staging's room.</exception>
         public VpIndexedIndirectDrawBatch(int commandCapacity, int instanceCapacity, IVpPageBacking stagingBacking)
+            : this(commandCapacity, instanceCapacity, stagingBacking, null)
+        {
+        }
+
+        /// <summary>
+        /// The same batch selecting its instances on the GPU when <paramref name="culling"/> is given (see the class
+        /// notes): the commands' records and every view's lists and arguments are made here, with the other buffers,
+        /// and the two CPU-written argument buffers are not. Null is the batch as it always was.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The backing refused the staging's room.</exception>
+        public VpIndexedIndirectDrawBatch(
+            int commandCapacity, int instanceCapacity, IVpPageBacking stagingBacking, VpGpuCullSetup culling)
         {
             if (commandCapacity <= 0)
             {
@@ -85,33 +148,75 @@ namespace Zantetsu.Rendering
 
             VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> forwardStaging = null;
             VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> shadowStaging = null;
+            VpNumericRoom<VpCullCommand> cullStaging = null;
+            string failure = null;
             if (stagingBacking == null)
             {
-                _forwardArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
-                _shadowArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+                if (culling == null)
+                {
+                    _forwardArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+                    _shadowArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+                }
+                else
+                {
+                    _cullCommands = new VpCullCommand[commandCapacity];
+                }
+
                 _instanceClips = new VpInstanceClip[instanceCapacity];
             }
-            else if (!VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
-                         stagingBacking, commandCapacity, commandCapacity, out forwardStaging, out string failure)
-                     || !VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
-                         stagingBacking, commandCapacity, commandCapacity, out shadowStaging, out failure))
+            else if (culling == null
+                         ? !VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
+                               stagingBacking, commandCapacity, commandCapacity, out forwardStaging, out failure)
+                           || !VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs>.TryCreateNative(
+                               stagingBacking, commandCapacity, commandCapacity, out shadowStaging, out failure)
+                         : !VpNumericRoom<VpCullCommand>.TryCreateNative(
+                               stagingBacking, commandCapacity, commandCapacity, out cullStaging, out failure))
             {
                 forwardStaging?.Dispose();
                 throw new InvalidOperationException("the batch's staging could not be made: " + failure);
             }
 
             // Each buffer is held in a local the moment it exists and named afterwards, so a failure anywhere in
-            // here can release every buffer that was already made. The fields are set only once all four stand.
+            // here can release every buffer that was already made. The fields are set only once all of them stand.
             GraphicsBuffer forwardArgumentBuffer = null;
             GraphicsBuffer shadowArgumentBuffer = null;
             GraphicsBuffer instanceBuffer = null;
             GraphicsBuffer instanceClipBuffer = null;
+            GraphicsBuffer cullCommandBuffer = null;
+            CullView[] cullViews = null;
             try
             {
-                forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
-                forwardArgumentBuffer.name = "VP Indexed Indirect Forward Arguments";
-                shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
-                shadowArgumentBuffer.name = "VP Indexed Indirect Shadow Arguments";
+                if (culling == null)
+                {
+                    forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                    forwardArgumentBuffer.name = "VP Indexed Indirect Forward Arguments";
+                    shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                    shadowArgumentBuffer.name = "VP Indexed Indirect Shadow Arguments";
+                }
+                else
+                {
+                    cullCommandBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, commandCapacity, VpCullCommand.Stride);
+                    cullCommandBuffer.name = "VP Cull Commands";
+                    cullViews = new CullView[culling.ViewCapacity];
+                    for (int v = 0; v < cullViews.Length; v++)
+                    {
+                        // The arguments are plain indirect-argument buffers, as VP Stage 3's are: on D3D11 the compute
+                        // pass writes such a buffer through a RWByteAddressBuffer as the draw's shader reads it through a
+                        // ByteAddressBuffer (UnityIndirect.cginc). Asking for Raw or Structured as well is refused or
+                        // unneeded there (probed 2026-10-06: perf/gpu-cull/probe-args).
+                        cullViews[v].forwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
+                        cullViews[v].forwardVisible.name = "VP Cull Forward Visible " + v;
+                        cullViews[v].forwardArguments = new GraphicsBuffer(
+                            GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                        cullViews[v].forwardArguments.name = "VP Cull Forward Arguments " + v;
+                        cullViews[v].shadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
+                        cullViews[v].shadowVisible.name = "VP Cull Shadow Visible " + v;
+                        cullViews[v].shadowArguments = new GraphicsBuffer(
+                            GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                        cullViews[v].shadowArguments.name = "VP Cull Shadow Arguments " + v;
+                    }
+                }
+
                 instanceBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceStride);
                 instanceBuffer.name = "VP Indexed Instance Transforms";
                 instanceClipBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceClipStride);
@@ -123,8 +228,18 @@ namespace Zantetsu.Rendering
                 shadowArgumentBuffer?.Dispose();
                 instanceBuffer?.Dispose();
                 instanceClipBuffer?.Dispose();
+                cullCommandBuffer?.Dispose();
+                if (cullViews != null)
+                {
+                    for (int v = 0; v < cullViews.Length; v++)
+                    {
+                        cullViews[v].Dispose();
+                    }
+                }
+
                 forwardStaging?.Dispose();
                 shadowStaging?.Dispose();
+                cullStaging?.Dispose();
                 throw;
             }
 
@@ -134,9 +249,22 @@ namespace Zantetsu.Rendering
             _shadowArgumentBuffer = shadowArgumentBuffer;
             _instanceBuffer = instanceBuffer;
             _instanceClipBuffer = instanceClipBuffer;
+            _cull = culling;
+            _cullStaging = cullStaging;
+            _cullCommandBuffer = cullCommandBuffer;
+            _cullViews = cullViews;
             CommandCapacity = commandCapacity;
             InstanceCapacity = instanceCapacity;
         }
+
+        /// <summary>Whether this batch draws only the instances a compute pass keeps (see the class notes).</summary>
+        public bool CullsOnGpu => _cull != null;
+
+        /// <summary>How many views this batch keeps a selection for; zero for a batch that does not select.</summary>
+        public int CullViewCapacity => _cull != null ? _cull.ViewCapacity : 0;
+
+        /// <summary>Observation: how many selections were issued for this batch's views. They are GPU work, not transfers.</summary>
+        public long CullDispatches { get; private set; }
 
         public int CommandCapacity { get; }
 
@@ -165,6 +293,7 @@ namespace Zantetsu.Rendering
             get
             {
                 ThrowIfDisposed();
+                ThrowIfCulled();
                 return _forwardArgumentBuffer;
             }
         }
@@ -175,7 +304,26 @@ namespace Zantetsu.Rendering
             get
             {
                 ThrowIfDisposed();
+                ThrowIfCulled();
                 return _shadowArgumentBuffer;
+            }
+        }
+
+        /// <summary>
+        /// What the selection wrote for a view, for reading back inside this assembly and by tests: never read by the
+        /// product, which issues its draws without knowing any count. Not to be written.
+        /// </summary>
+        internal GraphicsBuffer CullForwardArguments(int view) => View(view).forwardArguments;
+        internal GraphicsBuffer CullForwardVisible(int view) => View(view).forwardVisible;
+        internal GraphicsBuffer CullShadowArguments(int view) => View(view).shadowArguments;
+        internal GraphicsBuffer CullShadowVisible(int view) => View(view).shadowVisible;
+        internal GraphicsBuffer CullCommandBuffer
+        {
+            get
+            {
+                ThrowIfDisposed();
+                ThrowIfNotCulled();
+                return _cullCommandBuffer;
             }
         }
 
@@ -495,15 +643,38 @@ namespace Zantetsu.Rendering
             NativeArray<GraphicsBuffer.IndirectDrawIndexedArgs> arguments = default;
             NativeArray<Matrix4x4> transforms = default;
             NativeArray<VpInstanceClip> clips = default;
+            NativeArray<VpCullCommand> cullCommands = default;
+            NativeArray<uint> visible = default;
             try
             {
                 arguments = VpWholeWrite.Zeros<GraphicsBuffer.IndirectDrawIndexedArgs>("arguments", CommandCapacity);
                 transforms = VpWholeWrite.Zeros<Matrix4x4>("transforms", InstanceCapacity);
                 clips = VpWholeWrite.Zeros<VpInstanceClip>("clips", InstanceCapacity);
-                VpWholeWrite.Step("write forward arguments");
-                _forwardArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
-                VpWholeWrite.Step("write shadow arguments");
-                _shadowArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                if (_cull != null)
+                {
+                    // What the selection reads and writes stands on the device too: zero arguments draw nothing, so a
+                    // view drawn before its first selection draws nothing rather than something undefined.
+                    cullCommands = VpWholeWrite.Zeros<VpCullCommand>("cull commands", CommandCapacity);
+                    visible = VpWholeWrite.Zeros<uint>("visible instances", InstanceCapacity);
+                    VpWholeWrite.Step("write cull commands");
+                    _cullCommandBuffer.SetData(cullCommands, 0, 0, CommandCapacity);
+                    for (int v = 0; v < _cullViews.Length; v++)
+                    {
+                        VpWholeWrite.Step("write a view's lists and arguments");
+                        _cullViews[v].forwardVisible.SetData(visible, 0, 0, InstanceCapacity);
+                        _cullViews[v].forwardArguments.SetData(arguments, 0, 0, CommandCapacity);
+                        _cullViews[v].shadowVisible.SetData(visible, 0, 0, InstanceCapacity);
+                        _cullViews[v].shadowArguments.SetData(arguments, 0, 0, CommandCapacity);
+                    }
+                }
+                else
+                {
+                    VpWholeWrite.Step("write forward arguments");
+                    _forwardArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                    VpWholeWrite.Step("write shadow arguments");
+                    _shadowArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                }
+
                 VpWholeWrite.Step("write transforms");
                 _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity);
                 VpWholeWrite.Step("write clips");
@@ -514,12 +685,81 @@ namespace Zantetsu.Rendering
                 VpWholeWrite.Release(ref arguments);
                 VpWholeWrite.Release(ref transforms);
                 VpWholeWrite.Release(ref clips);
+                VpWholeWrite.Release(ref cullCommands);
+                VpWholeWrite.Release(ref visible);
             }
         }
 
-        /// <summary>The bytes of this batch's GPU buffers: two argument buffers, the transforms and the clips.</summary>
-        public long GpuBytes =>
-            ((long)CommandCapacity * GraphicsBuffer.IndirectDrawIndexedArgs.size * 2) + ((long)InstanceCapacity * (InstanceStride + InstanceClipStride));
+        /// <summary>
+        /// Diagnosis only -- tests and evidence runs: reads back, **waiting for the GPU**, how many instances the last
+        /// selection issued for <paramref name="view"/> kept for the body and as casters. The product never calls
+        /// this: it issues its draws without knowing any count.
+        /// </summary>
+        public void ReadCullCountsForDiagnosis(int view, out int forwardKept, out int shadowKept)
+        {
+            CullView target = View(view);
+            forwardKept = 0;
+            shadowKept = 0;
+            if (CommandCount == 0)
+            {
+                return;
+            }
+
+            var arguments = new GraphicsBuffer.IndirectDrawIndexedArgs[CommandCount];
+            uint multiplier = SinglePassInstanced ? 2u : 1u;
+            target.forwardArguments.GetData(arguments, 0, 0, CommandCount);
+            for (int c = 0; c < arguments.Length; c++)
+            {
+                forwardKept += (int)(arguments[c].instanceCount / multiplier);
+            }
+
+            target.shadowArguments.GetData(arguments, 0, 0, CommandCount);
+            for (int c = 0; c < arguments.Length; c++)
+            {
+                shadowKept += (int)arguments[c].instanceCount;
+            }
+        }
+
+        /// <summary>
+        /// For a batch that selects on the GPU and takes another's place: writes every view's arguments with zeros, so
+        /// that a view drawn before its first selection draws nothing. (<see cref="WriteWholeOnce"/> does this, and
+        /// more, for a batch made before play.) Does nothing for a batch that does not select.
+        /// </summary>
+        public void WriteCullArgumentsZero()
+        {
+            ThrowIfDisposed();
+            if (_cull == null)
+            {
+                return;
+            }
+
+            var zeros = new NativeArray<GraphicsBuffer.IndirectDrawIndexedArgs>(CommandCapacity, Allocator.Temp, NativeArrayOptions.ClearMemory);
+            try
+            {
+                for (int v = 0; v < _cullViews.Length; v++)
+                {
+                    _cullViews[v].forwardArguments.SetData(zeros, 0, 0, CommandCapacity);
+                    _cullViews[v].shadowArguments.SetData(zeros, 0, 0, CommandCapacity);
+                }
+            }
+            finally
+            {
+                zeros.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// The bytes of this batch's GPU buffers: two argument buffers, the transforms and the clips -- or, selecting on
+        /// the GPU, the commands' records, the transforms, the clips and what every view holds.
+        /// </summary>
+        public long GpuBytes => _cull == null
+            ? ((long)CommandCapacity * GraphicsBuffer.IndirectDrawIndexedArgs.size * 2) + ((long)InstanceCapacity * (InstanceStride + InstanceClipStride))
+            : ((long)CommandCapacity * VpCullCommand.Stride) + ((long)InstanceCapacity * (InstanceStride + InstanceClipStride)) + CullViewBytes;
+
+        /// <summary>The bytes the selection's own results take on the GPU, every view together; zero without selection.</summary>
+        public long CullViewBytes => _cull == null
+            ? 0L
+            : (long)_cull.ViewCapacity * 2L * (((long)CommandCapacity * GraphicsBuffer.IndirectDrawIndexedArgs.size) + ((long)InstanceCapacity * sizeof(uint)));
 
         /// <summary>What this batch's staging is made of, in bytes.</summary>
         public void DescribeStaging(System.Collections.Generic.List<VpRoomLine> into, string owner)
@@ -529,6 +769,8 @@ namespace Zantetsu.Rendering
             if (_forwardArguments != null) into.Add(VpRoomLine.OfManaged(owner + ".forwardArguments", _forwardArguments));
             if (_shadowArguments != null) into.Add(VpRoomLine.OfManaged(owner + ".shadowArguments", _shadowArguments));
             if (_instanceClips != null) into.Add(VpRoomLine.OfManaged(owner + ".instanceClips", _instanceClips));
+            if (_cullStaging != null) into.Add(VpRoomLine.Of(owner + ".cullCommands", _cullStaging));
+            if (_cullCommands != null) into.Add(VpRoomLine.OfManaged(owner + ".cullCommands", _cullCommands));
         }
 
         /// <summary>
@@ -644,6 +886,13 @@ namespace Zantetsu.Rendering
             ReadOnlySpan<VpIndirectCommand> commands, int commandCount, ReadOnlySpan<Matrix4x4> objectToWorlds,
             bool singlePassInstanced, out Bounds worldBounds)
         {
+            if (_cull != null)
+            {
+                WriteCullCommands(commands, commandCount);
+                worldBounds = BoundsOfInstances(commands, commandCount, objectToWorlds);
+                return;
+            }
+
             Span<GraphicsBuffer.IndirectDrawIndexedArgs> shadowArguments = _shadowStaging != null
                 ? _shadowStaging.AsSpan(0, commandCount)
                 : new Span<GraphicsBuffer.IndirectDrawIndexedArgs>(_shadowArguments, 0, commandCount);
@@ -711,6 +960,97 @@ namespace Zantetsu.Rendering
             }
         }
 
+        // A batch that selects on the GPU: the commands as the selection reads them, made and sent where the two
+        // argument buffers would have been. One buffer write, counted as one sending of the arguments.
+        private void WriteCullCommands(ReadOnlySpan<VpIndirectCommand> commands, int commandCount)
+        {
+            Span<VpCullCommand> staged = _cullStaging != null
+                ? _cullStaging.AsSpan(0, commandCount)
+                : new Span<VpCullCommand>(_cullCommands, 0, commandCount);
+            int startInstance = 0;
+            for (int c = 0; c < commandCount; c++)
+            {
+                VpIndirectCommand command = commands[c];
+                staged[c] = new VpCullCommand
+                {
+                    indexCount = (uint)command.range.indexCount,
+                    startIndex = (uint)command.range.indexStart,
+                    startInstance = (uint)startInstance,
+                    instanceCount = (uint)command.instanceCount,
+                    centre = command.localBounds.center,
+                    extents = command.localBounds.extents,
+                };
+                startInstance += command.instanceCount;
+            }
+
+            if (commandCount > 0)
+            {
+                if (_cullStaging != null)
+                {
+                    _cullCommandBuffer.SetData(_cullStaging.First(commandCount), 0, 0, commandCount);
+                }
+                else
+                {
+                    _cullCommandBuffer.SetData(_cullCommands, 0, 0, commandCount);
+                }
+
+                ArgumentSetDataCalls++;
+                ArgumentTransfers++;
+                ArgumentElementsTransferred += commandCount;
+            }
+        }
+
+        /// <summary>
+        /// Issues, into <paramref name="commands"/>, the selection of this batch's instances for <paramref name="view"/>
+        /// from <paramref name="conditions"/>: the view's lists and arguments, for the body and for the casters, are
+        /// written on the GPU when that command buffer is executed. It must be executed before the draws of that view
+        /// that were registered with <see cref="RenderForward(Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera, int)"/>
+        /// and <see cref="RenderShadows(Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera, int)"/>
+        /// are drawn, and it is the caller that puts it there. Nothing is read back and nothing waits.
+        /// <para>
+        /// Every uploaded command's arguments are written, whatever was kept. With no command uploaded there is nothing
+        /// to draw and nothing is issued. The conditions are copied as they are now.
+        /// </para>
+        /// </summary>
+        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (commands == null)
+            {
+                throw new ArgumentNullException(nameof(commands));
+            }
+
+            if (conditions == null)
+            {
+                throw new ArgumentNullException(nameof(conditions));
+            }
+
+            CullView target = View(view);
+            if (CommandCount == 0)
+            {
+                return;
+            }
+
+            ComputeShader shader = _cull.Shader;
+            int kernel = _cull.Kernel;
+            commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
+            commands.SetComputeIntParam(shader, ForwardMultiplierId, SinglePassInstanced ? 2 : 1);
+            commands.SetComputeIntParam(shader, EyeCountId, conditions.eyeCount);
+            commands.SetComputeVectorArrayParam(shader, EyePlanesId, conditions.eyePlanes);
+            commands.SetComputeIntParam(shader, ShadowSplitCountId, conditions.shadowSplitCount);
+            commands.SetComputeVectorParam(shader, ShadowPlaneCountsId, conditions.shadowPlaneCounts);
+            commands.SetComputeVectorArrayParam(shader, ShadowPlanesId, conditions.shadowPlanes);
+            commands.SetComputeBufferParam(shader, kernel, CullCommandsId, _cullCommandBuffer);
+            commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
+            commands.SetComputeBufferParam(shader, kernel, ForwardVisibleId, target.forwardVisible);
+            commands.SetComputeBufferParam(shader, kernel, ForwardArgumentsId, target.forwardArguments);
+            commands.SetComputeBufferParam(shader, kernel, ShadowVisibleId, target.shadowVisible);
+            commands.SetComputeBufferParam(shader, kernel, ShadowArgumentsId, target.shadowArguments);
+            commands.DispatchCompute(shader, kernel, (CommandCount + 63) / 64, 1, 1);
+            CullDispatches++;
+        }
+
         /// <summary>
         /// Queues every uploaded command for this frame's cameras, or only <paramref name="camera"/> when given, as a forward
         /// call and a shadow call. Issues nothing when no command is uploaded.
@@ -762,6 +1102,37 @@ namespace Zantetsu.Rendering
             int commandCount,
             Camera camera)
         {
+            ThrowIfCulled();
+            IssueForward(forwardMaterial, properties, buffers, layer, startCommand, commandCount, camera, _forwardArgumentBuffer);
+        }
+
+        /// <summary>
+        /// The forward call of a batch that selects on the GPU, for <paramref name="cullView"/>: the same call, drawing
+        /// with the arguments and from the list that view's selection writes. The material is one of the variant that
+        /// reads the list (<see cref="VpGpuCullSetup.Keyword"/>). The selection of this view for this frame must be
+        /// issued before the camera draws (<see cref="IssueCull"/>).
+        /// </summary>
+        public void RenderForward(
+            Material forwardMaterial,
+            MaterialPropertyBlock properties,
+            VpGpuIndexedGeometryBuffers buffers,
+            int layer,
+            int startCommand,
+            int commandCount,
+            Camera camera,
+            int cullView)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            CullView view = View(cullView);
+            properties.SetBuffer(VisibleId, view.forwardVisible);
+            IssueForward(forwardMaterial, properties, buffers, layer, startCommand, commandCount, camera, view.forwardArguments);
+        }
+
+        private void IssueForward(
+            Material forwardMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
+            int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
+        {
             if (!BindCommands(properties, buffers, startCommand, commandCount))
             {
                 return;
@@ -777,7 +1148,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.Off,
                 receiveShadows = true,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, _forwardArgumentBuffer, commandCount, startCommand);
+            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }
 
         /// <summary>
@@ -800,6 +1171,40 @@ namespace Zantetsu.Rendering
             int commandCount,
             Camera camera)
         {
+            ThrowIfCulled();
+            IssueShadows(shadowMaterial, properties, buffers, layer, startCommand, commandCount, camera, _shadowArgumentBuffer);
+        }
+
+        /// <summary>
+        /// The shadow call of a batch that selects on the GPU, for <paramref name="cullView"/>: the same call, casting
+        /// only the instances that view's selection keeps as casters, which is a selection of its own and not the
+        /// body's -- an instance the camera does not see casts when a split needs it. The shadow caster is also given
+        /// the commands' bounds, with which its vertex stage passes over an instance that lies outside the slice being
+        /// rendered (<see cref="VpGpuCullSetup.ShadowSliceSelection"/>).
+        /// </summary>
+        public void RenderShadows(
+            Material shadowMaterial,
+            MaterialPropertyBlock properties,
+            VpGpuIndexedGeometryBuffers buffers,
+            int layer,
+            int startCommand,
+            int commandCount,
+            Camera camera,
+            int cullView)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            CullView view = View(cullView);
+            properties.SetBuffer(VisibleId, view.shadowVisible);
+            properties.SetBuffer(CullCommandsId, _cullCommandBuffer);
+            properties.SetFloat(ShadowSliceSelectionId, VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f);
+            IssueShadows(shadowMaterial, properties, buffers, layer, startCommand, commandCount, camera, view.shadowArguments);
+        }
+
+        private void IssueShadows(
+            Material shadowMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
+            int startCommand, int commandCount, Camera camera, GraphicsBuffer arguments)
+        {
             if (!BindCommands(properties, buffers, startCommand, commandCount))
             {
                 return;
@@ -814,7 +1219,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, _shadowArgumentBuffer, commandCount, startCommand);
+            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }
 
         public void Dispose()
@@ -825,12 +1230,50 @@ namespace Zantetsu.Rendering
             }
 
             _disposed = true;
-            _forwardArgumentBuffer.Dispose();
-            _shadowArgumentBuffer.Dispose();
+            _forwardArgumentBuffer?.Dispose();
+            _shadowArgumentBuffer?.Dispose();
             _instanceBuffer.Dispose();
             _instanceClipBuffer.Dispose();
             _forwardStaging?.Dispose();
             _shadowStaging?.Dispose();
+            _cullCommandBuffer?.Dispose();
+            _cullStaging?.Dispose();
+            if (_cullViews != null)
+            {
+                for (int v = 0; v < _cullViews.Length; v++)
+                {
+                    _cullViews[v].Dispose();
+                }
+            }
+        }
+
+        private CullView View(int view)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (view < 0 || view >= _cullViews.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(view), view, "The view must be one of this batch's.");
+            }
+
+            return _cullViews[view];
+        }
+
+        private void ThrowIfCulled()
+        {
+            if (_cull != null)
+            {
+                throw new InvalidOperationException(
+                    "this batch selects its instances on the GPU: it has no CPU-written arguments, and it draws for a view");
+            }
+        }
+
+        private void ThrowIfNotCulled()
+        {
+            if (_cull == null)
+            {
+                throw new InvalidOperationException("this batch was not made to select its instances on the GPU");
+            }
         }
 
         /// <summary>

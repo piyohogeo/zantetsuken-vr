@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Zantetsu.MeshCut;
+using Zantetsu.Rendering.Urp;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -35,6 +36,13 @@ namespace Zantetsu.PhysicsCut
     /// The materials, the stencil settings and the shadow arrangement are the display's own, from the world's profile.
     /// Nothing here is a render pipeline feature, a camera manager or a pass.
     /// </para>
+    /// <para>
+    /// **A display that selects on the GPU (DESIGN 4.5.7).** Its draws read a selection that must be written first, in
+    /// the same camera's frame. So for such a display this also enqueues, for the camera about to render, the pass
+    /// that issues the selection inside the pipeline (<see cref="VpGpuCullCameraRoute"/>) -- before it registers the
+    /// draws. A camera the pass cannot be enqueued for is not drawn for in that frame, rather than drawn from an
+    /// earlier frame's selection. Nothing is read back and nothing waits.
+    /// </para>
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class CutWorldCameraDrawing : MonoBehaviour
@@ -54,6 +62,15 @@ namespace Zantetsu.PhysicsCut
         private bool _registered;
         private int _drawnFrame;
         private int _emptyFrame;
+        private VpGpuCullCameraRoute _cullRoute;
+        private VpLogicalCutDisplay _cullDisplay;
+        private bool _cullRefusalLogged;
+
+        /// <summary>The route the GPU selection is put into the pipeline by, once a display that selects has been drawn; else null.</summary>
+        public VpGpuCullCameraRoute CullRoute => _cullRoute;
+
+        /// <summary>How many times a camera was not drawn for because its selection could not be enqueued.</summary>
+        public int CullRefusals { get; private set; }
 
         /// <summary>How many frames this has registered a draw in. It counts the drawing, not what was drawn.</summary>
         public int DrawnFrames { get; private set; }
@@ -67,13 +84,51 @@ namespace Zantetsu.PhysicsCut
         private void OnEnable()
         {
             RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+            RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
             TryRegister();
         }
 
         private void OnDisable()
         {
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+            RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
+            ReportCullRoute();
             Unregister();
+        }
+
+        // What the GPU selection did while this drew, once, for the log: a run reads it to know that it selected.
+        private void ReportCullRoute()
+        {
+            if (_cullRoute == null)
+            {
+                return;
+            }
+
+            VpLogicalCutDisplay display = _cullDisplay;
+            Debug.Log(
+                "VP BODY ROUTE (end): " + name + " GPU selection enqueued " + _cullRoute.Enqueued + ", recorded " + _cullRoute.Recorded
+                + ", refused by the display " + _cullRoute.Refused + ", cameras not drawn for want of it " + CullRefusals
+                + "; last conditions eyes " + _cullRoute.LastEyeCount + ", splits " + _cullRoute.LastSplitCount
+                + "; body kept everything " + _cullRoute.BodyKeptEverything + ", casters kept everything " + _cullRoute.CastersKeptEverything
+                + (_cullRoute.LastCastersKeptEverythingReason != null ? " (last: " + _cullRoute.LastCastersKeptEverythingReason + ")" : "")
+                + ", frames without a main light shadow map " + _cullRoute.FramesWithoutMainShadowMap
+                + (_cullRoute.LastWithoutMainShadowMapReason != null ? " (last: " + _cullRoute.LastWithoutMainShadowMapReason + ")" : "")
+                + "; largest view difference from the rendered one " + _cullRoute.LargestViewDifference.ToString("G6")
+                + (display != null
+                    ? "; display selections issued " + display.CullSelectionsIssued + ", missed " + display.CullSelectionsMissed
+                      + ", dispatches " + display.CullDispatches + ", selection bytes on the GPU " + display.CullViewBytes
+                    : "; no display"),
+                this);
+            _cullRoute = null;
+            _cullDisplay = null;
+        }
+
+        private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
+        {
+            if (_cullRoute != null && IsOneOfOurs(camera))
+            {
+                _cullRoute.NoteRendered(camera);
+            }
         }
 
         /// <summary>
@@ -112,6 +167,32 @@ namespace Zantetsu.PhysicsCut
             {
                 LastRefusedFrame = Time.frameCount;
                 return;
+            }
+
+            // The selection first: it is enqueued for this camera's frame before the draws that read it are
+            // registered, and a camera it cannot be enqueued for is not drawn for.
+            if (display.CullsOnGpu)
+            {
+                if (_cullRoute == null)
+                {
+                    _cullRoute = new VpGpuCullCameraRoute();
+                }
+
+                _cullDisplay = display;
+                if (!_cullRoute.TryEnqueue(camera, display, out string failure))
+                {
+                    CullRefusals++;
+                    LastRefusedFrame = Time.frameCount;
+                    if (!_cullRefusalLogged)
+                    {
+                        _cullRefusalLogged = true;
+                        Debug.LogError(
+                            name + ": the GPU selection could not be put in " + camera.name + "'s frame (" + failure
+                            + "); that camera is not drawn for. Told once.", this);
+                    }
+
+                    return;
+                }
             }
 
             display.Render(layer, camera);

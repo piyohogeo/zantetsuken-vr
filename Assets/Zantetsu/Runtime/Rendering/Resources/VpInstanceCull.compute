@@ -1,0 +1,142 @@
+// VP Stage 3C: the selection of instances on the GPU (DESIGN 4.5.7), for VpIndexedIndirectDrawBatch made with a
+// VpGpuCullSetup. One dispatch serves one view of one camera: it reads the batch's commands and instance transforms and
+// writes, for the body and for the shadow casters separately, the numbers of the instances kept and the indexed indirect
+// arguments that draw them. Nothing of it is read back by the CPU.
+//
+// One thread per command. Command c owns the slots [startInstance, startInstance + instanceCount) of each list -- the
+// very run its transforms occupy -- and its own argument entry, so no two threads write one element and nothing is
+// counted across threads. A thread writes the instances it keeps to the front of its slots, in order, and then the whole
+// argument entry: the index range as the CPU gave it, the count it kept and the start of its slots. Every entry in
+// [0, _VpCommandCount) is written by every dispatch, a command that keeps nothing with a count of zero, so a draw never
+// reads a count of an earlier dispatch. The slots past the count are not read by the draw and are left as they are.
+//
+// The test is the one of VpInstanceCulling.MayIntersect(Bounds, Matrix4x4, ...): the command's local bounds, carried by
+// the instance's transform, are kept unless they lie wholly on the outer side of one plane by more than the margin.
+// Planes hold an inward normal and a distance. The body keeps what may intersect the frustum of either eye; the casters
+// keep what may intersect the culling volume of any shadow split. An eye count or a split count of zero keeps everything.
+#pragma kernel CullCommands
+
+// Matches Zantetsu.Rendering.VpCullCommand: 40 bytes.
+struct VpCullCommand
+{
+    uint indexCount;
+    uint startIndex;
+    uint startInstance;
+    uint instanceCount;
+    float3 centre;
+    float3 extents;
+};
+
+#define VP_CULL_MARGIN 1e-3
+#define VP_CULL_EYES 2
+#define VP_CULL_EYE_PLANES 6
+#define VP_CULL_SPLITS 4
+#define VP_CULL_SPLIT_PLANES 10
+
+// GraphicsBuffer.IndirectDrawIndexedArgs, five uints: indexCountPerInstance, instanceCount, startIndex,
+// baseVertexIndex, startInstance.
+#define VP_ARGUMENT_STRIDE 20
+
+StructuredBuffer<VpCullCommand> _VpCullCommands;
+StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+
+RWStructuredBuffer<uint> _VpForwardVisible;
+RWByteAddressBuffer _VpForwardArguments;
+RWStructuredBuffer<uint> _VpShadowVisible;
+RWByteAddressBuffer _VpShadowArguments;
+
+uint _VpCommandCount;
+
+// Physical instances per kept instance in the body's arguments: 2 for Single Pass Instanced stereo, otherwise 1. The
+// casters' arguments always hold the kept instances themselves.
+uint _VpForwardMultiplier;
+
+uint _VpEyeCount;
+float4 _VpEyePlanes[VP_CULL_EYES * VP_CULL_EYE_PLANES];
+
+uint _VpShadowSplitCount;
+float4 _VpShadowPlaneCounts;
+float4 _VpShadowPlanes[VP_CULL_SPLITS * VP_CULL_SPLIT_PLANES];
+
+bool VpOutside(float4 plane, float3 centre, float3 axisX, float3 axisY, float3 axisZ)
+{
+    float radius = abs(dot(plane.xyz, axisX)) + abs(dot(plane.xyz, axisY)) + abs(dot(plane.xyz, axisZ));
+    return dot(plane.xyz, centre) + plane.w + radius < -VP_CULL_MARGIN;
+}
+
+bool VpKeptForBody(float3 centre, float3 axisX, float3 axisY, float3 axisZ)
+{
+    bool kept = _VpEyeCount == 0u;
+    for (uint eye = 0u; eye < VP_CULL_EYES; eye++)
+    {
+        bool inside = eye < _VpEyeCount;
+        for (uint p = 0u; p < VP_CULL_EYE_PLANES; p++)
+        {
+            inside = inside && !VpOutside(_VpEyePlanes[eye * VP_CULL_EYE_PLANES + p], centre, axisX, axisY, axisZ);
+        }
+
+        kept = kept || inside;
+    }
+
+    return kept;
+}
+
+bool VpKeptAsCaster(float3 centre, float3 axisX, float3 axisY, float3 axisZ)
+{
+    bool kept = _VpShadowSplitCount == 0u;
+    for (uint split = 0u; split < VP_CULL_SPLITS; split++)
+    {
+        bool inside = split < _VpShadowSplitCount;
+        uint planes = (uint)_VpShadowPlaneCounts[split];
+        for (uint p = 0u; p < VP_CULL_SPLIT_PLANES; p++)
+        {
+            inside = inside && (p >= planes || !VpOutside(_VpShadowPlanes[split * VP_CULL_SPLIT_PLANES + p], centre, axisX, axisY, axisZ));
+        }
+
+        kept = kept || inside;
+    }
+
+    return kept;
+}
+
+[numthreads(64, 1, 1)]
+void CullCommands(uint3 id : SV_DispatchThreadID)
+{
+    uint c = id.x;
+    if (c >= _VpCommandCount)
+    {
+        return;
+    }
+
+    VpCullCommand command = _VpCullCommands[c];
+    uint forwardKept = 0u;
+    uint shadowKept = 0u;
+    [loop]
+    for (uint i = 0u; i < command.instanceCount; i++)
+    {
+        uint instance = command.startInstance + i;
+        float4x4 objectToWorld = _VpInstanceObjectToWorld[instance];
+        float3 centre = mul(objectToWorld, float4(command.centre, 1.0)).xyz;
+        float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * command.extents.x;
+        float3 axisY = float3(objectToWorld._m01, objectToWorld._m11, objectToWorld._m21) * command.extents.y;
+        float3 axisZ = float3(objectToWorld._m02, objectToWorld._m12, objectToWorld._m22) * command.extents.z;
+
+        if (VpKeptForBody(centre, axisX, axisY, axisZ))
+        {
+            _VpForwardVisible[command.startInstance + forwardKept] = instance;
+            forwardKept++;
+        }
+
+        if (VpKeptAsCaster(centre, axisX, axisY, axisZ))
+        {
+            _VpShadowVisible[command.startInstance + shadowKept] = instance;
+            shadowKept++;
+        }
+    }
+
+    uint offset = c * VP_ARGUMENT_STRIDE;
+    _VpForwardArguments.Store4(offset, uint4(command.indexCount, forwardKept * _VpForwardMultiplier, command.startIndex, 0u));
+    _VpForwardArguments.Store(offset + 16u, command.startInstance * _VpForwardMultiplier);
+    _VpShadowArguments.Store4(offset, uint4(command.indexCount, shadowKept, command.startIndex, 0u));
+    _VpShadowArguments.Store(offset + 16u, command.startInstance);
+}

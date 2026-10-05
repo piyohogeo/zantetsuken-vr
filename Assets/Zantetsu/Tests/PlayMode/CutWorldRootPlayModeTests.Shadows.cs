@@ -141,6 +141,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             internal Light light;
             internal RenderTexture target;
             internal bool registered;
+
+            // For a world that selects on the GPU (the default, D-198): what puts the selection into the frame, as the
+            // world's own camera drawing does. This stage draws the display itself, so it does that itself too.
+            internal readonly Zantetsu.Rendering.Urp.VpGpuCullCameraRoute cullRoute = new Zantetsu.Rendering.Urp.VpGpuCullCameraRoute();
         }
 
         private ShadowStage NewShadowStage()
@@ -311,6 +315,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             Assert.That(root.Display.TryPrepareCamera(stage.camera), Is.True, "the stage's camera is prepared");
+            if (root.Display.CullsOnGpu)
+            {
+                // The selection first, then the draws that read it: the pass is taken by the render request below.
+                Assert.That(stage.cullRoute.TryEnqueue(stage.camera, root.Display, out string cullFailure), Is.True, cullFailure);
+            }
+
             root.Display.Render(0, stage.camera);
             var request = new RenderPipeline.StandardRequest { destination = stage.target };
             Assert.That(RenderPipeline.SupportsRenderRequest(stage.camera, request), Is.True, "render request");
