@@ -222,6 +222,7 @@ namespace Zantetsu.Sandbox
                 Log("city walk registration: placed cuttables " + all.Length + " (buildings " + buildings + ", props " + props + "); registered buildings " + registeredBuildings + ", props " + registeredProps
                     + " (at a uniform scale other than 1: " + scaled + "); refused " + refused.Count + ", still waiting " + open.Count + ", never run (inactive or disabled) " + idle.Count
                     + "; hull groups " + (_world.Hulls != null ? _world.Hulls.GroupCount : 0) + "; storage: " + _world.Storage.DescribeRoom());
+                Log("city walk placed search (after the registrations): placement told for " + all.Count(c => c.PlacementTold) + " of " + all.Count(c => c.Candidate != null) + " deferred cut targets; " + CityWalkPlacedSearch());
                 foreach (PlayableCityCuttable c in refused) Log("city walk NOT registered: " + c.gameObject.name + ": " + c.Failure);
                 foreach (PlayableCityCuttable c in open) Log("city walk NOT registered: " + c.gameObject.name + ": still waiting at the deadline");
                 foreach (PlayableCityCuttable c in idle) Log("city walk NOT registered: " + c.gameObject.name + ": its registrar never ran (inactive or disabled)");
@@ -262,6 +263,25 @@ namespace Zantetsu.Sandbox
             }
 
             private bool _cwRegistrationCutShort;
+
+            // The scene detector's placed search (DESIGN 19.1.7, D-192), for the log: how many placed cut targets it finds by
+            // their box in its index and how many it reads every update, and what it has read and searched so far.
+            private static string CityWalkPlacedSearch()
+            {
+                SandboxSlashPropHit hit = Object.FindAnyObjectByType<SandboxSlashPropHit>();
+                SlashHitDetector d = hit != null ? hit.Detector : null;
+                if (d == null) return "no detector";
+                return "placed candidates " + d.PlacedCount + ": in the index " + d.PlacedIndexedCount + ", read every update " + d.PlacedReadEveryUpdateCount
+                    + "; so far state reads " + d.PlacedStateReads + ", listed " + d.PlacedListed + ", passed over by the box " + d.PlacedPassedOver
+                    + "; index builds " + d.PlacedIndexBuilds + " (nodes " + d.PlacedIndexNodes + ", the last " + (d.PlacedIndexLastBuildSeconds * 1e6).ToString("F0", Inv) + " us, all "
+                    + (d.PlacedIndexBuildSecondsInAll * 1e6).ToString("F0", Inv) + " us), searches " + d.PlacedIndexSearches
+                    + ", nodes visited " + d.PlacedIndexNodesVisited + ", entries tested " + d.PlacedIndexEntriesTested + ", found " + d.PlacedIndexEntriesFound
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                    + "; time in the searches (their builds inside) " + (d.PlacedSearchSeconds * 1e6).ToString("F0", Inv) + " us; told boxes made again in " + d.PlacedToldUpdates + " updates, "
+                    + (d.PlacedToldSeconds * 1e6).ToString("F0", Inv) + " us"
+#endif
+                    + "; found moved untold " + d.PlacedMovedUntold;
+            }
 
             /// <summary>
             /// A city walk whose registration stage reached its deadline (TL, 2026-10-03: the scenario's own path): no script;
@@ -580,6 +600,7 @@ namespace Zantetsu.Sandbox
                     + "); walked " + _mpTravel.ToString("F1", Inv) + " m (the script's own " + planned.ToString("F1", Inv) + " m"
                     + (_mpSteps != null ? " from the walk's start " + _mpSteps.PlannedFrom.ToString("F2") : "") + " at " + speed.ToString("R", Inv) + " m/s); script seconds " + MobPlanNow.ToString("F1", Inv)
                     + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Time.realtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
+                Log("city walk placed search (the run): " + CityWalkPlacedSearch());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");
                 Expect(propRoots.Count > 0, "[city walk] a prop was cut by the katana's Slash and its geometry committed (" + propRoots.Count + " props)");
                 Expect(npcRoots.Count > 0, "[city walk] an NPC was cut by the katana's Slash and its geometry committed (" + npcRoots.Count + " NPCs)");

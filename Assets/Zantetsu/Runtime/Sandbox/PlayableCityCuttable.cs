@@ -41,6 +41,22 @@ namespace Zantetsu.Sandbox
         /// <summary>A cut target only until a hit (see the class): the instance stays the scene's own until its first cut.</summary>
         public bool deferUntilCut;
 
+        /// <summary>
+        /// Set by whoever placed the instance -- the scene's builder -- when it undertakes that every change of the
+        /// instance's placement before its first cut (moved, turned, placed elsewhere, put under another parent, a
+        /// parent of it moved) is told through <see cref="NotifyPlacementChanged"/> or
+        /// <see cref="NotifyPlacementChangedUnder"/> before the next evaluation of the Slash hits. Only then is the
+        /// instance held in the hit detector's index of standing targets (DESIGN 19.1.7, D-192). **Unset, the default,
+        /// it is read by the detector every update as before**: nothing is taken to stand still because nobody said it
+        /// moves, and not being cut yet or having no body is no such undertaking.
+        /// <para>
+        /// The contract (DESIGN 19.1.7): whoever adds processing that changes the placement of a declared instance or
+        /// of a parent of it, or any other state its being found rests on, connects that change to the telling itself,
+        /// to take effect before the next search of the detector's index. Nothing polls the instances for it.
+        /// </para>
+        /// </summary>
+        public bool placementChangesAreTold;
+
         /// <summary>The scene's katana hit (its detector takes the cut target); found in the scene when not set.</summary>
         public SandboxSlashPropHit hit;
 
@@ -76,6 +92,50 @@ namespace Zantetsu.Sandbox
         /// <summary>Whether it is a cut target: registered, or a deferred one's target made.</summary>
         public bool IsCutTarget => IsRegistered || Candidate != null;
 
+        /// <summary>
+        /// Whether the deferred instance's cut target was added to the detector as one whose placement is told
+        /// (<see cref="SlashHitDetector.AddPlacedStanding"/>): <see cref="placementChangesAreTold"/> was set for it and
+        /// no Rigidbody is on the instance or above it (a body moves it without a word, whatever was undertaken). False
+        /// for one added as before (read every update), and before a target is made.
+        /// </summary>
+        public bool PlacementTold { get; private set; }
+
+        /// <summary>
+        /// To be called, before the next evaluation of the Slash hits, by whatever moves, turns or places the instance
+        /// elsewhere or puts it under another parent before its first cut -- before, during or after the change, and
+        /// whether the instance is switched on or off at the time: the detector makes its box again at the start of
+        /// that evaluation, from where it stands then. Nothing for an instance read every update, or already cut.
+        /// (Switching it off or on, or destroying it, needs no telling: its state is read whenever a sweep comes near.)
+        /// </summary>
+        public void NotifyPlacementChanged()
+        {
+            if (PlacementTold && Candidate != null) _detector?.PlacedChanged(Candidate);
+        }
+
+        /// <summary>
+        /// The same for a parent: to be called by whatever moves, turns, scales or re-parents <paramref name="moved"/>
+        /// when placed instances may stand under it. Every instance whose placement is told and whose target is
+        /// <paramref name="moved"/> or under it is told changed; how many were. It goes through the told instances
+        /// once, when called -- nothing is watched between calls.
+        /// </summary>
+        public static int NotifyPlacementChangedUnder(Transform moved)
+        {
+            if (moved == null) return 0;
+            int told = 0;
+            for (int i = 0; i < s_told.Count; i++)
+            {
+                PlayableCityCuttable c = s_told[i];
+                if (c == null || c.target == null || !c.target.IsChildOf(moved)) continue;
+                c.NotifyPlacementChanged();
+                told++;
+            }
+
+            return told;
+        }
+
+        // The instances added to a detector as ones whose placement is told, until their registrar is destroyed.
+        private static readonly List<PlayableCityCuttable> s_told = new List<PlayableCityCuttable>();
+
         private static SandboxSlashPropHit s_hit;
         private SlashHitDetector _detector;
 
@@ -97,6 +157,7 @@ namespace Zantetsu.Sandbox
             s_thisFrame = 0;
             Held = false;
             s_hit = null;
+            s_told.Clear();
         }
 
         /// <summary>The input parsed once per asset.</summary>
@@ -189,10 +250,29 @@ namespace Zantetsu.Sandbox
                 {
                     // A cut target only: its convexes (and a prop's, posed and cooked once) at the instance as placed, nothing in the world.
                     Candidate = new PlacedCuttableCandidate(world, data, target, instanceRenderers, instanceColliders, mass);
-                    _detector.AddPlaced(Candidate);
+                    // Whether its placement is told (DESIGN 19.1.7, D-192): only when whoever placed it undertook so.
+                    // That it is not cut yet, or has no body, is no ground for it -- and a body on it or above it moves
+                    // it without a word (the simulation, or whatever drives a kinematic one), whatever was undertaken.
+                    bool bodied = placementChangesAreTold && target.GetComponentInParent<Rigidbody>(true) != null;
+                    PlacementTold = placementChangesAreTold && !bodied;
+                    bool indexed = false;
+                    if (PlacementTold)
+                    {
+                        indexed = _detector.AddPlacedStanding(Candidate);
+                        s_told.Add(this);
+                    }
+                    else
+                    {
+                        _detector.AddPlaced(Candidate);
+                    }
+
                     Debug.Log("PLAYABLE CITY: cut target " + (building ? "building " : "prop ") + (RegisteredScale != 1f ? "(scale " + RegisteredScale.ToString("R") + ") " : "")
                         + "instance " + target.name + " name=" + data.name + " convexes=" + data.hulls.Length + " anchors=" + data.anchors.Length
-                        + " (drawn and colliding as the scene placed it until its first cut)");
+                        + " (drawn and colliding as the scene placed it until its first cut)"
+                        + (indexed ? "; placement told: found by its box in the detector's index"
+                            : PlacementTold ? "; placement told, no box could be made now: read every update"
+                            : bodied ? "; placement said to be told but a body is on it or above it: read every update"
+                            : "; read every update"));
                 }
                 else
                 {
@@ -223,6 +303,7 @@ namespace Zantetsu.Sandbox
                 _registration.Dispose();
             }
 
+            s_told.Remove(this);
             if (Candidate != null)
             {
                 _detector?.RemovePlaced(Candidate);
