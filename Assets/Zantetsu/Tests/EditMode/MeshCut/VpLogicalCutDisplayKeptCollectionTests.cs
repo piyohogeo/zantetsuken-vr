@@ -121,55 +121,88 @@ namespace Zantetsu.MeshCut.Tests
         // The GPU's buffers, read back: the commands' arguments, every instance's transform and clip, as adopted.
         private static void AssertGpuHoldsWhatIsAdopted(VpLogicalCutDisplay display, string what)
         {
+            // The draw data stands in slots (DESIGN 5.6): the batch goes through every command slot up to the end, free
+            // ones among them, and may name every instance record up to its end. A free slot draws no instance on the
+            // GPU; a command's instances begin where the display says, not where the commands before it end.
             VpIndexedIndirectDrawBatch batch = display.BodyBatchForTest;
-            int instances = display.SideCount, commands = display.DrawCommandCount;
-            Assert.That(batch.CommandCount, Is.EqualTo(commands), what + ": the batch draws as many commands as are adopted");
-            Assert.That(batch.InstanceCount, Is.EqualTo(instances), what + ": and as many instances");
-            if (commands > 0)
+            int commandEnd = display.DrawCommandEnd, instanceEnd = display.DrawInstanceEnd;
+            Assert.That(batch.CommandCount, Is.EqualTo(commandEnd), what + ": the batch goes through the command slots that are adopted");
+            Assert.That(batch.InstanceCount, Is.EqualTo(instanceEnd), what + ": and may name the instance records that are");
+            Assert.That(commandEnd, Is.GreaterThanOrEqualTo(display.DrawCommandCount), what + ": the slots hold the commands that draw");
+            Assert.That(instanceEnd, Is.GreaterThanOrEqualTo(display.SideCount), what + ": and the records they draw");
+            if (commandEnd > 0)
             {
-                var arguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commands];
-                batch.ShadowArgumentBuffer.GetData(arguments, 0, 0, commands);
-                var forward = new GraphicsBuffer.IndirectDrawIndexedArgs[commands];
-                batch.ForwardArgumentBuffer.GetData(forward, 0, 0, commands);
+                var arguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandEnd];
+                batch.ShadowArgumentBuffer.GetData(arguments, 0, 0, commandEnd);
+                var forward = new GraphicsBuffer.IndirectDrawIndexedArgs[commandEnd];
+                batch.ForwardArgumentBuffer.GetData(forward, 0, 0, commandEnd);
+                Matrix4x4[] transforms = null;
+                VpInstanceClip[] clips = null;
+                if (instanceEnd > 0)
+                {
+                    transforms = new Matrix4x4[instanceEnd];
+                    batch.InstanceBuffer.GetData(transforms, 0, 0, instanceEnd);
+                    clips = new VpInstanceClip[instanceEnd];
+                    batch.InstanceClipBuffer.GetData(clips, 0, 0, instanceEnd);
+                }
 
                 // One stereo condition for the batch, the display's: under single pass instanced the forward arguments
                 // draw every instance twice (an eye each), the shadow's once.
                 Assert.That(batch.SinglePassInstanced, Is.EqualTo(display.SinglePassInstanced), what + ": the batch draws under the display's stereo condition");
                 uint eyes = display.SinglePassInstanced ? 2u : 1u;
-                uint start = 0;
-                for (int c = 0; c < commands; c++)
+                int live = 0, drawn = 0;
+                var named = new bool[instanceEnd];
+                for (int c = 0; c < commandEnd; c++)
                 {
-                    display.TryGetDrawCommand(c, out VpIndirectCommand command);
-                    Assert.That(forward[c].indexCountPerInstance, Is.EqualTo((uint)command.range.indexCount), what + ": command " + c + " index count (forward)");
-                    Assert.That(forward[c].startIndex, Is.EqualTo((uint)command.range.indexStart), what + ": command " + c + " index start (forward)");
-                    Assert.That(forward[c].instanceCount, Is.EqualTo((uint)command.instanceCount * eyes), what + ": command " + c + " instance count (forward, " + eyes + " an instance)");
-                    Assert.That(forward[c].startInstance, Is.EqualTo(start * eyes), what + ": command " + c + " first instance (forward)");
-                    Assert.That(arguments[c].indexCountPerInstance, Is.EqualTo((uint)command.range.indexCount), what + ": command " + c + " index count on the GPU");
-                    Assert.That(arguments[c].startIndex, Is.EqualTo((uint)command.range.indexStart), what + ": command " + c + " index start");
-                    Assert.That(arguments[c].instanceCount, Is.EqualTo((uint)command.instanceCount), what + ": command " + c + " instance count");
-                    Assert.That(arguments[c].startInstance, Is.EqualTo(start), what + ": command " + c + " first instance");
-                    start += (uint)command.instanceCount;
-                }
-
-                Assert.That(start, Is.EqualTo((uint)instances), what + ": the commands' instances are the instances");
-            }
-
-            if (instances > 0)
-            {
-                var transforms = new Matrix4x4[instances];
-                batch.InstanceBuffer.GetData(transforms, 0, 0, instances);
-                var clips = new VpInstanceClip[instances];
-                batch.InstanceClipBuffer.GetData(clips, 0, 0, instances);
-                for (int i = 0; i < instances; i++)
-                {
-                    if (!transforms[i].Equals(display.InstanceTransformForTest(i)))
+                    Assert.That(display.TryGetCommandSlot(c, out VpIndirectCommand command, out int start, out bool free), Is.True, what + ": command slot " + c);
+                    if (free)
                     {
-                        Assert.Fail(what + ": instance " + i + " transform on the GPU\n" + transforms[i] + "\nadopted\n" + display.InstanceTransformForTest(i));
+                        Assert.That(command.instanceCount, Is.Zero, what + ": free command slot " + c + " holds a command of no instance");
+                        Assert.That(forward[c].instanceCount, Is.Zero, what + ": free command slot " + c + " draws no instance (forward)");
+                        Assert.That(arguments[c].instanceCount, Is.Zero, what + ": free command slot " + c + " draws no instance on the GPU");
+                        continue;
                     }
 
-                    display.TryGetSide(i, out LogicalCutDisplaySide side);
-                    Assert.That(clips[i].Equals(side.clip), Is.True, what + ": instance " + i + " clip on the GPU is the adopted one");
+                    live++;
+                    Assert.That(forward[c].indexCountPerInstance, Is.EqualTo((uint)command.range.indexCount), what + ": command slot " + c + " index count (forward)");
+                    Assert.That(forward[c].startIndex, Is.EqualTo((uint)command.range.indexStart), what + ": command slot " + c + " index start (forward)");
+                    Assert.That(forward[c].instanceCount, Is.EqualTo((uint)command.instanceCount * eyes), what + ": command slot " + c + " instance count (forward, " + eyes + " an instance)");
+                    Assert.That(forward[c].startInstance, Is.EqualTo((uint)start * eyes), what + ": command slot " + c + " first instance (forward)");
+                    Assert.That(arguments[c].indexCountPerInstance, Is.EqualTo((uint)command.range.indexCount), what + ": command slot " + c + " index count on the GPU");
+                    Assert.That(arguments[c].startIndex, Is.EqualTo((uint)command.range.indexStart), what + ": command slot " + c + " index start");
+                    Assert.That(arguments[c].instanceCount, Is.EqualTo((uint)command.instanceCount), what + ": command slot " + c + " instance count");
+                    Assert.That(arguments[c].startInstance, Is.EqualTo((uint)start), what + ": command slot " + c + " first instance");
+                    for (int k = 0; k < command.instanceCount; k++, drawn++)
+                    {
+                        int record = start + k;
+                        Assert.That(record, Is.LessThan(instanceEnd), what + ": command slot " + c + " names a record below the end");
+                        Assert.That(named[record], Is.False, what + ": instance record " + record + " is drawn by one command only");
+                        named[record] = true;
+                        if (!transforms[record].Equals(display.InstanceRecordTransformForTest(record)))
+                        {
+                            Assert.Fail(what + ": instance record " + record + " transform on the GPU\n" + transforms[record] + "\nadopted\n" + display.InstanceRecordTransformForTest(record));
+                        }
+
+                        Assert.That(clips[record].Equals(display.InstanceRecordClipForTest(record)), Is.True, what + ": instance record " + record + " clip on the GPU is the adopted one");
+                    }
                 }
+
+                Assert.That(live, Is.EqualTo(display.DrawCommandCount), what + ": the slots that are not free are the commands that draw");
+                Assert.That(drawn, Is.EqualTo(display.SideCount), what + ": the commands' instances are the instances");
+
+                // By index -- the registrations in their order -- the display names the same records with the same clips.
+                for (int i = 0; i < display.SideCount; i++)
+                {
+                    display.TryGetSide(i, out LogicalCutDisplaySide side);
+                    int record = display.InstanceRecordOfIndexForTest(i);
+                    Assert.That(named[record], Is.True, what + ": instance " + i + " is a record a command draws");
+                    Assert.That(clips[record].Equals(side.clip), Is.True, what + ": instance " + i + " clip on the GPU is its side's");
+                }
+            }
+            else
+            {
+                Assert.That(display.DrawCommandCount, Is.Zero, what + ": no slot, no command");
+                Assert.That(display.SideCount, Is.Zero, what + ": and no instance");
             }
 
             // The cap normals: every vertex of every adopted cap holds that cap's outward normal on the GPU.
@@ -255,6 +288,7 @@ namespace Zantetsu.MeshCut.Tests
         {
             public long reads, lists, arrangements, assemblies, written, caughtUp, argumentTransfers, argumentElements, instanceTransfers, instanceElements, keptWhole, walks;
             public long argumentCalls, instanceCalls, capNormalCalls, capNormalVertices, capNormalsMade;
+            public long commandsWritten, wholeArguments, wholeInstances, wholeCalls;
 
             public static Kept Of(VpLogicalCutDisplay d) => new Kept
             {
@@ -264,6 +298,8 @@ namespace Zantetsu.MeshCut.Tests
                 instanceElements = d.BodyInstanceElementsTransferred, keptWhole = d.StructuresKeptWhole, walks = d.StructureWalks,
                 argumentCalls = d.BodyArgumentSetDataCalls, instanceCalls = d.BodyInstanceSetDataCalls, capNormalCalls = d.CapNormalTransfers,
                 capNormalVertices = d.CapNormalVerticesTransferred, capNormalsMade = d.CapNormalsMade,
+                commandsWritten = d.CommandRecordsWritten, wholeArguments = d.BodyWholeArgumentElementsTransferred,
+                wholeInstances = d.BodyWholeInstanceElementsTransferred, wholeCalls = d.BodyWholeSetDataCalls,
             };
 
             public Kept Since(Kept before) => new Kept
@@ -274,13 +310,17 @@ namespace Zantetsu.MeshCut.Tests
                 instanceElements = instanceElements - before.instanceElements, keptWhole = keptWhole - before.keptWhole, walks = walks - before.walks,
                 argumentCalls = argumentCalls - before.argumentCalls, instanceCalls = instanceCalls - before.instanceCalls, capNormalCalls = capNormalCalls - before.capNormalCalls,
                 capNormalVertices = capNormalVertices - before.capNormalVertices, capNormalsMade = capNormalsMade - before.capNormalsMade,
+                commandsWritten = commandsWritten - before.commandsWritten, wholeArguments = wholeArguments - before.wholeArguments,
+                wholeInstances = wholeInstances - before.wholeInstances, wholeCalls = wholeCalls - before.wholeCalls,
             };
 
             public override string ToString() =>
                 "ledger reads " + reads + ", registration lists " + lists + ", draw arrangements " + arrangements + ", structure walks " + walks + " (kept whole " + keptWhole
                 + "), assemblies " + assemblies + ", instance records written " + written + " (given from the other side " + caughtUp + "), argument updates "
                 + argumentTransfers + " (" + argumentCalls + " SetData calls, " + argumentElements + " commands), instance updates " + instanceTransfers + " (" + instanceCalls
-                + " SetData calls, " + instanceElements + " instances), cap normal SetData calls " + capNormalCalls + " (" + capNormalVertices + " vertices; made on the CPU " + capNormalsMade + ")";
+                + " SetData calls, " + instanceElements + " instances), sent whole " + wholeArguments + " commands and " + wholeInstances + " instances (" + wholeCalls
+                + " SetData calls), commands written " + commandsWritten + ", cap normal SetData calls " + capNormalCalls + " (" + capNormalVertices + " vertices; made on the CPU "
+                + capNormalsMade + ")";
         }
 
         [Test]
@@ -351,7 +391,7 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
-        public void KeptCollection_TwoBodiesFarApartMoved_SendOneRangeWithWhatLiesBetween_AndItIsRight()
+        public void KeptCollection_TwoBodiesMoved_SendOneRange_WithWhatLiesBetween_FarApartOrCloseTogether()
         {
             using (Twin twin = NewTwin(16))
             {
@@ -360,18 +400,32 @@ namespace Zantetsu.MeshCut.Tests
                 Both(twin, run => run.at.Put(run.bodies[2], Stand(2, 4f)).Put(run.bodies[13], Stand(13, -2f, 45f)));
                 CollectBoth(twin, "bodies 2 and 13 moved");
                 Kept kept = Kept.Of(twin.kept.Display).Since(before);
-                TestContext.Out.WriteLine("two of 16 moved: " + kept);
+                TestContext.Out.WriteLine("two of 16 moved, far apart: " + kept);
                 Assert.That(kept.written, Is.EqualTo(2), "two instance records written");
-                Assert.That(kept.instanceTransfers, Is.EqualTo(1), "one transfer");
-                Assert.That(kept.instanceElements, Is.EqualTo(12), "of the one range from the first to the last of them: 2..13, the ten between sent along");
+                Assert.That(kept.instanceTransfers, Is.EqualTo(1), "one update");
+                Assert.That(kept.instanceElements, Is.EqualTo(12), "one range, 2..13: the ten between them are sent along (the instance records go as one range, DESIGN 5.6)");
+                Assert.That(kept.instanceCalls, Is.EqualTo(2), "the transforms and the clips of the one range");
+                Assert.That(kept.argumentElements + kept.wholeArguments + kept.wholeInstances, Is.EqualTo(0), "no command, and nothing whole");
 
                 // The next frame nothing moves; the other side is given that range and nothing is sent.
                 before = Kept.Of(twin.kept.Display);
                 CollectBoth(twin, "the frame after");
                 kept = Kept.Of(twin.kept.Display).Since(before);
-                Assert.That(kept.caughtUp, Is.EqualTo(12), "the other side is given the range it was not written over");
+                Assert.That(kept.caughtUp, Is.EqualTo(12), "the other side is given the range it was not written over, whole");
                 Assert.That(kept.written + kept.instanceElements, Is.EqualTo(0), "and nothing is written or sent");
                 CollectBoth(twin, "two frames after");
+
+                // Two close together: the one range again, and the record between them goes along -- from the side being
+                // built, which holds it as it stands (read back by CollectBoth).
+                before = Kept.Of(twin.kept.Display);
+                Both(twin, run => run.at.Put(run.bodies[5], Stand(5, 1f)).Put(run.bodies[7], Stand(7, 2f, 20f)));
+                CollectBoth(twin, "bodies 5 and 7 moved");
+                kept = Kept.Of(twin.kept.Display).Since(before);
+                TestContext.Out.WriteLine("two of 16 moved, close together: " + kept);
+                Assert.That(kept.written, Is.EqualTo(2), "two instance records written");
+                Assert.That(kept.instanceElements, Is.EqualTo(3), "one range, 5..7: the one between sent along");
+                Assert.That(kept.instanceCalls, Is.EqualTo(2), "the transforms and the clips of the one range");
+                CollectBoth(twin, "at rest");
             }
         }
 
@@ -617,8 +671,9 @@ namespace Zantetsu.MeshCut.Tests
                 Kept kept = Kept.Of(display).Since(before);
                 TestContext.Out.WriteLine("single pass instanced came on, nothing else changed: " + kept);
                 Assert.That(display.DrawsSinglePassInstanced, Is.True, "the batch draws single pass instanced");
-                Assert.That(kept.argumentTransfers, Is.EqualTo(1), "the arguments are sent again, once");
-                Assert.That(kept.argumentElements, Is.EqualTo(display.DrawCommandCount), "every command's");
+                Assert.That(kept.wholeArguments, Is.EqualTo(display.DrawCommandEnd), "the arguments are sent again, once: every command slot's, counted as sent whole");
+                Assert.That(kept.argumentTransfers + kept.argumentElements, Is.EqualTo(0), "and not as a change");
+                Assert.That(kept.wholeInstances, Is.EqualTo(0), "no instance record is sent whole for it: only what the placement pass placed anew");
                 Assert.That(kept.walks + kept.assemblies + kept.reads, Is.EqualTo(0), "nothing of the structure is done again for it");
 
                 // Standing under it: nothing is sent.
@@ -626,7 +681,7 @@ namespace Zantetsu.MeshCut.Tests
                 before = Kept.Of(display);
                 for (int f = 0; f < 4; f++) CollectBoth(twin, "standing under single pass instanced " + f);
                 kept = Kept.Of(display).Since(before);
-                Assert.That(kept.argumentTransfers, Is.EqualTo(0), "standing: the arguments are not sent");
+                Assert.That(kept.argumentTransfers + kept.wholeArguments, Is.EqualTo(0), "standing: the arguments are not sent");
                 Assert.That(kept.capNormalCalls, Is.EqualTo(0), "nor the cap normals");
 
                 // A body moved under it: its record, and no arguments.
@@ -634,7 +689,7 @@ namespace Zantetsu.MeshCut.Tests
                 Both(twin, run => run.at.Put(run.bodies[0], Stand(0, 1f, 30f)));
                 CollectBoth(twin, "a body moved under single pass instanced");
                 kept = Kept.Of(display).Since(before);
-                Assert.That(kept.argumentTransfers, Is.EqualTo(0), "a move sends no arguments");
+                Assert.That(kept.argumentTransfers + kept.wholeArguments, Is.EqualTo(0), "a move sends no arguments");
                 Assert.That(kept.written, Is.GreaterThanOrEqualTo(1), "its record is written");
                 Assert.That(kept.instanceTransfers, Is.EqualTo(1), "and sent");
 
@@ -643,7 +698,8 @@ namespace Zantetsu.MeshCut.Tests
                 Both(twin, run => run.Display.SinglePassInstanced = false);
                 CollectBoth(twin, "single pass instanced went off");
                 kept = Kept.Of(display).Since(before);
-                Assert.That(kept.argumentTransfers, Is.EqualTo(1), "the arguments are sent again");
+                Assert.That(kept.wholeArguments, Is.EqualTo(display.DrawCommandEnd), "the arguments are sent again");
+                Assert.That(kept.wholeInstances, Is.EqualTo(0), "and no instance record with them");
                 CollectBoth(twin, "at rest");
             }
         }

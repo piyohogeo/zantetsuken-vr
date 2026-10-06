@@ -1291,6 +1291,10 @@ namespace Zantetsu.MeshCut.Tests
                     int indexTransfers = display.IndexTransfers;
                     Assert.That(sides, Is.EqualTo(2), "one instance per command of the whole body");
                     Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(1));
+                    int commandEnd = display.DrawCommandEnd, instanceEnd = display.DrawInstanceEnd;
+                    Assert.That(
+                        display.TryGetDrawSlots(source, out int commandStart, out int commandCount, out int instanceStart, out _, out _), Is.True,
+                        "the body holds draw slots");
 
                     // Something else takes the table's last display instance, so the split has none to take.
                     Assert.That(
@@ -1314,6 +1318,14 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(
                         table.LiveDisplayInstanceCount, Is.EqualTo(2),
                         "and the refused pass gave back what it had taken");
+                    Assert.That(
+                        new[] { display.DrawCommandEnd, display.DrawInstanceEnd }, Is.EqualTo(new[] { commandEnd, instanceEnd }),
+                        "the draw slots end where they did");
+                    Assert.That(
+                        display.TryGetDrawSlots(source, out int refusedCommands, out _, out int refusedInstances, out _, out int refusedFragments), Is.True);
+                    Assert.That(
+                        new[] { refusedCommands, refusedInstances, refusedFragments }, Is.EqualTo(new[] { commandStart, instanceStart, 1 }),
+                        "and the body holds the slots it held");
 
                     // That earlier snapshot is still what this frame draws.
                     Assert.That(() => RenderFrame(display), Throws.Nothing, "the snapshot it kept is drawable");
@@ -1340,6 +1352,16 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(SideOf(display, 0).clip.IsClipped, Is.True);
                     Assert.That(SideOf(display, 1).clip.IsClipped, Is.True);
                     Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(2), "one instance per side");
+
+                    // The region the refused pass had taken at the end was never published: the retry takes that very
+                    // one, so a refusal uses up nothing of what is left (DESIGN 5.6).
+                    Assert.That(
+                        display.TryGetDrawSlots(source, out int retriedCommands, out _, out int retriedInstances, out _, out _), Is.True);
+                    Assert.That(retriedCommands, Is.EqualTo(commandStart), "the commands stay in their slots");
+                    Assert.That(retriedInstances, Is.EqualTo(instanceEnd), "the two sides' records begin where the records ended before the refusal");
+                    Assert.That(
+                        new[] { display.DrawCommandEnd, display.DrawInstanceEnd }, Is.EqualTo(new[] { commandEnd, instanceEnd + (2 * commandCount) }),
+                        "and end one region further on, not two");
                     Assert.That(display.VertexTransfers, Is.EqualTo(vertexTransfers), "and nothing was transferred");
                     Assert.That(display.IndexTransfers, Is.EqualTo(indexTransfers));
 

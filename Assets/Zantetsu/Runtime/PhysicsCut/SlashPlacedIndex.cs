@@ -261,6 +261,7 @@ namespace Zantetsu.PhysicsCut
         private void Build()
         {
             long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.StaticIndexRebuild);
             if (_built.Length < _count)
             {
                 int room = Math.Max(_count, _built.Length * 2);

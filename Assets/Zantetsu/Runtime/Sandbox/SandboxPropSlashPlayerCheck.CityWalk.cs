@@ -303,7 +303,9 @@ namespace Zantetsu.Sandbox
                     + "; sent: arguments " + d.BodyArgumentTransfers + " updates, " + d.BodyArgumentSetDataCalls + " SetData calls, " + d.BodyArgumentElementsTransferred + " commands, "
                     + (d.BodyArgumentElementsTransferred * argumentBytes) + " bytes; transforms and clips " + d.BodyInstanceTransfers + " updates, " + d.BodyInstanceSetDataCalls + " SetData calls, "
                     + d.BodyInstanceElementsTransferred + " records, " + (d.BodyInstanceElementsTransferred * instanceBytes) + " bytes; cap normals " + d.CapNormalTransfers + " SetData calls, "
-                    + d.CapNormalVerticesTransferred + " vertices, " + (d.CapNormalVerticesTransferred * 16L) + " bytes (made on the CPU " + d.CapNormalsMade + ")";
+                    + d.CapNormalVerticesTransferred + " vertices, " + (d.CapNormalVerticesTransferred * 16L) + " bytes (made on the CPU " + d.CapNormalsMade + ")"
+                    + "; draw slots: commands taken " + d.DrawCommandEnd + " (drawing " + d.DrawCommandCount + "), instance records taken " + d.DrawInstanceEnd
+                    + " (drawn " + d.DrawInstanceCount + "); " + d.DescribeCompaction();
             }
 
             // Unity's skinning of the uncut characters (DESIGN 9, D-196), for the log. The counts are of this check's own
