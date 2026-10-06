@@ -303,7 +303,7 @@ namespace Zantetsu.MeshCut
         // The structure as it stands -- the parts, where each begins, every render fragment's own record -- with only
         // where things stand settled again. What Clear resets of a placement pass is reset; nothing of the structure is.
         private VpMultiCutBuildOutcome TryPlaceOnKeptStructure(VpMultiCutSnapshot previous, LogicalCutLedger ledger,
-            IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement)
+            IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement, VpHeldPlacements holds)
         {
             IsBuilt = false;
             _conditionCount = 0; _capCount = 0; _capVertexCount = 0; _sectionCount = 0;
@@ -327,12 +327,23 @@ namespace Zantetsu.MeshCut
                         kept.branchStart, kept.branchCount, 0, 0, default, 0, 0);
                 }
                 _placeInto = PlacementOnlyPlaceCounts;
+
+                // Who is asked (DESIGN 5.6, D-205): with held placements, a host that vouches for its step count and
+                // a pass that is not a test's or a diagnosis's, the ordinary render fragments and the held ones near a
+                // reference point -- picked here, before the pass's own time. Otherwise every one, as ever.
+                int asksAll = -1;   // the kind of a pass that asks everything, for the held placements' counts
+                if (holds != null && placement == null) holds.Forget();   // nothing is asked of anyone: nothing is held
+                else if (holds != null && (PlacePhasedDiagnosis || placeQueriesOnlyForTest || placementRebuildUnchangedForTest)) { holds.BeginOther(); asksAll = 2; }
+                else if (holds != null && holds.BeginKept(_renderFragmentCount, _stampLedger, _stampInputs)) _holdsNow = holds;
+                else if (holds != null) asksAll = 1;
+                long queriesBefore = _placeInto.queries;
                 long begin = System.Diagnostics.Stopwatch.GetTimestamp();
                 _renderFragmentsTakenOver = true;
                 VpMultiCutBuildOutcome placed;
                 try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }
-                finally { _renderFragmentsTakenOver = false; }
+                finally { _renderFragmentsTakenOver = false; _holdsNow = null; }
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
+                if (asksAll >= 0) holds.CountConventional(asksAll, _placeInto.queries - queriesBefore);
                 if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
                 IsBuilt = true;
                 return VpMultiCutBuildOutcome.Built;
@@ -350,13 +361,17 @@ namespace Zantetsu.MeshCut
         /// </summary>
         internal VpMultiCutBuildOutcome TryBuildIncremental(StructurePool pool, VpMultiCutSnapshot previous,
             LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement,
-            long stampLedger = -1, long stampInputs = -1)
+            long stampLedger = -1, long stampInputs = -1, VpHeldPlacements holds = null)
         {
             if (previous == this) throw new ArgumentException("the adopted snapshot must be separate", nameof(previous));
             if (stampLedger >= 0 && stampInputs >= 0 && CanKeepStructure(pool, previous, registrations.Count, stampLedger, stampInputs))
             {
-                return TryPlaceOnKeptStructure(previous, ledger, registrations, placement);
+                return TryPlaceOnKeptStructure(previous, ledger, registrations, placement, holds);
             }
+
+            // The structure is gone through again: its render fragments are numbered anew, so whatever was held is
+            // forgotten here, before anything of this build can fail (D-205). The pass below asks every one.
+            holds?.Forget();
 
             StructureWalks++;
             Clear(); _structurePool = pool; _buildGeneration++;
@@ -477,13 +492,19 @@ namespace Zantetsu.MeshCut
                     }
                 }
                 _placeInto = rebuilt ? StructuralPlaceCounts : PlacementOnlyPlaceCounts;
+
+                // Every render fragment is asked in this pass, so each one's placement is known as of this pass's step:
+                // all ordinary, to be held once another step's answer is the same (D-205).
+                if (holds != null && placement != null) holds.ResetForStructure(_renderFragmentCount, stampLedger, stampInputs);
+                long queriesBefore = _placeInto.queries;
                 long begin = System.Diagnostics.Stopwatch.GetTimestamp();
                 _renderFragmentsTakenOver = true;
                 VpMultiCutBuildOutcome placed;
                 try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }
                 finally { _renderFragmentsTakenOver = false; }
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
-                if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
+                if (holds != null && placement != null) holds.CountConventional(0, _placeInto.queries - queriesBefore);
+                if (placed != VpMultiCutBuildOutcome.Built) { holds?.Forget(); return Fail(placed); }
                 _registrationCount = registrations.Count; IsBuilt = true;
                 _stampLedger = stampLedger; _stampInputs = stampInputs; _stampValid = stampLedger >= 0 && stampInputs >= 0;
                 return VpMultiCutBuildOutcome.Built;

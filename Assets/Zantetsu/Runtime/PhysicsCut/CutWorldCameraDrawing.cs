@@ -256,8 +256,25 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
+            // The cameras named here are the reference points of the display's held placements (DESIGN 5.6, D-205):
+            // a held piece is asked where it stands again when one of them comes near it.
+            _proximity ??= AddCameraPositions;
+            world.Display.PlacementProximity = _proximity;
             _registered = true;
             return true;
+        }
+
+        private VpLogicalCutDisplay.PlacementProximitySource _proximity;
+
+        private void AddCameraPositions(System.Collections.Generic.List<Vector3> into)
+        {
+            for (int i = 0; i < cameras.Length; i++)
+            {
+                if (cameras[i] != null)
+                {
+                    into.Add(cameras[i].transform.position);
+                }
+            }
         }
 
         private void Unregister()
@@ -279,6 +296,11 @@ namespace Zantetsu.PhysicsCut
                 {
                     world.Display.TryUnregisterCamera(cameras[i]);
                 }
+            }
+
+            if (world.Display.PlacementProximity == _proximity)
+            {
+                world.Display.PlacementProximity = null;   // no camera named any more: every placement is asked
             }
         }
     }
