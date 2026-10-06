@@ -1948,8 +1948,8 @@ namespace Zantetsu.MeshCut
                 if (_conditionCount == 0 && _capCount == 0) continue;
 
                 // This one made conditions or caps: the empty ranges of every later render fragment begin elsewhere,
-                // and each is asked and built again as it always was (the keep test's second condition) -- a held, far
-                // one among them too, which is then ordinary again.
+                // and each is built again as it always was (the keep test's second condition). A held, far one among
+                // them is built again where it is held, without being asked, and stays held.
                 holds.NoteShifted();
                 for (int later = r + 1; later < _renderFragmentCount; later++)
                 {
@@ -1968,7 +1968,8 @@ namespace Zantetsu.MeshCut
         private VpHeldPlacements _holdsNow;
 
         // One render fragment of a placement pass: asked where it stands, then kept as it was taken over or placed anew.
-        // unpicked: it was not one of the pass's targets (held and far) and is reached because ranges begin elsewhere.
+        // unpicked: it was not one of the pass's targets (held and far) and is reached only because ranges begin
+        // elsewhere -- it is not asked: it stands where it is held.
         private VpMultiCutBuildOutcome PlaceAt(
             LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement, VpMultiCutSnapshot reuseFrom,
             int r, VpHeldPlacements holds, bool unpicked)
@@ -1977,13 +1978,22 @@ namespace Zantetsu.MeshCut
             VpMultiCutRegistration registration = registrations[renderFragment.registration];
             _placeInto.renderFragments++;
             bool wasHeld = holds != null && holds.IsHeld(r);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
-#else
-            if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out Matrix4x4 geometryLocalToWorld))
-#endif
+            Matrix4x4 geometryLocalToWorld;
+            if (unpicked)
             {
-                return Invalid(VpMultiCutInvalidInput.InputContract);
+                geometryLocalToWorld = renderFragment.geometryLocalToWorld;
+                holds.NoteShiftedRebuilt();
+            }
+            else
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out geometryLocalToWorld))
+#else
+                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out geometryLocalToWorld))
+#endif
+                {
+                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
             }
 
             // The keep test: the same conditions in the same order as one conjunction, one after another so that
@@ -2007,7 +2017,7 @@ namespace Zantetsu.MeshCut
                 PlacementsKeptAsSettled++;
 
                 // Asked, and standing where the adopted snapshot has it: what the held placements go by (D-205).
-                if (holds != null) holds.Stood(r, wasHeld, unpicked, renderFragment.localBounds, geometryLocalToWorld);
+                if (holds != null && !unpicked) holds.Stood(r, wasHeld, renderFragment.localBounds, geometryLocalToWorld);
                 return VpMultiCutBuildOutcome.Built;
             }
 
@@ -2022,7 +2032,12 @@ namespace Zantetsu.MeshCut
                 default: _placeInto.anewMoved++; break;
             }
 
-            if (holds != null) holds.PlacedAnew(r, wasHeld, unpicked, why == 3);
+            // A held one that was asked and is built again only because its ranges begin elsewhere: whether it stands
+            // where it is held is the keep test's own last comparison, which the test did not reach for it.
+            if (holds != null && !unpicked)
+            {
+                holds.PlacedAnew(r, wasHeld, why == 3, why == 2 && wasHeld && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld));
+            }
             _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
             if (placeQueriesOnlyForTest) return VpMultiCutBuildOutcome.Built;
             VpMultiCutBuildOutcome built = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
