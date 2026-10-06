@@ -2294,6 +2294,9 @@ namespace Zantetsu.MeshCut
             /// <summary>The snapshot builds of this frame by stage, and the collections' own time whole and by stage, every one added (2026-10-07).</summary>
             public VpSnapshotStageTotals stages;
             public VpCollectTimes times;
+
+            /// <summary>What the held placements did in this frame's collections, every one added (2026-10-07, D-205).</summary>
+            public VpHeldPlacementTotals holds;
         }
 
         /// <summary>
@@ -4370,6 +4373,7 @@ namespace Zantetsu.MeshCut
             {
                 _placementSerial = value;
                 _placedSerialKnown = false;   // whatever was adopted was not counted by this source
+                _holds.Forget();              // nor was any step a placement is remembered from
             }
         }
 
@@ -4379,6 +4383,55 @@ namespace Zantetsu.MeshCut
         /// <summary>Observation: collections that let the adopted snapshot stand, and the placement queries they did not make.</summary>
         public long PlacementReuses { get; private set; }
         public long PlacementQueriesOmitted { get; private set; }
+
+        // ----- held placements: who is asked in a pass that does ask (DESIGN 5.6, D-205) ------------------------------
+        //
+        // A collection after a new step asks where things stand. Of the render fragments, the ones seen standing, bit
+        // for bit, where the adopted snapshot has them over two different step results are held: their world boxes go
+        // into a tree, and a pass asks only the others and the held ones near one of the host's reference points --
+        // its cameras' positions. A held one that is far is drawn, and casts its shadow, where it is held, in view or
+        // not; nearness alone brings it back to be asked. See VpHeldPlacements. A host that names no reference points
+        // (null, the default) or does not vouch for its step count has every render fragment asked, as before.
+
+        /// <summary>Adds the host's reference points -- the positions near which a held placement is asked again.</summary>
+        public delegate void PlacementProximitySource(List<Vector3> into);
+
+        private PlacementProximitySource _placementProximity;
+        private readonly VpHeldPlacements _holds = new VpHeldPlacements();
+        private readonly List<Vector3> _proximityPoints = new List<Vector3>(4);
+
+        /// <summary>
+        /// Asked once in a collection that asks placements, for the reference points. Null (the default): nothing is
+        /// held, every render fragment is asked. A source that adds no point says nothing is near.
+        /// </summary>
+        public PlacementProximitySource PlacementProximity
+        {
+            get => _placementProximity;
+            set
+            {
+                _placementProximity = value;
+                _holds.Forget();
+            }
+        }
+
+        /// <summary>Metres on each axis about a reference point within which a held placement is asked again (20 by default).</summary>
+        public float PlacementHoldReach { get => _holds.Reach; set => _holds.Reach = value; }
+
+        /// <summary>Metres added on each axis to a held target's box (0.5 by default). Changing it forgets what is held.</summary>
+        public float PlacementHoldMargin
+        {
+            get => _holds.Margin;
+            set
+            {
+                _holds.Margin = value;
+                _holds.Forget();
+            }
+        }
+
+        /// <summary>Observation: what the held placements did since this display was made, and how many are held now.</summary>
+        public VpHeldPlacementTotals HeldPlacementTotals => _holds.Totals;
+        public int HeldPlacements => _holds.HeldCount;
+        internal VpHeldPlacements HeldPlacementsForTest => _holds;
 
         private VpSnapshotStageTotals SumStages()
         {
@@ -5281,6 +5334,7 @@ namespace Zantetsu.MeshCut
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
             VpDrawDataCounts drawBefore = DrawTotals();
             VpSnapshotStageTotals stagesBefore = SumStages();
+            VpHeldPlacementTotals holdsBefore = _holds.Totals;
             _placementReused = false;
             _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             OpenSlotPass();
@@ -5332,6 +5386,9 @@ namespace Zantetsu.MeshCut
                 VpSnapshotStageTotals stagesAfter = SumStages();
                 stagesAfter.Subtract(stagesBefore);
                 _countsNow.stages.Add(stagesAfter);
+                VpHeldPlacementTotals holdsAfter = _holds.Totals;
+                holdsAfter.Subtract(holdsBefore);
+                _countsNow.holds.Add(holdsAfter);
                 CountDraw(drawBefore);
                 SumValidate(_validateAfter);
                 _countsNow.validate.AddDifference(_validateAfter, _validateBefore);
@@ -5410,10 +5467,16 @@ namespace Zantetsu.MeshCut
             {
                 // The snapshot's build, timed apart from the rest of this stage, with the managed heap's change across it
                 // (2026-10-07, for observation: what the build took of the heap, less what a collector freed meanwhile).
+                // Who is asked (D-205): the host's reference points, when it vouches for its step count.
+                _proximityPoints.Clear();
+                bool holding = _buildSerialKnown && _placementProximity != null;
+                if (holding) _placementProximity(_proximityPoints);
+                _holds.SetPass(holding, _buildStep, _buildOutside, _proximityPoints);
+
                 long heapBefore = GC.GetTotalMemory(false);
                 long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
                 VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
-                    _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
+                    _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision, _holds);
                 _buildCalls++;
                 _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
 
@@ -5439,7 +5502,7 @@ namespace Zantetsu.MeshCut
 
                     buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
                     outcome = _building.TryBuildIncremental(
-                        _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
+                        _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision, _holds);
                     _buildCalls++;
                     _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
                 }

@@ -1925,71 +1925,119 @@ namespace Zantetsu.MeshCut
             }
 #endif
 
-            for (int r = 0; r < _renderFragmentCount; r++)
+            VpHeldPlacements holds = _holdsNow;
+            if (holds == null)
             {
-                VpMultiCutRenderFragment renderFragment = _renderFragments[r];
-                VpMultiCutRegistration registration = registrations[renderFragment.registration];
-                _placeInto.renderFragments++;
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                if (!TryPlacementOf(
-                        placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
-#else
-                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out Matrix4x4 geometryLocalToWorld))
-#endif
+                // Every render fragment is asked where it stands.
+                for (int r = 0; r < _renderFragmentCount; r++)
                 {
-                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                    VpMultiCutBuildOutcome outcome = PlaceAt(ledger, registrations, placement, reuseFrom, r, null, false);
+                    if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
                 }
 
-                // The keep test: the same conditions in the same order as one conjunction, one after another so that
-                // the first that does not hold is known (2026-10-07, for observation; nothing more is compared).
-                int why;
-                if (!_renderFragmentsTakenOver || placementRebuildUnchangedForTest) why = 0;
-                else if (renderFragment.conditionCount != 0 || renderFragment.capCount != 0 || renderFragment.clip.PlaneCount != 0) why = 1;
-                else if (renderFragment.conditionStart != _conditionCount || renderFragment.capStart != _capCount) why = 2;
-                else if (SelectedCountOf(renderFragment.branchStart, renderFragment.registration) != 0) why = 3;
-                else if (!SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld)) why = 4;
-                else
-                {
-                    // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
-                    // standing, bit for bit, where the structure placed it: placing it again and building it again
-                    // would write this very render fragment back (the same placement, an empty clip, the same empty
-                    // ranges at the same places). It is kept as it was copied (2026-10-05). It was asked where it
-                    // stands above, as any other (and, where the numeric diagnosis is compiled, that answer checked or
-                    // remembered there).
-                    _placeInto.clipsKept++;
-                    _placeInto.keptAsSettled++;
-                    PlacementsKeptAsSettled++;
-                    continue;
-                }
-
-                _placedAnew[_placedAnewCount++] = r;   // not kept as settled: placed anew, its clip and caps made again
-                _placeInto.placedAnew++;
-                switch (why)
-                {
-                    case 0: _placeInto.anewNotTakenOver++; break;
-                    case 1: _placeInto.anewCarried++; break;
-                    case 2: _placeInto.anewStartsShifted++; break;
-                    case 3: _placeInto.anewSelected++; break;
-                    default: _placeInto.anewMoved++; break;
-                }
-
-                _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
-                if (placeQueriesOnlyForTest) continue;
-                VpMultiCutBuildOutcome outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
-                if (outcome != VpMultiCutBuildOutcome.Built)
-                {
-                    return outcome;
-                }
-
-                // What it came out with (read from the record just built; nothing is compared).
-                VpMultiCutRenderFragment made = _renderFragments[r];
-                bool clipped = made.clip.PlaneCount > 0, capped = made.capCount > 0;
-                if (clipped) _placeInto.anewClipped++;
-                if (capped) _placeInto.anewCapped++;
-                if (clipped && capped) _placeInto.anewClippedAndCapped++;
-                if (why == 2 && !clipped && !capped) _placeInto.anewShiftedPlain++;
+                return VpMultiCutBuildOutcome.Built;
             }
 
+            // The pass's targets only (DESIGN 5.6, D-205): the ordinary render fragments and the held ones a proximity
+            // box meets, in order. A held one that is not near is not asked and not touched: its record stands as it was
+            // copied from the adopted snapshot.
+            for (int r = holds.NextPicked(-1); r >= 0; r = holds.NextPicked(r))
+            {
+                VpMultiCutBuildOutcome outcome = PlaceAt(ledger, registrations, placement, reuseFrom, r, holds, false);
+                if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
+                if (_conditionCount == 0 && _capCount == 0) continue;
+
+                // This one made conditions or caps: the empty ranges of every later render fragment begin elsewhere,
+                // and each is asked and built again as it always was (the keep test's second condition) -- a held, far
+                // one among them too, which is then ordinary again.
+                holds.NoteShifted();
+                for (int later = r + 1; later < _renderFragmentCount; later++)
+                {
+                    outcome = PlaceAt(ledger, registrations, placement, reuseFrom, later, holds, !holds.IsPicked(later));
+                    if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
+                }
+
+                break;
+            }
+
+            return VpMultiCutBuildOutcome.Built;
+        }
+
+        // The held placements of the pass that is running, when it asks only its targets; null in a pass that asks every
+        // render fragment.
+        private VpHeldPlacements _holdsNow;
+
+        // One render fragment of a placement pass: asked where it stands, then kept as it was taken over or placed anew.
+        // unpicked: it was not one of the pass's targets (held and far) and is reached because ranges begin elsewhere.
+        private VpMultiCutBuildOutcome PlaceAt(
+            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, IVpFragmentPlacement placement, VpMultiCutSnapshot reuseFrom,
+            int r, VpHeldPlacements holds, bool unpicked)
+        {
+            VpMultiCutRenderFragment renderFragment = _renderFragments[r];
+            VpMultiCutRegistration registration = registrations[renderFragment.registration];
+            _placeInto.renderFragments++;
+            bool wasHeld = holds != null && holds.IsHeld(r);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out Matrix4x4 geometryLocalToWorld))
+#else
+            if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out Matrix4x4 geometryLocalToWorld))
+#endif
+            {
+                return Invalid(VpMultiCutInvalidInput.InputContract);
+            }
+
+            // The keep test: the same conditions in the same order as one conjunction, one after another so that
+            // the first that does not hold is known (2026-10-07, for observation; nothing more is compared).
+            int why;
+            if (!_renderFragmentsTakenOver || placementRebuildUnchangedForTest) why = 0;
+            else if (renderFragment.conditionCount != 0 || renderFragment.capCount != 0 || renderFragment.clip.PlaneCount != 0) why = 1;
+            else if (renderFragment.conditionStart != _conditionCount || renderFragment.capStart != _capCount) why = 2;
+            else if (SelectedCountOf(renderFragment.branchStart, renderFragment.registration) != 0) why = 3;
+            else if (!SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld)) why = 4;
+            else
+            {
+                // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
+                // standing, bit for bit, where the structure placed it: placing it again and building it again
+                // would write this very render fragment back (the same placement, an empty clip, the same empty
+                // ranges at the same places). It is kept as it was copied (2026-10-05). It was asked where it
+                // stands above, as any other (and, where the numeric diagnosis is compiled, that answer checked or
+                // remembered there).
+                _placeInto.clipsKept++;
+                _placeInto.keptAsSettled++;
+                PlacementsKeptAsSettled++;
+
+                // Asked, and standing where the adopted snapshot has it: what the held placements go by (D-205).
+                if (holds != null) holds.Stood(r, wasHeld, unpicked, renderFragment.localBounds, geometryLocalToWorld);
+                return VpMultiCutBuildOutcome.Built;
+            }
+
+            _placedAnew[_placedAnewCount++] = r;   // not kept as settled: placed anew, its clip and caps made again
+            _placeInto.placedAnew++;
+            switch (why)
+            {
+                case 0: _placeInto.anewNotTakenOver++; break;
+                case 1: _placeInto.anewCarried++; break;
+                case 2: _placeInto.anewStartsShifted++; break;
+                case 3: _placeInto.anewSelected++; break;
+                default: _placeInto.anewMoved++; break;
+            }
+
+            if (holds != null) holds.PlacedAnew(r, wasHeld, unpicked, why == 3);
+            _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
+            if (placeQueriesOnlyForTest) return VpMultiCutBuildOutcome.Built;
+            VpMultiCutBuildOutcome built = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
+            if (built != VpMultiCutBuildOutcome.Built)
+            {
+                return built;
+            }
+
+            // What it came out with (read from the record just built; nothing is compared).
+            VpMultiCutRenderFragment made = _renderFragments[r];
+            bool clipped = made.clip.PlaneCount > 0, capped = made.capCount > 0;
+            if (clipped) _placeInto.anewClipped++;
+            if (capped) _placeInto.anewCapped++;
+            if (clipped && capped) _placeInto.anewClippedAndCapped++;
+            if (why == 2 && !clipped && !capped) _placeInto.anewShiftedPlain++;
             return VpMultiCutBuildOutcome.Built;
         }
 
