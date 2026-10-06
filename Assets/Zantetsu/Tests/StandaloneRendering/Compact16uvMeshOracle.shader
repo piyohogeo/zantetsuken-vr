@@ -13,8 +13,9 @@ Shader "Hidden/Zantetsu/Compact16uv Mesh Oracle"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma target 4.5
+            #include_with_pragmas "Assets/Zantetsu/Runtime/Rendering/VpSurfaceLightingVariants.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Assets/Zantetsu/Runtime/Rendering/VpCutSurfaceShading.hlsl"
             #include "Assets/Zantetsu/Runtime/Rendering/VpPaletteAtlas.hlsl"
             TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);

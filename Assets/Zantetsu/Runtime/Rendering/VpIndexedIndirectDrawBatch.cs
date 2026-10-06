@@ -1147,6 +1147,14 @@ namespace Zantetsu.Rendering
                 worldBounds = WorldBounds,
                 shadowCastingMode = ShadowCastingMode.Off,
                 receiveShadows = true,
+
+                // The environment inputs of the shared lighting (VpCutSurfaceShading.hlsl). With both usages off Unity
+                // gives the draw the scene's ambient probe and its default reflection as the per-draw constants URP's
+                // lighting reads -- the same values a renderer outside every probe gets (measured against a
+                // MeshRenderer, 2026-10-06). Stated rather than left to RenderParams' defaults, because the lighting
+                // depends on it: a placed light probe or reflection probe does not reach these draws.
+                lightProbeUsage = LightProbeUsage.Off,
+                reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
             Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }

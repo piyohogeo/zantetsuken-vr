@@ -837,6 +837,11 @@ namespace Zantetsu.Rendering
                             worldBounds = Everywhere,
                             shadowCastingMode = ShadowCastingMode.Off,
                             receiveShadows = false,
+
+                            // As the body's draw states them (VpIndexedIndirectDrawBatch): the scene's ambient probe
+                            // and default reflection, so that a temporary cap is lit from what the real cap is.
+                            lightProbeUsage = LightProbeUsage.Off,
+                            reflectionProbeUsage = ReflectionProbeUsage.Off,
                         };
                         Graphics.RenderPrimitivesIndexed(
                             capParams, MeshTopology.Triangles, _capIndexBuffer, color.capIndexCount,

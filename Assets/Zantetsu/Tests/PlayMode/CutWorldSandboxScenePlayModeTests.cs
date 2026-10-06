@@ -334,6 +334,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             SceneManager.LoadScene(ScenePath, LoadSceneMode.Single);
             yield return null;
 
+            // The display is lit by the scene it is drawn in (DESIGN 5.3): its main light, its ambient light and its
+            // default reflection. These cases tell the display's surfaces by their colours, from whichever side the
+            // camera sees them -- a face that looks down at this scene's dark ground would be dark, and seen along
+            // itself it would show the sky's reflection more than its own colour. So the loaded scene is given an even
+            // ambient light and no reflection, in memory only: the scene on disk is not touched, and its own light, its
+            // floor and its camera stay as they are.
+            float ambient = Mathf.LinearToGammaSpace(0.6f);
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientLight = new Color(ambient, ambient, ambient, 1f);
+            RenderSettings.reflectionIntensity = 0f;
+            DynamicGI.UpdateEnvironment();
+
             _world = UnityEngine.Object.FindFirstObjectByType<CutWorldRoot>();
             Assert.That(_world, Is.Not.Null, "the scene has a cut world");
             Assert.That(_world.IsReady, Is.True, "which built itself when the scene began");
@@ -446,6 +458,24 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
 
             return found;
+        }
+
+        /// <summary>The mean colour of a box on the screen, for saying what was there when a face was not found.</summary>
+        private Color MeanIn(RectInt box)
+        {
+            Color[] pixels = ReadPixels();
+            Color sum = Color.clear;
+            int n = 0;
+            for (int y = Mathf.Max(0, box.yMin); y < Mathf.Min(Height, box.yMax); y++)
+            {
+                for (int x = Mathf.Max(0, box.xMin); x < Mathf.Min(Width, box.xMax); x++)
+                {
+                    sum += pixels[(y * Width) + x];
+                    n++;
+                }
+            }
+
+            return n > 0 ? sum / n : Color.clear;
         }
 
         /// <summary>The screen box one world point falls in, with a margin around it.</summary>
@@ -822,8 +852,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             int onUpper = PixelsOfIn(face, BoxAround(_upperFaceAt, 7));
             int onLower = PixelsOfIn(face, BoxAround(_lowerFaceAt, 7));
-            Assert.That(onUpper, Is.GreaterThan(20), what + " is on the side that was carried away: " + onUpper);
-            Assert.That(onLower, Is.GreaterThan(20), what + " is on the side it left behind: " + onLower);
+            Assert.That(
+                onUpper, Is.GreaterThan(20),
+                what + " is on the side that was carried away: " + onUpper + " (the mean colour there " + MeanIn(BoxAround(_upperFaceAt, 7)) + ")");
+            Assert.That(
+                onLower, Is.GreaterThan(20),
+                what + " is on the side it left behind: " + onLower + " (the mean colour there " + MeanIn(BoxAround(_lowerFaceAt, 7)) + ")");
 
             var beside = new Vector3(0.8f, 0f, 0f);
             Assert.That(

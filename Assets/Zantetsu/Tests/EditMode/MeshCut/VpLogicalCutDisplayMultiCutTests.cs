@@ -69,6 +69,23 @@ namespace Zantetsu.MeshCut.Tests
             VpCutSurfaceColour.Restore(_cutSurfaceColours);
         }
 
+        // The display is lit by the scene it is drawn in (DESIGN 5.3). These cases read where a cap is, not how it is
+        // lit, so they stand in a light that shows a colour from every side, and put the scene's own back.
+        private Zantetsu.Rendering.Tests.VpTestLighting _lighting;
+
+        [SetUp]
+        public void LightTheSceneFromEverySide()
+        {
+            _lighting = Zantetsu.Rendering.Tests.VpTestLighting.BrightFromEverySide();
+        }
+
+        [TearDown]
+        public void PutTheScenesLightBack()
+        {
+            _lighting?.Dispose();
+            _lighting = null;
+        }
+
         [TearDown]
         public void DestroyObjects()
         {

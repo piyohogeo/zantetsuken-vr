@@ -1,7 +1,7 @@
 // Stage 1 vertex-pulling shader (DESIGN 4.5.5): a Direct non-indexed draw whose SV_VertexID reads the uint index
-// buffer, and the index reads the VP vertex buffer. The colour is the base colour shaded by a fixed direction, not by
-// scene lights, darkened where the main light's realtime shadow falls; the geometry casts shadows through the
-// ShadowCaster pass. No additional lights, soft or screen-space shadow sampling, clipping or stencil.
+// buffer, and the index reads the VP vertex buffer. The colour is the base colour through the lighting every VP surface
+// shares (VpCutSurfaceShading.hlsl, DESIGN 5.3: URP's own, with the common material setting); the geometry casts
+// shadows through the ShadowCaster pass. No additional lights, screen-space shadow sampling, clipping or stencil.
 Shader "Zantetsu/VP Unlit"
 {
     Properties
@@ -66,10 +66,11 @@ Shader "Zantetsu/VP Unlit"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
-            // Main light realtime shadows only: one map or its cascades.
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // The variants of the shared lighting (the main light's shadow, its soft sampling, the reflection).
+            #include_with_pragmas "VpSurfaceLightingVariants.hlsl"
 
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "VpCutSurfaceShading.hlsl"
 
             struct Varyings
             {
@@ -97,13 +98,12 @@ Shader "Zantetsu/VP Unlit"
 
             half4 Fragment(Varyings input) : SV_Target
             {
-                half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
-                // The shadow coordinate picks its cascade from the world position, so it is computed per fragment.
-                half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 half3 colour = _BaseColor.rgb;
                 if (_VpUsePaletteAtlas > 0.0 && _VpPaletteAtlasEnabled > 0.0)
                     colour = VpPaletteBase(input.rawUv, TRANSFORM_TEX(input.rawUv, _BaseMap), _BaseColor.rgb);
-                return half4(colour * (0.5 + 0.5 * facing * shadow), 1.0);
+                // The shared lighting of every VP surface (VpCutSurfaceShading.hlsl, DESIGN 5.3).
+                return half4(VpShadeSurface(colour, input.normalWS, input.positionWS), 1.0);
             }
             ENDHLSL
         }
