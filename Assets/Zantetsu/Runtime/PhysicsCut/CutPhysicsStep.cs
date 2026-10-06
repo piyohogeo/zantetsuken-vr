@@ -60,6 +60,7 @@ namespace Zantetsu.PhysicsCut
         private static readonly ProfilerMarker s_simulate = new ProfilerMarker("Zantetsu.CutPhysicsStep.Simulate");
         private static readonly ProfilerMarker s_collect = new ProfilerMarker("Zantetsu.CutPhysicsStep.Collect");
         private static readonly List<ProvisionalCutDriver> s_collectors = new List<ProvisionalCutDriver>(2);
+        private static readonly List<Action> s_afterStep = new List<Action>(2);
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
         private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
@@ -175,6 +176,27 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// Takes part in every simulated step: <paramref name="afterStep"/> is called right after a step was simulated,
+        /// before that frame's collections, and in no frame without a step. What it moves is part of what the step
+        /// leaves: a display that asks placements only after a new step (DESIGN 5.6, D-204) reads it, and it is no
+        /// placement input changed outside a step.
+        /// </summary>
+        internal static void JoinStep(Action afterStep)
+        {
+            Loop.EnsureInstalled();
+            if (!s_afterStep.Contains(afterStep))
+            {
+                s_afterStep.Add(afterStep);
+            }
+        }
+
+        /// <summary>Takes part in the steps no more.</summary>
+        internal static void LeaveStep(Action afterStep)
+        {
+            s_afterStep.Remove(afterStep);
+        }
+
+        /// <summary>
         /// A play session starts from nothing, whether or not the domain was reloaded: the frequency chosen for this
         /// session, the budget, no time owed, no step taken, no pause, no collector left from a previous session. This
         /// runs before any scene is loaded and so before any simulation.
@@ -189,6 +211,7 @@ namespace Zantetsu.PhysicsCut
             s_applicationPaused = false;
             s_pauseListener = null;
             s_collectors.Clear();
+            s_afterStep.Clear();
             LastSimulateSeconds = 0.0;
             LastCollectSeconds = 0.0;
             s_costs.Clear();
@@ -250,6 +273,21 @@ namespace Zantetsu.PhysicsCut
         }
 
         private static int s_gcCountAtFrameStart;
+
+        /// <summary>
+        /// How often something outside a physics step has changed what a placement is read from (DESIGN 5.6, D-204):
+        /// an owner come or gone, a provisional pair made, handed over or ended, an owner's root put somewhere by a
+        /// script. With <see cref="ManualPhysicsClock.StepId"/> it is what a display compares to know that the
+        /// placements it adopted are still the ones to be read. Whoever makes such a change says so here; a change
+        /// made without saying so is not seen until the next step.
+        /// </summary>
+        public static long PlacementInputChanges { get; private set; }
+
+        /// <summary>A placement input was changed outside a physics step.</summary>
+        public static void NotePlacementInputChanged()
+        {
+            PlacementInputChanges++;
+        }
 
         /// <summary>
         /// How many garbage collections have completed since this frame began (the collector's own count of
@@ -323,6 +361,15 @@ namespace Zantetsu.PhysicsCut
                 s_costs.Add(LastSimulateSeconds);
                 s_clock.Stepped();
                 LastSimulatedFrame = Time.frameCount;
+
+                // What moves with the steps (JoinStep), before anything is collected. Backwards and bounds-checked, as below.
+                for (int i = s_afterStep.Count - 1; i >= 0; i--)
+                {
+                    if (i < s_afterStep.Count)
+                    {
+                        s_afterStep[i]();
+                    }
+                }
             }
 
             // Backwards and bounds-checked: a collection may end a driver (the termination latch), which leaves.

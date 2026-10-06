@@ -212,6 +212,7 @@ namespace Zantetsu.PhysicsCut
             var negative = new HullGroup(++_lastGroupId, group.Building) { owner = this, Generation = 1 };
             negative.Root = new GameObject("Building hull group " + negative.Id + " -");
             negative.Root.transform.SetPositionAndRotation(root.position, root.rotation);
+            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
             negative.Body = negative.Root.AddComponent<Rigidbody>();
             negative.Body.automaticCenterOfMass = false;
             negative.Body.automaticInertiaTensor = false;

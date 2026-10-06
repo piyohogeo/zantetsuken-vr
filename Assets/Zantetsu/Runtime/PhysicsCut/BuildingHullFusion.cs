@@ -381,6 +381,7 @@ namespace Zantetsu.PhysicsCut
         {
             var root = new GameObject(name);
             root.transform.SetPositionAndRotation(at.position, at.rotation);
+            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
             root.transform.SetParent(under, true);
             return root;
         }
@@ -928,8 +929,7 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 StepPairs();
-                StepAnimations();
-                AdvanceCuts();
+                AdvanceCuts();   // the drops are placed with the physics steps (StepDropsAfterPhysicsStep), not here
                 StepHullUpdates();
                 StepFusions();
                 RouteHeld();

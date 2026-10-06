@@ -434,6 +434,9 @@ namespace Zantetsu.PhysicsCut
 
             // Whether a frame may bear the compaction of the display's instance regions (DESIGN 5.6, D-202).
             Display.CompactionGate = CompactionGate;
+
+            // What tells the display that the placements it adopted are still the ones to be read (DESIGN 5.6, D-204).
+            Display.PlacementSerial = TryGetPlacementSerial;
             if (usePalette)
             {
                 VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);
@@ -828,6 +831,18 @@ namespace Zantetsu.PhysicsCut
         /// of those.
         /// </summary>
         public const double CompactionReserveSeconds = 0.002;
+
+        /// <summary>
+        /// The counts a placement changes with (D-204): the physics steps really simulated, and the placement inputs
+        /// changed outside a step. False when the physics is not stepped by <see cref="CutPhysicsStep"/> -- the engine
+        /// steps it by itself then, and the count of steps does not follow it -- so that every collection asks.
+        /// </summary>
+        private bool TryGetPlacementSerial(out long step, out long outsideStep)
+        {
+            step = CutPhysicsStep.Clock.StepId;
+            outsideStep = CutPhysicsStep.PlacementInputChanges;
+            return Physics.simulationMode == SimulationMode.Script;
+        }
 
         /// <summary>
         /// Whether this frame may bear a compaction the display finds necessary (D-202): not when heavy work was noted

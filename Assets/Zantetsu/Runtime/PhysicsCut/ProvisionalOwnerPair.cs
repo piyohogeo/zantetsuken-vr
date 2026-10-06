@@ -252,6 +252,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsEnded = true;
+            CutPhysicsStep.NotePlacementInputChanged();   // this pair answers no more (D-204)
 
             // The constraint goes at once, not at the end of the frame. The actors stay in the scene, and the frame's
             // physics step comes after the late update this handoff may be in (CutPhysicsStep): a joint only asked to go
@@ -298,6 +299,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsEnded = true;
+            CutPhysicsStep.NotePlacementInputChanged();   // this pair answers no more (D-204)
             if (Positive?.Root != null)
             {
                 Positive.Root.SetActive(false);

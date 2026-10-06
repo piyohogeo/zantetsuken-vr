@@ -462,6 +462,7 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
         {
             Root.transform.SetPositionAndRotation(placement.position, placement.rotation);
+            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
 
             // Still out of the scene: where it stands now is what its building constraint starts from.
             BuildingWorldD6.Place(this);
@@ -1045,6 +1046,7 @@ namespace Zantetsu.PhysicsCut
                 // does not enter the physics scene, which is what keeps this build unpublished.
                 root.SetActive(false);
                 root.transform.SetPositionAndRotation(input.placement.position, input.placement.rotation);
+                CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
 
                 var shapeFrame = new GameObject("Shape Frame");
                 shapeFrame.transform.SetParent(root.transform, false);

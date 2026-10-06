@@ -36,11 +36,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             return section.Run(root, detector, building, () => ++next, external, f => frames.Add(f), null, null, op => false, j.Log, clock ?? (() => CutPhysicsStep.Clock.PhysicsSeconds));
         }
 
-        // The drops' clock, advanced once a frame and only by the frame (10 ms a frame): read twice in one frame, the same value.
-        private static System.Func<double> FrameClock(BuildingHullFusion h)
+        // The drops' clock, advanced once a physics step and only by the step (10 ms a step): the same value in every
+        // frame between two steps. The drops are placed with the steps (2026-10-07), so this is the time they are placed at.
+        private static System.Func<double> StepClock(BuildingHullFusion h)
         {
-            int from = Time.frameCount;
-            System.Func<double> clock = () => (Time.frameCount - from) * 0.01;
+            long from = CutPhysicsStep.Clock.StepId;
+            System.Func<double> clock = () => (CutPhysicsStep.Clock.StepId - from) * 0.01;
             h.RealSecondsForTest = clock;
             return clock;
         }
@@ -54,7 +55,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             HullGroup building = AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            System.Func<double> clock = FrameClock(h);
+            System.Func<double> clock = StepClock(h);
             var section = new HullMidDropSection(true, "test");
             var j = new SectionJudgement();
             var frames = new List<int>();
@@ -109,7 +110,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(h.Hits.Count, Is.EqualTo(1));
             Assert.That(j.failures, Is.EqualTo(1));
             Assert.That(j.Code, Is.Not.Zero);
-            FrameClock(h);   // moving again: the drop ends, the world settles
+            StepClock(h);   // moving again: the drop ends, the world settles
             yield return UntilHull(root, () => Quiet(h), 30f, "the first cut ended");
             yield return EndWorld(root);
         }

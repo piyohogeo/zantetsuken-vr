@@ -135,6 +135,35 @@ namespace Zantetsu.MeshCut
         internal long FamiliesRebuilt { get; private set; }
         internal long RegistrationsReused { get; private set; }
 
+        /// <summary>
+        /// Whether this snapshot, built, is of the very structure these numbers count -- the pool, how many
+        /// registrations, the ledger's revision and the display's own count of its inputs: what a build asks of its two
+        /// snapshots before it keeps a structure whole, asked of one.
+        /// </summary>
+        internal bool IsOfStructure(StructurePool pool, int registrations, long stampLedger, long stampInputs)
+        {
+            return IsBuilt && _composite && _stampValid && _structurePool == pool && stampLedger >= 0 && stampInputs >= 0
+                   && _stampLedger == stampLedger && _stampInputs == stampInputs && _registrationCount == registrations;
+        }
+
+        /// <summary>
+        /// This snapshot, the adopted one, stands for one more collection as it is (DESIGN 5.6, D-204): no placement is
+        /// asked and nothing of it is made again. What its own placement pass reported of itself -- the render
+        /// fragments placed anew, the caps that changed, the sections it took -- is of that pass, not of this
+        /// collection, and reads as nothing from here on. Not a placement pass, and not counted as one: nothing is
+        /// "kept as settled" by it.
+        /// </summary>
+        internal void NotePlacementsReused()
+        {
+            _allPlacedAnew = false;
+            _placedAnewCount = 0;
+            _capsChangedFrom = int.MaxValue;
+            _capsChangedTo = 0;
+            SectionBuildCount = 0;
+            _stages.placementsReused++;
+            _stages.queriesOmitted += _renderFragmentCount;
+        }
+
         // The stages' calls and time, what the rebuilt families held and the work arrays' growth, since this snapshot
         // was made (2026-10-07, for observation; a display takes a collection's share as a difference).
         private VpSnapshotStageTotals _stages;
