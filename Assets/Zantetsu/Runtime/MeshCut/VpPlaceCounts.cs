@@ -24,6 +24,18 @@ namespace Zantetsu.MeshCut
         // standing bit for bit where the structure placed them -- and so neither placed nor built again (2026-10-05).
         public long keptAsSettled;
 
+        // The render fragments NOT kept: placed anew, their clip and caps made again (2026-10-07, for observation).
+        // Why, by the first condition of the keep test that did not hold, in the test's own order (so a later condition
+        // was not looked at for it): the pass does not take a structure over (or a test asks for everything); the
+        // record carried conditions, caps or planes into the pass (it does not: they are reset before it); the pass had
+        // made conditions or caps before reaching it, so its empty ranges would begin elsewhere; it has selected
+        // boundaries (it is clipped); it stands elsewhere than the structure placed it.
+        public long placedAnew, anewNotTakenOver, anewCarried, anewStartsShifted, anewSelected, anewMoved;
+
+        // What the placed anew came out with: clip planes, caps. One with both is counted in each and in the third.
+        // And of the "starts shifted", those that came out with neither.
+        public long anewClipped, anewCapped, anewClippedAndCapped, anewShiftedPlain;
+
         // The diagnosis's blocks (VpMultiCutSnapshot.PlacePhasedDiagnosis; 0 otherwise): every query of the pass, every check
         // of their answers, everything built after them -- each block timed whole.
         public double providerSeconds, restSeconds;
@@ -44,6 +56,8 @@ namespace Zantetsu.MeshCut
             sectionsFoundHere = sectionsReused = sectionsBuilt = sectionEntriesCompared = 0;
             capClips = capInputVertices = capOutputVertices = 0;
             keptAsSettled = 0;
+            placedAnew = anewNotTakenOver = anewCarried = anewStartsShifted = anewSelected = anewMoved = 0;
+            anewClipped = anewCapped = anewClippedAndCapped = anewShiftedPlain = 0;
             providerSeconds = restSeconds = 0.0;
         }
 
@@ -71,6 +85,16 @@ namespace Zantetsu.MeshCut
             capInputVertices += a.capInputVertices - b.capInputVertices;
             capOutputVertices += a.capOutputVertices - b.capOutputVertices;
             keptAsSettled += a.keptAsSettled - b.keptAsSettled;
+            placedAnew += a.placedAnew - b.placedAnew;
+            anewNotTakenOver += a.anewNotTakenOver - b.anewNotTakenOver;
+            anewCarried += a.anewCarried - b.anewCarried;
+            anewStartsShifted += a.anewStartsShifted - b.anewStartsShifted;
+            anewSelected += a.anewSelected - b.anewSelected;
+            anewMoved += a.anewMoved - b.anewMoved;
+            anewClipped += a.anewClipped - b.anewClipped;
+            anewCapped += a.anewCapped - b.anewCapped;
+            anewClippedAndCapped += a.anewClippedAndCapped - b.anewClippedAndCapped;
+            anewShiftedPlain += a.anewShiftedPlain - b.anewShiftedPlain;
             providerSeconds += a.providerSeconds - b.providerSeconds;
             restSeconds += a.restSeconds - b.restSeconds;
         }

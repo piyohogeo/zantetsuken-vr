@@ -1850,6 +1850,8 @@ namespace Zantetsu.MeshCut
                 double collected = SecondsSince(collectBegin);
                 LastCollectSeconds += collected;
                 ValidateCounts.collectSeconds += collected;
+                _stages.collectCalls++;
+                _stages.collectSeconds += collected;
                 ValidateCounts.chainSteps += VpClipCandidates.ChainSteps - chainSteps;
                 ValidateCounts.operationReads += VpClipCandidates.OperationReads - operationReads;
                 ValidateCounts.candidatesMade += VpClipCandidates.CandidatesMade - candidatesMade;
@@ -1870,7 +1872,10 @@ namespace Zantetsu.MeshCut
                     outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
                 }
 
-                LastGroupSeconds += SecondsSince(groupBegin);
+                double grouped = SecondsSince(groupBegin);
+                LastGroupSeconds += grouped;
+                _stages.groupCalls++;
+                _stages.groupSeconds += grouped;
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
                     return outcome;
@@ -1905,7 +1910,10 @@ namespace Zantetsu.MeshCut
             _allPlacedAnew = false;
             if (_placedAnew.Length < _renderFragmentCount)
             {
-                _placedAnew = new int[Math.Max(_renderFragmentCount, _placedAnew.Length * 2)];
+                int room = Math.Max(_renderFragmentCount, _placedAnew.Length * 2);
+                _stages.arrayGrowths++;
+                _stages.arrayGrowthElements += room;   // a new array (the old one is not copied)
+                _placedAnew = new int[room];
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1932,12 +1940,15 @@ namespace Zantetsu.MeshCut
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }
 
-                if (_renderFragmentsTakenOver && !placementRebuildUnchangedForTest
-                    && renderFragment.conditionCount == 0 && renderFragment.capCount == 0
-                    && renderFragment.clip.PlaneCount == 0
-                    && renderFragment.conditionStart == _conditionCount && renderFragment.capStart == _capCount
-                    && SelectedCountOf(renderFragment.branchStart, renderFragment.registration) == 0
-                    && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld))
+                // The keep test: the same conditions in the same order as one conjunction, one after another so that
+                // the first that does not hold is known (2026-10-07, for observation; nothing more is compared).
+                int why;
+                if (!_renderFragmentsTakenOver || placementRebuildUnchangedForTest) why = 0;
+                else if (renderFragment.conditionCount != 0 || renderFragment.capCount != 0 || renderFragment.clip.PlaneCount != 0) why = 1;
+                else if (renderFragment.conditionStart != _conditionCount || renderFragment.capStart != _capCount) why = 2;
+                else if (SelectedCountOf(renderFragment.branchStart, renderFragment.registration) != 0) why = 3;
+                else if (!SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld)) why = 4;
+                else
                 {
                     // Taken over from the structure with nothing selected -- no condition, no plane, no cap -- and
                     // standing, bit for bit, where the structure placed it: placing it again and building it again
@@ -1952,6 +1963,16 @@ namespace Zantetsu.MeshCut
                 }
 
                 _placedAnew[_placedAnewCount++] = r;   // not kept as settled: placed anew, its clip and caps made again
+                _placeInto.placedAnew++;
+                switch (why)
+                {
+                    case 0: _placeInto.anewNotTakenOver++; break;
+                    case 1: _placeInto.anewCarried++; break;
+                    case 2: _placeInto.anewStartsShifted++; break;
+                    case 3: _placeInto.anewSelected++; break;
+                    default: _placeInto.anewMoved++; break;
+                }
+
                 _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
                 if (placeQueriesOnlyForTest) continue;
                 VpMultiCutBuildOutcome outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
@@ -1959,6 +1980,14 @@ namespace Zantetsu.MeshCut
                 {
                     return outcome;
                 }
+
+                // What it came out with (read from the record just built; nothing is compared).
+                VpMultiCutRenderFragment made = _renderFragments[r];
+                bool clipped = made.clip.PlaneCount > 0, capped = made.capCount > 0;
+                if (clipped) _placeInto.anewClipped++;
+                if (capped) _placeInto.anewCapped++;
+                if (clipped && capped) _placeInto.anewClippedAndCapped++;
+                if (why == 2 && !clipped && !capped) _placeInto.anewShiftedPlain++;
             }
 
             return VpMultiCutBuildOutcome.Built;
@@ -2044,6 +2073,8 @@ namespace Zantetsu.MeshCut
                 ValidateCounts.ancestorSeconds += _vAncestors;
                 ValidateCounts.operationsSeconds += _vOperations;
                 LastStructureValidateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - validateBegin) / (double)System.Diagnostics.Stopwatch.Frequency;
+                _stages.validateCalls++;
+                _stages.validateSeconds += LastStructureValidateSeconds;
             }
         }
 
