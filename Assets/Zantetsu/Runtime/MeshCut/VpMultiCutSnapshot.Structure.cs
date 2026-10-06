@@ -134,6 +134,26 @@ namespace Zantetsu.MeshCut
         private readonly Dictionary<LogicalFragmentId, int> _partByRoot = new Dictionary<LogicalFragmentId, int>();
         internal long FamiliesRebuilt { get; private set; }
         internal long RegistrationsReused { get; private set; }
+
+        // The stages' calls and time, what the rebuilt families held and the work arrays' growth, since this snapshot
+        // was made (2026-10-07, for observation; a display takes a collection's share as a difference).
+        private VpSnapshotStageTotals _stages;
+
+        internal VpSnapshotStageTotals StageTotals
+        {
+            get
+            {
+                VpSnapshotStageTotals totals = _stages;
+                totals.structureSeconds = ValidateCounts.structureSeconds;
+                totals.familiesRebuilt = FamiliesRebuilt;
+                totals.registrationsReused = RegistrationsReused;
+                totals.keptWhole = StructuresKeptWhole;
+                totals.walks = StructureWalks;
+                totals.placeCalls = StructuralPlaceCounts.passes + PlacementOnlyPlaceCounts.passes;
+                totals.placeSeconds = StructuralPlaceCounts.seconds + PlacementOnlyPlaceCounts.seconds;
+                return totals;
+            }
+        }
         internal object StructureForTest(LogicalFragmentId root) => _partByRoot.TryGetValue(root, out int i) ? _parts[i].part : null;
 
         /// <summary>
@@ -170,9 +190,13 @@ namespace Zantetsu.MeshCut
             _selectedCandidates?.Use(_candidates); _selectedStates?.Use(_states);
         }
 
-        private static void Room<T>(ref T[] array, int count)
+        private void Room<T>(ref T[] array, int count)
         {
-            if (array.Length < count) Array.Resize(ref array, Math.Max(count, checked(array.Length * 2)));
+            if (array.Length >= count) return;
+            int room = Math.Max(count, checked(array.Length * 2));
+            _stages.arrayGrowths++;
+            _stages.arrayGrowthElements += room;   // the new array's length (Array.Resize makes a new one and copies)
+            Array.Resize(ref array, room);
         }
 
         // Only a changed family's results are copied out of the existing reusable build workspace.
@@ -368,6 +392,10 @@ namespace Zantetsu.MeshCut
                         _lineage.Close(); _segLedger = null; _currentRegistration = -1;
                     }
                     if (outcome != VpMultiCutBuildOutcome.Built) return Fail(outcome);
+                    _stages.registrationsRebuilt += group.indices.Count;
+                    _stages.renderFragmentsRebuilt += _renderFragmentCount;
+                    _stages.branchesRebuilt += _branchCount;
+                    _stages.candidatesRebuilt += _candidateCount;
                     int b0 = 0, c0 = 0, r0 = 0;
                     for (int j = 0; j < group.indices.Count; j++)
                     {

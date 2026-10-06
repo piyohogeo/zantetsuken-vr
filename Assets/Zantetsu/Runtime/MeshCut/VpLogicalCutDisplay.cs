@@ -2290,6 +2290,10 @@ namespace Zantetsu.MeshCut
 
             /// <summary>What this frame's collections did to the body's draw data, and where it stood afterwards (2026-10-06).</summary>
             public VpDrawDataCounts draw;
+
+            /// <summary>The snapshot builds of this frame by stage, and the collections' own time whole and by stage, every one added (2026-10-07).</summary>
+            public VpSnapshotStageTotals stages;
+            public VpCollectTimes times;
         }
 
         /// <summary>
@@ -2427,6 +2431,12 @@ namespace Zantetsu.MeshCut
                 _countsNow.placePlacementOnly.Clear();
             }
         }
+
+        /// <summary>Tests only: the Place passes' counts since this display was made, the structural ones' and the placement-only ones' (copies).</summary>
+        internal void PlaceTotalsForTest(VpPlaceCounts structural, VpPlaceCounts placementOnly) => SumPlace(structural, placementOnly);
+
+        /// <summary>Tests only: the snapshots' stages since this display was made.</summary>
+        internal VpSnapshotStageTotals StageTotalsForTest => SumStages();
 
         private void CountCollection(long builds, long validations, long placements)
         {
@@ -4318,9 +4328,33 @@ namespace Zantetsu.MeshCut
 
         private int _collectStage = -1;
 
+        // The collection under way, timed whole and by stage with the clock itself (2026-10-07): the Profiler's markers
+        // above are not there in a Player that is not a Development build. One clock read a stage; summed into the
+        // frame's counts when the collection ends. And the snapshot's build calls of the collection, timed apart.
+        private static readonly double s_secondsPerTick = 1.0 / System.Diagnostics.Stopwatch.Frequency;
+        private readonly double[] _stageSeconds = new double[10];
+        private long _stageBegan, _collectBegan;
+        private int _buildCalls;
+        private double _buildSeconds;
+        private long _buildHeapDelta;
+
+        private VpSnapshotStageTotals SumStages()
+        {
+            VpSnapshotStageTotals sum = _snapshot.StageTotals;
+            if (!ReferenceEquals(_building, _snapshot)) sum.Add(_building.StageTotals);
+            return sum;
+        }
+
         private void EnterCollectStage(int stage)
         {
-            if (_collectStage >= 0) s_collectStages[_collectStage].End();
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_collectStage >= 0)
+            {
+                s_collectStages[_collectStage].End();
+                _stageSeconds[_collectStage] += (now - _stageBegan) * s_secondsPerTick;
+            }
+
+            _stageBegan = now;
             s_collectStages[stage].Begin();
             _collectStage = stage;
             if (_compactThisPass)
@@ -5195,6 +5229,8 @@ namespace Zantetsu.MeshCut
         {
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
             VpDrawDataCounts drawBefore = DrawTotals();
+            VpSnapshotStageTotals stagesBefore = SumStages();
+            _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             OpenSlotPass();
             SumValidate(_validateBefore);
             SumPlace(_placeStructuralBefore, _placePlacementOnlyBefore);
@@ -5209,7 +5245,13 @@ namespace Zantetsu.MeshCut
             }
             finally
             {
-                if (_collectStage >= 0) s_collectStages[_collectStage].End();
+                long ended = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (_collectStage >= 0)
+                {
+                    s_collectStages[_collectStage].End();
+                    _stageSeconds[_collectStage] += (ended - _stageBegan) * s_secondsPerTick;
+                }
+
                 _collectStage = -1;
 
                 // A collection that was not adopted leaves the draw slots as the adopted side has them.
@@ -5219,6 +5261,17 @@ namespace Zantetsu.MeshCut
                 }
 
                 CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
+
+                // The collection's own time, whole (to here: the counting below is not in it) and by stage, and the
+                // snapshot's stages (2026-10-07).
+                _countsNow.times.Add((ended - _collectBegan) * s_secondsPerTick, _stageSeconds, _buildCalls, _buildSeconds, _buildHeapDelta);
+                Array.Clear(_stageSeconds, 0, _stageSeconds.Length);
+                _buildCalls = 0;
+                _buildSeconds = 0.0;
+                _buildHeapDelta = 0;
+                VpSnapshotStageTotals stagesAfter = SumStages();
+                stagesAfter.Subtract(stagesBefore);
+                _countsNow.stages.Add(stagesAfter);
                 CountDraw(drawBefore);
                 SumValidate(_validateAfter);
                 _countsNow.validate.AddDifference(_validateAfter, _validateBefore);
@@ -5279,8 +5332,14 @@ namespace Zantetsu.MeshCut
                 return FailRoom("room for the registrations", _shown.Count, _fragmentCapacity, _fragmentLimit, registrationsFailure);
             }
 
+            // The snapshot's build, timed apart from the rest of this stage, with the managed heap's change across it
+            // (2026-10-07, for observation: what the build took of the heap, less what a collector freed meanwhile).
+            long heapBefore = GC.GetTotalMemory(false);
+            long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
                 _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
+            _buildCalls++;
+            _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
 
             // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
             // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
@@ -5302,10 +5361,14 @@ namespace Zantetsu.MeshCut
                     return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
                 }
 
+                buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
                 outcome = _building.TryBuildIncremental(
                     _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
+                _buildCalls++;
+                _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
             }
 
+            _buildHeapDelta += GC.GetTotalMemory(false) - heapBefore;
             CapPolygonBuilds += _building.SectionBuildCount;
 
             if (outcome != VpMultiCutBuildOutcome.Built)

@@ -462,6 +462,16 @@ namespace Zantetsu.Sandbox
                 // What the display's collections of this very frame did to the body's draw data (2026-10-06); known false when not known.
                 public VpDrawDataCounts draw;
                 public VpValidateCounts validate;   // the validations' parts of this frame (a copy), null when not known
+
+                // The snapshot's stages and the collections' time of this frame (2026-10-07; times.known false when not
+                // known); the whole collection as the physics step timed it (NaN when not known); the heavy work noted
+                // in this frame (CutWorldFrameNotes' bits; -1 not known); the collector's count of completed collections
+                // when the row was taken; the display room's native bytes committed, taken only in a frame whose room grew.
+                public VpSnapshotStageTotals stages;
+                public VpCollectTimes times;
+                public double stepCollectMs = double.NaN;
+                public int notes = -1, gcCount = -1;
+                public long roomCommittedBytes = -1;
                 public VpPlaceCounts placeStructural, placePlacementOnly;   // the Place passes of this frame, structural and placement-only (copies), null when not known
             }
 
@@ -1217,6 +1227,7 @@ namespace Zantetsu.Sandbox
                 if (_timelineRowOf.TryGetValue(frame - 1, out int before))
                 {
                     FrameRow previous = _timeline[before];
+                    previous.notes = CutWorldFrameNotes.MaskOf(frame - 1);
                     previous.markers = new long[_timelineRecorders.Length];
                     for (int i = 0; i < _timelineRecorders.Length; i++)
                     {
@@ -1233,6 +1244,12 @@ namespace Zantetsu.Sandbox
                         previous.displayRoomGrowths = counts.roomGrowths;
                         previous.displaySnapshotRegrowths = counts.snapshotRegrowths;
                         previous.draw = counts.draw;
+                        previous.stages = counts.stages;
+                        previous.times = counts.times;
+
+                        // The step's collection of that frame: this frame's has not run yet where this is called (Update).
+                        previous.stepCollectMs = CutPhysicsStep.LastCollectSeconds * 1000.0;
+                        if (counts.roomGrowths > 0 || counts.snapshotRegrowths > 0) previous.roomCommittedBytes = _world.Display.RoomBytes().nativeCommitted;
                         if (counts.validate != null) { previous.validate = new VpValidateCounts(); previous.validate.CopyFrom(counts.validate); }
                         if (counts.placeStructural != null) { previous.placeStructural = new VpPlaceCounts(); previous.placeStructural.CopyFrom(counts.placeStructural); }
                         if (counts.placePlacementOnly != null) { previous.placePlacementOnly = new VpPlaceCounts(); previous.placePlacementOnly.CopyFrom(counts.placePlacementOnly); }
@@ -1257,6 +1274,7 @@ namespace Zantetsu.Sandbox
                     waves = _katana != null ? _katana.WaveCount : -1,
                     hits = _replaying && HitListIsNew() ? _detector.HitCount : 0,
                     pictures = _picturesAsked,
+                    gcCount = GC.CollectionCount(0),
                 });
                 _picturesAsked = 0;
                 FrameRow taken = _timeline[_timeline.Count - 1];
@@ -1351,7 +1369,7 @@ namespace Zantetsu.Sandbox
 
                 var text = new StringBuilder(_timeline.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
-                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept");
+                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes");
                 foreach ((ProfilerCategory _, string name) in _timelineMarkers)
                 {
                     text.Append(',').Append(name);
@@ -1458,6 +1476,44 @@ namespace Zantetsu.Sandbox
                         if (p == null) { text.Append(','); continue; }
                         text.Append(',').Append(p.keptAsSettled);
                     }
+
+                    // 2026-10-07: what else the Place passes counted (structural, then placement-only); the collections'
+                    // time and the snapshot's stages; the step's collection; the notes; the collector's count; the room.
+                    // Empty where not known -- never a zero for it.
+                    foreach (VpPlaceCounts p in new[] { r.placeStructural, r.placePlacementOnly })
+                    {
+                        if (p == null) { text.Append(",,,,,,,,,,,,,,,,"); continue; }
+                        text.Append(',').Append(p.selected).Append(',').Append(p.clipsKept).Append(',').Append(p.capInputVertices).Append(',').Append(p.capOutputVertices)
+                            .Append(',').Append(p.following).Append(',').Append(p.staticPlacements).Append(',').Append(p.placedAnew).Append(',').Append(p.anewNotTakenOver)
+                            .Append(',').Append(p.anewCarried).Append(',').Append(p.anewStartsShifted).Append(',').Append(p.anewSelected).Append(',').Append(p.anewMoved)
+                            .Append(',').Append(p.anewClipped).Append(',').Append(p.anewCapped).Append(',').Append(p.anewClippedAndCapped).Append(',').Append(p.anewShiftedPlain);
+                    }
+
+                    if (r.times.known)
+                    {
+                        VpCollectTimes t = r.times;
+                        VpSnapshotStageTotals s = r.stages;
+                        text.Append(',').Append(t.collections).Append(',').Append((t.collectSeconds * 1000).ToString("R", Inv))
+                            .Append(',').Append((t.s0 * 1000).ToString("R", Inv)).Append(',').Append((t.s1 * 1000).ToString("R", Inv)).Append(',').Append((t.s2 * 1000).ToString("R", Inv))
+                            .Append(',').Append((t.s3 * 1000).ToString("R", Inv)).Append(',').Append((t.s4 * 1000).ToString("R", Inv)).Append(',').Append((t.s5 * 1000).ToString("R", Inv))
+                            .Append(',').Append((t.s6 * 1000).ToString("R", Inv)).Append(',').Append((t.s7 * 1000).ToString("R", Inv)).Append(',').Append((t.s8 * 1000).ToString("R", Inv))
+                            .Append(',').Append((t.s9 * 1000).ToString("R", Inv)).Append(',').Append(t.buildCalls).Append(',').Append((t.buildSeconds * 1000).ToString("R", Inv))
+                            .Append(',').Append(t.buildHeapDelta)
+                            .Append(',').Append(s.validateCalls).Append(',').Append((s.validateSeconds * 1000).ToString("R", Inv)).Append(',').Append(s.collectCalls)
+                            .Append(',').Append((s.collectSeconds * 1000).ToString("R", Inv)).Append(',').Append(s.groupCalls).Append(',').Append((s.groupSeconds * 1000).ToString("R", Inv))
+                            .Append(',').Append((s.structureSeconds * 1000).ToString("R", Inv)).Append(',').Append(s.placeCalls).Append(',').Append((s.placeSeconds * 1000).ToString("R", Inv))
+                            .Append(',').Append(s.keptWhole).Append(',').Append(s.walks).Append(',').Append(s.familiesRebuilt).Append(',').Append(s.registrationsRebuilt)
+                            .Append(',').Append(s.renderFragmentsRebuilt).Append(',').Append(s.branchesRebuilt).Append(',').Append(s.candidatesRebuilt).Append(',').Append(s.registrationsReused)
+                            .Append(',').Append(s.arrayGrowths).Append(',').Append(s.arrayGrowthElements);
+                    }
+                    else
+                    {
+                        text.Append(",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,");
+                    }
+
+                    text.Append(',').Append(double.IsNaN(r.stepCollectMs) ? "" : r.stepCollectMs.ToString("R", Inv))
+                        .Append(',').Append(r.notes < 0 ? "" : r.notes.ToString(Inv)).Append(',').Append(r.gcCount < 0 ? "" : r.gcCount.ToString(Inv))
+                        .Append(',').Append(r.roomCommittedBytes < 0 ? "" : r.roomCommittedBytes.ToString(Inv));
                     for (int i = 0; i < _timelineMarkers.Length; i++)
                     {
                         text.Append(',').Append(r.markers != null ? r.markers[i] : -1);
