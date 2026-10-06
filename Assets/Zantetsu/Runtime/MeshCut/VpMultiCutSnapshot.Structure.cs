@@ -24,6 +24,11 @@ namespace Zantetsu.MeshCut
                 // Which taking of this part this is: a part is pooled, so the object alone does not say that what it
                 // holds is what it held (DESIGN 5.6: what a display's draw slots were written for).
                 internal long serial;
+
+                // Where the held placements have this part's render fragments (DESIGN 5.6, D-205): the first one's
+                // number in their arrays, of which mapping, for which taking of the part. Theirs to write and read.
+                internal long holdEpoch, holdSerial;
+                internal int holdStart;
                 internal LogicalCutLedger ledger;
                 internal LogicalFragmentId family;
                 internal long revision;
@@ -369,10 +374,6 @@ namespace Zantetsu.MeshCut
                 return TryPlaceOnKeptStructure(previous, ledger, registrations, placement, holds);
             }
 
-            // The structure is gone through again: its render fragments are numbered anew, so whatever was held is
-            // forgotten here, before anything of this build can fail (D-205). The pass below asks every one.
-            holds?.Forget();
-
             StructureWalks++;
             Clear(); _structurePool = pool; _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None; _shortage = VpMultiCutShortage.None; SectionBuildCount = 0;
@@ -493,18 +494,30 @@ namespace Zantetsu.MeshCut
                 }
                 _placeInto = rebuilt ? StructuralPlaceCounts : PlacementOnlyPlaceCounts;
 
-                // Every render fragment is asked in this pass, so each one's placement is known as of this pass's step:
-                // all ordinary, to be held once another step's answer is the same (D-205).
-                if (holds != null && placement != null) holds.ResetForStructure(_renderFragmentCount, stampLedger, stampInputs);
+                // The render fragments are numbered anew. What is held goes with the parts (D-205): a part that is the
+                // one the held placements mapped before -- a family unchanged, taken over from the adopted snapshot --
+                // carries its render fragments' state to their new numbers; any other starts ordinary; what was held of
+                // parts that are gone leaves the tree. No placement is asked for this. Then the pass asks its targets
+                // only, as a pass over a kept structure does.
+                int asksAll = -1;
+                if (holds != null && placement == null) holds.Forget();
+                else if (holds != null && (PlacePhasedDiagnosis || placeQueriesOnlyForTest || placementRebuildUnchangedForTest)) { holds.BeginOther(); asksAll = 2; }
+                else if (holds != null && holds.BeginStructure(_renderFragmentCount))
+                {
+                    for (int g = 0; g < _partCount; g++) holds.MapPart(_parts[g].part, _parts[g].render);
+                    holds.EndStructure(stampLedger, stampInputs);
+                    _holdsNow = holds;
+                }
+                else if (holds != null) asksAll = 1;
                 long queriesBefore = _placeInto.queries;
                 long begin = System.Diagnostics.Stopwatch.GetTimestamp();
                 _renderFragmentsTakenOver = true;
                 VpMultiCutBuildOutcome placed;
                 try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }
-                finally { _renderFragmentsTakenOver = false; }
+                finally { _renderFragmentsTakenOver = false; _holdsNow = null; }
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
-                if (holds != null && placement != null) holds.CountConventional(0, _placeInto.queries - queriesBefore);
-                if (placed != VpMultiCutBuildOutcome.Built) { holds?.Forget(); return Fail(placed); }
+                if (asksAll >= 0) holds.CountConventional(asksAll, _placeInto.queries - queriesBefore);
+                if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
                 _registrationCount = registrations.Count; IsBuilt = true;
                 _stampLedger = stampLedger; _stampInputs = stampInputs; _stampValid = stampLedger >= 0 && stampInputs >= 0;
                 return VpMultiCutBuildOutcome.Built;

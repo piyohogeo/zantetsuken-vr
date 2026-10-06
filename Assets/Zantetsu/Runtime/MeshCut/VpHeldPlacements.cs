@@ -9,44 +9,52 @@ namespace Zantetsu.MeshCut
     /// What the held placements did, counted (2026-10-07, DESIGN 5.6, D-205). Cumulative in a display; a collection's
     /// share is taken as a difference. A Place pass is of one kind:
     /// <list type="bullet">
-    /// <item>**selective** -- the structure kept, the host vouching for its step count and naming its reference
-    /// points: the ordinary targets and the held ones a proximity box finds are asked, the other held ones are not
-    /// (<see cref="omitted"/>);</item>
-    /// <item>**structure** -- the structure was gone through again: every render fragment asked, nothing held;</item>
-    /// <item>**unvouched** -- the structure kept, but no step count vouched for or no reference points: every render
-    /// fragment asked, nothing held;</item>
+    /// <item>**selective** -- the structure kept: the ordinary targets and the held ones a proximity box finds are
+    /// asked, the other held ones are not (<see cref="omitted"/>);</item>
+    /// <item>**structure** -- the structure was gone through again: what is held was mapped to the new numbers, and
+    /// the pass asks its targets in the same way;</item>
+    /// <item>**unvouched** -- no step count vouched for or no reference points: every render fragment asked, nothing
+    /// held;</item>
     /// <item>**other** -- a test's or a diagnosis's pass that asks everything.</item>
     /// </list>
-    /// So, a pass that ran to its end: render fragments = omitted + queried (ordinary + near + selected + shifted) in a
-    /// selective one, = queried (structure / unvouched / other) in the others. A collection that let the adopted snapshot stand
-    /// (D-204) runs no pass and is counted nowhere here.
+    /// So, a selective or structure pass that ran to its end: render fragments = omitted + queried (ordinary + near +
+    /// selected + notified); the others: = queried (unvouched / other). A collection that let the adopted snapshot
+    /// stand (D-204) runs no pass and is counted nowhere here.
     /// </summary>
     public struct VpHeldPlacementTotals
     {
         public long passesSelective, passesStructure, passesUnvouched, passesOther;
 
-        // A selective pass: held and outside every proximity box -- not asked; asked because not held (moving, or not
-        // yet seen standing over two step results); asked because held and inside a proximity box; asked because it
-        // has selected boundaries (clipped: never held).
-        public long omitted, queriedOrdinary, queriedNear, queriedSelected;
+        // Held and outside every proximity box -- not asked; asked because not held (moving, new, or not yet seen
+        // standing over two step results); asked because held and inside a proximity box; asked because it has selected
+        // boundaries (clipped: never held); asked, though held, because a placement input was said to have changed
+        // outside a step (every held one is asked once then).
+        public long omitted, queriedOrdinary, queriedNear, queriedSelected, queriedNotified;
 
         // The passes that ask everything, by why.
-        public long queriedStructure, queriedUnvouched, queriedOther;
+        public long queriedUnvouched, queriedOther;
 
-        // Ordinary targets that became held; held ones found moved (or reached by shifted ranges while near) and made
-        // ordinary again; times every held one was made ordinary because a placement input changed outside a step;
-        // times everything was forgotten for a structure gone through again.
+        // Ordinary targets that became held; held ones asked and found moved, made ordinary again; passes in which
+        // every held one was asked for a change outside a step; times everything was forgotten (no step count vouched
+        // for, a source or the margin changed, a structure these were not mapped for).
         public long promoted, demoted, invalidations, structureResets;
 
-        // Selective passes in which a render fragment made conditions or caps, so that every later one's ranges begin
-        // elsewhere and each is asked and built again as before; and the held, far ones among those, asked after all
-        // (not in omitted, not in the three above).
-        public long shiftedPasses, queriedShifted;
+        // Passes in which a render fragment made conditions or caps, so that every later one's ranges begin elsewhere
+        // and each is built again as before; and the held, far ones among those -- built again where they are held,
+        // without being asked (they are in omitted).
+        public long shiftedPasses, shiftedRebuilt;
 
-        // The tree: searches (one a proximity box a selective pass) and their time whole, with the marking of the
-        // ordinary targets; and the time of the insertions and removals (inside the Place pass's own time).
+        // The tree: searches (one a proximity box a pass) and their time whole, with the marking of the ordinary
+        // targets; and the time of the insertions and removals (inside the Place pass's own time).
         public long searches;
         public double searchSeconds, updateSeconds;
+
+        // A structure gone through again: mappings of the parts to the new numbers; the render fragments whose state
+        // was carried (their part was the one mapped before) and those that started ordinary (a part new or changed);
+        // the held ones of parts that were gone, taken out of the tree; and the mappings' time (before the pass; no
+        // placement is asked in it).
+        public long remaps, carried, fresh, droppedHeld;
+        public double remapSeconds;
 
         // Not sums: as they stood after the last collection added.
         public int heldAtEnd, ordinaryAtEnd, pointsAtEnd;
@@ -54,22 +62,24 @@ namespace Zantetsu.MeshCut
         public void Add(in VpHeldPlacementTotals a)
         {
             passesSelective += a.passesSelective; passesStructure += a.passesStructure; passesUnvouched += a.passesUnvouched; passesOther += a.passesOther;
-            omitted += a.omitted; queriedOrdinary += a.queriedOrdinary; queriedNear += a.queriedNear; queriedSelected += a.queriedSelected;
-            queriedStructure += a.queriedStructure; queriedUnvouched += a.queriedUnvouched; queriedOther += a.queriedOther;
+            omitted += a.omitted; queriedOrdinary += a.queriedOrdinary; queriedNear += a.queriedNear; queriedSelected += a.queriedSelected; queriedNotified += a.queriedNotified;
+            queriedUnvouched += a.queriedUnvouched; queriedOther += a.queriedOther;
             promoted += a.promoted; demoted += a.demoted; invalidations += a.invalidations; structureResets += a.structureResets;
-            shiftedPasses += a.shiftedPasses; queriedShifted += a.queriedShifted;
+            shiftedPasses += a.shiftedPasses; shiftedRebuilt += a.shiftedRebuilt;
             searches += a.searches; searchSeconds += a.searchSeconds; updateSeconds += a.updateSeconds;
+            remaps += a.remaps; carried += a.carried; fresh += a.fresh; droppedHeld += a.droppedHeld; remapSeconds += a.remapSeconds;
             heldAtEnd = a.heldAtEnd; ordinaryAtEnd = a.ordinaryAtEnd; pointsAtEnd = a.pointsAtEnd;
         }
 
         public void Subtract(in VpHeldPlacementTotals a)
         {
             passesSelective -= a.passesSelective; passesStructure -= a.passesStructure; passesUnvouched -= a.passesUnvouched; passesOther -= a.passesOther;
-            omitted -= a.omitted; queriedOrdinary -= a.queriedOrdinary; queriedNear -= a.queriedNear; queriedSelected -= a.queriedSelected;
-            queriedStructure -= a.queriedStructure; queriedUnvouched -= a.queriedUnvouched; queriedOther -= a.queriedOther;
+            omitted -= a.omitted; queriedOrdinary -= a.queriedOrdinary; queriedNear -= a.queriedNear; queriedSelected -= a.queriedSelected; queriedNotified -= a.queriedNotified;
+            queriedUnvouched -= a.queriedUnvouched; queriedOther -= a.queriedOther;
             promoted -= a.promoted; demoted -= a.demoted; invalidations -= a.invalidations; structureResets -= a.structureResets;
-            shiftedPasses -= a.shiftedPasses; queriedShifted -= a.queriedShifted;
+            shiftedPasses -= a.shiftedPasses; shiftedRebuilt -= a.shiftedRebuilt;
             searches -= a.searches; searchSeconds -= a.searchSeconds; updateSeconds -= a.updateSeconds;
+            remaps -= a.remaps; carried -= a.carried; fresh -= a.fresh; droppedHeld -= a.droppedHeld; remapSeconds -= a.remapSeconds;
         }
     }
 
@@ -88,20 +98,33 @@ namespace Zantetsu.MeshCut
     /// <para>
     /// **Nearness alone decides who is asked.** No view frustum, no shadow volume, no rendering path. A held target
     /// far from every reference point that does move is drawn where it was held until a reference point comes near or
-    /// something below forgets it: accepted (TL, 2026-10-07).
+    /// something below asks it: accepted (TL, 2026-10-07).
     /// </para>
     /// <para>
-    /// **What forgets.** The structure gone through again (a registration, a retirement, a publication, a commit, a
-    /// selection: the ledger's and the display's own revisions) forgets everything -- the render fragments are numbered
-    /// anew. A placement input changed outside a step (the host's count) makes every held one ordinary, so the next
-    /// pass asks them all. A pass with no step count vouched for forgets everything and asks everything.
+    /// **What is held goes with a registration's structure part.** The arrays here go by a render fragment's number in
+    /// the structure being built, and a structure gone through again numbers them anew. A snapshot's structure is made
+    /// of parts, one a registration: the pooled part and which taking of it. A registration whose family did not change
+    /// is given the adopted snapshot's own part, so the same part at the next mapping says that its render fragments,
+    /// what each stands as and its geometry are the same -- nothing compared. Such a part's render fragments carry
+    /// their state to their new numbers: held or ordinary, the step remembered, the tree's leaf as it is (only the
+    /// number the leaf names is rewritten). A part that is not the one mapped before -- its family changed (a cut, a
+    /// commit, a split, a membership change), or the registration is new -- starts ordinary. What was held of parts
+    /// that are gone (retired, or replaced) is taken out of the tree. No placement is asked for the mapping.
     /// </para>
     /// <para>
-    /// **A collection that is not adopted** leaves nothing wrong here: becoming held says that a query's answer was the
-    /// adopted placement at a later step, which is so whatever becomes of that collection; becoming ordinary only asks
-    /// more; and the step a placement is remembered from is only ever made later, never earlier, than the truth.
+    /// **A change outside a step** (the host's other count: an owner put somewhere, brought or taken away) names no
+    /// target: every held one is asked in the next pass. One that stands where it is held stays held, its leaf
+    /// untouched; one that moved is ordinary. A pass with no step count vouched for forgets everything.
     /// </para>
-    /// The render fragments are named by their index in the structure the two snapshots keep.
+    /// <para>
+    /// **A collection that is not adopted** leaves nothing wrong here. Becoming held says that a query's answer was
+    /// the adopted placement at a later step, which is so whatever becomes of that collection; becoming ordinary only
+    /// asks more; the step remembered is only ever made later than the truth. And the mapping follows the structure
+    /// being built, not the adopted one: a structure built and not adopted is gone through again by the next
+    /// collection, which maps again from the parts it then has -- a part taken for the build that failed is not the
+    /// part of the next build (a new taking), so nothing is carried to it; a part of the adopted snapshot that both
+    /// builds took over is carried through both.
+    /// </para>
     /// </summary>
     internal sealed class VpHeldPlacements
     {
@@ -115,15 +138,19 @@ namespace Zantetsu.MeshCut
         public float Reach = DefaultReach;
 
         private readonly Tree _tree = new Tree();
-        private long[] _readStep = Array.Empty<long>();   // the step whose result the adopted placement was first seen at
-        private int[] _leaf = Array.Empty<int>();         // a held one's leaf in the tree; -1 while ordinary
+        private long[] _readStep = Array.Empty<long>(), _readStepNext = Array.Empty<long>();   // the step whose result the adopted placement was first seen at
+        private int[] _leaf = Array.Empty<int>(), _leafNext = Array.Empty<int>();              // a held one's leaf in the tree; -1 while ordinary
         private int[] _ordinaryAt = Array.Empty<int>();   // an ordinary one's place in _ordinary; -1 while held
         private int[] _ordinary = Array.Empty<int>();
-        private int _ordinaryCount, _count;
+        private int _ordinaryCount, _count, _nextCount;
         private ulong[] _picked = Array.Empty<ulong>();   // this pass's targets: the ordinary and the held found near
         private int _pickedWords;
-        private bool _valid, _outsideKnown;
+        private bool _valid, _outsideKnown, _allHeldAsked;
         private long _stampLedger = -1, _stampInputs = -1, _outside;
+
+        // Which mapping the parts' marks are of: a part marked with another number was not in the last mapping.
+        private long _epoch = 1;
+        private long _remapBegan;
 
         // This pass, as the display said it before the snapshot was built.
         private bool _active;
@@ -161,42 +188,133 @@ namespace Zantetsu.MeshCut
         /// <summary>Everything forgotten: the next pass asks everything, and nothing is held until two step results agree again.</summary>
         public void Forget()
         {
+            if (_valid) _totals.structureResets++;
             _valid = false;
             _tree.Clear();
             _ordinaryCount = 0;
             _count = 0;
             _outsideKnown = false;
+            _epoch++;   // no part's mark is of this mapping any more
         }
 
-        /// <summary>
-        /// The structure was gone through again and its pass asks every render fragment: all ordinary, each placement
-        /// known as of this pass's step (or of none, when no count is vouched for).
-        /// </summary>
-        public void ResetForStructure(int count, long stampLedger, long stampInputs)
-        {
-            _totals.passesStructure++;
-            _totals.structureResets++;
-            AllOrdinary(count, _active ? _step : Unknown);
-            _valid = stampLedger >= 0 && stampInputs >= 0;
-            _stampLedger = stampLedger;
-            _stampInputs = stampInputs;
-            _outsideKnown = _active;
-            _outside = _passOutside;
-        }
-
-        /// <summary>A pass that asked everything took this many queries: counted by its kind (0 structure, 1 unvouched, 2 other).</summary>
+        /// <summary>A pass that asked everything took this many queries: counted by its kind (1 unvouched, 2 other).</summary>
         public void CountConventional(int kind, long queries)
         {
-            if (kind == 0) _totals.queriedStructure += queries;
-            else if (kind == 1) _totals.queriedUnvouched += queries;
+            if (kind == 1) _totals.queriedUnvouched += queries;
             else _totals.queriedOther += queries;
         }
 
-        /// <summary>A kept-structure pass that a test or a diagnosis makes ask everything.</summary>
+        /// <summary>A pass that a test or a diagnosis makes ask everything.</summary>
         public void BeginOther()
         {
             _totals.passesOther++;
             Forget();
+        }
+
+        /// <summary>
+        /// A pass through a structure gone through again begins: its <paramref name="count"/> render fragments are
+        /// numbered anew. False: no step count is vouched for -- everything is forgotten and the pass asks every one.
+        /// True: each part is to be told (<see cref="MapPart"/>), then <see cref="EndStructure"/>.
+        /// </summary>
+        public bool BeginStructure(int count)
+        {
+            if (!_active)
+            {
+                _totals.passesUnvouched++;
+                Forget();
+                return false;
+            }
+
+            _remapBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            _totals.passesStructure++;
+            _totals.remaps++;
+            Room(count);
+            _nextCount = count;
+            return true;
+        }
+
+        /// <summary>
+        /// One registration's part, whose render fragments are numbered from <paramref name="start"/> now. The part
+        /// mapped before (the same taking, in the last mapping) carries their state; any other starts them ordinary,
+        /// nothing known of their placements' steps.
+        /// </summary>
+        public void MapPart(VpMultiCutSnapshot.StructurePool.Part part, int start)
+        {
+            int n = part.rendersCount;
+            if (_valid && part.holdEpoch == _epoch && part.holdSerial == part.serial)
+            {
+                int old = part.holdStart;
+                for (int j = 0; j < n; j++)
+                {
+                    int leaf = _leaf[old + j];
+                    _readStepNext[start + j] = _readStep[old + j];
+                    _leafNext[start + j] = leaf;
+                    if (leaf >= 0)
+                    {
+                        _tree.SetItem(leaf, start + j);   // the box stands as it is; only what it is called changes
+                        _leaf[old + j] = -1;              // carried: not one of the gone
+                    }
+                }
+
+                _totals.carried += n;
+            }
+            else
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    _readStepNext[start + j] = Unknown;
+                    _leafNext[start + j] = -1;
+                }
+
+                _totals.fresh += n;
+            }
+
+            part.holdEpoch = _epoch + 1;
+            part.holdSerial = part.serial;
+            part.holdStart = start;
+        }
+
+        /// <summary>
+        /// Every part was told. What was held of parts that are gone leaves the tree; the new numbers stand; the pass's
+        /// targets are picked.
+        /// </summary>
+        public void EndStructure(long stampLedger, long stampInputs)
+        {
+            if (_valid)
+            {
+                for (int old = 0; old < _count; old++)
+                {
+                    if (_leaf[old] >= 0)
+                    {
+                        _tree.Remove(_leaf[old]);
+                        _totals.droppedHeld++;
+                    }
+                }
+            }
+
+            (_readStep, _readStepNext) = (_readStepNext, _readStep);
+            (_leaf, _leafNext) = (_leafNext, _leaf);
+            _count = _nextCount;
+            _ordinaryCount = 0;
+            for (int r = 0; r < _count; r++)
+            {
+                if (_leaf[r] >= 0)
+                {
+                    _ordinaryAt[r] = -1;
+                }
+                else
+                {
+                    _ordinaryAt[r] = _ordinaryCount;
+                    _ordinary[_ordinaryCount++] = r;
+                }
+            }
+
+            _epoch++;
+            _valid = true;
+            _stampLedger = stampLedger;
+            _stampInputs = stampInputs;
+            _totals.remapSeconds += SecondsSince(_remapBegan);
+            Pick();
         }
 
         /// <summary>
@@ -214,59 +332,68 @@ namespace Zantetsu.MeshCut
 
             if (!_valid || _count != count || _stampLedger != stampLedger || _stampInputs != stampInputs)
             {
-                // A structure this was not made for (it is made in the pass that goes through the structure): nothing
-                // is known of its placements' steps.
-                AllOrdinary(count, Unknown);
+                // A structure these were not mapped for (they are mapped in the pass that goes through the structure):
+                // nothing is known of it.
+                Forget();
+                Room(count);
+                _count = count;
+                _ordinaryCount = count;
+                for (int r = 0; r < count; r++)
+                {
+                    _readStep[r] = Unknown;
+                    _leaf[r] = -1;
+                    _ordinaryAt[r] = r;
+                    _ordinary[r] = r;
+                }
+
                 _valid = true;
                 _stampLedger = stampLedger;
                 _stampInputs = stampInputs;
-                _outsideKnown = false;
             }
 
-            if (_outsideKnown && _outside != _passOutside)
-            {
-                // Something outside a step put an owner somewhere, brought one or took one away: which, nobody says.
-                // Every held one is asked again. What is remembered of the steps stands: an answer that is the adopted
-                // placement still, at another step, is two step results agreeing.
-                if (_count != _ordinaryCount) _totals.invalidations++;
-                long began = System.Diagnostics.Stopwatch.GetTimestamp();
-                _tree.Clear();
-                _ordinaryCount = 0;
-                for (int r = 0; r < _count; r++)
-                {
-                    _leaf[r] = -1;
-                    _ordinaryAt[r] = _ordinaryCount;
-                    _ordinary[_ordinaryCount++] = r;
-                }
+            _totals.passesSelective++;
+            Pick();
+            return true;
+        }
 
-                _totals.updateSeconds += SecondsSince(began);
-            }
-
+        // This pass's targets: the ordinary ones and the held ones a proximity box meets -- or every one, when
+        // something outside a step was said to have changed since the last pass (which target, nobody says).
+        private void Pick()
+        {
+            _allHeldAsked = _outsideKnown && _outside != _passOutside && _count != _ordinaryCount;
+            if (_allHeldAsked) _totals.invalidations++;
             _outside = _passOutside;
             _outsideKnown = true;
 
-            long searchBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
             _pickedWords = (_count + 63) >> 6;
-            Array.Clear(_picked, 0, _pickedWords);
-            for (int i = 0; i < _ordinaryCount; i++)
+            if (_allHeldAsked)
             {
-                int r = _ordinary[i];
-                _picked[r >> 6] |= 1UL << (r & 63);
+                for (int w = 0; w < _pickedWords; w++) _picked[w] = ulong.MaxValue;
+                if ((_count & 63) != 0) _picked[_pickedWords - 1] = (1UL << (_count & 63)) - 1UL;
+            }
+            else
+            {
+                Array.Clear(_picked, 0, _pickedWords);
+                for (int i = 0; i < _ordinaryCount; i++)
+                {
+                    int r = _ordinary[i];
+                    _picked[r >> 6] |= 1UL << (r & 63);
+                }
+
+                int near = 0;
+                float reach = Reach;
+                for (int i = 0; i < _points.Count; i++)
+                {
+                    Vector3 p = _points[i];
+                    near += _tree.Pick(new float3(p.x - reach, p.y - reach, p.z - reach), new float3(p.x + reach, p.y + reach, p.z + reach), _picked);
+                    _totals.searches++;
+                }
+
+                _totals.omitted += _count - _ordinaryCount - near;
             }
 
-            int near = 0;
-            float reach = Reach;
-            for (int i = 0; i < _points.Count; i++)
-            {
-                Vector3 p = _points[i];
-                near += _tree.Pick(new float3(p.x - reach, p.y - reach, p.z - reach), new float3(p.x + reach, p.y + reach, p.z + reach), _picked);
-                _totals.searches++;
-            }
-
-            _totals.searchSeconds += SecondsSince(searchBegan);
-            _totals.passesSelective++;
-            _totals.omitted += _count - _ordinaryCount - near;
-            return true;
+            _totals.searchSeconds += SecondsSince(began);
         }
 
         /// <summary>The next of this pass's targets after <paramref name="renderFragment"/> (-1 to begin), in order; -1 at the end.</summary>
@@ -291,15 +418,18 @@ namespace Zantetsu.MeshCut
         /// <summary>Every later render fragment's ranges begin elsewhere from here on in this pass.</summary>
         public void NoteShifted() => _totals.shiftedPasses++;
 
+        /// <summary>A held, far render fragment built again where it is held because its ranges begin elsewhere: not asked.</summary>
+        public void NoteShiftedRebuilt() => _totals.shiftedRebuilt++;
+
         /// <summary>
         /// A render fragment was asked and stands, bit for bit, where the adopted snapshot has it (the keep test held).
         /// An ordinary one whose adopted placement is known from another step's result becomes held.
         /// </summary>
-        public void Stood(int r, bool wasHeld, bool unpicked, in Bounds localBounds, in Matrix4x4 geometryLocalToWorld)
+        public void Stood(int r, bool wasHeld, in Bounds localBounds, in Matrix4x4 geometryLocalToWorld)
         {
             if (wasHeld)
             {
-                CountHeldAsked(unpicked);
+                CountHeldAsked();
                 return;
             }
 
@@ -328,14 +458,16 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// A render fragment was asked and is placed anew (it moved, it is clipped, or its ranges begin elsewhere): its
-        /// placement is of this step, and a held one is ordinary again.
+        /// A render fragment was asked and is placed anew: it moved, it is clipped, or its ranges begin elsewhere. A
+        /// held one is ordinary again -- unless <paramref name="standsWhereHeld"/>: it was built again only for its
+        /// ranges and stands, bit for bit, where it is held. Otherwise its placement is of this step.
         /// </summary>
-        public void PlacedAnew(int r, bool wasHeld, bool unpicked, bool selected)
+        public void PlacedAnew(int r, bool wasHeld, bool selected, bool standsWhereHeld)
         {
             if (wasHeld)
             {
-                CountHeldAsked(unpicked);
+                CountHeldAsked();
+                if (standsWhereHeld) return;
                 long began = System.Diagnostics.Stopwatch.GetTimestamp();
                 _tree.Remove(_leaf[r]);
                 _leaf[r] = -1;
@@ -356,43 +488,25 @@ namespace Zantetsu.MeshCut
             _readStep[r] = _step;
         }
 
-        // A held one was asked: because a proximity box met it, or -- not picked, counted as not asked when the pass
-        // began -- because the ranges before it began elsewhere.
-        private void CountHeldAsked(bool unpicked)
+        // A held one was asked: a proximity box met it, or every held one is asked in this pass.
+        private void CountHeldAsked()
         {
-            if (unpicked)
-            {
-                _totals.omitted--;
-                _totals.queriedShifted++;
-            }
-            else
-            {
-                _totals.queriedNear++;
-            }
+            if (_allHeldAsked) _totals.queriedNotified++;
+            else _totals.queriedNear++;
         }
 
-        private void AllOrdinary(int count, long readStep)
+        // Room for that many render fragments in every array, what they hold kept.
+        private void Room(int count)
         {
-            _tree.Clear();
-            if (_readStep.Length < count)
-            {
-                int room = Math.Max(count, _readStep.Length * 2);
-                _readStep = new long[room];
-                _leaf = new int[room];
-                _ordinaryAt = new int[room];
-                _ordinary = new int[room];
-                _picked = new ulong[(room + 63) >> 6];
-            }
-
-            _count = count;
-            _ordinaryCount = count;
-            for (int r = 0; r < count; r++)
-            {
-                _readStep[r] = readStep;
-                _leaf[r] = -1;
-                _ordinaryAt[r] = r;
-                _ordinary[r] = r;
-            }
+            if (_readStep.Length >= count) return;
+            int room = Math.Max(count, _readStep.Length * 2);
+            Array.Resize(ref _readStep, room);
+            Array.Resize(ref _readStepNext, room);
+            Array.Resize(ref _leaf, room);
+            Array.Resize(ref _leafNext, room);
+            Array.Resize(ref _ordinaryAt, room);
+            Array.Resize(ref _ordinary, room);
+            Array.Resize(ref _picked, (room + 63) >> 6);
         }
 
         private static double SecondsSince(long began) =>
@@ -465,6 +579,9 @@ namespace Zantetsu.MeshCut
                 Release(leaf);
                 Count--;
             }
+
+            /// <summary>The item a leaf holds is called otherwise from now on; nothing of the tree moves.</summary>
+            public void SetItem(int leaf, int item) => _n[leaf].item = item;
 
             /// <summary>Sets the bit of every item whose box meets the box; says how many bits it set that were not set.</summary>
             public int Pick(float3 lo, float3 hi, ulong[] bits)
