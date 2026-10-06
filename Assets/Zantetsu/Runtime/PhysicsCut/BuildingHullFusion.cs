@@ -381,7 +381,7 @@ namespace Zantetsu.PhysicsCut
         {
             var root = new GameObject(name);
             root.transform.SetPositionAndRotation(at.position, at.rotation);
-            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
+            CutPhysicsStep.NoteUnpublishedPlacementChange();   // a root nothing is asked through yet, placed (D-204; no held placement is concerned, D-207)
             root.transform.SetParent(under, true);
             return root;
         }

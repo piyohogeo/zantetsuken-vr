@@ -315,7 +315,7 @@ namespace Zantetsu.Sandbox
                 if (_probe.IsAuthoredMegacity)
                     foreach (var id in new[] { record.positive, record.negative })
                         if (_world.Owners.TryGet(id, out var owner))
-                        { Hold(owner.Root); owner.Root.transform.SetPositionAndRotation(_authoredPosition, _authoredRotation); CutPhysicsStep.NotePlacementInputChanged(); }
+                        { Hold(owner.Root); owner.Root.transform.SetPositionAndRotation(_authoredPosition, _authoredRotation); CutPhysicsStep.NotePlacementInputChanged(id); }
 #if VP_DIAGNOSTIC_SCENE_AB
                 _ab.Phase = 2; _ab.Mark("first-cut", record.positive, record.negative);
 #endif
@@ -334,7 +334,7 @@ namespace Zantetsu.Sandbox
 #endif
                     Vector3 before = positive.Root.transform.position;
                     positive.Root.transform.position += new Vector3(0f, _probe.IsAuthoredMegacity ? 3f : 1.1f, 0f);
-                    CutPhysicsStep.NotePlacementInputChanged();   // the carry (and the placing above) is outside a physics step (D-204)
+                    CutPhysicsStep.NotePlacementInputChanged(record.positive); CutPhysicsStep.NotePlacementInputChanged(record.negative);   // the carry (and the placing above) is outside a physics step (D-204)
                     if (_probe.IsAuthoredMegacity) _authoredChildPosition = positive.Root.transform.position;
 #if VP_DIAGNOSTIC_SCENE_AB
                     _abChildPosition = positive.Root.transform.position;
@@ -397,7 +397,7 @@ namespace Zantetsu.Sandbox
                             Hold(owner.Root);
                             var shift = id.Equals(secondRecord.positive) ? new Vector3(3, 0, 0) : Vector3.zero;
                             owner.Root.transform.SetPositionAndRotation(_authoredChildPosition + shift, _authoredRotation);
-                            CutPhysicsStep.NotePlacementInputChanged();
+                            CutPhysicsStep.NotePlacementInputChanged(id);
                         }
 #if VP_DIAGNOSTIC_SCENE_AB
                 if (!_probe.IsAuthoredMegacity) foreach (var id in new[] { secondRecord.positive, secondRecord.negative })
@@ -405,7 +405,7 @@ namespace Zantetsu.Sandbox
                     {
                         Hold(grandchild.Root);
                         grandchild.Root.transform.SetPositionAndRotation(_abChildPosition, _abOriginalRotation);
-                        CutPhysicsStep.NotePlacementInputChanged();
+                        CutPhysicsStep.NotePlacementInputChanged(id);
                     }
 #endif
                 Log("the child's cut committed. operation=" + second

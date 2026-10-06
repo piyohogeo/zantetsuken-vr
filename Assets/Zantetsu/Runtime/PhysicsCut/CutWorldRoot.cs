@@ -437,6 +437,9 @@ namespace Zantetsu.PhysicsCut
 
             // What tells the display that the placements it adopted are still the ones to be read (DESIGN 5.6, D-204).
             Display.PlacementSerial = TryGetPlacementSerial;
+
+            // And what the changes outside a step were told of (D-207): the display asks the families concerned.
+            Display.PlacementChanges = CutPhysicsStep.TryReadPlacementChanges;
             if (usePalette)
             {
                 VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);
