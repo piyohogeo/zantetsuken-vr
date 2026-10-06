@@ -20,6 +20,7 @@ namespace Zantetsu.Rendering
             if(normalAtlas==null || debugAtlas==null || normalAtlas.width!=256 || normalAtlas.height!=256
                 || debugAtlas.width!=256 || debugAtlas.height!=256) throw new ArgumentException("A prepared 256x256 normal/debug atlas pair is required.");
             VpCutSurfaceColour.EnsureInitialized();
+            VpSurfaceMaterial.EnsureInitialized();
             s_normal=normalAtlas;s_debug=debugAtlas;
             Shader.SetGlobalTexture(SurfaceId,s_normal);
             SelectDebug(VpCutSurfaceColour.DebugEnabled);

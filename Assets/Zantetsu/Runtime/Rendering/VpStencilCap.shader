@@ -62,10 +62,10 @@ Shader "Zantetsu/VP Stencil Cap"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            #include_with_pragmas "VpSurfaceLightingVariants.hlsl"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
             #include "VpPaletteAtlas.hlsl"
 
@@ -140,6 +140,9 @@ Shader "Zantetsu/VP Stencil Cap"
 
             half4 Fragment(Varyings input) : SV_Target
             {
+                // The eye this fragment is drawn for, under Single Pass Instanced: the lighting's view direction is that
+                // eye's own, as it is for the body the cap closes.
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 half4 colour = _BaseColor;
                 if (_VpUsePaletteAtlas > 0.0 && _VpPaletteAtlasEnabled > 0.0)
                     colour = half4(VpPaletteCap(true),1.0);

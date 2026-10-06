@@ -32,10 +32,10 @@ Shader "Zantetsu/VP Mesh Surface"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            #include_with_pragmas "VpSurfaceLightingVariants.hlsl"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
             #include "VpPaletteAtlas.hlsl"
 

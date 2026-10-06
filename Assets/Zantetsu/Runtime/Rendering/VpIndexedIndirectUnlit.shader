@@ -50,13 +50,13 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
-            // Main light realtime shadows only: one map or its cascades.
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // The variants of the shared lighting (the main light's shadow, its soft sampling, the reflection).
+            #include_with_pragmas "VpSurfaceLightingVariants.hlsl"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
 
             // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
@@ -229,6 +229,10 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             half4 Fragment(Varyings input) : SV_Target
             {
+                // The eye this fragment is drawn for, under Single Pass Instanced: the lighting's view direction is that
+                // eye's own.
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+
                 // DESIGN 5.3: the marker is the raw uv0, read before the material's UV transform and before any
                 // sampling. A cap takes the cut surface colour and neither the texture nor the material's own colour;
                 // everything else is unchanged. The chosen colour then goes through the same shading as before.
