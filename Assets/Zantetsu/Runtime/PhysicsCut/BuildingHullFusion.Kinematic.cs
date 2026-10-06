@@ -575,7 +575,8 @@ namespace Zantetsu.PhysicsCut
                 if (!ReferenceEquals(a.group, group)) continue;
                 double t = DropSeconds(a, now);
                 Place(a, t);
-                CutPhysicsStep.NotePlacementInputChanged();   // the one placement of a drop outside a physics step (D-204)
+                // The one placement of a drop outside a physics step (D-204): told of the members it placed (D-207).
+                foreach ((HullGroup.DisplayMember member, Vector3 _) in a.items) CutPhysicsStep.NotePlacementInputChanged(member.fragment);
                 a.record.end = t >= a.seconds ? "completed" : "stopped";
                 if (t < a.seconds) a.record.stoppedByHit = byHit;
                 MeasureDrop(a);

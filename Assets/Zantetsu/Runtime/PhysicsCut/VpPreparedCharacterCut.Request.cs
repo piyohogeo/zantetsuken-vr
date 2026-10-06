@@ -345,7 +345,7 @@ namespace Zantetsu.PhysicsCut
                 characterRoot.transform.GetPositionAndRotation(out Vector3 rootPosition,out Quaternion rootRotation);
                 Vector3 centre=massProperties.CentreOfMassAt(rootPosition,rootRotation);
                 actor.transform.SetPositionAndRotation(rendererPosition,rendererRotation);
-                CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
+                CutPhysicsStep.NotePlacementInputChanged(Source);   // the body of this character put where it stands, outside a step (D-204, D-207)
                 actor.SetActive(true);
                 actorBody.mass=mass;
                 actorBody.centerOfMass=inverse.MultiplyPoint3x4(centre);

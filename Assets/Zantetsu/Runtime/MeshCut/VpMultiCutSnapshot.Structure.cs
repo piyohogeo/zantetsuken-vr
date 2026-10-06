@@ -349,6 +349,7 @@ namespace Zantetsu.MeshCut
                 finally { _renderFragmentsTakenOver = false; _holdsNow = null; }
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
                 if (asksAll >= 0) holds.CountConventional(asksAll, _placeInto.queries - queriesBefore);
+                else if (holds != null && placement != null && placed == VpMultiCutBuildOutcome.Built) holds.PassEnded();   // what was told is taken (D-207)
                 if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
                 IsBuilt = true;
                 return VpMultiCutBuildOutcome.Built;
@@ -517,6 +518,7 @@ namespace Zantetsu.MeshCut
                 finally { _renderFragmentsTakenOver = false; _holdsNow = null; }
                 LastPlaceSeconds = SecondsSince(begin); _placeInto.passes++; _placeInto.seconds += LastPlaceSeconds;
                 if (asksAll >= 0) holds.CountConventional(asksAll, _placeInto.queries - queriesBefore);
+                else if (holds != null && placement != null && placed == VpMultiCutBuildOutcome.Built) holds.PassEnded();   // what was told is taken (D-207)
                 if (placed != VpMultiCutBuildOutcome.Built) return Fail(placed);
                 _registrationCount = registrations.Count; IsBuilt = true;
                 _stampLedger = stampLedger; _stampInputs = stampInputs; _stampValid = stampLedger >= 0 && stampInputs >= 0;

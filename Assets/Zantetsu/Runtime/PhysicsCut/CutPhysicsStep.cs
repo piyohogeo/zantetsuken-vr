@@ -283,10 +283,75 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public static long PlacementInputChanges { get; private set; }
 
-        /// <summary>A placement input was changed outside a physics step.</summary>
+        /// <summary>
+        /// Of <see cref="PlacementInputChanges"/>, the ones told with no target: something changed and what it
+        /// concerns was not said. A display's held placements are all asked again for one of these (DESIGN 5.6, D-207).
+        /// </summary>
+        public static long UntargetedPlacementInputChanges { get; private set; }
+
+        // The fragments the targeted changes were told with, the last ChangedKept of them, by their running number.
+        private const int ChangedKept = 256;
+        private static readonly Zantetsu.MeshCut.LogicalFragmentId[] s_changed = new Zantetsu.MeshCut.LogicalFragmentId[ChangedKept];
+        private static long s_changedCount;
+
+        /// <summary>A placement input was changed outside a physics step, and what it concerns is not said: every held placement is asked again.</summary>
         public static void NotePlacementInputChanged()
         {
             PlacementInputChanges++;
+            UntargetedPlacementInputChanges++;
+        }
+
+        /// <summary>
+        /// A placement input of <paramref name="fragment"/> was changed outside a physics step: what answers for it
+        /// (an owner added, handed over, withdrawn or retired; a provisional pair made or ended), or where its owner's
+        /// root was put. Any fragment of the lineage will do -- the source of a cut, a side, a piece: a display asks
+        /// the held placements of that fragment's family again, and no other's (D-207). A fragment that is not set
+        /// says nothing of the target and is told as <see cref="NotePlacementInputChanged()"/>.
+        /// </summary>
+        public static void NotePlacementInputChanged(Zantetsu.MeshCut.LogicalFragmentId fragment)
+        {
+            if (!fragment.IsSet)
+            {
+                NotePlacementInputChanged();
+                return;
+            }
+
+            PlacementInputChanges++;
+            s_changed[(int)(s_changedCount & (ChangedKept - 1))] = fragment;
+            s_changedCount++;
+        }
+
+        /// <summary>
+        /// Something through which no placement is asked yet was placed or ended -- a root just made, a side built and
+        /// not published, an owner not registered. No placement anybody holds is concerned; a collection only does
+        /// not let its snapshot stand for it (D-204).
+        /// </summary>
+        public static void NoteUnpublishedPlacementChange()
+        {
+            PlacementInputChanges++;
+        }
+
+        /// <summary>
+        /// The fragments the targeted changes since <paramref name="cursor"/> were told with, added to
+        /// <paramref name="into"/> (a reader keeps its own cursor; -1 to begin), and the count of the changes told with
+        /// no target. False when more were told since the cursor than are kept: the reader is to take every placement
+        /// as possibly changed. The cursor is brought to now either way.
+        /// </summary>
+        public static bool TryReadPlacementChanges(ref long cursor, List<Zantetsu.MeshCut.LogicalFragmentId> into, out long untargeted)
+        {
+            untargeted = UntargetedPlacementInputChanges;
+            long told = s_changedCount - cursor;
+            bool kept = cursor >= 0 && told >= 0 && told <= ChangedKept;
+            if (kept)
+            {
+                for (long r = cursor; r < s_changedCount; r++)
+                {
+                    into.Add(s_changed[(int)(r & (ChangedKept - 1))]);
+                }
+            }
+
+            cursor = s_changedCount;
+            return kept;
         }
 
         /// <summary>

@@ -4414,6 +4414,32 @@ namespace Zantetsu.MeshCut
             }
         }
 
+        /// <summary>
+        /// Gives the fragments the changes outside a step were told with since <paramref name="cursor"/>, and the count
+        /// of the changes told with no target; false when it no longer has them all.
+        /// </summary>
+        public delegate bool PlacementChangeSource(ref long cursor, List<LogicalFragmentId> into, out long untargeted);
+
+        private PlacementChangeSource _placementChanges;
+        private long _changesCursor = -1;
+        private readonly List<LogicalFragmentId> _changedFragments = new List<LogicalFragmentId>(8);
+
+        /// <summary>
+        /// Asked once in a collection that asks placements, for what the changes outside a step concerned (D-207): the
+        /// held placements of those fragments' families are asked, the others are not. Null (the default): every
+        /// change outside a step has every held placement asked.
+        /// </summary>
+        public PlacementChangeSource PlacementChanges
+        {
+            get => _placementChanges;
+            set
+            {
+                _placementChanges = value;
+                _changesCursor = -1;
+                _holds.Forget();
+            }
+        }
+
         /// <summary>Metres on each axis about a reference point within which a held placement is asked again (20 by default).</summary>
         public float PlacementHoldReach { get => _holds.Reach; set => _holds.Reach = value; }
 
@@ -5471,7 +5497,23 @@ namespace Zantetsu.MeshCut
                 _proximityPoints.Clear();
                 bool holding = _buildSerialKnown && _placementProximity != null;
                 if (holding) _placementProximity(_proximityPoints);
-                _holds.SetPass(holding, _buildStep, _buildOutside, _proximityPoints);
+
+                // What changed outside a step (D-207): the families of the fragments told. A change told with no target,
+                // more changes than the source keeps, or a fragment that is not this ledger's has every held one asked.
+                // With no source every change counts as one with no target.
+                long untargeted = _buildOutside;
+                if (holding && _placementChanges != null)
+                {
+                    _changedFragments.Clear();
+                    if (!_placementChanges(ref _changesCursor, _changedFragments, out untargeted)) _holds.TellAll();
+                    for (int i = 0; i < _changedFragments.Count; i++)
+                    {
+                        if (_ledger.TryGetFamily(_changedFragments[i], out LogicalFragmentId family, out long _)) _holds.Tell(family);
+                        else _holds.TellAll();
+                    }
+                }
+
+                _holds.SetPass(holding, _buildStep, untargeted, _proximityPoints);
 
                 long heapBefore = GC.GetTotalMemory(false);
                 long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();

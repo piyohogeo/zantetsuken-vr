@@ -28,11 +28,14 @@ namespace Zantetsu.MeshCut
         // Held and outside every proximity box -- not asked; asked because not held (moving, new, or not yet seen
         // standing over two step results); asked because held and inside a proximity box; asked because it has selected
         // boundaries (clipped: never held); asked, though held, because a placement input was said to have changed
-        // outside a step (every held one is asked once then).
+        // outside a step -- of its own family, or with no target (every held one is asked once then).
         public long omitted, queriedOrdinary, queriedNear, queriedSelected, queriedNotified;
 
         // The passes that ask everything, by why.
         public long queriedUnvouched, queriedOther;
+
+        // Families told of a change outside a step (one a telling: a family told twice counts twice).
+        public long toldFamilies;
 
         // Ordinary targets that became held; held ones asked and found moved, made ordinary again; passes in which
         // every held one was asked for a change outside a step; times everything was forgotten (no step count vouched
@@ -63,7 +66,7 @@ namespace Zantetsu.MeshCut
         {
             passesSelective += a.passesSelective; passesStructure += a.passesStructure; passesUnvouched += a.passesUnvouched; passesOther += a.passesOther;
             omitted += a.omitted; queriedOrdinary += a.queriedOrdinary; queriedNear += a.queriedNear; queriedSelected += a.queriedSelected; queriedNotified += a.queriedNotified;
-            queriedUnvouched += a.queriedUnvouched; queriedOther += a.queriedOther;
+            queriedUnvouched += a.queriedUnvouched; queriedOther += a.queriedOther; toldFamilies += a.toldFamilies;
             promoted += a.promoted; demoted += a.demoted; invalidations += a.invalidations; structureResets += a.structureResets;
             shiftedPasses += a.shiftedPasses; shiftedRebuilt += a.shiftedRebuilt;
             searches += a.searches; searchSeconds += a.searchSeconds; updateSeconds += a.updateSeconds;
@@ -75,7 +78,7 @@ namespace Zantetsu.MeshCut
         {
             passesSelective -= a.passesSelective; passesStructure -= a.passesStructure; passesUnvouched -= a.passesUnvouched; passesOther -= a.passesOther;
             omitted -= a.omitted; queriedOrdinary -= a.queriedOrdinary; queriedNear -= a.queriedNear; queriedSelected -= a.queriedSelected; queriedNotified -= a.queriedNotified;
-            queriedUnvouched -= a.queriedUnvouched; queriedOther -= a.queriedOther;
+            queriedUnvouched -= a.queriedUnvouched; queriedOther -= a.queriedOther; toldFamilies -= a.toldFamilies;
             promoted -= a.promoted; demoted -= a.demoted; invalidations -= a.invalidations; structureResets -= a.structureResets;
             shiftedPasses -= a.shiftedPasses; shiftedRebuilt -= a.shiftedRebuilt;
             searches -= a.searches; searchSeconds -= a.searchSeconds; updateSeconds -= a.updateSeconds;
@@ -112,9 +115,13 @@ namespace Zantetsu.MeshCut
     /// that are gone (retired, or replaced) is taken out of the tree. No placement is asked for the mapping.
     /// </para>
     /// <para>
-    /// **A change outside a step** (the host's other count: an owner put somewhere, brought or taken away) names no
-    /// target: every held one is asked in the next pass. One that stands where it is held stays held, its leaf
-    /// untouched; one that moved is ordinary. A pass with no step count vouched for forgets everything.
+    /// **A change outside a step** (an owner put somewhere, brought, handed over or taken away) is told with the
+    /// fragment it concerns wherever the teller has one (D-207). The display gives that fragment's family: the held
+    /// render fragments of that family's registrations are asked in the next pass that runs to its end, and no other
+    /// family's. A change told with no target has every held one asked. Either way one that stands where it is held
+    /// stays held, its leaf untouched; one that moved is ordinary. What was told is kept until a pass has run to its
+    /// end, so a build that fails part way and is made again asks them again. A pass with no step count vouched for
+    /// forgets everything.
     /// </para>
     /// <para>
     /// **A collection that is not adopted** leaves nothing wrong here. Becoming held says that a query's answer was
@@ -152,6 +159,18 @@ namespace Zantetsu.MeshCut
         private long _epoch = 1;
         private long _remapBegan;
 
+        // The families' registrations as the last mapping had them: each family's parts in a chain (D-207).
+        private readonly Dictionary<LogicalFragmentId, int> _familyHead = new Dictionary<LogicalFragmentId, int>();
+        private int[] _partStart = Array.Empty<int>(), _partRenders = Array.Empty<int>(), _partNext = Array.Empty<int>();
+        private int _parts;
+        private bool _familiesKnown;
+
+        // Told since the last pass that ran to its end: the families whose placement inputs changed outside a step, and
+        // whether a change was told that names none. And, of this pass, the held ones asked for their family's telling.
+        private readonly List<LogicalFragmentId> _told = new List<LogicalFragmentId>(8);
+        private bool _toldAll, _toldAny;
+        private ulong[] _toldBits = Array.Empty<ulong>();
+
         // This pass, as the display said it before the snapshot was built.
         private bool _active;
         private long _step, _passOutside;
@@ -185,10 +204,31 @@ namespace Zantetsu.MeshCut
             if (active && points != null) for (int i = 0; i < points.Count; i++) _points.Add(points[i]);
         }
 
+        /// <summary>A placement input of this family changed outside a step: its held render fragments are asked in the next pass.</summary>
+        public void Tell(LogicalFragmentId family) => _told.Add(family);
+
+        /// <summary>A placement input changed outside a step and whose is not known: every held one is asked in the next pass.</summary>
+        public void TellAll() => _toldAll = true;
+
+        /// <summary>
+        /// The pass ran to its end: what was told is taken -- every target it concerned was asked. (A pass that stops
+        /// part way leaves it: the build made again asks them again.)
+        /// </summary>
+        public void PassEnded()
+        {
+            _outside = _passOutside;
+            _outsideKnown = true;
+            _told.Clear();
+            _toldAll = false;
+        }
+
         /// <summary>Everything forgotten: the next pass asks everything, and nothing is held until two step results agree again.</summary>
         public void Forget()
         {
             if (_valid) _totals.structureResets++;
+            _told.Clear();
+            _toldAll = false;
+            _familiesKnown = false;
             _valid = false;
             _tree.Clear();
             _ordinaryCount = 0;
@@ -230,6 +270,8 @@ namespace Zantetsu.MeshCut
             _totals.remaps++;
             Room(count);
             _nextCount = count;
+            _familyHead.Clear();
+            _parts = 0;
             return true;
         }
 
@@ -272,6 +314,20 @@ namespace Zantetsu.MeshCut
             part.holdEpoch = _epoch + 1;
             part.holdSerial = part.serial;
             part.holdStart = start;
+
+            // The family's registrations, for a change told of the family.
+            if (_parts == _partStart.Length)
+            {
+                int room = Math.Max(16, _parts * 2);
+                Array.Resize(ref _partStart, room);
+                Array.Resize(ref _partRenders, room);
+                Array.Resize(ref _partNext, room);
+            }
+
+            _partStart[_parts] = start;
+            _partRenders[_parts] = n;
+            _partNext[_parts] = _familyHead.TryGetValue(part.family, out int head) ? head : -1;
+            _familyHead[part.family] = _parts++;
         }
 
         /// <summary>
@@ -311,6 +367,7 @@ namespace Zantetsu.MeshCut
 
             _epoch++;
             _valid = true;
+            _familiesKnown = true;
             _stampLedger = stampLedger;
             _stampInputs = stampInputs;
             _totals.remapSeconds += SecondsSince(_remapBegan);
@@ -356,14 +413,15 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        // This pass's targets: the ordinary ones and the held ones a proximity box meets -- or every one, when
-        // something outside a step was said to have changed since the last pass (which target, nobody says).
+        // This pass's targets: the ordinary ones, the held ones a proximity box meets and the held ones of the families
+        // told of a change outside a step -- or every one, when such a change was told with no target (or of a family
+        // while the families' registrations are not known).
         private void Pick()
         {
-            _allHeldAsked = _outsideKnown && _outside != _passOutside && _count != _ordinaryCount;
+            bool all = _toldAll || (_outsideKnown && _outside != _passOutside) || (_told.Count > 0 && !_familiesKnown);
+            _allHeldAsked = all && _count != _ordinaryCount;
             if (_allHeldAsked) _totals.invalidations++;
-            _outside = _passOutside;
-            _outsideKnown = true;
+            _toldAny = false;
 
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             _pickedWords = (_count + 63) >> 6;
@@ -390,7 +448,33 @@ namespace Zantetsu.MeshCut
                     _totals.searches++;
                 }
 
-                _totals.omitted += _count - _ordinaryCount - near;
+                // The held ones of the families told: through the family's registrations, as the last mapping had them.
+                int toldNow = 0;
+                if (_told.Count > 0)
+                {
+                    if (_toldBits.Length < _pickedWords) _toldBits = new ulong[_picked.Length];
+                    Array.Clear(_toldBits, 0, _pickedWords);
+                    _toldAny = true;
+                    _totals.toldFamilies += _told.Count;
+                    for (int t = 0; t < _told.Count; t++)
+                    {
+                        if (!_familyHead.TryGetValue(_told[t], out int part)) continue;   // no registration of it here
+                        for (; part >= 0; part = _partNext[part])
+                        {
+                            for (int r = _partStart[part], end = r + _partRenders[part]; r < end; r++)
+                            {
+                                if (_leaf[r] < 0) continue;   // ordinary: asked anyway
+                                ulong bit = 1UL << (r & 63);
+                                _toldBits[r >> 6] |= bit;
+                                if ((_picked[r >> 6] & bit) != 0) continue;
+                                _picked[r >> 6] |= bit;
+                                toldNow++;
+                            }
+                        }
+                    }
+                }
+
+                _totals.omitted += _count - _ordinaryCount - near - toldNow;
             }
 
             _totals.searchSeconds += SecondsSince(began);
@@ -429,7 +513,7 @@ namespace Zantetsu.MeshCut
         {
             if (wasHeld)
             {
-                CountHeldAsked();
+                CountHeldAsked(r);
                 return;
             }
 
@@ -466,7 +550,7 @@ namespace Zantetsu.MeshCut
         {
             if (wasHeld)
             {
-                CountHeldAsked();
+                CountHeldAsked(r);
                 if (standsWhereHeld) return;
                 long began = System.Diagnostics.Stopwatch.GetTimestamp();
                 _tree.Remove(_leaf[r]);
@@ -488,10 +572,10 @@ namespace Zantetsu.MeshCut
             _readStep[r] = _step;
         }
 
-        // A held one was asked: a proximity box met it, or every held one is asked in this pass.
-        private void CountHeldAsked()
+        // A held one was asked: for a change told (of its family, or with no target), or because a proximity box met it.
+        private void CountHeldAsked(int r)
         {
-            if (_allHeldAsked) _totals.queriedNotified++;
+            if (_allHeldAsked || (_toldAny && (_toldBits[r >> 6] & (1UL << (r & 63))) != 0)) _totals.queriedNotified++;
             else _totals.queriedNear++;
         }
 

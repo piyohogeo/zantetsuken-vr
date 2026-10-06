@@ -505,6 +505,154 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        // The changes outside a step as a host tells them with their targets (D-207): the fragments told, in order, read
+        // by a cursor; and the count of the changes told with no target. Every telling also counts in the host's
+        // count of changes outside a step, which is what keeps a collection from letting its snapshot stand.
+        private sealed class ToldChanges
+        {
+            private readonly HoldHost _host;
+            private readonly List<LogicalFragmentId> _log = new List<LogicalFragmentId>();
+            private long _untargeted;
+
+            public ToldChanges(HoldHost host, VpLogicalCutDisplay display)
+            {
+                _host = host;
+                display.PlacementChanges = (ref long cursor, List<LogicalFragmentId> into, out long untargeted) =>
+                {
+                    untargeted = _untargeted;
+                    bool kept = cursor >= 0 && cursor <= _log.Count;
+                    if (kept) for (int i = (int)cursor; i < _log.Count; i++) into.Add(_log[i]);
+                    cursor = _log.Count;
+                    return kept;
+                };
+            }
+
+            public void Of(LogicalFragmentId fragment)
+            {
+                _log.Add(fragment);
+                _host.outside++;
+            }
+
+            public void OfNothingNamed()
+            {
+                _untargeted++;
+                _host.outside++;
+            }
+        }
+
+        [Test]
+        public void HeldPlacements_AChangeToldOfAFamily_HasThatFamilysHeldOnesAsked_AndNoOthers_WithNoStep_SeveralAtOnce_ThroughARenumbering_AndInACollectionNotAdopted()
+        {
+            using (Twin twin = NewTwin(8))
+            {
+                VpLogicalCutDisplay display = twin.kept.Display;
+                List<LogicalFragmentId> bodies = twin.kept.bodies;
+                var host = new HoldHost();
+                host.points.Add(k_byTheFirstTwo);
+                host.Attach(display);
+                var told = new ToldChanges(host, display);
+                SettleHeld(twin, host, 8, "eight bodies");
+                VpHeldPlacementTotals whole = display.HeldPlacementTotals;
+
+                // Body 6 -- held, far -- is put elsewhere with no step, and that is told of it. The pass asks the two
+                // near ones and body 6: nobody else.
+                Both(twin, run => run.at.Put(run.bodies[6], Stand(6, 1f)));
+                told.Of(bodies[6]);
+                VpHeldPlacementTotals t = display.HeldPlacementTotals;
+                long[] work = PlaceWork(display);
+                CollectBoth(twin, "one told, no step");
+                VpHeldPlacementTotals d = Since(display, t);
+                Assert.That(Minus(PlaceWork(display), work), Is.EqualTo(new long[] { 1, 3, 2, 1 }), "three asked: the two near ones and the one told of, which is placed anew");
+                Assert.That(new[] { d.toldFamilies, d.queriedNotified, d.queriedNear, d.omitted, d.demoted, d.invalidations }, Is.EqualTo(new long[] { 1, 1, 2, 5, 1, 0 }),
+                    "one family told: its one held render fragment asked; the five other far ones not; not every held one");
+                AssertTreeHolds(display, 7, "the others held, their boxes untouched");
+
+                // Two more at once, still with no step: both are asked and both seen.
+                Both(twin, run => run.at.Put(run.bodies[3], Stand(3, 1f)));
+                Both(twin, run => run.at.Put(run.bodies[5], Stand(5, 2f)));
+                told.Of(bodies[3]);
+                told.Of(bodies[5]);
+                t = display.HeldPlacementTotals;
+                work = PlaceWork(display);
+                CollectBoth(twin, "two told at once");
+                d = Since(display, t);
+                Assert.That(new[] { d.toldFamilies, d.queriedNotified, d.demoted, d.invalidations, d.omitted }, Is.EqualTo(new long[] { 2, 2, 2, 0, 3 }), "both asked, both found moved; three far held ones left alone");
+                Assert.That(Minus(PlaceWork(display), work)[1], Is.EqualTo(5), "five queries: two near, two told of, and the one made ordinary before");
+
+                // They stand at later steps and are held again. Then a change is told of body 7 that moved nothing (what
+                // answers for it changed, say): it is asked, stands where it is held, and stays held -- its box untouched.
+                for (int i = 0; i < 2; i++)
+                {
+                    host.step++;
+                    CollectBoth(twin, "standing again " + i);
+                }
+
+                AssertTreeHolds(display, 8, "all held again");
+                told.Of(bodies[7]);
+                t = display.HeldPlacementTotals;
+                CollectBoth(twin, "told, and nothing moved");
+                d = Since(display, t);
+                Assert.That(new[] { d.queriedNotified, d.demoted, d.promoted, d.omitted, d.invalidations }, Is.EqualTo(new long[] { 1, 0, 0, 5, 0 }), "asked once, standing: held as it was");
+                AssertTreeHolds(display, 8, "nothing taken out of the tree");
+
+                // A renumbering and a telling in one collection: the first registration is retired -- every other one
+                // gets a new number -- and body 4 is moved and told of. It is body 4 that is asked.
+                Both(twin, run => Assert.That(run.scene.ledger.Retire(run.bodies[0]), Is.True));
+                Both(twin, run => run.at.Put(run.bodies[4], Stand(4, 1f)));
+                told.Of(bodies[4]);
+                t = display.HeldPlacementTotals;
+                CollectBoth(twin, "a retirement and a telling");
+                for (int i = 0; i < 2; i++)
+                {
+                    host.step++;
+                    CollectBoth(twin, "after the retirement " + i);
+                }
+
+                CollectBoth(twin, "at rest");
+                d = Since(display, t);
+                TestContext.Out.WriteLine("a retirement and a telling: mappings " + d.remaps + ", carried " + d.carried + ", fresh " + d.fresh + ", held ones gone " + d.droppedHeld + "; told " + d.toldFamilies + ", asked for it "
+                                          + d.queriedNotified + ", near " + d.queriedNear + ", ordinary " + d.queriedOrdinary + "; made ordinary " + d.demoted + ", became held " + d.promoted);
+                Assert.That(new[] { d.toldFamilies, d.queriedNotified, d.demoted, d.promoted, d.droppedHeld, d.fresh, d.invalidations }, Is.EqualTo(new long[] { 1, 1, 1, 1, 1, 0, 0 }),
+                    "the one told of asked under its new number, made ordinary and held again; the retired one's box gone; nobody else touched");
+                AssertTreeHolds(display, 7, "seven left, all held");
+
+                // A telling in a collection that is not adopted: body 2 -- held, far -- moved and told of; the collection
+                // is refused after its compaction plan. The next one asks it again (it is ordinary now): not lost.
+                Both(twin, run => run.Display.CompactionMinimumInterval = 1);
+                host.step++;
+                Both(twin, run => run.at.Put(run.bodies[2], Stand(2, 1f)));
+                told.Of(bodies[2]);
+                Drawn adopted = Capture(display);
+                display.FailAfterCompactionPlanForTest = true;
+                t = display.HeldPlacementTotals;
+                _frame++;
+                Assert.That(display.TryBeginFrame(), Is.False, "refused");
+                display.FailAfterCompactionPlanForTest = false;
+                d = Since(display, t);
+                Assert.That(new[] { d.toldFamilies, d.queriedNotified, d.demoted, d.invalidations }, Is.EqualTo(new long[] { 1, 1, 1, 0 }), "the layout: the refused collection asked the one told of");
+                AssertSameShape(adopted, Capture(display), "what is adopted, whole");
+                Assert.That(twin.everything.Display.TryBeginFrame(), Is.True, "the reference collected in that frame");
+                work = PlaceWork(display);
+                CollectBoth(twin, "the collection after the refusal");
+                Assert.That(Minus(PlaceWork(display), work)[3], Is.EqualTo(1), "the moved body placed anew: what was told is not lost with the refused collection");
+                CollectBoth(twin, "the compaction");
+                host.step++;
+                CollectBoth(twin, "a step later");
+                AssertTreeHolds(display, 7, "all held");
+
+                // A change told with no target: every held one is asked, as before.
+                Both(twin, run => run.at.Put(run.bodies[7], Stand(7, 3f)));
+                told.OfNothingNamed();
+                t = display.HeldPlacementTotals;
+                work = PlaceWork(display);
+                CollectBoth(twin, "a change that names nothing");
+                d = Since(display, t);
+                Assert.That(new[] { d.invalidations, d.queriedNotified, d.demoted, d.omitted }, Is.EqualTo(new long[] { 1, 7, 1, 0 }), "every held one asked; the moved one found");
+                d = Since(display, whole);
+                Assert.That(d.structureResets, Is.Zero, "nothing was forgotten whole in all of this");
+            }
+        }
+
         [Test]
         public void HeldPlacementTree_FindsExactlyTheBoxesThatMeetABox_ThroughInsertionsAndRemovals()
         {
