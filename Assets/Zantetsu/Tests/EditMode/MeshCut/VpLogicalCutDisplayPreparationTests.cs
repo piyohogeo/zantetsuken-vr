@@ -909,8 +909,10 @@ namespace Zantetsu.MeshCut.Tests
             };
             var table = new VpGeometryReferenceTable(scene.storage, 64, 64);
             Assert.That(
+                // Three instance records a command: one while the body is whole, and a region of two taken at the end
+                // when it is split (DESIGN 5.6).
                 VpLogicalCutDisplay.TryCreate(
-                    scene.storage, table, scene.ledger, Materials(), null, null, commandCapacity, commandCapacity * 2,
+                    scene.storage, table, scene.ledger, Materials(), null, null, commandCapacity, commandCapacity * 3,
                     VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, Frame, out scene.display),
                 Is.True,
                 "create the display");

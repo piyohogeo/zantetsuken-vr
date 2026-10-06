@@ -406,6 +406,10 @@ namespace Zantetsu.Sandbox
                 (ProfilerCategory.Scripts, "Zantetsu.Driver.LateUpdate"),
                 (ProfilerCategory.Scripts, "Zantetsu.Driver.AfterRendering"),
                 (ProfilerCategory.Scripts, "Zantetsu.Display.Collect.2Snapshot"),
+                (ProfilerCategory.Scripts, "Zantetsu.Display.Collect.3Draw"),
+                (ProfilerCategory.Scripts, "Zantetsu.Display.Collect.5Candidate"),
+                (ProfilerCategory.Scripts, "Zantetsu.Display.Collect.7Upload"),
+                (ProfilerCategory.Scripts, "Zantetsu.Display.Collect.9Release"),
                 (ProfilerCategory.Scripts, "Zantetsu.Snapshot.Validate"),
                 (ProfilerCategory.Scripts, "Zantetsu.Snapshot.Collect"),
                 (ProfilerCategory.Scripts, "Zantetsu.Snapshot.Group"),
@@ -454,6 +458,9 @@ namespace Zantetsu.Sandbox
 
                 // What the display drew from when this row was taken, and how many of its GPU objects had been replaced by then.
                 public int displayFragments = -1, displayGpuReplacements = -1;
+
+                // What the display's collections of this very frame did to the body's draw data (2026-10-06); known false when not known.
+                public VpDrawDataCounts draw;
                 public VpValidateCounts validate;   // the validations' parts of this frame (a copy), null when not known
                 public VpPlaceCounts placeStructural, placePlacementOnly;   // the Place passes of this frame, structural and placement-only (copies), null when not known
             }
@@ -1225,6 +1232,7 @@ namespace Zantetsu.Sandbox
                         previous.displayPlacements = counts.placementPasses;
                         previous.displayRoomGrowths = counts.roomGrowths;
                         previous.displaySnapshotRegrowths = counts.snapshotRegrowths;
+                        previous.draw = counts.draw;
                         if (counts.validate != null) { previous.validate = new VpValidateCounts(); previous.validate.CopyFrom(counts.validate); }
                         if (counts.placeStructural != null) { previous.placeStructural = new VpPlaceCounts(); previous.placeStructural.CopyFrom(counts.placeStructural); }
                         if (counts.placePlacementOnly != null) { previous.placePlacementOnly = new VpPlaceCounts(); previous.placePlacementOnly.CopyFrom(counts.placePlacementOnly); }
@@ -1343,7 +1351,7 @@ namespace Zantetsu.Sandbox
 
                 var text = new StringBuilder(_timeline.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
-                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept");
+                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept");
                 foreach ((ProfilerCategory _, string name) in _timelineMarkers)
                 {
                     text.Append(',').Append(name);
@@ -1372,6 +1380,21 @@ namespace Zantetsu.Sandbox
                         .Append(',').Append(r.displayCollections).Append(',').Append(r.displayBuilds).Append(',').Append(r.displayValidations)
                         .Append(',').Append(r.displayPlacements).Append(',').Append(r.displayRoomGrowths).Append(',').Append(r.displaySnapshotRegrowths)
                         .Append(',').Append(r.displayFragments).Append(',').Append(r.displayGpuReplacements);
+                    VpDrawDataCounts d = r.draw;
+                    if (d.known)
+                    {
+                        text.Append(',').Append(d.commandsWritten).Append(',').Append(d.commandsCaughtUp).Append(',').Append(d.instancesWritten)
+                            .Append(',').Append(d.instancesCaughtUp).Append(',').Append(d.registrationsWritten).Append(',').Append(d.regionsTaken)
+                            .Append(',').Append(d.argumentElements).Append(',').Append(d.argumentCalls).Append(',').Append(d.instanceElements)
+                            .Append(',').Append(d.instanceCalls).Append(',').Append(d.wholeArgumentElements).Append(',').Append(d.wholeInstanceElements)
+                            .Append(',').Append(d.wholeCalls).Append(',').Append(d.commandEnd).Append(',').Append(d.commandsLive)
+                            .Append(',').Append(d.commandCapacity).Append(',').Append(d.instanceEnd).Append(',').Append(d.instancesLive)
+                            .Append(',').Append(d.instanceCapacity).Append(',').Append(d.regionsMoved).Append(',').Append(d.instancesMoved).Append(',').Append(d.compactions).Append(',').Append(d.compactionRecordsMoved).Append(',').Append(d.compactionMilliseconds.ToString("F4", Inv)).Append(',').Append(d.compactionsSkipped).Append(',').Append(d.compactionCandidates).Append(',').Append(d.compactionOrderMilliseconds.ToString("F4", Inv)).Append(',').Append(d.compactionWriteMilliseconds.ToString("F4", Inv)).Append(',').Append(d.compactionUploadMilliseconds.ToString("F4", Inv)).Append(',').Append(d.historyWrites).Append(',').Append(d.transformCalls).Append(',').Append(d.clipCalls);
+                    }
+                    else
+                    {
+                        text.Append(",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,");
+                    }
                     VpValidateCounts v = r.validate;
                     if (v != null)
                     {

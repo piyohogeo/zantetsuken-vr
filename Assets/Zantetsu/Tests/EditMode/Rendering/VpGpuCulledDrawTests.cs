@@ -1030,6 +1030,247 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(CountDiffering(vp3, culledImage), Is.Zero, "pixels differing between VP Stage 3 and the GPU selection");
         }
 
+        /// <summary>
+        /// The draw data in slots (DESIGN 5.6), by both routes: commands whose instances begin where each is told --
+        /// not where the commands before it end --, a free command slot among them, and instance records between the
+        /// regions that no command draws. They draw what the same commands packed draw. A command made to draw nothing
+        /// is sent alone and stays removed over later selections, whose input it is; a command taken at the end after
+        /// it, with its instance record at the end, is sent as one run of each buffer and draws beside the others,
+        /// with nothing of the removed one.
+        /// </summary>
+        [Test]
+        public void CommandSlots_WithOneOfNoInstanceAmongThem_DrawAsTheCommandsPacked_AndACommandRemovedStaysRemoved_WhileOthersAreTakenAtTheEnd()
+        {
+            RenderTexture target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32));
+            Camera camera = Track(new GameObject("VP Draw Slot Test Camera")).AddComponent<Camera>();
+            camera.enabled = false;
+            camera.orthographic = true;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.targetTexture = target;
+            camera.transform.position = new Vector3(0f, 0f, -5f);
+            camera.orthographicSize = 1f;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 20f;
+
+            Vector3[] a = { new Vector3(-0.45f, -0.4f, 0f), new Vector3(-0.25f, 0.4f, 0f), new Vector3(-0.05f, -0.4f, 0f) };
+            Vector3[] b = { new Vector3(0.05f, -0.4f, 0f), new Vector3(0.25f, 0.4f, 0f), new Vector3(0.45f, -0.4f, 0f) };
+            var cell = new Bounds(Vector3.zero, new Vector3(1f, 1f, 0.1f));
+            Matrix4x4 topLeft = Matrix4x4.Translate(new Vector3(-0.5f, 0.5f, 0f)), topRight = Matrix4x4.Translate(new Vector3(0.5f, 0.5f, 0f));
+            Matrix4x4 bottomLeft = Matrix4x4.Translate(new Vector3(-0.5f, -0.5f, 0f)), bottomRight = Matrix4x4.Translate(new Vector3(0.5f, -0.5f, 0f));
+
+            // A record no command draws stands in the middle of the picture: drawn by mistake, it would show.
+            Matrix4x4 nobodys = Matrix4x4.identity;
+
+            // The three stages, as slots: one batch throughout, each stage sent as what changed.
+            Color32[][] Slots(bool culled)
+            {
+                var images = new Color32[3][];
+                Material forward = Material(ShaderName, Color.green, culled);
+                var properties = new MaterialPropertyBlock();
+                var commands = new NativeArray<VpIndirectCommand>(5, Allocator.Temp);
+                var starts = new NativeArray<int>(5, Allocator.Temp);
+                var transforms = new NativeArray<Matrix4x4>(7, Allocator.Temp);
+                var clips = new NativeArray<VpInstanceClip>(7, Allocator.Temp);
+                var commandRanges = new VpChangedRanges(4, 0);
+                int instanceFrom = 0, instanceTo = 0;   // the instance records' one range
+                var conditions = new VpCullConditions();
+                conditions.SetEye(0, camera.worldToCameraMatrix, camera.projectionMatrix);
+                conditions.eyeCount = 1;
+                string route = culled ? "the GPU selection" : "VP Stage 3";
+                try
+                {
+                    using (var pool = new VpCpuGeometryPool(6, 6, Allocator.Persistent))
+                    using (var buffers = new VpGpuIndexedGeometryBuffers(6, 6))
+                    using (var batch = new VpIndexedIndirectDrawBatch(5, 7, null, culled ? Setup() : null))
+                    {
+                        Assert.That(pool.TryAppend(Triangle(a), out VpGeometryRange rangeA), Is.True);
+                        Assert.That(pool.TryAppend(Triangle(b), out VpGeometryRange rangeB), Is.True);
+                        Assert.That(buffers.TryUpload(pool), Is.True);
+                        for (int i = 0; i < 7; i++)
+                        {
+                            transforms[i] = nobodys;
+                            clips[i] = VpInstanceClip.None;
+                        }
+
+                        // Slot 0: A once, its record the fifth. Slot 1: free. Slot 2: B twice, the first two records.
+                        // Slot 3: A once, the fourth record. Records 2 and 5 are nobody's.
+                        commands[0] = new VpIndirectCommand(rangeA, cell, 1);
+                        starts[0] = 4;
+                        transforms[4] = topLeft;
+                        commands[1] = default;
+                        starts[1] = 0;
+                        commands[2] = new VpIndirectCommand(rangeB, cell, 2);
+                        starts[2] = 0;
+                        transforms[0] = topRight;
+                        transforms[1] = bottomLeft;
+                        commands[3] = new VpIndirectCommand(rangeA, cell, 1);
+                        starts[3] = 3;
+                        transforms[3] = bottomRight;
+
+                        // The slots and the records in use end at these two; what lies past them is not gone through.
+                        int commandEnd = 4, instanceEnd = 6;
+                        GraphicsBuffer.IndirectDrawIndexedArgs[] Take(int stage)
+                        {
+                            Assert.That(
+                                batch.TryUploadSlots(commands, starts, commandEnd, transforms, clips, instanceEnd, false, commandRanges, instanceFrom, instanceTo), Is.True,
+                                route + ", stage " + stage + ": the slots are taken");
+                            commandRanges.Clear();
+                            instanceFrom = 0;
+                            instanceTo = 0;
+                            GraphicsBuffer.IndirectDrawIndexedArgs[] arguments;
+                            if (culled)
+                            {
+                                Cull(batch, 0, conditions);
+                                arguments = Arguments(batch.CullForwardArguments(0), commandEnd);
+                                batch.RenderForward(forward, properties, buffers, 0, 0, commandEnd, camera, 0);
+                            }
+                            else
+                            {
+                                arguments = Arguments(batch.ForwardArgumentBuffer, commandEnd);
+                                batch.RenderForward(forward, properties, buffers, 0, 0, commandEnd, camera);
+                            }
+
+                            images[stage] = RenderAndRead(camera, target);
+                            return arguments;
+                        }
+
+                        GraphicsBuffer.IndirectDrawIndexedArgs[] drawn = Take(0);
+                        Assert.That(
+                            new[] { batch.WholeArgumentElementsTransferred, batch.WholeInstanceElementsTransferred, batch.ArgumentElementsTransferred, batch.InstanceElementsTransferred },
+                            Is.EqualTo(new long[] { 4, 6, 0, 0 }), route + ": a batch never sent to takes every slot and every record, counted apart");
+                        Assert.That(new[] { batch.CommandCount, batch.InstanceCount }, Is.EqualTo(new[] { 4, 6 }), route + ": it goes through the slots, the one of no instance among them");
+                        Assert.That(
+                            new[] { drawn[0].instanceCount, drawn[1].instanceCount, drawn[2].instanceCount, drawn[3].instanceCount },
+                            Is.EqualTo(new uint[] { 1, 0, 2, 1 }), route + ": the slot of no instance draws none");
+                        Assert.That(
+                            new[] { drawn[0].startInstance, drawn[2].startInstance, drawn[3].startInstance },
+                            Is.EqualTo(new uint[] { 4, 0, 3 }), route + ": each command's instances begin where it was told");
+                        if (culled)
+                        {
+                            uint[] visible = Visible(batch.CullForwardVisible(0), 6);
+                            Assert.That(new[] { visible[0], visible[1], visible[3], visible[4] }, Is.EqualTo(new uint[] { 0, 1, 3, 4 }), "what the selection kept stands in each command's own region");
+                        }
+
+                        // Slot 2 is made to draw nothing: that one command is sent, and no instance record.
+                        commands[2] = default;
+                        starts[2] = 0;
+                        commandRanges.Add(2, 3);
+                        drawn = Take(1);
+                        Assert.That(
+                            new[] { batch.ArgumentElementsTransferred, batch.InstanceElementsTransferred, batch.WholeArgumentElementsTransferred, batch.WholeInstanceElementsTransferred },
+                            Is.EqualTo(new long[] { 1, 0, 4, 6 }), route + ": the removed command alone is sent");
+                        Assert.That(
+                            new[] { drawn[0].instanceCount, drawn[1].instanceCount, drawn[2].instanceCount, drawn[3].instanceCount },
+                            Is.EqualTo(new uint[] { 1, 0, 0, 1 }), route + ": it draws no instance");
+                        if (culled)
+                        {
+                            // The selection reads the command again every time: a later one finds it still removed.
+                            Cull(batch, 0, conditions);
+                            Cull(batch, 0, conditions);
+                            Assert.That(Arguments(batch.CullForwardArguments(0), 4)[2].instanceCount, Is.Zero, "later selections do not bring the removed command back");
+                            Assert.That(Arguments(batch.CullShadowArguments(0), 4)[2].instanceCount, Is.Zero, "nor as a caster");
+                        }
+
+                        // A command is taken at the end -- the fifth slot, A once, its record the seventh -- while slot 2
+                        // goes on drawing nothing and records 0 and 1 still hold where B stood.
+                        commandEnd = 5;
+                        instanceEnd = 7;
+                        commands[4] = new VpIndirectCommand(rangeA, cell, 1);
+                        starts[4] = 6;
+                        transforms[6] = topRight;
+                        commandRanges.Add(4, 5);
+                        instanceFrom = 6;
+                        instanceTo = 7;
+                        drawn = Take(2);
+                        Assert.That(
+                            new[] { batch.ArgumentElementsTransferred, batch.InstanceElementsTransferred, batch.WholeArgumentElementsTransferred, batch.WholeInstanceElementsTransferred },
+                            Is.EqualTo(new long[] { 2, 1, 4, 6 }), route + ": the command taken at the end and its one record are sent, and nothing else");
+                        Assert.That(new[] { batch.CommandCount, batch.InstanceCount }, Is.EqualTo(new[] { 5, 7 }), route + ": it goes through one slot and one record more");
+                        Assert.That(
+                            new[] { drawn[4].instanceCount, drawn[4].startInstance, drawn[4].indexCountPerInstance, drawn[4].startIndex },
+                            Is.EqualTo(new uint[] { 1, 6, (uint)rangeA.indexCount, (uint)rangeA.indexStart }), route + ": the slot at the end draws its command");
+                        Assert.That(new[] { drawn[1].instanceCount, drawn[2].instanceCount }, Is.EqualTo(new uint[] { 0, 0 }), route + ": the removed command is still removed");
+                    }
+                }
+                finally
+                {
+                    commands.Dispose();
+                    starts.Dispose();
+                    transforms.Dispose();
+                    clips.Dispose();
+                }
+
+                return images;
+            }
+
+            // The same three pictures from commands packed one after another, each in a batch of its own.
+            Color32[] Packed(bool culled, int stage)
+            {
+                Material forward = Material(ShaderName, Color.green, culled);
+                var properties = new MaterialPropertyBlock();
+                using (var pool = new VpCpuGeometryPool(6, 6, Allocator.Persistent))
+                using (var buffers = new VpGpuIndexedGeometryBuffers(6, 6))
+                using (var batch = new VpIndexedIndirectDrawBatch(3, 4, null, culled ? Setup() : null))
+                {
+                    Assert.That(pool.TryAppend(Triangle(a), out VpGeometryRange rangeA), Is.True);
+                    Assert.That(pool.TryAppend(Triangle(b), out VpGeometryRange rangeB), Is.True);
+                    Assert.That(buffers.TryUpload(pool), Is.True);
+                    VpIndirectCommand[] commands;
+                    Matrix4x4[] transforms;
+                    switch (stage)
+                    {
+                        case 0:
+                            commands = new[] { new VpIndirectCommand(rangeA, cell, 1), new VpIndirectCommand(rangeB, cell, 2), new VpIndirectCommand(rangeA, cell, 1) };
+                            transforms = new[] { topLeft, topRight, bottomLeft, bottomRight };
+                            break;
+                        case 1:
+                            commands = new[] { new VpIndirectCommand(rangeA, cell, 1), new VpIndirectCommand(rangeA, cell, 1) };
+                            transforms = new[] { topLeft, bottomRight };
+                            break;
+                        default:
+                            commands = new[] { new VpIndirectCommand(rangeA, cell, 1), new VpIndirectCommand(rangeA, cell, 1), new VpIndirectCommand(rangeA, cell, 1) };
+                            transforms = new[] { topLeft, topRight, bottomRight };
+                            break;
+                    }
+
+                    Assert.That(batch.TryUpload(commands, transforms, false), Is.True);
+                    if (culled)
+                    {
+                        var conditions = new VpCullConditions();
+                        conditions.SetEye(0, camera.worldToCameraMatrix, camera.projectionMatrix);
+                        conditions.eyeCount = 1;
+                        Cull(batch, 0, conditions);
+                        batch.RenderForward(forward, properties, buffers, 0, 0, commands.Length, camera, 0);
+                    }
+                    else
+                    {
+                        batch.RenderForward(forward, properties, buffers, 0, 0, commands.Length, camera);
+                    }
+
+                    return RenderAndRead(camera, target);
+                }
+            }
+
+            string[] stages = { "four triangles", "the two of slot 2 removed", "one more taken at the end" };
+            Color32[][] vp3 = Slots(false);
+            Color32[][] selected = Slots(true);
+            var green = new int[3];
+            for (int stage = 0; stage < 3; stage++)
+            {
+                Color32[] packed = Packed(false, stage);
+                green[stage] = CountGreen(packed);
+                Assert.That(CountDiffering(packed, vp3[stage]), Is.Zero, stages[stage] + ": pixels differing between the packed commands and the slots (VP Stage 3)");
+                Assert.That(CountDiffering(packed, selected[stage]), Is.Zero, stages[stage] + ": pixels differing between the packed commands and the slots (the GPU selection)");
+                Assert.That(CountDiffering(packed, Packed(true, stage)), Is.Zero, stages[stage] + ": pixels differing between the two routes, packed");
+            }
+
+            TestContext.Out.WriteLine("green pixels: " + green[0] + ", " + green[1] + ", " + green[2]);
+            Assert.That(green[0], Is.GreaterThan(300), "the four triangles are drawn");
+            Assert.That(green[1], Is.LessThan(green[0] * 2 / 3), "two of them are gone");
+            Assert.That(green[2], Is.InRange(green[1] + 50, green[0] - 50), "and one is drawn by the command taken at the end");
+        }
+
         private Mesh Triangle(Vector3[] positions)
         {
             Mesh mesh = Track(new Mesh());

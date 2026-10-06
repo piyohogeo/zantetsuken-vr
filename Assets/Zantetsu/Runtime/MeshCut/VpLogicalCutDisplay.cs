@@ -66,15 +66,33 @@ namespace Zantetsu.MeshCut
     /// How far a display may grow each of its counts. The counts it is made with are where it starts; a collection
     /// that needs more grows the room it builds in, up to these, and switches to it whole at adoption. A limit equal to
     /// its first capacity keeps that count fixed. <c>default</c> keeps every count fixed.
+    /// <para>
+    /// **Two different counts stand behind "instances" (DESIGN 5.6).** The draw command slots and the instance
+    /// records are used up over the display's life: a slot is taken at the end and never again, so their room is
+    /// about everything ever drawn. How many render fragments are drawn at once is another count, and everything
+    /// sized from it -- the snapshot's render fragments and caps, the cap records, vertices, indices and normals, the
+    /// stencil commands of every camera's batch, the registrations' own tables -- is about what is alive. A caller
+    /// that gives the two apart names the render fragments' first room and limit here; one that does not
+    /// (<see cref="firstRenderFragments"/> and <see cref="renderFragments"/> zero) has them follow the instances',
+    /// as before there were two.
+    /// </para>
     /// </summary>
     public readonly struct VpLogicalCutDisplayLimits
     {
         public VpLogicalCutDisplayLimits(int commands, int instances, int branches, int candidates)
+            : this(commands, instances, branches, candidates, 0, 0)
+        {
+        }
+
+        public VpLogicalCutDisplayLimits(
+            int commands, int instances, int branches, int candidates, int firstRenderFragments, int renderFragments)
         {
             this.commands = commands;
             this.instances = instances;
             this.branches = branches;
             this.candidates = candidates;
+            this.firstRenderFragments = firstRenderFragments;
+            this.renderFragments = renderFragments;
         }
 
         public readonly int commands;
@@ -82,7 +100,14 @@ namespace Zantetsu.MeshCut
         public readonly int branches;
         public readonly int candidates;
 
-        internal bool IsDefault => commands == 0 && instances == 0 && branches == 0 && candidates == 0;
+        /// <summary>Where the render fragments' room starts; zero: at the first instance capacity.</summary>
+        public readonly int firstRenderFragments;
+
+        /// <summary>How far the render fragments' room may grow; zero: as far as the instances'.</summary>
+        public readonly int renderFragments;
+
+        internal bool IsDefault =>
+            commands == 0 && instances == 0 && branches == 0 && candidates == 0 && firstRenderFragments == 0 && renderFragments == 0;
     }
 
     /// <summary>
@@ -468,9 +493,22 @@ namespace Zantetsu.MeshCut
             public int renderFragments;
             public int firstRenderFragment;
 
-            // Where its instances begin in the draw data, for the structure it was last arranged for: command c's
-            // instance of its k-th render fragment is firstInstance + c * renderFragments + k.
-            public int firstInstance;
+            // Where its render fragments began in the adopted snapshot's numbering: what a side's number is read from.
+            public int firstRenderFragmentShown;
+
+            // The draw slots this registration holds (DESIGN 5.6): of the side last built, which is the adopted one
+            // whenever no collection is under way. And, for a collection under way: the collection that last changed
+            // them, what they were before it (put back if it is not adopted), and what it has to write.
+            public SlotState slots, slotsBefore;
+            public int slotPass = -1, writtenPass = -1;
+            public bool rewrite, releasing;
+
+            // The frame of the last adopted collection whose ordinary processing wrote an instance record of this
+            // registration (DESIGN 5.6, D-202): a placement update or a structural write, whatever it wrote. Unset
+            // until first adopted. The compaction orders by it; nothing else reads it. And the collection under way
+            // that wrote one, before it is adopted.
+            public int lastWrittenFrame = int.MinValue;
+            public int notedPass = -1;
 
             // The next registration of the same family in _shown, or -1: the chain a ledger notice is followed along.
             internal int familyNext = -1;
@@ -519,13 +557,18 @@ namespace Zantetsu.MeshCut
         private readonly Func<int> _frameSource;
 
         // The room a collection builds in, and how far it may grow. The adopted side may be smaller for one collection
-        // after a growth: it is read by count only.
+        // after a growth: it is read by count only. The commands and the instances are the draw slots' room -- command
+        // slots and instance records, used up as they are taken at the end (DESIGN 5.6). The fragments are how many
+        // render fragments, and registrations, there may be at once: the snapshot's render fragments and caps, the cap
+        // and stencil arrays and every camera's stencil batch are sized from them, and never from the instances.
         private int _commandCapacity;
         private int _instanceCapacity;
+        private int _fragmentCapacity;
         private int _branchCapacity;
         private int _candidateCapacity;
         private readonly int _chainDepth;
         private readonly VpLogicalCutDisplayLimits _limits;
+        private readonly int _fragmentLimit;
 
         // GPU objects replaced by larger ones, each kept until a readback asked for when it was replaced has completed.
         private readonly List<RetiredGpu> _retiredGpu = new List<RetiredGpu>(2);
@@ -545,6 +588,24 @@ namespace Zantetsu.MeshCut
                 done = true;
                 error = completed.hasError;
             }
+        }
+
+        /// <summary>
+        /// The draw slots of one registration (DESIGN 5.6). Its commands stand in <c>commandStart .. + commands.Length</c>,
+        /// one slot a command, in the commands' order; its instance records in a region of
+        /// <c>commands.Length * instanceStride</c> from <c>instanceStart</c>, where command <c>c</c> has room for
+        /// <c>instanceStride</c> records from <c>instanceStart + c * instanceStride</c> on and draws the first
+        /// <c>renderFragments</c> of them -- its k-th render fragment at the k-th. Neither moves while the registration
+        /// is drawn, except that the region is taken anew when more render fragments are drawn than it has room for.
+        /// <c>part</c> is what the content was written for: the structure the snapshot settled for this registration.
+        /// </summary>
+        internal struct SlotState
+        {
+            public bool held;
+            public int commandStart, instanceStart, instanceStride, renderFragments;
+            public bool clipped;
+            public object part;
+            public long partSerial;
         }
 
         private readonly List<Shown> _shown = new List<Shown>(2);
@@ -574,8 +635,11 @@ namespace Zantetsu.MeshCut
         // The adopted draw data: what the GPU holds and what is being drawn. Nothing here is touched until an upload
         // has succeeded, so a refused collection leaves exactly this on screen. Each has a candidate twin of the same
         // fixed size; adoption trades them.
-        private List<LogicalCutDisplaySide> _sides = new List<LogicalCutDisplaySide>(4);
+        // The commands, their materials and which caster each takes are by command slot; the transforms, the clips and
+        // the sides by instance record (DESIGN 5.6). A free command slot holds a command of no instance and no material.
+        private VpNumericRoom<LogicalCutDisplaySide> _sides;
         private VpNumericRoom<VpIndirectCommand> _commands;
+        private VpNumericRoom<int> _commandStarts;
         private Material[] _commandMaterials;
         private VpNumericRoom<bool> _commandProvisional;
         private VpNumericRoom<Matrix4x4> _transforms;
@@ -588,8 +652,9 @@ namespace Zantetsu.MeshCut
         private int _commandCount;
         private int _capRecordCount;
 
-        private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
+        private VpNumericRoom<LogicalCutDisplaySide> _candidateSides;
         private VpNumericRoom<VpIndirectCommand> _candidateCommands;
+        private VpNumericRoom<int> _candidateCommandStarts;
         private Material[] _candidateCommandMaterials;
         private VpNumericRoom<bool> _candidateCommandProvisional;
         private VpNumericRoom<Matrix4x4> _candidateTransforms;
@@ -777,6 +842,8 @@ namespace Zantetsu.MeshCut
             VpStencilSettings settings,
             int commandCapacity,
             int instanceCapacity,
+            int fragmentCapacity,
+            int fragmentLimit,
             in DerivedCapacities derived,
             in DerivedCapacities reserved,
             IVpPageBacking pages,
@@ -799,10 +866,10 @@ namespace Zantetsu.MeshCut
             _settings = settings;
             _snapshot = snapshot;
             _building = building;
-            _structurePool = new VpMultiCutSnapshot.StructurePool(instanceCapacity);
+            _structurePool = new VpMultiCutSnapshot.StructurePool(fragmentCapacity);
             _capJobs = capJobs;
-            _geometries = new GeometryTable(instanceCapacity);
-            _candidateGeometries = new GeometryTable(instanceCapacity);
+            _geometries = new GeometryTable(fragmentCapacity);
+            _candidateGeometries = new GeometryTable(fragmentCapacity);
             _cameraStencils = new CameraStencil[settings.cameraCapacity];
             _candidateStencilColors = new VpStencilCapColor[settings.maxStencilColors];
 
@@ -828,13 +895,10 @@ namespace Zantetsu.MeshCut
             _stencilCapIndexCapacity = derived.capIndices;
             _commandMaterials = new Material[commandCapacity];
             _candidateCommandMaterials = new Material[commandCapacity];
-            _sides = new List<LogicalCutDisplaySide>(instanceCapacity);
-            _candidateSides = new List<LogicalCutDisplaySide>(instanceCapacity);
-
             // The lists kept per registration are made for the room too -- there are never more registrations than
-            // instances -- so that showing bodies up to the room makes neither of them again.
-            _shown.Capacity = Math.Max(_shown.Capacity, instanceCapacity);
-            _registrations.Capacity = Math.Max(_registrations.Capacity, instanceCapacity);
+            // render fragments -- so that showing bodies up to the room makes neither of them again.
+            _shown.Capacity = Math.Max(_shown.Capacity, fragmentCapacity);
+            _registrations.Capacity = Math.Max(_registrations.Capacity, fragmentCapacity);
 
             // The numbers (TL, 2026-10-05): each array is a room on address space reserved for what the limits allow and
             // committed for the first room, every page of the committed part written here, before play. The adopted
@@ -848,6 +912,10 @@ namespace Zantetsu.MeshCut
                 _candidateStencilClips = Room<VpInstanceClip>(reserved.stencilCommands, derived.stencilCommands);
                 _candidateCapIndices = Room<int>(reserved.capIndices, derived.capIndices);
                 _commands = Room<VpIndirectCommand>(limits.commands, commandCapacity);
+                _commandStarts = Room<int>(limits.commands, commandCapacity);
+                _candidateCommandStarts = Room<int>(limits.commands, commandCapacity);
+                _sides = Room<LogicalCutDisplaySide>(limits.instances, instanceCapacity);
+                _candidateSides = Room<LogicalCutDisplaySide>(limits.instances, instanceCapacity);
                 _commandProvisional = Room<bool>(limits.commands, commandCapacity);
                 _candidateCommands = Room<VpIndirectCommand>(limits.commands, commandCapacity);
                 _candidateCommandProvisional = Room<bool>(limits.commands, commandCapacity);
@@ -855,8 +923,8 @@ namespace Zantetsu.MeshCut
                 _clips = Room<VpInstanceClip>(limits.instances, instanceCapacity);
                 _candidateTransforms = Room<Matrix4x4>(limits.instances, instanceCapacity);
                 _candidateClips = Room<VpInstanceClip>(limits.instances, instanceCapacity);
-                _roots = Room<LogicalFragmentId>(limits.instances, instanceCapacity);
-                _candidateRoots = Room<LogicalFragmentId>(limits.instances, instanceCapacity);
+                _roots = Room<LogicalFragmentId>(fragmentLimit, fragmentCapacity);
+                _candidateRoots = Room<LogicalFragmentId>(fragmentLimit, fragmentCapacity);
                 _rfCommandStart = Room<int>(reserved.renderFragments, derived.renderFragments);
                 _rfCommandCount = Room<int>(reserved.renderFragments, derived.renderFragments);
                 _rfTransform = Room<Matrix4x4>(reserved.renderFragments, derived.renderFragments);
@@ -877,6 +945,8 @@ namespace Zantetsu.MeshCut
             _preparationRecordLimit = derived.caps;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
+            _fragmentCapacity = fragmentCapacity;
+            _fragmentLimit = fragmentLimit;
             _branchCapacity = derived.branches;
             _candidateCapacity = derived.candidates;
             _chainDepth = derived.chainDepth;
@@ -914,6 +984,10 @@ namespace Zantetsu.MeshCut
             _candidateStencilClips?.Dispose();
             _candidateCapIndices?.Dispose();
             _commands?.Dispose();
+            _commandStarts?.Dispose();
+            _candidateCommandStarts?.Dispose();
+            _sides?.Dispose();
+            _candidateSides?.Dispose();
             _commandProvisional?.Dispose();
             _candidateCommands?.Dispose();
             _candidateCommandProvisional?.Dispose();
@@ -992,6 +1066,10 @@ namespace Zantetsu.MeshCut
             into.Add(VpRoomLine.Of("display.capIndices", _candidateCapIndices));
             into.Add(VpRoomLine.Of("display.commands", _commands));
             into.Add(VpRoomLine.Of("display.commands'", _candidateCommands));
+            into.Add(VpRoomLine.Of("display.commandStarts", _commandStarts));
+            into.Add(VpRoomLine.Of("display.commandStarts'", _candidateCommandStarts));
+            into.Add(VpRoomLine.Of("display.sides", _sides));
+            into.Add(VpRoomLine.Of("display.sides'", _candidateSides));
             into.Add(VpRoomLine.Of("display.commandProvisional", _commandProvisional));
             into.Add(VpRoomLine.Of("display.commandProvisional'", _candidateCommandProvisional));
             into.Add(VpRoomLine.Of("display.transforms", _transforms));
@@ -1026,9 +1104,6 @@ namespace Zantetsu.MeshCut
             int geometry = Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<VpCapJobGeometry>();
             into.Add(VpRoomLine.OfManaged("display.geometries (ref)", geometry, _geometries.Capacity));
             into.Add(VpRoomLine.OfManaged("display.geometries' (ref)", geometry, _candidateGeometries.Capacity));
-            int side = Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<LogicalCutDisplaySide>();
-            into.Add(VpRoomLine.OfManaged("display.sides", side, _sides.Capacity));
-            into.Add(VpRoomLine.OfManaged("display.sides'", side, _candidateSides.Capacity));
             into.Add(VpRoomLine.OfManaged("display.registrations (ref)", Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<VpMultiCutRegistration>(), _registrations.Capacity));
             into.Add(VpRoomLine.OfManaged("display.shown (ref)", IntPtr.Size, _shown.Capacity));
         }
@@ -1081,10 +1156,11 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Every size a display is made to, worked out in 64-bit arithmetic from its explicit capacities: a render
-        /// fragment takes at least one instance, since every body has a command, so there are at most as many render
-        /// fragments as instances; eight caps per render fragment; fourteen vertices and twelve fanned triangles per
-        /// cap. Stencil volume commands are instances times eight: a volume group is issued with one command per command
+        /// Every size a display is made to, worked out in 64-bit arithmetic from its explicit capacities. The second
+        /// one is how many render fragments there may be at once -- the instances' capacity for a caller that gives no
+        /// other (a render fragment takes at least one instance, since every body has a command), and the render
+        /// fragments' own room otherwise: eight caps per render fragment; fourteen vertices and twelve fanned triangles
+        /// per cap. Stencil volume commands are that count times eight: a volume group is issued with one command per command
         /// of its body, and a render fragment has at most one group per selected boundary -- at most eight -- so one
         /// render fragment's volume commands are at most eight times its body's commands, each of which is one of its
         /// instances. The logical branches, candidates and chain depth are not derived from
@@ -1176,7 +1252,7 @@ namespace Zantetsu.MeshCut
         /// How many instances the last settled collection draws: per body, its command count times its render
         /// fragments.
         /// </summary>
-        public int SideCount => _sides.Count;
+        public int SideCount => _liveInstances;
 
         public bool IsDisposed => _disposed;
 
@@ -1241,11 +1317,126 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentOutOfRangeException(nameof(index));
             }
 
-            return _commandProvisional[index];
+            EnsureIndexView();
+            return _commandProvisional[_viewCommandSlots[index]];
         }
 
-        /// <summary>How many commands the adopted snapshot holds.</summary>
+        /// <summary>How many commands the adopted snapshot draws with: the slots of what is drawn no more are not counted.</summary>
         public int CommandCount => _commandCount;
+
+        // ----- the draw slots, as they are adopted (DESIGN 5.6) --------------------------------------------------------
+
+        /// <summary>
+        /// One past the last command slot that is processed -- drawn through and, selecting on the GPU, selected
+        /// through -- the slots of what is drawn no more included; and the same of the instance records that may be
+        /// named. Both are how many were ever taken: slots are taken at the end and never again by another
+        /// registration, so neither comes down while the display lives.
+        /// </summary>
+        public int DrawCommandEnd => _commandEnd;
+        public int DrawInstanceEnd => _instanceEnd;
+
+        /// <summary>How many instance records the adopted commands draw: per registration, its commands times its render fragments.</summary>
+        public int DrawInstanceCount => _liveInstances;
+
+        /// <summary>
+        /// The draw slots a registered fragment holds in the adopted draw data: where its commands and its instance
+        /// records stand, how many records each command has room for and how many it draws. False when the fragment
+        /// is not registered or is drawn as nothing.
+        /// </summary>
+        public bool TryGetDrawSlots(
+            LogicalFragmentId fragment, out int commandStart, out int commandCount, out int instanceStart, out int instanceStride,
+            out int renderFragments)
+        {
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                if (entry.fragment == fragment && entry.slots.held)
+                {
+                    commandStart = entry.slots.commandStart;
+                    commandCount = entry.commands.Length;
+                    instanceStart = entry.slots.instanceStart;
+                    instanceStride = entry.slots.instanceStride;
+                    renderFragments = entry.slots.renderFragments;
+                    return true;
+                }
+            }
+
+            commandStart = commandCount = instanceStart = instanceStride = renderFragments = 0;
+            return false;
+        }
+
+        /// <summary>
+        /// One command slot of the adopted draw data, free or not: its command (no instance when free), where its
+        /// instances begin, and whether it is free. False outside [0, <see cref="DrawCommandEnd"/>).
+        /// </summary>
+        public bool TryGetCommandSlot(int slot, out VpIndirectCommand command, out int startInstance, out bool free)
+        {
+            if (slot < 0 || slot >= _commandEnd)
+            {
+                command = default;
+                startInstance = 0;
+                free = true;
+                return false;
+            }
+
+            command = _commands[slot];
+            startInstance = _commandStarts[slot];
+            free = _commandMaterials[slot] == null;
+            return true;
+        }
+
+        /// <summary>Tests only: one instance record of the adopted draw data, by its place.</summary>
+        internal Matrix4x4 InstanceRecordTransformForTest(int record) => _transforms[record];
+        internal VpInstanceClip InstanceRecordClipForTest(int record) => _clips[record];
+
+        /// <summary>Tests only: where instance <paramref name="index"/> of the accessors that take an index stands.</summary>
+        internal int InstanceRecordOfIndexForTest(int index)
+        {
+            EnsureIndexView();
+            return _viewInstanceRecords[index];
+        }
+
+        // The accessors that take an index go through the registrations in their order -- per registration its
+        // commands, per command its render fragments -- which is the order the draw data was packed in before the
+        // slots, and say where each stands now. A registration no longer shown that is still drawn (a body a commit
+        // replaced, until the next adoption) comes after them. Made when asked for, for the draw data then adopted.
+        private readonly List<int> _viewCommandSlots = new List<int>(), _viewInstanceRecords = new List<int>(), _viewRenderFragments = new List<int>();
+        private long _viewGeneration = -1, _viewInputs = -1;
+
+        private void EnsureIndexView()
+        {
+            if (_viewGeneration == _generation && _viewInputs == _inputRevision)
+            {
+                return;
+            }
+
+            _viewCommandSlots.Clear();
+            _viewInstanceRecords.Clear();
+            _viewRenderFragments.Clear();
+            for (int g = 0; g < _shown.Count; g++) AddToIndexView(_shown[g]);
+            for (int g = 0; g < _retiring.Count; g++) AddToIndexView(_retiring[g]);
+            for (int g = 0; g < _unshownWithSlots.Count; g++) AddToIndexView(_unshownWithSlots[g]);
+            _viewGeneration = _generation;
+            _viewInputs = _inputRevision;
+        }
+
+        private void AddToIndexView(Shown entry)
+        {
+            if (!entry.slots.held)
+            {
+                return;
+            }
+
+            for (int c = 0; c < entry.commands.Length; c++)
+            {
+                _viewCommandSlots.Add(entry.slots.commandStart + c);
+                for (int k = 0; k < entry.slots.renderFragments; k++)
+                {
+                    _viewInstanceRecords.Add(entry.slots.instanceStart + (c * entry.slots.instanceStride) + k);
+                    _viewRenderFragments.Add(entry.firstRenderFragmentShown + k);
+                }
+            }
+        }
 
         /// <summary>Vertex transfers this display has issued. One per body shown, and never one for a split.</summary>
         public int VertexTransfers { get; private set; }
@@ -1311,7 +1502,9 @@ namespace Zantetsu.MeshCut
         /// <param name="commandCapacity">Draw commands: one per submesh of every body drawn.</param>
         /// <param name="instanceCapacity">
         /// Draw instances: per body, its commands times its render fragments. Render fragments, stencil volume commands
-        /// (eight per instance), caps (eight per render fragment), cap vertices and cap indices are derived from it.
+        /// (eight per render fragment), caps (eight per render fragment), cap vertices and cap indices are derived from
+        /// it too, unless the limits name a room of their own for the render fragments
+        /// (<see cref="VpLogicalCutDisplayLimits.firstRenderFragments"/>).
         /// </param>
         /// <param name="branchCapacity">Logical branches over every registration together.</param>
         /// <param name="candidateCapacity">Clip candidates kept over every branch together; not cut at eight.</param>
@@ -1607,11 +1800,16 @@ namespace Zantetsu.MeshCut
                 limits = new VpLogicalCutDisplayLimits(commandCapacity, instanceCapacity, branchCapacity, candidateCapacity);
             }
 
+            // The render fragments' own room (DESIGN 5.6): given apart from the instances', or following them.
+            int fragmentCapacity = limits.firstRenderFragments > 0 ? limits.firstRenderFragments : instanceCapacity;
+            int fragmentLimit = limits.renderFragments > 0 ? limits.renderFragments : limits.instances;
+
             // Every size the limits give must be an int too, so that no growth can come to one that is not.
             if (limits.commands < commandCapacity || limits.instances < instanceCapacity || limits.branches < branchCapacity
-                || limits.candidates < candidateCapacity
+                || limits.candidates < candidateCapacity || limits.firstRenderFragments < 0 || limits.renderFragments < 0
+                || fragmentLimit < fragmentCapacity
                 || !TryDeriveCapacities(
-                    limits.commands, limits.instances, limits.branches, limits.candidates, chainDepth,
+                    limits.commands, fragmentLimit, limits.branches, limits.candidates, chainDepth,
                     out DerivedCapacities reserved))
             {
                 return false;
@@ -1628,8 +1826,9 @@ namespace Zantetsu.MeshCut
             }
 
             // Every size is worked out wide and must be an int, before any GPU buffer, material or scratch is made.
-            if (!TryDeriveCapacities(
-                    commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth,
+            if (instanceCapacity <= 0
+                || !TryDeriveCapacities(
+                    commandCapacity, fragmentCapacity, branchCapacity, candidateCapacity, chainDepth,
                     out DerivedCapacities derived))
             {
                 return false;
@@ -1742,8 +1941,9 @@ namespace Zantetsu.MeshCut
                 {
                     display = new VpLogicalCutDisplay(
                         storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
-                        batch, stencilMaterials, capNormals, stencilSettings, commandCapacity, instanceCapacity, derived,
-                        reserved, pages, snapshot, building, capJobs, frameSource, limits);
+                        batch, stencilMaterials, capNormals, stencilSettings, commandCapacity, instanceCapacity,
+                        fragmentCapacity, fragmentLimit, derived, reserved, pages, snapshot, building, capJobs, frameSource,
+                        limits);
                 }
                 catch (RoomNotMadeException exception)
                 {
@@ -2087,6 +2287,81 @@ namespace Zantetsu.MeshCut
 
             /// <summary>The Place passes in this frame, the structural builds' and the placement-only ones' apart (2026-10-01); null as above.</summary>
             public VpPlaceCounts placeStructural, placePlacementOnly;
+
+            /// <summary>What this frame's collections did to the body's draw data, and where it stood afterwards (2026-10-06).</summary>
+            public VpDrawDataCounts draw;
+        }
+
+        /// <summary>
+        /// Observation, since this display was made: commands written into a side being built (a command zeroed
+        /// because it draws no more is one) and commands that side was first given from the adopted one; registrations
+        /// whose commands were written; instance regions taken anew (a registration first drawn, or one whose records
+        /// could not be lengthened where they stood); and, of those, the regions that now stand elsewhere, with the
+        /// instance records that stood in them. A command slot never moves.
+        /// </summary>
+        public long CommandRecordsWritten { get; private set; }
+        public long CommandRecordsCaughtUp { get; private set; }
+        public long RegistrationsWritten { get; private set; }
+        public long RegionsTaken { get; private set; }
+        public long RegionsMoved { get; private set; }
+        public long InstanceRecordsMoved { get; private set; }
+
+        /// <summary>Observation: what the body's batches sent whole -- a first upload, a batch that took a smaller one's place, another stereo condition.</summary>
+        public long BodyWholeArgumentElementsTransferred => _pastWholeArguments + _batch.WholeArgumentElementsTransferred;
+        public long BodyWholeInstanceElementsTransferred => _pastWholeInstances + _batch.WholeInstanceElementsTransferred;
+        public long BodyWholeSetDataCalls => _pastWholeCalls + _batch.WholeSetDataCalls;
+        private long _pastWholeArguments, _pastWholeInstances, _pastWholeCalls;
+
+        // The cumulative counters a collection's share of VpDrawDataCounts is the difference of.
+        private VpDrawDataCounts DrawTotals()
+        {
+            return new VpDrawDataCounts
+            {
+                commandsWritten = CommandRecordsWritten, commandsCaughtUp = CommandRecordsCaughtUp,
+                instancesWritten = InstanceRecordsWritten, instancesCaughtUp = InstanceRecordsCaughtUp,
+                registrationsWritten = RegistrationsWritten, regionsTaken = RegionsTaken,
+                regionsMoved = RegionsMoved, instancesMoved = InstanceRecordsMoved,
+                argumentElements = BodyArgumentElementsTransferred, argumentCalls = BodyArgumentSetDataCalls,
+                instanceElements = BodyInstanceElementsTransferred, instanceCalls = BodyInstanceSetDataCalls,
+                transformCalls = BodyInstanceTransformSetDataCalls, clipCalls = BodyInstanceClipSetDataCalls,
+                wholeArgumentElements = BodyWholeArgumentElementsTransferred, wholeInstanceElements = BodyWholeInstanceElementsTransferred,
+                wholeCalls = BodyWholeSetDataCalls,
+            };
+        }
+
+        // This collection's share, added to its frame's; where the draw data stands now replaces what an earlier
+        // collection of the frame said.
+        private void CountDraw(in VpDrawDataCounts before)
+        {
+            VpDrawDataCounts now = DrawTotals();
+            CountingFrame();
+            ref VpDrawDataCounts into = ref _countsNow.draw;
+            into.known = true;
+            into.commandsWritten += now.commandsWritten - before.commandsWritten;
+            into.commandsCaughtUp += now.commandsCaughtUp - before.commandsCaughtUp;
+            into.instancesWritten += now.instancesWritten - before.instancesWritten;
+            into.instancesCaughtUp += now.instancesCaughtUp - before.instancesCaughtUp;
+            into.registrationsWritten += now.registrationsWritten - before.registrationsWritten;
+            into.regionsTaken += now.regionsTaken - before.regionsTaken;
+            into.regionsMoved += now.regionsMoved - before.regionsMoved;
+            into.instancesMoved += now.instancesMoved - before.instancesMoved;
+            into.argumentElements += now.argumentElements - before.argumentElements;
+            into.argumentCalls += now.argumentCalls - before.argumentCalls;
+            into.instanceElements += now.instanceElements - before.instanceElements;
+            into.instanceCalls += now.instanceCalls - before.instanceCalls;
+            into.transformCalls += now.transformCalls - before.transformCalls;
+            into.clipCalls += now.clipCalls - before.clipCalls;
+            into.wholeArgumentElements += now.wholeArgumentElements - before.wholeArgumentElements;
+            into.wholeInstanceElements += now.wholeInstanceElements - before.wholeInstanceElements;
+            into.wholeCalls += now.wholeCalls - before.wholeCalls;
+
+            // Where the adopted draw data stands: what is processed, what of it draws, the room, and the holes.
+            into.commandEnd = _commandEnd;
+            into.commandsLive = _commandCount;
+            into.instanceEnd = _instanceEnd;
+            into.instancesLive = _liveInstances;
+            into.commandCapacity = _commandCapacity;
+            into.instanceCapacity = _instanceCapacity;
         }
 
         // The validations' parts of the snapshots made again (their sums kept, as the counters above), and two sums to take a collection's difference.
@@ -2765,18 +3040,23 @@ namespace Zantetsu.MeshCut
             }
 #endif
 
-            // Room for the body now, and for a second render fragment it may take later: within the limits, since a
-            // collection grows the room to what it needs. Past a limit is told, not only refused.
-            if (_commandCount + commands.Length > _limits.commands)
+            // Room for the body at the end of the draw slots (DESIGN 5.6): what was ever taken, what the bodies
+            // shown and not yet drawn will take, and this one -- a slot a command, and an instance record a command
+            // with as many again for a second render fragment it may take later. An early refusal, not a reservation:
+            // a body drawn as more than its region holds takes a region of its own at the end when it comes to it.
+            // Within the limits, since a collection grows the room to what it needs. Past a limit is told, not only
+            // refused; slots of what is drawn no more are not taken again, so it stays refused.
+            long waiting = WaitingForSlots();
+            if (_commandTail + waiting + commands.Length > _limits.commands)
             {
-                ReportRoom("draw commands", _commandCount + commands.Length, _commandCapacity, _limits.commands,
+                ReportRoom("draw commands", _commandTail + waiting + commands.Length, _commandCapacity, _limits.commands,
                     "a body could not be shown");
                 return false;
             }
 
-            if (CurrentInstanceCount() + (commands.Length * 2) > _limits.instances)
+            if (_instanceTail + waiting + (commands.Length * 2) > _limits.instances)
             {
-                ReportRoom("draw instances", CurrentInstanceCount() + (commands.Length * 2), _instanceCapacity,
+                ReportRoom("draw instances", _instanceTail + waiting + (commands.Length * 2), _instanceCapacity,
                     _limits.instances, "a body could not be shown");
                 return false;
             }
@@ -3078,23 +3358,24 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // Two different rooms, judged apart. The drawing data is judged on what is drawn after the swap: the body
-            // goes and the sides that replace it come, each at one render fragment. Holding the body's own geometry and
+            // Two different rooms, judged apart. The drawing data is judged on the end of the draw slots (DESIGN 5.6):
+            // the sides that replace the body take their commands and their instance records there, each at one
+            // render fragment, and the body's own slots are not taken again. Holding the body's own geometry and
             // display instances until the next adoption is not drawing data at all -- it is room in the reference
             // table, and the table is asked by its own rule whether both sides could really be taken.
-            int bodyInstances = body.commands.Length * Math.Max(1, body.renderFragmentsShown);
-            if (ShownCommandCount() - body.commands.Length + commands > _limits.commands)
+            long waiting = WaitingForSlots();
+            if (_commandTail + waiting + commands > _limits.commands)
             {
-                ReportRoom("draw commands", ShownCommandCount() - body.commands.Length + commands, _commandCapacity,
+                ReportRoom("draw commands", _commandTail + waiting + commands, _commandCapacity,
                     _limits.commands, "a cut could not be committed");
                 _commitNow.outcome = "refused: draw command room";
                 CommitLap(ref _commitNow.room);
                 return false;
             }
 
-            if (CurrentInstanceCount() - bodyInstances + commands > _limits.instances)
+            if (_instanceTail + waiting + commands > _limits.instances)
             {
-                ReportRoom("draw instances", CurrentInstanceCount() - bodyInstances + commands, _instanceCapacity,
+                ReportRoom("draw instances", _instanceTail + waiting + commands, _instanceCapacity,
                     _limits.instances, "a cut could not be committed");
                 _commitNow.outcome = "refused: draw instance room";
                 CommitLap(ref _commitNow.room);
@@ -3569,41 +3850,76 @@ namespace Zantetsu.MeshCut
                 NoteCullRequest(cameraStencil);
             }
 
-            // The surfaces, grouped by material: one forward call per run of commands sharing one.
+            // The surfaces, grouped by material: one forward call per run of command slots whose commands share one.
+            // A free slot -- no material, a command of no instance -- breaks no run and begins none: it is drawn
+            // through, drawing nothing, when it lies inside a run, and passed over otherwise (DESIGN 5.6).
             int start = 0;
-            while (start < _commandCount)
+            while (start < _commandEnd)
             {
-                int end = start + 1;
-                while (end < _commandCount && ReferenceEquals(_commandMaterials[end], _commandMaterials[start]))
+                Material material = _commandMaterials[start];
+                if (material == null)
                 {
-                    end++;
+                    start++;
+                    continue;
+                }
+
+                int end = start + 1, next = end;
+                while (next < _commandEnd)
+                {
+                    Material other = _commandMaterials[next];
+                    if (other != null)
+                    {
+                        if (!ReferenceEquals(other, material))
+                        {
+                            break;
+                        }
+
+                        end = next + 1;
+                    }
+
+                    next++;
                 }
 
                 if (culled)
                 {
-                    _batch.RenderForward(
-                        _commandMaterials[start], _properties, _buffers, layer, start, end - start, camera, cameraStencil.view);
+                    _batch.RenderForward(material, _properties, _buffers, layer, start, end - start, camera, cameraStencil.view);
                 }
                 else
                 {
-                    _batch.RenderForward(_commandMaterials[start], _properties, _buffers, layer, start, end - start, camera);
+                    _batch.RenderForward(material, _properties, _buffers, layer, start, end - start, camera);
                 }
 
-                start = end;
+                start = next;
             }
 
             // The casters, grouped by which side of DESIGN 5.4's division a command falls on, over the same commands,
-            // transforms, clip records and offsets as the surfaces above.
+            // transforms, clip records and offsets as the surfaces above; free slots are passed over the same way.
             if (_shadowMaterial != null)
             {
                 start = 0;
-                while (start < _commandCount)
+                while (start < _commandEnd)
                 {
-                    bool provisional = _commandProvisional[start];
-                    int end = start + 1;
-                    while (end < _commandCount && _commandProvisional[end] == provisional)
+                    if (_commandMaterials[start] == null)
                     {
-                        end++;
+                        start++;
+                        continue;
+                    }
+
+                    bool provisional = _commandProvisional[start];
+                    int end = start + 1, next = end;
+                    while (next < _commandEnd)
+                    {
+                        if (_commandMaterials[next] != null)
+                        {
+                            if (_commandProvisional[next] != provisional)
+                            {
+                                break;
+                            }
+
+                            end = next + 1;
+                        }
+
+                        next++;
                     }
 
                     if (culled)
@@ -3628,7 +3944,7 @@ namespace Zantetsu.MeshCut
                         OneSidedShadowIssues++;
                     }
 
-                    start = end;
+                    start = next;
                 }
             }
 
@@ -3675,7 +3991,8 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            instances = _batch.InstanceCount;
+            // The instances that are drawn: the records the batch goes through include free ones (DESIGN 5.6).
+            instances = _liveInstances;
             _batch.ReadCullCountsForDiagnosis(slot.view, out forwardKept, out shadowKept);
             return true;
         }
@@ -3798,7 +4115,8 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            command = _commands[index];
+            EnsureIndexView();
+            command = _commands[_viewCommandSlots[index]];
             return true;
         }
 
@@ -3843,18 +4161,21 @@ namespace Zantetsu.MeshCut
         /// <summary>One instance of the settled collection, in the order it is drawn.</summary>
         public bool TryGetSide(int index, out LogicalCutDisplaySide side)
         {
-            if (index < 0 || index >= _sides.Count)
+            if (index < 0 || index >= _liveInstances)
             {
                 side = default;
                 return false;
             }
 
-            // What the side is was settled with the structure and is kept; its clip is where it stands now, kept with
-            // the instances' own.
-            LogicalCutDisplaySide kept = _sides[index];
+            // What the side is was settled with the structure and is kept where its instance record stands; its clip is
+            // where it stands now, kept with the instances' own; and its render fragment's number is the adopted
+            // snapshot's, read from where its registration's render fragments begin there.
+            EnsureIndexView();
+            int record = _viewInstanceRecords[index];
+            LogicalCutDisplaySide kept = _sides[record];
             side = new LogicalCutDisplaySide(
-                kept.source, kept.renderFragment, kept.operation, kept.side, kept.published, kept.fragment, kept.fixedByAnchors,
-                _clips[index]);
+                kept.source, _viewRenderFragments[index], kept.operation, kept.side, kept.published, kept.fragment, kept.fixedByAnchors,
+                _clips[record]);
             return true;
         }
 
@@ -3933,9 +4254,13 @@ namespace Zantetsu.MeshCut
             _geometries.Restart(0);
             _candidateGeometries.Restart(0);
             _capJobs.Dispose();
-            _sides.Clear();
-            _candidateSides.Clear();
             _commandCount = 0;
+            _commandEnd = 0;
+            _instanceEnd = 0;
+            _liveInstances = 0;
+            _commandTail = 0;
+            _instanceTail = 0;
+            _unshownWithSlots.Clear();
             _capRecordCount = 0;
             _hasSnapshot = false;
             for (int i = 0; i < _cameraStencils.Length; i++)
@@ -3998,6 +4323,10 @@ namespace Zantetsu.MeshCut
             if (_collectStage >= 0) s_collectStages[_collectStage].End();
             s_collectStages[stage].Begin();
             _collectStage = stage;
+            if (_compactThisPass)
+            {
+                _compactionStageAt[stage] = System.Diagnostics.Stopwatch.GetTimestamp();   // the compaction's cost, by stage (D-202)
+            }
         }
 
         // ----- what a collection keeps from the one before (DESIGN 5.6) -----------------------------------------------
@@ -4012,17 +4341,444 @@ namespace Zantetsu.MeshCut
         private readonly Dictionary<LogicalFragmentId, int> _familyHead = new Dictionary<LogicalFragmentId, int>();
 
         // What each registration is drawn as (stage 3): what it was worked out for, and what it came to.
-        private long _drawnLedger = -1, _drawnInputs = -1, _drawnCommands, _drawnInstances;
+        private long _drawnLedger = -1, _drawnInputs = -1;
 
-        // Each side of the draw data -- the adopted one and the one a collection builds in: what its commands,
-        // materials, draw ranges and sides were assembled for (negative: not to be relied on), and its counts.
+        // The tables that go by the snapshot's own numbering -- where each render fragment's commands are and where it
+        // stands, the roots and the draw ranges of every registration -- on each side, the adopted one and the one a
+        // collection builds in: what they were made for (negative: not to be relied on). They are made again when
+        // the structure is another; the draw slots below are not.
         private long _sideLedger = -1, _sideInputs = -1, _candidateSideLedger = -1, _candidateSideInputs = -1;
-        private int _sideCommands, _sideInstances, _candidateSideCommands, _candidateSideInstances;
 
-        // The one range of instances, and of render fragments, over which the two sides may differ: what the side last
-        // built was written over. It is what the next collection gives the other side before writing, and -- for the
-        // side being built -- what this collection sends to the GPU. Empty: start = end = 0.
-        private int _instanceDiffStart, _instanceDiffEnd, _renderFragmentDiffStart, _renderFragmentDiffEnd;
+        // The one range of render fragments over which the two sides' tables may differ: what the side last built was
+        // written over. Empty: start = end = 0.
+        private int _renderFragmentDiffStart, _renderFragmentDiffEnd;
+
+        // ----- the draw slots (DESIGN 5.6) -------------------------------------------------------------------------------
+        //
+        // Every registration that is drawn holds a run of command slots and an instance region (SlotState). Both are
+        // taken at the end of everything taken so far -- the two counts below, which only grow -- and are never taken
+        // again by another registration: what is drawn no more leaves its command slots holding commands of no
+        // instance, and its instance records unnamed, for as long as the display lives. Nothing is searched, split
+        // or joined, and nothing is moved. What a collection takes it takes one after another, so what it adds is one
+        // run of each buffer. A collection that is not adopted puts the two counts back: what it took was never
+        // published. A collection goes through the command slots in [0, end) and may name the instance records in
+        // [0, end); the room grows to where they end, within the limits.
+        private int _commandTail, _instanceTail, _commandTailBefore, _instanceTailBefore;
+
+        // The adopted draw data: where it ends and how much of it draws.
+        private int _commandEnd, _instanceEnd, _liveInstances;
+
+        // What the collection under way wrote into the side it builds in, recorded as it is written: what is sent, and
+        // -- once adopted -- what the other side lacks. And what the side being built lacks of the adopted one: it is
+        // given that from it first. Recorded by whoever writes; nothing is compared to find it.
+        //
+        // The commands: ranges, joined when near. The instance records (transform, clip, side): ONE range, from the
+        // first record written to past the last -- the transforms and the clips are sent as that one range, a buffer
+        // write each, with whatever lies between (DESIGN 5.6). So the side being built is given the whole range it
+        // lacks before anything is written: every record of the range sent is then the adopted content with this
+        // collection's writes over it. A transform and a clip are written together everywhere, so the two buffers'
+        // ranges are the same one. This is what is sent; the history of ordinary writes (D-202) is noted apart.
+        private VpChangedRanges _writtenCommands = new VpChangedRanges(16, 8);
+        private VpChangedRanges _lackingCommands = new VpChangedRanges(16, 8);
+        private InstanceSpan _writtenInstances, _lackingInstances;
+
+        // One contiguous range of instance records, [start, end); empty when end is not past start.
+        private struct InstanceSpan
+        {
+            public int start, end;
+
+            public bool IsEmpty => end <= start;
+
+            public int Count => end > start ? end - start : 0;
+
+            public void Add(int from, int to)
+            {
+                if (to <= from)
+                {
+                    return;
+                }
+
+                if (end <= start)
+                {
+                    start = from;
+                    end = to;
+                    return;
+                }
+
+                if (from < start) start = from;
+                if (to > end) end = to;
+            }
+
+            public void Add(in InstanceSpan other) => Add(other.start, other.end);
+
+            public void Clear()
+            {
+                start = 0;
+                end = 0;
+            }
+        }
+
+        // The side being built cannot be brought up by ranges -- nothing was ever written to it, or its room was made
+        // again larger: it is written whole, every slot.
+        private bool _candidateSlotsWhole = true;
+
+        // The collection under way: its number; whether it is still to be adopted or put back; the registrations
+        // whose slots it changed; how many instance records its commands draw. And the registrations that are no
+        // longer shown and still hold slots: let go by the next collection.
+        private int _slotPass;
+        private bool _slotPassOpen;
+        private readonly List<Shown> _slotTouched = new List<Shown>(16);
+        private readonly List<Shown> _unshownWithSlots = new List<Shown>(4);
+        private int _plannedCommands, _plannedInstances, _plannedCommandsBefore, _plannedInstancesBefore;
+
+        // ----- the compaction of the instance regions (DESIGN 5.6, D-202) ------------------------------------------------
+        //
+        // The regions are taken at the end and never again, so what is drawn no more leaves records that nothing draws
+        // -- holes -- among the live ones, and the live ones spread over everything ever taken. A compaction lays every
+        // live region out again from the first record, in the order of the frame the ordinary processing last wrote a
+        // record of each registration -- the longest unwritten first, the most recently written last -- each region
+        // exactly what it draws, and the tail comes down to what is live: what is written, and so sent, stands
+        // together. The records are written from the snapshot into the side being built, as any other write of a
+        // collection; nothing is moved in place. The command slots are not compacted: a command stays in its slot and
+        // names its region's new start.
+        //
+        // **What the history is.** A registration's last-written frame advances when a collection is adopted whose
+        // ordinary processing wrote an instance record of it, whatever the record held before: a render fragment the
+        // placement pass placed anew (one record of the registration is enough), or the registration written by a
+        // structural collection (first drawn, cut, published, committed, or one of its family was). It is noted at
+        // those write sites and nowhere else, with no comparison of values: when a write is spared there one day, its
+        // note goes with it. The compaction's own rewrite, the catch-up copy between the sides, records only inside a
+        // range sent, and a side or a GPU buffer written whole with what was held are not ordinary writes. A whole
+        // write in the same collection does not hide an ordinary one: what the placement pass placed anew, and what a
+        // structural collection planned, are noted as such whoever wrote the record. The history is for the order of
+        // the regions alone: nothing is updated less or drawn differently for it.
+        //
+        // **When.** Whether a compaction is a candidate is this display's: a collection whose structure stands, at
+        // least the minimum interval of adopted collections after the last compaction (or the last candidate that
+        // found nothing to move), and since then an ordinary write adopted or a hole appeared. A candidate whose order moves no
+        // region writes and sends nothing and resets that baseline. Whether this frame may bear it is the world's,
+        // asked through the gate with the expected cost: heavy work this frame (refill, MobPlan, the static index, a
+        // garbage collection), a cut in flight, the frame's remaining budget. Inside the collection it is also not run
+        // when the structure changed, when room was grown or GPU room is needed, or when the side is written whole.
+        // A candidate that is skipped, or whose collection is not adopted, keeps everything pending.
+        private int _compactionMinimumInterval = 300;   // adopted collections; provisional (TL, 2026-10-06)
+        private bool _compactThisPass;
+        private long _compactionBegan;
+        private readonly long[] _compactionStageAt = new long[10];
+        private int _roomGrowthsAtPassStart, _snapshotRegrowthsAtPassStart;
+        private readonly double[] _compactionCosts = new double[5];
+        private int _compactionCostCount;
+
+        // The baseline the next candidate is judged against: the adopted collections at the last compaction (or the
+        // last candidate with nothing to move), the registrations' ordinary writes adopted since, the holes then.
+        private long _adoptedPasses, _compactionBaselinePass;
+        private int _compactionBaselineHoles;
+        private long _writesSinceCompaction;
+        private bool _candidateOpen;
+
+        // The registrations this collection's ordinary processing wrote (not yet adopted), and the order's work arrays.
+        private readonly List<Shown> _writtenThisPass = new List<Shown>(16);
+        private long[] _orderKeys = new long[64];
+        private Shown[] _orderEntries = new Shown[64];
+
+        /// <summary>
+        /// The seed of the expected cost, a second per live record, before any compaction was measured (D-202). Read
+        /// from the Editor's measurement of one; the Player's own replaces it from the first compaction on.
+        /// </summary>
+        public const double CompactionSeedSecondsPerRecord = 1.0e-6;
+
+        /// <summary>
+        /// Asked, with the expected cost in seconds, whether this frame may bear a compaction that is a candidate:
+        /// null to allow it, or the reason not to (kept and counted). Null when nobody answers: allowed.
+        /// </summary>
+        public Func<double, string> CompactionGate { get; set; }
+
+        /// <summary>
+        /// How many adopted collections must pass after a compaction before another is a candidate (D-202). The
+        /// product's value is the default; tests lower it.
+        /// </summary>
+        public int CompactionMinimumInterval
+        {
+            get => _compactionMinimumInterval;
+            set => _compactionMinimumInterval = Math.Max(1, value);
+        }
+
+        /// <summary>
+        /// Observation: how many times a compaction became a candidate (once per baseline), the collections it was a
+        /// candidate in (one that is skipped is a candidate again in the next), the compactions run, the records laid
+        /// out, the registrations that put a record elsewhere.
+        /// </summary>
+        public long CompactionCandidates { get; private set; }
+        public long CompactionCandidateCollections { get; private set; }
+        public long Compactions { get; private set; }
+        public long CompactionRecordsLaidOut { get; private set; }
+        public long CompactionRegistrationsMoved { get; private set; }
+
+        /// <summary>Observation: candidates whose order moved no region (nothing written or sent, the baseline reset).</summary>
+        public long CompactionsWithoutChange { get; private set; }
+
+        /// <summary>Observation: candidate collections that did not run (the gate, or the collection's own reasons), and why the last one did not.</summary>
+        public long CompactionsSkipped { get; private set; }
+        public string LastCompactionSkipReason { get; private set; }
+        private readonly Dictionary<string, int> _compactionSkipReasons = new Dictionary<string, int>();
+
+        /// <summary>
+        /// Observation: the history. How many times a registration's last-written frame was advanced: once for a
+        /// registration and an adopted collection whose ordinary processing wrote a record of it.
+        /// </summary>
+        public long HistoryRegistrationWrites { get; private set; }
+
+        /// <summary>The last compaction: its records, its registrations, the oldest and the newest last-written frame among them, the frame it was adopted in.</summary>
+        public int LastCompactionRecords { get; private set; }
+        public int LastCompactionRegistrations { get; private set; }
+        public int LastCompactionOldestFrame { get; private set; }
+        public int LastCompactionNewestFrame { get; private set; }
+        public int LastCompactionFrame { get; private set; } = int.MinValue;
+
+        /// <summary>
+        /// The last compaction's cost in seconds: from the decision to the adoption (stages 3 to 8 of its collection),
+        /// and of that the order (the sort and the layout), the candidate's build (stage 5: every live record written
+        /// from the snapshot) and the upload (stage 7).
+        /// </summary>
+        public double LastCompactionSeconds { get; private set; }
+        public double LastCompactionOrderSeconds { get; private set; }
+        public double LastCompactionWriteSeconds { get; private set; }
+        public double LastCompactionUploadSeconds { get; private set; }
+
+        /// <summary>Tests only: the collection that decided to compact is refused right after, as if its room were short.</summary>
+        internal bool FailAfterCompactionPlanForTest { get; set; }
+
+        /// <summary>
+        /// The frame of the last adopted collection whose ordinary processing wrote an instance record of a registered
+        /// fragment; false when it is not registered or was never adopted.
+        /// </summary>
+        public bool TryGetLastWrittenFrame(LogicalFragmentId fragment, out int frame)
+        {
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                if (_shown[g].fragment == fragment && _shown[g].lastWrittenFrame != int.MinValue)
+                {
+                    frame = _shown[g].lastWrittenFrame;
+                    return true;
+                }
+            }
+
+            frame = int.MinValue;
+            return false;
+        }
+
+        /// <summary>
+        /// What a compaction is expected to cost now, in seconds: the median of the last five measured, or the seed
+        /// times the live records before any was.
+        /// </summary>
+        public double ExpectedCompactionSeconds
+        {
+            get
+            {
+                if (_compactionCostCount == 0)
+                {
+                    return _liveInstances * CompactionSeedSecondsPerRecord;
+                }
+
+                int n = Math.Min(_compactionCostCount, _compactionCosts.Length);
+                var sorted = new double[n];
+                Array.Copy(_compactionCosts, sorted, n);
+                Array.Sort(sorted);
+                return sorted[n / 2];
+            }
+        }
+
+        /// <summary>The compaction's record, in words. Log text only.</summary>
+        public string DescribeCompaction()
+        {
+            var reasons = new System.Text.StringBuilder();
+            foreach (KeyValuePair<string, int> pair in _compactionSkipReasons)
+            {
+                reasons.Append(reasons.Length == 0 ? "" : ", ").Append(pair.Value).Append("x ").Append(pair.Key);
+            }
+
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            return "compaction candidates " + CompactionCandidates + " (in " + CompactionCandidateCollections + " collections), run " + Compactions
+                   + " (records laid out " + CompactionRecordsLaidOut + ", registrations whose records moved " + CompactionRegistrationsMoved
+                   + "; the last at frame " + LastCompactionFrame + ": " + LastCompactionRegistrations + " registrations, " + LastCompactionRecords
+                   + " records, last written in frames " + LastCompactionOldestFrame + ".." + LastCompactionNewestFrame + ", "
+                   + (LastCompactionSeconds * 1000.0).ToString("F3", inv) + " ms of which the order " + (LastCompactionOrderSeconds * 1000.0).ToString("F3", inv)
+                   + ", the build " + (LastCompactionWriteSeconds * 1000.0).ToString("F3", inv) + ", the upload " + (LastCompactionUploadSeconds * 1000.0).ToString("F3", inv)
+                   + " ms; expected now " + (ExpectedCompactionSeconds * 1000.0).ToString("F3", inv) + " ms), candidates with nothing to move " + CompactionsWithoutChange
+                   + ", candidate collections not run " + CompactionsSkipped + (reasons.Length > 0 ? " [" + reasons + "]" : "")
+                   + "; history: registrations' ordinary writes adopted " + HistoryRegistrationWrites
+                   + "; since the baseline: such writes " + _writesSinceCompaction + ", adopted collections " + (_adoptedPasses - _compactionBaselinePass) + " (interval "
+                   + _compactionMinimumInterval + "); holes now " + (_instanceTail - _liveInstances) + " of " + _instanceTail + " records taken";
+        }
+
+        // This collection's ordinary processing writes an instance record of the registration: history when the
+        // collection is adopted (D-202). Called where such a record is written, and where it would be were the
+        // registration or the side not written whole in the same collection. No value is looked at.
+        private void NoteWritten(Shown entry)
+        {
+            if (entry.notedPass != _slotPass)
+            {
+                entry.notedPass = _slotPass;
+                _writtenThisPass.Add(entry);
+            }
+        }
+
+        // The render fragments the placement pass placed anew, noted and nothing written: for a collection that
+        // writes the side whole, where no record is written one by one -- the ordinary updates of that collection are
+        // history all the same, and the rest of the side, written with what it held, is not.
+        private void NotePlacedAnewWrites()
+        {
+            bool all = _building.AllRenderFragmentsPlacedAnew;
+            int count = all ? _building.RenderFragmentCount : _building.PlacedAnewCount;
+            for (int a = 0; a < count; a++)
+            {
+                _building.TryGetRenderFragment(all ? a : _building.PlacedAnewAt(a), out VpMultiCutRenderFragment rf);
+                Shown entry = _shown[rf.registration];
+                if (entry.slots.held)
+                {
+                    NoteWritten(entry);
+                }
+            }
+        }
+
+        // A collection whose structure stands: is a compaction a candidate, may this frame bear it, and would it move
+        // anything? Nothing is written here; the regions are laid out again on the registrations (put back if the
+        // collection is not adopted), and the tail brought down. False when the collection is to be refused for a test.
+        private bool ConsiderCompaction()
+        {
+            int holes = _instanceTail - _liveInstances;
+            if (_liveInstances == 0 || _adoptedPasses - _compactionBaselinePass < _compactionMinimumInterval
+                || (_writesSinceCompaction == 0 && holes <= _compactionBaselineHoles))
+            {
+                return true;
+            }
+
+            if (!_candidateOpen)
+            {
+                _candidateOpen = true;
+                CompactionCandidates++;
+            }
+
+            CompactionCandidateCollections++;
+            CountingFrame();
+            _countsNow.draw.compactionCandidates++;
+            string reason = null;
+            if (_candidateSlotsWhole)
+            {
+                reason = "the side is written whole anyway";
+            }
+            else if (RoomGrowths != _roomGrowthsAtPassStart || SnapshotRegrowths != _snapshotRegrowthsAtPassStart)
+            {
+                reason = "room was grown in this collection";
+            }
+            else if (_building.CapVertexCount > _capNormalBuffer.count || AnyCameraStencilSmallerThanRoom())
+            {
+                reason = "GPU room is needed in this collection";
+            }
+
+            if (reason == null && CompactionGate != null)
+            {
+                reason = CompactionGate(ExpectedCompactionSeconds);
+            }
+
+            if (reason != null)
+            {
+                // Skipped: the history and the baseline stand, and it is a candidate again in the next collection.
+                CompactionsSkipped++;
+                LastCompactionSkipReason = reason;
+                _compactionSkipReasons.TryGetValue(reason, out int times);
+                _compactionSkipReasons[reason] = times + 1;
+                _countsNow.draw.compactionsSkipped++;
+                return true;
+            }
+
+            // The order: the live registrations by the frame the ordinary processing last wrote a record of them, the
+            // oldest first; among those of one frame, as they stand now, so that nothing moves for no reason.
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            int n = 0;
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                if (!entry.slots.held || entry.dropping || entry.renderFragments == 0)
+                {
+                    continue;
+                }
+
+                if (n == _orderKeys.Length)
+                {
+                    Array.Resize(ref _orderKeys, n * 2);
+                    Array.Resize(ref _orderEntries, n * 2);
+                }
+
+                _orderKeys[n] = ((long)entry.lastWrittenFrame << 32) | (uint)entry.slots.instanceStart;
+                _orderEntries[n] = entry;
+                n++;
+            }
+
+            Array.Sort(_orderKeys, _orderEntries, 0, n);
+
+            // Would any region move? Each is exactly what it draws, from where the order has come to.
+            int tail = 0, moved = 0;
+            for (int i = 0; i < n; i++)
+            {
+                Shown entry = _orderEntries[i];
+                if (entry.slots.instanceStart != tail || entry.slots.instanceStride != entry.renderFragments)
+                {
+                    moved++;
+                }
+
+                tail += entry.commands.Length * entry.renderFragments;
+            }
+
+            if (moved == 0)
+            {
+                // Nothing to move: no copy and no transfer, and this state is not examined again until there is
+                // something new -- an ordinary write adopted or a hole -- and the interval has passed again.
+                CompactionsWithoutChange++;
+                _compactionBaselinePass = _adoptedPasses + 1;   // counted from this collection, as after a compaction
+                _compactionBaselineHoles = holes;
+                _writesSinceCompaction = 0;
+                _candidateOpen = false;
+                Array.Clear(_orderEntries, 0, n);
+                return true;
+            }
+
+            _compactionBegan = began;
+            _compactThisPass = true;
+            tail = 0;
+            for (int i = 0; i < n; i++)
+            {
+                Shown entry = _orderEntries[i];
+                Touch(entry);
+                entry.slots.instanceStart = tail;
+                entry.slots.instanceStride = entry.renderFragments;
+                entry.rewrite = true;
+                tail += entry.commands.Length * entry.renderFragments;
+            }
+
+            _instanceTail = tail;
+            LastCompactionRecords = tail;
+            LastCompactionRegistrations = n;
+            LastCompactionOldestFrame = (int)(_orderKeys[0] >> 32);
+            LastCompactionNewestFrame = (int)(_orderKeys[n - 1] >> 32);
+            CompactionRegistrationsMoved += moved;
+            LastCompactionOrderSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+            Array.Clear(_orderEntries, 0, n);
+            return !FailAfterCompactionPlanForTest;
+        }
+
+        private bool AnyCameraStencilSmallerThanRoom()
+        {
+            foreach (CameraStencil slot in _cameraStencils)
+            {
+                if (slot != null && IsSmallerThanRoom(slot.batch))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// Observation, since this display was made: registrations whose state was read from the ledger; times the
@@ -4046,6 +4802,11 @@ namespace Zantetsu.MeshCut
         /// <summary>Observation: the body batches' buffer writes themselves (SetData calls), since this display was made.</summary>
         public long BodyArgumentSetDataCalls => _pastArgumentCalls + _batch.ArgumentSetDataCalls;
         public long BodyInstanceSetDataCalls => _pastInstanceCalls + _batch.InstanceSetDataCalls;
+
+        /// <summary>Observation: of those, the writes of the instance records' range: the transforms' buffer and the clips', counted where each is made.</summary>
+        public long BodyInstanceTransformSetDataCalls => _pastTransformCalls + _batch.InstanceTransformSetDataCalls;
+        public long BodyInstanceClipSetDataCalls => _pastClipCalls + _batch.InstanceClipSetDataCalls;
+        private long _pastTransformCalls, _pastClipCalls;
 
         /// <summary>Tests only: the cap normals' GPU buffer now drawn from.</summary>
         internal GraphicsBuffer CapNormalBufferForTest => _capNormalBuffer;
@@ -4071,12 +4832,291 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Tests only: the body's batch now drawn from, and the adopted transform of one instance.</summary>
         internal VpIndexedIndirectDrawBatch BodyBatchForTest => _batch;
-        internal Matrix4x4 InstanceTransformForTest(int instance) => _transforms[instance];
+        internal Matrix4x4 InstanceTransformForTest(int instance)
+        {
+            EnsureIndexView();
+            return _transforms[_viewInstanceRecords[instance]];
+        }
 
-        // The side being built is not one to keep: its next collection assembles it whole.
+        // The tables of the side being built are not ones to keep: its next collection makes them again.
         private void InvalidateCandidateSide()
         {
             _candidateSideLedger = -1;
+        }
+
+        // ----- a collection's hold on the draw slots ------------------------------------------------------------------------
+
+        private void OpenSlotPass()
+        {
+            _slotPass++;
+            _slotPassOpen = true;
+            _slotTouched.Clear();
+            _writtenCommands.Clear();
+            _writtenInstances.Clear();
+            _plannedCommandsBefore = _plannedCommands;
+            _plannedInstancesBefore = _plannedInstances;
+            _commandTailBefore = _commandTail;
+            _instanceTailBefore = _instanceTail;
+            _compactThisPass = false;
+            _writtenThisPass.Clear();
+            _roomGrowthsAtPassStart = RoomGrowths;
+            _snapshotRegrowthsAtPassStart = SnapshotRegrowths;
+        }
+
+        // The first time this collection changes a registration's slots: what they were is kept, to be put back.
+        private void Touch(Shown entry)
+        {
+            if (entry.slotPass == _slotPass)
+            {
+                return;
+            }
+
+            entry.slotPass = _slotPass;
+            entry.slotsBefore = entry.slots;
+            entry.rewrite = false;
+            entry.releasing = false;
+            _slotTouched.Add(entry);
+        }
+
+        // A registration drawn no more: its commands are made to draw nothing by this collection, and it holds no
+        // slots from here on. They are not taken again.
+        private void PlanRelease(Shown entry)
+        {
+            if (!entry.slots.held)
+            {
+                return;
+            }
+
+            Touch(entry);
+            int commands = entry.commands.Length;
+            _plannedCommands -= commands;
+            _plannedInstances -= commands * entry.slots.renderFragments;
+            entry.slots = default;
+            entry.releasing = true;
+        }
+
+        // What the registrations that are shown and hold no slots yet will take at the end when they are first drawn:
+        // a command slot a command, and at least an instance record a command.
+        private long WaitingForSlots()
+        {
+            long waiting = 0;
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                if (!entry.slots.held && !entry.dropping)
+                {
+                    waiting += entry.commands.Length;
+                }
+            }
+
+            return waiting;
+        }
+
+        /// <summary>
+        /// Stage 3 of a collection whose structure is another: which registrations' slots this collection writes, with
+        /// the slots a registration lacks taken. A registration is written when it holds none, when it is drawn as
+        /// another number of render fragments or its clipped state is another, or when the structure the snapshot
+        /// settled for it is not the one its slots were written for -- which the snapshot says by the part it shares
+        /// between builds, so nothing is compared. Everything else stands: no slot of it is touched.
+        /// <para>
+        /// A registration first drawn takes a run of command slots, one a command, and an instance region of exactly
+        /// what it draws, both at the end. One that draws more render fragments than its region has room for takes
+        /// a new region at the end, its own alone; its commands stay where they are and name the new region. One that
+        /// draws as many as its region has room for, or fewer, is written where it stands and keeps the room it has.
+        /// The slots of what is drawn no more, and a region left for a larger one, are not taken by anything again.
+        /// Nothing is written here.
+        /// </para>
+        /// False when the end would pass a limit (the caller puts back what was taken).
+        /// </summary>
+        private bool TryPlanSlots(out string shortOf, out long needed, out string failure)
+        {
+            shortOf = null;
+            needed = 0;
+            failure = null;
+            for (int i = 0; i < _retiring.Count; i++)
+            {
+                PlanRelease(_retiring[i]);
+            }
+
+            for (int i = 0; i < _unshownWithSlots.Count; i++)
+            {
+                PlanRelease(_unshownWithSlots[i]);
+            }
+
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                int commands = entry.commands.Length;
+                if (entry.renderFragments == 0 || commands == 0)
+                {
+                    PlanRelease(entry);
+                    continue;
+                }
+
+                object part = _building.StructurePartAt(g, out long serial);
+                bool another = !entry.slots.held || entry.slots.renderFragments != entry.renderFragments
+                    || entry.slots.clipped != entry.clipped;
+                if (!another && part != null && ReferenceEquals(entry.slots.part, part) && entry.slots.partSerial == serial)
+                {
+                    continue;
+                }
+
+                Touch(entry);
+                if (!entry.slots.held)
+                {
+                    if (_commandTail > _limits.commands - commands)
+                    {
+                        shortOf = "draw commands";
+                        needed = (long)_commandTail + commands;
+                        failure = "no room at the end for " + commands + " command slots: " + _commandTail + " of "
+                                  + _limits.commands + " were taken since the display was made (" + _plannedCommands
+                                  + " of them draw; a slot is not taken again)";
+                        return false;
+                    }
+
+                    entry.slots.commandStart = _commandTail;
+                    entry.slots.instanceStride = 0;
+                    _commandTail += commands;
+                    _plannedCommands += commands;
+                }
+
+                if (entry.renderFragments > entry.slots.instanceStride)
+                {
+                    int records = checked(commands * entry.renderFragments);
+                    if (_instanceTail > _limits.instances - records)
+                    {
+                        shortOf = "draw instances";
+                        needed = (long)_instanceTail + records;
+                        failure = "no room at the end for " + records + " instance records: " + _instanceTail + " of "
+                                  + _limits.instances + " were taken since the display was made (" + _plannedInstances
+                                  + " of them are drawn; a record is not taken again)";
+                        return false;
+                    }
+
+                    RegionsTaken++;
+                    if (entry.slots.held)
+                    {
+                        RegionsMoved++;
+                        InstanceRecordsMoved += commands * entry.slots.renderFragments;
+                    }
+
+                    entry.slots.instanceStart = _instanceTail;
+                    entry.slots.instanceStride = entry.renderFragments;
+                    _instanceTail += records;
+                }
+
+                _plannedInstances += commands * (entry.renderFragments - (entry.slots.held ? entry.slots.renderFragments : 0));
+                entry.slots.held = true;
+                entry.slots.renderFragments = entry.renderFragments;
+                entry.slots.clipped = entry.clipped;
+                entry.slots.part = part;
+                entry.slots.partSerial = serial;
+                entry.rewrite = true;
+            }
+
+            return true;
+        }
+
+        // The collection was not adopted: the registrations hold the slots they held, the two ends are where they
+        // were -- what it took there was never published, and is taken by the next collection -- and what it wrote
+        // into the side it built in is what that side now lacks of the adopted one.
+        private void PutSlotsBack()
+        {
+            for (int i = 0; i < _slotTouched.Count; i++)
+            {
+                Shown entry = _slotTouched[i];
+                entry.slots = entry.slotsBefore;
+                entry.slotsBefore = default;
+                entry.slotPass = -1;
+                entry.rewrite = false;
+                entry.releasing = false;
+            }
+
+            _slotTouched.Clear();
+            _compactThisPass = false;
+            _writtenThisPass.Clear();   // not adopted: no history of it, and the baseline stands
+            _commandTail = _commandTailBefore;
+            _instanceTail = _instanceTailBefore;
+            _plannedCommands = _plannedCommandsBefore;
+            _plannedInstances = _plannedInstancesBefore;
+            _lackingCommands.AddAll(_writtenCommands);
+            _lackingInstances.Add(_writtenInstances);   // with what it lacked before, if a compaction left that uncopied
+            _writtenCommands.Clear();
+            _writtenInstances.Clear();
+            _slotPassOpen = false;
+
+            // What the registrations are drawn as was worked out for a collection that planned slots it no longer
+            // has: the next one works it out and plans again, whatever it is settled from.
+            _drawnLedger = -1;
+        }
+
+        // The collection was adopted: the slots are as it planned them, and what it wrote is what the other side --
+        // the one the next collection builds in -- lacks.
+        private void KeepSlots()
+        {
+            for (int i = 0; i < _slotTouched.Count; i++)
+            {
+                Shown entry = _slotTouched[i];
+                entry.slotsBefore = default;
+                entry.rewrite = false;
+                entry.releasing = false;
+            }
+
+            // The history (D-202): what this collection's ordinary processing wrote is adopted with it, and only then.
+            _adoptedPasses++;
+            int adoptedFrame = CurrentFrame;
+            int written = _writtenThisPass.Count;
+            for (int i = 0; i < written; i++)
+            {
+                _writtenThisPass[i].lastWrittenFrame = adoptedFrame;
+            }
+
+            _writtenThisPass.Clear();
+            HistoryRegistrationWrites += written;
+            _writesSinceCompaction += written;
+            if (written > 0)
+            {
+                CountingFrame();
+                _countsNow.draw.historyWrites += written;
+            }
+
+            if (_compactThisPass)
+            {
+                double frequency = System.Diagnostics.Stopwatch.Frequency;
+                double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - _compactionBegan) / frequency;
+                _compactionCosts[_compactionCostCount % _compactionCosts.Length] = seconds;
+                _compactionCostCount++;
+                LastCompactionSeconds = seconds;
+                LastCompactionWriteSeconds = (_compactionStageAt[6] - _compactionStageAt[5]) / frequency;
+                LastCompactionUploadSeconds = (_compactionStageAt[8] - _compactionStageAt[7]) / frequency;
+                LastCompactionFrame = adoptedFrame;
+                Compactions++;
+                CompactionRecordsLaidOut += LastCompactionRecords;
+                CountingFrame();
+                _countsNow.draw.compactions++;
+                _countsNow.draw.compactionRecordsMoved += LastCompactionRecords;
+                _countsNow.draw.compactionMilliseconds += seconds * 1000.0;
+                _countsNow.draw.compactionOrderMilliseconds += LastCompactionOrderSeconds * 1000.0;
+                _countsNow.draw.compactionWriteMilliseconds += LastCompactionWriteSeconds * 1000.0;
+                _countsNow.draw.compactionUploadMilliseconds += LastCompactionUploadSeconds * 1000.0;
+                _compactThisPass = false;
+
+                // The baseline of the next candidate. What this very collection's ordinary processing wrote was laid
+                // out by the history it had before, so it stays pending; the compaction's own rewrite is not among it.
+                _compactionBaselinePass = _adoptedPasses;
+                _compactionBaselineHoles = 0;
+                _writesSinceCompaction = written;
+                _candidateOpen = false;
+            }
+
+            _slotTouched.Clear();
+            _unshownWithSlots.Clear();   // each was let go by this collection
+            Swap(ref _lackingCommands, ref _writtenCommands);
+            _lackingInstances = _writtenInstances;   // a compaction's range covers every live record, so nothing older is owed
+            _writtenCommands.Clear();
+            _writtenInstances.Clear();
+            _candidateSlotsWhole = false;
+            _slotPassOpen = false;
         }
 
         // One registration's state, read from the ledger, changing nothing there.
@@ -4154,6 +5194,8 @@ namespace Zantetsu.MeshCut
         private bool TryCollectAndUpload()
         {
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
+            VpDrawDataCounts drawBefore = DrawTotals();
+            OpenSlotPass();
             SumValidate(_validateBefore);
             SumPlace(_placeStructuralBefore, _placePlacementOnlyBefore);
             try
@@ -4162,14 +5204,22 @@ namespace Zantetsu.MeshCut
             }
             catch (OutOfMemoryException exception)
             {
-                return FailRoom("snapshot structure", _shown.Count, _instanceCapacity, _limits.instances,
+                return FailRoom("snapshot structure", _shown.Count, _fragmentCapacity, _fragmentLimit,
                     "memory could not be had: " + exception.Message);
             }
             finally
             {
                 if (_collectStage >= 0) s_collectStages[_collectStage].End();
                 _collectStage = -1;
+
+                // A collection that was not adopted leaves the draw slots as the adopted side has them.
+                if (_slotPassOpen)
+                {
+                    PutSlotsBack();
+                }
+
                 CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
+                CountDraw(drawBefore);
                 SumValidate(_validateAfter);
                 _countsNow.validate.AddDifference(_validateAfter, _validateBefore);
                 SumPlace(_placeStructuralAfter, _placePlacementOnlyAfter);
@@ -4226,7 +5276,7 @@ namespace Zantetsu.MeshCut
             //    </para>
             if (!TryGrowForRegistrations(out string registrationsFailure))
             {
-                return FailRoom("room for the registrations", _shown.Count, _instanceCapacity, _limits.instances, registrationsFailure);
+                return FailRoom("room for the registrations", _shown.Count, _fragmentCapacity, _fragmentLimit, registrationsFailure);
             }
 
             VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
@@ -4274,14 +5324,8 @@ namespace Zantetsu.MeshCut
             //    structure -- which render fragments a registration has, whether any carries a plane (as many planes as
             //    it has selected boundaries), whether it is split -- so it is worked out again only when what a
             //    structure is settled from has changed, and stands otherwise.
-            long commandCount;
-            long instanceCount;
-            if (stampLedger >= 0 && _drawnLedger == stampLedger && _drawnInputs == _inputRevision)
-            {
-                commandCount = _drawnCommands;
-                instanceCount = _drawnInstances;
-            }
-            else
+            bool structural = !(stampLedger >= 0 && _drawnLedger == stampLedger && _drawnInputs == _inputRevision);
+            if (structural)
             {
                 DrawArrangements++;
                 _drawnLedger = -1;
@@ -4310,46 +5354,62 @@ namespace Zantetsu.MeshCut
                     entry.split |= rf.root != entry.fragment || rf.rootPendingSide != 0f || rf.aggregated;
                 }
 
-                commandCount = 0;
-                instanceCount = 0;
                 for (int g = 0; g < _shown.Count; g++)
                 {
                     Shown entry = _shown[g];
                     entry.split |= entry.renderFragments > 1;
-                    if (entry.renderFragments > 0)
-                    {
-                        commandCount += entry.commands.Length;
-                        instanceCount += (long)entry.commands.Length * entry.renderFragments;
-                    }
                 }
 
-                _drawnCommands = commandCount;
-                _drawnInstances = instanceCount;
+                // The draw slots (DESIGN 5.6): which registrations this collection writes, the slots they lack taken.
+                // Nothing is written yet, and nothing of the adopted side is touched.
+                if (!TryPlanSlots(out string shortOf, out long slotsNeeded, out string slotFailure))
+                {
+                    bool commandsShort = shortOf == "draw commands";
+                    return FailRoom(
+                        shortOf, slotsNeeded, commandsShort ? _commandCapacity : _instanceCapacity,
+                        commandsShort ? _limits.commands : _limits.instances, slotFailure);
+                }
+
                 _drawnInputs = _inputRevision;
                 _drawnLedger = stampLedger;
             }
-
-            // Capacity, decided before anything is taken or uploaded, and grown to fit when short -- the snapshot just
-            // built is kept as it is. The stencil side's room follows from these: no more volume commands than eight per
-            // instance, no more caps than the snapshot holds. The draw-range table holds one entry per registration and
-            // grows with the instances, which are never fewer than the registrations; it is asked here all the same,
-            // before anything is taken, rather than found out while the candidate is built.
-            if (commandCount > _commandCapacity && !TryGrow(RoomKind.Commands, commandCount, false, out string commandFailure))
+            else if (!ConsiderCompaction())
             {
-                return FailRoom("draw commands", commandCount, _commandCapacity, _limits.commands, commandFailure);
+                // The compaction of the instance regions (DESIGN 5.6, D-202): a collection whose structure stands may
+                // lay the live regions out again. Refused here only for a test.
+                return FailRoom("compaction", _instanceTail, _instanceCapacity, _limits.instances, "refused after the plan, for a test");
             }
 
-            long instancesNeeded = Math.Max(instanceCount, _shown.Count);
-            if (instancesNeeded > _instanceCapacity
-                && !TryGrow(RoomKind.Instances, instancesNeeded, false, out string instanceFailure))
+            // Capacity, decided before anything is written or uploaded, and grown to fit when short -- the snapshot just
+            // built is kept as it is. The draw slots' room reaches to where they end: everything ever taken, drawn or
+            // not. The stencil side's room follows from the render fragments, not from these: no more volume commands
+            // than eight per render fragment, no more caps than the snapshot holds. The draw-range table holds one
+            // entry per registration and grows with the render fragments, which are never fewer than the
+            // registrations; it is asked here all the same, before anything is taken, rather than found out while the
+            // candidate is built.
+            int commandEnd = _commandTail;
+            int instanceEnd = _instanceTail;
+            if (commandEnd > _commandCapacity && !TryGrow(RoomKind.Commands, commandEnd, false, out string commandFailure))
             {
-                return FailRoom("draw instances", instancesNeeded, _instanceCapacity, _limits.instances, instanceFailure);
+                return FailRoom("draw commands", commandEnd, _commandCapacity, _limits.commands, commandFailure);
+            }
+
+            if (instanceEnd > _instanceCapacity
+                && !TryGrow(RoomKind.Instances, instanceEnd, false, out string instanceFailure))
+            {
+                return FailRoom("draw instances", instanceEnd, _instanceCapacity, _limits.instances, instanceFailure);
+            }
+
+            if (_shown.Count > _fragmentCapacity
+                && !TryGrow(RoomKind.Fragments, _shown.Count, false, out string fragmentFailure))
+            {
+                return FailRoom("render fragments", _shown.Count, _fragmentCapacity, _fragmentLimit, fragmentFailure);
             }
 
             if (_shown.Count > _candidateGeometries.Capacity)
             {
-                return FailRoom("draw-range table", _shown.Count, _candidateGeometries.Capacity, _limits.instances,
-                    "the table was not grown with the instances");
+                return FailRoom("draw-range table", _shown.Count, _candidateGeometries.Capacity, _fragmentLimit,
+                    "the table was not grown with the render fragments");
             }
 
             EnterCollectStage(4);
@@ -4363,9 +5423,10 @@ namespace Zantetsu.MeshCut
             }
 
             EnterCollectStage(5);
-            // 5. The candidate, beside the adopted draw data: assembled whole when its structure is not the one this
-            //    side holds, and otherwise only written where the placement pass placed something anew.
-            BuildCandidate(stampLedger, out int commands, out int instances, out bool candidateWhole);
+            // 5. The candidate, beside the adopted draw data: first given what the adopted side was written over and
+            //    it was not; then the registrations whose slots this collection writes, and the instance records of
+            //    what the placement pass placed anew. Every other slot stands as it is.
+            BuildCandidate(stampLedger, structural, commandEnd, instanceEnd);
 
             EnterCollectStage(6);
             // 6. The largest stencil arrangement this candidate could need -- every non-empty cap a job of its own, its
@@ -4385,11 +5446,11 @@ namespace Zantetsu.MeshCut
             VpIndexedIndirectDrawBatch grownBatch = null;
             GraphicsBuffer grownNormals = null;
             if (stencilFits && !TryMakeGpuRoomForCandidate(
-                    commands, instances, capVertices, out grownBatch, out grownNormals, out string gpuFailure))
+                    commandEnd, instanceEnd, capVertices, out grownBatch, out grownNormals, out string gpuFailure))
             {
                 GiveBackInstancesTakenThisPass();
                 InvalidateCandidateSide();
-                return FailRoom("GPU buffers", instances, _batch.InstanceCapacity, _limits.instances, gpuFailure);
+                return FailRoom("GPU buffers", instanceEnd, _batch.InstanceCapacity, _limits.instances, gpuFailure);
             }
 
             VpIndexedIndirectDrawBatch bodyBatch = grownBatch ?? _batch;
@@ -4408,8 +5469,10 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // The body batch is asked too, by exactly the counts and contents it would be sent, before anything is written.
-            if (stencilFits && !bodyBatch.CanUpload(_candidateCommands.Valid, commands, _candidateTransforms.Valid, _candidateClips.Valid))
+            // The body batch is asked too, by the very ends it would be sent, before anything is written.
+            if (stencilFits && !bodyBatch.CanUploadSlots(
+                    _candidateCommands.Valid, _candidateCommandStarts.Valid, commandEnd, _candidateTransforms.Valid,
+                    _candidateClips.Valid, instanceEnd))
             {
                 stencilFits = false;
             }
@@ -4446,15 +5509,15 @@ namespace Zantetsu.MeshCut
                 // A larger buffer made a moment ago holds nothing yet: it takes every cap's normals.
                 UploadCapNormals(_building, grownNormals ?? _capNormalBuffer, grownNormals != null || collectEverythingForTest);
 
-                // The commands go only when this side was assembled whole (or the batch needs them: a new one, another
-                // stereo condition); of the transforms and the clips, the one range this collection wrote. Everything
-                // outside it is on the GPU already, as the adopted side has it -- a batch never sent to takes it all.
-                int sendFrom = candidateWhole ? 0 : _instanceDiffStart, sendTo = candidateWhole ? instances : _instanceDiffEnd;
+                // Only what this collection wrote goes: the ranges of commands and of instance records recorded as
+                // they were written. Everything outside them is on the GPU already, as the adopted side has it. A batch
+                // never sent to -- one that takes a smaller one's place -- and another stereo condition take everything
+                // below the two ends instead, which the batch counts apart.
                 uploaded = RefuseBodyUploadForTest != null && RefuseBodyUploadForTest()
                     ? false
-                    : bodyBatch.TryUploadChanged(
-                        _candidateCommands.Valid, commands, _candidateTransforms.Valid, _candidateClips.Valid, singlePassInstanced,
-                        candidateWhole, sendFrom, sendTo);
+                    : bodyBatch.TryUploadSlots(
+                        _candidateCommands.Valid, _candidateCommandStarts.Valid, commandEnd, _candidateTransforms.Valid,
+                        _candidateClips.Valid, instanceEnd, singlePassInstanced, _writtenCommands, _writtenInstances.start, _writtenInstances.end);
             }
             catch
             {
@@ -4497,6 +5560,11 @@ namespace Zantetsu.MeshCut
                 _pastInstanceElements += _batch.InstanceElementsTransferred;
                 _pastArgumentCalls += _batch.ArgumentSetDataCalls;
                 _pastInstanceCalls += _batch.InstanceSetDataCalls;
+                _pastTransformCalls += _batch.InstanceTransformSetDataCalls;
+                _pastClipCalls += _batch.InstanceClipSetDataCalls;
+                _pastWholeArguments += _batch.WholeArgumentElementsTransferred;
+                _pastWholeInstances += _batch.WholeInstanceElementsTransferred;
+                _pastWholeCalls += _batch.WholeSetDataCalls;
                 _pastCullDispatches += _batch.CullDispatches;
                 _batch = grownBatch;
             }
@@ -4504,7 +5572,7 @@ namespace Zantetsu.MeshCut
             EnterCollectStage(8);
             // 8. Only the complete candidate is adopted. Shared family results stay owned by both snapshots
             //    until the old reader is cleared on the next build; GPU resources keep their existing retirement.
-            Adopt(commands);
+            Adopt(commandEnd, instanceEnd);
             CommandUploads++;
 
             EnterCollectStage(9);
@@ -4526,12 +5594,21 @@ namespace Zantetsu.MeshCut
                     ReleaseReferences(entry);
                     _shown.RemoveAt(g);
                     InputChanged();
+
+                    // Still drawn as this adoption has it: its slots are let go by the next collection.
+                    if (entry.slots.held)
+                    {
+                        entry.firstRenderFragmentShown = entry.firstRenderFragment;
+                        _unshownWithSlots.Add(entry);
+                    }
+
                     continue;
                 }
 
                 entry.splitShown = entry.split;
                 entry.awaitingShown = entry.awaiting && !entry.split;
                 entry.renderFragmentsShown = entry.renderFragments;
+                entry.firstRenderFragmentShown = entry.firstRenderFragment;
                 int required = Math.Max(1, entry.renderFragments);
                 while (entry.instances.Count > required)
                 {
@@ -4593,28 +5670,56 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// The candidate draw data from the built snapshot: per registration and command, one command whose instances
-        /// are its render fragments in order, each with the body's transform and that render fragment's clip record of
-        /// every selected face; where each render fragment's commands and transform are, which a stencil volume is later
-        /// drawn from with its own face's clip; every registration's draw ranges; and one cap record per snapshot cap.
+        /// The candidate draw data from the built snapshot, in the side that is not drawn from (DESIGN 5.6).
+        /// <para>
+        /// **The slots.** A side that can be brought up is first given, from the adopted side, the ranges that side was
+        /// written over and this one was not; then the registrations this collection planned to write are written --
+        /// their commands, each with where its instances begin, its material and its caster, and every instance
+        /// record of theirs -- and the commands of what is drawn no more are zeroed; then the render fragments the
+        /// placement pass placed anew have their transforms and clips written, a record a command. A side that cannot
+        /// be brought up has every slot written instead. Each write records its range; nothing else is touched.
+        /// </para>
+        /// <para>
+        /// **The tables by the snapshot's numbering** -- where each render fragment's commands are (the slots of its
+        /// registration) and where it stands, which a stencil volume is later drawn from with its own face's clip;
+        /// every registration's root and draw ranges -- are made again when the structure is another, and otherwise
+        /// only written where something was placed anew. And one cap record per snapshot cap.
+        /// </para>
         /// </summary>
-        private void BuildCandidate(long stampLedger, out int commandCount, out int instanceCount, out bool whole)
+        private void BuildCandidate(long stampLedger, bool structural, int commandEnd, int instanceEnd)
         {
-            // This side keeps what it was assembled with when that was for the very structure this collection is of,
-            // the adopted side is of it too (so the two differ only over the one range kept), and the placement pass
-            // told the render fragments it placed anew apart.
-            whole = !(stampLedger >= 0
-                      && _candidateSideLedger == stampLedger && _candidateSideInputs == _inputRevision
-                      && _sideLedger == stampLedger && _sideInputs == _inputRevision
-                      && _candidateSideCommands == _sideCommands && _candidateSideInstances == _sideInstances
-                      && !_building.AllRenderFragmentsPlacedAnew);
-            if (whole)
+            if (_candidateSlotsWhole || collectEverythingForTest)
             {
-                AssembleCandidate(stampLedger, out commandCount, out instanceCount);
+                WriteEverySlot(commandEnd, instanceEnd);
+                NotePlacedAnewWrites();   // the side is written whole: the ordinary updates among it are noted apart (D-202)
             }
             else
             {
-                WritePlacedAnew(out commandCount, out instanceCount);
+                // A compacting collection writes every live registration's records where they now stand, so the side
+                // is not given the adopted one's records first: it would be given them where they used to be.
+                CatchUpSlots(!_compactThisPass);
+                if (structural || _compactThisPass)
+                {
+                    WritePlannedSlots();
+                }
+
+                WritePlacedAnewRecords();
+            }
+
+            // The tables are kept when they were made for the very structure this collection is of, the adopted side's
+            // were too (so the two differ only over the one range kept), and the placement pass told the render
+            // fragments it placed anew apart.
+            bool tablesKept = stampLedger >= 0
+                              && _candidateSideLedger == stampLedger && _candidateSideInputs == _inputRevision
+                              && _sideLedger == stampLedger && _sideInputs == _inputRevision
+                              && !_building.AllRenderFragmentsPlacedAnew;
+            if (tablesKept)
+            {
+                WritePlacedAnewTables();
+            }
+            else
+            {
+                AssembleTables(stampLedger);
             }
 
             // One cap record per snapshot cap: where a cap is -- its plane, its normal, its vertices -- is of this frame.
@@ -4625,108 +5730,230 @@ namespace Zantetsu.MeshCut
             }
         }
 
-        /// <summary>
-        /// The structure this side holds stands: nothing of its commands, materials, draw ranges or sides is touched.
-        /// First the side is given what the other side was written over and it was not -- one range, copied; then the
-        /// render fragments the placement pass placed anew have their transforms and clips written, each instance of
-        /// them, with no comparison. The range written is what is sent, and what the other side is given next time.
-        /// </summary>
-        private void WritePlacedAnew(out int commandCount, out int instanceCount)
+        // The side being built is given what the adopted side was written over and it was not: the commands' recorded
+        // ranges and the instance records' one range, copied, and nothing else. After this the two sides hold the same
+        // in every slot. Without the instances (a compaction, which writes every live record where it now stands) the
+        // range is kept as owed: the side lacks it still if this collection is not adopted.
+        private void CatchUpSlots(bool instances)
         {
-            if (_instanceDiffEnd > _instanceDiffStart)
+            for (int r = 0; r < _lackingCommands.Count; r++)
             {
-                int count = _instanceDiffEnd - _instanceDiffStart;
-                _candidateTransforms.CopyFrom(_transforms, _instanceDiffStart, _instanceDiffStart, count);
-                _candidateClips.CopyFrom(_clips, _instanceDiffStart, _instanceDiffStart, count);
-                InstanceRecordsCaughtUp += count;
+                int start = _lackingCommands.StartAt(r), count = _lackingCommands.EndAt(r) - start;
+                _candidateCommands.CopyFrom(_commands, start, start, count);
+                _candidateCommandStarts.CopyFrom(_commandStarts, start, start, count);
+                _candidateCommandProvisional.CopyFrom(_commandProvisional, start, start, count);
+                Array.Copy(_commandMaterials, start, _candidateCommandMaterials, start, count);
+                CommandRecordsCaughtUp += count;
             }
 
+            if (instances)
+            {
+                if (!_lackingInstances.IsEmpty)
+                {
+                    int start = _lackingInstances.start, count = _lackingInstances.Count;
+                    _candidateTransforms.CopyFrom(_transforms, start, start, count);
+                    _candidateClips.CopyFrom(_clips, start, start, count);
+                    _candidateSides.CopyFrom(_sides, start, start, count);
+                    InstanceRecordsCaughtUp += count;
+                }
+
+                _lackingInstances.Clear();
+            }
+
+            _lackingCommands.Clear();
+        }
+
+        // Every slot of a side that cannot be brought up by ranges: the free command slots zeroed, every registration
+        // that holds slots written. Everything below the two ends is then what this collection wrote.
+        private void WriteEverySlot(int commandEnd, int instanceEnd)
+        {
+            CandidateAssemblies++;
+            _candidateCommands.Clear(0, commandEnd);
+            _candidateCommandStarts.Clear(0, commandEnd);
+            _candidateCommandProvisional.Clear(0, commandEnd);
+            Array.Clear(_candidateCommandMaterials, 0, commandEnd);
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                if (_shown[g].slots.held)
+                {
+                    WriteRegistration(_shown[g]);
+                    if (_shown[g].rewrite && !_compactThisPass)
+                    {
+                        NoteWritten(_shown[g]);   // the structure's plan wrote it: as where the planned slots are written (D-202)
+                    }
+                }
+            }
+
+            _writtenCommands.Clear();
+            _writtenCommands.Add(0, commandEnd);
+            _writtenInstances.Clear();
+            _writtenInstances.Add(0, instanceEnd);
+            _lackingCommands.Clear();
+            _lackingInstances.Clear();
+        }
+
+        // What stage 3 planned: the registrations to write, and the commands of what is drawn no more made to draw
+        // nothing -- a command of no instance, which the next selection and the next draw read as such. A compacting
+        // collection has every live registration here, each written where its region now stands (D-202).
+        private void WritePlannedSlots()
+        {
+            for (int i = 0; i < _slotTouched.Count; i++)
+            {
+                Shown entry = _slotTouched[i];
+                if (entry.releasing)
+                {
+                    int start = entry.slotsBefore.commandStart, count = entry.commands.Length;
+                    _candidateCommands.Clear(start, count);
+                    _candidateCommandStarts.Clear(start, count);
+                    _candidateCommandProvisional.Clear(start, count);
+                    Array.Clear(_candidateCommandMaterials, start, count);
+                    _writtenCommands.Add(start, start + count);
+                    CommandRecordsWritten += count;
+                }
+            }
+
+            for (int i = 0; i < _slotTouched.Count; i++)
+            {
+                Shown entry = _slotTouched[i];
+                if (!entry.releasing && entry.rewrite)
+                {
+                    WriteRegistration(entry);
+                    if (!_compactThisPass)
+                    {
+                        // Written because its structure changed (first drawn, cut, published, committed, or one of
+                        // its family was): an ordinary write (D-202). A compaction's rewrite is none.
+                        NoteWritten(entry);
+                    }
+                }
+            }
+        }
+
+        // One registration's slots, whole: its commands -- each with where its instances begin, its material and its
+        // caster -- and, per command, the instance record of every render fragment it is drawn as.
+        private void WriteRegistration(Shown entry)
+        {
+            SlotState slots = entry.slots;
+            int commands = entry.commands.Length;
+            for (int c = 0; c < commands; c++)
+            {
+                VpIndirectCommand source = entry.commands[c];
+                int slot = slots.commandStart + c;
+                int first = slots.instanceStart + (c * slots.instanceStride);
+                _candidateCommands[slot] = new VpIndirectCommand(source.range, source.localBounds, slots.renderFragments);
+                _candidateCommandStarts[slot] = first;
+                _candidateCommandMaterials[slot] = entry.commandMaterials[c];
+                _candidateCommandProvisional[slot] = slots.clipped;
+                for (int k = 0; k < slots.renderFragments; k++)
+                {
+                    int r = entry.firstRenderFragment + k;
+                    _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                    _candidateTransforms[first + k] = rf.geometryLocalToWorld;
+                    _candidateClips[first + k] = rf.clip;
+                    _candidateSides[first + k] = SideOf(entry, r, rf);
+                }
+            }
+
+            entry.writtenPass = _slotPass;
+            _writtenCommands.Add(slots.commandStart, slots.commandStart + commands);
+            _writtenInstances.Add(slots.instanceStart, slots.instanceStart + (commands * slots.instanceStride));
+            CommandRecordsWritten += commands;
+            InstanceRecordsWritten += commands * slots.renderFragments;
+            RegistrationsWritten++;
+        }
+
+        // The render fragments the placement pass placed anew, of registrations this collection did not write whole:
+        // their transforms and clips, a record a command, where their registration's region has them. No comparison.
+        private void WritePlacedAnewRecords()
+        {
+            if (_building.AllRenderFragmentsPlacedAnew)
+            {
+                int every = _building.RenderFragmentCount;
+                for (int r = 0; r < every; r++)
+                {
+                    WritePlacedAnewRecord(r);
+                }
+
+                return;
+            }
+
+            int anew = _building.PlacedAnewCount;
+            for (int a = 0; a < anew; a++)
+            {
+                WritePlacedAnewRecord(_building.PlacedAnewAt(a));
+            }
+        }
+
+        private void WritePlacedAnewRecord(int r)
+        {
+            _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+            Shown entry = _shown[rf.registration];
+            if (!entry.slots.held)
+            {
+                return;   // drawn as nothing
+            }
+
+            // The history (D-202): the placement pass placed it anew, so its record is an ordinary write of this
+            // collection -- here, or a moment ago with its registration written whole (by the structure's plan or by
+            // a compaction, whose own rewrite of the others is no such write).
+            NoteWritten(entry);
+            if (entry.writtenPass == _slotPass)
+            {
+                return;   // written whole a moment ago
+            }
+
+            int commands = entry.commands.Length;
+            int stride = entry.slots.instanceStride;
+            int first = entry.slots.instanceStart + (r - entry.firstRenderFragment);
+            for (int c = 0; c < commands; c++)
+            {
+                int i = first + (c * stride);
+                _candidateTransforms[i] = rf.geometryLocalToWorld;
+                _candidateClips[i] = rf.clip;
+            }
+
+            _writtenInstances.Add(first, first + ((commands - 1) * stride) + 1);
+            InstanceRecordsWritten += commands;
+        }
+
+        // The tables by the snapshot's numbering stand: the side is given the one range the other was written over, and
+        // where the render fragments placed anew stand is written.
+        private void WritePlacedAnewTables()
+        {
             if (_renderFragmentDiffEnd > _renderFragmentDiffStart)
             {
                 _candidateRfTransform.CopyFrom(
                     _rfTransform, _renderFragmentDiffStart, _renderFragmentDiffStart, _renderFragmentDiffEnd - _renderFragmentDiffStart);
             }
 
-            int from = int.MaxValue, to = 0, rfFrom = int.MaxValue, rfTo = 0;
+            int rfFrom = int.MaxValue, rfTo = 0;
             int anew = _building.PlacedAnewCount;
             for (int a = 0; a < anew; a++)
             {
                 int r = _building.PlacedAnewAt(a);
                 _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                Shown entry = _shown[rf.registration];
-                int first = entry.firstInstance + (r - entry.firstRenderFragment);
-                int stride = entry.renderFragments;
-                int count = entry.commands.Length;
-                for (int c = 0; c < count; c++)
-                {
-                    int i = first + c * stride;
-                    _candidateTransforms[i] = rf.geometryLocalToWorld;
-                    _candidateClips[i] = rf.clip;
-                }
-
-                if (count > 0)
-                {
-                    if (first < from) from = first;
-                    int last = first + (count - 1) * stride + 1;
-                    if (last > to) to = last;
-                    InstanceRecordsWritten += count;
-                }
-
                 _candidateRfTransform[r] = rf.geometryLocalToWorld;
                 if (r < rfFrom) rfFrom = r;
                 if (r + 1 > rfTo) rfTo = r + 1;
             }
 
-            _instanceDiffStart = to > 0 ? from : 0;
-            _instanceDiffEnd = to;
             _renderFragmentDiffStart = rfTo > 0 ? rfFrom : 0;
             _renderFragmentDiffEnd = rfTo;
-            commandCount = _candidateSideCommands;
-            instanceCount = _candidateSideInstances;
         }
 
-        /// <summary>The candidate side assembled whole, as every collection did before: commands, materials, draw ranges, sides, transforms and clips.</summary>
-        private void AssembleCandidate(long stampLedger, out int commandCount, out int instanceCount)
+        // The tables by the snapshot's numbering made again: where each render fragment's commands are -- its
+        // registration's command slots -- and where it stands; and every registration's root and draw ranges.
+        private void AssembleTables(long stampLedger)
         {
-            CandidateAssemblies++;
-            InvalidateCandidateSide();   // until it is whole
-            _candidateSides.Clear();
-            int command = 0;
-            int instance = 0;
+            InvalidateCandidateSide();   // until they are whole
             for (int g = 0; g < _shown.Count; g++)
             {
                 Shown entry = _shown[g];
-                entry.firstInstance = instance;
-                if (entry.renderFragments == 0)
-                {
-                    continue;
-                }
-
-                int bodyStart = command;
-                for (int c = 0; c < entry.commands.Length; c++)
-                {
-                    VpIndirectCommand source = entry.commands[c];
-                    _candidateCommands[command] = new VpIndirectCommand(source.range, source.localBounds, entry.renderFragments);
-                    _candidateCommandMaterials[command] = entry.commandMaterials[c];
-                    _candidateCommandProvisional[command] = entry.clipped;
-                    command++;
-                    for (int k = 0; k < entry.renderFragments; k++)
-                    {
-                        int r = entry.firstRenderFragment + k;
-                        _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                        _candidateTransforms[instance] = rf.geometryLocalToWorld;
-                        _candidateClips[instance] = rf.clip;
-                        _candidateSides.Add(SideOf(entry, r, rf));
-                        instance++;
-                    }
-                }
-
                 for (int k = 0; k < entry.renderFragments; k++)
                 {
                     int r = entry.firstRenderFragment + k;
                     _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment placed);
-                    _candidateRfCommandStart[r] = bodyStart;
-                    _candidateRfCommandCount[r] = entry.commands.Length;
+                    _candidateRfCommandStart[r] = entry.slots.held ? entry.slots.commandStart : 0;
+                    _candidateRfCommandCount[r] = entry.slots.held ? entry.commands.Length : 0;
                     _candidateRfTransform[r] = placed.geometryLocalToWorld;
                 }
             }
@@ -4746,17 +5973,9 @@ namespace Zantetsu.MeshCut
                 _candidateGeometries.Add(_shown[g].ranges);
             }
 
-            commandCount = command;
-            instanceCount = instance;
-            InstanceRecordsWritten += instance;
-
-            // Whole: the two sides may differ anywhere, and everything of this one is to be sent.
-            _instanceDiffStart = 0;
-            _instanceDiffEnd = instance;
+            // Whole: the two sides' tables may differ anywhere.
             _renderFragmentDiffStart = 0;
             _renderFragmentDiffEnd = _building.RenderFragmentCount;
-            _candidateSideCommands = command;
-            _candidateSideInstances = instance;
             _candidateSideInputs = _inputRevision;
             _candidateSideLedger = stampLedger;
         }
@@ -4842,14 +6061,16 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// The candidate becomes what is drawn. Everything trades places -- the snapshots, the arrays and the list of
-        /// sides alike -- so what was adopted a moment ago becomes the room the next candidate is built in. Nothing is
-        /// copied and nothing can grow here.
+        /// The candidate becomes what is drawn. Everything trades places -- the snapshots and the arrays alike -- so
+        /// what was adopted a moment ago becomes the room the next candidate is built in. Nothing is copied and nothing
+        /// can grow here. The draw slots stay where they are: what the side just replaced lacks of this one is the
+        /// ranges this collection wrote, kept for the collection that builds in it next (DESIGN 5.6).
         /// </summary>
-        private void Adopt(int commandCount)
+        private void Adopt(int commandEnd, int instanceEnd)
         {
             Swap(ref _snapshot, ref _building);
             Swap(ref _commands, ref _candidateCommands);
+            Swap(ref _commandStarts, ref _candidateCommandStarts);
             Swap(ref _commandMaterials, ref _candidateCommandMaterials);
             Swap(ref _commandProvisional, ref _candidateCommandProvisional);
             Swap(ref _transforms, ref _candidateTransforms);
@@ -4862,22 +6083,25 @@ namespace Zantetsu.MeshCut
             Swap(ref _geometries, ref _candidateGeometries);
             Swap(ref _sides, ref _candidateSides);
 
-            // What each side was assembled for goes with it; the side just replaced keeps what it holds, to be given
-            // the one range it lacks -- or assembled whole -- by the collection that builds in it next.
+            // What each side's tables were made for goes with it.
             Swap(ref _sideLedger, ref _candidateSideLedger);
             Swap(ref _sideInputs, ref _candidateSideInputs);
-            Swap(ref _sideCommands, ref _candidateSideCommands);
-            Swap(ref _sideInstances, ref _candidateSideInstances);
 
-            _commandCount = commandCount;
+            _commandEnd = commandEnd;
+            _instanceEnd = instanceEnd;
+            _commandCount = _plannedCommands;
+            _liveInstances = _plannedInstances;
             _capRecordCount = _snapshot.CapCount;
             _hasSnapshot = true;
             MostRenderFragments = Math.Max(MostRenderFragments, _snapshot.RenderFragmentCount);
-            MostCommands = Math.Max(MostCommands, commandCount);
+            MostCommands = Math.Max(MostCommands, _commandCount);
             MostBranches = Math.Max(MostBranches, _snapshot.BranchCount);
             MostCandidates = Math.Max(MostCandidates, _snapshot.CandidateCount);
             MostCaps = Math.Max(MostCaps, _snapshot.CapCount);
             MostCapVertices = Math.Max(MostCapVertices, _snapshot.CapVertexCount);
+
+            // The collection is adopted: what it stopped using is free, and what it wrote is what the other side lacks.
+            KeepSlots();
 
             // Every camera's preparation was for the snapshot just replaced.
             _generation++;
@@ -4894,6 +6118,7 @@ namespace Zantetsu.MeshCut
         {
             Commands,
             Instances,
+            Fragments,
             Branches,
             Candidates,
         }
@@ -4925,6 +6150,12 @@ namespace Zantetsu.MeshCut
 
         public int InstanceCapacity => _instanceCapacity;
 
+        /// <summary>
+        /// How many render fragments, and registrations, there is room for at once: what the snapshot, the caps and
+        /// every camera's stencil batch are sized from (DESIGN 5.6). Not the draw slots' room.
+        /// </summary>
+        public int RenderFragmentCapacity => _fragmentCapacity;
+
         public int BranchCapacity => _branchCapacity;
 
         public int CandidateCapacity => _candidateCapacity;
@@ -4932,7 +6163,8 @@ namespace Zantetsu.MeshCut
         /// <summary>This display's room, in words. Log text only.</summary>
         public string DescribeRoom()
             => "display room: commands " + _commandCapacity + " (limit " + _limits.commands + "), instances " + _instanceCapacity
-               + " (limit " + _limits.instances + "), branches " + _branchCapacity + " (limit " + _limits.branches + "), candidates "
+               + " (limit " + _limits.instances + "), render fragments " + _fragmentCapacity + " (limit " + _fragmentLimit
+               + "), branches " + _branchCapacity + " (limit " + _limits.branches + "), candidates "
                + _candidateCapacity + " (limit " + _limits.candidates + "), grown " + RoomGrowths + " times, replaced GPU objects "
                + "awaiting release " + _retiredGpu.Count + "; " + _table.DescribeRoom();
 
@@ -4945,7 +6177,7 @@ namespace Zantetsu.MeshCut
         {
             failure = null;
             if (!TryDeriveCapacities(
-                    _commandCapacity, _instanceCapacity, _branchCapacity, _candidateCapacity, _chainDepth,
+                    _commandCapacity, _fragmentCapacity, _branchCapacity, _candidateCapacity, _chainDepth,
                     out DerivedCapacities derived))
             {
                 failure = "a size derived from the room is not an int";
@@ -4976,19 +6208,22 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // A side whose room is made larger is assembled whole in it: what holds a reference is made again, empty.
+            // A side whose room is made larger is written whole in it: what holds a reference is made again, empty.
             if (_candidateCommands.Length < _commandCapacity || _candidateTransforms.Length < _instanceCapacity
                 || _candidateRfTransform.Length < derived.renderFragments || _candidateCommandMaterials.Length < _commandCapacity
-                || _candidateGeometries.Capacity < _instanceCapacity)
+                || _candidateGeometries.Capacity < _fragmentCapacity)
             {
                 InvalidateCandidateSide();
+                _candidateSlotsWhole = true;
             }
 
             if (!_candidateCommands.TryGrow(_commandCapacity, out failure)
+                || !_candidateCommandStarts.TryGrow(_commandCapacity, out failure)
                 || !_candidateCommandProvisional.TryGrow(_commandCapacity, out failure)
                 || !_candidateTransforms.TryGrow(_instanceCapacity, out failure)
                 || !_candidateClips.TryGrow(_instanceCapacity, out failure)
-                || !_candidateRoots.TryGrow(_instanceCapacity, out failure)
+                || !_candidateSides.TryGrow(_instanceCapacity, out failure)
+                || !_candidateRoots.TryGrow(_fragmentCapacity, out failure)
                 || !_candidateRfCommandStart.TryGrow(derived.renderFragments, out failure)
                 || !_candidateRfCommandCount.TryGrow(derived.renderFragments, out failure)
                 || !_candidateRfTransform.TryGrow(derived.renderFragments, out failure)
@@ -5005,25 +6240,20 @@ namespace Zantetsu.MeshCut
             try
             {
                 AtLeast(ref _candidateCommandMaterials, _commandCapacity);
-                if (_candidateGeometries.Capacity < _instanceCapacity)
+                if (_candidateGeometries.Capacity < _fragmentCapacity)
                 {
                     _candidateGeometries.Restart(0);
-                    _candidateGeometries = new GeometryTable(_instanceCapacity);
+                    _candidateGeometries = new GeometryTable(_fragmentCapacity);
                 }
 
-                if (_candidateSides.Capacity < _instanceCapacity)
+                if (_shown.Capacity < _fragmentCapacity)
                 {
-                    _candidateSides.Capacity = _instanceCapacity;
+                    _shown.Capacity = _fragmentCapacity;
                 }
 
-                if (_shown.Capacity < _instanceCapacity)
+                if (_registrations.Capacity < _fragmentCapacity)
                 {
-                    _shown.Capacity = _instanceCapacity;
-                }
-
-                if (_registrations.Capacity < _instanceCapacity)
-                {
-                    _registrations.Capacity = _instanceCapacity;
+                    _registrations.Capacity = _fragmentCapacity;
                 }
             }
             catch (OutOfMemoryException exception)
@@ -5078,6 +6308,7 @@ namespace Zantetsu.MeshCut
             int grown = (int)Math.Min(limit, Math.Max(needed, held * 2L));
             int commands = _commandCapacity;
             int instances = _instanceCapacity;
+            int fragments = _fragmentCapacity;
             int branches = _branchCapacity;
             int candidates = _candidateCapacity;
             SetRoom(kind, grown);
@@ -5091,6 +6322,7 @@ namespace Zantetsu.MeshCut
             {
                 _commandCapacity = commands;
                 _instanceCapacity = instances;
+                _fragmentCapacity = fragments;
                 _branchCapacity = branches;
                 _candidateCapacity = candidates;
                 return false;
@@ -5107,10 +6339,10 @@ namespace Zantetsu.MeshCut
         /// <summary>
         /// Grows, together and once, every count that the registrations themselves show to be short, before anything is
         /// built: a registration that is kept has at least one branch and one render fragment, and all its commands with
-        /// at least one instance each, so the kept registrations and their commands are a floor under the branches, the
-        /// instances and the commands. A count whose floor is past its limit is left as it is -- the build and the
-        /// checks after it tell that shortfall as they always did. False, changing no count, when the room could not
-        /// be made.
+        /// at least one instance each, so the kept registrations are a floor under the branches and the render
+        /// fragments, and their commands one under the commands and the instances. A count whose floor is past its
+        /// limit is left as it is -- the build and the checks after it tell that shortfall as they always did. False,
+        /// changing no count, when the room could not be made.
         /// </summary>
         private bool TryGrowForRegistrations(out string failure)
         {
@@ -5129,23 +6361,29 @@ namespace Zantetsu.MeshCut
 
             int commands = _commandCapacity;
             int instances = _instanceCapacity;
+            int fragments = _fragmentCapacity;
             int branches = _branchCapacity;
             int candidates = _candidateCapacity;
             int grownCommands = GrownFor(keptCommands, commands, _limits.commands);
-            int grownInstances = GrownFor(Math.Max(keptCommands, kept), instances, _limits.instances);
+            int grownInstances = GrownFor(keptCommands, instances, _limits.instances);
+            int grownFragments = GrownFor(kept, fragments, _fragmentLimit);
             int grownBranches = GrownFor(kept, branches, _limits.branches);
-            if (grownCommands == commands && grownInstances == instances && grownBranches == branches)
+            if (grownCommands == commands && grownInstances == instances && grownFragments == fragments && grownBranches == branches)
             {
                 return true;
             }
 
             _commandCapacity = grownCommands;
             _instanceCapacity = grownInstances;
+            _fragmentCapacity = grownFragments;
             _branchCapacity = grownBranches;
             bool refusedForTest = false;
-            for (int kind = 0; kind < 3 && !refusedForTest; kind++)
+            for (int kind = 0; kind < 4 && !refusedForTest; kind++)
             {
-                bool grows = kind == 0 ? grownBranches != branches : kind == 1 ? grownInstances != instances : grownCommands != commands;
+                bool grows = kind == 0 ? grownBranches != branches
+                    : kind == 1 ? grownFragments != fragments
+                    : kind == 2 ? grownCommands != commands
+                    : grownInstances != instances;
                 refusedForTest = grows && FailRoomAllocationForTest != null && FailRoomAllocationForTest();
             }
 
@@ -5158,14 +6396,16 @@ namespace Zantetsu.MeshCut
             {
                 _commandCapacity = commands;
                 _instanceCapacity = instances;
+                _fragmentCapacity = fragments;
                 _branchCapacity = branches;
                 _candidateCapacity = candidates;
                 return false;
             }
 
             if (grownBranches != branches) NoteGrown(RoomKind.Branches, branches, grownBranches, kept);
-            if (grownInstances != instances) NoteGrown(RoomKind.Instances, instances, grownInstances, Math.Max(keptCommands, kept));
+            if (grownFragments != fragments) NoteGrown(RoomKind.Fragments, fragments, grownFragments, kept);
             if (grownCommands != commands) NoteGrown(RoomKind.Commands, commands, grownCommands, keptCommands);
+            if (grownInstances != instances) NoteGrown(RoomKind.Instances, instances, grownInstances, keptCommands);
             return true;
         }
 
@@ -5192,6 +6432,7 @@ namespace Zantetsu.MeshCut
         private int GrowthsToLimits()
         {
             return StepsToLimit(_commandCapacity, _limits.commands) + StepsToLimit(_instanceCapacity, _limits.instances)
+                + StepsToLimit(_fragmentCapacity, _fragmentLimit)
                 + StepsToLimit(_branchCapacity, _limits.branches) + StepsToLimit(_candidateCapacity, _limits.candidates);
         }
 
@@ -5217,8 +6458,8 @@ namespace Zantetsu.MeshCut
                     return TryGrow(RoomKind.Candidates, _candidateCapacity + 1L, true, out failure);
                 case VpMultiCutShortage.RenderFragments:
                 case VpMultiCutShortage.Caps:
-                    // Render fragments are the instances' own number, and caps eight per render fragment.
-                    return TryGrow(RoomKind.Instances, _instanceCapacity + 1L, true, out failure);
+                    // Caps are eight per render fragment.
+                    return TryGrow(RoomKind.Fragments, _fragmentCapacity + 1L, true, out failure);
                 default:
                     // The chain depth is a limit of the lineage, not room to grow.
                     failure = "the chain depth is not grown";
@@ -5232,6 +6473,7 @@ namespace Zantetsu.MeshCut
             {
                 case RoomKind.Commands: return _commandCapacity;
                 case RoomKind.Instances: return _instanceCapacity;
+                case RoomKind.Fragments: return _fragmentCapacity;
                 case RoomKind.Branches: return _branchCapacity;
                 default: return _candidateCapacity;
             }
@@ -5243,6 +6485,7 @@ namespace Zantetsu.MeshCut
             {
                 case RoomKind.Commands: return _limits.commands;
                 case RoomKind.Instances: return _limits.instances;
+                case RoomKind.Fragments: return _fragmentLimit;
                 case RoomKind.Branches: return _limits.branches;
                 default: return _limits.candidates;
             }
@@ -5254,6 +6497,7 @@ namespace Zantetsu.MeshCut
             {
                 case RoomKind.Commands: _commandCapacity = value; break;
                 case RoomKind.Instances: _instanceCapacity = value; break;
+                case RoomKind.Fragments: _fragmentCapacity = value; break;
                 case RoomKind.Branches: _branchCapacity = value; break;
                 default: _candidateCapacity = value; break;
             }
@@ -5265,6 +6509,7 @@ namespace Zantetsu.MeshCut
             {
                 case RoomKind.Commands: return "draw commands";
                 case RoomKind.Instances: return "draw instances";
+                case RoomKind.Fragments: return "render fragments";
                 case RoomKind.Branches: return "branches";
                 default: return "candidates";
             }
@@ -5277,8 +6522,8 @@ namespace Zantetsu.MeshCut
                 case VpMultiCutShortage.Branches: return "branches";
                 case VpMultiCutShortage.Candidates: return "candidates";
                 case VpMultiCutShortage.ChainDepth: return "chain depth";
-                case VpMultiCutShortage.RenderFragments: return "render fragments (draw instances)";
-                case VpMultiCutShortage.Caps: return "caps (draw instances)";
+                case VpMultiCutShortage.RenderFragments: return "render fragments";
+                case VpMultiCutShortage.Caps: return "caps (render fragments)";
                 default: return "snapshot room";
             }
         }
@@ -5290,7 +6535,7 @@ namespace Zantetsu.MeshCut
                 case VpMultiCutShortage.Branches: return _branchCapacity;
                 case VpMultiCutShortage.Candidates: return _candidateCapacity;
                 case VpMultiCutShortage.ChainDepth: return _chainDepth;
-                default: return _instanceCapacity;
+                default: return _fragmentCapacity;
             }
         }
 
@@ -5301,7 +6546,7 @@ namespace Zantetsu.MeshCut
                 case VpMultiCutShortage.Branches: return _limits.branches;
                 case VpMultiCutShortage.Candidates: return _limits.candidates;
                 case VpMultiCutShortage.ChainDepth: return _chainDepth;
-                default: return _limits.instances;
+                default: return _fragmentLimit;
             }
         }
 
@@ -5670,29 +6915,6 @@ namespace Zantetsu.MeshCut
             }
 
             return false;
-        }
-
-        private int CurrentInstanceCount()
-        {
-            int count = 0;
-            for (int i = 0; i < _shown.Count; i++)
-            {
-                count += _shown[i].commands.Length * Math.Max(1, _shown[i].renderFragmentsShown);
-            }
-
-            return count;
-        }
-
-        /// <summary>The commands every registration would draw at one render fragment each: the room a swap must fit.</summary>
-        private int ShownCommandCount()
-        {
-            int count = 0;
-            for (int i = 0; i < _shown.Count; i++)
-            {
-                count += _shown[i].commands.Length;
-            }
-
-            return count;
         }
 
         private void ReleaseReferences(Shown entry)

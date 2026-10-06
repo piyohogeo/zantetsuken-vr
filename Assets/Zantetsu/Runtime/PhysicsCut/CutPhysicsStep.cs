@@ -246,7 +246,18 @@ namespace Zantetsu.PhysicsCut
         private static void BeginFrame()
         {
             s_frameStart = Stopwatch.GetTimestamp();
+            s_gcCountAtFrameStart = GC.CollectionCount(0);
         }
+
+        private static int s_gcCountAtFrameStart;
+
+        /// <summary>
+        /// How many garbage collections have completed since this frame began (the collector's own count of
+        /// generation 0 collections; an incremental collection counts when it completes, its slices do not, and a
+        /// collection later in this frame is not known yet). 0 outside Play or before the first frame.
+        /// </summary>
+        public static int GcCollectionsThisFrame =>
+            !Application.isPlaying || s_frameStart == 0 ? 0 : GC.CollectionCount(0) - s_gcCountAtFrameStart;
 
         /// <summary>The decision, the simulation if it is taken, and then each driver's collection.</summary>
         private static void AfterLateUpdate()

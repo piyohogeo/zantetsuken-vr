@@ -19,10 +19,13 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// frame, so the selection is put into URP's frame by the product's own route and nothing here issues it.
     /// <para>
     /// **The same scenes, taken twice.** One world draws as VP Stage 3 and one through the GPU selection; each goes
-    /// through the same five stages -- the whole body; the cut while its geometry is held back (the sides clipped,
+    /// through the same seven stages -- the whole body; the cut while its geometry is held back (the sides clipped,
     /// two-sided casters, the cut face drawn by the stencil caps); the committed children; a row of further bodies
-    /// registered along the view, across every split of the shadow map and past its range; and one piece retired --
-    /// and each stage is taken from the same five views: the bodies in view, the bodies out of view with their shadow
+    /// registered along the view, across every split of the shadow map and past its range; one piece retired, which
+    /// leaves commands of no instance among the others (DESIGN 5.6); a body registered after it, taken at the end; and
+    /// the compaction of the instance regions (D-202), run by the display on the product's own path once its interval,
+    /// held off until then, is lowered for the case (the retirement and the cut left holes) -- and each stage is taken
+    /// from the same five views: the bodies in view, the bodies out of view with their shadow
     /// in it, nothing in view, the first view again, and down the row. The display starts with room for two commands
     /// and two instances, so the body's GPU buffers are replaced by larger ones on the way. The fixture holds one world
     /// a case, so the two worlds are two cases and a third compares what they took; it fails, rather than passing, when
@@ -39,7 +42,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     {
         private const int GpuCullViews = 5;
         private const int GpuCullRowStage = 3;
-        private static readonly string[] s_gpuCullStages = { "whole", "immediate", "committed", "row registered", "piece retired" };
+        private static readonly string[] s_gpuCullStages = { "whole", "immediate", "committed", "row registered", "piece retired", "registered after the retirement", "compacted" };
         private static readonly string[] s_gpuCullViewNames = { "bodies in view", "only the shadow in view", "nothing in view", "bodies in view again", "down the row" };
         private static readonly Dictionary<bool, List<Color32[]>> s_gpuCullImages = new Dictionary<bool, List<Color32[]>>();
 
@@ -173,6 +176,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(geometryPool, Is.Not.Null);
                 geometryPool.HoldEverything = true;
                 root.Driver.RemainingMainSeconds = () => 1.0;
+                root.Display.CompactionMinimumInterval = int.MaxValue;   // held off until the stage that is about it
                 Assert.That(root.GpuCullFallback, Is.Null, "the world did not fall back");
                 Assert.That(root.Display.CullsOnGpu, Is.EqualTo(gpu), "the world draws by the route this case asked for");
                 Assert.That(GpuCullMaterialCopies(), gpu ? Is.EqualTo(4) : Is.Zero, "the selection's own materials: two surfaces and two casters");
@@ -274,6 +278,52 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 yield return null;
                 yield return GpuCullTakeStage(root, stage, gpu, 4, images, kept);
                 Assert.That(root.Display.CommandCount, Is.LessThan(commandsBefore), "the retired piece's commands are gone");
+
+                // A body registered after the retirement (DESIGN 5.6): the retired piece left command slots among the
+                // others' that are drawn through -- and selected through -- as commands of no instance; the new body is
+                // taken at the end, not in them, and nothing of the retired piece is drawn again.
+                int endBefore = root.Display.DrawCommandEnd;
+                Assert.That(endBefore, Is.GreaterThan(root.Display.CommandCount), "the retired piece's command slots are still gone through, drawing nothing");
+                // It stands to the side, in the first view and with its shadow outside the narrow one: that view's
+                // measure of shadow takes the value most of the picture has for the lit ground.
+                LogicalFragmentId late = AddBody(root, new Vector3(6f, 1.5f, 2f));
+                Assert.That(root.Owners.TryGet(late, out PhysicsFragmentOwner lateOwner), Is.True);
+                lateOwner.Body.isKinematic = true;
+                yield return null;
+                yield return null;
+                yield return null;
+                Assert.That(
+                    root.Display.TryGetDrawSlots(late, out int lateStart, out int lateCommands, out int _, out int _, out int _), Is.True,
+                    "the body registered after the retirement is drawn");
+                TestContext.Out.WriteLine(
+                    (gpu ? "GPU selection" : "VP Stage 3") + ": the late body's " + lateCommands + " commands from slot " + lateStart + "; the end was " + endBefore
+                    + " and is " + root.Display.DrawCommandEnd + "; commands that draw " + root.Display.CommandCount);
+                Assert.That(lateStart, Is.EqualTo(endBefore), "at the end, not in the slots the retired piece left");
+                Assert.That(root.Display.DrawCommandEnd, Is.EqualTo(endBefore + lateCommands));
+                Assert.That(root.Display.DrawCommandEnd, Is.GreaterThan(root.Display.CommandCount), "which are still gone through, drawing nothing");
+                yield return GpuCullTakeStage(root, stage, gpu, 5, images, kept);
+
+                // The compaction of the instance regions (D-202), on the product's path: the world's gate decides the
+                // frame, the display whether it is a candidate -- the interval, held off until here, lowered to one
+                // adopted collection; the retirement and the cut's regions left holes. The live records are laid out
+                // again from the first in the order they were last written in, the tail comes down to them, every
+                // command stays in its slot, and both routes draw the same five views as before.
+                int instanceEndBefore = root.Display.DrawInstanceEnd, commandEndBefore = root.Display.DrawCommandEnd;
+                Assert.That(root.Display.Compactions, Is.Zero, "the layout: none before this stage");
+                Assert.That(instanceEndBefore, Is.GreaterThan(root.Display.DrawInstanceCount), "the layout: holes among the instance records");
+                root.Display.CompactionMinimumInterval = 1;
+                yield return Until(() => root.Display.Compactions > 0 || root.Display.CompactionsSkipped > 30, "the display compacts (or keeps being refused)");
+                root.Display.CompactionMinimumInterval = int.MaxValue;
+                TestContext.Out.WriteLine((gpu ? "GPU selection" : "VP Stage 3") + ": " + root.Display.DescribeCompaction());
+                Assert.That(root.Display.Compactions, Is.EqualTo(1), "one compaction, on the product's path: " + root.Display.LastCompactionSkipReason);
+                Assert.That(root.Display.DrawInstanceEnd, Is.EqualTo(root.Display.DrawInstanceCount), "the tail is the live records");
+                Assert.That(root.Display.DrawInstanceEnd, Is.LessThan(instanceEndBefore), "and below where it was");
+                Assert.That(root.Display.DrawCommandEnd, Is.EqualTo(commandEndBefore), "the command slots are not compacted");
+                Assert.That(root.Display.LastCompactionOldestFrame, Is.LessThanOrEqualTo(root.Display.LastCompactionNewestFrame), "ordered by the frame each was last written in");
+                yield return null;
+                yield return null;
+                yield return GpuCullTakeStage(root, stage, gpu, 6, images, kept);
+                Assert.That(root.Display.Compactions, Is.EqualTo(1), "and not again within the interval");
 
                 TestContext.Out.WriteLine((gpu ? "GPU selection" : "VP Stage 3") + ":\n" + string.Join("\n", kept));
                 Assert.That(root.Display.IsHalted, Is.False);
@@ -389,6 +439,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 string line = label + ": drawn pixels " + lit + ", darker than the ground " + shadowed;
+                TestContext.Out.WriteLine(
+                    line + " (ground value " + ground + "; draw bounds " + root.Display.BodyBatchForTest.WorldBounds + "; commands " + root.Display.CommandCount
+                    + " in " + root.Display.DrawCommandEnd + " slots, instances " + root.Display.DrawInstanceCount + " in " + root.Display.DrawInstanceEnd + " records)");
                 if (view == 2)
                 {
                     Assert.That(lit, Is.Zero, label + ": nothing is in this view");

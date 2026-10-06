@@ -407,7 +407,9 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void AnAdoptionRefusedAfterAddingARegistration_PreparesTheOldSnapshotWithItsOwnTable()
         {
-            using (Scene scene = NewScene(instances: 4))
+            // Six instance records: the first body's two, and the region of three it takes at the end when it is
+            // split in three (DESIGN 5.6). The second body's two more would end at seven, which is what is refused.
+            using (Scene scene = NewScene(instances: 6))
             {
                 LogicalCutLedger ledger = scene.ledger;
                 VpLogicalCutDisplay display = scene.display;
@@ -415,7 +417,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId first = ledger.AddFragment(below);
                 Assert.That(display.TryShow(first, AppendCube(scene.storage, false), Matrix4x4.identity), Is.True);
                 display.GeometryTableRoomForTest(out object roomA, out object roomB, out int capacity, out _);
-                Assert.That(capacity, Is.EqualTo(4), "the table's room is the instance capacity");
+                Assert.That(capacity, Is.EqualTo(6), "the table's room is the instance capacity");
                 var (_, plus, _) = Cut(ledger, first, new float4(0f, 1f, 0f, 0f));
                 Collect(scene);
                 AssertTableRoom(display, roomA, roomB, "one registration");
@@ -427,7 +429,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(display.TryShow(second, AppendCube(scene.storage, false), Matrix4x4.Translate(new Vector3(0f, 0f, 3f))), Is.True);
                 Admit(ledger, plus, new float4(1f, 0f, 0f, 0f));
                 Admit(ledger, second, new float4(0f, 1f, 0f, 0f));
-                Assert.That(display.TryBeginFrame(), Is.False, "three render fragments and two more: five instances, room for four");
+                Assert.That(display.TryBeginFrame(), Is.False, "a region of three at the end of the first two, and two more: seven records, room for six");
                 Assert.That(display.IsHalted, Is.False, "an ordinary refusal");
                 Assert.That(display.AdoptedSnapshot.RegistrationCount, Is.EqualTo(1), "the old snapshot");
                 Assert.That(display.AdoptedGeometries.Count, Is.EqualTo(1), "with its own table");

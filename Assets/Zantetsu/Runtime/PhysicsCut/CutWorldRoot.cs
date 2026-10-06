@@ -431,6 +431,9 @@ namespace Zantetsu.PhysicsCut
             // Display room past its limits, or room that could not be made, is the same common termination: the
             // display stops rather than keep drawing an older snapshot while the game goes on.
             Display.RoomFailureHandler = RequestTermination;
+
+            // Whether a frame may bear the compaction of the display's instance regions (DESIGN 5.6, D-202).
+            Display.CompactionGate = CompactionGate;
             if (usePalette)
             {
                 VpCutSurfaceAtlas.Bind(normalPaletteAtlas, debugPaletteAtlas);
@@ -816,6 +819,46 @@ namespace Zantetsu.PhysicsCut
             IVpPageBacking pages = nextWorldDisplayPageBacking ?? VpWindowsPageBacking.Instance;
             nextWorldDisplayPageBacking = null;
             return pages;
+        }
+
+        /// <summary>
+        /// The Main budget a compaction of the display's instance regions must leave to the rest of the frame, in
+        /// seconds, beyond twice its own expected cost (D-202). The collection runs after the simulation, and the
+        /// cameras' preparations and the frame's rendering come after it; a provisional value, from no measurement
+        /// of those.
+        /// </summary>
+        public const double CompactionReserveSeconds = 0.002;
+
+        /// <summary>
+        /// Whether this frame may bear a compaction the display finds necessary (D-202): not when heavy work was noted
+        /// in this frame (<see cref="CutWorldFrameNotes"/>), a garbage collection completed in it, a cut is in flight
+        /// or held, or what is left of the frame's Main budget is less than the reserve and twice the expected cost.
+        /// The reason, or null.
+        /// </summary>
+        private string CompactionGate(double expectedSeconds)
+        {
+            if (CutWorldFrameNotes.TryGetThisFrame(out string work))
+            {
+                return "heavy work this frame: " + work;
+            }
+
+            if (CutPhysicsStep.GcCollectionsThisFrame > 0)
+            {
+                return "a garbage collection completed this frame";
+            }
+
+            if (Driver != null && (Driver.Transactions.Count > 0 || Driver.HeldCharacterCutCount > 0))
+            {
+                return "a cut is in flight";
+            }
+
+            double remaining = CutPhysicsStep.FrameRemainingMainSeconds;
+            if (remaining < CompactionReserveSeconds + (2.0 * expectedSeconds))
+            {
+                return "the frame's remaining Main budget is short";
+            }
+
+            return null;
         }
 
         internal void RequestTermination(string cause)

@@ -21,6 +21,9 @@ namespace Zantetsu.MeshCut
             internal sealed class Part
             {
                 internal int users, branchesCount, candidatesCount, rendersCount;
+                // Which taking of this part this is: a part is pooled, so the object alone does not say that what it
+                // holds is what it held (DESIGN 5.6: what a display's draw slots were written for).
+                internal long serial;
                 internal LogicalCutLedger ledger;
                 internal LogicalFragmentId family;
                 internal long revision;
@@ -76,6 +79,7 @@ namespace Zantetsu.MeshCut
             }
             private readonly List<Part> _free = new List<Part>();
             private int _capacity;
+            private long _serials;
             internal readonly Dictionary<LogicalFragmentId, int> families = new Dictionary<LogicalFragmentId, int>();
             internal readonly List<FamilyInput> inputs = new List<FamilyInput>();
             internal int inputCount;
@@ -94,7 +98,7 @@ namespace Zantetsu.MeshCut
             {
                 if (_free.Count == 0) throw new InvalidOperationException("structural pool has no unused slot");
                 int index = _free.Count - 1;
-                Part part = _free[index]; _free.RemoveAt(index); part.users = 1; return part;
+                Part part = _free[index]; _free.RemoveAt(index); part.users = 1; part.serial = ++_serials; return part;
             }
             internal void Release(Part part)
             {
@@ -131,6 +135,25 @@ namespace Zantetsu.MeshCut
         internal long FamiliesRebuilt { get; private set; }
         internal long RegistrationsReused { get; private set; }
         internal object StructureForTest(LogicalFragmentId root) => _partByRoot.TryGetValue(root, out int i) ? _parts[i].part : null;
+
+        /// <summary>
+        /// What registration <paramref name="registration"/>'s structure is, as something to tell apart and nothing
+        /// else: the part it was settled into and which taking of that part. A registration whose family did not
+        /// change is given the adopted snapshot's own part (see <see cref="TryBuildIncremental"/>), so the same answer
+        /// from two builds says that its branches, its render fragments, what each stands as and what each side is are
+        /// the same -- without anything being compared. Null when this snapshot is not made of such parts.
+        /// </summary>
+        internal object StructurePartAt(int registration, out long serial)
+        {
+            serial = 0;
+            if (!IsBuilt || !_composite || registration < 0 || registration >= _partCount || _parts[registration].part == null)
+            {
+                return null;
+            }
+
+            serial = _parts[registration].part.serial;
+            return _parts[registration].part;
+        }
 
         private bool TryReadStructureOperation(LogicalCutLedger ledger, int position, out LogicalCutOperation operation)
             => _buildingFamily.IsSet ? ledger.TryGetFamilyOperation(_buildingFamily, position, out operation)

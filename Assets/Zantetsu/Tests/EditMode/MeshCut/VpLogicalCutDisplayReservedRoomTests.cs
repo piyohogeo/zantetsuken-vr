@@ -933,8 +933,8 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Counts that the registrations themselves show to be short are grown together, before anything is built: five
-        /// bodies more than a room of two holds grow the branches, the instances and the commands in one step, the
-        /// snapshot grows once and the structure is built once.
+        /// bodies more than a room of two holds grow the branches, the render fragments, the commands and the instances
+        /// in one step, the snapshot grows once and the structure is built once.
         /// </summary>
         [Test]
         public void CountsTheRegistrationsShowToBeShort_GrowTogether_AndTheStructureIsBuiltOnce()
@@ -954,8 +954,9 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(display.IsHalted, Is.False);
                 Assert.That(display.LastRoomFailure, Is.Null, display.LastRoomFailure);
                 Assert.That(display.RenderFragmentCount, Is.EqualTo(7));
-                Assert.That(display.RoomGrowths, Is.EqualTo(3), "the branches, the instances and the commands, once each");
+                Assert.That(display.RoomGrowths, Is.EqualTo(4), "the branches, the render fragments, the commands and the instances, once each");
                 Assert.That(display.BranchCapacity, Is.GreaterThanOrEqualTo(7));
+                Assert.That(display.RenderFragmentCapacity, Is.GreaterThanOrEqualTo(7));
                 Assert.That(display.InstanceCapacity, Is.GreaterThanOrEqualTo(7));
                 Assert.That(display.CommandCapacity, Is.GreaterThanOrEqualTo(7));
                 Assert.That(display.SnapshotRegrowths - regrowths, Is.EqualTo(1), "the snapshot being built grew once");

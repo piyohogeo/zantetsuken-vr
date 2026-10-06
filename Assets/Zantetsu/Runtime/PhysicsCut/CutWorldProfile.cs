@@ -112,8 +112,14 @@ namespace Zantetsu.PhysicsCut
         // 1024 each (TL, 2026-10-05; they were 256, 512, 512, 512, 128, 512): the first room is what a scene reaches,
         // made, committed and written before play, so that crossing 128, 256 or 512 pieces is no longer a growth inside
         // a frame. The reservation behind the display's numeric rooms is made from the limits below.
-        [SerializeField] private int drawCommandCapacity = 1024;
-        [SerializeField] private int drawInstanceCapacity = 1024;
+        // The draw command slots and the instance records are 65536, their limit (TL, 2026-10-06; DESIGN 5.6, D-200):
+        // a slot is taken at the end and never again, so these two are used up by everything ever drawn, not by what
+        // is drawn at once, and their whole room is made before play so that it is never grown during it. What is
+        // sized from how many render fragments are drawn AT ONCE -- the snapshot, the caps, every camera's stencil
+        // batch -- has its own count, renderFragmentCapacity, and stays at 1024.
+        [SerializeField] private int drawCommandCapacity = 65536;
+        [SerializeField] private int drawInstanceCapacity = 65536;
+        [SerializeField] private int renderFragmentCapacity = 1024;
         [SerializeField] private int geometryReferenceCapacity = 1024;
         [SerializeField] private int displayInstanceCapacity = 1024;
         [SerializeField] private int branchCapacity = 1024;
@@ -128,11 +134,13 @@ namespace Zantetsu.PhysicsCut
         [Tooltip(
             "How far each display count may grow; at least its first capacity. Equal keeps that count fixed. 65536 each "
             + "(TL, 2026-09-30: the coexistence run ended the Player at 2048 draw commands; the six are raised together). "
-            + "Room is still made only as needed, doubling from the first capacity; a room grown past 32768 instances "
-            + "is the full 65536 and holds several hundred MB of stencil and cap arrays per camera. The storage's fixed "
-            + "tables above (index-range descriptors first) bind before these do.")]
+            + "Room is still made only as needed, doubling from the first capacity; a room grown past 32768 render "
+            + "fragments is the full 65536 and holds several hundred MB of stencil and cap arrays per camera (it is the "
+            + "render fragments' count that those follow, not the draw instances'). The storage's fixed tables above "
+            + "(index-range descriptors first) bind before these do.")]
         [SerializeField] private int drawCommandCapacityLimit = 65536;
         [SerializeField] private int drawInstanceCapacityLimit = 65536;
+        [SerializeField] private int renderFragmentCapacityLimit = 65536;
         [SerializeField] private int geometryReferenceCapacityLimit = 65536;
         [SerializeField] private int displayInstanceCapacityLimit = 65536;
         [SerializeField] private int branchCapacityLimit = 65536;   // 2026-09-29: 1024 was reached by the playable city's re-cut building (k1-k5) and ended the Player
@@ -345,6 +353,9 @@ namespace Zantetsu.PhysicsCut
 
         public int DrawInstanceCapacity => drawInstanceCapacity;
 
+        /// <summary>How many render fragments the display has room for at once, at first (DESIGN 5.6).</summary>
+        public int RenderFragmentCapacity => renderFragmentCapacity;
+
         public int GeometryReferenceCapacity => geometryReferenceCapacity;
 
         public int DisplayInstanceCapacity => displayInstanceCapacity;
@@ -378,7 +389,8 @@ namespace Zantetsu.PhysicsCut
         /// <summary>How far the display's counts may grow, from the limits above.</summary>
         public VpLogicalCutDisplayLimits DisplayLimits =>
             new VpLogicalCutDisplayLimits(
-                drawCommandCapacityLimit, drawInstanceCapacityLimit, branchCapacityLimit, candidateCapacityLimit);
+                drawCommandCapacityLimit, drawInstanceCapacityLimit, branchCapacityLimit, candidateCapacityLimit,
+                renderFragmentCapacity, renderFragmentCapacityLimit);
 
         public int ChainDepth => chainDepth;
 
@@ -461,13 +473,15 @@ namespace Zantetsu.PhysicsCut
             {
                 reason = "the dispatcher's sizes must be positive, and the urgent reserve smaller than the queue";
             }
-            else if (drawCommandCapacity <= 0 || drawInstanceCapacity <= 0 || geometryReferenceCapacity <= 0
+            else if (drawCommandCapacity <= 0 || drawInstanceCapacity <= 0 || renderFragmentCapacity <= 0
+                     || geometryReferenceCapacity <= 0
                      || displayInstanceCapacity <= 0 || branchCapacity <= 0 || candidateCapacity <= 0
                      || chainDepth <= 0)
             {
                 reason = "the display's counts must be positive";
             }
             else if (drawCommandCapacityLimit < drawCommandCapacity || drawInstanceCapacityLimit < drawInstanceCapacity
+                     || renderFragmentCapacityLimit < renderFragmentCapacity
                      || geometryReferenceCapacityLimit < geometryReferenceCapacity
                      || displayInstanceCapacityLimit < displayInstanceCapacity || branchCapacityLimit < branchCapacity
                      || candidateCapacityLimit < candidateCapacity)

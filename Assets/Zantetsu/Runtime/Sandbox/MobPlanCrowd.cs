@@ -390,8 +390,11 @@ namespace Zantetsu.Sandbox
 
             int broken = pool.BrokenCount;
             int records = refill.Records.Count;
+            int started = refill.Started, prepared = refill.Prepared, baked = refill.Baked;
             refill.Run(Time.frameCount, refillCap, refillRemaining,
                 refillReserveMilliseconds / 1000.0 + CutPhysicsStep.ExpectedSimulateSeconds, refillStart, refillHasPrepare, refillPrepare, refillNeedsBake, refillBake);
+            if (refill.Started != started) CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.NpcRefill);
+            if (refill.Prepared != prepared || refill.Baked != baked) CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.NpcReprepare);
             if (pool.BrokenCount > broken) Debug.LogError("MobPlan slot not prepared again: " + pool.Broken[pool.BrokenCount - 1].Failure, pool.Broken[pool.BrokenCount - 1]);
             for (int i = records; i < refill.Records.Count; i++)
             {
@@ -459,6 +462,7 @@ namespace Zantetsu.Sandbox
             }
             if (reused) ReusedActivations++;
             actors.Add(id, actor);
+            CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.MobPlanIntake);   // every activation comes through here
             ActorAdded?.Invoke(id, character, replacement);
             return true;
         }
@@ -470,6 +474,7 @@ namespace Zantetsu.Sandbox
                 if (pair.Value.character == null || (pair.Value.character.Handle != null && pair.Value.character.Handle.IsWithdrawn))
                 { if (gone == null) gone = new List<int>(); gone.Add(pair.Key); }
             if (gone == null) return;
+            CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.MobPlanReclaim);
             foreach (int id in gone)
             {
                 SandboxNpcCharacter character = actors[id].character;
@@ -591,6 +596,7 @@ namespace Zantetsu.Sandbox
             }
             lastAccepted = product.cycle;
             PublishedCycles++;
+            CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.MobPlanPublish);
             return "published";
         }
 

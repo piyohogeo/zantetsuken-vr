@@ -547,7 +547,9 @@ namespace Zantetsu.MeshCut.Tests
         {
             var cases = new (string what, int instances, int branches, int references)[]
             {
-                ("draw instances", 3, VpDisplayTestCapacities.Branches, 32),
+                // Five records: the first two, and a region of three taken at the end when three are drawn (DESIGN 5.6;
+                // a region of four would end at six, which is what is refused).
+                ("draw instances", 5, VpDisplayTestCapacities.Branches, 32),
                 ("logical branches", 16, 3, 32),
                 ("display instance references", 16, VpDisplayTestCapacities.Branches, 3),
             };

@@ -1201,15 +1201,18 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The capacity is judged on what is drawn after the swap, not on what was drawn before it: a body of two
-        /// commands becoming two sides of two commands each fits commands and instances of four exactly. The body's
-        /// own drawing data goes when the sides take its place; what it keeps until the next adoption is room in the
-        /// reference table, which has plenty here, and not drawing data.
+        /// The capacity is judged on the end of the draw slots, which only moves on (DESIGN 5.6): a body of two
+        /// commands becoming two sides of two commands each takes four more command slots at the end -- the body's own
+        /// two go on being gone through, drawing nothing, and are not taken again -- so six hold the swap exactly.
+        /// With five the commit is refused before anything is taken, and the cut goes on being drawn as it was. The
+        /// instance records are given room for the body, its two clipped sides and the two committed ones. The body's
+        /// own geometry and display instances, kept until the next adoption, are room in the reference table, which
+        /// has plenty here, and not drawing data.
         /// </summary>
         [Test]
-        public void ADrawCapacityThatFitsTheSwapExactly_IsNotRefused()
+        public void ADrawCapacityThatHoldsEveryCommandSlotEverTaken_IsNotRefused_AndOneSlotFewerIs()
         {
-            using (Fixture f = NewFixture(commandCapacity: 4, instanceCapacity: 4))
+            using (Fixture f = NewFixture(commandCapacity: 6, instanceCapacity: 10))
             {
                 VpStoredGeometry body = AppendBox(f.storage, float3.zero);
                 LogicalFragmentId fragment = f.ledger.AddFragment();
@@ -1226,6 +1229,26 @@ namespace Zantetsu.MeshCut.Tests
                 _frame++;
                 Assert.That(f.display.TryBeginFrame(), Is.True, "the collection settles");
                 Assert.That(f.display.DrawCommandCount, Is.EqualTo(4), "four commands after");
+                Assert.That(f.display.DrawCommandEnd, Is.EqualTo(6), "in the six slots ever taken: the body's two draw nothing");
+            }
+
+            using (Fixture f = NewFixture(commandCapacity: 5, instanceCapacity: 10))
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment();
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True, "the body is shown");
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the first collection settles");
+
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PublishPhysics(f, cut, out _, out _);
+                f.RunUntil(() => f.commit.Refusals > 0, "one slot short at the end: the commit is refused");
+                Assert.That(f.commit.Commits, Is.Zero, "and nothing was committed");
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the collection settles");
+                Assert.That(f.display.IsHalted, Is.False, "a shortfall of room is not a stop");
+                Assert.That(f.display.DrawCommandCount, Is.EqualTo(2), "the body's two commands go on drawing the cut as it was");
+                Assert.That(f.display.DrawCommandEnd, Is.EqualTo(2), "and no slot was taken for the refused commit");
             }
         }
 

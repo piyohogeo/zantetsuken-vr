@@ -29,8 +29,9 @@ MonoBehaviour:
   unityJobCapacity: 8
   geometryWorkerCount: 4
   backgroundWorkerCount: 2
-  drawCommandCapacity: 1024
-  drawInstanceCapacity: 1024
+  drawCommandCapacity: 65536
+  drawInstanceCapacity: 65536
+  renderFragmentCapacity: 1024
   geometryReferenceCapacity: 1024
   displayInstanceCapacity: 1024
   branchCapacity: 1024
@@ -38,6 +39,7 @@ MonoBehaviour:
   chainDepth: 256
   drawCommandCapacityLimit: 65536
   drawInstanceCapacityLimit: 65536
+  renderFragmentCapacityLimit: 65536
   geometryReferenceCapacityLimit: 65536
   displayInstanceCapacityLimit: 65536
   branchCapacityLimit: 65536

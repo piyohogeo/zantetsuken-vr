@@ -625,6 +625,306 @@ namespace Zantetsu.Rendering
             return worldBounds;
         }
 
+        // ----- commands in stable slots (DESIGN 5.6) -----------------------------------------------------------------
+
+        /// <summary>
+        /// Observation: what a slot upload sent **whole** -- a batch's first upload, or another stereo condition --
+        /// kept apart from the counters of what changed: commands, instance records, and the buffer writes of both.
+        /// </summary>
+        public long WholeArgumentElementsTransferred { get; private set; }
+        public long WholeInstanceElementsTransferred { get; private set; }
+        public long WholeSetDataCalls { get; private set; }
+
+        /// <summary>
+        /// Observation: the buffer writes of the instance records' range by <see cref="TryUploadSlots"/>, counted where
+        /// each is made: the transforms' and the clips'. At most one of each an upload; a whole upload is not among them.
+        /// </summary>
+        public long InstanceTransformSetDataCalls { get; private set; }
+        public long InstanceClipSetDataCalls { get; private set; }
+
+        /// <summary>
+        /// Whether <see cref="TryUploadSlots"/> would take these views and ends at all, decided without writing or
+        /// reading anything of them: the ends against this batch's room and against the views. What the commands
+        /// themselves say is judged by the upload, over the commands it sends.
+        /// </summary>
+        public bool CanUploadSlots(
+            NativeArray<VpIndirectCommand> commands, NativeArray<int> startInstances, int commandEnd,
+            NativeArray<Matrix4x4> objectToWorlds, NativeArray<VpInstanceClip> clips, int instanceEnd)
+        {
+            ThrowIfDisposed();
+            return commands.IsCreated && startInstances.IsCreated && objectToWorlds.IsCreated && clips.IsCreated
+                && commandEnd >= 0 && commandEnd <= CommandCapacity && commands.Length >= commandEnd && startInstances.Length >= commandEnd
+                && instanceEnd >= 0 && instanceEnd <= InstanceCapacity && objectToWorlds.Length >= instanceEnd && clips.Length >= instanceEnd;
+        }
+
+        /// <summary>
+        /// The upload of a batch whose commands and instances stand in **slots that do not move** (DESIGN 5.6). Command
+        /// <c>c</c> draws <c>commands[c].instanceCount</c> instances from <c>startInstances[c]</c> on: where a command's
+        /// instances begin is said, not added up from the commands before it, so a command may be taken out -- its
+        /// instance count made zero, which draws nothing and selects nothing -- or put in without any other command or
+        /// instance changing its place. The commands in [0, <paramref name="commandEnd"/>) are the ones processed, free
+        /// ones among them included; the instance records in [0, <paramref name="instanceEnd"/>) are the ones that may
+        /// be named.
+        /// <para>
+        /// **Only what changed is sent**: the commands of <paramref name="commandRanges"/>, a buffer write for each
+        /// range, and the instance records (a transform and a clip) of the one range
+        /// [<paramref name="instanceFrom"/>, <paramref name="instanceTo"/>): one buffer write for the transforms and
+        /// one for the clips, or none when the range is empty. Everything outside is taken to stand on the GPU as the
+        /// views hold it. The instance range covers what lies between the records written, so the views are complete
+        /// and current over all of it. The command ranges are read, not cleared.
+        /// </para>
+        /// <para>
+        /// **Everything is sent** -- every command and every instance record below the two ends, whatever the ranges
+        /// say -- when this batch has not been uploaded to (a batch that takes a smaller one's place holds nothing).
+        /// When only the stereo condition differs from the last upload's, every command is sent again (the forward
+        /// arguments depend on it) and, of the instance records, the ranges alone. What is sent whole is counted apart
+        /// (<see cref="WholeArgumentElementsTransferred"/>, <see cref="WholeInstanceElementsTransferred"/>).
+        /// </para>
+        /// <para>
+        /// False, having written nothing and changed nothing, when the views or the ends do not fit
+        /// (<see cref="CanUploadSlots"/>) or a command about to be sent names instances outside
+        /// [0, <paramref name="instanceEnd"/>). The draw's bounds are gathered again, over every instance drawn,
+        /// whenever anything was sent.
+        /// </para>
+        /// </summary>
+        public bool TryUploadSlots(
+            NativeArray<VpIndirectCommand> commands, NativeArray<int> startInstances, int commandEnd,
+            NativeArray<Matrix4x4> objectToWorlds, NativeArray<VpInstanceClip> clips, int instanceEnd,
+            bool singlePassInstanced, VpChangedRanges commandRanges, int instanceFrom, int instanceTo)
+        {
+            ThrowIfDisposed();
+            if (commandRanges == null)
+            {
+                throw new ArgumentNullException(nameof(commandRanges));
+            }
+
+            if (!CanUploadSlots(commands, startInstances, commandEnd, objectToWorlds, clips, instanceEnd))
+            {
+                return false;
+            }
+
+            ReadOnlySpan<VpIndirectCommand> read = commands.AsReadOnlySpan();
+            ReadOnlySpan<int> starts = startInstances.AsReadOnlySpan();
+            bool first = !_uploaded;
+            bool everyCommand = first || singlePassInstanced != SinglePassInstanced;
+
+            // Judged before anything is written: a refusal leaves every buffer as it was.
+            if (everyCommand)
+            {
+                if (!SlotsAreWithin(read, starts, 0, commandEnd, instanceEnd))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                for (int r = 0; r < commandRanges.Count; r++)
+                {
+                    if (!SlotsAreWithin(read, starts, Math.Min(commandRanges.StartAt(r), commandEnd), Math.Min(commandRanges.EndAt(r), commandEnd), instanceEnd))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            bool sent = false;
+            if (everyCommand)
+            {
+                if (commandEnd > 0)
+                {
+                    int calls = SendSlotCommands(read, starts, 0, commandEnd, singlePassInstanced);
+                    WholeArgumentElementsTransferred += commandEnd;
+                    WholeSetDataCalls += calls;
+                    sent = true;
+                }
+            }
+            else
+            {
+                bool anyCommand = false;
+                for (int r = 0; r < commandRanges.Count; r++)
+                {
+                    int from = Math.Min(commandRanges.StartAt(r), commandEnd), to = Math.Min(commandRanges.EndAt(r), commandEnd);
+                    if (to > from)
+                    {
+                        ArgumentSetDataCalls += SendSlotCommands(read, starts, from, to, singlePassInstanced);
+                        ArgumentElementsTransferred += to - from;
+                        anyCommand = true;
+                    }
+                }
+
+                ArgumentTransfers += anyCommand ? 1 : 0;
+                sent = anyCommand;
+            }
+
+            if (first)
+            {
+                if (instanceEnd > 0)
+                {
+                    _instanceBuffer.SetData(objectToWorlds, 0, 0, instanceEnd);
+                    _instanceClipBuffer.SetData(clips, 0, 0, instanceEnd);
+                    WholeInstanceElementsTransferred += instanceEnd;
+                    WholeSetDataCalls += 2;
+                    sent = true;
+                }
+            }
+            else
+            {
+                // One range, a write a buffer: whatever lies between the records written goes with them.
+                int from = Math.Max(0, Math.Min(instanceFrom, instanceEnd)), to = Math.Min(instanceTo, instanceEnd);
+                if (to > from)
+                {
+                    _instanceBuffer.SetData(objectToWorlds, from, from, to - from);
+                    InstanceTransformSetDataCalls++;
+                    _instanceClipBuffer.SetData(clips, from, from, to - from);
+                    InstanceClipSetDataCalls++;
+                    InstanceSetDataCalls += 2;
+                    InstanceElementsTransferred += to - from;
+                    InstanceTransfers++;
+                    sent = true;
+                }
+            }
+
+            if (sent)
+            {
+                WorldBounds = BoundsOfSlots(read, starts, commandEnd, objectToWorlds.AsReadOnlySpan());
+            }
+
+            _uploaded = true;
+            CommandCount = commandEnd;
+            InstanceCount = instanceEnd;
+            SinglePassInstanced = singlePassInstanced;
+            return true;
+        }
+
+        // Every command of [from, to) names instances inside [0, instanceEnd), or none.
+        private static bool SlotsAreWithin(
+            ReadOnlySpan<VpIndirectCommand> commands, ReadOnlySpan<int> startInstances, int from, int to, int instanceEnd)
+        {
+            for (int c = from; c < to; c++)
+            {
+                VpIndirectCommand command = commands[c];
+                if (command.instanceCount < 0 || command.range.indexStart < 0 || command.range.indexCount < 0)
+                {
+                    return false;
+                }
+
+                if (command.instanceCount > 0 && (startInstances[c] < 0 || startInstances[c] > instanceEnd - command.instanceCount))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // The commands of [from, to) staged as this batch sends them -- the two argument buffers, or the selection's
+        // commands -- each with the start its slot says, and sent as that one range. Answers the buffer writes made.
+        private int SendSlotCommands(
+            ReadOnlySpan<VpIndirectCommand> commands, ReadOnlySpan<int> startInstances, int from, int to, bool singlePassInstanced)
+        {
+            int count = to - from;
+            if (_cull != null)
+            {
+                Span<VpCullCommand> staged = _cullStaging != null
+                    ? _cullStaging.AsSpan(from, count)
+                    : new Span<VpCullCommand>(_cullCommands, from, count);
+                for (int c = from; c < to; c++)
+                {
+                    VpIndirectCommand command = commands[c];
+                    staged[c - from] = new VpCullCommand
+                    {
+                        indexCount = (uint)command.range.indexCount,
+                        startIndex = (uint)command.range.indexStart,
+                        startInstance = (uint)startInstances[c],
+                        instanceCount = (uint)command.instanceCount,
+                        centre = command.localBounds.center,
+                        extents = command.localBounds.extents,
+                    };
+                }
+
+                if (_cullStaging != null)
+                {
+                    _cullCommandBuffer.SetData(_cullStaging.First(to), from, from, count);
+                }
+                else
+                {
+                    _cullCommandBuffer.SetData(_cullCommands, from, from, count);
+                }
+
+                return 1;
+            }
+
+            Span<GraphicsBuffer.IndirectDrawIndexedArgs> shadowArguments = _shadowStaging != null
+                ? _shadowStaging.AsSpan(from, count)
+                : new Span<GraphicsBuffer.IndirectDrawIndexedArgs>(_shadowArguments, from, count);
+            Span<GraphicsBuffer.IndirectDrawIndexedArgs> forwardArguments = _forwardStaging != null
+                ? _forwardStaging.AsSpan(from, count)
+                : new Span<GraphicsBuffer.IndirectDrawIndexedArgs>(_forwardArguments, from, count);
+            uint multiplier = singlePassInstanced ? 2u : 1u;
+            for (int c = from; c < to; c++)
+            {
+                VpIndirectCommand command = commands[c];
+                uint start = (uint)startInstances[c];
+                shadowArguments[c - from] = new GraphicsBuffer.IndirectDrawIndexedArgs
+                {
+                    indexCountPerInstance = (uint)command.range.indexCount,
+                    instanceCount = (uint)command.instanceCount,
+                    startIndex = (uint)command.range.indexStart,
+                    baseVertexIndex = 0,
+                    startInstance = start,
+                };
+                forwardArguments[c - from] = new GraphicsBuffer.IndirectDrawIndexedArgs
+                {
+                    indexCountPerInstance = (uint)command.range.indexCount,
+                    instanceCount = (uint)command.instanceCount * multiplier,
+                    startIndex = (uint)command.range.indexStart,
+                    baseVertexIndex = 0,
+                    startInstance = start * multiplier,
+                };
+            }
+
+            if (_forwardStaging != null)
+            {
+                _forwardArgumentBuffer.SetData(_forwardStaging.First(to), from, from, count);
+                _shadowArgumentBuffer.SetData(_shadowStaging.First(to), from, from, count);
+            }
+            else
+            {
+                _forwardArgumentBuffer.SetData(_forwardArguments, from, from, count);
+                _shadowArgumentBuffer.SetData(_shadowArguments, from, from, count);
+            }
+
+            return 2;
+        }
+
+        // The bounds of every instance a slot's command draws, at its own transform; a free slot draws none.
+        private static Bounds BoundsOfSlots(
+            ReadOnlySpan<VpIndirectCommand> commands, ReadOnlySpan<int> startInstances, int commandEnd, ReadOnlySpan<Matrix4x4> objectToWorlds)
+        {
+            bool anyInstance = false;
+            Bounds worldBounds = default;
+            for (int c = 0; c < commandEnd; c++)
+            {
+                VpIndirectCommand command = commands[c];
+                int start = startInstances[c];
+                for (int i = start; i < start + command.instanceCount; i++)
+                {
+                    Bounds instanceBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorlds[i]);
+                    if (anyInstance)
+                    {
+                        worldBounds.Encapsulate(instanceBounds);
+                    }
+                    else
+                    {
+                        worldBounds = instanceBounds;
+                        anyInstance = true;
+                    }
+                }
+            }
+
+            return worldBounds;
+        }
+
         /// <summary>
         /// Writes every GPU buffer of this batch once, whole, with zeros, so that each stands on the device before the
         /// first upload of a frame. Only before the first upload; nothing uploaded, no count and no bound changes.
