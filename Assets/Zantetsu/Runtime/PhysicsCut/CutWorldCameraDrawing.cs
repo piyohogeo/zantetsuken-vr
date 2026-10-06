@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Zantetsu.Core;
 using Zantetsu.MeshCut;
 using Zantetsu.Rendering.Urp;
 
@@ -35,6 +36,11 @@ namespace Zantetsu.PhysicsCut
     /// <para>
     /// The materials, the stencil settings and the shadow arrangement are the display's own, from the world's profile.
     /// Nothing here is a render pipeline feature, a camera manager or a pass.
+    /// </para>
+    /// <para>
+    /// **The cameras given send no <c>OnMouse*</c> messages.** This is where a world's cameras are named, so it is where
+    /// each is told so, once, as it is registered (<see cref="CameraMouseEvents"/>): nothing in the product answers those
+    /// messages, and a camera left to send them costs a physics raycast every frame. Nothing else of the camera is set.
     /// </para>
     /// <para>
     /// **A display that selects on the GPU (DESIGN 4.5.7).** Its draws read a selection that must be written first, in
@@ -240,6 +246,8 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
+                // Once, with the registration: the camera sends no OnMouse* messages (no raycast for them each frame).
+                CameraMouseEvents.TurnOff(cameras[i]);
                 if (!world.Display.TryRegisterCamera(cameras[i]))
                 {
                     Debug.LogError(

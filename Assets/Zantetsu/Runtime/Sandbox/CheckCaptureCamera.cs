@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Zantetsu.Core;
 using Zantetsu.PhysicsCut;
 
 namespace Zantetsu.Sandbox
@@ -80,6 +81,9 @@ namespace Zantetsu.Sandbox
             Camera.depth = game != null ? game.depth - 1 : -1;
             Target = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32) { name = "Check Capture Target" };
             Camera.targetTexture = Target;
+            // Made for the world at run time: told here, once, that it sends no OnMouse* messages -- the camera drawing tells
+            // only the cameras it registers itself, and this one may be registered below instead.
+            CameraMouseEvents.TurnOff(Camera);
             if (this.shots.Count > 0) SetShot(0, "made"); else Place();
 
             // The cut display draws for the cameras its camera drawing lists and the display took: this one is added to both.
