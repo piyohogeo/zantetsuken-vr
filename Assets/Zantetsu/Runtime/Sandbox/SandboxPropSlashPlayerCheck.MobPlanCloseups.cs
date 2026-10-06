@@ -38,6 +38,7 @@ namespace Zantetsu.Sandbox
                 _mpCloseupCamera.nearClipPlane = 0.05f;
                 _mpCloseupTarget = new RenderTexture(900, 900, 24);
                 _mpCloseupCamera.targetTexture = _mpCloseupTarget;
+                Zantetsu.Core.CameraMouseEvents.TurnOff(_mpCloseupCamera);   // made for the world at run time: no OnMouse* messages
                 // The cut pieces are the display's: it draws for the cameras its camera drawing lists and the display took.
                 // This camera is added to both, for the image run only.
                 var drawing = UnityEngine.Object.FindFirstObjectByType<Zantetsu.PhysicsCut.CutWorldCameraDrawing>();
