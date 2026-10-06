@@ -453,6 +453,7 @@ namespace Zantetsu.PhysicsCut
         {
             var root = new GameObject("Fused Group " + key + (kinematic ? " (held)" : ""));
             root.transform.SetPositionAndRotation(position, rotation);
+            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
             var body = root.AddComponent<Rigidbody>();
             body.automaticCenterOfMass = false;
             body.automaticInertiaTensor = false;
@@ -1341,6 +1342,7 @@ namespace Zantetsu.PhysicsCut
             var shadow = new GameObject("Shadow of " + member.fragment.value);
             if (inactive) shadow.SetActive(false);   // made ahead: nothing of it enters the physics scene until the switch
             shadow.transform.SetPositionAndRotation(member.owner.Root.transform.position, member.owner.Root.transform.rotation);
+            CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
             shadow.transform.SetParent(negativeRoot, true);
             foreach (MeshCollider c in member.colliders)
             {
@@ -1638,6 +1640,7 @@ namespace Zantetsu.PhysicsCut
             try
             {
                 root.transform.SetPositionAndRotation(at.position, at.rotation);
+                CutPhysicsStep.NotePlacementInputChanged();   // a root put somewhere outside a physics step (D-204)
                 var shapeFrame = new GameObject("Shape Frame");
                 shapeFrame.transform.SetParent(root.transform, false);
                 shapeFrame.transform.SetLocalPositionAndRotation(localOffset, localRotation);

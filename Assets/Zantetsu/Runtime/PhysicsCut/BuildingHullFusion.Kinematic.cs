@@ -464,14 +464,27 @@ namespace Zantetsu.PhysicsCut
             }
 
             _dropRecords.Add(record);
-            _animations.Add(a);
             AnimationsStarted++;
+            _animations.Add(a);   // where it is until the next physics step; from then on placed with every step
         }
 
         /// <summary>The drop's time now: seconds since its start, clamped to [0, T].</summary>
         private double DropSeconds(DisplayAnimation a, double now) => math.clamp(now - a.start, 0.0, a.seconds);
 
-        /// <summary>Each Step: every drop placed at its time (the slide and the arc, from the time alone); a finished one ends at x0 + d.</summary>
+        /// <summary>
+        /// Right after a physics step was simulated, before that frame's collections (the world joins the step for it;
+        /// 2026-10-07, DESIGN 7.2.4 and 5.6, D-204): every drop is placed at its time. A drop moves with the steps and
+        /// never between two of them, so its members' placements are part of what a step leaves -- the display, which
+        /// asks placements only after a new step, reads every one of them, and nothing has to be said or asked for a
+        /// drop. Until 2026-10-07 the drops were placed in every frame, whether a step was simulated or not.
+        /// </summary>
+        public void StepDropsAfterPhysicsStep()
+        {
+            if (!Enabled) return;
+            StepAnimations();
+        }
+
+        /// <summary>Every drop placed at its time (the slide and the arc, from the time alone); a finished one ends at x0 + d.</summary>
         private void StepAnimations()
         {
             if (_animations.Count == 0) return;
@@ -562,6 +575,7 @@ namespace Zantetsu.PhysicsCut
                 if (!ReferenceEquals(a.group, group)) continue;
                 double t = DropSeconds(a, now);
                 Place(a, t);
+                CutPhysicsStep.NotePlacementInputChanged();   // the one placement of a drop outside a physics step (D-204)
                 a.record.end = t >= a.seconds ? "completed" : "stopped";
                 if (t < a.seconds) a.record.stoppedByHit = byHit;
                 MeasureDrop(a);

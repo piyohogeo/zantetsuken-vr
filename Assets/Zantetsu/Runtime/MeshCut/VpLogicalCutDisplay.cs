@@ -4338,6 +4338,48 @@ namespace Zantetsu.MeshCut
         private double _buildSeconds;
         private long _buildHeapDelta;
 
+        // ----- placements asked only when they can have changed (DESIGN 5.6, D-204) -----------------------------------
+        //
+        // Where things stand changes when the physics is stepped, or when something outside a step puts an owner
+        // somewhere, brings one or takes one away. The host counts both (the steps really simulated; the placement
+        // inputs changed outside a step) and gives the two numbers when asked. A collection that finds them as they were
+        // at the last ADOPTED placement pass, with the adopted snapshot of the very structure the ledger and this
+        // display's inputs are at now, lets that snapshot stand: nothing is asked, no clip or cap is made again. The two
+        // snapshots change places for the collection -- the adopted one is read as the one built -- and the adoption
+        // changes them back; a collection that is not adopted changes them back itself. Everything else of the
+        // collection runs as ever.
+        //
+        // The numbers are taken at the collection that asks the placements and kept only when it is adopted: a
+        // collection that failed leaves them as they were, so the next one asks. A host that gives no numbers, or says
+        // it cannot vouch for them, is asked every time. Letting a snapshot stand says nothing of anything standing
+        // still: no render fragment is counted as kept for it, and no history is advanced.
+
+        /// <summary>The host's two counts; false when it cannot vouch that a placement changes only with one of them.</summary>
+        public delegate bool PlacementSerialSource(out long step, out long outsideStep);
+
+        private PlacementSerialSource _placementSerial;
+
+        /// <summary>
+        /// Asked once a collection for the count of physics steps simulated and of placement inputs changed outside a
+        /// step. Null (the default): every collection asks every placement.
+        /// </summary>
+        public PlacementSerialSource PlacementSerial
+        {
+            get => _placementSerial;
+            set
+            {
+                _placementSerial = value;
+                _placedSerialKnown = false;   // whatever was adopted was not counted by this source
+            }
+        }
+
+        private bool _placementReused, _buildSerialKnown, _placedSerialKnown;
+        private long _buildStep, _buildOutside, _placedStep, _placedOutside;
+
+        /// <summary>Observation: collections that let the adopted snapshot stand, and the placement queries they did not make.</summary>
+        public long PlacementReuses { get; private set; }
+        public long PlacementQueriesOmitted { get; private set; }
+
         private VpSnapshotStageTotals SumStages()
         {
             VpSnapshotStageTotals sum = _snapshot.StageTotals;
@@ -5096,6 +5138,15 @@ namespace Zantetsu.MeshCut
                 entry.releasing = false;
             }
 
+            // The placements adopted are of the counts taken when they were asked (D-204); a collection that let the
+            // adopted snapshot stand changes nothing of that.
+            if (!_placementReused)
+            {
+                _placedSerialKnown = _buildSerialKnown;
+                _placedStep = _buildStep;
+                _placedOutside = _buildOutside;
+            }
+
             // The history (D-202): what this collection's ordinary processing wrote is adopted with it, and only then.
             _adoptedPasses++;
             int adoptedFrame = CurrentFrame;
@@ -5230,6 +5281,7 @@ namespace Zantetsu.MeshCut
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
             VpDrawDataCounts drawBefore = DrawTotals();
             VpSnapshotStageTotals stagesBefore = SumStages();
+            _placementReused = false;
             _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             OpenSlotPass();
             SumValidate(_validateBefore);
@@ -5254,11 +5306,19 @@ namespace Zantetsu.MeshCut
 
                 _collectStage = -1;
 
-                // A collection that was not adopted leaves the draw slots as the adopted side has them.
+                // A collection that was not adopted leaves the draw slots as the adopted side has them -- and the
+                // adopted snapshot where it was, if it stood as the one built (D-204).
                 if (_slotPassOpen)
                 {
+                    if (_placementReused)
+                    {
+                        Swap(ref _snapshot, ref _building);
+                    }
+
                     PutSlotsBack();
                 }
+
+                _placementReused = false;
 
                 CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
 
@@ -5332,54 +5392,72 @@ namespace Zantetsu.MeshCut
                 return FailRoom("room for the registrations", _shown.Count, _fragmentCapacity, _fragmentLimit, registrationsFailure);
             }
 
-            // The snapshot's build, timed apart from the rest of this stage, with the managed heap's change across it
-            // (2026-10-07, for observation: what the build took of the heap, less what a collector freed meanwhile).
-            long heapBefore = GC.GetTotalMemory(false);
-            long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
-            VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
-                _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
-            _buildCalls++;
-            _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
-
-            // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
-            // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
-            // are bounded by what the room and the limits allow, worked out here, and never by a number of their own.
-            int growthsLeft = GrowthsToLimits();
-            for (int growths = 0; outcome == VpMultiCutBuildOutcome.CapacityExceeded; growths++)
+            // Where things stand, asked only when it can have changed (D-204): the host's counts as they were at the
+            // last adopted placement pass, and the adopted snapshot of the structure as it is now.
+            _buildSerialKnown = _placementSerial != null && _placementSerial(out _buildStep, out _buildOutside);
+            if (_buildSerialKnown && _placedSerialKnown && _buildStep == _placedStep && _buildOutside == _placedOutside && _hasSnapshot
+                && _snapshot.IsOfStructure(_structurePool, _registrations.Count, stampLedger, _inputRevision))
             {
-                CapPolygonBuilds += _building.SectionBuildCount;
-                VpMultiCutShortage shortage = _building.Shortage;
-                if (growths > growthsLeft)
-                {
-                    // Not reachable while every growth takes at least one step: said, not looped on.
-                    return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage),
-                        "more growths than the limits allow (" + growthsLeft + ")");
-                }
+                // The adopted snapshot stands as the one built for this collection; the adoption changes them back.
+                Swap(ref _snapshot, ref _building);
+                _building.NotePlacementsReused();
+                _placementReused = true;
+                PlacementReuses++;
+                PlacementQueriesOmitted += _building.RenderFragmentCount;
+            }
 
-                if (!TryGrowFor(shortage, out string failure))
-                {
-                    return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
-                }
-
-                buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
-                outcome = _building.TryBuildIncremental(
+            if (!_placementReused)
+            {
+                // The snapshot's build, timed apart from the rest of this stage, with the managed heap's change across it
+                // (2026-10-07, for observation: what the build took of the heap, less what a collector freed meanwhile).
+                long heapBefore = GC.GetTotalMemory(false);
+                long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
                     _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
                 _buildCalls++;
                 _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
-            }
 
-            _buildHeapDelta += GC.GetTotalMemory(false) - heapBefore;
-            CapPolygonBuilds += _building.SectionBuildCount;
-
-            if (outcome != VpMultiCutBuildOutcome.Built)
-            {
-                if (!_halted && outcome == VpMultiCutBuildOutcome.InvalidInput)
+                // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
+                // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
+                // are bounded by what the room and the limits allow, worked out here, and never by a number of their own.
+                int growthsLeft = GrowthsToLimits();
+                for (int growths = 0; outcome == VpMultiCutBuildOutcome.CapacityExceeded; growths++)
                 {
-                    _haltInvalidInput = _building.InvalidInputReason;
+                    CapPolygonBuilds += _building.SectionBuildCount;
+                    VpMultiCutShortage shortage = _building.Shortage;
+                    if (growths > growthsLeft)
+                    {
+                        // Not reachable while every growth takes at least one step: said, not looped on.
+                        return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage),
+                            "more growths than the limits allow (" + growthsLeft + ")");
+                    }
+
+                    if (!TryGrowFor(shortage, out string failure))
+                    {
+                        return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
+                    }
+
+                    buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                    outcome = _building.TryBuildIncremental(
+                        _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision);
+                    _buildCalls++;
+                    _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
                 }
 
-                Halt(ReasonOf(outcome));
-                return false;
+                _buildHeapDelta += GC.GetTotalMemory(false) - heapBefore;
+                CapPolygonBuilds += _building.SectionBuildCount;
+
+                if (outcome != VpMultiCutBuildOutcome.Built)
+                {
+                    if (!_halted && outcome == VpMultiCutBuildOutcome.InvalidInput)
+                    {
+                        _haltInvalidInput = _building.InvalidInputReason;
+                    }
+
+                    Halt(ReasonOf(outcome));
+                    return false;
+                }
+
             }
 
             EnterCollectStage(3);

@@ -38,7 +38,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// <summary>Frames until a condition, the tracker reading each one; an optional action before each reading.</summary>
         private static IEnumerator Tracked(CutWorldRoot root, HullDropStartTracker tracker, System.Func<bool> done, string what, System.Action before = null)
         {
-            for (int i = 0; i < 600 && !done(); i++)
+            float until = Time.realtimeSinceStartup + 30f;   // by frames and by time: the drops move with the physics steps
+            for (int i = 0; (i < 600 || Time.realtimeSinceStartup < until) && !done(); i++)
             {
                 yield return null;
                 before?.Invoke();
@@ -61,7 +62,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             BuildingHullFusion h = root.Hulls;
             var detector = new SlashHitDetector(root, in k_hitSettings);
-            FrameClock(h);
+            StepClock(h);
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
             yield return Tracked(root, tracker, () => h.DropRecords.Count == 1 && h.DropRecords[0].Phase > 0.3 && h.DisplayOperationsOpen == 0, "the first drop a third of the way");
             Evaluate(detector, Upright(2, 0.1f), 2);
@@ -200,7 +201,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
                 var detector = new SlashHitDetector(root, in k_hitSettings);
                 yield return null;
-                FrameClock(h);
+                StepClock(h);
                 Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
                 var p = new PathReads();
                 yield return UntilDrops(root, () => h.DropRecords.Count == 1 && h.DropRecords[0].end != null && Quiet(h), p, "the drop ended");

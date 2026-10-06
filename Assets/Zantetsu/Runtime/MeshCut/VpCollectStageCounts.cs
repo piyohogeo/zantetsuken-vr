@@ -26,8 +26,13 @@ namespace Zantetsu.MeshCut
         // often, and the new arrays' lengths in elements, added. Not bytes, and not what the heap grew by.
         public long arrayGrowths, arrayGrowthElements;
 
+        // Collections in which the adopted snapshot stood as it was and no Place pass ran (D-204), and the placement
+        // queries not made for it: the render fragments it held, one a render fragment a collection.
+        public long placementsReused, queriesOmitted;
+
         public void Add(in VpSnapshotStageTotals a)
         {
+            placementsReused += a.placementsReused; queriesOmitted += a.queriesOmitted;
             validateCalls += a.validateCalls; collectCalls += a.collectCalls; groupCalls += a.groupCalls; placeCalls += a.placeCalls;
             validateSeconds += a.validateSeconds; collectSeconds += a.collectSeconds; groupSeconds += a.groupSeconds;
             structureSeconds += a.structureSeconds; placeSeconds += a.placeSeconds;
@@ -38,6 +43,7 @@ namespace Zantetsu.MeshCut
 
         public void Subtract(in VpSnapshotStageTotals a)
         {
+            placementsReused -= a.placementsReused; queriesOmitted -= a.queriesOmitted;
             validateCalls -= a.validateCalls; collectCalls -= a.collectCalls; groupCalls -= a.groupCalls; placeCalls -= a.placeCalls;
             validateSeconds -= a.validateSeconds; collectSeconds -= a.collectSeconds; groupSeconds -= a.groupSeconds;
             structureSeconds -= a.structureSeconds; placeSeconds -= a.placeSeconds;

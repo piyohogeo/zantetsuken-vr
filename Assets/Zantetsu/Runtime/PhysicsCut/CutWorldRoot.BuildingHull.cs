@@ -50,6 +50,17 @@ namespace Zantetsu.PhysicsCut
             Rest.GroupBusy = Hulls.IsGroupBusy;
             Rest.GroupHeld = Hulls.OnGroupHeld;
             Rest.GroupReleasing = Hulls.OnGroupReleasing;
+
+            // The display drops move with the physics steps: placed right after each, before the frame's collections.
+            _stepHullDrops = StepHullDrops;
+            CutPhysicsStep.JoinStep(_stepHullDrops);
+        }
+
+        private Action _stepHullDrops;
+
+        private void StepHullDrops()
+        {
+            Hulls?.StepDropsAfterPhysicsStep();
         }
 
         private void StepHulls()
@@ -67,6 +78,12 @@ namespace Zantetsu.PhysicsCut
 
         private void ReleaseHulls()
         {
+            if (_stepHullDrops != null)
+            {
+                CutPhysicsStep.LeaveStep(_stepHullDrops);
+                _stepHullDrops = null;
+            }
+
             if (Hulls == null)
             {
                 return;

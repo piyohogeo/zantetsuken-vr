@@ -16,7 +16,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// and the world's vertical arc), x0 + d at the end with no arc left, rotations unchanged; a small D(n) keeps the whole
     /// arc; a re-cut stops a drop on its curve and the children start a new curve from there; the last drop after the limit
     /// runs to its end, its hull update refused or not; the world's end with a drop running leaves it cleared. The clock is
-    /// advanced once a frame (10 ms) and never within a frame.
+    /// advanced once a physics step (10 ms a step) and never between two steps: the drops are placed with the steps.
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
@@ -54,7 +54,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         private IEnumerator UntilDrops(CutWorldRoot root, System.Func<bool> done, PathReads p, string what)
         {
-            for (int i = 0; i < 600 && !done(); i++)
+            // By frames and by time: the drops move with the physics steps, and a frame here is far shorter than a step.
+            float until = Time.realtimeSinceStartup + 30f;
+            for (int i = 0; (i < 600 || Time.realtimeSinceStartup < until) && !done(); i++)
             {
                 yield return null;
                 ReadPaths(root.Hulls, p);
@@ -120,7 +122,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             HullGroup vertical = AddHullBuilding(root, new Vector3(80f, 0f, 0f), new[] { anchor }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            FrameClock(h);
+            StepClock(h);
             Quaternion bodyTurned = turned.Body.rotation;
             Vector3 n = math.normalize(new float3(1f, 1f, 0f)), along = math.normalize(new float3(1f, -1f, 0f));
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
@@ -164,7 +166,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            FrameClock(h);
+            StepClock(h);
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
             var p = new PathReads();
             yield return UntilDrops(root, () => h.DropRecords.Count == 1 && h.DropRecords[0].end != null && Quiet(h), p, "the drop ended");
@@ -188,7 +190,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            System.Func<double> clock = FrameClock(h);
+            System.Func<double> clock = StepClock(h);
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
             var p = new PathReads();
             yield return UntilDrops(root, () => h.DropRecords.Count == 1 && h.DropRecords[0].Phase > 0.3 && h.DisplayOperationsOpen == 0, p, "the first drop a third of the way, its display committed");
@@ -246,7 +248,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             HullGroup building = AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            FrameClock(h);
+            StepClock(h);
             h.refuseHullForTest = true;
             int generation = building.HullGeneration;
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
@@ -273,7 +275,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
             var detector = new SlashHitDetector(root, in k_hitSettings);
             yield return null;
-            FrameClock(h);
+            StepClock(h);
             Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
             var p = new PathReads();
             yield return UntilDrops(root, () => h.DropRecords.Count == 1 && h.DropRecords[0].Phase > 0.2, p, "the drop under way");

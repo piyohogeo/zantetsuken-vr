@@ -135,6 +135,71 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// (its operation committed); the upper child drops 0.15 m over 0.25 s, the lower one stays; the hull's update is
         /// exchanged (generation 2) with its top lowered by the drop; at every frame one body, one hull, one enabled collider.
         /// </summary>
+        /// <summary>
+        /// The drop moves with the physics steps (2026-10-07): its members are somewhere else than a frame before only
+        /// when a step was simulated in between, and the display -- which asks placements only after a new step, and
+        /// lets them stand in the frames between -- draws the upper side where its root is, in every frame to the end.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator HullKinematic_TheDropMovesWithThePhysicsSteps_NeverBetweenThem_AndTheDisplayDrawsItWhereItIs()
+        {
+            CutWorldRoot root = NewKinematicWorld();
+            BuildingHullFusion h = root.Hulls;
+            HullGroup building = AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
+            var detector = new SlashHitDetector(root, in k_hitSettings);
+            yield return null;
+            Vector3 origin = building.Members[0].root.transform.position;
+            for (int f = 0; f < 8; f++) yield return null;
+            Bounds whole = root.Display.BodyBatchForTest.WorldBounds;
+            Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
+            yield return UntilKinematic(root, 1, () => h.GroupCuts == 1, 30f, "published by the display", null, default);
+            Assert.That(new[] { h.AnimationsStarted, h.AnimationsRunning }, Is.EqualTo(new[] { 1, 1 }), "the drop is running");
+
+            // A frame of the case begins before that frame's step and collection. So between two of its frames the
+            // roots may have moved only if a step was simulated in the earlier one, and what the display holds at a
+            // frame's beginning is what the frame before collected -- after that frame's step, if it had one.
+            float Reach() { float x = 0f; foreach (HullGroup.DisplayMember m in building.Members) if (m.root != null) x = Mathf.Max(x, m.root.transform.position.x - origin.x); return x; }
+            float before = Reach();
+            long step = CutPhysicsStep.Clock.StepId, reuses = root.Display.PlacementReuses;
+            int frames = 0, moves = 0, framesWithoutAStep = 0, stoodWhileRunning = 0;
+            float until = Time.realtimeSinceStartup + 30f;
+            while (h.AnimationsRunning > 0 && Time.realtimeSinceStartup < until)
+            {
+                yield return null;
+                frames++;
+                float now = Reach();
+                bool stepped = CutPhysicsStep.Clock.StepId != step;
+                if (!stepped) framesWithoutAStep++;
+                if (now != before)
+                {
+                    moves++;
+                    Assert.That(stepped, Is.True, "frame " + frames + ": the upper side moved (" + before.ToString("R") + " -> " + now.ToString("R") + ") with no physics step simulated in between");
+                }
+
+                if (root.Display.PlacementReuses != reuses) stoodWhileRunning++;
+                Assert.That(root.Display.BodyBatchForTest.WorldBounds.max.x - whole.max.x, Is.EqualTo(now).Within(1e-4f), "frame " + frames + ": the display draws the upper side where its root is");
+                before = now;
+                step = CutPhysicsStep.Clock.StepId;
+                reuses = root.Display.PlacementReuses;
+            }
+
+            TestContext.Out.WriteLine("the drop: frames " + frames + ", of them with no physics step " + framesWithoutAStep + "; frames in which the upper side had moved " + moves
+                                      + "; collections that let the adopted placements stand while it ran " + stoodWhileRunning + "; placements of the drop " + h.DropRecords[0].placements);
+            Assert.That(new[] { h.AnimationsRunning, h.AnimationsCompleted }, Is.EqualTo(new[] { 0, 1 }), "the drop ran to its end");
+            Assert.That(moves, Is.GreaterThan(1), "over more than one step: it was played, not put at its end");
+            Assert.That(h.DropRecords[0].placements, Is.LessThanOrEqualTo(frames - framesWithoutAStep + 1), "placed at the steps only: no more placements than steps");
+            AssertOneMoved(building, origin, new Vector3(DropHorizontal, 0f, 0f), Vector3.up, "the horizontal cut (along the sweep's travel, +X)");
+            yield return UntilKinematic(root, 1, () => h.HullUpdatesAdopted == 1 && h.IsSettled, 30f, "the hull exchanged", null, default);
+            for (int f = 0; f < 8; f++) yield return null;
+            Bounds dropped = root.Display.BodyBatchForTest.WorldBounds;
+            TestContext.Out.WriteLine("the display's draw bounds: whole " + whole.min.ToString("F4") + " .. " + whole.max.ToString("F4") + "; after the drop " + dropped.min.ToString("F4") + " .. " + dropped.max.ToString("F4")
+                                      + "; collections that let the adopted placements stand " + root.Display.PlacementReuses + ", queries not made " + root.Display.PlacementQueriesOmitted);
+            Assert.That(dropped.max.x - whole.max.x, Is.EqualTo(DropHorizontal).Within(1e-3f), "the display draws the upper side where the drop ended");
+            Assert.That(dropped.min.x, Is.EqualTo(whole.min.x).Within(1e-3f), "and the lower side where it was");
+            AssertOneEach(root, 1, "at the end");
+            yield return EndWorld(root);
+        }
+
         [UnityTest]
         public IEnumerator HullKinematic_HorizontalCut_DropsTheUpperSide_AndExchangesTheHull()
         {

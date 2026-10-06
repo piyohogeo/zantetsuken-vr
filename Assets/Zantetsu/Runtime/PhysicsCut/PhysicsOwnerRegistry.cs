@@ -298,6 +298,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             IsWithdrawn = true;
+            CutPhysicsStep.NotePlacementInputChanged();   // this owner answers no more (D-204)
             if (PreparedSourceWithdrawal != null)
             {
                 using (s_withdrawPreparedRoot.Auto())
@@ -623,6 +624,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal void AddProvisional(ProvisionalOwnerPair pair)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             if (pair == null)
             {
                 throw new ArgumentNullException(nameof(pair));
@@ -675,6 +677,7 @@ namespace Zantetsu.PhysicsCut
         internal bool TryHandOverProvisional(
             CutOperationId operation, out PhysicsOwnerSide positive, out PhysicsOwnerSide negative)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             positive = null;
             negative = null;
             if (!_pairsByOperation.TryGetValue(operation, out ProvisionalOwnerPair pair))
@@ -705,6 +708,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool EndProvisional(CutOperationId operation)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             if (!_pairsByOperation.TryGetValue(operation, out ProvisionalOwnerPair pair))
             {
                 return false;
@@ -782,6 +786,7 @@ namespace Zantetsu.PhysicsCut
 
         internal void Add(LogicalFragmentId fragment, PhysicsFragmentOwner owner)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             if (!fragment.IsSet)
             {
                 throw new ArgumentException("not a fragment", nameof(fragment));
@@ -816,6 +821,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool Withdraw(LogicalFragmentId fragment)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             if (!_owners.TryGetValue(fragment, out PhysicsFragmentOwner owner))
             {
                 return false;
@@ -832,6 +838,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool Retire(LogicalFragmentId fragment)
         {
+            CutPhysicsStep.NotePlacementInputChanged();   // what answers for a fragment changes (D-204)
             if (!_owners.TryGetValue(fragment, out PhysicsFragmentOwner owner))
             {
                 return false;
