@@ -126,6 +126,13 @@ namespace Zantetsu.Core.Animation
         /// <summary>The view's part of the last decision: 0 in view, up to 3 the farthest outside.</summary>
         public int ViewStrength { get; internal set; }
 
+        /// <summary>
+        /// Whether the last decision left this character unposed for standing outside both eyes' view
+        /// (<see cref="PoseLodDirector.StopsOutOfView"/>): no scheduled update comes while it is so. A hit's whole
+        /// current pose (<see cref="EnsureCurrentFullPose"/>) is put on all the same when asked.
+        /// </summary>
+        public bool IsStoppedOutOfView { get; internal set; }
+
         public bool IsLive => Player != null && Player.IsPlaying;
 
         /// <summary>The level of the last decision (0 = every frame, every needed bone .. 3 = the fewest).</summary>
@@ -215,6 +222,17 @@ namespace Zantetsu.Core.Animation
     /// The time goes on while a character is not updated, and an update always applies the pose of the frame's time; a
     /// level that drops applies at once.
     /// <para>
+    /// **Outside both eyes' view: not posed at all** (DESIGN 9, D-213; <see cref="StopsOutOfView"/>). While neither
+    /// eye's view holds the character's bounds, its ordinary update does not run: no pose is evaluated and no bone is
+    /// written, at any rate. The bounds are the fixed ones the view is judged by -- made for every pose of what the
+    /// character plays, not from the bones -- so they hold while the bones stand still. In the frame an eye's view
+    /// holds them again (one eye is enough) the frame's pose is put on before anything is drawn, at the frame's own
+    /// time: nothing is frozen and nothing is played to catch up. A hit that may meet the character asks for its whole
+    /// current pose as before, seen or not. With no camera to read, the view asks for nothing and no character is
+    /// stopped. What the stopped bones still show is accepted: a shadow that falls into view keeps the pose the bones
+    /// stopped in, carried along by the root's own movement.
+    /// </para>
+    /// <para>
     /// **Needed bones.** A table bone that nothing reads is never evaluated or applied, at any level: level 0 -- and the
     /// whole pose a hit asks for -- is the needed set, the bones the caller says the character is drawn and placed with
     /// (the bones with a skin weight, the renderer's own Transform and root bone), its hit shapes' bones, what else hangs
@@ -264,6 +282,15 @@ namespace Zantetsu.Core.Animation
         /// caller compares against: the needed-bone saving without the level of detail.)
         /// </summary>
         public bool NeededOnly { get; set; }
+
+        /// <summary>
+        /// Whether a character outside both eyes' view is not posed at all (DESIGN 9, D-213): on, as the product has
+        /// it. Off -- for tests and diagnostics -- such a character is updated at its level's rate, as before.
+        /// </summary>
+        public bool StopsOutOfView { get; set; } = true;
+
+        /// <summary>The characters the last update left unposed for standing outside both eyes' view.</summary>
+        public int StoppedLastFrame { get; private set; }
 
         public PoseLodSettings Settings
         {
@@ -789,6 +816,7 @@ namespace Zantetsu.Core.Animation
         {
             int frame = Time.frameCount;
             UpdatedLastFrame = 0;
+            StoppedLastFrame = 0;
             using (s_decide.Auto())
             {
                 if (_rate <= 0f)
@@ -805,6 +833,7 @@ namespace Zantetsu.Core.Animation
                 {
                     PoseLodCharacter character = _characters[c];
                     character.Due = false;
+                    character.IsStoppedOutOfView = false;
                     if (!character.IsLive)
                     {
                         continue;
@@ -826,6 +855,18 @@ namespace Zantetsu.Core.Animation
                     bool cameIntoView = view == 0 && character.ViewStrength > 0;
                     character.ViewStrength = view;
                     character.Level = level;
+
+                    // Outside both eyes' view (DESIGN 9, D-213): not posed at all -- no evaluation, no bone written,
+                    // whatever the level or the phase. The view's part is 0 when an eye's view holds the bounds or when
+                    // no camera could be read, so a character seen by one eye, or one no camera can say anything of,
+                    // is never stopped. A level given by hand (tests, diagnostics) keeps its own schedule.
+                    if (StopsOutOfView && view > 0 && character.LevelOverride < 0)
+                    {
+                        character.IsStoppedOutOfView = true;
+                        StoppedLastFrame++;
+                        continue;
+                    }
+
                     int interval = IntervalOf(level);
                     character.Due = dropped || cameIntoView || character.LastUpdateFrame < 0 || (frame + character.Phase) % interval == 0;
                 }
