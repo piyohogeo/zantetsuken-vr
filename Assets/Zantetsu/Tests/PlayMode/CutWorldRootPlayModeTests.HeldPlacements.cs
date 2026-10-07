@@ -10,9 +10,10 @@ using Object = UnityEngine.Object;
 namespace Zantetsu.PhysicsCut.PlayModeTests
 {
     /// <summary>
-    /// Held placements in a cut world (2026-10-07; DESIGN 5.6, D-205): the world's physics step counts are what the
-    /// display's held placements go by, and the cameras named to the world's camera drawing are their reference points.
-    /// The display's own cases (EditMode) say what is held and who is asked; this says that a world is wired so.
+    /// Held placements in a cut world (2026-10-07; DESIGN 5.6, D-205, D-210): the world's physics step counts are what
+    /// the display's held placements go by, the cameras named to the world's camera drawing are their reference
+    /// points, and the view each of them was rendered with decides, of what is near it, who is asked. The display's own
+    /// cases (EditMode) say what is held and who is asked; this says that a world is wired so.
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
@@ -37,8 +38,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             ShadowStage stage = NewShadowStage();
             stage.camera.enabled = true;
-            stage.camera.transform.position = new Vector3(0f, 3f, -8f);   // its proximity box: z from -28 to 12
-            Assert.That(root.Display.PlacementProximity, Is.Null, "no camera named yet: every placement is asked");
+
+            // It looks along the row (+z): its proximity box is z from -28 to 12, and its view -- 5 m to each side and
+            // above and below, from 0.1 to 40 m ahead -- holds the three bodies near it.
+            stage.camera.transform.SetPositionAndRotation(new Vector3(0f, 3f, -8f), Quaternion.identity);
+            Assert.That(root.Display.PlacementProximityViews, Is.Null, "no camera named yet: every placement is asked");
             var drawing = root.gameObject.AddComponent<CutWorldCameraDrawing>();
             SetPrivate(drawing, "world", root);
             SetPrivate(drawing, "cameras", new[] { stage.camera });
@@ -56,8 +60,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
             // They are held once two different step results agree.
             yield return UntilHeld(() => root.Display.HeldPlacements == rowZ.Length, 30f, "every standing body held");
-            Assert.That(root.Display.PlacementProximity, Is.Not.Null, "the world's camera drawing named its cameras to the display");
+            Assert.That(root.Display.PlacementProximityViews, Is.Not.Null, "the world's camera drawing named its cameras to the display");
             Assert.That(root.Display.HeldPlacementTotals.pointsAtEnd, Is.EqualTo(1), "one camera, one reference point");
+            Assert.That(root.Display.CameraViewsNoted, Is.GreaterThan(0), "and notes the view each was rendered with");
 
             // Over a few more steps: each pass asks the three near ones and leaves the two far ones.
             VpHeldPlacementTotals t = root.Display.HeldPlacementTotals;
@@ -71,18 +76,66 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(d.passesSelective, Is.GreaterThanOrEqualTo(3), "a pass a step");
             Assert.That(new[] { d.queriedNear, d.omitted, d.queriedOrdinary, d.passesStructure, d.passesUnvouched }, Is.EqualTo(new[] { 3 * d.passesSelective, 2 * d.passesSelective, 0L, 0L, 0L }),
                 "three asked, two not, in every pass");
+            Assert.That(new[] { d.pointsWithView, d.pointsWithoutView, d.nearCandidates, d.omittedOutOfView }, Is.EqualTo(new[] { d.passesSelective, 0L, 3 * d.passesSelective, 0L }),
+                "every pass had the camera's view of the frame before: the three near ones are in it");
+
+            // The camera looks the other way. The three near bodies are near still and out of its view: not asked. The
+            // nearest is moved meanwhile, nothing said: it is drawn where it is held -- until the camera looks back.
+            Bounds whole = root.Display.BodyBatchForTest.WorldBounds;
+            stage.camera.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+            yield return null;
+            yield return null;   // a frame rendered looking away, and its view read by the next collection
+            t = root.Display.HeldPlacementTotals;
+            long writtenAway = root.Display.InstanceRecordsWritten, compactionsAway = root.Display.Compactions;
+            owners[0].Root.transform.position += new Vector3(7f, 0f, 0f);
+            step = CutPhysicsStep.Clock.StepId;
+            yield return UntilHeld(() => CutPhysicsStep.Clock.StepId >= step + 3, 30f, "three steps looking away");
+            yield return null;
+            d = HeldSince(root, t);
+            TestContext.Out.WriteLine("looking away: selective passes " + d.passesSelective + ", near candidates " + d.nearCandidates + ", near but out of view " + d.omittedOutOfView + ", asked near " + d.queriedNear
+                                      + ", not asked " + d.omitted + "; tree boxes taken in " + d.treeInserts + ", given up " + d.treeRemovals + "; view ms " + (d.viewSeconds * 1000).ToString("F4"));
+            Assert.That(d.passesSelective, Is.GreaterThanOrEqualTo(2));
+            Assert.That(new[] { d.queriedNear, d.omittedOutOfView, d.omitted, d.treeInserts, d.treeRemovals }, Is.EqualTo(new[] { 0L, 3 * d.passesSelective, 5 * d.passesSelective, 0L, 0L }),
+                "the three near ones out of view: not asked, and no box touched for the turn");
+            TestContext.Out.WriteLine("looking away: records written " + (root.Display.InstanceRecordsWritten - writtenAway) + ", compactions " + (root.Display.Compactions - compactionsAway)
+                                      + ", held ones asked and found moved " + d.demoted);
+            Assert.That(d.demoted, Is.Zero, "no held one asked and found moved: the moved one was not asked");
+            if (root.Display.Compactions == compactionsAway)
+            {
+                Assert.That(root.Display.InstanceRecordsWritten, Is.EqualTo(writtenAway), "and, no compaction having run, nothing was written");
+            }
+
+            Assert.That(root.Display.BodyBatchForTest.WorldBounds.max.x, Is.EqualTo(whole.max.x), "drawn where it is held");
+            stage.camera.transform.rotation = Quaternion.identity;
+            t = root.Display.HeldPlacementTotals;
+            yield return UntilHeld(() => HeldSince(root, t).demoted >= 1, 30f, "the moved body asked once the camera looks at it again");
+            yield return null;
+            Assert.That(root.Display.BodyBatchForTest.WorldBounds.max.x, Is.EqualTo(whole.max.x + 7f).Within(1e-3f), "drawn where it is");
+            yield return UntilHeld(() => root.Display.HeldPlacements == rowZ.Length, 30f, "held again where it stands");
 
             // The farthest is moved with nothing said. It is held and far: not asked, drawn where it is held.
             Bounds before = root.Display.BodyBatchForTest.WorldBounds;
-            long written = root.Display.InstanceRecordsWritten;
+            long written = root.Display.InstanceRecordsWritten, compactions = root.Display.Compactions;
+            t = root.Display.HeldPlacementTotals;
             owners[4].Root.transform.position += new Vector3(0f, 2f, 0f);
             step = CutPhysicsStep.Clock.StepId;
             yield return UntilHeld(() => CutPhysicsStep.Clock.StepId >= step + 3, 30f, "three steps with the far body moved");
             yield return null;
-            Assert.That(root.Display.InstanceRecordsWritten, Is.EqualTo(written), "nothing written: the far held body was not asked");
+            d = HeldSince(root, t);
+            TestContext.Out.WriteLine("the far body moved: selective passes " + d.passesSelective + ", asked near " + d.queriedNear + ", not asked " + d.omitted + ", held ones asked and found moved " + d.demoted
+                                      + "; records written " + (root.Display.InstanceRecordsWritten - written) + ", compactions " + (root.Display.Compactions - compactions));
+            Assert.That(new[] { d.demoted, d.queriedNotified, d.invalidations }, Is.EqualTo(new long[] { 0, 0, 0 }), "the far held body was not asked: no held one asked and found moved, none asked for a telling");
+
+            // A compaction of the draw slots (by the history of ordinary writes, D-202) may fall in these steps and
+            // writes records for its own reasons; with none, nothing is written.
+            if (root.Display.Compactions == compactions)
+            {
+                Assert.That(root.Display.InstanceRecordsWritten, Is.EqualTo(written), "and, no compaction having run, nothing was written");
+            }
+
             Assert.That(root.Display.BodyBatchForTest.WorldBounds.max.y, Is.EqualTo(before.max.y), "drawn where it is held");
 
-            // The camera comes near it: asked, found moved, drawn where it is.
+            // The camera comes near it, looking at it: asked, found moved, drawn where it is.
             stage.camera.transform.position = new Vector3(0f, 3f, 85f);   // z from 65 to 105: the body at 90, not the one at 60
             t = root.Display.HeldPlacementTotals;
             yield return UntilHeld(() => HeldSince(root, t).demoted >= 1, 30f, "the moved body asked once the camera is near");
@@ -105,7 +158,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Object.Destroy(drawing);
             yield return null;
             yield return null;
-            Assert.That(root.Display.PlacementProximity, Is.Null, "the camera drawing gone: no reference points");
+            Assert.That(root.Display.PlacementProximityViews, Is.Null, "the camera drawing gone: no reference points");
             Assert.That(root.Display.HeldPlacements, Is.Zero, "and nothing held");
             yield return EndWorld(root);
         }

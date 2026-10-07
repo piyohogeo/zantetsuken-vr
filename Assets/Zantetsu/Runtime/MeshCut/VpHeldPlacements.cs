@@ -59,6 +59,33 @@ namespace Zantetsu.MeshCut
         public long remaps, carried, fresh, droppedHeld;
         public double remapSeconds;
 
+        // The view (D-210). Held ones a proximity box found, before any view was asked (each once a pass, however
+        // many boxes found it); of those, the ones left unasked because they met no view of a camera whose box found
+        // them (they are in omitted too); the tests of a box against a camera's view; and the reference points of the
+        // passes by whether a view was known for them -- one with none asks by its proximity box alone, as before.
+        //
+        // viewSeconds is the time of **choosing among the candidates by the view**, apart from the tree search's: for
+        // every leaf a search found, reading its item, marking it as a candidate once (a bit set), passing over one
+        // already taken (a bit read), the planes' arithmetic against its kept box where the point has a view, taking it
+        // (a bit set) and the counting. It is not the planes' arithmetic alone.
+        //
+        // Not in viewSeconds but done for these counts, in searchSeconds: a set of bits, one a render fragment of the
+        // display, is cleared before the searches of a pass, and gone over once more (a word at a time, 64 render
+        // fragments a word) when some candidate was left unasked, to count them. That is a pass over bits -- over
+        // every registered render fragment's bit -- and reads no Transform, no matrix and no bounds.
+        public long nearCandidates, omittedOutOfView, viewTests;
+        public double viewSeconds;
+        public long pointsWithView, pointsWithoutView;
+
+        // Of the held ones taken as near: those taken through a reference point that had no view, by its proximity
+        // box alone (a camera that is not rendered, or a point that is no camera's). The others were taken through a
+        // point's box and view. One taken by both kinds of point is counted for the one that took it first.
+        public long pickedWithoutView;
+
+        // The tree's boxes taken in and given up, one at a time (a mapping that carries a box does neither; a
+        // forgetting empties the tree at once and is counted in structureResets, not here).
+        public long treeInserts, treeRemovals;
+
         // Not sums: as they stood after the last collection added.
         public int heldAtEnd, ordinaryAtEnd, pointsAtEnd;
 
@@ -71,6 +98,9 @@ namespace Zantetsu.MeshCut
             shiftedPasses += a.shiftedPasses; shiftedRebuilt += a.shiftedRebuilt;
             searches += a.searches; searchSeconds += a.searchSeconds; updateSeconds += a.updateSeconds;
             remaps += a.remaps; carried += a.carried; fresh += a.fresh; droppedHeld += a.droppedHeld; remapSeconds += a.remapSeconds;
+            nearCandidates += a.nearCandidates; omittedOutOfView += a.omittedOutOfView; viewTests += a.viewTests; viewSeconds += a.viewSeconds;
+            pointsWithView += a.pointsWithView; pointsWithoutView += a.pointsWithoutView; treeInserts += a.treeInserts; treeRemovals += a.treeRemovals;
+            pickedWithoutView += a.pickedWithoutView;
             heldAtEnd = a.heldAtEnd; ordinaryAtEnd = a.ordinaryAtEnd; pointsAtEnd = a.pointsAtEnd;
         }
 
@@ -83,6 +113,9 @@ namespace Zantetsu.MeshCut
             shiftedPasses -= a.shiftedPasses; shiftedRebuilt -= a.shiftedRebuilt;
             searches -= a.searches; searchSeconds -= a.searchSeconds; updateSeconds -= a.updateSeconds;
             remaps -= a.remaps; carried -= a.carried; fresh -= a.fresh; droppedHeld -= a.droppedHeld; remapSeconds -= a.remapSeconds;
+            nearCandidates -= a.nearCandidates; omittedOutOfView -= a.omittedOutOfView; viewTests -= a.viewTests; viewSeconds -= a.viewSeconds;
+            pointsWithView -= a.pointsWithView; pointsWithoutView -= a.pointsWithoutView; treeInserts -= a.treeInserts; treeRemovals -= a.treeRemovals;
+            pickedWithoutView -= a.pickedWithoutView;
         }
     }
 
@@ -99,9 +132,31 @@ namespace Zantetsu.MeshCut
     /// ordinary again; one that has not stays in the tree as it is.
     /// </para>
     /// <para>
-    /// **Nearness alone decides who is asked.** No view frustum, no shadow volume, no rendering path. A held target
-    /// far from every reference point that does move is drawn where it was held until a reference point comes near or
-    /// something below asks it: accepted (TL, 2026-10-07).
+    /// **Near and in view (D-210).** A reference point may come with its camera's view: the planes of the eyes that
+    /// camera was last rendered with (one eye, or two under XR), as the host noted them at the end of that rendering.
+    /// A held one a proximity box finds is then asked only if its kept box -- the box in the tree, margin and all --
+    /// also meets that view: either eye's (a target only one eye sees is asked). With several cameras a held one is
+    /// asked when, for at least one of them, it is in that camera's proximity box **and** that camera's view. A
+    /// reference point with no view known -- none noted yet, or one older than the frame before -- asks by its
+    /// proximity box alone, as before the view was used; it never asks everything. The search goes down the tree by
+    /// the proximity box only; the view is asked of what the search found, and nothing of the tree is touched for it:
+    /// a view that turns inserts and removes nothing. No Transform is read and no box is made again for the choosing.
+    /// </para>
+    /// <para>
+    /// **What is not asked is drawn where it is held.** No shadow volume and no rendering path comes into it. A held
+    /// target that moves while far from every reference point, or near one but out of its view, is drawn -- and casts
+    /// its shadow -- where it was held, until a pass asks it: accepted (TL, 2026-10-07).
+    /// </para>
+    /// <para>
+    /// **When one that came into view is asked -- no frame is promised.** A placement pass reads the view the camera
+    /// was rendered with in the frame before (this frame's is not made yet when it runs). And a pass runs only when a
+    /// collection asks placements at all: with no new step result, nothing told and no structure change, a collection
+    /// lets the adopted snapshot stand (D-204) whatever the view did -- no search, no view asked. So a held target
+    /// that moved out of view and is then looked at is asked in the **next pass that runs** in which its kept box
+    /// meets a proximity box and that camera's view as noted the frame before -- the frame after the turn if a step's
+    /// result is new then, later if steps are passed over, as long as they are. Nothing is done to make it sooner: the
+    /// reuse is not given up for a view that moved, and nothing asks every one. The margin of the kept box may let a
+    /// target be picked up early, when the view comes within it; it is no promise either -- a quick turn passes it.
     /// </para>
     /// <para>
     /// **What is held goes with a registration's structure part.** The arrays here go by a render fragment's number in
@@ -176,6 +231,16 @@ namespace Zantetsu.MeshCut
         private long _step, _passOutside;
         private readonly List<Vector3> _points = new List<Vector3>(4);
 
+        // The view of each reference point's camera (D-210): how many eyes (0: no view known -- its proximity box alone
+        // decides), and six planes an eye, normals inward (inside: n.p + d >= 0).
+        internal const int EyePlanes = 6, EyeCapacity = 2, ViewPlanes = EyePlanes * EyeCapacity;
+        private int[] _viewEyes = new int[4];
+        private Vector4[] _viewPlanes = new Vector4[4 * ViewPlanes];
+
+        // The held ones a proximity box found in this pass, each once; and the leaves one search found.
+        private ulong[] _nearBits = Array.Empty<ulong>();
+        private int[] _found = new int[64];
+
         private VpHeldPlacementTotals _totals;
 
         public VpHeldPlacementTotals Totals
@@ -202,6 +267,33 @@ namespace Zantetsu.MeshCut
             _passOutside = outside;
             _points.Clear();
             if (active && points != null) for (int i = 0; i < points.Count; i++) _points.Add(points[i]);
+            if (_viewEyes.Length < _points.Count)
+            {
+                Array.Resize(ref _viewEyes, _points.Count);
+                Array.Resize(ref _viewPlanes, _points.Count * ViewPlanes);
+            }
+
+            Array.Clear(_viewEyes, 0, _points.Count);   // no view known, until SetView says one
+        }
+
+        /// <summary>
+        /// The view of reference point <paramref name="point"/>'s camera, after <see cref="SetPass"/>:
+        /// <paramref name="eyes"/> eyes (1 or 2) of six planes each from <paramref name="planes"/>, normals inward. A
+        /// point not told here, or told with planes that are not finite or have no normal, has no view: its proximity
+        /// box alone decides.
+        /// </summary>
+        public void SetView(int point, int eyes, Vector4[] planes)
+        {
+            if (point < 0 || point >= _points.Count || planes == null || eyes < 1 || eyes > EyeCapacity || planes.Length < eyes * EyePlanes) return;
+            for (int k = 0; k < eyes * EyePlanes; k++)
+            {
+                Vector4 p = planes[k];
+                float normal = p.x * p.x + p.y * p.y + p.z * p.z;
+                if (!(normal > 0f) || float.IsInfinity(normal) || float.IsNaN(p.w) || float.IsInfinity(p.w)) return;
+                _viewPlanes[point * ViewPlanes + k] = p;
+            }
+
+            _viewEyes[point] = eyes;
         }
 
         /// <summary>A placement input of this family changed outside a step: its held render fragments are asked in the next pass.</summary>
@@ -344,6 +436,7 @@ namespace Zantetsu.MeshCut
                     {
                         _tree.Remove(_leaf[old]);
                         _totals.droppedHeld++;
+                        _totals.treeRemovals++;
                     }
                 }
             }
@@ -439,14 +532,55 @@ namespace Zantetsu.MeshCut
                     _picked[r >> 6] |= 1UL << (r & 63);
                 }
 
-                int near = 0;
+                // The held ones near a reference point: found in the tree by the proximity box alone. Of what a box
+                // found, the ones that also meet its camera's view are this pass's targets (every one, where no view
+                // is known for that point). The view is asked of the kept boxes the search found, afterwards: the
+                // search's time and the view's are taken apart.
+                int near = 0, candidates = 0;
                 float reach = Reach;
+                if (_nearBits.Length < _pickedWords) _nearBits = new ulong[_picked.Length];
+                Array.Clear(_nearBits, 0, _pickedWords);
+                double viewSeconds = 0.0;
                 for (int i = 0; i < _points.Count; i++)
                 {
                     Vector3 p = _points[i];
-                    near += _tree.Pick(new float3(p.x - reach, p.y - reach, p.z - reach), new float3(p.x + reach, p.y + reach, p.z + reach), _picked);
+                    int found = _tree.Find(new float3(p.x - reach, p.y - reach, p.z - reach), new float3(p.x + reach, p.y + reach, p.z + reach), ref _found);
                     _totals.searches++;
+                    int eyes = _viewEyes[i];
+                    if (eyes > 0) _totals.pointsWithView++; else _totals.pointsWithoutView++;
+                    long viewBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                    for (int f = 0; f < found; f++)
+                    {
+                        int leaf = _found[f];
+                        int r = _tree.ItemOf(leaf);
+                        ulong bit = 1UL << (r & 63);
+                        if ((_nearBits[r >> 6] & bit) == 0)
+                        {
+                            _nearBits[r >> 6] |= bit;
+                            candidates++;
+                        }
+
+                        if ((_picked[r >> 6] & bit) != 0) continue;   // another point's box and view already took it
+                        if (eyes > 0)
+                        {
+                            _totals.viewTests++;
+                            if (!_tree.MeetsView(leaf, _viewPlanes, i * ViewPlanes, eyes)) continue;
+                        }
+                        else
+                        {
+                            _totals.pickedWithoutView++;
+                        }
+
+                        _picked[r >> 6] |= bit;
+                        near++;
+                    }
+
+                    viewSeconds += SecondsSince(viewBegan);
                 }
+
+                _totals.nearCandidates += candidates;
+                _totals.viewSeconds += viewSeconds;
+                began += (long)(viewSeconds * System.Diagnostics.Stopwatch.Frequency);   // the search's time, without the view's
 
                 // The held ones of the families told: through the family's registrations, as the last mapping had them.
                 int toldNow = 0;
@@ -475,6 +609,14 @@ namespace Zantetsu.MeshCut
                 }
 
                 _totals.omitted += _count - _ordinaryCount - near - toldNow;
+
+                // Of the near ones, those left unasked: they met no view (one told of is asked, in view or not).
+                if (candidates > near)
+                {
+                    int unasked = 0;
+                    for (int w = 0; w < _pickedWords; w++) unasked += math.countbits(_nearBits[w] & ~_picked[w]);
+                    _totals.omittedOutOfView += unasked;
+                }
             }
 
             _totals.searchSeconds += SecondsSince(began);
@@ -498,6 +640,9 @@ namespace Zantetsu.MeshCut
         }
 
         public bool IsPicked(int renderFragment) => (_picked[renderFragment >> 6] & (1UL << (renderFragment & 63))) != 0;
+
+        /// <summary>For tests: whether the last pass's targets held that render fragment.</summary>
+        internal bool IsPickedForTest(int renderFragment) => renderFragment >= 0 && renderFragment < _count && IsPicked(renderFragment);
 
         /// <summary>Every later render fragment's ranges begin elsewhere from here on in this pass.</summary>
         public void NoteShifted() => _totals.shiftedPasses++;
@@ -533,6 +678,7 @@ namespace Zantetsu.MeshCut
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             WorldBox(localBounds, geometryLocalToWorld, Margin, out float3 lo, out float3 hi);
             _leaf[r] = _tree.Insert(lo, hi, r);
+            _totals.treeInserts++;
             int at = _ordinaryAt[r], last = _ordinary[--_ordinaryCount];
             _ordinary[at] = last;
             _ordinaryAt[last] = at;
@@ -554,6 +700,7 @@ namespace Zantetsu.MeshCut
                 if (standsWhereHeld) return;
                 long began = System.Diagnostics.Stopwatch.GetTimestamp();
                 _tree.Remove(_leaf[r]);
+                _totals.treeRemovals++;
                 _leaf[r] = -1;
                 _ordinaryAt[r] = _ordinaryCount;
                 _ordinary[_ordinaryCount++] = r;
@@ -572,7 +719,8 @@ namespace Zantetsu.MeshCut
             _readStep[r] = _step;
         }
 
-        // A held one was asked: for a change told (of its family, or with no target), or because a proximity box met it.
+        // A held one was asked: for a change told (of its family, or with no target), or because a proximity box met it
+        // and, where that box's camera has a view, the view did too.
         private void CountHeldAsked(int r)
         {
             if (_allHeldAsked || (_toldAny && (_toldBits[r >> 6] & (1UL << (r & 63))) != 0)) _totals.queriedNotified++;
@@ -696,6 +844,59 @@ namespace Zantetsu.MeshCut
                 }
 
                 return newly;
+            }
+
+            /// <summary>The leaves whose boxes meet the box, into <paramref name="leaves"/> (grown as needed); how many.</summary>
+            public int Find(float3 lo, float3 hi, ref int[] leaves)
+            {
+                if (_root == -1) return 0;
+                int count = 0, top = 0;
+                _stack[top++] = _root;
+                while (top > 0)
+                {
+                    int i = _stack[--top];
+                    if (math.any(_n[i].lo > hi) || math.any(_n[i].hi < lo)) continue;
+                    if (_n[i].left == -1)
+                    {
+                        if (count == leaves.Length) Array.Resize(ref leaves, leaves.Length * 2);
+                        leaves[count++] = i;
+                        continue;
+                    }
+
+                    if (top + 2 > _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    _stack[top++] = _n[i].left;
+                    _stack[top++] = _n[i].right;
+                }
+
+                return count;
+            }
+
+            /// <summary>The item a leaf holds.</summary>
+            public int ItemOf(int leaf) => _n[leaf].item;
+
+            /// <summary>
+            /// Whether a leaf's box may meet the view of any of <paramref name="eyes"/> eyes, six planes each from
+            /// <paramref name="first"/>, normals inward: outside an eye only when the whole box is beyond one of its
+            /// planes (the box's corner farthest along the plane's normal is still behind it). It never says no of a
+            /// box that touches a view; it may say yes of one that draws nothing.
+            /// </summary>
+            public bool MeetsView(int leaf, Vector4[] planes, int first, int eyes)
+            {
+                float3 lo = _n[leaf].lo, hi = _n[leaf].hi;
+                for (int e = 0; e < eyes; e++)
+                {
+                    bool outside = false;
+                    for (int k = 0; k < EyePlanes && !outside; k++)
+                    {
+                        Vector4 p = planes[first + e * EyePlanes + k];
+                        float farthest = p.x * (p.x >= 0f ? hi.x : lo.x) + p.y * (p.y >= 0f ? hi.y : lo.y) + p.z * (p.z >= 0f ? hi.z : lo.z) + p.w;
+                        outside = farthest < 0f;
+                    }
+
+                    if (!outside) return true;
+                }
+
+                return false;
             }
 
             private int Allocate()
