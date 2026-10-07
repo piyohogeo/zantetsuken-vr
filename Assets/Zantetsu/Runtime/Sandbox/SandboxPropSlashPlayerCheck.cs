@@ -191,6 +191,13 @@ namespace Zantetsu.Sandbox
         }
         public const string Prefix = "PROP SLASH: ";
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Whether the numeric input-contract diagnosis runs in this process (VpNumericDiagnosis, D-211), read once.
+        // Where it is off, its columns of frames.csv are left empty, as where it is not compiled: a 0 there is a
+        // diagnosis that ran and found nothing to do.
+        private static readonly bool s_numericDiagnosis = VpNumericDiagnosis.Enabled;
+#endif
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void StartIfAsked()
         {
@@ -1419,10 +1426,10 @@ namespace Zantetsu.Sandbox
                     if (v != null)
                     {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        // The numeric input-contract diagnosis's own counts (DESIGN 5.6).
-                        string vPlacementOnly = v.placementOnly.ToString(Inv), vPlacementRegistrations = v.placementRegistrations.ToString(Inv);
-                        string vContractMs = (v.contractSeconds * 1000).ToString("R", Inv), vPlacementInputMs = (v.placementInputSeconds * 1000).ToString("R", Inv);
-                        string vPlacementContractMs = (v.placementContractSeconds * 1000).ToString("R", Inv);
+                        // The numeric input-contract diagnosis's own counts (DESIGN 5.6); empty where it is off (D-211).
+                        string vPlacementOnly = s_numericDiagnosis ? v.placementOnly.ToString(Inv) : "", vPlacementRegistrations = s_numericDiagnosis ? v.placementRegistrations.ToString(Inv) : "";
+                        string vContractMs = s_numericDiagnosis ? (v.contractSeconds * 1000).ToString("R", Inv) : "", vPlacementInputMs = s_numericDiagnosis ? (v.placementInputSeconds * 1000).ToString("R", Inv) : "";
+                        string vPlacementContractMs = s_numericDiagnosis ? (v.placementContractSeconds * 1000).ToString("R", Inv) : "";
 #else
                         // The numeric input-contract diagnosis is not compiled here: its columns keep their places, empty.
                         const string vPlacementOnly = "", vPlacementRegistrations = "", vContractMs = "", vPlacementInputMs = "", vPlacementContractMs = "";
@@ -1450,7 +1457,7 @@ namespace Zantetsu.Sandbox
                     {
                         if (p == null) { text.Append(",,,,,,,,,,,"); continue; }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        string checksColumn = p.placementChecks.ToString(Inv);
+                        string checksColumn = s_numericDiagnosis ? p.placementChecks.ToString(Inv) : "";   // empty where the diagnosis is off (D-211)
 #else
                         const string checksColumn = "";   // the diagnosis's count: not compiled here, its column left empty
 #endif
@@ -1464,7 +1471,7 @@ namespace Zantetsu.Sandbox
                     {
                         if (p == null) { text.Append(",,,"); continue; }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        string checkMs = (p.checkSeconds * 1000).ToString("R", Inv);
+                        string checkMs = s_numericDiagnosis ? (p.checkSeconds * 1000).ToString("R", Inv) : "";   // empty where the diagnosis is off (D-211)
 #else
                         const string checkMs = "";   // the diagnosis's block: not compiled here, its column left empty
 #endif

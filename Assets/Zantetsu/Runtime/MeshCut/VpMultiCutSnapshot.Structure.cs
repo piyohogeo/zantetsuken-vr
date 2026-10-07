@@ -326,9 +326,12 @@ namespace Zantetsu.MeshCut
             try
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                VpMultiCutBuildOutcome valid;
-                using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
-                if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+                if (_numeric)
+                {
+                    VpMultiCutBuildOutcome valid;
+                    using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
+                    if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+                }
 #endif
                 // Each render fragment starts where the adopted snapshot placed it, with nothing of a placement on it
                 // yet: the same record the structure's assembly would write, read from the two records side by side.
@@ -488,10 +491,13 @@ namespace Zantetsu.MeshCut
                 _composite = true;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // The numeric input-contract diagnosis of every registration (DESIGN 5.6): not compiled for a
-                // non-Development Player.
-                VpMultiCutBuildOutcome valid;
-                using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
-                if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+                // non-Development Player, not run where the diagnosis is off (D-211).
+                if (_numeric)
+                {
+                    VpMultiCutBuildOutcome valid;
+                    using (s_validate.Auto()) valid = ValidatePlacementInputs(registrations);
+                    if (valid != VpMultiCutBuildOutcome.Built) return Fail(valid);
+                }
 #endif
                 // The drawing array remains snapshot-local. The branches/candidates/selection arrays are never copied here.
                 for (int g = 0; g < _partCount; g++)

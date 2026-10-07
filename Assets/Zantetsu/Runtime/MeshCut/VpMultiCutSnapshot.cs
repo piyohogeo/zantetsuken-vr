@@ -902,7 +902,7 @@ namespace Zantetsu.MeshCut
                 _partByRoot.EnsureCapacity(count);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 // What the numeric contract diagnosis remembers (it and its room exist in these configurations only).
-                if (_validatedHas.Length < count)
+                if (_numeric && _validatedHas.Length < count)
                 {
                     Array.Resize(ref _validatedHas, count);
                     Array.Resize(ref _validatedNow, count);
@@ -912,7 +912,7 @@ namespace Zantetsu.MeshCut
                     Array.Resize(ref _validatedEpsilon, count);
                 }
 
-                if (_placedHas.Length < count)
+                if (_numeric && _placedHas.Length < count)
                 {
                     Array.Resize(ref _placedHas, count);
                     Array.Resize(ref _placedPassed, count);
@@ -1237,6 +1237,15 @@ namespace Zantetsu.MeshCut
         /// <summary>Tests only: a query's answer checked a second time once it is the placement (the pass before 2026-10-01's change).</summary>
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         internal static bool placementCheckTwiceForTest;
+
+        // Whether the numeric input-contract diagnosis runs in this snapshot (VpNumericDiagnosis, D-211): taken once,
+        // when the snapshot is made. Where it is false nothing of the diagnosis runs here -- no check, nothing
+        // remembered or compared for one, no room for it, none of its counts or times -- and nothing is refused by
+        // it, as in a non-Development Player.
+        private readonly bool _numeric = VpNumericDiagnosis.Enabled;
+
+        /// <summary>Tests only: the room the diagnosis keeps for what it remembers (a registration, a render fragment).</summary>
+        internal (int validated, int placed) NumericDiagnosisRoomForTest => (_validatedHas.Length, _placedHas.Length);
 #endif
 
         /// <summary>
@@ -1852,16 +1861,20 @@ namespace Zantetsu.MeshCut
             SectionBuildCount = 0;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // The numeric input-contract diagnosis of the registrations: what is left of the ordinary build's
-            // validation when the settled structure has answered the rest. Not compiled for a non-Development Player.
-            VpMultiCutBuildOutcome checkedInputs;
-            using (s_validate.Auto())
+            // validation when the settled structure has answered the rest. Not compiled for a non-Development Player,
+            // and not run where the diagnosis is off (D-211): its Profiler section is then not entered either.
+            if (_numeric)
             {
-                checkedInputs = ValidatePlacementInputs(registrations);
-            }
+                VpMultiCutBuildOutcome checkedInputs;
+                using (s_validate.Auto())
+                {
+                    checkedInputs = ValidatePlacementInputs(registrations);
+                }
 
-            if (checkedInputs != VpMultiCutBuildOutcome.Built)
-            {
-                return Fail(checkedInputs);
+                if (checkedInputs != VpMultiCutBuildOutcome.Built)
+                {
+                    return Fail(checkedInputs);
+                }
             }
 #endif
 
@@ -2062,7 +2075,7 @@ namespace Zantetsu.MeshCut
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (_placedHas.Length < _renderFragmentCount)
+            if (_numeric && _placedHas.Length < _renderFragmentCount)
             {
                 int room = Math.Max(_renderFragmentCount, _placedHas.Length * 2);
                 Array.Resize(ref _placedHas, room);
@@ -2276,7 +2289,7 @@ namespace Zantetsu.MeshCut
                 ValidateCounts.indexSeconds += _vIndex;
                 ValidateCounts.inputSeconds += _vInput;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                ValidateCounts.contractSeconds += _vContract;
+                if (_numeric) ValidateCounts.contractSeconds += _vContract;
 #endif
                 ValidateCounts.ancestorSeconds += _vAncestors;
                 ValidateCounts.operationsSeconds += _vOperations;
@@ -2426,19 +2439,24 @@ namespace Zantetsu.MeshCut
             IReadOnlyList<VpMultiCutRegistration> registrations)
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // The numeric input-contract diagnosis of every registration, before anything of the structure is read.
-            for (int g = 0; g < registrations.Count; g++)
+            // The numeric input-contract diagnosis of every registration, before anything of the structure is read
+            // (the whole of it one branch: nothing is read or timed where the diagnosis is off).
+            bool numeric = _numeric;
+            if (numeric)
             {
-                VpMultiCutRegistration registration = registrations[g];
-                if (!IsWithinContract(registration.localBounds)
-                    || !IsPlacement(registration.geometryLocalToWorld)
-                    || !IsRigid(registration.lineageToGeometryLocal))
+                for (int g = 0; g < registrations.Count; g++)
                 {
-                    return Invalid(VpMultiCutInvalidInput.InputContract);
+                    VpMultiCutRegistration registration = registrations[g];
+                    if (!IsWithinContract(registration.localBounds)
+                        || !IsPlacement(registration.geometryLocalToWorld)
+                        || !IsRigid(registration.lineageToGeometryLocal))
+                    {
+                        return Invalid(VpMultiCutInvalidInput.InputContract);
+                    }
                 }
-            }
 
-            _vContract = (System.Diagnostics.Stopwatch.GetTimestamp() - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+                _vContract = (System.Diagnostics.Stopwatch.GetTimestamp() - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
+            }
 #endif
             Lap(ref _vInput);
             StructureValidations++;
@@ -2489,7 +2507,8 @@ namespace Zantetsu.MeshCut
                 // The numeric diagnosis: a section of this box, placed, can be computed in float at all, and every cap
                 // vertex it gives is bounded -- asked here, where it has always been asked, so that which refusal comes
                 // first is what it always was.
-                if (!VpSectionBounds.TryPlacedExtent(
+                if (numeric
+                    && !VpSectionBounds.TryPlacedExtent(
                         registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon, out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.ConservativeSection);
@@ -2646,7 +2665,7 @@ namespace Zantetsu.MeshCut
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (!VpSectionBounds.IsPlaneWithin(local, registration.localBounds))
+            if (_numeric && !VpSectionBounds.IsPlaneWithin(local, registration.localBounds))
             {
                 return Invalid(VpMultiCutInvalidInput.ConservativeSection);
             }
@@ -3057,19 +3076,23 @@ namespace Zantetsu.MeshCut
 
             long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // The numeric diagnosis of the answers, as a block of its own.
-            for (int r = 0; r < refusedAt; r++)
+            // The numeric diagnosis of the answers, as a block of its own (no block where the diagnosis is off).
+            long t2 = t1;
+            if (_numeric)
             {
-                if (!_phasedChecked[r]) continue;
-                _placeInto.placementChecks++;
-                if (!IsPlacement(_phasedPlacements[r]))
+                for (int r = 0; r < refusedAt; r++)
                 {
-                    refusedAt = r;
-                    break;
+                    if (!_phasedChecked[r]) continue;
+                    _placeInto.placementChecks++;
+                    if (!IsPlacement(_phasedPlacements[r]))
+                    {
+                        refusedAt = r;
+                        break;
+                    }
                 }
-            }
 
-            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
 #else
             long t2 = t1;   // no check block here: the builds follow the queries
 #endif
@@ -3086,7 +3109,7 @@ namespace Zantetsu.MeshCut
             double f = 1.0 / System.Diagnostics.Stopwatch.Frequency;
             _placeInto.providerSeconds += (t1 - t0) * f;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            _placeInto.checkSeconds += (t2 - t1) * f;
+            if (_numeric) _placeInto.checkSeconds += (t2 - t1) * f;
 #endif
             _placeInto.restSeconds += (t3 - t2) * f;
             if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
@@ -3200,6 +3223,14 @@ namespace Zantetsu.MeshCut
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Matrix4x4 baseline = kind == VpFragmentPlacementKind.Following ? followed : registration.geometryLocalToWorld;
+            if (!_numeric)
+            {
+                // The diagnosis is off in this process (D-211): the answer is taken as it is, as in a non-Development
+                // Player -- not checked, and nothing remembered or compared for a check.
+                geometryLocalToWorld = baseline;
+                return true;
+            }
+
             if (kind != VpFragmentPlacementKind.Following && !placementCheckStaticForTest)
             {
                 // A Static placement is the registration's own matrix, and every build validates each registration's
@@ -3434,7 +3465,7 @@ namespace Zantetsu.MeshCut
             // finite is judged from the box the shapes lie in -- each row of the placement over the box's farthest
             // reach -- and a reach that is not finite is refused, never dropped or emptied. A non-Development Player
             // does not ask: such a placement is outside the contract and its caps are drawn as the numbers come out.
-            if (selected > 0 && !PlacesFinitely(geometryLocalToWorld, renderFragment.localBounds))
+            if (_numeric && selected > 0 && !PlacesFinitely(geometryLocalToWorld, renderFragment.localBounds))
             {
                 return Invalid(VpMultiCutInvalidInput.DrawnCapVertex);
             }
