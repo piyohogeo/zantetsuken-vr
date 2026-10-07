@@ -49,7 +49,7 @@ namespace Zantetsu.Sandbox
                 _pcRestRef = rest;
                 if (_pcRest == null)
                 {
-                    _pcRest = new StreamWriter(Path.Combine(directory, "playable-rest.csv"));
+                    _pcRest = DetailWriter("playable-rest.csv");
                     _pcRest.WriteLine("frame,t,trackedDynamic,trackedAnchored,held,asleepByRest,reCuts,reCutCandidates,releasedPieces,sleptOnRelease,wokenOnRelease,wokenBySupportLoss,lostGrounds,autoWakes,unsupportedPastTimeout,heldWithoutSupport,maxReleaseMs,maxSupportMs,maxRestMs,simulateMs,stepped,skipsInARow,remainingMs,expectedMs,groups,fusedPieces,groupCuts,finals,rigidbodies");
                 }
 

@@ -137,7 +137,7 @@ namespace Zantetsu.Sandbox
             private IEnumerator CityWalkViews(string when)
             {
                 string spec = Value(CityWalkViewsArgument);
-                if (string.IsNullOrEmpty(spec)) yield break;
+                if (string.IsNullOrEmpty(spec) || !runParts.detail) yield break;   // pictures are the detailed diagnostics'
                 var shots = new List<CheckCaptureCamera.Shot>();
                 foreach (string item in spec.Split(';'))
                 {
@@ -262,7 +262,7 @@ namespace Zantetsu.Sandbox
                 if (!cityWalk) return;
                 _cwRealAtScriptStart = Time.realtimeSinceStartupAsDouble;
                 if (Has(CityWalkWalkShotsArgument)) StartCoroutine(CityWalkWalkShots(Value(CityWalkWalkShotsArgument)));
-                StartCoroutine(CityWalkSkinningWatch());
+                if (runParts.Watching) StartCoroutine(CityWalkSkinningWatch());   // every NPC slot looked at every frame: not where nothing watches
             }
 
             private bool _cwRegistrationCutShort;
@@ -443,6 +443,7 @@ namespace Zantetsu.Sandbox
             /// </summary>
             private IEnumerator CityWalkWalkShots(string spec)
             {
+                if (!runParts.detail) yield break;
                 List<float> times = spec.Split(',').Select(x => float.Parse(x, Inv)).OrderBy(t => t).ToList();
                 using (var frames = new StreamWriter(Path.Combine(directory, "walk-shot-frames.csv")) { AutoFlush = true })
                 {
@@ -502,6 +503,7 @@ namespace Zantetsu.Sandbox
             // Held before the first Slash of a visit until its picture is taken.
             private bool CityWalkHoldBeforeSlash(CityWalkSteps.Step s)
             {
+                if (!runParts.detail) return false;
                 int i = _mpSteps.Current;
                 bool first = i == 0 || _mpSteps.Steps[i - 1].kind != CityWalkSteps.Kind.Slash || _mpSteps.Steps[i - 1].visit != s.visit;
                 if (!first) return false;

@@ -66,8 +66,8 @@ namespace Zantetsu.Sandbox
                     if (--left > 0) { _capOpen[i] = (snapshot, left); continue; }
                     _capOpen.RemoveAt(i);
                     string path = Path.Combine(directory, "playable-anomaly-" + snapshot.anomaly + ".json");
-                    File.WriteAllText(path, JsonUtility.ToJson(snapshot, true));
-                    Log("playable city capture " + snapshot.anomaly + ": written " + path + " (" + snapshot.bodies.Length + " bodies, floor " + (snapshot.floor != null) + ")");
+                    if (runParts.detail) File.WriteAllText(path, JsonUtility.ToJson(snapshot, true));
+                    Log("playable city capture " + snapshot.anomaly + ": " + (runParts.detail ? "written " + path : "not written (the detailed diagnostics are left out)") + " (" + snapshot.bodies.Length + " bodies, floor " + (snapshot.floor != null) + ")");
                 }
             }
 

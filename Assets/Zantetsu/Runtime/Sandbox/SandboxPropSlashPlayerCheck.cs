@@ -209,6 +209,9 @@ namespace Zantetsu.Sandbox
 
             // A check Player keeps running when its window is not in focus (the project setting stays as it is).
             Application.runInBackground = true;
+            // The parts of the run (scenario, metrics, checks, detailed diagnostics), decided here once for the process.
+            s_parts = PartsFor(Environment.GetCommandLineArgs());
+            Log("parts of the run: " + s_parts.Describe());
             // The city walk: no placed cuttable registers before the check's registration stage (after scene load, before any
             // Start or Update of the scene).
             PlayableCityCuttable.Held = Has(CityWalkArgument);
@@ -244,6 +247,7 @@ namespace Zantetsu.Sandbox
                     PhysicsCut.PreparedCharacterWithdrawal.CompareWholeRoot = mode == "A";
                     Walk walk = gameObject.AddComponent<Walk>();
                     walk.withdrawalMode = mode;
+                    walk.runParts = s_parts;
                     walk.directory = iterations > 1 ? Path.Combine(directory, "iter-" + i.ToString("D2", CultureInfo.InvariantCulture)) : directory;
                     walk.iteration = i;
                     walk.input = Value(SandboxSlashReplayPlayerCheck.InputArgument);
@@ -425,12 +429,33 @@ namespace Zantetsu.Sandbox
                 (ProfilerCategory.Scripts, "Zantetsu.CutPhysicsStep.Collect"),
                 (ProfilerCategory.Scripts, "Zantetsu.Check.LateUpdate"),
                 (ProfilerCategory.Scripts, "Zantetsu.Check.Picture"),
+
+                // The parts of this component's own frame (2026-10-07). Each is the whole of its section, its children
+                // included: LateUpdate holds Metrics.RecordFrame, Check.Hits, Check.Cuts, a part of Scenario.Frame and
+                // Check.MobPlanFrame; MobPlanFrame holds MobPlanDisplay, Pieces, Detail, MobPlanLifetime, Npcs and
+                // MobPlanHitRegistry. Scenario.Frame is also the script's drive, outside LateUpdate.
+                (ProfilerCategory.Scripts, "Zantetsu.Scenario.Frame"),
+                (ProfilerCategory.Scripts, "Zantetsu.Metrics.RecordFrame"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanFrame"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Hits"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Cuts"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Pieces"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Npcs"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.Detail"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanDisplay"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanLifetime"),
+                (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanHitRegistry"),
             };
 
             private (ProfilerCategory category, string name)[] _timelineMarkers;
             private ProfilerRecorder[] _timelineRecorders;
             private readonly List<FrameRow> _timeline = new List<FrameRow>(1024);
-            private readonly Dictionary<int, int> _timelineRowOf = new Dictionary<int, int>();
+
+            // The timeline's room, made once before its first row (PrepareTimelineRoom, 2026-10-07): the rows, each with
+            // the room of its markers' values and of its copies of the display's counts, so that an ordinary frame's
+            // row makes nothing. A run longer than the room makes its further rows in their frames, counted.
+            private FrameRow[] _rowPool = Array.Empty<FrameRow>();
+            private int _rowRoom, _rowsPastRoom;
             private bool _timing;
             private string _phase = "replay";
             private int _picturesAsked;
@@ -450,6 +475,12 @@ namespace Zantetsu.Sandbox
                 public int hits;
                 public int pictures;
                 public long[] markers;
+
+                // The room of this row's markers' values and of its copies of the display's counts, made with the
+                // row before the run (null in a row made past the room): taken when the values are known.
+                public long[] markerRoom;
+                public VpValidateCounts validateRoom;
+                public VpPlaceCounts placeStructuralRoom, placePlacementOnlyRoom;
                 public double ftCpu = double.NaN, ftMain = double.NaN, ftMainPresentWait = double.NaN, ftRender = double.NaN, ftGpu = double.NaN;
                 public double xrGpu = double.NaN, xrCompositorGpu = double.NaN;
                 public int xrDropped = -1;
@@ -840,11 +871,15 @@ namespace Zantetsu.Sandbox
                     while (Time.unscaledTimeAsDouble < readyTime + headWaitSeconds && (!cityWalk || Time.realtimeSinceStartup < headBy))
                     {
                         Vector3 at = head.transform.position;
-                        Vector3 e = head.transform.eulerAngles;
-                        wait.Append(Time.frameCount).Append(',').Append(Time.unscaledTimeAsDouble.ToString("R", Inv)).Append(',')
-                            .Append(at.x.ToString("R", Inv)).Append(',').Append(at.y.ToString("R", Inv)).Append(',').Append(at.z.ToString("R", Inv)).Append(',')
-                            .Append(e.y.ToString("R", Inv)).Append(',').Append(e.x.ToString("R", Inv)).Append(',')
-                            .Append(clock != null ? clock.UnsimulatedSeconds.ToString("R", Inv) : "").Append(',').Append(clock != null ? clock.StepId : -1).Append('\n');
+                        if (runParts.detail)
+                        {
+                            Vector3 e = head.transform.eulerAngles;
+                            wait.Append(Time.frameCount).Append(',').Append(Time.unscaledTimeAsDouble.ToString("R", Inv)).Append(',')
+                                .Append(at.x.ToString("R", Inv)).Append(',').Append(at.y.ToString("R", Inv)).Append(',').Append(at.z.ToString("R", Inv)).Append(',')
+                                .Append(e.y.ToString("R", Inv)).Append(',').Append(e.x.ToString("R", Inv)).Append(',')
+                                .Append(clock != null ? clock.UnsimulatedSeconds.ToString("R", Inv) : "").Append(',').Append(clock != null ? clock.StepId : -1).Append('\n');
+                        }
+
                         looks++;
                         if (Vector3.Distance(at, readyPosition) > startOnHeadMove || Quaternion.Angle(head.transform.rotation, readyRotation) > 0.5f)
                         {
@@ -856,7 +891,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     StageEnd(!moved, moved ? looks + " looks" : "the head did not move");
-                    File.WriteAllText(Path.Combine(directory, "head-wait.csv"), wait.ToString());
+                    if (runParts.detail) File.WriteAllText(Path.Combine(directory, "head-wait.csv"), wait.ToString());
                     // Moved already at the second look (one frame after ready): the replay was under way before the check was
                     // ready, so the run is not under the comparison's condition. It goes on, and is written down as such.
                     _replayBeforeReady = moved && looks <= 2;
@@ -888,7 +923,9 @@ namespace Zantetsu.Sandbox
                     yield return HullMidDropBeforeScript(false, null, Vector3.zero, Quaternion.identity);
                 }
 
-                StartTimeline();
+                _timelineBegun = true;
+                if (runParts.metrics) StartTimeline();
+                else Log("metrics: off for this run (" + MetricsArgument + " off): no frame timeline, no frames.csv");
                 _clockStart = Time.unscaledTimeAsDouble;
                 _replaying = MobPlanMode || _recorder.TryBeginReplay(_clockStart);
                 if (!MobPlanMode) _npcPose?.Restart();
@@ -909,9 +946,14 @@ namespace Zantetsu.Sandbox
                 }
 
                 ReplayBegun?.Invoke();
-                _poseEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate");
-                _poseApplyNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply");
-                _hitEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate");
+                if (runParts.Watching)
+                {
+                    // The hit frames' markers, read by the checks' summary: not started where nothing watches the hits.
+                    _poseEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate");
+                    _poseApplyNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply");
+                    _hitEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate");
+                }
+
                 Log("start: frame=" + Time.frameCount + " rows " + start + ".." + (start + _loaded - 1) + " replayed=" + _rowTimes.Count
                     + " refusedByRecorder=[" + string.Join(",", _refusedRows) + "]"
                     + " replay begun=" + _replaying + " clock start=" + _clockStart.ToString("F4", Inv)
@@ -945,6 +987,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 _replaying = false;
+                _scriptCompleted = cutsComplete;
                 ManualPhysicsClock stepClock = CutPhysicsStep.Clock;
                 if (cutsComplete)
                 {
@@ -959,7 +1002,7 @@ namespace Zantetsu.Sandbox
                     // not a completion.
                     Log("cuts NOT complete at the waiting deadline: frame=" + Time.frameCount + " realSinceStart=" + (Time.unscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
                         + " stepId=" + (stepClock != null ? stepClock.StepId : -1) + "; " + DescribeWaiting());
-                    Expect(false, "[scenario] the cuts completed before the waiting deadline (" + DescribeWaiting() + ")");
+                    RunExpect(false, "[scenario] the cuts completed before the waiting deadline (" + DescribeWaiting() + ")");
                 }
 
                 StageEnd(!cutsComplete, cutsComplete ? "script seconds " + (Time.unscaledTimeAsDouble - _clockStart).ToString("F1", Inv) : DescribeWaiting());
@@ -1041,7 +1084,9 @@ namespace Zantetsu.Sandbox
                 yield return null;
                 // The ending (CheckEnding): a failure inside one part of the summary must not stop the later parts, the
                 // world's reclaim, the log's release: each part is guarded, and the whole is guarded once more.
-                var parts = new List<CheckEnding.Part> { new CheckEnding.Part("summary", Summarise) };
+                // The summary is the checks' (their judgements and what they followed); a run without them writes the
+                // scenario's own record in its place.
+                var parts = new List<CheckEnding.Part> { runParts.checks ? new CheckEnding.Part("summary", Summarise) : new CheckEnding.Part("scenario record", ScenarioRecord) };
                 if (trace)
                 {
                     parts.Add(new CheckEnding.Part("trace", FinishTrace));
@@ -1077,6 +1122,7 @@ namespace Zantetsu.Sandbox
                 {
                     Application.quitting -= MultiQuitting;
                     _timing = false;
+                    _timelineBegun = false;
                     var steps = new List<CheckEnding.Part>
                     {
                         new CheckEnding.Part("capture sinks cancelled if still live", CaptureCancel),
@@ -1087,8 +1133,28 @@ namespace Zantetsu.Sandbox
                         new CheckEnding.Part("view target", ReleaseTarget),
                     };
                     ending.Complete(steps, ReleaseLog,
-                        closingFailures => fixedCode.HasValue && closingFailures == 0 ? fixedCode.Value : CheckEnding.CodeOf(_failures + closingFailures, _replayBeforeReady),
-                        code => { Code = code; Done = true; });
+                        closingFailures =>
+                        {
+                            _closingFailures = closingFailures;
+                            return fixedCode.HasValue && closingFailures == 0
+                                ? fixedCode.Value
+                                : PropSlashRunResult.CodeOf(runParts.checks, _failures + closingFailures, RunResult(ending, fixedCode, closingFailures, 0).completed, _replayBeforeReady);
+                        },
+                        code =>
+                        {
+                            Code = code;
+                            try
+                            {
+                                // The run and the checks apart (2026-10-07): after the log's release, so the lines are written at once.
+                                WriteRunResult(RunResult(ending, fixedCode, _closingFailures, code));
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogException(e);
+                            }
+
+                            Done = true;
+                        });
                 }
                 finally
                 {
@@ -1202,6 +1268,7 @@ namespace Zantetsu.Sandbox
                     _timelineRecorders[i] = ProfilerRecorder.StartNew(_timelineMarkers[i].category, _timelineMarkers[i].name);
                 }
 
+                PrepareTimelineRoom();
                 _timing = true;
             }
 
@@ -1228,15 +1295,72 @@ namespace Zantetsu.Sandbox
                     + bytes.managed + " B; GPU buffers of the room " + d.RoomGpuBytes + " B; managed heap in use " + GC.GetTotalMemory(false) + " B; " + d.DescribeRoom());
             }
 
-            // One row for this frame, and the markers of the frame before into that frame's row.
+            // The room of the whole timeline, made once here, before the first row: one row a frame for the time the run
+            // is expected to take at the display's rate, each with the room of its markers' values and of its copies of
+            // the display's counts. What the timeline holds at the end is the same as before; it is made here instead of a
+            // little in every frame.
+            private void PrepareTimelineRoom()
+            {
+                float rate = _xrDisplay != null && _xrDisplay.TryGetDisplayRefreshRate(out float hz) && hz > 0f ? hz : Mathf.Max(1, frameRate);
+                double seconds = TimelineSecondsFor(_mpEnd, MobPlanMode, light, endHoldSeconds);
+                int rows = TimelineRowsFor(_mpEnd, MobPlanMode, light, endHoldSeconds, rate);
+                long heapBefore = GC.GetTotalMemory(false), began = System.Diagnostics.Stopwatch.GetTimestamp();
+                _rowPool = MakeTimelineRows(rows, _timelineRecorders.Length);
+                _rowRoom = rows;
+                if (_timeline.Capacity < rows) _timeline.Capacity = rows;
+                Log("timeline room: " + rows + " rows prepared before the first (" + seconds.ToString("F0", Inv) + " s at " + rate.ToString("R", Inv) + " Hz and a twentieth more; each with its "
+                    + _timelineRecorders.Length + " markers' values and its copies of the display's counts) in "
+                    + ((System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency).ToString("F1", Inv) + " ms, managed heap +"
+                    + (GC.GetTotalMemory(false) - heapBefore) + " B; a row past the room is made in its frame and counted");
+            }
+
+            // The room's rows: each with the room of its markers' values and of its three copies of the display's counts.
+            private static FrameRow[] MakeTimelineRows(int rows, int markers)
+            {
+                var made = new FrameRow[rows];
+                for (int i = 0; i < rows; i++)
+                {
+                    made[i] = new FrameRow
+                    {
+                        markerRoom = new long[markers],
+                        validateRoom = new VpValidateCounts(),
+                        placeStructuralRoom = new VpPlaceCounts(),
+                        placePlacementOnlyRoom = new VpPlaceCounts(),
+                    };
+                }
+
+                return made;
+            }
+
+            /// <summary>The process-wide retained-heap difference across making the rows; not an allocation counter.</summary>
+            internal static long TimelineRoomBytes(int rows, int markers)
+            {
+                long before = GC.GetTotalMemory(true);
+                FrameRow[] made = MakeTimelineRows(rows, markers);
+                long after = GC.GetTotalMemory(true);
+                GC.KeepAlive(made);
+                return after - before;
+            }
+
+            private FrameRow TakeRow()
+            {
+                if (_timeline.Count < _rowRoom) return _rowPool[_timeline.Count];
+                _rowsPastRoom++;
+                return new FrameRow();
+            }
+
+            // One row for this frame, and the markers of the frame before into that frame's row. The rows come from the
+            // room made at the timeline's start: an ordinary frame makes nothing here. The row before is the frame
+            // before's (a row is taken every frame of the timeline), looked up by its place, not through a table.
             private void RecordFrame()
             {
                 int frame = Time.frameCount;
-                if (_timelineRowOf.TryGetValue(frame - 1, out int before))
+                int before = _timeline.Count - 1;
+                if (before >= 0 && _timeline[before].frame == frame - 1)
                 {
                     FrameRow previous = _timeline[before];
                     previous.notes = CutWorldFrameNotes.MaskOf(frame - 1);
-                    previous.markers = new long[_timelineRecorders.Length];
+                    previous.markers = previous.markerRoom ?? new long[_timelineRecorders.Length];
                     for (int i = 0; i < _timelineRecorders.Length; i++)
                     {
                         previous.markers[i] = _timelineRecorders[i].Valid ? _timelineRecorders[i].LastValue : -1;
@@ -1259,34 +1383,31 @@ namespace Zantetsu.Sandbox
                         // The step's collection of that frame: this frame's has not run yet where this is called (Update).
                         previous.stepCollectMs = CutPhysicsStep.LastCollectSeconds * 1000.0;
                         if (counts.roomGrowths > 0 || counts.snapshotRegrowths > 0) previous.roomCommittedBytes = _world.Display.RoomBytes().nativeCommitted;
-                        if (counts.validate != null) { previous.validate = new VpValidateCounts(); previous.validate.CopyFrom(counts.validate); }
-                        if (counts.placeStructural != null) { previous.placeStructural = new VpPlaceCounts(); previous.placeStructural.CopyFrom(counts.placeStructural); }
-                        if (counts.placePlacementOnly != null) { previous.placePlacementOnly = new VpPlaceCounts(); previous.placePlacementOnly.CopyFrom(counts.placePlacementOnly); }
+                        if (counts.validate != null) { previous.validate = previous.validateRoom ?? new VpValidateCounts(); previous.validate.CopyFrom(counts.validate); }
+                        if (counts.placeStructural != null) { previous.placeStructural = previous.placeStructuralRoom ?? new VpPlaceCounts(); previous.placeStructural.CopyFrom(counts.placeStructural); }
+                        if (counts.placePlacementOnly != null) { previous.placePlacementOnly = previous.placePlacementOnlyRoom ?? new VpPlaceCounts(); previous.placePlacementOnly.CopyFrom(counts.placePlacementOnly); }
                     }
                 }
 
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 int fed = _recorder != null ? _recorder.ReplayIndex : 0;
                 SlashWaveCore core = _katana != null ? _katana.Core : null;
-                _timelineRowOf[frame] = _timeline.Count;
-                _timeline.Add(new FrameRow
-                {
-                    frame = frame,
-                    phase = _phase,
-                    real = Time.unscaledTimeAsDouble - _clockStart,
-                    delta = Time.unscaledDeltaTime,
-                    fed = fed,
-                    recorded = fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN,
-                    stepId = clock != null ? clock.StepId : -1,
-                    unsimulated = clock != null ? clock.UnsimulatedSeconds : double.NaN,
-                    sweeps = core != null ? core.SweepCount : -1,
-                    waves = _katana != null ? _katana.WaveCount : -1,
-                    hits = _replaying && HitListIsNew() ? _detector.HitCount : 0,
-                    pictures = _picturesAsked,
-                    gcCount = GC.CollectionCount(0),
-                });
+                FrameRow taken = TakeRow();
+                taken.frame = frame;
+                taken.phase = _phase;
+                taken.real = Time.unscaledTimeAsDouble - _clockStart;
+                taken.delta = Time.unscaledDeltaTime;
+                taken.fed = fed;
+                taken.recorded = fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN;
+                taken.stepId = clock != null ? clock.StepId : -1;
+                taken.unsimulated = clock != null ? clock.UnsimulatedSeconds : double.NaN;
+                taken.sweeps = core != null ? core.SweepCount : -1;
+                taken.waves = _katana != null ? _katana.WaveCount : -1;
+                taken.hits = _replaying && HitListIsNew() ? _detector.HitCount : 0;
+                taken.pictures = _picturesAsked;
+                taken.gcCount = GC.CollectionCount(0);
+                _timeline.Add(taken);
                 _picturesAsked = 0;
-                FrameRow taken = _timeline[_timeline.Count - 1];
                 if (_world != null && _world.Display != null && !_world.Display.IsDisposed)
                 {
                     taken.displayFragments = _world.Display.RenderFragmentCount;
@@ -1294,7 +1415,6 @@ namespace Zantetsu.Sandbox
                 }
 
                 FillExtras(taken);
-                ReleaseGeometryHoldWhenDue();
             }
 
             // The hold ends N frames after the first hit; the held work is then collected as it would have been.
@@ -1623,7 +1743,12 @@ namespace Zantetsu.Sandbox
 
             private void LateUpdateObserved()
             {
-                GameViewFrame();   // every frame: the game's view references still the XR camera's
+                // What each part does in a frame (2026-10-07). The scenario: the view's turn, the geometry hold, the hits
+                // read into the cuts the end waits for, those cuts followed, the script's own frame. The metrics: the
+                // timeline's row. The checks and the detailed diagnostics: everything else here -- not run, with what
+                // they would read, where both are left out.
+                bool watching = runParts.Watching;
+                if (runParts.checks) GameViewFrame();   // every frame: the game's view references still the XR camera's
                 if (viewTurnStart >= 0.0 && _replaying)
                 {
                     TurnView(Time.unscaledTimeAsDouble - _clockStart);
@@ -1631,10 +1756,15 @@ namespace Zantetsu.Sandbox
 
                 if (_timing)
                 {
-                    RecordFrame();
+                    using (s_metricsFrame.Auto())
+                    {
+                        RecordFrame();
+                    }
                 }
 
-                if (!light && (_replaying || _observing) && _world != null && !_world.IsEnding)
+                // The image runs' hold of the finished geometry: a part of the scenario, timeline or no timeline.
+                if (_timelineBegun) ReleaseGeometryHoldWhenDue();
+                if (watching && !light && (_replaying || _observing) && _world != null && !_world.IsEnding)
                 {
                     TrackPieces();
                 }
@@ -1656,27 +1786,30 @@ namespace Zantetsu.Sandbox
 
                 int frame = Time.frameCount;
                 int update = _recorder.ReplayIndex - 1;
-                if (_hitEvaluateNs.Valid)
+                if (watching)
                 {
-                    _markerNs[frame - 1] = (_poseEvaluateNs.LastValue, _poseApplyNs.LastValue, _hitEvaluateNs.LastValue);
-                }
-
-                // The pose the character stands in when each Slash latches, to set beside the pose its hit meets.
-                for (int w = 0; w < _katana.WaveCount; w++)
-                {
-                    long id = _katana.SlashIdAt(w);
-                    if (id > _lastLatchSeen)
+                    if (_hitEvaluateNs.Valid)
                     {
-                        _lastLatchSeen = id;
-                        if (_npcPose != null)
+                        _markerNs[frame - 1] = (_poseEvaluateNs.LastValue, _poseApplyNs.LastValue, _hitEvaluateNs.LastValue);
+                    }
+
+                    // The pose the character stands in when each Slash latches, to set beside the pose its hit meets.
+                    for (int w = 0; w < _katana.WaveCount; w++)
+                    {
+                        long id = _katana.SlashIdAt(w);
+                        if (id > _lastLatchSeen)
                         {
-                            _latchPose[id] = (_npcPose.AppliedFrame, _npcPose.AppliedSourceTime);
+                            _lastLatchSeen = id;
+                            if (_npcPose != null)
+                            {
+                                _latchPose[id] = (_npcPose.AppliedFrame, _npcPose.AppliedSourceTime);
+                            }
                         }
                     }
                 }
 
                 // Any piece moving faster than 20 m/s, the first time it does: which, how heavy, where (not in a light run).
-                for (int id = 1; !light && id < int.MaxValue; id++)
+                for (int id = 1; watching && !light && id < int.MaxValue; id++)
                 {
                     var fragment = new LogicalFragmentId(id);
                     if (!_world.Ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
@@ -1697,7 +1830,7 @@ namespace Zantetsu.Sandbox
 
                 // The character's withdrawal, as seen from outside: it is no longer drawn and no longer a hit target (the
                 // same frame), its pose is not applied again, and its motion body takes no part in the physics.
-                if (_npc != null && _npcWithdrawnFrame < 0 && NpcLeft())
+                if (watching && _npc != null && _npcWithdrawnFrame < 0 && NpcLeft())
                 {
                     _npcWithdrawnFrame = frame;
                     _npcPoseFrameAtWithdrawal = _npcPose != null ? _npcPose.AppliedFrame : -1;
@@ -1706,17 +1839,45 @@ namespace Zantetsu.Sandbox
                         + " pose last applied at frame " + _npcPoseFrameAtWithdrawal);
                 }
 
+                // The hits of this frame's evaluation. The scenario reads each once: an accepted one is a cut the run's
+                // end waits for. What is judged and written of a hit is the checks' and the detailed diagnostics'.
                 if (HitListIsNew())
                 {
                     _lastHitListAt = _detector.HitAt(0).At;
                     for (int i = 0; i < _detector.HitCount; i++)
                     {
                         SlashHitConfirmed hit = _detector.HitAt(i);
-                        _seenHits.Add(hit);
-                        LogHit(hit, frame, update);
+                        _scenarioHits++;
+                        if (_firstHitFrame < 0)
+                        {
+                            _firstHitFrame = frame;
+                        }
+
+                        Accepted made;
+                        using (s_scenarioFrame.Auto())
+                        {
+                            made = ScenarioAccept(hit, frame);
+                        }
+
+                        if (watching)
+                        {
+                            using (s_checkHits.Auto())
+                            {
+                                _seenHits.Add(hit);
+                                LogHit(hit, frame, update, made);   // adds the cut where it always was added
+                            }
+                        }
+                        else
+                        {
+                            using (s_scenarioFrame.Auto())
+                            {
+                                ScenarioNoteHeld(hit, frame);
+                                if (made != null) ScenarioAdd(made);
+                            }
+                        }
                     }
                 }
-                else if (_detector.HitCount > 0)
+                else if (watching && _detector.HitCount > 0)
                 {
                     _hitListRereads.Add((frame, _detector.HitAt(0).At, _detector.HitCount, _recorder.ReplayIndex));
                     Log("hit list not new: frame=" + frame + " the detector still holds the " + _detector.HitCount
@@ -1736,33 +1897,26 @@ namespace Zantetsu.Sandbox
                     _traceDrainer.Drain(_traceHistory);
                 }
 
-                string picture = null;
-                foreach (Accepted a in _accepted)
+                // The cuts still followed -- the unfinished ones only -- for the run's end.
+                _cutPicture = null;
+                using (s_scenarioFrame.Auto())
                 {
-                    if (!_world.Ledger.TryGetOperation(a.operation, out LogicalCutOperation op))
-                    {
-                        continue;
-                    }
-
-                    if (a.publishedFrame < 0 && op.state != LogicalCutOperationState.Admitted)
-                    {
-                        a.publishedFrame = frame;
-                        Log(a.name + " Final/Logical published: state=" + op.state + " frame=" + frame
-                            + " children=" + op.positive.value + "," + op.negative.value + Clocks(update));
-                        picture ??= a.name + "-2-final";
-                    }
-
-                    if (a.committedFrame < 0 && _world.Geometry.StageOf(a.operation) == CutGeometryStage.Committed)
-                    {
-                        a.committedFrame = frame;
-                        Log(a.name + " geometry committed: frame=" + frame + " ledger=" + op.state + Clocks(update));
-                        picture ??= a.name + "-3-geometry";
-                    }
+                    ScenarioFollowCuts(frame, update);
                 }
 
                 if (multiNpc || MobPlanMode)
                 {
-                    MultiFrame(frame);
+                    if (watching)
+                    {
+                        using (s_checkCuts.Auto())
+                        {
+                            MultiFrame(frame);
+                        }
+                    }
+                    else
+                    {
+                        MultiHeldTakenUp(frame);   // the one part of it the end depends on
+                    }
                 }
 
                 if (MobPlanMode)
@@ -1777,9 +1931,9 @@ namespace Zantetsu.Sandbox
                     BuildingFrame(frame);
                 }
 
-                if (picture != null)
+                if (_cutPicture != null)
                 {
-                    RequestPicture(picture);
+                    RequestPicture(_cutPicture);
                 }
             }
 
@@ -1797,7 +1951,7 @@ namespace Zantetsu.Sandbox
                 return _detector != null && _detector.HitCount > 0 && _detector.HitAt(0).At != _lastHitListAt;
             }
 
-            private void LogHit(in SlashHitConfirmed hit, int frame, int update)
+            private void LogHit(in SlashHitConfirmed hit, int frame, int update, Accepted cutOfHit)
             {
                 _hitsLogged++;
                 LogicalCutLedger ledger = _world.Ledger;
@@ -1848,11 +2002,6 @@ namespace Zantetsu.Sandbox
                 {
                     HitLogged?.Invoke(of, frame);
                 }
-                if (_firstHitFrame < 0)
-                {
-                    _firstHitFrame = frame;
-                }
-
                 Log("hit of=" + of + " slashId=" + hit.SlashId + " fragment=" + hit.Fragment.value + " side=" + hit.Side + pose
                     + " atLatch=" + hit.AtLatch + " acceptance=" + hit.Acceptance + " admission=" + hit.Admission
                     + " operation=" + hit.Operation.value + " lineage=" + lineage + " frame=" + frame
@@ -1876,14 +2025,13 @@ namespace Zantetsu.Sandbox
                     BuildingOnHit(hit);
                 }
 
-                // The multi-NPC mode and the building E2E follow a Pending cut as they follow a Published one.
-                bool pendingCut = (multiNpc || building || MobPlanMode) && hit.Acceptance == ProvisionalCutAcceptance.Pending;
-                if (hit.Acceptance != ProvisionalCutAcceptance.Published && !pendingCut)
+                // The cut this hit became, made by the scenario's own part (ScenarioAccept): none for a hit that is no cut.
+                if (cutOfHit == null)
                 {
                     return;
                 }
 
-                bool child = hasOrigin;
+                bool child = cutOfHit.child;
                 if (child)
                 {
                     _childCuts++;
@@ -1904,20 +2052,9 @@ namespace Zantetsu.Sandbox
                     if (child) _boxChildCuts++; else _boxRootCuts++;
                 }
 
-                var accepted = new Accepted
-                {
-                    slash = hit.SlashId,
-                    fragment = hit.Fragment,
-                    operation = hit.Operation,
-                    child = child,
-                    acceptedFrame = frame,
-                    name = "op" + hit.Operation.value + "-" + of + (child ? "-child" : "-root"),
-                    pending = pendingCut,
-                    provisionalFrame = pendingCut ? -1 : frame,
-                    fusion = pendingCut && _world.Fusion != null && _world.Owners.TryGet(hit.Fragment, out PhysicsFragmentOwner fusedOwner) && fusedOwner.IsFused,
-                    hull = pendingCut && _world.Hulls != null && hit.Operation.value == 0 && hit.Admission == LogicalCutAdmission.NoOp,
-                };
-                _accepted.Add(accepted);
+                Accepted accepted = cutOfHit;
+                accepted.name = "op" + hit.Operation.value + "-" + of + (child ? "-child" : "-root");
+                ScenarioAdd(accepted);
                 if (_world.Ledger.TryGetOperation(hit.Operation, out LogicalCutOperation cut))
                 {
                     // The adopted plane in its source's frame, as the ledger holds it: enough to repeat this cut.
@@ -1931,7 +2068,8 @@ namespace Zantetsu.Sandbox
             /// <summary>Every accepted cut outside the fusion has its geometry committed, and the fusion (when there is one) has nothing waiting.</summary>
             private bool CutsSettled()
             {
-                return _accepted.TrueForAll(a => a.fusion || a.hull || a.committedFrame >= 0) && (_world == null || _world.Fusion == null || _world.Fusion.IsSettled) && (_world == null || _world.Hulls == null || _world.Hulls.IsSettled);
+                // The count of the cuts the end waits for and has not seen committed (OpenCuts), not a pass over every cut the run accepted.
+                return _openCuts.Waiting == 0 && (_world == null || _world.Fusion == null || _world.Fusion.IsSettled) && (_world == null || _world.Hulls == null || _world.Hulls.IsSettled);
             }
 
             /// <summary>What a wait for the cuts is still waiting for: the accepted cuts outside the fusion not committed (the first few, by their stage), the fusion's own, the replay and the waves.</summary>
@@ -2581,9 +2719,26 @@ namespace Zantetsu.Sandbox
                     + "; shadow calls so far one-sided=" + display.OneSidedShadowIssues + " two-sided=" + display.TwoSidedShadowIssues;
             }
 
+            // A check's judgement. Where the checks are left out of the run it judges nothing and writes nothing: it is
+            // counted as not run, never as held (what it would have read is not gathered either: its callers are the checks').
             private void Expect(bool held, string what)
             {
-                if (!held) _failures++;
+                if (!runParts.checks)
+                {
+                    _checksNotRun++;
+                    return;
+                }
+
+                if (held)
+                {
+                    _checksHeld++;
+                }
+                else
+                {
+                    _failures++;
+                    _checkFailures++;
+                }
+
                 Log((held ? "ok: " : "FAILED: ") + what);
             }
 

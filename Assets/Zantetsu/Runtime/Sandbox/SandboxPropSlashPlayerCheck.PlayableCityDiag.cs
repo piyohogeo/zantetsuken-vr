@@ -44,7 +44,7 @@ namespace Zantetsu.Sandbox
             {
                 if (_pcFrames == null)
                 {
-                    _pcFrames = new StreamWriter(Path.Combine(directory, "playable-frames.csv"));
+                    _pcFrames = DetailWriter("playable-frames.csv");
                     _pcFrames.WriteLine("frame,t,owners,awake,asleep,kinematic,constraints,fastNow,anomalies");
                 }
 
