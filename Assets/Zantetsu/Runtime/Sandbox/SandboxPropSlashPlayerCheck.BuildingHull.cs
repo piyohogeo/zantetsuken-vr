@@ -118,7 +118,7 @@ namespace Zantetsu.Sandbox
                 BuildingRest rest = _world.Rest;
                 if (_bhRows == null)
                 {
-                    _bhRows = new StreamWriter(Path.Combine(directory, "building-hull.csv"));
+                    _bhRows = DetailWriter("building-hull.csv");
                     _bhRows.WriteLine("frame,scenario,real,t,groups,kinematic,free,anchoredGroups,stagedGroups,restGround,restPinned,pairsMoving,constraintsLive,dropsRunning,hullUpdatesRunning,hullRequestsWaiting,membersCommitted,membersEmpty,membersPending,ledgerFragments,ledgerOperations,liveHulls,bodies,colliders,members,waves,cuts,unions,fusions,givenUp,notAchieved,stale,heldNow,cutsInProgress,fusionsInFlight,displayOpen,maxFreeSpeed,hullStepMs,hitMs,restMs,frameSumMs,simulateMs,stepped,skipsInARow,mainThreadMs,mainWorkMs,frameIntervalMs");
                     _bhLastStep = h.StepSeconds; _bhLastHit = h.HitSeconds; _bhLastRest = RestSeconds(rest);
                     _bhLastReal = Time.realtimeSinceStartupAsDouble;

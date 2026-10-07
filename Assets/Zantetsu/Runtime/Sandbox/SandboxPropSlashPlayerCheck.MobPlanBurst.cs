@@ -92,7 +92,7 @@ namespace Zantetsu.Sandbox
                     {
                         SlashHitConfirmed hit = _detector.HitAt(i);
                         _seenHits.Add(hit);
-                        LogHit(hit, frame, update);
+                        LogHit(hit, frame, update, ScenarioAccept(hit, frame));
                     }
                 }
 

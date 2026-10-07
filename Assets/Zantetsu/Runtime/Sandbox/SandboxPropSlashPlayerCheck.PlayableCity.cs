@@ -152,6 +152,11 @@ namespace Zantetsu.Sandbox
                     if (c != null && c.IsRegistered) _pcNames[c.Registration.Fragment] = PlayableCityName(c);
                 }
 
+                _crowd.ActorRetired += PlayableCityRetired;
+                _pcLastCycles = _crowd.PublishedCycles;
+                _pcLastReplacements = _crowd.ReplacementsAdded;
+                if (!runParts.checks) return;   // what stands where at the start is gone through and judged by the checks alone
+
                 foreach (PlayableCityCuttable c in _pcCuttables)
                 {
                     // Deferred (TL, 2026-10-03): a cut target only, the instance the scene's own until its first cut.
@@ -222,10 +227,6 @@ namespace Zantetsu.Sandbox
                     Expect(_pcDeferredNotTarget.Count == 0, "[scenario] every deferred placed cuttable stands as the scene placed it, a cut target until its first cut (" + _pcDeferredAtStart
                         + " deferred; not a target " + _pcDeferredNotTarget.Count + (_pcDeferredNotTarget.Count > 0 ? ": " + string.Join(" ", _pcDeferredNotTarget.Take(8)) : "") + ")");
                 }
-
-                _crowd.ActorRetired += PlayableCityRetired;
-                _pcLastCycles = _crowd.PublishedCycles;
-                _pcLastReplacements = _crowd.ReplacementsAdded;
             }
 
             private void PlayableCityRetired(int id, SandboxNpcCharacter c) => _pcRetired++;

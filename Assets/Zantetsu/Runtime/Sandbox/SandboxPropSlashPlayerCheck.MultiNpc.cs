@@ -275,33 +275,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                // Held hits taken up by the driver: the handle has its Operation now, and the cut is followed from here.
-                for (int h = _multiHeld.Count - 1; h >= 0; h--)
-                {
-                    (SandboxNpcCharacter c, long slash, LogicalFragmentId fragment, int heldFrame) = _multiHeld[h];
-                    VpPreparedCharacterCut handle = c.Handle;
-                    if (handle != null && handle.Operation.IsSet)
-                    {
-                        _multiHeld.RemoveAt(h);
-                        _multiHeldAccepted++;
-                        _multiAcceptedOnSource.TryGetValue(fragment, out int k);
-                        _multiAcceptedOnSource[fragment] = k + 1;
-                        Tally(slash).roots.Add("npc-" + Model(c));
-                        _accepted.Add(new Accepted
-                        {
-                            slash = slash, fragment = fragment, operation = handle.Operation, child = false, acceptedFrame = frame,
-                            name = "op" + handle.Operation.value + "-npc-root-held", pending = true, provisionalFrame = -1,
-                        });
-                        Log("multi held taken up: " + Model(c) + " slash " + slash + " operation " + handle.Operation.value + " at frame " + frame
-                            + " (held at frame " + heldFrame + ", " + (frame - heldFrame) + " frames)");
-                    }
-                    else if (handle == null || (handle.IsDisposed && !handle.Operation.IsSet))
-                    {
-                        _multiHeld.RemoveAt(h);
-                        _multiHeldEnded++;
-                        Log("multi held ended without acceptance: " + Model(c) + " slash " + slash + " at frame " + frame);
-                    }
-                }
+                MultiHeldTakenUp(frame);
 
                 MultiFollowIdentification();
                 uncut = _npcs.Count - _multiRoots.Count(k => _multiAcceptedOnSource.ContainsKey(k.Key));
@@ -322,6 +296,38 @@ namespace Zantetsu.Sandbox
                     provisionalThisFrame = provisionalNow, finalThisFrame = finalNow, committedThisFrame = committedNow,
                     unsimulated = clock != null ? clock.UnsimulatedSeconds : (double?)null, stepId = clock != null ? clock.StepId : -1,
                 });
+            }
+
+            // Held hits taken up by the driver: the handle has its Operation now, and the cut is followed from here -- by
+            // the run's end too (ScenarioAdd), so this runs whether the checks do or not (2026-10-07).
+            private void MultiHeldTakenUp(int frame)
+            {
+                for (int h = _multiHeld.Count - 1; h >= 0; h--)
+                {
+                    (SandboxNpcCharacter c, long slash, LogicalFragmentId fragment, int heldFrame) = _multiHeld[h];
+                    VpPreparedCharacterCut handle = c.Handle;
+                    if (handle != null && handle.Operation.IsSet)
+                    {
+                        _multiHeld.RemoveAt(h);
+                        _multiHeldAccepted++;
+                        _multiAcceptedOnSource.TryGetValue(fragment, out int k);
+                        _multiAcceptedOnSource[fragment] = k + 1;
+                        Tally(slash).roots.Add("npc-" + Model(c));
+                        ScenarioAdd(new Accepted
+                        {
+                            slash = slash, fragment = fragment, operation = handle.Operation, child = false, acceptedFrame = frame,
+                            name = "op" + handle.Operation.value + "-npc-root-held", pending = true, provisionalFrame = -1,
+                        });
+                        Log("multi held taken up: " + Model(c) + " slash " + slash + " operation " + handle.Operation.value + " at frame " + frame
+                            + " (held at frame " + heldFrame + ", " + (frame - heldFrame) + " frames)");
+                    }
+                    else if (handle == null || (handle.IsDisposed && !handle.Operation.IsSet))
+                    {
+                        _multiHeld.RemoveAt(h);
+                        _multiHeldEnded++;
+                        Log("multi held ended without acceptance: " + Model(c) + " slash " + slash + " at frame " + frame);
+                    }
+                }
             }
 
             private void MultiClose()
@@ -428,6 +434,25 @@ namespace Zantetsu.Sandbox
             {
                 if (Done) return;
                 Log("INCOMPLETE: the Player is quitting before the scenario finished (phase " + _phase + ", frame " + Time.frameCount + ")");
+                try
+                {
+                    WriteRunResult(new PropSlashRunResult(false, "the Player quit before the run finished (phase " + _phase + ", frame " + Time.frameCount + ")",
+                        runParts.checks, _checksHeld, _checkFailures, _checksNotRun, -1));
+                }
+                catch (System.Exception e)
+                {
+                    Log("run result at quitting failed: " + e.GetType().Name + ": " + e.Message);
+                }
+
+                if (!runParts.checks)
+                {
+                    // The checks are left out of this run: none of their summaries is run at a forced ending either.
+                    try { WriteTimeline(false); } catch (System.Exception e) { Log("timeline at quitting failed: " + e.GetType().Name + ": " + e.Message); }
+                    MultiClose();
+                    ReleaseLog();
+                    return;
+                }
+
                 if (multiNpc) MultiStorage("at quitting");
                 // The building rest's summary is still written when the world ended early (its counters and record survive the ending).
                 try { PlayableRestSummary(); } catch (System.Exception e) { Log("playable city rest summary at quitting failed: " + e.GetType().Name + ": " + e.Message); }

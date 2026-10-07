@@ -48,6 +48,7 @@ namespace Zantetsu.Sandbox
                 + ", " + DeepProfilingArgument + "=" + (Has(DeepProfilingArgument) ? "given" : "not given")
                 + ", " + ProfilerEnableArgument + "=" + (Has(ProfilerEnableArgument) ? "given" : "not given")
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
+                + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);
         }
 

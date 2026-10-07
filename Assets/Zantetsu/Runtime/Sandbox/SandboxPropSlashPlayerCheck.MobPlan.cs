@@ -51,7 +51,11 @@ namespace Zantetsu.Sandbox
             {
                 if (drive != null)
                 {
-                    drive();
+                    using (s_scenarioFrame.Auto())
+                    {
+                        drive();
+                    }
+
                     return;
                 }
 
@@ -191,7 +195,7 @@ namespace Zantetsu.Sandbox
                     Vector3 at = _mpInput.player.transform.position;
                     _mpSteps = CityWalkSteps.Parse(scriptLines, new Vector2(at.x, at.z));
                     _mpEnd = _mpSteps.Budget;
-                    if (cityWalk && Has(CityWalkHitShotsArgument)) _mpSteps.HoldBeforeSlash = CityWalkHoldBeforeSlash;
+                    if (cityWalk && runParts.detail && Has(CityWalkHitShotsArgument)) _mpSteps.HoldBeforeSlash = CityWalkHoldBeforeSlash;
                     Log("mobplan: pictures before and after each visit's Slashes " + (_mpSteps.HoldBeforeSlash != null ? "ON (" + CityWalkHitShotsArgument + ")" : "off"));
                     Log("mobplan: attacks on the NPCs met " + (_mpSteps.Engage == null ? "off (no engage line)" : "ON: range " + _mpSteps.Engage.range.ToString("R", Inv) + " m, half angle "
                         + _mpSteps.Engage.halfAngle.ToString("R", Inv) + " deg, face within " + _mpSteps.Engage.faceTolerance.ToString("R", Inv) + " deg in " + _mpSteps.Engage.turnSeconds.ToString("R", Inv)
@@ -214,8 +218,8 @@ namespace Zantetsu.Sandbox
                     if (_mpSteps != null) _mpStick.drive = MobPlanStepDrive;
                 }
 
-                _mpEvents = new StreamWriter(Path.Combine(directory, "mobplan-events.csv")) { AutoFlush = MobPlanLive };
-                _mpEvents.WriteLine("frame,t,event,id,name,detail");
+                if (runParts.detail) _mpEvents = new StreamWriter(Path.Combine(directory, "mobplan-events.csv")) { AutoFlush = MobPlanLive };
+                _mpEvents?.WriteLine("frame,t,event,id,name,detail");
                 Log("mobplan: script moves=" + _mpMoves.Count + " slashes=" + _mpSlashes.Count + " end=" + _mpEnd.ToString("R", Inv)
                     + " input=" + input + " (" + _mpInputLines.Length + " lines); live stick off, scripted stick at order -100"
                     + (cityWalk ? " (the city walk: each span given for exactly the time a frame overlaps it)" : "")
@@ -528,10 +532,12 @@ namespace Zantetsu.Sandbox
                 _mpReplacementsAtBegin = _crowd.ReplacementsAdded;
                 PlayableCityBegin();
                 _mpPreviousPlayer = _mpInput.player.transform.position;
-                HitLogOpen("mobPlan");
-                FrameLogOpen("mobPlan");   // the per-frame rows (formerly multi.csv), a recording of their own
-                _mpFrames = new StreamWriter(Path.Combine(directory, "mobplan-frames.csv"));
-                _mpFrames.WriteLine("frame,t,delta,live,busy,published,stale,replacements,playerX,playerZ,playerYaw,waves,replaying,chunk,fed,lodRegistered,slots,free,returning,preparing,waitedForSlot");
+                // The records (2026-10-07): the hits' for the checks and the detailed diagnostics; the per-frame rows and the
+                // detail files for the detailed diagnostics alone.
+                if (runParts.Watching) HitLogOpen("mobPlan");
+                if (runParts.detail) FrameLogOpen("mobPlan");   // the per-frame rows (formerly multi.csv), a recording of their own
+                if (runParts.detail) _mpFrames = new StreamWriter(Path.Combine(directory, "mobplan-frames.csv"));
+                _mpFrames?.WriteLine("frame,t,delta,live,busy,published,stale,replacements,playerX,playerZ,playerYaw,waves,replaying,chunk,fed,lodRegistered,slots,free,returning,preparing,waitedForSlot");
                 _mpSlotsAtBegin = _crowd.SlotCount;
                 _mpFullPreparationsAtBegin = SandboxNpcCharacter.FullPreparations;
                 _mpDirectMadeAtBegin = Zantetsu.Rendering.VpDirectSkinInput.CreatedCount;
@@ -539,10 +545,10 @@ namespace Zantetsu.Sandbox
                     + " prepared in " + _crowd.PoolPrepareSeconds.ToString("F3", Inv) + " s, allocated +" + (_crowd.PoolAllocatedBytes / 1048576.0).ToString("F1", Inv)
                     + " MB, mono +" + (_crowd.PoolMonoBytes / 1048576.0).ToString("F1", Inv) + " MB, full preparations " + SandboxNpcCharacter.FullPreparations
                     + ", shared reads " + _crowd.SharedReads + ", models " + _crowd.SlotShareCount);
-                _mpActors = new StreamWriter(Path.Combine(directory, "mobplan-actors.csv"));
-                _mpActors.WriteLine("frame,t,name,id,replacement,x,z,yaw,distance,target,withdrawn,drawn");
+                if (runParts.detail) _mpActors = new StreamWriter(Path.Combine(directory, "mobplan-actors.csv"));
+                _mpActors?.WriteLine("frame,t,name,id,replacement,x,z,yaw,distance,target,withdrawn,drawn");
                 MultiStorage("before replay");
-                _mpDetail = MobPlanDetail;
+                _mpDetail = MobPlanDetail && runParts.detail;
                 Log("mobplan detail files: " + (_mpDetail ? "written (-zantetsuMobPlanDetail)" : "off (a performance run)")
                     + ", flushed line by line: " + MobPlanLive);
                 MobPlanLifetimeBegin();
@@ -555,6 +561,7 @@ namespace Zantetsu.Sandbox
                 Log("mobplan begin: frame=" + Time.frameCount + " live=" + _mpLiveAtBegin + " published=" + _mpPublishedAtBegin
                     + " player=" + player.ToString("F3") + " yaw=" + _mpInput.player.transform.eulerAngles.y.ToString("F1", Inv)
                     + " floor under player=" + FloorUnder(player));
+                if (!runParts.Watching) return;   // where each stands at the start is the checks' and the detailed diagnostics' to write
                 foreach (SandboxNpcCharacter c in _npcs)
                 {
                     if (c == null || c.CharacterRoot == null) continue;
@@ -593,81 +600,113 @@ namespace Zantetsu.Sandbox
 
             private void MobPlanFrameObserved(int frame)
             {
-                using (s_mpDisplayMarker.Auto()) MobPlanDisplayFrame(frame);
-                PlayableCityFrame(frame);
+                // The parts of the script's frame (2026-10-07), in the order they always ran. The scenario's: the next
+                // chunk when due, the walk's distance, the eye held at its height and level. The checks' and the detailed
+                // diagnostics': everything else -- not run, with what it would read, where they are left out.
+                bool checks = runParts.checks, detail = runParts.detail, watching = runParts.Watching;
+                if (watching)
+                {
+                    using (s_mpDisplayMarker.Auto()) MobPlanDisplayFrame(frame);
+                    using (s_checkPieces.Auto()) PlayableCityFrame(frame);
+                }
+
                 double t = MobPlanNow;
-                if (_mpNextSlash < _mpSlashes.Count && t >= _mpSlashes[_mpNextSlash].at && t < _mpEnd
-                    && !_recorder.IsReplaying && _katana.WaveCount == 0)
-                {
-                    MobPlanBeginChunk(_mpSlashes[_mpNextSlash++]);
-                }
-
                 Transform player = _mpInput.player.transform;
-                _mpTravel += Vector3.Distance(_mpPreviousPlayer, player.position);
-                _mpPreviousPlayer = player.position;
-                _mpFrames.WriteLine(string.Join(",", frame, t.ToString("F4", Inv), (Time.unscaledDeltaTime * 1000f).ToString("F3", Inv), _crowd.LiveCount,
-                    _crowd.PlannerBusy ? 1 : 0, _crowd.PublishedCycles, _crowd.StaleCycles, _crowd.ReplacementsAdded,
-                    player.position.x.ToString("F3", Inv), player.position.z.ToString("F3", Inv), player.eulerAngles.y.ToString("F1", Inv),
-                    _katana.WaveCount, _recorder.IsReplaying ? 1 : 0, _mpChunk, _recorder.ReplayIndex, _mpLod != null ? _mpLod.CharacterCount : -1,
-                    _crowd.SlotCount, _crowd.FreeSlots, _crowd.ReturningSlots, _crowd.PreparingSlots, _crowd.WaitedForSlot));
+                using (s_scenarioFrame.Auto())
+                {
+                    if (_mpNextSlash < _mpSlashes.Count && t >= _mpSlashes[_mpNextSlash].at && t < _mpEnd
+                        && !_recorder.IsReplaying && _katana.WaveCount == 0)
+                    {
+                        MobPlanBeginChunk(_mpSlashes[_mpNextSlash++]);
+                    }
+
+                    _mpTravel += Vector3.Distance(_mpPreviousPlayer, player.position);
+                    _mpPreviousPlayer = player.position;
+                }
+
+                if (_mpFrames != null)
+                {
+                    using (s_checkDetail.Auto())
+                    {
+                        _mpFrames.WriteLine(string.Join(",", frame, t.ToString("F4", Inv), (Time.unscaledDeltaTime * 1000f).ToString("F3", Inv), _crowd.LiveCount,
+                            _crowd.PlannerBusy ? 1 : 0, _crowd.PublishedCycles, _crowd.StaleCycles, _crowd.ReplacementsAdded,
+                            player.position.x.ToString("F3", Inv), player.position.z.ToString("F3", Inv), player.eulerAngles.y.ToString("F1", Inv),
+                            _katana.WaveCount, _recorder.IsReplaying ? 1 : 0, _mpChunk, _recorder.ReplayIndex, _mpLod != null ? _mpLod.CharacterCount : -1,
+                            _crowd.SlotCount, _crowd.FreeSlots, _crowd.ReturningSlots, _crowd.PreparingSlots, _crowd.WaitedForSlot));
+                    }
+                }
+
+                // The eye held at its height is the scenario's; the lifetime's most-seen counts are read beside it, and its
+                // detail rows are written only where its file was made.
                 using (s_mpLifetimeMarker.Auto()) MobPlanLifetimeFrame(frame, t);
-                _mpFreeMin = Math.Min(_mpFreeMin, _crowd.FreeSlots);
-                _mpDetectorMax = Math.Max(_mpDetectorMax, _detector.CharacterCount);
-                _mpReturningMax = Math.Max(_mpReturningMax, _crowd.ReturningSlots);
-                _mpPreparingMax = Math.Max(_mpPreparingMax, _crowd.PreparingSlots);
-                foreach (KeyValuePair<SandboxNpcCharacter, (int id, bool replacement, int addedFrame)> a in _mpActorOf)
+                if (watching)
                 {
-                    SandboxNpcCharacter c = a.Key;
-                    if (c != null && c.Handle != null && c.Handle.Source.IsSet && !_mpRootNames.ContainsKey(c.Handle.Source)
-                        && !_mpRetired.ContainsKey(a.Value.id))
+                    using (s_checkNpcs.Auto())
                     {
-                        _mpRootNames[c.Handle.Source] = Model(c);
+                        _mpFreeMin = Math.Min(_mpFreeMin, _crowd.FreeSlots);
+                        _mpDetectorMax = Math.Max(_mpDetectorMax, _detector.CharacterCount);
+                        _mpReturningMax = Math.Max(_mpReturningMax, _crowd.ReturningSlots);
+                        _mpPreparingMax = Math.Max(_mpPreparingMax, _crowd.PreparingSlots);
+                        foreach (KeyValuePair<SandboxNpcCharacter, (int id, bool replacement, int addedFrame)> a in _mpActorOf)
+                        {
+                            SandboxNpcCharacter c = a.Key;
+                            if (c != null && c.Handle != null && c.Handle.Source.IsSet && !_mpRootNames.ContainsKey(c.Handle.Source)
+                                && !_mpRetired.ContainsKey(a.Value.id))
+                            {
+                                _mpRootNames[c.Handle.Source] = Model(c);
+                            }
+                        }
+
+                        if (_mpLod != null)
+                        {
+                            int registered = _mpLod.CharacterCount;
+                            _mpLodMax = Math.Max(_mpLodMax, registered);
+                            _mpLodExcessMax = Math.Max(_mpLodExcessMax, registered - _crowd.LiveCount);
+                            _mpLodShortMax = Math.Max(_mpLodShortMax, _crowd.LiveCount - registered);
+                        }
+
+                        bool rows = t >= _mpNextActorRow;
+                        if (rows) _mpNextActorRow = t + 0.25;
+                        foreach (KeyValuePair<SandboxNpcCharacter, (int id, bool replacement, int addedFrame)> a in _mpActorOf)
+                        {
+                            SandboxNpcCharacter c = a.Key;
+                            if (c == null || c.CharacterRoot == null) continue;
+                            bool retired = _mpRetired.ContainsKey(a.Value.id);
+                            bool drawn = c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy;
+                            // A hit target: a candidate of the hit detector whose handle takes hits now. A dormant slot's new handle
+                            // is not a candidate until the slot is activated.
+                            bool hitTarget = c.Handle != null && !c.Handle.IsDisposed && c.Handle.IsHitTarget && _detector.HasCharacter(c.Handle);
+                            if (retired && (drawn || hitTarget) && !_mpRetiredDrawn.ContainsKey(c))
+                            {
+                                _mpRetiredDrawn[c] = "frame " + frame + " drawn=" + drawn + " hitTarget=" + hitTarget;
+                                _mpViolations.Add(Model(c) + " drawn or a hit target after its retirement: " + _mpRetiredDrawn[c]);
+                            }
+
+                            Vector3 p = c.CharacterRoot.transform.position;
+                            float d = Vector3.Distance(new Vector3(p.x, 0f, p.z), new Vector3(player.position.x, 0f, player.position.z));
+                            if (!retired && drawn && d < _mpMinDistance)
+                            {
+                                _mpMinDistance = d;
+                                _mpMinDistanceAt = Model(c) + " frame " + frame;
+                            }
+
+                            if (rows && _mpActors != null)
+                            {
+                                _mpActors.WriteLine(string.Join(",", frame, t.ToString("F3", Inv), Model(c), a.Value.id, a.Value.replacement ? 1 : 0,
+                                    p.x.ToString("F3", Inv), p.z.ToString("F3", Inv), c.CharacterRoot.transform.eulerAngles.y.ToString("F1", Inv),
+                                    d.ToString("F3", Inv), c.IsTarget ? 1 : 0, retired ? 1 : 0, drawn ? 1 : 0));
+                            }
+                        }
                     }
                 }
-                if (_mpLod != null)
+
+                if (checks)
                 {
-                    int registered = _mpLod.CharacterCount;
-                    _mpLodMax = Math.Max(_mpLodMax, registered);
-                    _mpLodExcessMax = Math.Max(_mpLodExcessMax, registered - _crowd.LiveCount);
-                    _mpLodShortMax = Math.Max(_mpLodShortMax, _crowd.LiveCount - registered);
+                    using (s_mpRegistryMarker.Auto()) MobPlanHitRegistryFrame(frame);
+                    using (s_checkNpcs.Auto()) MobPlanModelsFrame(frame);
                 }
 
-                bool rows = t >= _mpNextActorRow;
-                if (rows) _mpNextActorRow = t + 0.25;
-                foreach (KeyValuePair<SandboxNpcCharacter, (int id, bool replacement, int addedFrame)> a in _mpActorOf)
-                {
-                    SandboxNpcCharacter c = a.Key;
-                    if (c == null || c.CharacterRoot == null) continue;
-                    bool retired = _mpRetired.ContainsKey(a.Value.id);
-                    bool drawn = c.Renderer != null && c.Renderer.enabled && c.Renderer.gameObject.activeInHierarchy;
-                    // A hit target: a candidate of the hit detector whose handle takes hits now. A dormant slot's new handle
-                    // is not a candidate until the slot is activated.
-                    bool hitTarget = c.Handle != null && !c.Handle.IsDisposed && c.Handle.IsHitTarget && _detector.HasCharacter(c.Handle);
-                    if (retired && (drawn || hitTarget) && !_mpRetiredDrawn.ContainsKey(c))
-                    {
-                        _mpRetiredDrawn[c] = "frame " + frame + " drawn=" + drawn + " hitTarget=" + hitTarget;
-                        _mpViolations.Add(Model(c) + " drawn or a hit target after its retirement: " + _mpRetiredDrawn[c]);
-                    }
-
-                    Vector3 p = c.CharacterRoot.transform.position;
-                    float d = Vector3.Distance(new Vector3(p.x, 0f, p.z), new Vector3(player.position.x, 0f, player.position.z));
-                    if (!retired && drawn && d < _mpMinDistance)
-                    {
-                        _mpMinDistance = d;
-                        _mpMinDistanceAt = Model(c) + " frame " + frame;
-                    }
-
-                    if (rows)
-                    {
-                        _mpActors.WriteLine(string.Join(",", frame, t.ToString("F3", Inv), Model(c), a.Value.id, a.Value.replacement ? 1 : 0,
-                            p.x.ToString("F3", Inv), p.z.ToString("F3", Inv), c.CharacterRoot.transform.eulerAngles.y.ToString("F1", Inv),
-                            d.ToString("F3", Inv), c.IsTarget ? 1 : 0, retired ? 1 : 0, drawn ? 1 : 0));
-                    }
-                }
-
-                using (s_mpRegistryMarker.Auto()) MobPlanHitRegistryFrame(frame);
-                MobPlanModelsFrame(frame);
-                MobPlanCloseupsFrame(frame);
+                if (detail) MobPlanCloseupsFrame(frame);
                 MobPlanLevelEye();
             }
 
