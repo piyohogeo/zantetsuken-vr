@@ -40,3 +40,5 @@ Unity exited normally after the baseline run. Its shutdown log includes a `Memor
 - Product-scene memory includes the current descriptor-to-slot table and the current PhysicsCut mesh-slot layout. Do not attribute their costs or savings to the vertex-format change.
 - The source main worktree remains at its existing branch and retains all original tracked/untracked edits. Only shared Git metadata changes when this worktree commits.
 - No merge to main is implied by worktree validation. XR validation remains distinct from mono results.
+
+Published evidence replaces user-profile account names with `%USERNAME%`. Baseline summary hashes refer to these anonymized copies; `beforeAnonymizationXmlSha256` and `beforeAnonymizationLogSha256` retain the original hashes. Historical source-snapshot hashes describe the files at the recorded source commit.

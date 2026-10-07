@@ -1,5 +1,5 @@
-param([string]$BenchmarkRoot='C:/Users/%USERNAME%/src/zantetsuken-mesh-vp-transform-benchmark',
-      [string]$PipelineRoot='C:/Users/%USERNAME%/src/zantetsuken-blender-pipeline-pilot')
+param([string]$BenchmarkRoot=(Join-Path $env:USERPROFILE 'src/zantetsuken-mesh-vp-transform-benchmark'),
+      [string]$PipelineRoot=(Join-Path $env:USERPROFILE 'src/zantetsuken-blender-pipeline-pilot'))
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $private=Join-Path $root 'Assets/Licensed/Compact16uvIntake'
