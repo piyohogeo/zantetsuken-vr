@@ -131,9 +131,38 @@ namespace Zantetsu.PhysicsCut
 
         private void OnEndCameraRendering(ScriptableRenderContext context, Camera camera)
         {
-            if (_cullRoute != null && IsOneOfOurs(camera))
+            if (!IsOneOfOurs(camera))
+            {
+                return;
+            }
+
+            if (_cullRoute != null)
             {
                 _cullRoute.NoteRendered(camera);
+            }
+
+            // The view this camera was just rendered with, for the display's held placements (DESIGN 5.6, D-210): a
+            // held piece near this camera is asked where it stands only if it is also in this view -- either eye's.
+            // Read here, at the end of the camera's rendering, because the camera's matrices are then the ones the
+            // pipeline rendered with (measured on this project: the difference the GPU selection's route reports
+            // between the two is 0); the collection of the next frame runs before that frame's are made, so a
+            // placement pass of that frame reads these. A camera not rendered in the frame before is asked for by
+            // nearness alone. No frame is promised for a piece that comes into view: it is asked when a placement
+            // pass next runs (none runs without a new step result, a change told or a structure change).
+            if (_registered && world != null && world.Display != null && !world.Display.IsDisposed)
+            {
+                if (camera.stereoEnabled)
+                {
+                    world.Display.NoteCameraView(
+                        camera, 2,
+                        camera.GetStereoProjectionMatrix(Camera.StereoscopicEye.Left) * camera.GetStereoViewMatrix(Camera.StereoscopicEye.Left),
+                        camera.GetStereoProjectionMatrix(Camera.StereoscopicEye.Right) * camera.GetStereoViewMatrix(Camera.StereoscopicEye.Right));
+                }
+                else
+                {
+                    Matrix4x4 worldToClip = camera.projectionMatrix * camera.worldToCameraMatrix;
+                    world.Display.NoteCameraView(camera, 1, worldToClip, worldToClip);
+                }
             }
         }
 
@@ -256,23 +285,24 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            // The cameras named here are the reference points of the display's held placements (DESIGN 5.6, D-205):
-            // a held piece is asked where it stands again when one of them comes near it.
-            _proximity ??= AddCameraPositions;
-            world.Display.PlacementProximity = _proximity;
+            // The cameras named here are the reference points of the display's held placements (DESIGN 5.6, D-205,
+            // D-210): a held piece is asked where it stands again when one of them comes near it and has it in view.
+            _proximity ??= AddCameraReferences;
+            world.Display.PlacementProximityViews = _proximity;
             _registered = true;
             return true;
         }
 
-        private VpLogicalCutDisplay.PlacementProximitySource _proximity;
+        private VpLogicalCutDisplay.PlacementProximityViewSource _proximity;
 
-        private void AddCameraPositions(System.Collections.Generic.List<Vector3> into)
+        private void AddCameraReferences(System.Collections.Generic.List<Vector3> points, System.Collections.Generic.List<Camera> of)
         {
             for (int i = 0; i < cameras.Length; i++)
             {
                 if (cameras[i] != null)
                 {
-                    into.Add(cameras[i].transform.position);
+                    points.Add(cameras[i].transform.position);
+                    of.Add(cameras[i]);
                 }
             }
         }
@@ -298,9 +328,9 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            if (world.Display.PlacementProximity == _proximity)
+            if (world.Display.PlacementProximityViews == _proximity)
             {
-                world.Display.PlacementProximity = null;   // no camera named any more: every placement is asked
+                world.Display.PlacementProximityViews = null;   // no camera named any more: every placement is asked
             }
         }
     }

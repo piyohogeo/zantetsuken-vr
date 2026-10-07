@@ -825,6 +825,13 @@ namespace Zantetsu.MeshCut
             public VpIndexedIndirectDrawBatch cullBatch;
             public int cullRequestedFrame = int.MinValue;
             public int cullIssuedFrame = int.MinValue;
+
+            // The view this camera was last rendered with (D-210), as its host noted it at the end of that rendering:
+            // how many eyes, six planes an eye (normals inward), and the frame it was noted in. Read by the held
+            // placements of a collection in that frame or the one after.
+            public readonly Vector4[] viewPlanes = new Vector4[VpHeldPlacements.ViewPlanes];
+            public int viewEyes;
+            public int viewFrame = int.MinValue;
         }
 
         private static readonly int CapNormalsId = Shader.PropertyToID("_VpCapNormals");
@@ -4484,9 +4491,9 @@ namespace Zantetsu.MeshCut
         // A collection after a new step asks where things stand. Of the render fragments, the ones seen standing, bit
         // for bit, where the adopted snapshot has them over two different step results are held: their world boxes go
         // into a tree, and a pass asks only the others and the held ones near one of the host's reference points --
-        // its cameras' positions. A held one that is far is drawn, and casts its shadow, where it is held, in view or
-        // not; nearness alone brings it back to be asked. See VpHeldPlacements. A host that names no reference points
-        // (null, the default) or does not vouch for its step count has every render fragment asked, as before.
+        // its cameras' positions -- and, where that camera's view is known, in it (D-210). A held one that is not
+        // asked is drawn, and casts its shadow, where it is held. See VpHeldPlacements. A host that names no reference
+        // points (null, the default) or does not vouch for its step count has every render fragment asked, as before.
 
         /// <summary>Adds the host's reference points -- the positions near which a held placement is asked again.</summary>
         public delegate void PlacementProximitySource(List<Vector3> into);
@@ -4494,6 +4501,94 @@ namespace Zantetsu.MeshCut
         private PlacementProximitySource _placementProximity;
         private readonly VpHeldPlacements _holds = new VpHeldPlacements();
         private readonly List<Vector3> _proximityPoints = new List<Vector3>(4);
+
+        /// <summary>
+        /// Adds the host's reference points and, beside each, the camera it is the position of (D-210) -- a camera
+        /// registered with this display, or null for a point that is no camera's. A held placement near a point is
+        /// asked again only if it is also in the view that point's camera was last rendered with
+        /// (<see cref="NoteCameraView"/>); a point with no camera, or whose camera's view is not known, asks by
+        /// nearness alone.
+        /// </summary>
+        public delegate void PlacementProximityViewSource(List<Vector3> points, List<Camera> cameras);
+
+        private PlacementProximityViewSource _placementProximityViews;
+        private readonly List<Camera> _proximityCameras = new List<Camera>(4);
+
+        /// <summary>
+        /// Asked once in a collection that asks placements, for the reference points and their cameras; it stands in
+        /// for <see cref="PlacementProximity"/> when both are set. Null (the default): the points come from
+        /// <see cref="PlacementProximity"/>, with no camera -- nearness alone.
+        /// </summary>
+        public PlacementProximityViewSource PlacementProximityViews
+        {
+            get => _placementProximityViews;
+            set
+            {
+                _placementProximityViews = value;
+                _holds.Forget();
+            }
+        }
+
+        /// <summary>
+        /// The view <paramref name="camera"/> was rendered with in this frame: <paramref name="eyes"/> eyes (1, or 2
+        /// under XR) whose world-to-clip matrices are given (<see cref="Camera.projectionMatrix"/>'s convention: inside
+        /// is -w &lt;= x, y, z &lt;= w; the second is not read for one eye). The host calls it at the end of that
+        /// camera's rendering, when the camera's matrices are the ones rendered with. It is kept with the camera and
+        /// read by the held placements of a collection in this frame or the next (D-210); an older one counts as not
+        /// known. False, keeping nothing, for a camera that is not registered; a view that is not finite is kept as
+        /// not known. Nothing is drawn, asked or changed by it.
+        /// </summary>
+        public bool NoteCameraView(Camera camera, int eyes, in Matrix4x4 leftWorldToClip, in Matrix4x4 rightWorldToClip)
+        {
+            if (_disposed || ReferenceEquals(camera, null))
+            {
+                return false;
+            }
+
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null)
+            {
+                return false;
+            }
+
+            slot.viewEyes = 0;
+            slot.viewFrame = CurrentFrame;
+            if (eyes < 1 || eyes > VpHeldPlacements.EyeCapacity)
+            {
+                return true;
+            }
+
+            for (int e = 0; e < eyes; e++)
+            {
+                Matrix4x4 m = e == 0 ? leftWorldToClip : rightWorldToClip;
+                Vector4 x = m.GetRow(0), y = m.GetRow(1), z = m.GetRow(2), w = m.GetRow(3);
+                int first = e * VpHeldPlacements.EyePlanes;
+                slot.viewPlanes[first + 0] = w + x;
+                slot.viewPlanes[first + 1] = w - x;
+                slot.viewPlanes[first + 2] = w + y;
+                slot.viewPlanes[first + 3] = w - y;
+                slot.viewPlanes[first + 4] = w + z;
+                slot.viewPlanes[first + 5] = w - z;
+                for (int k = 0; k < VpHeldPlacements.EyePlanes; k++)
+                {
+                    Vector4 p = slot.viewPlanes[first + k];
+                    float length = Mathf.Sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+                    if (!(length > 0f) || float.IsInfinity(length) || float.IsNaN(p.w) || float.IsInfinity(p.w))
+                    {
+                        return true;   // not a view: kept as not known
+                    }
+
+                    slot.viewPlanes[first + k] = p / length;
+                }
+            }
+
+            slot.viewEyes = eyes;
+            CameraViewsNoted++;
+            return true;
+        }
+
+        /// <summary>Observation: views noted that were whole (finite, with their planes).</summary>
+        public long CameraViewsNoted { get; private set; }
 
         /// <summary>
         /// Asked once in a collection that asks placements, for the reference points. Null (the default): nothing is
@@ -5611,8 +5706,13 @@ namespace Zantetsu.MeshCut
                 // (2026-10-07, for observation: what the build took of the heap, less what a collector freed meanwhile).
                 // Who is asked (D-205): the host's reference points, when it vouches for its step count.
                 _proximityPoints.Clear();
-                bool holding = _buildSerialKnown && _placementProximity != null;
-                if (holding) _placementProximity(_proximityPoints);
+                _proximityCameras.Clear();
+                bool holding = _buildSerialKnown && (_placementProximityViews != null || _placementProximity != null);
+                if (holding)
+                {
+                    if (_placementProximityViews != null) _placementProximityViews(_proximityPoints, _proximityCameras);
+                    else _placementProximity(_proximityPoints);
+                }
 
                 // What changed outside a step (D-207): the families of the fragments told. A change told with no target,
                 // more changes than the source keeps, or a fragment that is not this ledger's has every held one asked.
@@ -5630,6 +5730,26 @@ namespace Zantetsu.MeshCut
                 }
 
                 _holds.SetPass(holding, _buildStep, untargeted, _proximityPoints);
+
+                // Each reference point's view (D-210): the one its camera was rendered with in the frame before -- this
+                // frame's is not made yet when a collection runs -- or in this frame already. A point with no camera,
+                // or whose camera's view was not noted then, has none: its proximity box alone decides for it. (This
+                // is done only by a collection that asks placements: one that lets the adopted snapshot stand does not
+                // come here, whatever its cameras' views did.)
+                if (holding)
+                {
+                    int frame = CurrentFrame;
+                    for (int i = 0; i < _proximityCameras.Count && i < _proximityPoints.Count; i++)
+                    {
+                        Camera of = _proximityCameras[i];
+                        if (ReferenceEquals(of, null)) continue;
+                        CameraStencil slot = FindCamera(of);
+                        if (slot != null && slot.viewEyes > 0 && (slot.viewFrame == frame || slot.viewFrame == frame - 1))
+                        {
+                            _holds.SetView(i, slot.viewEyes, slot.viewPlanes);
+                        }
+                    }
+                }
 
                 long heapBefore = GC.GetTotalMemory(false);
                 long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
