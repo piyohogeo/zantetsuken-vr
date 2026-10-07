@@ -118,7 +118,7 @@ namespace Zantetsu.MeshCut
         public string Describe() =>
             "structural " + structural + " (registrations " + registrations + ", indexes built " + indexesBuilt + " reused " + indexesReused + "; ms: index " + (indexSeconds * 1000).ToString("F3") + ", input " + (inputSeconds * 1000).ToString("F3")
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            + " (contract " + (contractSeconds * 1000).ToString("F3") + ")"
+            + (VpNumericDiagnosis.Enabled ? " (contract " + (contractSeconds * 1000).ToString("F3") + ")" : " (contract not run: numeric diagnosis off)")
 #endif
             + ", ancestors " + (ancestorSeconds * 1000).ToString("F3") + ", operations " + (operationsSeconds * 1000).ToString("F3") + "; ancestor steps " + ancestorSteps + " (ledger reads " + ancestorReads + ", kept " + ancestorHits + "), their reflected lookups " + ancestorLookups
             + ", plane checks " + planeChecks + ", operations " + operations + ", owner lookups " + ownerLookups + " (steps " + ownerSteps + ", answered by the cache " + ownerCacheHits + "), unreflected steps " + unreflectedSteps
@@ -126,7 +126,9 @@ namespace Zantetsu.MeshCut
             + "; branches " + branches + ", collections " + collectCalls + ", chain boundaries " + chainSteps + ", operations read " + operationReads + ", candidates " + candidatesMade + ", cap identities " + capIdentities
             + "; chain ancestors " + collectVisits + " (ledger reads " + collectReads + ", kept " + collectHits + "), reflected lookups " + collectLookups + ", segments taken in " + collectSplices + " (" + collectSegmentBoundaries + " boundaries; kept by the validation " + segmentEntries + ")); structure ms " + (structureSeconds * 1000).ToString("F3")
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            + "; placement only " + placementOnly + " (registrations " + placementRegistrations + ", input ms " + (placementInputSeconds * 1000).ToString("F3") + " (contract " + (placementContractSeconds * 1000).ToString("F3") + "))";
+            + (VpNumericDiagnosis.Enabled
+                ? "; placement only " + placementOnly + " (registrations " + placementRegistrations + ", input ms " + (placementInputSeconds * 1000).ToString("F3") + " (contract " + (placementContractSeconds * 1000).ToString("F3") + "))"
+                : "; placement only not run (numeric diagnosis off)");
 #else
             ;
 #endif

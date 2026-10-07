@@ -3147,9 +3147,10 @@ namespace Zantetsu.MeshCut
             // registration settles by itself -- its box, its placement and the epsilon it will be built with -- is
             // refused here, before anything is transferred, registered or taken; the collection asks the same
             // function again.
-            if (!VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
-                || !VpMultiCutSnapshot.IsWithinSectionBounds(
-                    localBounds, objectToWorld, VpCapBoundsPolygon.EpsilonFor(localBounds)))
+            if (_numeric
+                && (!VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
+                    || !VpMultiCutSnapshot.IsWithinSectionBounds(
+                        localBounds, objectToWorld, VpCapBoundsPolygon.EpsilonFor(localBounds))))
             {
                 return false;
             }
@@ -3717,15 +3718,23 @@ namespace Zantetsu.MeshCut
             out Bounds localBounds)
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (!TryPrepare(geometry, out commands, out commandMaterials, out localBounds)) return false;
+            if (!_numeric) return true;   // the diagnosis is off in this process: nothing is read for it or asked
             Matrix4x4 placement = placements.drawn;
-            return TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
-                && VpMultiCutSnapshot.IsWithinInputContract(localBounds, placement, body.lineageToGeometryLocal)
+            return VpMultiCutSnapshot.IsWithinInputContract(localBounds, placement, body.lineageToGeometryLocal)
                 && VpMultiCutSnapshot.IsWithinSectionBounds(
                     localBounds, placement, VpCapBoundsPolygon.EpsilonFor(localBounds));
 #else
             return TryPrepare(geometry, out commands, out commandMaterials, out localBounds);
 #endif
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Whether the numeric input-contract diagnosis runs in this display (VpNumericDiagnosis, D-211): taken once,
+        // when the display is made, as its snapshots take it when they are made. Where it is false a registration and
+        // a commit's sides are not asked the contract and are not refused by it.
+        private readonly bool _numeric = VpNumericDiagnosis.Enabled;
+#endif
 
         /// <summary>
         /// Takes one produced side in, where it stands. The room was decided before anything was transferred, so a

@@ -112,13 +112,16 @@ namespace Zantetsu.MeshCut
         public string Describe() =>
             "passes " + passes + " (" + (seconds * 1000).ToString("F3") + " ms); render fragments " + renderFragments + ", queries " + queries + " (following " + following + ", static " + staticPlacements + ")"
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            + ", placement checks " + placementChecks
+            + (VpNumericDiagnosis.Enabled ? ", placement checks " + placementChecks : ", placement checks not run (numeric diagnosis off)")
 #endif
             + "; selected " + selected + " (plane transforms " + planeTransforms + "), clips kept " + clipsKept + ", kept as taken over " + keptAsSettled
             + "; sections found in the build " + sectionsFoundHere + ", reused " + sectionsReused + ", built " + sectionsBuilt + " (entries compared " + sectionEntriesCompared + ")"
             + "; cap clips " + capClips + " (vertices in " + capInputVertices + ", out " + capOutputVertices + ")"
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            + (providerSeconds + checkSeconds + restSeconds > 0.0 ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + ", checks " + (checkSeconds * 1000).ToString("F3") + ", the rest " + (restSeconds * 1000).ToString("F3") : "");
+            + (providerSeconds + checkSeconds + restSeconds > 0.0
+                ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + (VpNumericDiagnosis.Enabled ? ", checks " + (checkSeconds * 1000).ToString("F3") : ", checks not run")
+                    + ", the rest " + (restSeconds * 1000).ToString("F3")
+                : "");
 #else
             + (providerSeconds + restSeconds > 0.0 ? "; blocks ms: queries " + (providerSeconds * 1000).ToString("F3") + ", the rest " + (restSeconds * 1000).ToString("F3") : "");
 #endif
