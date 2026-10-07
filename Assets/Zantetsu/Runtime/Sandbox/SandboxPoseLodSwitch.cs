@@ -71,7 +71,7 @@ namespace Zantetsu.Sandbox
             }
 
             Debug.Log("POSE LOD: " + (NeededOnly ? "needed" : On ? "on" : "off") + " (" + Argument + " " + (value ?? "not given") + ")"
-                + (director != null ? "" : " -- no director in the scene"));
+                + (director != null ? (On && !NeededOnly && director.StopsOutOfView ? "; an uncut character outside both eyes' view is not posed (D-213)" : "") : " -- no director in the scene"));
         }
     }
 }

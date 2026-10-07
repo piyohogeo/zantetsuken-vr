@@ -512,8 +512,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         /// <summary>
         /// **A far character coming into view is given its pose in that frame.** Sixty metres away its level is the
-        /// distance's (3) in view and out; coming into view does not lower it. Its pose is put on all the same in the
-        /// frame it comes into view -- the frame after a scheduled update, where the schedule alone gives none.
+        /// distance's (3) in view and out; coming into view does not lower it. Out of view it is not posed at all
+        /// (DESIGN 9, D-213); its pose is put on in the frame it comes into view, and its level's schedule follows.
         /// </summary>
         [UnityTest]
         public IEnumerator AFarCharacterComingIntoView_IsGivenItsPoseInThatFrame_ThoughItsLevelStays()
@@ -536,18 +536,23 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(lod.Level, Is.EqualTo(3));
                 Assert.That(lod.ViewStrength, Is.GreaterThan(0));
 
-                // Wait for a scheduled update: the next one by the schedule is several frames away.
-                for (int f = 0; f < 40 && lod.LastUpdateFrame != Time.frameCount; f++) yield return null;
-                Assert.That(lod.LastUpdateFrame, Is.EqualTo(Time.frameCount), "a scheduled update, this frame");
-                int scheduled = Time.frameCount;
+                // Out of view no update comes, at its level's rate or any other (D-213).
+                for (int f = 0; f < 24; f++)
+                {
+                    yield return null;
+                    Assert.That(lod.IsStoppedOutOfView, Is.True);
+                    Assert.That(lod.LastUpdateFrame, Is.EqualTo(-1), "no scheduled update while neither eye sees it");
+                }
+
+                int before = Time.frameCount;
                 camera.transform.rotation = Quaternion.LookRotation(Vector3.forward);
                 yield return null;
-                Assert.That(Time.frameCount, Is.EqualTo(scheduled + 1));
+                Assert.That(Time.frameCount, Is.EqualTo(before + 1));
                 Assert.That(lod.ViewStrength, Is.EqualTo(0), "in view now");
                 Assert.That(lod.Level, Is.EqualTo(3), "its level is still the distance's");
-                Assert.That(lod.LastUpdateFrame, Is.EqualTo(Time.frameCount), "its pose was put on in the frame it came into view, the frame after a scheduled one");
+                Assert.That(lod.LastUpdateFrame, Is.EqualTo(Time.frameCount), "its pose was put on in the frame it came into view");
                 yield return null;
-                Assert.That(lod.LastUpdateFrame, Is.EqualTo(scheduled + 1), "and then by the schedule again");
+                Assert.That(lod.LastUpdateFrame, Is.EqualTo(before + 1), "and then by its level's schedule: none the frame after");
                 yield return Destroy(setup);
             }
             finally
