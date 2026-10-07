@@ -195,7 +195,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpCutSurfaceColour.SetColours(OrdinaryUnderTest, RealCapDebugUnderTest);
                 VpCutSurfaceColour.SetDebugEnabled(false);
                 Color32[] ordinary = DrawAgain(scene, camera, "the switch off");
-                Assert.That(display.CapNormalCount, Is.EqualTo(display.AdoptedSnapshot.CapVertexCount), "a normal per cap vertex");
+                Assert.That(display.CapNormalCount, Is.EqualTo(display.AdoptedSnapshot.CapCount * VpLogicalCutDisplay.CapPlacementStride), "a record of four a cap");
                 Assert.That(display.CapNormalCount, Is.GreaterThan(0), "the layout: caps are prepared");
 
                 VpCutSurfaceColour.SetDebugEnabled(true);

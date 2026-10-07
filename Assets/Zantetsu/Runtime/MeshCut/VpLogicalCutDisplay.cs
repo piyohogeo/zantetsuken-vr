@@ -545,6 +545,45 @@ namespace Zantetsu.MeshCut
         private VpNumericRoom<Vector4> _capNormals;
         private GraphicsBuffer _capNormalBuffer;
         private int _capNormalCount;
+
+        // The caps as they are drawn (DESIGN 5.6, D-208). The room and the buffer above hold a record a cap now -- four
+        // float4: the three rows of its render fragment's placement, then its outward normal -- and this room holds the
+        // adopted snapshot's cap vertices in their geometry's local frame, the cap's number in w, laid out when a
+        // collection that settled a structure is adopted and at no other time. A camera's batch sends them when it
+        // holds another layout than this one.
+        internal const int CapPlacementStride = 4;
+        private VpNumericRoom<Vector4> _capLocalVertices;
+        private long _capLayout;
+        private bool _capLayoutStale = true;
+        private int _capLayoutRoom = -1;
+
+        /// <summary>
+        /// Observation: times a camera's batch was sent the cap vertices (it held another layout, or none), and the
+        /// vertices sent, since this display was made -- counted where they are sent, so a camera that is no longer
+        /// drawn for takes nothing away. A body that moves sends none.
+        /// </summary>
+        public long CameraCapLayoutUploads { get; private set; }
+        public long CameraCapLayoutVertices { get; private set; }
+
+        /// <summary>
+        /// Observation: of those, the sendings that were a camera's first -- its batch held no cap vertices yet (a
+        /// camera newly drawn for, or one that had seen no cap). The others sent another layout to a camera that held one.
+        /// </summary>
+        public long CameraCapLayoutFirstUploads { get; private set; }
+        public long CameraCapLayoutFirstVertices { get; private set; }
+
+        // What the collections' records have told of the two sums above (a record tells what was sent since the one before).
+        private long _cameraCapUploadsTold, _cameraCapVerticesTold, _cameraCapFirstUploadsTold, _cameraCapFirstVerticesTold;
+
+        /// <summary>Observation: times the placed (world) cap vertices were made for a reader of either snapshot. The collection and the drawing ask for none.</summary>
+        internal long PlacedCapFills => _snapshot.PlacedCapFills + (ReferenceEquals(_building, _snapshot) ? 0 : _building.PlacedCapFills);
+
+        /// <summary>For tests: one of the local cap vertices as laid out for the adopted snapshot (the cap's number in w).</summary>
+        internal Vector4 CapLocalVertexForTest(int index) => _capLocalVertices[index];
+
+        /// <summary>Observation: times the local cap vertices were laid out (a structure adopted), and the vertices laid out.</summary>
+        public long CapLayouts { get; private set; }
+        public long CapLayoutVertices { get; private set; }
         private int _stencilCapIndexCapacity;
 
         // What the stencil batches of cameras no longer registered had counted, so the totals do not go backwards.
@@ -789,6 +828,8 @@ namespace Zantetsu.MeshCut
         }
 
         private static readonly int CapNormalsId = Shader.PropertyToID("_VpCapNormals");
+        private static readonly int CapPlacementsId = Shader.PropertyToID("_VpCapPlacements");
+        private static readonly int CapLocalId = Shader.PropertyToID("_VpCapLocal");
         private static readonly int CapShadedId = Shader.PropertyToID("_VpCapShaded");
 
         /// <summary>
@@ -889,6 +930,8 @@ namespace Zantetsu.MeshCut
             {
                 Material cap = stencilMaterials.Cap(c);
                 cap.SetBuffer(CapNormalsId, _capNormalBuffer);
+                cap.SetBuffer(CapPlacementsId, _capNormalBuffer);
+                cap.SetFloat(CapLocalId, 1f);
                 cap.SetFloat(CapShadedId, 1f);
             }
 
@@ -907,6 +950,7 @@ namespace Zantetsu.MeshCut
             try
             {
                 _capNormals = Room<Vector4>(reserved.capVertices, derived.capVertices);
+                _capLocalVertices = Room<Vector4>(reserved.capVertices, derived.capVertices);
                 _candidateStencilCommands = Room<VpIndirectCommand>(reserved.stencilCommands, derived.stencilCommands);
                 _candidateStencilTransforms = Room<Matrix4x4>(reserved.stencilCommands, derived.stencilCommands);
                 _candidateStencilClips = Room<VpInstanceClip>(reserved.stencilCommands, derived.stencilCommands);
@@ -979,6 +1023,7 @@ namespace Zantetsu.MeshCut
         private void DisposeRooms()
         {
             _capNormals?.Dispose();
+            _capLocalVertices?.Dispose();
             _candidateStencilCommands?.Dispose();
             _candidateStencilTransforms?.Dispose();
             _candidateStencilClips?.Dispose();
@@ -1060,6 +1105,7 @@ namespace Zantetsu.MeshCut
         public void DescribeRooms(List<VpRoomLine> into)
         {
             into.Add(VpRoomLine.Of("display.capNormals", _capNormals));
+            into.Add(VpRoomLine.Of("display.capLocalVertices", _capLocalVertices));
             into.Add(VpRoomLine.Of("display.stencilCommands", _candidateStencilCommands));
             into.Add(VpRoomLine.Of("display.stencilTransforms", _candidateStencilTransforms));
             into.Add(VpRoomLine.Of("display.stencilClips", _candidateStencilClips));
@@ -2163,15 +2209,35 @@ namespace Zantetsu.MeshCut
                 // is checked, sent and drawn. The cap vertices are the adopted snapshot's own.
                 try
                 {
-                    if (!slot.batch.TryUpload(
+                    if (_capLayoutStale)
+                    {
+                        LayOutLocalCapVertices();   // an adopted snapshot never laid out (the first, or a room made larger)
+                    }
+
+                    long sentBefore = slot.batch.CapLayoutUploads, verticesBefore = slot.batch.CapLayoutVertices;
+                    if (!slot.batch.TryUploadLocalCaps(
                             _candidateStencilCommands.Valid, commands, _candidateStencilTransforms.Valid, _candidateStencilClips.Valid,
-                            _snapshot.CapVertexArray.Valid, _snapshot.CapVertexCount, _candidateCapIndices.Valid, capIndices,
+                            _capLocalVertices.Valid, _snapshot.CapVertexCount, _capLayout, _candidateCapIndices.Valid, capIndices,
                             _candidateStencilColors, colours, _batch.SinglePassInstanced))
                     {
                         _broken = true;
                         throw new InvalidOperationException(
                             "a camera's stencil batch refused an arrangement inside the capacity checked when the "
                             + "snapshot was adopted; this display stops");
+                    }
+
+                    // Observation: what this camera was sent of the cap vertices just now, and whether it was its first.
+                    long sent = slot.batch.CapLayoutUploads - sentBefore;
+                    if (sent > 0)
+                    {
+                        long vertices = slot.batch.CapLayoutVertices - verticesBefore;
+                        CameraCapLayoutUploads += sent;
+                        CameraCapLayoutVertices += vertices;
+                        if (sentBefore == 0)
+                        {
+                            CameraCapLayoutFirstUploads += sent;
+                            CameraCapLayoutFirstVertices += vertices;
+                        }
                     }
                 }
                 catch
@@ -2659,7 +2725,8 @@ namespace Zantetsu.MeshCut
                     {
                         _capJobs.TryGetJobOfGroup(k, out int j);
                         _capJobs.TryGetJob(j, out VpCapJob job);
-                        AppendFan(_capRecords[job.capIndex], ref capIndexCount);
+                        _snapshot.TryGetCap(job.capIndex, out VpMultiCutCap drawn);
+                        AppendFan(_capRecords[job.capIndex], drawn.mirrored, ref capIndexCount);
                         capsDrawn++;
                     }
                 }
@@ -2696,45 +2763,69 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private void UploadCapNormals(VpMultiCutSnapshot snapshot, GraphicsBuffer into, bool everything)
         {
-            int vertices = snapshot.CapVertexCount;
-            if (vertices < 0 || vertices > _capNormals.Length || vertices > into.count)
+            // A record a cap (D-208): the three rows of its render fragment's placement and its outward normal. The cap's
+            // vertices are the structure's, in the local frame, and are not touched here.
+            int caps = snapshot.CapCount;
+            int elements = caps * CapPlacementStride;
+            if (elements > _capNormals.Length || elements > into.count)
             {
-                throw new InvalidOperationException("the snapshot holds more cap vertices than this display's room");
+                throw new InvalidOperationException("the snapshot holds more caps than this display's room");
             }
 
-            int from = 0, to = snapshot.CapCount;
+            int from = 0, to = caps;
             if (!everything)
             {
                 snapshot.ChangedCaps(_snapshot, out from, out to);
             }
 
-            int first = 0, end = 0;
             for (int c = from; c < to; c++)
             {
                 snapshot.TryGetCap(c, out VpMultiCutCap cap);
-                if (c == from)
-                {
-                    first = cap.vertexStart;
-                }
-
-                end = cap.vertexStart + cap.vertexCount;
+                snapshot.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment placed);
+                Matrix4x4 m = placed.geometryLocalToWorld;
                 Vector3 outward = cap.outwardNormal;
-                var normal = new Vector4(outward.x, outward.y, outward.z, 0f);
-                for (int v = 0; v < cap.vertexCount; v++)
-                {
-                    _capNormals[cap.vertexStart + v] = normal;
-                }
+                int at = c * CapPlacementStride;
+                _capNormals[at] = new Vector4(m.m00, m.m01, m.m02, m.m03);
+                _capNormals[at + 1] = new Vector4(m.m10, m.m11, m.m12, m.m13);
+                _capNormals[at + 2] = new Vector4(m.m20, m.m21, m.m22, m.m23);
+                _capNormals[at + 3] = new Vector4(outward.x, outward.y, outward.z, 0f);
             }
 
-            if (end > first)
+            if (to > from)
             {
-                into.SetData(_capNormals.First(vertices), first, first, end - first);
+                int first = from * CapPlacementStride, count = (to - from) * CapPlacementStride;
+                into.SetData(_capNormals.First(elements), first, first, count);
                 CapNormalTransfers++;
-                CapNormalVerticesTransferred += end - first;
-                CapNormalsMade += end - first;
+                CapNormalVerticesTransferred += count;
+                CapNormalsMade += count;
             }
 
-            _capNormalCount = vertices;
+            _capNormalCount = elements;
+        }
+
+        // The adopted snapshot's cap vertices, laid out in the caps' order in their geometry's local frame with the cap's
+        // number in w: copied from the structure's kept shapes, placed nowhere. Done when a collection that settled a
+        // structure is adopted (the layout follows from the structure alone), and never for a placement.
+        private void LayOutLocalCapVertices()
+        {
+            int caps = _snapshot.CapCount, laid = 0;
+            for (int c = 0; c < caps; c++)
+            {
+                _snapshot.TryGetCap(c, out VpMultiCutCap cap);
+                ReadOnlySpan<Vector3> local = _snapshot.LocalCapPolygon(c);
+                for (int v = 0; v < local.Length; v++)
+                {
+                    Vector3 p = local[v];
+                    _capLocalVertices[cap.vertexStart + v] = new Vector4(p.x, p.y, p.z, c);
+                }
+
+                laid += local.Length;
+            }
+
+            _capLayout++;
+            _capLayoutStale = false;
+            CapLayouts++;
+            CapLayoutVertices += laid;
         }
 
         /// <summary>Makes the cap normals' GPU write throw once, to reach the broken path. For tests only; null otherwise.</summary>
@@ -2776,13 +2867,17 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>A cap's polygon as a fan; a cap of fewer than three vertices has no triangle and adds nothing.</summary>
-        private void AppendFan(in LogicalCutCapRecord record, ref int capIndexCount)
+        /// <remarks>
+        /// The kept local order is wound about the outward normal under a placement that does not mirror; under one
+        /// that does, the triangles are named the other way round -- the shape is not made again (D-208).
+        /// </remarks>
+        private void AppendFan(in LogicalCutCapRecord record, bool mirrored, ref int capIndexCount)
         {
             for (int v = 1; v + 1 < record.vertexCount; v++)
             {
                 _candidateCapIndices[capIndexCount++] = record.vertexStart;
-                _candidateCapIndices[capIndexCount++] = record.vertexStart + v;
-                _candidateCapIndices[capIndexCount++] = record.vertexStart + v + 1;
+                _candidateCapIndices[capIndexCount++] = record.vertexStart + (mirrored ? v + 1 : v);
+                _candidateCapIndices[capIndexCount++] = record.vertexStart + (mirrored ? v : v + 1);
             }
         }
 
@@ -4463,6 +4558,15 @@ namespace Zantetsu.MeshCut
         {
             VpSnapshotStageTotals sum = _snapshot.StageTotals;
             if (!ReferenceEquals(_building, _snapshot)) sum.Add(_building.StageTotals);
+
+            // The display's own counts of the caps' vertices and records (D-208).
+            sum.capLayouts = CapLayouts;
+            sum.capLayoutVertices = CapLayoutVertices;
+            sum.cameraCapUploads = CameraCapLayoutUploads;
+            sum.cameraCapVertices = CameraCapLayoutVertices;
+            sum.cameraCapFirstUploads = CameraCapLayoutFirstUploads;
+            sum.cameraCapFirstVertices = CameraCapLayoutFirstVertices;
+            sum.capRecordElements = CapNormalVerticesTransferred;
             return sum;
         }
 
@@ -4826,7 +4930,7 @@ namespace Zantetsu.MeshCut
             {
                 reason = "room was grown in this collection";
             }
-            else if (_building.CapVertexCount > _capNormalBuffer.count || AnyCameraStencilSmallerThanRoom())
+            else if (Math.Max(_building.CapVertexCount, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count || AnyCameraStencilSmallerThanRoom())
             {
                 reason = "GPU room is needed in this collection";
             }
@@ -5411,6 +5515,18 @@ namespace Zantetsu.MeshCut
                 _buildHeapDelta = 0;
                 VpSnapshotStageTotals stagesAfter = SumStages();
                 stagesAfter.Subtract(stagesBefore);
+
+                // The cameras are sent the local cap vertices where they are prepared -- between collections, never
+                // within one, so the difference above holds none. This collection's record tells what they were sent
+                // since the collection before it (the layout that one adopted), from the display's running totals.
+                stagesAfter.cameraCapUploads = CameraCapLayoutUploads - _cameraCapUploadsTold;
+                stagesAfter.cameraCapVertices = CameraCapLayoutVertices - _cameraCapVerticesTold;
+                stagesAfter.cameraCapFirstUploads = CameraCapLayoutFirstUploads - _cameraCapFirstUploadsTold;
+                stagesAfter.cameraCapFirstVertices = CameraCapLayoutFirstVertices - _cameraCapFirstVerticesTold;
+                _cameraCapUploadsTold = CameraCapLayoutUploads;
+                _cameraCapVerticesTold = CameraCapLayoutVertices;
+                _cameraCapFirstUploadsTold = CameraCapLayoutFirstUploads;
+                _cameraCapFirstVerticesTold = CameraCapLayoutFirstVertices;
                 _countsNow.stages.Add(stagesAfter);
                 VpHeldPlacementTotals holdsAfter = _holds.Totals;
                 holdsAfter.Subtract(holdsBefore);
@@ -5571,6 +5687,10 @@ namespace Zantetsu.MeshCut
             //    it has selected boundaries), whether it is split -- so it is worked out again only when what a
             //    structure is settled from has changed, and stands otherwise.
             bool structural = !(stampLedger >= 0 && _drawnLedger == stampLedger && _drawnInputs == _inputRevision);
+            if (structural || collectEverythingForTest)
+            {
+                _capLayoutStale = true;   // the caps' shapes and their order follow from the structure (D-208)
+            }
             if (structural)
             {
                 DrawArrangements++;
@@ -5706,7 +5826,7 @@ namespace Zantetsu.MeshCut
                 {
                     if (slot != null && !slot.batch.CanUpload(
                             _candidateStencilCommands.Valid, stencilCommands, _candidateStencilTransforms.Valid,
-                            _candidateStencilClips.Valid, _building.CapVertexArray.Valid, capVertices, _candidateCapIndices.Valid,
+                            _candidateStencilClips.Valid, _building.CapVertexRoom.Valid, capVertices, _candidateCapIndices.Valid,
                             capIndexCount, _candidateStencilColors, stencilColours))
                     {
                         stencilFits = false;
@@ -5794,6 +5914,7 @@ namespace Zantetsu.MeshCut
                 for (int c = 0; c < _stencilMaterials.ColorCount; c++)
                 {
                     _stencilMaterials.Cap(c).SetBuffer(CapNormalsId, _capNormalBuffer);
+                    _stencilMaterials.Cap(c).SetBuffer(CapPlacementsId, _capNormalBuffer);
                 }
             }
 
@@ -6294,7 +6415,8 @@ namespace Zantetsu.MeshCut
                 AppendVolume(
                     cap.renderFragment, VpInstanceClip.Keep(world, cap.boundary.side), _candidateCommands,
                     _candidateRfCommandStart, _candidateRfCommandCount, _candidateRfTransform, ref stencilCommands);
-                AppendFan(_candidateCapRecords[i], ref capIndexCount);
+                _building.TryGetCap(i, out VpMultiCutCap candidateCap);
+                AppendFan(_candidateCapRecords[i], candidateCap.mirrored, ref capIndexCount);
             }
 
             colours = stencilCommands > 0 || capIndexCount > 0 ? 1 : 0;
@@ -6339,6 +6461,16 @@ namespace Zantetsu.MeshCut
             _liveInstances = _plannedInstances;
             _capRecordCount = _snapshot.CapCount;
             _hasSnapshot = true;
+            if (_capLocalVertices.Length != _capLayoutRoom)
+            {
+                _capLayoutRoom = _capLocalVertices.Length;   // a room made larger holds no layout
+                _capLayoutStale = true;
+            }
+
+            if (_capLayoutStale)
+            {
+                LayOutLocalCapVertices();
+            }
             MostRenderFragments = Math.Max(MostRenderFragments, _snapshot.RenderFragmentCount);
             MostCommands = Math.Max(MostCommands, _commandCount);
             MostBranches = Math.Max(MostBranches, _snapshot.BranchCount);
@@ -6478,7 +6610,8 @@ namespace Zantetsu.MeshCut
                 || !_candidateStencilTransforms.TryGrow(derived.stencilCommands, out failure)
                 || !_candidateStencilClips.TryGrow(derived.stencilCommands, out failure)
                 || !_candidateCapIndices.TryGrow(derived.capIndices, out failure)
-                || !_capNormals.TryGrow(derived.capVertices, out failure))
+                || !_capNormals.TryGrow(derived.capVertices, out failure)
+                || !_capLocalVertices.TryGrow(derived.capVertices, out failure))
             {
                 return false;
             }
@@ -6817,7 +6950,7 @@ namespace Zantetsu.MeshCut
             }
 
             bool bodyShort = commands > _batch.CommandCapacity || instances > _batch.InstanceCapacity;
-            bool normalsShort = capVertices > _capNormalBuffer.count;
+            bool normalsShort = Math.Max(capVertices, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count;
             if (!cameraShort && !bodyShort && !normalsShort)
             {
                 return true;

@@ -1175,12 +1175,12 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(ledger.Publish(a, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
             VpMultiCutSnapshot published = S.NewSnapshot();
             Assert.That(published.TryBuild(ledger, registrations, pending), Is.EqualTo(VpMultiCutBuildOutcome.Built));
-            Assert.That(published.SectionBuildCount, Is.Zero, "publication reuses the sections");
+            Assert.That(published.SectionBuildCount, Is.EqualTo(taken), "this builder settles the structure in every build and makes the shapes with it: the same sections again");
             AssertSameSections(pending, published);
 
             VpMultiCutSnapshot moved = S.NewSnapshot();
             Assert.That(moved.TryBuild(ledger, registrations, published), Is.EqualTo(VpMultiCutBuildOutcome.Built));
-            Assert.That(moved.SectionBuildCount, Is.Zero, "a new separation reuses the sections");
+            Assert.That(moved.SectionBuildCount, Is.EqualTo(taken), "and again: with the structure, not for where things stand");
             AssertSameSections(published, moved);
 
             // The moved upper piece's bottom faces -y: an eye below sees it, at the new separation.

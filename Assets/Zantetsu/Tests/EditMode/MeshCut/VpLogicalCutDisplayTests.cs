@@ -2036,7 +2036,8 @@ namespace Zantetsu.MeshCut.Tests
                         AssertVector(again[i], first[i], "vertex " + i + " is the one prepared before");
                     }
 
-                    // Publication: the children are named, the face is not taken again.
+                    // Publication: the children are named. The family's structure was settled again, and its cap's shape
+                    // is made with it (D-208): once more, in the local frame -- not for where anything stands.
                     Assert.That(
                         ledger.Publish(cut, out LogicalFragmentId positiveChild, out _),
                         Is.EqualTo(LogicalCutResultOutcome.Applied));
@@ -2045,8 +2046,8 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(CapOf(display, 0).published, Is.True, "the caps caught up with the publication");
                     Assert.That(CapOf(display, 0).fragment, Is.EqualTo(positiveChild));
                     Assert.That(
-                        display.CapPolygonBuilds, Is.EqualTo(1),
-                        "which is a change of who, not of where: no new cross-section");
+                        display.CapPolygonBuilds, Is.EqualTo(2),
+                        "a change of structure: the one cross-section made again with it");
 
                     Vector3[] published = CapVertices(display, 0);
                     for (int i = 0; i < published.Length; i++)

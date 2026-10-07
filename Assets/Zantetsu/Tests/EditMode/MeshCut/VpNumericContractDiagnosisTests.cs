@@ -123,6 +123,46 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(snapshot.IsBuilt, Is.False);
         }
 
+        /// <summary>
+        /// The caps' shapes are kept in the geometry's local frame and nothing of a cap is placed by a collection
+        /// (D-208), so there is no placed vertex whose value could be looked at. Whether a placement carries the box the
+        /// shapes lie in out of a float is therefore a judgement of a range of numbers -- part of this diagnosis, in the
+        /// Editor and Development Players only. Here: a placement a query answers that is a placement in itself and
+        /// carries the cut's plane, but puts a corner of the box past a float, is refused as a cap vertex that is not
+        /// finite, with no placed vertex made to find it out; and the same build passes once the answer is back inside.
+        /// </summary>
+        [Test]
+        public void InTheEditor_APlacementThatCarriesACapsBoxOutOfAFloat_IsRefused_WithNoCapPlacedToFindItOut()
+        {
+            Bounds box = VpMultiCutSnapshotTests.k_box;
+            var across = new Unity.Mathematics.float4(0f, 1f, 0f, 0f);
+            Matrix4x4 far = Matrix4x4.TRS(new Vector3(3.4e38f, 0f, 0f), Quaternion.identity, new Vector3(1e36f, 1f, 1f));
+            Assert.That(VpMultiCutSnapshot.IsPlacementForTest(far), Is.True, "the layout: a placement in itself -- finite, affine, invertible");
+            Assert.That(VpCutPlane.TryGeometryLocalToWorld(across, far, out _), Is.True, "that carries the cut's plane");
+            Assert.That(float.IsInfinity(far.MultiplyPoint3x4(box.max).x), Is.True, "and puts a corner of the box past a float");
+
+            LogicalCutLedger ledger = VpMultiCutSnapshotTests.NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            VpMultiCutSnapshotTests.Cut(ledger, root, across);
+            VpMultiCutSnapshot snapshot = VpMultiCutSnapshotTests.NewSnapshot();
+            float epsilon = VpCapBoundsPolygon.EpsilonFor(box);
+            VpMultiCutBuildOutcome Build(Matrix4x4 at) => snapshot.TryBuild(
+                ledger, root, box, Matrix4x4.identity, Matrix4x4.identity, VpMultiCutSnapshotTests.k_none, epsilon, new Answers { answer = _ => at });
+
+            Assert.That(Build(Matrix4x4.identity), Is.EqualTo(VpMultiCutBuildOutcome.Built), "an ordinary answer first");
+            Assert.That(snapshot.CapCount, Is.EqualTo(2), "the two sides' caps");
+            long fills = snapshot.PlacedCapFills;
+
+            Assert.That(Build(far), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "refused");
+            Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.DrawnCapVertex), "as a cap vertex that would not be finite");
+            Assert.That(snapshot.IsBuilt, Is.False, "nothing is drawn from it");
+            Assert.That(snapshot.CapCount, Is.Zero, "no empty cap in its place");
+            Assert.That(snapshot.PlacedCapFills, Is.EqualTo(fills), "and no cap was placed to find it out");
+
+            Assert.That(Build(Matrix4x4.identity), Is.EqualTo(VpMultiCutBuildOutcome.Built), "an ordinary answer again: built");
+            Assert.That(snapshot.CapCount, Is.EqualTo(2));
+        }
+
         [Test]
         public void InTheEditor_TheContractsOwnFunctions_AnswerForWhatADisplayTakesIn()
         {

@@ -206,6 +206,54 @@ namespace Zantetsu.MeshCut
             return new VpCapVisibilityVerdict(backFacing, outside);
         }
 
+        /// <summary>
+        /// The same test over a polygon kept in its geometry's local frame (D-208): the vertices are not placed. The
+        /// facing rule reads one point of the cap in the world (<paramref name="pointInWorld"/>) and the outward normal;
+        /// the frustum rule carries the local vertices by each eye's local-to-clip matrix -- the eye's world-to-clip
+        /// times the placement, made once a render fragment an eye by the caller.
+        /// </summary>
+        internal static VpCapVisibilityVerdict ClassifyLocal(
+            ReadOnlySpan<Vector3> localPolygon,
+            Vector3 pointInWorld,
+            Vector3 outwardNormal,
+            in VpCapEye left,
+            in VpCapEye right,
+            in Matrix4x4 leftLocalToClip,
+            in Matrix4x4 rightLocalToClip,
+            float facingEpsilon)
+        {
+            CheckEpsilon(facingEpsilon);
+            if (localPolygon.Length < 1)
+            {
+                throw new ArgumentException("A cap has at least one vertex.", nameof(localPolygon));
+            }
+
+            // A cap that is not finite is not judged at all: it is kept.
+            if (!IsFinite(outwardNormal) || !IsFinite(pointInWorld))
+            {
+                return default;
+            }
+
+            for (int i = 0; i < localPolygon.Length; i++)
+            {
+                if (!IsFinite(localPolygon[i]))
+                {
+                    return default;
+                }
+            }
+
+            // An eye that is not finite confirms neither rule, so the other eye alone never excludes.
+            bool leftUsable = IsUsable(left);
+            bool rightUsable = IsUsable(right);
+            bool backFacing = leftUsable && rightUsable
+                && IsBackFacing(pointInWorld, outwardNormal, left.position, facingEpsilon)
+                && IsBackFacing(pointInWorld, outwardNormal, right.position, facingEpsilon);
+            bool outside = leftUsable && rightUsable
+                && IsOutsideFrustum(localPolygon, leftLocalToClip)
+                && IsOutsideFrustum(localPolygon, rightLocalToClip);
+            return new VpCapVisibilityVerdict(backFacing, outside);
+        }
+
         private static void CheckEpsilon(float facingEpsilon)
         {
             if (!IsFinite(facingEpsilon) || facingEpsilon < 0f)

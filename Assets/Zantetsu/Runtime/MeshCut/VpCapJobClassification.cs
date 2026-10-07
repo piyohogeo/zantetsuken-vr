@@ -813,6 +813,11 @@ namespace Zantetsu.MeshCut
             int jobs = 0;
             int empty = 0;
             int hidden = 0;
+
+            // Each eye's local-to-clip matrix of the render fragment in hand: made when the render fragment changes
+            // (a render fragment's caps follow one another), used for every cap and section of it.
+            int composedFor = -1;
+            Matrix4x4 leftLocalToClip = default, rightLocalToClip = default;
             for (int c = 0; c < caps; c++)
             {
                 snapshot.TryGetCap(c, out VpMultiCutCap cap);
@@ -822,20 +827,31 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
-                if (!VpCapVisibility.Classify(snapshot.CapPolygon(c).AsSpan(), cap.outwardNormal, left, right, facingEpsilon).Keep)
+                // The kept local shape, carried by one matrix a render fragment an eye: the eye's world-to-clip times
+                // the placement (D-208). No vertex is placed in the world; one point of the cap is, for the facing rule.
+                snapshot.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment rf);
+                if (cap.renderFragment != composedFor)
+                {
+                    composedFor = cap.renderFragment;
+                    leftLocalToClip = left.worldToClip * rf.geometryLocalToWorld;
+                    rightLocalToClip = right.worldToClip * rf.geometryLocalToWorld;
+                }
+
+                ReadOnlySpan<Vector3> localPolygon = snapshot.LocalCapPolygon(c);
+                if (!VpCapVisibility.ClassifyLocal(
+                        localPolygon, rf.geometryLocalToWorld.MultiplyPoint3x4(localPolygon[0]), cap.outwardNormal, left, right,
+                        leftLocalToClip, rightLocalToClip, facingEpsilon).Keep)
                 {
                     hidden++;
                     continue;
                 }
 
-                snapshot.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment rf);
                 var world = new Vector4(cap.worldPlane.x, cap.worldPlane.y, cap.worldPlane.z, cap.worldPlane.w);
                 float side = cap.boundary.side;
                 Vector4 signed = side > 0f ? world : -world;
-                VpArrayRange<Vector3> section = snapshot.InitialSection(c);
                 _jobs[jobs] = new VpCapJob(
                     c, cap.renderFragment, rf.registration, cap.boundary, signed,
-                    VpInstanceClip.Keep(world, side), cap.vertexCount, section.Count, -1, -1);
+                    VpInstanceClip.Keep(world, side), cap.vertexCount, cap.initialVertexCount, -1, -1);
                 jobs++;
                 _jobCount = jobs;
                 AfterJobWritten?.Invoke(jobs);
@@ -888,16 +904,25 @@ namespace Zantetsu.MeshCut
             // 3. Each job's initial section, projected once per eye, where it stands.
             for (int j = 0; j < jobs; j++)
             {
-                VpArrayRange<Vector3> section = snapshot.InitialSection(_jobs[j].capIndex);
-                bool valid = !section.IsNull && section.Count >= 1 && section.Count <= SectionVertices;
+                ReadOnlySpan<Vector3> section = snapshot.LocalInitialSection(_jobs[j].capIndex);
+                bool valid = section.Length >= 1 && section.Length <= SectionVertices;
                 _sectionValid[j] = valid;
                 if (!valid)
                 {
                     continue;
                 }
 
-                _leftState[j] = ProjectFor(section, left, margin, j, _leftPoints);
-                _rightState[j] = ProjectFor(section, right, margin, j, _rightPoints);
+                // The kept local section through the same composite matrix a render fragment an eye.
+                if (_jobs[j].renderFragment != composedFor)
+                {
+                    composedFor = _jobs[j].renderFragment;
+                    snapshot.TryGetRenderFragment(composedFor, out VpMultiCutRenderFragment placedAt);
+                    leftLocalToClip = left.worldToClip * placedAt.geometryLocalToWorld;
+                    rightLocalToClip = right.worldToClip * placedAt.geometryLocalToWorld;
+                }
+
+                _leftState[j] = ProjectFor(section, left, leftLocalToClip, margin, j, _leftPoints);
+                _rightState[j] = ProjectFor(section, right, rightLocalToClip, margin, j, _rightPoints);
             }
 
             // 4. Ordinary colours, first fit, at most the limit less one; a group that fits none goes whole to the last.
@@ -1020,15 +1045,15 @@ namespace Zantetsu.MeshCut
         }
 
         private static Projection ProjectFor(
-            VpArrayRange<Vector3> section, in VpCapEye eye, Vector2 margin, int job, VpNumericRoom<Vector2> points)
+            ReadOnlySpan<Vector3> localSection, in VpCapEye eye, in Matrix4x4 localToClip, Vector2 margin, int job, VpNumericRoom<Vector2> points)
         {
-            if (!VpScreenProjection.IsFinite(eye.worldToClip))
+            if (!VpScreenProjection.IsFinite(eye.worldToClip) || !VpScreenProjection.IsFinite(localToClip))
             {
                 return Projection.NotFinite;
             }
 
             return VpScreenProjection.Project(
-                section.AsSpan(), eye.worldToClip, margin, points.AsSpan(job * SectionVertices, section.Count));
+                localSection, localToClip, margin, points.AsSpan(job * SectionVertices, localSection.Length));
         }
 
         /// <summary>Whether any job of one group may overlap any job of the other on the screen, in either eye.</summary>

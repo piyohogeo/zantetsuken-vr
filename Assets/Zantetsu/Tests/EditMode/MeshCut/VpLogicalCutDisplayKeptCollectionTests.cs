@@ -205,29 +205,49 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(display.SideCount, Is.Zero, what + ": and no instance");
             }
 
-            // The cap normals: every vertex of every adopted cap holds that cap's outward normal on the GPU.
+            // The caps (D-208): a record a cap on the GPU -- the three rows of its render fragment's placement, then its
+            // outward normal -- and, laid out for the adopted snapshot, its vertices in the geometry's local frame with
+            // the cap's number in w, as the structure keeps them.
             VpMultiCutSnapshot adopted = display.AdoptedSnapshot;
-            int capVertices = adopted.CapVertexCount;
-            Assert.That(display.CapNormalCount, Is.EqualTo(capVertices), what + ": a normal a cap vertex");
-            if (capVertices > 0)
+            int caps = adopted.CapCount;
+            Assert.That(display.CapNormalCount, Is.EqualTo(caps * VpLogicalCutDisplay.CapPlacementStride), what + ": a record of four a cap");
+            if (caps > 0)
             {
-                var normals = new Vector4[capVertices];
-                display.CapNormalBufferForTest.GetData(normals, 0, 0, capVertices);
+                var records = new Vector4[caps * VpLogicalCutDisplay.CapPlacementStride];
+                display.CapNormalBufferForTest.GetData(records, 0, 0, records.Length);
                 int seen = 0;
-                for (int c = 0; c < adopted.CapCount; c++)
+                for (int c = 0; c < caps; c++)
                 {
                     adopted.TryGetCap(c, out VpMultiCutCap cap);
-                    var expect = new Vector4(cap.outwardNormal.x, cap.outwardNormal.y, cap.outwardNormal.z, 0f);
-                    for (int v = 0; v < cap.vertexCount; v++, seen++)
+                    adopted.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment placed);
+                    Matrix4x4 m = placed.geometryLocalToWorld;
+                    int at = c * VpLogicalCutDisplay.CapPlacementStride;
+                    var rows = new[]
                     {
-                        if (!normals[cap.vertexStart + v].Equals(expect))
+                        new Vector4(m.m00, m.m01, m.m02, m.m03), new Vector4(m.m10, m.m11, m.m12, m.m13), new Vector4(m.m20, m.m21, m.m22, m.m23),
+                        new Vector4(cap.outwardNormal.x, cap.outwardNormal.y, cap.outwardNormal.z, 0f),
+                    };
+                    for (int k = 0; k < rows.Length; k++)
+                    {
+                        if (!records[at + k].Equals(rows[k]))
                         {
-                            Assert.Fail(what + ": cap " + c + " vertex " + v + " normal on the GPU " + normals[cap.vertexStart + v].ToString("F6") + ", the adopted cap's " + expect.ToString("F6"));
+                            Assert.Fail(what + ": cap " + c + " record row " + k + " on the GPU " + records[at + k].ToString("F6") + ", the adopted cap's " + rows[k].ToString("F6"));
+                        }
+                    }
+
+                    ReadOnlySpan<Vector3> local = adopted.LocalCapPolygon(c);
+                    Assert.That(local.Length, Is.EqualTo(cap.vertexCount), what + ": cap " + c + " kept vertices");
+                    for (int v = 0; v < local.Length; v++, seen++)
+                    {
+                        Vector4 laid = display.CapLocalVertexForTest(cap.vertexStart + v);
+                        if (!laid.Equals(new Vector4(local[v].x, local[v].y, local[v].z, c)))
+                        {
+                            Assert.Fail(what + ": cap " + c + " vertex " + v + " laid out as " + laid.ToString("F6") + ", kept as " + local[v].ToString("F6"));
                         }
                     }
                 }
 
-                Assert.That(seen, Is.EqualTo(capVertices), what + ": the caps' vertices are the cap vertices");
+                Assert.That(seen, Is.EqualTo(adopted.CapVertexCount), what + ": the caps' vertices are the cap vertices");
             }
         }
 
