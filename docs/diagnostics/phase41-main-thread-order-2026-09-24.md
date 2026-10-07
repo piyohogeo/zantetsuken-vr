@@ -117,3 +117,5 @@ Build＋Publish合計の同round差（変更mode−mode0）は、次のように
 元repoのtracked＋非ignored untracked **1602/1602ファイル** が開始時のSHA-256と一致し、追加・削除・変更なし、status一致、main HEADは `b19ce67a` のまま。[照合記録](phase41-main-thread-order-data-2026-09-24/original-verification.json)。共有 `.git` のworktree・branch・commit管理更新は発生する。元mainへのmergeは行っていない。
 
 アルゴリズム仕様まで含む次候補は2つある。内部の連続Build→Publish専用経路ならReposition×2の重複を減らせる可能性があるが、公開時にsourceの最新運動を反映する契約、D6 anchor、失敗時の挙動を別途検証する必要がある。DESIGN §7.6の全頂点距離計算も、更新時に検証した不変boundsで一側所属を証明できれば省略可能だが、現bankは変更可能であり、非finiteやfloat演算のoverflowの拒否も現在の走査が担っている。現状へ無条件にbounds短絡を加える変更は採用していない。詳細は [設計レビュー](../../Tools/MainThreadOrder20260924/design-review.md) を参照。
+
+Published evidence uses `%USERNAME%` for user-profile account names. `sha256.json` and `archived_files` hashes/lengths describe the anonymized copies; historical source and Player binary hashes are unchanged.

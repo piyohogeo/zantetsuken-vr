@@ -16,6 +16,8 @@
     "sourceHeadAndStatusUnchanged":  true,
     "gpuVertexStride":  32,
     "compact16uvMigrationComplete":  false,
-    "xmlSha256":  "bbf9d0897f2e8fb7adb3e73f142fedaa88d41fe42954d67bba4e9d7831fa0943",
-    "logSha256":  "1d36ae8e5dbddcf8f3b8ec492df8d46acd7786cfb730dfc986cf3c3f2101ac1b"
+    "beforeAnonymizationXmlSha256":  "bbf9d0897f2e8fb7adb3e73f142fedaa88d41fe42954d67bba4e9d7831fa0943",
+    "xmlSha256":  "69d3d051486296d7c04fc6332e1c68268941f8bd42f3953b2db2e19dedcb9af1",
+    "beforeAnonymizationLogSha256":  "1d36ae8e5dbddcf8f3b8ec492df8d46acd7786cfb730dfc986cf3c3f2101ac1b",
+    "logSha256":  "0e65edee07a1bc4e9833fbab37b2223b389eccc191370928244cf1c2a6bc0feb"
 }

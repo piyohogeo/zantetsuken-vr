@@ -188,7 +188,10 @@ foreach ($p in (Get-HistoryPaths $historyObjects)) {
 # another developer's profile (for example the CI "runneradmin" account
 # scanning for a developer's home folder) is still flagged. Anonymous "%VAR%"
 # placeholders such as "%USERNAME%" are explicitly allowed.
-$userPattern = 'C:(\\+|/+)Users(\\+|/+)[^\\/]+'
+# Stop at string/Markdown delimiters so an anonymous account is not combined
+# with the following expression or closing quote. Escape the double quote
+# also for Windows PowerShell 5.1 native-command argument passing.
+$userPattern = 'C:(\\+|/+)Users(\\+|/+)[^\\/\"''`]+'
 $userHits = @(& git -C $root grep -o -I -n -i -E $userPattern 2>&1)
 $userGrepExit = $LASTEXITCODE
 if ($userGrepExit -gt 1) {
@@ -207,7 +210,7 @@ foreach ($line in $userHits) {
     # Extract the account name that follows the Users folder segment. A
     # "%VAR%" placeholder is anonymous and therefore allowed; any other name
     # is user-specific and is reported below.
-    if ($fragment -notmatch '^C:(\\+|/+)Users(\\+|/+)(?<name>[^\\/]+)$') { continue }
+    if ($fragment -notmatch '^C:(\\+|/+)Users(\\+|/+)(?<name>[^\\/"''`]+)$') { continue }
     $name = $Matches['name']
     if ($name -match '^%[^%]+%$') { continue }
 
