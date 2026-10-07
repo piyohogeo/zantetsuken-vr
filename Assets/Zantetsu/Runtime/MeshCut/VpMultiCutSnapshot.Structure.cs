@@ -50,6 +50,10 @@ namespace Zantetsu.MeshCut
                 internal RenderTemplate[] renders = new RenderTemplate[2];
                 internal VpMultiCutStandsAs[] stands = new VpMultiCutStandsAs[2];
                 internal VpMultiCutSideIdentity[] sides = new VpMultiCutSideIdentity[2];
+
+                // The caps of this part's render fragments, in the geometry's local frame (D-208): made when the part is,
+                // read by whichever snapshot holds it, and gone when it is given back.
+                internal readonly LocalCapSet shapes = new LocalCapSet();
                 internal bool Matches(LogicalCutLedger owner, LogicalFragmentId familyId, long version, in VpMultiCutRegistration registration)
                 {
                     // Product registrations carry immutable VpReflectedSet. An arbitrary mutable collection is
@@ -71,6 +75,7 @@ namespace Zantetsu.MeshCut
                 internal void Forget()
                 {
                     ledger = null; reflected = null; root = default;
+                    shapes.Clear();
                     Array.Clear(candidates, 0, Math.Min(candidatesCount, candidates.Length));
                     branchesCount = candidatesCount = rendersCount = 0;
                 }
@@ -162,6 +167,7 @@ namespace Zantetsu.MeshCut
         {
             _allPlacedAnew = false;
             _placedAnewCount = 0;
+            // (The placed cap vertices, if a reader had them made, stand: nothing was placed anew.)
             _capsChangedFrom = int.MaxValue;
             _capsChangedTo = 0;
             SectionBuildCount = 0;
@@ -185,6 +191,8 @@ namespace Zantetsu.MeshCut
                 totals.walks = StructureWalks;
                 totals.placeCalls = StructuralPlaceCounts.passes + PlacementOnlyPlaceCounts.passes;
                 totals.placeSeconds = StructuralPlaceCounts.seconds + PlacementOnlyPlaceCounts.seconds;
+                totals.capShapesBuilt = CapShapesBuilt;
+                totals.capShapeVertices = CapShapeVertices;
                 return totals;
             }
         }
@@ -455,6 +463,13 @@ namespace Zantetsu.MeshCut
                         part.ledger = ledger; part.family = group.family; part.revision = group.revision;
                         part.SetInput(group.registrations[j]);
                         CapturePart(part, b0, b1, c0, c1, r0, r1);
+
+                        // The caps' shapes of this registration, with its structure and in its local frame (D-208).
+                        VpMultiCutRegistration shapedFor = group.registrations[j];
+                        long shapesBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                        VpMultiCutBuildOutcome shaped = TryBuildLocalCaps(part, shapedFor);
+                        _stages.capShapeSeconds += SecondsSince(shapesBegan);
+                        if (shaped != VpMultiCutBuildOutcome.Built) return Fail(shaped);
                         b0 = b1; c0 = c1; r0 = r1;
                     }
                 }

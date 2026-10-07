@@ -30,9 +30,27 @@ namespace Zantetsu.MeshCut
         // queries not made for it: the render fragments it held, one a render fragment a collection.
         public long placementsReused, queriesOmitted;
 
+        // The caps' shapes made with a structure (D-208): the time of making them, inside the structure pass and beside
+        // the structure builds and the Place pass (the counts are the snapshot's CapShapesBuilt / CapShapeVertices).
+        public double capShapeSeconds;
+        public long capShapesBuilt, capShapeVertices;
+
+        // The display's own, added by it (not a snapshot's): the local cap vertices laid out when a structure is
+        // adopted, what its cameras' batches were sent of them (a camera is sent a layout it does not hold, when it is
+        // next prepared -- between collections: a collection's record tells what was sent since the collection before
+        // it), and the cap records sent -- float4, four a cap.
+        public long capLayouts, capLayoutVertices, cameraCapUploads, cameraCapVertices, capRecordElements;
+
+        // Of the sendings to cameras above: those that were a camera's first -- its batch held no cap vertices yet (a
+        // camera newly drawn for, or one that had seen no cap). The rest sent another layout to a camera holding one.
+        public long cameraCapFirstUploads, cameraCapFirstVertices;
+
         public void Add(in VpSnapshotStageTotals a)
         {
             placementsReused += a.placementsReused; queriesOmitted += a.queriesOmitted;
+            capShapeSeconds += a.capShapeSeconds; capShapesBuilt += a.capShapesBuilt; capShapeVertices += a.capShapeVertices;
+            capLayouts += a.capLayouts; capLayoutVertices += a.capLayoutVertices; cameraCapUploads += a.cameraCapUploads; cameraCapVertices += a.cameraCapVertices; capRecordElements += a.capRecordElements;
+            cameraCapFirstUploads += a.cameraCapFirstUploads; cameraCapFirstVertices += a.cameraCapFirstVertices;
             validateCalls += a.validateCalls; collectCalls += a.collectCalls; groupCalls += a.groupCalls; placeCalls += a.placeCalls;
             validateSeconds += a.validateSeconds; collectSeconds += a.collectSeconds; groupSeconds += a.groupSeconds;
             structureSeconds += a.structureSeconds; placeSeconds += a.placeSeconds;
@@ -44,6 +62,9 @@ namespace Zantetsu.MeshCut
         public void Subtract(in VpSnapshotStageTotals a)
         {
             placementsReused -= a.placementsReused; queriesOmitted -= a.queriesOmitted;
+            capShapeSeconds -= a.capShapeSeconds; capShapesBuilt -= a.capShapesBuilt; capShapeVertices -= a.capShapeVertices;
+            capLayouts -= a.capLayouts; capLayoutVertices -= a.capLayoutVertices; cameraCapUploads -= a.cameraCapUploads; cameraCapVertices -= a.cameraCapVertices; capRecordElements -= a.capRecordElements;
+            cameraCapFirstUploads -= a.cameraCapFirstUploads; cameraCapFirstVertices -= a.cameraCapFirstVertices;
             validateCalls -= a.validateCalls; collectCalls -= a.collectCalls; groupCalls -= a.groupCalls; placeCalls -= a.placeCalls;
             validateSeconds -= a.validateSeconds; collectSeconds -= a.collectSeconds; groupSeconds -= a.groupSeconds;
             structureSeconds -= a.structureSeconds; placeSeconds -= a.placeSeconds;

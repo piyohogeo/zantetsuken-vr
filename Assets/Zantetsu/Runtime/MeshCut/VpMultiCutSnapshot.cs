@@ -130,7 +130,12 @@ namespace Zantetsu.MeshCut
         /// </summary>
         ConservativeSection = 10,
 
-        /// <summary>A cap vertex, as built, came out not finite. Kept as a defence after the check above.</summary>
+        /// <summary>
+        /// A cap vertex is not finite. In every configuration: a vertex of a cap's shape, as built in the geometry's
+        /// local frame with its structure, came out not finite. In the Editor and Development Players only (the numeric
+        /// input-contract diagnosis, D-191): the placement carries the box the shape lies in out of a float -- judged
+        /// from the box and the placement, no placed vertex being made (D-208).
+        /// </summary>
         DrawnCapVertex = 9,
     }
 
@@ -456,7 +461,7 @@ namespace Zantetsu.MeshCut
     /// fourteen). A count of zero is a normal answer -- nothing of area is left -- and says nothing about visibility or
     /// being Ignored.
     /// </summary>
-    public readonly struct VpMultiCutCap
+    public readonly struct VpMultiCutCap : IEquatable<VpMultiCutCap>
     {
         internal VpMultiCutCap(
             int renderFragment, VpClipBoundary boundary, float4 worldPlane, Vector3 outwardNormal, int vertexStart,
@@ -469,7 +474,43 @@ namespace Zantetsu.MeshCut
             this.vertexStart = vertexStart;
             this.initialVertexCount = initialVertexCount;
             this.vertexCount = vertexCount;
+            shapes = null;
+            shape = -1;
+            mirrored = false;
         }
+
+        internal VpMultiCutCap(
+            int renderFragment, VpClipBoundary boundary, float4 worldPlane, Vector3 outwardNormal, int vertexStart,
+            int initialVertexCount, int vertexCount, VpMultiCutSnapshot.LocalCapSet shapes, int shape, bool mirrored)
+        {
+            this.renderFragment = renderFragment;
+            this.boundary = boundary;
+            this.worldPlane = worldPlane;
+            this.outwardNormal = outwardNormal;
+            this.vertexStart = vertexStart;
+            this.initialVertexCount = initialVertexCount;
+            this.vertexCount = vertexCount;
+            this.shapes = shapes;
+            this.shape = shape;
+            this.mirrored = mirrored;
+        }
+
+        // The cap's shape as the structure keeps it (D-208): the set it is in and which of the set's caps it is; and
+        // whether the render fragment's placement mirrors, so that the kept order is read backwards where the sense of
+        // the polygon about its outward normal matters (drawing).
+        internal readonly VpMultiCutSnapshot.LocalCapSet shapes;
+        internal readonly int shape;
+        internal readonly bool mirrored;
+
+        /// <summary>Equal in what the cap says; which set keeps its shape is not part of it.</summary>
+        public bool Equals(VpMultiCutCap other) =>
+            renderFragment == other.renderFragment && boundary == other.boundary && math.all(worldPlane == other.worldPlane)
+            && outwardNormal.Equals(other.outwardNormal) && vertexStart == other.vertexStart
+            && initialVertexCount == other.initialVertexCount && vertexCount == other.vertexCount && mirrored == other.mirrored;
+
+        public override bool Equals(object obj) => obj is VpMultiCutCap other && Equals(other);
+
+        public override int GetHashCode() => (renderFragment * 397) ^ (vertexStart * 31) ^ vertexCount;
 
         public readonly int renderFragment;
         public readonly VpClipBoundary boundary;
@@ -480,7 +521,10 @@ namespace Zantetsu.MeshCut
         /// <summary>The outward normal of the side the cap closes: <c>-side * n</c>.</summary>
         public readonly Vector3 outwardNormal;
 
-        /// <summary>Where its vertices are: world space, at the render fragment's own placement.</summary>
+        /// <summary>
+        /// Where its vertices are among the caps' vertices, in the caps' order. The vertices themselves are kept in the
+        /// geometry's local frame with the structure; a reader places them by the render fragment's placement.
+        /// </summary>
         public readonly int vertexStart;
 
         /// <summary>The vertices of the box-and-plane section before the other planes cut it: 0 to 6.</summary>
@@ -1369,14 +1413,107 @@ namespace Zantetsu.MeshCut
         public VpMultiCutInvalidInput InvalidInputReason => _invalid;
 
         /// <summary>
-        /// This snapshot's own cap vertex array, for an upload that reads the first <see cref="CapVertexCount"/> of them
-        /// by count. Not copied; good only until this snapshot is built again.
+        /// One cap's vertices as the structure keeps them: the geometry's local frame, in the kept order (D-208). Nothing
+        /// is copied or placed; good until this snapshot is built again. Empty for a cap of no area.
         /// </summary>
-        internal VpNumericRoom<Vector3> CapVertexArray => _capVertices;
+        internal ReadOnlySpan<Vector3> LocalCapPolygon(int capIndex)
+        {
+            if (!TryGetCap(capIndex, out VpMultiCutCap cap))
+            {
+                throw new ArgumentOutOfRangeException(nameof(capIndex));
+            }
+
+            if (cap.shapes == null) return default;
+            LocalCapSet.Cap shape = cap.shapes.caps[cap.shape];
+            return new ReadOnlySpan<Vector3>(cap.shapes.vertices, shape.vertexStart, shape.vertexCount);
+        }
 
         /// <summary>
-        /// A look at one cap's vertices (world space) in this snapshot's own array: nothing is copied,
-        /// and it is good only until this snapshot is built again. For a caller that finishes with it before then.
+        /// The section one cap started from -- its face's plane through its registration's box, before the other
+        /// selected half-spaces cut it (at most six vertices) -- in the geometry's local frame, as kept.
+        /// </summary>
+        internal ReadOnlySpan<Vector3> LocalInitialSection(int capIndex)
+        {
+            if (!TryGetCap(capIndex, out VpMultiCutCap cap))
+            {
+                throw new ArgumentOutOfRangeException(nameof(capIndex));
+            }
+
+            if (cap.shapes == null) return default;
+            LocalCapSet.Cap shape = cap.shapes.caps[cap.shape];
+            return new ReadOnlySpan<Vector3>(cap.shapes.vertices, shape.initialStart, shape.initialCount);
+        }
+
+        // The placed (world) cap vertices and sections: not made by a placement pass. They are filled here, whole, the
+        // first time one is asked for after a pass -- by a test, a diagnosis, or a consumer not yet moved to the local
+        // shapes -- from the kept shapes and each render fragment's placement.
+        private bool _placedCapsMade;
+
+        /// <summary>Observation: times the placed cap vertices were made for a reader, and the vertices placed for it.</summary>
+        internal long PlacedCapFills { get; private set; }
+        internal long PlacedCapVertices { get; private set; }
+
+        private void EnsurePlacedCaps()
+        {
+            if (_placedCapsMade || !IsBuilt)
+            {
+                return;
+            }
+
+            const int stride = VpCapBoundsPolygon.MaxVertices;
+            for (int c = 0; c < _capCount; c++)
+            {
+                VpMultiCutCap cap = _caps[c];
+                _capSection[c] = c;
+                if (cap.shapes == null)
+                {
+                    _sections[c] = new Section { vertexCount = 0, previousSlot = -1 };
+                    continue;
+                }
+
+                LocalCapSet.Cap shape = cap.shapes.caps[cap.shape];
+                Matrix4x4 placement = _renderFragments[cap.renderFragment].geometryLocalToWorld;
+                for (int v = 0; v < shape.initialCount; v++)
+                {
+                    int from = shape.initialStart + (cap.mirrored ? shape.initialCount - 1 - v : v);
+                    _sectionVertices[c * stride + v] = placement.MultiplyPoint3x4(cap.shapes.vertices[from]);
+                }
+
+                _sections[c] = new Section { vertexCount = shape.initialCount, previousSlot = -1 };
+                for (int v = 0; v < shape.vertexCount; v++)
+                {
+                    int from = shape.vertexStart + (cap.mirrored ? shape.vertexCount - 1 - v : v);
+                    _capVertices[cap.vertexStart + v] = placement.MultiplyPoint3x4(cap.shapes.vertices[from]);
+                }
+
+                PlacedCapVertices += shape.initialCount + shape.vertexCount;
+            }
+
+            _sectionCount = _capCount;
+            _placedCapsMade = true;
+            PlacedCapFills++;
+        }
+
+        /// <summary>The room of the placed cap vertices as it stands, filled or not: for a check of room, which reads none.</summary>
+        internal VpNumericRoom<Vector3> CapVertexRoom => _capVertices;
+
+        /// <summary>
+        /// This snapshot's cap vertices placed in the world, the first <see cref="CapVertexCount"/> of them in the caps'
+        /// order: made on this call if no reader asked since the last pass. Good only until this snapshot is built again.
+        /// </summary>
+        internal VpNumericRoom<Vector3> CapVertexArray
+        {
+            get
+            {
+                EnsurePlacedCaps();
+                return _capVertices;
+            }
+        }
+
+        /// <summary>
+        /// A look at one cap's vertices placed in the world (wound about its outward normal), made on demand as
+        /// <see cref="CapVertexArray"/> is. For tests and diagnoses: the judgement and the drawing read
+        /// <see cref="LocalCapPolygon"/> with the placement.
         /// </summary>
         internal VpArrayRange<Vector3> CapPolygon(int capIndex)
         {
@@ -1385,16 +1522,14 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentOutOfRangeException(nameof(capIndex));
             }
 
+            EnsurePlacedCaps();
             return RangeOf(_capVertices, cap.vertexStart, cap.vertexCount);
         }
 
         /// <summary>
-        /// A look at the section one cap started from, as this snapshot keeps it: the box-and-plane section of the cap's
-        /// face through its registration's box (at most <see cref="VpCapBoundsPolygon.MaxVertices"/>, six), before the
-        /// other selected half-spaces cut it -- in world space, at the render fragment's own placement, which a reader
-        /// needs to add nothing to. It is the section taken or reused for the cap in the build, not a copy
-        /// and not the build's working room; nothing is taken here. Good only until this snapshot is built again
-        /// (<see cref="BuildGeneration"/>). A section of no vertices is a plane that missed the box.
+        /// A look at the section one cap started from, placed in the world at the render fragment's own placement: made
+        /// on demand as <see cref="CapVertexArray"/> is. For tests and diagnoses; see <see cref="LocalInitialSection"/>.
+        /// A section of no vertices is a plane that missed the box.
         /// </summary>
         internal VpArrayRange<Vector3> InitialSection(int capIndex)
         {
@@ -1403,6 +1538,7 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentOutOfRangeException(nameof(capIndex));
             }
 
+            EnsurePlacedCaps();
             int slot = _capSection[capIndex];
             return RangeOf(_sectionVertices, slot * VpCapBoundsPolygon.MaxVertices, _sections[slot].vertexCount);
         }
@@ -1514,6 +1650,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            EnsurePlacedCaps();
             world = _capVertices[cap.vertexStart + vertex];
             return true;
         }
@@ -1897,6 +2034,14 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot reuseFrom)
         {
             PlacementPasses++;
+            _placedCapsMade = false;
+            if (!_composite)
+            {
+                // The shapes of a snapshot not made of parts are of this build.
+                _ownShapes.Clear();
+                _ownShapesRegistration = -1;
+                _ownShapesFrom = 0;
+            }
             _placedAnewCount = 0;
             _capsChangedFrom = int.MaxValue;
             _capsChangedTo = 0;
@@ -3172,6 +3317,22 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // The numeric input-contract diagnosis (DESIGN 5.6, D-191; not compiled for a non-Development Player): whether
+        // every point of the box is placed at finite coordinates -- each row of the placement over the largest
+        // coordinates the box reaches. (The caps' vertices lie in the box.) It judges a range of numbers from the box
+        // and the placement; no value of the drawing is made by it or for it.
+        private static bool PlacesFinitely(in Matrix4x4 m, in Bounds box)
+        {
+            Vector3 c = box.center, e = box.extents;
+            float x = Mathf.Abs(c.x) + Mathf.Abs(e.x), y = Mathf.Abs(c.y) + Mathf.Abs(e.y), z = Mathf.Abs(c.z) + Mathf.Abs(e.z);
+            float r0 = Mathf.Abs(m.m00) * x + Mathf.Abs(m.m01) * y + Mathf.Abs(m.m02) * z + Mathf.Abs(m.m03);
+            float r1 = Mathf.Abs(m.m10) * x + Mathf.Abs(m.m11) * y + Mathf.Abs(m.m12) * z + Mathf.Abs(m.m13);
+            float r2 = Mathf.Abs(m.m20) * x + Mathf.Abs(m.m21) * y + Mathf.Abs(m.m22) * z + Mathf.Abs(m.m23);
+            return !(float.IsNaN(r0) || float.IsInfinity(r0) || float.IsNaN(r1) || float.IsInfinity(r1) || float.IsNaN(r2) || float.IsInfinity(r2));
+        }
+#endif
+
         private VpMultiCutBuildOutcome TryBuildRenderFragment(
             LogicalCutLedger ledger,
             in VpMultiCutRegistration registration,
@@ -3188,32 +3349,61 @@ namespace Zantetsu.MeshCut
             Matrix4x4 geometryLocalToWorld = renderFragment.geometryLocalToWorld;
             VpMultiCutBranch representative = BranchAt(renderFragment.branchStart);
 
-            // 1. The selected boundaries: the geometry's own plane, the world plane, the condition and the half-space.
+            // 1. The selected boundaries. Their planes in the geometry's local frame and their caps' shapes are the
+            //    structure's (D-208): the part's own, made when its structure was -- or, in a snapshot not made of
+            //    parts, made here with the structure this build settled. From them, by this placement: the world plane,
+            //    the condition and the half-space.
             int selected = representative.selectedCount;
             if (_conditionCount + selected > _conditions.Length || _capCount + selected > _caps.Length)
             {
                 return Short(VpMultiCutShortage.Caps);
             }
 
+            LocalCapSet shapes;
+            int first;
+            if (_composite)
+            {
+                PartRange range = _parts[renderFragment.registration];
+                shapes = range.part.shapes;
+                first = shapes.firstOf[index - range.render];
+            }
+            else
+            {
+                shapes = _ownShapes;
+                if (renderFragment.registration != _ownShapesRegistration)
+                {
+                    // Another registration's box from here on: its faces share nothing with the ones before.
+                    _ownShapesRegistration = renderFragment.registration;
+                    _ownShapesFrom = shapes.capCount;
+                }
+
+                VpMultiCutBuildOutcome shaped = TryAppendLocalCaps(
+                    shapes, index, _ownShapesFrom, registration, representative, _candidates, _states, _placeInto);
+                if (shaped != VpMultiCutBuildOutcome.Built)
+                {
+                    return shaped;
+                }
+
+                first = shapes.firstOf[index];
+            }
+
             int conditionStart = _conditionCount;
             for (int j = 0; j < selected; j++)
             {
-                VpClipCandidate candidate = CandidateAt(representative.candidateStart + j);
-                if (!VpCutPlane.TryGeometryLocalToWorld(candidate.plane, lineageToGeometryLocal, out float4 local)
-                    || !VpCutPlane.TryGeometryLocalToWorld(local, geometryLocalToWorld, out float4 world))
+                LocalCapSet.Cap shape = shapes.caps[first + j];
+                if (!VpCutPlane.TryGeometryLocalToWorld(shape.localPlane, geometryLocalToWorld, out float4 world))
                 {
                     return Invalid(VpMultiCutInvalidInput.PlaneNotCarried);
                 }
 
-                _localPlanes[j] = local;
                 _worldPlanes[j] = world;
-                _halfSpaces[j] = new VpClipHalfSpace(ToVector4(world), candidate.boundary.side);
+                _halfSpaces[j] = new VpClipHalfSpace(ToVector4(world), shape.boundary.side);
                 _conditions[_conditionCount++] = new VpCapConstraint(
-                    candidate.boundary.face, candidate.boundary.side, ToVector4(world));
+                    shape.boundary.face, shape.boundary.side, ToVector4(world));
             }
 
             _placeInto.selected += selected;
-            _placeInto.planeTransforms += 2 * selected;
+            _placeInto.planeTransforms += selected;
             _selectedHalfSpaces.Set(0, selected);
             if (!VpInstanceClip.TryKeep(_selectedHalfSpaces, out VpInstanceClip clip))
             {
@@ -3230,79 +3420,55 @@ namespace Zantetsu.MeshCut
                 return VpMultiCutBuildOutcome.Built;
             }
 
-            // 3. One cap per selected boundary, cut by the other selected half-spaces.
-            SetSelectedRange(representative.candidateStart, selected);
-            _selectedPlanes.Set(0, selected);
+            // 3. One cap per selected boundary: its kept shape, carried by this placement. No section is looked up or
+            //    built here and no polygon is clipped.
             int capStart = _capCount;
+
+            // A placement that mirrors turns a polygon's sense about its normal: the cap says so, and whoever needs the
+            // sense (the drawing) reads the kept order backwards. The shape is not made again for it.
+            bool mirrored = selected > 0 && geometryLocalToWorld.determinant < 0f;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // The numeric input-contract diagnosis (DESIGN 5.6, D-191; not compiled for a non-Development Player).
+            // Nothing of a cap is placed here, so there is no placed vertex to look at: whether every one would be
+            // finite is judged from the box the shapes lie in -- each row of the placement over the box's farthest
+            // reach -- and a reach that is not finite is refused, never dropped or emptied. A non-Development Player
+            // does not ask: such a placement is outside the contract and its caps are drawn as the numbers come out.
+            if (selected > 0 && !PlacesFinitely(geometryLocalToWorld, renderFragment.localBounds))
+            {
+                return Invalid(VpMultiCutInvalidInput.DrawnCapVertex);
+            }
+#endif
+
             for (int j = 0; j < selected; j++)
             {
-                VpClipBoundary boundary = CandidateAt(representative.candidateStart + j).boundary;
-                VpMultiCutBuildOutcome sectioned = TryTakeSection(
-                    boundary.face, _localPlanes[j], registration, geometryLocalToWorld, reuseFrom, out int initial,
-                    out int sectionSlot);
-                if (sectioned != VpMultiCutBuildOutcome.Built)
-                {
-                    return sectioned;
-                }
-
-                // The negative side keeps the order the section was built in; the positive side reads it backwards,
-                // its outward direction being the opposite one.
-                if (boundary.side > 0f)
-                {
-                    Array.Reverse(_initial, 0, initial);
-                }
-
-                int clipped = 0;
-                if (initial > 0 && !placeNoCapClipForTest)
-                {
-                    _placeInto.capClips++;
-                    _placeInto.capInputVertices += initial;
-                }
-
-                if (initial > 0 && !placeNoCapClipForTest
-                    && !VpCapPolygonClip.TryClip(
-                        _initial, initial, boundary, _selectedCandidates, _selectedStates, _selectedPlanes,
-                        vertexEpsilon, _clipped, out clipped))
-                {
-                    return Invalid(VpMultiCutInvalidInput.ClipNotTaken);
-                }
-
-                _placeInto.capOutputVertices += clipped;
-                for (int v = 0; v < clipped; v++)
-                {
-                    // Finite inputs can still overflow when added; such a vertex is refused, never dropped or emptied.
-                    Vector3 placed = _clipped[v];
-                    if (!IsFinite(placed))
-                    {
-                        return Invalid(VpMultiCutInvalidInput.DrawnCapVertex);
-                    }
-
-                    _capVertices[_capVertexCount + v] = placed;
-                }
-
+                LocalCapSet.Cap shape = shapes.caps[first + j];
                 float4 plane = _worldPlanes[j];
                 var normal = new Vector3(plane.x, plane.y, plane.z);
 
                 // This cap is the same as the cap of that index in the snapshot this one is placed beside when it is
-                // the same boundary's, its section is the very one that cap was built from -- taken from there under
-                // exactly the same key (face, plane, box and placement), so its plane in world is the same -- and it
-                // lies at the same vertices. Any other cap -- standing elsewhere, cut otherwise, new, or moved along by
-                // one before it -- widens the one range of changed caps. Nothing is compared vertex by vertex.
-                int sectionBefore = _sections[sectionSlot].previousSlot;
-                if (!(sectionBefore >= 0 && _capsChangedBeside != null && _capCount < _capsChangedBeside._capCount
-                      && _capsChangedBeside._capSection[_capCount] == sectionBefore
-                      && _capsChangedBeside._caps[_capCount].boundary == boundary
+                // the very same kept shape (the same set's, so the same structure's), lies at the same vertices, and
+                // its render fragment stands, bit for bit, where that one's did: the cap's record -- its placement and
+                // its normal -- is then the one already held. Any other cap -- standing elsewhere, of another shape,
+                // new, or moved along by one before it -- widens the one range of changed caps. Nothing is compared
+                // vertex by vertex.
+                if (!(_capsChangedBeside != null && _capCount < _capsChangedBeside._capCount
+                      && ReferenceEquals(_capsChangedBeside._caps[_capCount].shapes, shapes)
+                      && _capsChangedBeside._caps[_capCount].shape == first + j
                       && _capsChangedBeside._caps[_capCount].vertexStart == _capVertexCount
-                      && _capsChangedBeside._caps[_capCount].vertexCount == clipped))
+                      && _capsChangedBeside._caps[_capCount].mirrored == mirrored
+                      && SameBits(
+                          _capsChangedBeside._renderFragments[_capsChangedBeside._caps[_capCount].renderFragment].geometryLocalToWorld,
+                          geometryLocalToWorld)))
                 {
                     if (_capCount < _capsChangedFrom) _capsChangedFrom = _capCount;
                     _capsChangedTo = _capCount + 1;
                 }
 
-                _capSection[_capCount] = sectionSlot;
                 _caps[_capCount++] = new VpMultiCutCap(
-                    index, boundary, plane, -boundary.side * normal, _capVertexCount, initial, clipped);
-                _capVertexCount += clipped;
+                    index, shape.boundary, plane, -shape.boundary.side * normal, _capVertexCount, shape.initialCount, shape.vertexCount,
+                    shapes, first + j, mirrored);
+                _capVertexCount += shape.vertexCount;
             }
 
             _renderFragments[index] = new VpMultiCutRenderFragment(
@@ -3311,94 +3477,6 @@ namespace Zantetsu.MeshCut
                 renderFragment.branchStart, renderFragment.branchCount, conditionStart, selected, clip,
                 capStart, selected);
             return VpMultiCutBuildOutcome.Built;
-        }
-
-        /// <summary>
-        /// The section of this face's plane through this registration's box, into <c>_initial</c> in the order it was
-        /// built: taken already in this build, else taken from <paramref name="reuseFrom"/> under exactly the same key,
-        /// else taken now and counted. A plane that misses the box is a section of no vertices, and is kept like any other.
-        /// Asked only for a selected boundary's cap. The room cannot be short (see the class notes); if it is all the same,
-        /// the build is refused and nothing is taken without being kept.
-        /// </summary>
-        private VpMultiCutBuildOutcome TryTakeSection(
-            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld,
-            VpMultiCutSnapshot reuseFrom, out int vertexCount, out int sectionSlot)
-        {
-            vertexCount = 0;
-            sectionSlot = -1;
-            const int stride = VpCapBoundsPolygon.MaxVertices;
-            int found = FindSection(face, localPlane, registration, geometryLocalToWorld, _placeInto);
-            if (found >= 0)
-            {
-                _placeInto.sectionsFoundHere++;
-                sectionSlot = found;
-                vertexCount = _sections[found].vertexCount;
-                _sectionVertices.CopyTo(found * stride, _initial, 0, vertexCount);
-                return VpMultiCutBuildOutcome.Built;
-            }
-
-            if (_sectionCount >= _sections.Length)
-            {
-                return Short(VpMultiCutShortage.Caps);
-            }
-
-            int slot = _sectionCount;
-            int reused = reuseFrom != null ? reuseFrom.FindSection(face, localPlane, registration, geometryLocalToWorld, _placeInto) : -1;
-            if (reused >= 0)
-            {
-                _placeInto.sectionsReused++;
-                vertexCount = reuseFrom._sections[reused].vertexCount;
-                _sectionVertices.CopyFrom(reuseFrom._sectionVertices, reused * stride, slot * stride, vertexCount);
-            }
-            else
-            {
-                SectionBuildCount++;
-                _placeInto.sectionsBuilt++;
-                // Taken into the work room (at most a section's six vertices), then kept in the sections' own room.
-                if (!_section.TryBuild(
-                        registration.localBounds, localPlane, geometryLocalToWorld,
-                        registration.vertexEpsilon, _initial, 0, out vertexCount, out _))
-                {
-                    return Invalid(VpMultiCutInvalidInput.SectionNotTaken);
-                }
-
-                _sectionVertices.CopyFrom(_initial, 0, slot * stride, vertexCount);
-            }
-
-            _sections[slot] = new Section
-            {
-                face = face,
-                localPlane = localPlane,
-                bounds = registration.localBounds,
-                placement = geometryLocalToWorld,
-                epsilon = registration.vertexEpsilon,
-                vertexCount = vertexCount,
-                previousSlot = reused,
-            };
-            _sectionCount++;
-            sectionSlot = slot;
-            _sectionVertices.CopyTo(slot * stride, _initial, 0, vertexCount);
-            return VpMultiCutBuildOutcome.Built;
-        }
-
-        private int FindSection(
-            VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, Matrix4x4 geometryLocalToWorld, VpPlaceCounts counts)
-        {
-            for (int i = 0; i < _sectionCount; i++)
-            {
-                counts.sectionEntriesCompared++;
-                Section section = _sections[i];
-                if (section.face == face
-                    && Same(section.localPlane, localPlane)
-                    && Same(section.bounds, registration.localBounds)
-                    && Same(section.placement, geometryLocalToWorld)
-                    && section.epsilon == registration.vertexEpsilon)
-                {
-                    return i;
-                }
-            }
-
-            return -1;
         }
 
         // What a section was taken of is compared value by value: Unity's own equality for Vector4, Matrix4x4 and Bounds

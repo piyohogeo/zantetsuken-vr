@@ -71,6 +71,13 @@ Shader "Zantetsu/VP Stencil Cap"
 
             StructuredBuffer<float4> _VpCapVertices;
 
+            // Where _VpCapLocal is on (the display's own caps): a cap vertex is its position in the geometry's local
+            // frame with the cap's number in w, and the cap's record places it -- four float4 a cap: the three rows of
+            // its render fragment's placement, then its outward normal in world space. Moving a body changes its caps'
+            // records, never their vertices.
+            StructuredBuffer<float4> _VpCapPlacements;
+            float _VpCapLocal;
+
             // One outward normal in world space per cap vertex, in the same order, bound by the caller together with
             // _VpCapShaded. Read only where _VpCapShaded is on.
             StructuredBuffer<float4> _VpCapNormals;
@@ -128,13 +135,31 @@ Shader "Zantetsu/VP Stencil Cap"
                     return output;
                 }
 
-                float3 positionWS = _VpCapVertices[input.vertexID].xyz;
+                float4 vertex = _VpCapVertices[input.vertexID];
+                float3 positionWS;
+                if (_VpCapLocal > 0.5)
+                {
+                    uint record = (uint)(vertex.w + 0.5) * 4u;
+                    float4 local = float4(vertex.xyz, 1.0);
+                    positionWS = float3(
+                        dot(_VpCapPlacements[record], local),
+                        dot(_VpCapPlacements[record + 1u], local),
+                        dot(_VpCapPlacements[record + 2u], local));
+
+                    // The cap's own outward normal: one colour may hold caps of several sides.
+                    output.normalWS = _VpCapPlacements[record + 3u].xyz;
+                }
+                else
+                {
+                    positionWS = vertex.xyz;
+
+                    // The cap's own outward normal, per vertex: one colour may hold caps of several sides, so a
+                    // single normal for the colour would shade them alike.
+                    output.normalWS = _VpCapShaded > 0.0 ? _VpCapNormals[input.vertexID].xyz : float3(0.0, 1.0, 0.0);
+                }
+
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.positionWS = positionWS;
-
-                // The cap's own outward normal, per vertex: one colour may hold caps of several sides, so a single
-                // normal for the colour would shade them alike.
-                output.normalWS = _VpCapShaded > 0.0 ? _VpCapNormals[input.vertexID].xyz : float3(0.0, 1.0, 0.0);
                 return output;
             }
 

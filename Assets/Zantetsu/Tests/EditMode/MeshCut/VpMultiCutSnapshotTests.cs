@@ -970,7 +970,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 second.TryBuild(ledger, new[] { new VpMultiCutRegistration(root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(k_box)) }, first),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
-            Assert.That(second.SectionBuildCount, Is.Zero, "all reused");
+            Assert.That(second.SectionBuildCount, Is.EqualTo(8), "this builder settles the structure in every build and makes the shapes with it: the eight again");
 
             VpMultiCutSnapshot tight = NewSnapshot(caps: 1);
             Assert.That(Build(tight, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.CapacityExceeded));
@@ -1249,7 +1249,7 @@ namespace Zantetsu.MeshCut.Tests
 
             VpMultiCutSnapshot second = NewSnapshot();
             Assert.That(second.TryBuild(ledger, registrations, first), Is.EqualTo(VpMultiCutBuildOutcome.Built));
-            Assert.That(second.SectionBuildCount, Is.Zero, "every section reused");
+            Assert.That(second.SectionBuildCount, Is.EqualTo(2), "made with the structure of this build: one a face again");
             for (int c = 0; c < first.CapCount; c++)
             {
                 first.TryGetCap(c, out VpMultiCutCap a);
@@ -1269,7 +1269,7 @@ namespace Zantetsu.MeshCut.Tests
             };
             VpMultiCutSnapshot third = NewSnapshot();
             Assert.That(third.TryBuild(ledger, moved, second), Is.EqualTo(VpMultiCutBuildOutcome.Built));
-            Assert.That(third.SectionBuildCount, Is.EqualTo(2), "a moved placement is another key");
+            Assert.That(third.SectionBuildCount, Is.EqualTo(2), "and the same two whatever the placement: the shapes are local");
         }
 
         // ----- fixture -------------------------------------------------------------------------------------------------

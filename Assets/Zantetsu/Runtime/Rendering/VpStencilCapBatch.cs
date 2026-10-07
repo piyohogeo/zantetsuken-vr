@@ -287,6 +287,90 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        // Which layout of local cap vertices this batch's buffer holds (TryUploadLocalCaps); -1 before any.
+        private long _capLayout = -1;
+
+        /// <summary>Observation: times the cap vertex buffer was written for another layout, and the vertices sent.</summary>
+        public long CapLayoutUploads { get; private set; }
+        public long CapLayoutVertices { get; private set; }
+
+        /// <summary>
+        /// The counted upload for caps kept in their geometry's local frame (DESIGN 5.6, D-208):
+        /// <paramref name="capVertices"/> are float4 already -- the local position, the cap's number in w -- laid out by
+        /// the caller, and <paramref name="capLayout"/> names that layout. The cap vertices are sent only when this
+        /// batch holds another layout: a body that moves changes its caps' records (the caller's buffer), never these.
+        /// The volumes, their instances and the cap indices are sent as in the other upload.
+        /// </summary>
+        public bool TryUploadLocalCaps(
+            NativeArray<VpIndirectCommand> commands,
+            int commandCount,
+            NativeArray<Matrix4x4> objectToWorlds,
+            NativeArray<VpInstanceClip> clips,
+            NativeArray<Vector4> capVertices,
+            int capVertexCount,
+            long capLayout,
+            NativeArray<int> capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool singlePassInstanced)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (!commands.IsCreated || !objectToWorlds.IsCreated || !clips.IsCreated || !capVertices.IsCreated || !capIndices.IsCreated)
+            {
+                return false;
+            }
+
+            if (!IsWellFormed(
+                    commands.AsReadOnlySpan(), commandCount, capVertices.Length, capVertexCount, capIndices.AsReadOnlySpan(),
+                    capIndexCount, colors, colorCount, out int volumeWrites))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!_volumes.TryUpload(commands, commandCount, objectToWorlds, clips, singlePassInstanced))
+                {
+                    return false;
+                }
+
+                BufferWrites += volumeWrites;
+                if (capLayout != _capLayout)
+                {
+                    if (capVertexCount > 0)
+                    {
+                        _capVertexBuffer.SetData(capVertices, 0, 0, capVertexCount);
+                        BufferWrites++;
+                        CapLayoutUploads++;
+                        CapLayoutVertices += capVertexCount;
+                    }
+
+                    _capLayout = capLayout;
+                }
+
+                if (capIndexCount > 0)
+                {
+                    // The indices were checked to be within the vertices, so none is negative: read as unsigned as they stand.
+                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount);
+                    BufferWrites++;
+                }
+            }
+            catch
+            {
+                _broken = true;
+                throw;
+            }
+
+            Array.Copy(colors, _colors, colorCount);
+            _colorCount = colorCount;
+            SinglePassInstanced = singlePassInstanced;
+            _uploaded = true;
+            Uploads++;
+            return true;
+        }
+
         /// <summary>Whether the native upload would accept this input, decided without writing anything and by the same judgement.</summary>
         public bool CanUpload(
             NativeArray<VpIndirectCommand> commands,

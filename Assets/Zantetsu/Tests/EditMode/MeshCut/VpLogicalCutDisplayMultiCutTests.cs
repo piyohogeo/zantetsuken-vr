@@ -135,7 +135,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(ledger.Publish(a, out LogicalFragmentId plus, out LogicalFragmentId minus), Is.EqualTo(LogicalCutResultOutcome.Applied));
                 Collect(scene);
                 AssertSameShape(pendingA, Capture(display), "A published");
-                Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds), "no section taken again when A is published");
+                Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds + 1), "A published: its family's structure was settled again, and its one face's shape with it");
                 Assert.That(display.StateOf(plus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
                 Assert.That(display.StateOf(minus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
                 AssertSidesName(display, plus, minus);
@@ -151,7 +151,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(ledger.Publish(b, out LogicalFragmentId plusPlus, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
                 Collect(scene);
                 AssertSameShape(pendingB, Capture(display), "B published");
-                Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds), "no section taken again when B is published");
+                Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds + 2), "B published: the family's structure again, a section for each of its two faces");
                 Assert.That(display.StateOf(plusPlus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
                 Assert.That(display.StateOf(plus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit), "an intermediate fragment");
 
