@@ -300,17 +300,32 @@ namespace Zantetsu.MeshCut
             }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            // The stamp is what says the two are of one structure. Where the diagnosis is compiled, that is looked at too.
-            for (int g = 0; g < _partCount; g++)
+            // The stamp is what says the two are of one structure. Where the numeric diagnosis is on, that is looked at
+            // too -- a pass over every part a collection, so under the same switch as the other diagnoses of the input
+            // (TL, 2026-10-08: a Development Player with the diagnosis off measures without it).
+            if (_numeric)
             {
-                if (!ReferenceEquals(previous._parts[g].part, _parts[g].part) || previous._parts[g].render != _parts[g].render)
+                for (int g = 0; g < _partCount; g++)
                 {
-                    KeptStructureMismatches++;
-                    return false;
+                    if (!ReferenceEquals(previous._parts[g].part, _parts[g].part) || previous._parts[g].render != _parts[g].render)
+                    {
+                        KeptStructureMismatches++;
+                        return false;
+                    }
                 }
             }
 #endif
             return true;
+        }
+
+        /// <summary>
+        /// Whether a build for these stamps would keep the whole structure (<see cref="TryBuildIncremental"/>'s first
+        /// branch): both snapshots are of it. Asked by the display before a build, to know whether a pass over the kept
+        /// structure would have any target at all (TL, 2026-10-08). Nothing is changed.
+        /// </summary>
+        internal bool WouldKeepStructure(StructurePool pool, VpMultiCutSnapshot previous, int registrations, long stampLedger, long stampInputs)
+        {
+            return stampLedger >= 0 && stampInputs >= 0 && previous != this && CanKeepStructure(pool, previous, registrations, stampLedger, stampInputs);
         }
 
         // The structure as it stands -- the parts, where each begins, every render fragment's own record -- with only

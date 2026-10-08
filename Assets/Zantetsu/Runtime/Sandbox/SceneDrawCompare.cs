@@ -550,9 +550,20 @@ namespace Zantetsu.Sandbox
             _scaled.Clear();
         }
 
-        /// <summary>The world's lookup with a second voice: a fragment shown here stands where it was registered.</summary>
-        private sealed class Placement : IVpFragmentPlacement
+        /// <summary>
+        /// The world's lookup with a second voice: a fragment shown here stands where it was registered -- and, since
+        /// nothing moves it (no owner, no actor; a target's renderer is off and its Transform is not touched by this
+        /// comparison), the lookup vouches that a physics step does not move it (<see cref="IVpFixedPlacementSource"/>,
+        /// TL 2026-10-08). The world's own fragments are vouched for only if the world's lookup vouches for them.
+        /// </summary>
+        private sealed class Placement : IVpFragmentPlacement, IVpFixedPlacementSource
         {
+            public bool IsPlacementFixed(LogicalFragmentId fragment)
+            {
+                if (_own.Contains(fragment)) return true;
+                return _inner is IVpFixedPlacementSource vouching && vouching.IsPlacementFixed(fragment);
+            }
+
             private readonly IVpFragmentPlacement _inner;
             private readonly HashSet<LogicalFragmentId> _own;
 

@@ -1309,9 +1309,11 @@ namespace Zantetsu.MeshCut
                 if (!ReferenceEquals(_placement, value))
                 {
                     // Which lookup answers is part of what a structure was settled from, because a different one can
-                    // answer Missing where the last one followed something.
+                    // answer Missing where the last one followed something. And what the last one said of the held and
+                    // the fixed ones is no longer anyone's word: every one is asked once in the next pass (2026-10-08).
                     _placement = value;
                     InputChanged();
+                    _holds.TellAll();
                 }
             }
         }
@@ -2367,10 +2369,26 @@ namespace Zantetsu.MeshCut
         /// (<see cref="Time.frameCount"/>); a room's growth and a snapshot made again counted in the frame they happen.
         /// A frame's markers and these counts then belong to the same frame, wherever in the frame an observer reads them.
         /// </summary>
+        /// <summary>
+        /// What the collections of a frame kept of the static data (TL, 2026-10-08): placement passes a step alone did
+        /// not make, every target being fixed or held and far; the structure tally (the room asked for the
+        /// registrations) run or kept from the structure it was last run for; the instance takes and the release pass
+        /// over the registrations run or kept likewise; and the runs' time. Every one added over the frame.
+        /// </summary>
+        public struct VpStaticCollectCounts
+        {
+            public long passesSkipped;
+            public long tallies, talliesSkipped, instanceTakes, instanceTakesSkipped, releases, releasesSkipped;
+            public double tallySeconds, instanceTakeSeconds, releaseSeconds;
+        }
+
         public struct FrameCounts
         {
             public int frame, collections, roomGrowths, snapshotRegrowths;
             public long structureBuilds, structureValidations, placementPasses;
+
+            /// <summary>The static data kept by this frame's collections (2026-10-08).</summary>
+            public VpStaticCollectCounts statics;
 
             /// <summary>The validations' parts in this frame, every one of them added (2026-10-01); null in a frame that validated nothing.</summary>
             public VpValidateCounts validate;
@@ -4584,12 +4602,36 @@ namespace Zantetsu.MeshCut
             }
         }
 
-        private bool _placementReused, _buildSerialKnown, _placedSerialKnown;
+        private bool _placementReused, _placementPassSkipped, _buildSerialKnown, _placedSerialKnown;
         private long _buildStep, _buildOutside, _placedStep, _placedOutside;
 
         /// <summary>Observation: collections that let the adopted snapshot stand, and the placement queries they did not make.</summary>
         public long PlacementReuses { get; private set; }
         public long PlacementQueriesOmitted { get; private set; }
+
+        /// <summary>
+        /// Observation (TL, 2026-10-08): collections after a new step that made no placement pass because the pass
+        /// would have had no target -- every render fragment fixed (its lookup vouches a step does not move it,
+        /// <see cref="IVpFixedPlacementSource"/>) or held and far, nothing told. The adopted snapshot stood, as for a
+        /// collection with no new step; its queries are in <see cref="PlacementQueriesOmitted"/>.
+        /// </summary>
+        public long PlacementPassesSkipped { get; private set; }
+
+        /// <summary>How many render fragments are fixed now: vouched for by the lookup, not asked for a step.</summary>
+        public int FixedPlacements => _holds.FixedCount;
+
+        /// <summary>Observation: the structure tally (the room asked for the registrations) run, and kept from the structure it was last run for.</summary>
+        public long StructureTallies { get; private set; }
+        public long StructureTalliesSkipped { get; private set; }
+
+        /// <summary>Observation: the instance takes (one display instance a render fragment) run, and kept while the structure stands.</summary>
+        public long InstanceTakes { get; private set; }
+        public long InstanceTakesSkipped { get; private set; }
+
+        // The structure (ledger revision, input revision) the tally was last run for; the instances stand as the last
+        // adopted structure needs them (one a render fragment, taken in stage 4 and trimmed in stage 9).
+        private long _talliedLedger = -1, _talliedInputs = -1;
+        private bool _instancesSettled;
 
         // ----- held placements: who is asked in a pass that does ask (DESIGN 5.6, D-205) ------------------------------
         //
@@ -5522,8 +5564,10 @@ namespace Zantetsu.MeshCut
             }
 
             // The placements adopted are of the counts taken when they were asked (D-204); a collection that let the
-            // adopted snapshot stand changes nothing of that.
-            if (!_placementReused)
+            // adopted snapshot stand changes nothing of that -- except one that stood it for a new step because the
+            // pass would have had no target (2026-10-08): that step's placements are the adopted ones, settled by the
+            // fixed and held ones' standing, and are taken as placed at these counts.
+            if (!_placementReused || _placementPassSkipped)
             {
                 _placedSerialKnown = _buildSerialKnown;
                 _placedStep = _buildStep;
@@ -5666,6 +5710,7 @@ namespace Zantetsu.MeshCut
             VpSnapshotStageTotals stagesBefore = SumStages();
             VpHeldPlacementTotals holdsBefore = _holds.Totals;
             _placementReused = false;
+            _placementPassSkipped = false;
             _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             OpenSlotPass();
             SumValidate(_validateBefore);
@@ -5703,6 +5748,7 @@ namespace Zantetsu.MeshCut
                 }
 
                 _placementReused = false;
+                _placementPassSkipped = false;
 
                 CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
 
@@ -5856,6 +5902,32 @@ namespace Zantetsu.MeshCut
                     }
                 }
 
+                // A pass whose targets are none (TL, 2026-10-08): with the structure kept whole, the pass over it would
+                // ask the ordinary render fragments, the held ones near a camera and in its view, and the ones told
+                // of -- and when there are none of these (every one fixed, its lookup vouching that a step does not
+                // move it, or held and far; nothing told) it would settle every record as the adopted snapshot has it.
+                // So the adopted snapshot stands, as for a collection with no new step (D-204): no record is reset, no
+                // target picked twice (the pass's targets are picked here, once, before the build). The step's counts
+                // are taken as placed at the adoption (KeepSlots). A pass with any target runs whole below: the fixed
+                // ones are not asked in it, the others are. A lookup's guarantee alone makes a fragment fixed; a
+                // dynamic one that stood twice is held, and asked when near.
+                if (holding && _hasSnapshot && _building.WouldKeepStructure(_structurePool, _snapshot, _registrations.Count, stampLedger, _inputRevision)
+                    && _holds.BeginKept(_snapshot.RenderFragmentCount, stampLedger, _inputRevision) && _holds.PickedCount == 0)
+                {
+                    _holds.PassEnded();
+                    Swap(ref _snapshot, ref _building);
+                    _building.NotePlacementsReused();
+                    _placementReused = true;
+                    _placementPassSkipped = true;
+                    PlacementPassesSkipped++;
+                    PlacementQueriesOmitted += _building.RenderFragmentCount;
+                    CountingFrame();
+                    _countsNow.statics.passesSkipped++;
+                }
+            }
+
+            if (!_placementReused)
+            {
                 long heapBefore = GC.GetTotalMemory(false);
                 long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
                 VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
@@ -6007,10 +6079,33 @@ namespace Zantetsu.MeshCut
             // 4. The display instances the new snapshot needs that are not held yet. A failure gives back what this
             //    pass took, and nothing already held is given back early to make room; the table grows to its limit
             //    by itself, so a failure here is past it.
-            if (!TryTakeInstances())
+            //    <para>
+            //    How many a registration needs is one a render fragment, which follows from the structure alone; a
+            //    collection whose structure stands, after one whose release pass (9) left every registration holding
+            //    exactly that many, takes none and trims none (TL, 2026-10-08). Anything that changes the need -- a
+            //    registration shown or retired, a cut, a commit -- changes the ledger or this display's inputs, so the
+            //    collection is structural and goes through every registration as before.
+            //    </para>
+            bool instancesStand = !structural && _instancesSettled && !collectEverythingForTest;
+            CountingFrame();
+            if (instancesStand)
             {
-                return FailRoom("display instances", -1, _table.DisplayInstanceCapacity, _table.DisplayInstanceLimit,
-                    _table.DescribeRoom());
+                InstanceTakesSkipped++;
+                _countsNow.statics.instanceTakesSkipped++;
+            }
+            else
+            {
+                _instancesSettled = false;
+                long takeBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                bool taken = TryTakeInstances();
+                InstanceTakes++;
+                _countsNow.statics.instanceTakes++;
+                _countsNow.statics.instanceTakeSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - takeBegan) * s_secondsPerTick;
+                if (!taken)
+                {
+                    return FailRoom("display instances", -1, _table.DisplayInstanceCapacity, _table.DisplayInstanceLimit,
+                        _table.DescribeRoom());
+                }
             }
 
             EnterCollectStage(5);
@@ -6177,39 +6272,58 @@ namespace Zantetsu.MeshCut
                 _retiring.RemoveAt(r);
             }
 
-            for (int g = _shown.Count - 1; g >= 0; g--)
+            // The pass over the registrations: what each is shown as, and the instances past its need let go. With the
+            // structure standing and the instances settled (stage 4), every value it would write is the one standing
+            // and nothing is past its need: kept (TL, 2026-10-08). A registration being let go came with a ledger
+            // change, so its collection is structural and comes here.
+            CountingFrame();
+            if (instancesStand)
             {
-                Shown entry = _shown[g];
-                entry.takenThisPass = 0;
-                if (entry.dropping)
+                _countsNow.statics.releasesSkipped++;
+            }
+            else
+            {
+                long releaseBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                for (int g = _shown.Count - 1; g >= 0; g--)
                 {
-                    ReleaseReferences(entry);
-                    _shown.RemoveAt(g);
-                    InputChanged();
-
-                    // Still drawn as this adoption has it: its slots are let go by the next collection.
-                    if (entry.slots.held)
+                    Shown entry = _shown[g];
+                    entry.takenThisPass = 0;
+                    if (entry.dropping)
                     {
-                        entry.firstRenderFragmentShown = entry.firstRenderFragment;
-                        _unshownWithSlots.Add(entry);
+                        ReleaseReferences(entry);
+                        _shown.RemoveAt(g);
+                        InputChanged();
+
+                        // Still drawn as this adoption has it: its slots are let go by the next collection.
+                        if (entry.slots.held)
+                        {
+                            entry.firstRenderFragmentShown = entry.firstRenderFragment;
+                            _unshownWithSlots.Add(entry);
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    entry.splitShown = entry.split;
+                    entry.awaitingShown = entry.awaiting && !entry.split;
+                    entry.renderFragmentsShown = entry.renderFragments;
+                    entry.firstRenderFragmentShown = entry.firstRenderFragment;
+                    int required = Math.Max(1, entry.renderFragments);
+                    while (entry.instances.Count > required)
+                    {
+                        int last = entry.instances.Count - 1;
+                        _table.TryRetireDisplayInstance(entry.instances[last]);
+                        entry.instances.RemoveAt(last);
+                    }
                 }
 
-                entry.splitShown = entry.split;
-                entry.awaitingShown = entry.awaiting && !entry.split;
-                entry.renderFragmentsShown = entry.renderFragments;
-                entry.firstRenderFragmentShown = entry.firstRenderFragment;
-                int required = Math.Max(1, entry.renderFragments);
-                while (entry.instances.Count > required)
-                {
-                    int last = entry.instances.Count - 1;
-                    _table.TryRetireDisplayInstance(entry.instances[last]);
-                    entry.instances.RemoveAt(last);
-                }
+                _countsNow.statics.releases++;
+                _countsNow.statics.releaseSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - releaseBegan) * s_secondsPerTick;
             }
 
+            // Every registration holds exactly what the adopted structure needs: the next collection of this structure
+            // takes and trims nothing.
+            _instancesSettled = true;
             return true;
         }
 
@@ -6951,6 +7065,20 @@ namespace Zantetsu.MeshCut
         private bool TryGrowForRegistrations(out string failure)
         {
             failure = null;
+
+            // The tally -- the registrations kept and their commands -- follows from the registrations as read (stage
+            // 1): the same ledger revision and input revision, the same tally, and room that was enough is enough
+            // still (it only grows). Kept while they stand (TL, 2026-10-08); run again for any change of either, as a
+            // test that collects everything does.
+            CountingFrame();
+            if (!collectEverythingForTest && _readLedgerRevision >= 0 && _talliedLedger == _readLedgerRevision && _talliedInputs == _readInputRevision)
+            {
+                StructureTalliesSkipped++;
+                _countsNow.statics.talliesSkipped++;
+                return true;
+            }
+
+            long tallyBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             long kept = 0;
             long keptCommands = 0;
             for (int g = 0; g < _shown.Count; g++)
@@ -6972,8 +7100,13 @@ namespace Zantetsu.MeshCut
             int grownInstances = GrownFor(keptCommands, instances, _limits.instances);
             int grownFragments = GrownFor(kept, fragments, _fragmentLimit);
             int grownBranches = GrownFor(kept, branches, _limits.branches);
+            StructureTallies++;
+            _countsNow.statics.tallies++;
+            _countsNow.statics.tallySeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - tallyBegan) * s_secondsPerTick;
             if (grownCommands == commands && grownInstances == instances && grownFragments == fragments && grownBranches == branches)
             {
+                _talliedLedger = _readLedgerRevision;
+                _talliedInputs = _readInputRevision;
                 return true;
             }
 
@@ -7010,6 +7143,8 @@ namespace Zantetsu.MeshCut
             if (grownFragments != fragments) NoteGrown(RoomKind.Fragments, fragments, grownFragments, kept);
             if (grownCommands != commands) NoteGrown(RoomKind.Commands, commands, grownCommands, keptCommands);
             if (grownInstances != instances) NoteGrown(RoomKind.Instances, instances, grownInstances, keptCommands);
+            _talliedLedger = _readLedgerRevision;
+            _talliedInputs = _readInputRevision;
             return true;
         }
 

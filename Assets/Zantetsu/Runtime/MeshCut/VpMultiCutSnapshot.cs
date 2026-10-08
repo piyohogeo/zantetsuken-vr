@@ -2136,6 +2136,7 @@ namespace Zantetsu.MeshCut
             VpMultiCutRegistration registration = registrations[renderFragment.registration];
             _placeInto.renderFragments++;
             bool wasHeld = holds != null && holds.IsHeld(r);
+            bool fixedVouched = false;
             Matrix4x4 geometryLocalToWorld;
             if (unpicked)
             {
@@ -2144,13 +2145,21 @@ namespace Zantetsu.MeshCut
             }
             else
             {
+                VpMultiCutStandsAs stands = StandsOf(r, renderFragment.registration);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, r, out geometryLocalToWorld))
+                if (!TryPlacementOf(placement, registration, stands, _placeInto, r, out geometryLocalToWorld))
 #else
-                if (!TryPlacementOf(placement, registration, StandsOf(r, renderFragment.registration), _placeInto, out geometryLocalToWorld))
+                if (!TryPlacementOf(placement, registration, stands, _placeInto, out geometryLocalToWorld))
 #endif
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
+                }
+
+                // The lookup's word on this fragment (TL, 2026-10-08): a step does not move it. Asked only of a target
+                // this pass asked where it stands, and only where something holds the answer.
+                if (holds != null && placement is IVpFixedPlacementSource vouching)
+                {
+                    fixedVouched = vouching.IsPlacementFixed(stands.fragment);
                 }
             }
 
@@ -2174,8 +2183,9 @@ namespace Zantetsu.MeshCut
                 _placeInto.keptAsSettled++;
                 PlacementsKeptAsSettled++;
 
-                // Asked, and standing where the adopted snapshot has it: what the held placements go by (D-205).
-                if (holds != null && !unpicked) holds.Stood(r, wasHeld, renderFragment.localBounds, geometryLocalToWorld);
+                // Asked, and standing where the adopted snapshot has it: what the held placements go by (D-205), and
+                // what makes a vouched-for one fixed.
+                if (holds != null && !unpicked) holds.Stood(r, wasHeld, renderFragment.localBounds, geometryLocalToWorld, fixedVouched);
                 return VpMultiCutBuildOutcome.Built;
             }
 
@@ -2194,7 +2204,7 @@ namespace Zantetsu.MeshCut
             // where it is held is the keep test's own last comparison, which the test did not reach for it.
             if (holds != null && !unpicked)
             {
-                holds.PlacedAnew(r, wasHeld, why == 3, why == 2 && wasHeld && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld));
+                holds.PlacedAnew(r, wasHeld, why == 3, why == 2 && wasHeld && SameBits(renderFragment.geometryLocalToWorld, geometryLocalToWorld), fixedVouched);
             }
             _renderFragments[r] = WithPlacement(renderFragment, geometryLocalToWorld);
             if (placeQueriesOnlyForTest) return VpMultiCutBuildOutcome.Built;
