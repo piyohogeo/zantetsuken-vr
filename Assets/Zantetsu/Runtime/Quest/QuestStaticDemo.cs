@@ -21,9 +21,14 @@ namespace Zantetsu.Quest
             public string pathFile;
             public string geometryFile;
             public int warmupLaps = 1;
+            public int sceneObjectLimit = 0;
             public bool appSw = true;
             public bool nativeColourPreparation = true;
             public bool directClipProbe = false;
+            public bool nativeNoClipColour = true;
+            public bool nativeNoClipMotion = true;
+            public bool nativeNoClipShadows = true;
+            public bool nativeShareGpuConstants = true;
             public bool profiler = false;
             public bool quitWhenDone = false;
             public bool headTracked = true;
@@ -68,6 +73,12 @@ namespace Zantetsu.Quest
             Debug.Log("QUEST STATIC: nativeColourPreparation=" + _config.nativeColourPreparation);
             Zantetsu.Rendering.VpNativeDrawPlugin.VulkanDirectClipProbe = _config.directClipProbe;
             Debug.Log("QUEST STATIC: directClipProbe=" + _config.directClipProbe);
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanNoClipColourShaders = _config.nativeNoClipColour;
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanNoClipMotionShaders = _config.nativeNoClipMotion;
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanNoClipShadowShaders = _config.nativeNoClipShadows;
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanShareGpuConstants = _config.nativeShareGpuConstants;
+            Debug.Log("QUEST STATIC: noClipColour=" + _config.nativeNoClipColour + " noClipMotion=" + _config.nativeNoClipMotion
+                + " noClipShadows=" + _config.nativeNoClipShadows + " shareGpuConstants=" + _config.nativeShareGpuConstants);
             string pathText = !string.IsNullOrEmpty(_config.pathFile) ? File.ReadAllText(_config.pathFile)
                 : Resources.Load<TextAsset>("Quest3sStaticDemoPath").text;
             if (!SceneDrawComparePath.TryParse(pathText, out var path, out string failure)) throw new InvalidOperationException(failure);
@@ -95,6 +106,7 @@ namespace Zantetsu.Quest
                 directory = Path.Combine(directory, "comparison"), path = path, geometryFile = geometryPath,
                 mode = _config.mode == "unity" ? SandboxDrawComparePlayerCheck.Mode.Unity : _config.mode == "vp3c-native" ? SandboxDrawComparePlayerCheck.Mode.Vp3cNative : SandboxDrawComparePlayerCheck.Mode.Vp3c,
                 warmupLaps = _config.warmupLaps,
+                sceneObjectLimit = Math.Max(0, _config.sceneObjectLimit),
                 headTracked = _config.headTracked, retainSceneAfterMeasurement = !_config.quitWhenDone,
                 profilerFile = _config.profiler ? Path.Combine(directory, "profile.raw") : null,
             };
@@ -117,7 +129,7 @@ namespace Zantetsu.Quest
                 xr.TryGetAppGPUTimeLastFrame(out float gpu);
                 QuestDisplayRefreshRateFeature.TryReadReported(out float physicalRefresh);
                 if (_config.mode == "vp3c-native" && Zantetsu.Rendering.VpNativeDrawPlugin.TryLoad(out _)) Debug.Log("QUEST NATIVE: " + Zantetsu.Rendering.VpNativeDrawPlugin.ReadCounters() + "; " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeState());
-                Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
+                Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
 
