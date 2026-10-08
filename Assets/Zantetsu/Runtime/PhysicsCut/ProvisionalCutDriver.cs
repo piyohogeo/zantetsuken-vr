@@ -1027,10 +1027,18 @@ namespace Zantetsu.PhysicsCut
             // The upload is made for the stereo mode this frame renders in: under Single Pass Instanced one issue carries
             // two instances per body, one per eye, and the display is told so here, the one place it collects. A camera
             // that draws a single view in the same frame drops the second copy itself (the shader's own rule).
-            _display.SinglePassInstanced = RendersSinglePassInstanced(
+            _display.SinglePassInstanced = SinglePassInstancedForTest ?? RendersSinglePassInstanced(
                 UnityEngine.XR.XRSettings.isDeviceActive, UnityEngine.XR.XRSettings.stereoRenderingMode);
             return _display.TryBeginFrame();
         }
+
+        /// <summary>
+        /// Tests only: the stereo condition the collections upload for, in place of the device's. An Editor test has no
+        /// XR device, and what a single-view camera draws from arguments uploaded for Single Pass Instanced -- the
+        /// picture cameras of an XR session -- can be taken on the product's path only by saying so here. Null (the
+        /// default) is the device's own.
+        /// </summary>
+        internal static bool? SinglePassInstancedForTest;
 
         /// <summary>
         /// Whether a frame renders Single Pass Instanced stereo: an XR device is active and its stereo mode is that one.

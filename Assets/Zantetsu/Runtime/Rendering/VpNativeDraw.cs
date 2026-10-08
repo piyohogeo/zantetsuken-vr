@@ -8,51 +8,155 @@ using Plugin = Zantetsu.Rendering.VpNativeDrawPlugin;
 
 namespace Zantetsu.Rendering
 {
+    /// <summary>What a launch asks of the body's route between Unity's calls and the Direct3D 12 plugin (DESIGN 4.5.8).</summary>
+    public enum VpBodyRouteRequest
+    {
+        /// <summary>Nothing asked: the plugin where it is the default (a Windows Direct3D 12 Player), Unity's calls elsewhere.</summary>
+        Default,
+
+        /// <summary>The plugin, asked for by <see cref="VpNativeDrawSetup.Argument"/>: a plugin that cannot be had ends the world.</summary>
+        Native,
+
+        /// <summary>Unity's calls, asked for by <see cref="VpNativeDrawSetup.UnityApiArgument"/>: for comparison, on any device.</summary>
+        UnityApi,
+    }
+
     /// <summary>
-    /// Whether a world draws its bodies through the Direct3D 12 plugin (DESIGN 4.5.8): asked for by a Player argument,
-    /// settled at start-up and never switched, as the GPU selection is (D-198). The default is Unity's own route; a
-    /// Player started with <see cref="Argument"/> takes the plugin's, and a plugin that cannot be had then is a
-    /// failure the world records -- it does not fall back on its own, so that no comparison mixes the two.
+    /// Which route draws a world's bodies of the GPU selection (DESIGN 4.5.8, D-215): Unity's indirect draw calls, or
+    /// the Direct3D 12 plugin. Settled at the world's construction from the launch's arguments and the device, and
+    /// never switched afterwards, as the GPU selection is (D-198).
+    /// <para>
+    /// **The default.** A Windows x64 Player on Direct3D 12 draws through the plugin. Every other configuration --
+    /// another graphics device (Direct3D 11, Vulkan, ...), another platform, the Editor -- draws by Unity's calls: the
+    /// plugin is not forced on a device it does not draw on, and the Editor takes it only when asked (a frame with the
+    /// plugin's route and no Unity renderer ends the Editor: a known limitation, not handled here).
+    /// </para>
+    /// <para>
+    /// **What is asked for.** <see cref="Argument"/> asks for the plugin anywhere: where it cannot be had the world
+    /// records why and ends -- no other route is taken. <see cref="UnityApiArgument"/> asks for Unity's calls anywhere
+    /// (the comparison's route, and the way back from the default); it wins when both are given.
+    /// </para>
+    /// <para>
+    /// **A default that cannot be had.** Where the plugin is the default and cannot be had (the library missing or of
+    /// another contract, the display not made with its arguments), the world draws by Unity's calls and says so as an
+    /// error, keeping the reason: it is a failure of the default that is recorded, not a success by another route.
+    /// Once a world draws through the plugin, a refusal or a failed issue is never made up for by Unity's calls.
+    /// </para>
     /// </summary>
     public static class VpNativeDrawSetup
     {
-        /// <summary>The Player argument that draws the bodies through the plugin.</summary>
+        /// <summary>The Player argument that asks for the plugin's route.</summary>
         public const string Argument = "-zantetsuVp3cNative";
 
-        private static bool s_read;
-        private static bool s_requested;
+        /// <summary>The Player argument that asks for Unity's calls (the Unity-API VP3C), whatever the default is.</summary>
+        public const string UnityApiArgument = "-zantetsuVp3cUnityApi";
 
-        public static bool Requested
+        /// <summary>What <see cref="Select(VpBodyRouteRequest, GraphicsDeviceType, bool, RuntimePlatform)"/> settled, and in which words.</summary>
+        public readonly struct Selection
+        {
+            public Selection(bool native, bool asked, string reason)
+            {
+                Native = native;
+                Asked = asked;
+                Reason = reason;
+            }
+
+            /// <summary>The plugin's route is to be taken.</summary>
+            public bool Native { get; }
+
+            /// <summary>The route was asked for by an argument (or a caller); false when it is the configuration's default.</summary>
+            public bool Asked { get; }
+
+            /// <summary>Why this route, for the launch's record.</summary>
+            public string Reason { get; }
+        }
+
+        private static bool s_read;
+        private static VpBodyRouteRequest s_request;
+
+        /// <summary>What the launch asks; read once from the arguments. A caller (a test) may set it before a world is made.</summary>
+        public static VpBodyRouteRequest Request
         {
             get
             {
                 Read();
-                return s_requested;
+                return s_request;
             }
             set
             {
                 Read();
-                s_requested = value;
+                s_request = value;
             }
         }
 
-        /// <summary>What <see cref="Requested"/> answers for a set of arguments. For tests of the reading itself.</summary>
+        /// <summary>
+        /// The plugin asked for (as before D-215). Setting true asks for the plugin; setting false asks for Unity's
+        /// calls -- not the default, so that a caller that said "not the plugin" keeps getting Unity's calls.
+        /// </summary>
+        public static bool Requested
+        {
+            get => Request == VpBodyRouteRequest.Native;
+            set => Request = value ? VpBodyRouteRequest.Native : VpBodyRouteRequest.UnityApi;
+        }
+
+        /// <summary>Whether a set of arguments asks for the plugin. For tests of the reading itself.</summary>
         public static bool Read(string[] arguments)
         {
-            if (arguments == null)
-            {
-                return false;
-            }
+            return ReadRequest(arguments) == VpBodyRouteRequest.Native;
+        }
 
-            for (int i = 0; i < arguments.Length; i++)
+        /// <summary>What a set of arguments asks: <see cref="UnityApiArgument"/> wins over <see cref="Argument"/>.</summary>
+        public static VpBodyRouteRequest ReadRequest(string[] arguments)
+        {
+            bool native = false, unity = false;
+            if (arguments != null)
             {
-                if (string.Equals(arguments[i], Argument, StringComparison.Ordinal))
+                for (int i = 0; i < arguments.Length; i++)
                 {
-                    return true;
+                    native |= string.Equals(arguments[i], Argument, StringComparison.Ordinal);
+                    unity |= string.Equals(arguments[i], UnityApiArgument, StringComparison.Ordinal);
                 }
             }
 
-            return false;
+            return unity ? VpBodyRouteRequest.UnityApi : native ? VpBodyRouteRequest.Native : VpBodyRouteRequest.Default;
+        }
+
+        /// <summary>The route of this process: its request, device and platform.</summary>
+        public static Selection Select()
+        {
+            return SelectionForTest ?? Select(Request, SystemInfo.graphicsDeviceType, Application.isEditor, Application.platform);
+        }
+
+        /// <summary>A test's selection in place of this process's (a default the Editor never has); null otherwise.</summary>
+        public static Selection? SelectionForTest;
+
+        /// <summary>The route for a request on a device and a platform. Decides nothing about whether the plugin can be had there.</summary>
+        public static Selection Select(VpBodyRouteRequest request, GraphicsDeviceType device, bool editor, RuntimePlatform platform)
+        {
+            switch (request)
+            {
+                case VpBodyRouteRequest.Native:
+                    return new Selection(true, true, "asked for by " + Argument);
+                case VpBodyRouteRequest.UnityApi:
+                    return new Selection(false, true, "asked for by " + UnityApiArgument);
+            }
+
+            if (editor)
+            {
+                return new Selection(false, false, "the default in the Editor (the plugin's route is taken there only when asked for)");
+            }
+
+            if (platform != RuntimePlatform.WindowsPlayer || IntPtr.Size != 8)
+            {
+                return new Selection(false, false, "the default on " + platform + (IntPtr.Size != 8 ? " (not 64-bit)" : "") + ": the plugin is a Windows x64 library");
+            }
+
+            if (device != GraphicsDeviceType.Direct3D12)
+            {
+                return new Selection(false, false, "the default on " + device + ": the plugin draws on Direct3D 12 only");
+            }
+
+            return new Selection(true, false, "the default of a Windows Direct3D 12 Player (D-215)");
         }
 
         private static void Read()
@@ -60,7 +164,7 @@ namespace Zantetsu.Rendering
             if (!s_read)
             {
                 s_read = true;
-                s_requested = Read(Environment.GetCommandLineArgs());
+                s_request = ReadRequest(Environment.GetCommandLineArgs());
             }
         }
     }
@@ -133,10 +237,17 @@ namespace Zantetsu.Rendering
     /// here asks Unity only for a resource not seen before or one whose native object may have changed.
     /// <para>
     /// **When a pointer is taken again (the invalidation of each kind, 2026-10-08).**
-    /// A <see cref="GraphicsBuffer"/>'s native buffer is fixed for the object's lifetime: Unity never resizes one in
-    /// place, SetData writes into the same buffer (VpNativePointerFactsTests, Direct3D 11 and 12), and the batch
-    /// replaces a buffer by a new object. Its pointer is kept while the object is valid and its count and stride are
-    /// unchanged, and dropped by <see cref="DropDead"/> once it is disposed (called every frame by the route).
+    /// A <see cref="GraphicsBuffer"/> written through Unity's APIs (SetData and the like) is ASKED AGAIN after every
+    /// such write: Unity's contract is that a write may change the native buffer, so the pointer is kept only while
+    /// the generation its owner raises at each CPU write is the one it was taken at (<see cref="Buffer(GraphicsBuffer, uint)"/>).
+    /// That the pointer was the same after SetData in the facts test (VpNativePointerFactsTests, Direct3D 11 and 12)
+    /// is an observation of those devices, not something this cache relies on -- an earlier wording here said the
+    /// native buffer was fixed for the object's lifetime; it is not the contract. In a city walk the display writes
+    /// its transform and clip buffers in about half the frames, and the route asks for those two pointers again each
+    /// time (mixed-configuration B1, 2026-10-08): an accepted cost, not an oversight. A buffer no Unity API writes after
+    /// its creation (written by the GPU, or once) is kept for the object's life. Unity never resizes a buffer in place
+    /// and the batch replaces one by a new object; an entry is kept while the object is valid and its count and stride
+    /// are unchanged, and dropped by <see cref="DropDead"/> once it is disposed (called every frame by the route).
     /// A <see cref="Texture2D"/>, <see cref="Cubemap"/> or other non-render texture is kept while the object lives
     /// and its width, height, mip count, dimension, format and <see cref="Texture.updateCount"/> are unchanged: an
     /// upload (Apply) keeps the native texture and raises the count (asked again, needlessly but safely). A

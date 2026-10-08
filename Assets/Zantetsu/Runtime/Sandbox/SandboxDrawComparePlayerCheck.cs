@@ -83,6 +83,9 @@ namespace Zantetsu.Sandbox
             public Mode mode;
             public int warmupLaps = 1;
             public bool allowRefused, shots, lifetimeDrill;
+
+            /// <summary>After the measurement: the cut scene's stages, pictured (<see cref="SandboxDrawCompareCutScene"/>).</summary>
+            public bool cutScene;
             public double[] captureTimes = Array.Empty<double>();
             public SceneDrawComparePath path;
         }
@@ -112,18 +115,47 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            // The plugin's route is the world's at start-up (VpNativeDrawSetup.Argument): a run asking to compare it
-            // must have been launched with that argument, and one asking for Unity's route must not have been.
-            bool nativeLaunched = Zantetsu.Rendering.VpNativeDrawSetup.Read(arguments);
+            // The body's route is the world's at start-up (VpNativeDrawSetup, D-215): a comparison says which route it
+            // compares and does not lean on a default. A run asking to compare the plugin's must have been launched with
+            // its argument; one asking for Unity's calls must not have been, and where the plugin is the default (a
+            // Windows Direct3D 12 Player) it must have been launched with the argument that asks for Unity's calls.
+            Zantetsu.Rendering.VpBodyRouteRequest routeRequest = Zantetsu.Rendering.VpNativeDrawSetup.ReadRequest(arguments);
+            bool nativeLaunched = routeRequest == Zantetsu.Rendering.VpBodyRouteRequest.Native;
+
+            // The cut scene (after the measurement): the city stays Unity's own renderers -- mode unity, the product's
+            // mixed configuration -- and what the cuts make is drawn by the world's route, which the launch names
+            // itself, by either argument: its pictures are compared between the two routes and lean on no default.
+            made.cutScene = Has(arguments, SandboxDrawCompareCutScene.Argument);
+            if (made.cutScene && made.mode != Mode.Unity)
+            {
+                failure = SandboxDrawCompareCutScene.Argument + " cuts props of a city drawn by Unity: mode unity only";
+                return false;
+            }
+
+            if (made.cutScene && routeRequest == Zantetsu.Rendering.VpBodyRouteRequest.Default)
+            {
+                failure = SandboxDrawCompareCutScene.Argument + " compares routes: the Player must be launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument
+                    + " or " + Zantetsu.Rendering.VpNativeDrawSetup.UnityApiArgument;
+                return false;
+            }
+
             if (made.mode == Mode.Vp3cNative && !nativeLaunched)
             {
                 failure = "mode vp3c-native needs the Player launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument;
                 return false;
             }
 
-            if (made.mode != Mode.Vp3cNative && nativeLaunched)
+            if (made.mode != Mode.Vp3cNative && nativeLaunched && !made.cutScene)
             {
                 failure = "the Player was launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument + ", which only mode vp3c-native compares";
+                return false;
+            }
+
+            if (made.mode == Mode.Vp3c
+                && Zantetsu.Rendering.VpNativeDrawSetup.Select(routeRequest, SystemInfo.graphicsDeviceType, Application.isEditor, Application.platform).Native)
+            {
+                failure = "mode vp3c compares Unity's calls, and the plugin's route is the default here (" + SystemInfo.graphicsDeviceType
+                    + "): the Player must be launched with " + Zantetsu.Rendering.VpNativeDrawSetup.UnityApiArgument;
                 return false;
             }
 
@@ -627,6 +659,11 @@ namespace Zantetsu.Sandbox
                           : world.Display.CullsOnGpu ? "VP3C, GPU selection"
                           : "VP3, no GPU selection" + (world.GpuCullFallback != null ? ": FALLBACK " + world.GpuCullFallback : "")) + ")"
                     : "unity (the targets' own MeshRenderers)"));
+                if (settings.cutScene)
+                {
+                    Note("cut scene: asked (" + SandboxDrawCompareCutScene.Argument + "): after the measurement two props are cut and pictured; what the cuts make is drawn by the world's route "
+                        + world.BodyRoute + " (" + world.BodyRouteReason + "); the geometry hold " + (SandboxDrawCompareCutScene.HoldInstalled ? "is the world's geometry pool" : "was NOT installed"));
+                }
                 Note("launch: " + SandboxLaunchRecord.Describe());
                 bool profilerAlready = Profiler.enabled && Profiler.enableBinaryLog;
                 if (profilerAlready) Note("the Profiler was ALREADY recording when the preparation began (" + Profiler.logFile + "): the preparation is in that recording");
@@ -923,6 +960,14 @@ namespace Zantetsu.Sandbox
                 string targetsAfter = TargetPhysics();
                 string changedWhileMeasuring = ColliderChanges(collidersAtStart, SceneColliders());
 
+                // The cut scene: after everything read above -- it makes cut targets, cuts and bodies, none of which is
+                // the comparison's.
+                var cutNotes = new List<string>();
+                if (settings.cutScene)
+                {
+                    yield return CutScene(cutNotes);
+                }
+
                 // The drill ends the world itself (its third step is the display's end): after everything read above.
                 var drillNotes = new List<string>();
                 if (settings.lifetimeDrill)
@@ -931,6 +976,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 var notes = new List<string>(drillNotes);
+                notes.AddRange(cutNotes);
                 if (measuredChanges != null) notes.Add("changed between the measurement's first and last frame: " + measuredChanges);
                 if (_rowsPastRoom > 0) notes.Add(_rowsPastRoom + " frames past the frame table's room were not recorded");
                 if (refused > 0 || showRefused > 0) notes.Add((refused + showRefused) + " renderers were left to Unity in both ways (" + AllowRefusedArgument + ")");
@@ -941,7 +987,7 @@ namespace Zantetsu.Sandbox
                 if (settings.mode == Mode.Vp3c && !world.Display.CullsOnGpu) notes.Add("the display drew as VP3, not VP3C");
                 if (settings.mode == Mode.Vp3c && world.Display.NativeArguments) notes.Add("the display drew through the plugin, not by Unity's calls");
                 if (settings.mode == Mode.Vp3cNative && !world.Display.NativeArguments) notes.Add("the display did NOT draw through the plugin");
-                if (settings.mode == Mode.Vp3cNative)
+                if (settings.mode == Mode.Vp3cNative || (settings.cutScene && world.Display.NativeArguments))
                 {
                     foreach (CutWorldCameraDrawing drawing in UnityEngine.Object.FindObjectsByType<CutWorldCameraDrawing>(FindObjectsSortMode.None))
                     {
@@ -1414,6 +1460,139 @@ namespace Zantetsu.Sandbox
 
                 Log("lifetime drill ended at frame " + Time.frameCount + "; the world was ended by it");
                 endWorld = false;   // ended above
+            }
+
+            // The cut scene (SandboxDrawCompareCutScene): two props of the city made cut targets, cut by synthetic sweeps
+            // through the scene's own detector, their pieces put where the scene says, each stage pictured from two
+            // views -- the screen, both eyes and the main light's shadow map -- and its state written
+            // (cut-scene-states.txt). What fails is a note of the run: its code is then not 0.
+            private IEnumerator CutScene(List<string> notes)
+            {
+                Log("cut scene begins at frame " + Time.frameCount + " (pictures of cut states; not a performance sample)");
+                var header = new List<string>();
+                var states = new List<string>();
+                var failures = new List<string>();
+                Zantetsu.Rendering.VpBodyRouteRequest asked = Zantetsu.Rendering.VpNativeDrawSetup.ReadRequest(Environment.GetCommandLineArgs());
+                bool native = world.Display.NativeArguments;
+                header.Add("route: asked " + asked + "; the world's " + world.BodyRoute + " (" + world.BodyRouteReason + ")");
+                if (native != (asked == Zantetsu.Rendering.VpBodyRouteRequest.Native)) failures.Add("the world's route " + world.BodyRoute + " is not the one asked (" + asked + ")");
+                SandboxSlashPropHit hit = UnityEngine.Object.FindAnyObjectByType<SandboxSlashPropHit>();
+                SlashHitDetector detector = hit != null ? hit.Detector : null;
+                PlayableCityCuttable first = null, second = null;
+                if (detector == null) failures.Add("the scene has no hit detector");
+                if (!SandboxDrawCompareCutScene.HoldInstalled) failures.Add("the world was not given the geometry hold");
+                Vector3 start = settings.path.At(0).eye;
+                PlayableCityCuttable[] all = UnityEngine.Object.FindObjectsByType<PlayableCityCuttable>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                if (failures.Count == 0)
+                {
+                    if (!SandboxDrawCompareCutScene.TryChoose(all, start, out first, out second, out string chosen)) failures.Add("two props to cut were not found: " + chosen);
+                    Log("cut scene: " + chosen);
+                    header.Add("props: " + chosen);
+                }
+
+                if (failures.Count == 0)
+                {
+                    // Only the two become cut targets (as a city walk's props do, at their own turn): the others'
+                    // registrars are switched off before the hold on them is let go.
+                    foreach (PlayableCityCuttable c in all)
+                    {
+                        if (c != first && c != second) c.enabled = false;
+                    }
+
+                    PlayableCityCuttable.Held = false;
+                    for (int i = 0; i < 300 && !((first.IsCutTarget || first.Failure != null) && (second.IsCutTarget || second.Failure != null)); i++) yield return null;
+                    PlayableCityCuttable.Held = true;
+                    if (first.Candidate == null || second.Candidate == null)
+                    {
+                        failures.Add("the props were not made cut targets: " + first.target.name + ": " + (first.Failure ?? (first.Candidate != null ? "made" : "not made")) + "; " + second.target.name + ": " + (second.Failure ?? (second.Candidate != null ? "made" : "not made")));
+                    }
+                }
+
+                if (failures.Count == 0)
+                {
+                    SandboxDrawCompareCutScene.Body a = SandboxDrawCompareCutScene.BodyOf(first), b = SandboxDrawCompareCutScene.BodyOf(second);
+                    var views = new (Vector3 from, float yaw)[2];
+                    SandboxDrawCompareCutScene.View(start, a.bounds, out views[0].from, out views[0].yaw);
+                    SandboxDrawCompareCutScene.View(start, b.bounds, out views[1].from, out views[1].yaw);
+                    foreach ((SandboxDrawCompareCutScene.Body body, int v) in new[] { (a, 0), (b, 1) })
+                    {
+                        string line = "body " + v + ": " + body.name + " at (" + body.position.x.ToString("F3", Inv) + ", " + body.position.y.ToString("F3", Inv) + ", " + body.position.z.ToString("F3", Inv)
+                            + "), box centre (" + body.bounds.center.x.ToString("F3", Inv) + ", " + body.bounds.center.y.ToString("F3", Inv) + ", " + body.bounds.center.z.ToString("F3", Inv)
+                            + ") size (" + body.bounds.size.x.ToString("F3", Inv) + ", " + body.bounds.size.y.ToString("F3", Inv) + ", " + body.bounds.size.z.ToString("F3", Inv)
+                            + "); view " + v + ": eye (" + views[v].from.x.ToString("F3", Inv) + ", " + views[v].from.y.ToString("F3", Inv) + ", " + views[v].from.z.ToString("F3", Inv) + ") yaw " + views[v].yaw.ToString("F2", Inv);
+                        header.Add(line);
+                        Log("cut scene: " + line);
+                    }
+
+                    var io = new SandboxDrawCompareCutScene.Io
+                    {
+                        world = world,
+                        detector = detector,
+                        hold = SandboxDrawCompareCutScene.SetHold,
+                        held = () => SandboxDrawCompareCutScene.HeldNow,
+                        pictures = name => CutScenePictures(name, views),
+                        log = Log,
+                    };
+                    yield return SandboxDrawCompareCutScene.Stages(io, a, b, states, failures);
+                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) yield return null;
+                    Log("cut scene: eye shots written " + Zantetsu.Rendering.Urp.VpEyeShot.Written + ", pending " + Zantetsu.Rendering.Urp.VpEyeShot.Pending
+                        + (Zantetsu.Rendering.Urp.VpEyeShot.LastFailure != null ? ", last failure: " + Zantetsu.Rendering.Urp.VpEyeShot.LastFailure : ""));
+                    if (Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0) failures.Add(Zantetsu.Rendering.Urp.VpEyeShot.Pending + " eye shots were not written");
+                    if (_cutShotFailures > 0) failures.Add(_cutShotFailures + " pictures were not asked: " + _cutShotLastFailure);
+                    if (states.Count != SandboxDrawCompareCutScene.StageNames.Length) failures.Add("stages pictured " + states.Count + " of " + SandboxDrawCompareCutScene.StageNames.Length);
+                    if (world.Display.IsHalted || world.TerminationRequested) failures.Add("the world stopped (display halted " + world.Display.IsHalted + ", termination asked " + world.TerminationRequested + ")");
+                }
+
+                try
+                {
+                    var text = new StringBuilder();
+                    foreach (string line in header) text.Append(line).Append('\n');
+                    foreach (string line in states) text.Append("stage ").Append(line).Append('\n');
+                    text.Append("failures: ").Append(failures.Count).Append('\n');
+                    foreach (string line in failures) text.Append("failure: ").Append(line).Append('\n');
+                    File.WriteAllText(Path.Combine(settings.directory, "cut-scene-states.txt"), text.ToString());
+                }
+                catch (Exception e)
+                {
+                    failures.Add("the states could not be written: " + e.Message);
+                }
+
+                foreach (string failure in failures)
+                {
+                    Log("cut scene FAILED: " + failure);
+                    notes.Add("cut scene: " + failure);
+                }
+
+                Log("cut scene ended at frame " + Time.frameCount + ": stages pictured " + states.Count + " of " + SandboxDrawCompareCutScene.StageNames.Length + ", failures " + failures.Count);
+            }
+
+            private int _cutShotFailures;
+            private string _cutShotLastFailure;
+
+            // One stage from each view: the rig placed, four frames for the view to be the drawn one, then the screen,
+            // both eyes and the main light's shadow map of one frame (cut-<stage>-view<n>*.png).
+            private IEnumerator CutScenePictures(string stage, (Vector3 from, float yaw)[] views)
+            {
+                for (int v = 0; v < views.Length; v++)
+                {
+                    ApplyPose(new SceneDrawComparePath.Pose { eye = views[v].from, yaw = views[v].yaw });
+                    for (int i = 0; i < 4; i++) yield return null;
+                    string stem = Path.Combine(settings.directory, "cut-" + stage + "-view" + v);
+                    ScreenCapture.CaptureScreenshot(stem + "-screen.png");
+                    if (!Zantetsu.Rendering.Urp.VpEyeShot.TryRequest(eye, stem, out string eyeFailure))
+                    {
+                        _cutShotFailures++;
+                        _cutShotLastFailure = "eyes of " + stage + " view " + v + ": " + eyeFailure;
+                    }
+
+                    if (!Zantetsu.Rendering.Urp.VpEyeShot.TryRequestShadowMap(eye, stem + "-shadow-map.png", out string mapFailure))
+                    {
+                        _cutShotFailures++;
+                        _cutShotLastFailure = "shadow map of " + stage + " view " + v + ": " + mapFailure;
+                    }
+
+                    for (int i = 0; i < 3; i++) yield return null;
+                }
             }
 
             private IEnumerator Shots()

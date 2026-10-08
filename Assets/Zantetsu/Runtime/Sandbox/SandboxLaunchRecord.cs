@@ -47,9 +47,23 @@ namespace Zantetsu.Sandbox
                 + ", allocation callstacks=" + Profiler.enableAllocationCallstacks
                 + ", " + DeepProfilingArgument + "=" + (Has(DeepProfilingArgument) ? "given" : "not given")
                 + ", " + ProfilerEnableArgument + "=" + (Has(ProfilerEnableArgument) ? "given" : "not given")
+                + "; graphics=" + SystemInfo.graphicsDeviceType + "; body route asked: " + DescribeBodyRoute(arguments)
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
                 + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);
+        }
+
+        /// <summary>
+        /// What the launch asks of the body's route and what that selects on this device (D-215): the request, and the
+        /// route with its reason. This is the launch's side; the route a world actually took, with whether the plugin
+        /// could be had, is that world's own "VP BODY ROUTE:" line.
+        /// </summary>
+        public static string DescribeBodyRoute(string[] arguments)
+        {
+            Zantetsu.Rendering.VpBodyRouteRequest request = Zantetsu.Rendering.VpNativeDrawSetup.ReadRequest(arguments);
+            Zantetsu.Rendering.VpNativeDrawSetup.Selection selection =
+                Zantetsu.Rendering.VpNativeDrawSetup.Select(request, SystemInfo.graphicsDeviceType, Application.isEditor, Application.platform);
+            return request + " -> " + (selection.Native ? "VP3C-NATIVE" : "Unity's calls") + " (" + selection.Reason + ")";
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]

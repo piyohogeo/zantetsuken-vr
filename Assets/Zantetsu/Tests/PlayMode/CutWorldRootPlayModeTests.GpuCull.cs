@@ -46,6 +46,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private static readonly string[] s_gpuCullViewNames = { "bodies in view", "only the shadow in view", "nothing in view", "bodies in view again", "down the row" };
         private static readonly Dictionary<bool, List<Color32[]>> s_gpuCullImages = new Dictionary<bool, List<Color32[]>>();
 
+        // The same scenes through the Direct3D 12 plugin's route (DESIGN 4.5.8), taken in this run (null when not).
+        private static List<Color32[]> s_gpuCullNativeImages;
+        private static int s_gpuCullImageWidth, s_gpuCullImageHeight;
+
         [UnityTest, Order(1)]
         public IEnumerator GpuCull_1_VpStage3_TakesTheScenes()
         {
@@ -129,6 +133,442 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+        /// <summary>
+        /// **The same scenes a third time, through the plugin** (2026-10-08, before the first city walk by the plugin's
+        /// route): the body and its casters drawn by the Direct3D 12 plugin from the GPU selection's argument entries,
+        /// the stencil caps by Unity's draws as ever -- through the cut held back, the commit, the row, the retirement,
+        /// the late body, the replaced GPU buffers and the compaction. Direct3D 12 only.
+        /// </summary>
+        [UnityTest, Order(5)]
+        public IEnumerator GpuCull_5_ThePluginsRoute_TakesTheSameScenes()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType + " (start it with -force-d3d12 for this case)");
+            }
+
+            yield return GpuCullScenes(true, true);
+        }
+
+        /// <summary>
+        /// The plugin's pictures against the Unity-API route's, scene by scene and view by view: how many pixels differ
+        /// by more than 2 of 255 in a channel, and by more than 16. The two routes run the same shaders over the same
+        /// geometry and selection; what may differ is the casters' depth bias (the plugin's is its own, DESIGN 4.5.8),
+        /// which moves shadow edges by a pixel. Held: no view differs in more than a hundredth of its pixels by more
+        /// than 16 -- a body, a clipped side or a cap missing or misplaced is far more than that. The counts are written
+        /// for every view, and both sets of pictures are saved for looking at.
+        /// </summary>
+        [Test, Order(6)]
+        public void GpuCull_6_ThePluginsImages_AreTheGpuSelections()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType);
+            }
+
+            Assert.That(s_gpuCullImages.ContainsKey(true), Is.True, "the GPU selection's scenes were taken in this run");
+            Assert.That(s_gpuCullNativeImages, Is.Not.Null, "the plugin's scenes were taken in this run");
+            List<Color32[]> unity = s_gpuCullImages[true];
+            List<Color32[]> plugin = s_gpuCullNativeImages;
+            Assert.That(plugin.Count, Is.EqualTo(unity.Count));
+            string folder = System.IO.Path.Combine(Application.temporaryCachePath, "gpu-cull-plugin-pictures");
+            System.IO.Directory.CreateDirectory(folder);
+            var lines = new List<string>();
+            double worstShare = 0;
+            for (int i = 0; i < unity.Count; i++)
+            {
+                int small = 0, large = 0, litUnity = 0, litPlugin = 0;
+                for (int q = 0; q < unity[i].Length; q++)
+                {
+                    Color32 a = unity[i][q];
+                    Color32 b = plugin[i][q];
+                    int d = Math.Max(Math.Abs(a.r - b.r), Math.Max(Math.Abs(a.g - b.g), Math.Abs(a.b - b.b)));
+                    small += d > 2 ? 1 : 0;
+                    large += d > 16 ? 1 : 0;
+                    litUnity += a.r + a.g + a.b > 24 ? 1 : 0;
+                    litPlugin += b.r + b.g + b.b > 24 ? 1 : 0;
+                }
+
+                double share = (double)large / unity[i].Length;
+                worstShare = Math.Max(worstShare, share);
+                string label = s_gpuCullStages[i / GpuCullViews] + ", " + s_gpuCullViewNames[i % GpuCullViews];
+                lines.Add(label + ": pixels differing by more than 2: " + small + ", by more than 16: " + large + " of " + unity[i].Length
+                    + " (" + (100.0 * share).ToString("F3") + "%); drawn pixels Unity-API " + litUnity + " / plugin " + litPlugin);
+                if (s_gpuCullImageWidth > 0)
+                {
+                    foreach ((string name, Color32[] pixels) in new[] { ("unity", unity[i]), ("plugin", plugin[i]) })
+                    {
+                        var picture = new Texture2D(s_gpuCullImageWidth, s_gpuCullImageHeight, TextureFormat.RGBA32, false);
+                        picture.SetPixels32(pixels);
+                        picture.Apply(false);
+                        System.IO.File.WriteAllBytes(System.IO.Path.Combine(folder, (i / GpuCullViews) + "-" + (i % GpuCullViews) + "-" + name + ".png"), picture.EncodeToPNG());
+                        Object.DestroyImmediate(picture);
+                    }
+                }
+            }
+
+            TestContext.Out.WriteLine("pictures saved in " + folder + " (<stage>-<view>-unity|plugin.png)\n" + string.Join("\n", lines));
+            Assert.That(worstShare, Is.LessThan(0.01), "a view differs in a hundredth of its pixels or more by more than 16:\n" + string.Join("\n", lines));
+        }
+
+        // The cut scene of the draw comparison (Zantetsu.Sandbox.SandboxDrawCompareCutScene), by route (native: the
+        // plugin's) and by what the display uploaded for (doubled: Single Pass Instanced, two instances a body).
+        private const int CutSceneViews = 2;
+        // placed: the two bodies are placed props, in the world from their first cut (a city's); otherwise registered beforehand.
+        private static readonly Dictionary<(bool native, bool doubled, bool placed), List<Color32[]>> s_cutSceneImages = new Dictionary<(bool, bool, bool), List<Color32[]>>();
+        private static readonly Dictionary<(bool native, bool doubled, bool placed), List<string>> s_cutSceneStates = new Dictionary<(bool, bool, bool), List<string>>();
+
+        /// <summary>
+        /// **The draw comparison's cut scene, in the Editor** (2026-10-09, before it is run in a Player for D-215): the
+        /// stages a Player pictures of two props of a city are made here of two bodies by the same code -- synthetic
+        /// sweeps through the ordinary detector, the cuts' geometry held back and let go, every piece made kinematic
+        /// and put where the scene says, one piece cut again, one retired -- by Unity's calls. Held: every stage is
+        /// made, and the picture of each cut, move and retirement differs from the stage's before it (one the picture
+        /// does not show would compare nothing; a commit draws the committed faces where the provisional caps were,
+        /// and is not held to differ).
+        /// </summary>
+        [UnityTest, Order(7)]
+        public IEnumerator GpuCull_7_TheCutScene_ByUnitysCalls_TakesItsStages()
+        {
+            yield return CutSceneCase(false);
+        }
+
+        /// <summary>The same stages by the plugin's route. Direct3D 12 only.</summary>
+        [UnityTest, Order(8)]
+        public IEnumerator GpuCull_8_TheCutScene_ByThePlugin_TakesTheSameStages()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType + " (start it with -force-d3d12 for this case)");
+            }
+
+            yield return CutSceneCase(true);
+        }
+
+        /// <summary>
+        /// The two routes' cut scenes against each other: the same line of state at every stage (what the ledger and
+        /// the display hold, where every piece was put), and the same picture by the rule of the scenes above (no view
+        /// differs in a hundredth of its pixels or more by more than 16 of 255).
+        /// </summary>
+        [Test, Order(9)]
+        public void GpuCull_9_TheCutScenesPictures_AreTheSameByBothRoutes()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType);
+            }
+
+            CompareCutScenes((false, false, false), "unity", (true, false, false), "plugin");
+        }
+
+        /// <summary>
+        /// **The cut scene as a picture camera of an XR session takes it, by Unity's calls** (2026-10-09, after a city
+        /// walk by the plugin took its own pictures without the bodies): the display uploads for Single Pass Instanced
+        /// -- two instances a body, as under an XR device -- and the camera that draws is this fixture's, a single
+        /// view. Held: every stage is made, and its pictures are those of the scene uploaded one instance a body
+        /// (the shader drops the second copy of each instance in a single view).
+        /// </summary>
+        [UnityTest, Order(10)]
+        public IEnumerator GpuCull_10_TheCutScene_UploadedForBothEyes_InASingleViewCamera_ByUnitysCalls_IsTheSamePicture()
+        {
+            yield return CutSceneCase(false, true);
+            CompareCutScenes((false, false, false), "unity", (false, true, false), "unity-doubled");
+        }
+
+        /// <summary>
+        /// The same by the plugin's route, which until 2026-10-09 issued no body for such a camera: its pictures are the
+        /// plugin's of the scene uploaded one instance a body, and those of Unity's calls from the doubled upload; the
+        /// route counts the bodies as issued from doubled arguments and no failure. Direct3D 12 only.
+        /// </summary>
+        [UnityTest, Order(11)]
+        public IEnumerator GpuCull_11_TheCutScene_UploadedForBothEyes_InASingleViewCamera_ByThePlugin_IsTheSamePicture()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType + " (start it with -force-d3d12 for this case)");
+            }
+
+            yield return CutSceneCase(true, true);
+            CompareCutScenes((true, false, false), "plugin", (true, true, false), "plugin-doubled");
+            CompareCutScenes((false, true, false), "unity-doubled", (true, true, false), "plugin-doubled");
+        }
+
+        /// <summary>
+        /// **The cut scene of two placed props, by Unity's calls** (2026-10-09, after the first run in a Player stopped at
+        /// its second body): the bodies are placed props that are cut targets only until their first cut, as a city's
+        /// are -- nothing of them in the world's storage, display or physics before it, their display geometry appended
+        /// by the hit. The cases above register their bodies beforehand and could not show that the storage takes no
+        /// new geometry while a cut's output is outstanding. Held: every stage is made. Ignored where the licensed
+        /// input is absent.
+        /// </summary>
+        [UnityTest, Order(12)]
+        public IEnumerator GpuCull_12_TheCutScene_OfPlacedPropsCutAtTheirFirstHit_ByUnitysCalls_TakesItsStages()
+        {
+            if (!System.IO.File.Exists(RefusalPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + RefusalPropInputPath);
+            yield return CutSceneCase(false, false, true);
+        }
+
+        /// <summary>The same by the plugin's route, and against the pictures of Unity's calls. Direct3D 12 only.</summary>
+        [UnityTest, Order(13)]
+        public IEnumerator GpuCull_13_TheCutScene_OfPlacedPropsCutAtTheirFirstHit_ByThePlugin_IsTheSamePicture()
+        {
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin draws on Direct3D 12 only; this Editor runs " + SystemInfo.graphicsDeviceType + " (start it with -force-d3d12 for this case)");
+            }
+
+            if (!System.IO.File.Exists(RefusalPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + RefusalPropInputPath);
+            yield return CutSceneCase(true, false, true);
+            CompareCutScenes((false, false, true), "unity-placed", (true, false, true), "plugin-placed");
+        }
+
+        // Two takings of the cut scene against each other: the same line of state at every stage, and no view differing
+        // in a hundredth of its pixels or more by more than 16 of 255. Both must have been taken in this run.
+        private static void CompareCutScenes((bool native, bool doubled, bool placed) first, string firstName, (bool native, bool doubled, bool placed) second, string secondName)
+        {
+            Assert.That(s_cutSceneImages.ContainsKey(first), Is.True, "the cut scene '" + firstName + "' was taken in this run");
+            Assert.That(s_cutSceneImages.ContainsKey(second), Is.True, "the cut scene '" + secondName + "' was taken in this run");
+            Assert.That(s_cutSceneStates[second], Is.EqualTo(s_cutSceneStates[first]), "the same states were pictured (" + firstName + " / " + secondName + ")");
+            List<Color32[]> a = s_cutSceneImages[first], b = s_cutSceneImages[second];
+            Assert.That(b.Count, Is.EqualTo(a.Count));
+            string folder = System.IO.Path.Combine(Application.temporaryCachePath, "cut-scene-pictures");
+            System.IO.Directory.CreateDirectory(folder);
+            var lines = new List<string>();
+            double worstShare = 0;
+            for (int i = 0; i < a.Count; i++)
+            {
+                int small = 0, large = 0, drawn = 0;
+                for (int q = 0; q < a[i].Length; q++)
+                {
+                    Color32 x = a[i][q];
+                    Color32 y = b[i][q];
+                    int d = Math.Max(Math.Abs(x.r - y.r), Math.Max(Math.Abs(x.g - y.g), Math.Abs(x.b - y.b)));
+                    small += d > 2 ? 1 : 0;
+                    large += d > 16 ? 1 : 0;
+                    drawn += y.r + y.g + y.b > 24 ? 1 : 0;
+                }
+
+                double share = (double)large / a[i].Length;
+                worstShare = Math.Max(worstShare, share);
+                string stage = Zantetsu.Sandbox.SandboxDrawCompareCutScene.StageNames[i / CutSceneViews];
+                lines.Add(stage + ", view " + (i % CutSceneViews) + ": pixels differing by more than 2: " + small + ", by more than 16: " + large + " of " + a[i].Length + "; drawn pixels of " + secondName + " " + drawn);
+                foreach ((string name, Color32[] pixels) in new[] { (firstName, a[i]), (secondName, b[i]) })
+                {
+                    var picture = new Texture2D(s_gpuCullImageWidth, s_gpuCullImageHeight, TextureFormat.RGBA32, false);
+                    picture.SetPixels32(pixels);
+                    picture.Apply(false);
+                    System.IO.File.WriteAllBytes(System.IO.Path.Combine(folder, stage + "-view" + (i % CutSceneViews) + "-" + name + ".png"), picture.EncodeToPNG());
+                    Object.DestroyImmediate(picture);
+                }
+            }
+
+            TestContext.Out.WriteLine(firstName + " against " + secondName + "; pictures saved in " + folder + " (<stage>-view<n>-<name>.png)\n" + string.Join("\n", lines));
+            Assert.That(worstShare, Is.LessThan(0.01), firstName + " against " + secondName + ": a view differs in a hundredth of its pixels or more by more than 16:\n" + string.Join("\n", lines));
+        }
+
+        private IEnumerator CutSceneCase(bool native, bool doubled = false, bool placed = false)
+        {
+            bool requestedBefore = VpGpuCullSetup.Requested;
+            VpBodyRouteRequest nativeBefore = VpNativeDrawSetup.Request;
+            bool? stereoBefore = ProvisionalCutDriver.SinglePassInstancedForTest;
+            VpNativeDrawSetup.Request = native ? VpBodyRouteRequest.Native : VpBodyRouteRequest.UnityApi;
+            VpGpuCullSetup.Requested = true;
+            // The display uploads two instances a body, as under a Single Pass Instanced device, when the case says so.
+            if (doubled) ProvisionalCutDriver.SinglePassInstancedForTest = true;
+            try
+            {
+                s_cutSceneImages.Remove((native, doubled, placed));
+                s_cutSceneStates.Remove((native, doubled, placed));
+                Shader casterShader = Shader.Find("Zantetsu/VP Indexed Indirect Shadow Caster");
+                Assert.That(casterShader, Is.Not.Null, "the display's shadow caster is in this project");
+                Material stable = Track(new Material(casterShader) { name = "stable caster" });
+                stable.SetFloat("_Cull", (float)CullMode.Back);
+                Material immediate = Track(new Material(casterShader) { name = "immediate caster" });
+                immediate.SetFloat("_Cull", (float)CullMode.Off);
+
+                HoldingExecutor geometryPool = null;
+                CutWorldRoot root = NewWorld(
+                    out Shader _,
+                    destination => destination == WorkDestination.GeometryPool
+                        ? geometryPool = Held(new HoldingExecutor(WorkerPoolExecutor.GeometryPool(2)))
+                        : null,
+                    null,
+                    SmallDisplayRoom(1024),
+                    world =>
+                    {
+                        SetPrivate(world, "shadowMaterial", stable);
+                        SetPrivate(world, "provisionalShadowMaterial", immediate);
+                        // A placed prop's display input names source material 0, as the walk city's world binds it.
+                        if (placed) BindSourceZero(world);
+                    });
+                Assert.That(geometryPool, Is.Not.Null);
+                root.Driver.RemainingMainSeconds = () => 1.0;
+                root.Display.CompactionMinimumInterval = int.MaxValue;
+                Assert.That(root.GpuCullFallback, Is.Null, "the world did not fall back");
+                Assert.That(root.Display.NativeArguments, Is.EqualTo(native), "the world draws by the route this case asked for: " + root.BodyRoute + " (" + root.BodyRouteReason + ")");
+                if (native) Assert.That(root.NativeDrawFailure, Is.Null, root.NativeDrawFailure);
+
+                ShadowStage stage = NewShadowStage();
+                GameObject ground = GameObject.Find("Plane");
+                Assert.That(ground, Is.Not.Null, "the stage's ground");
+                ground.transform.localScale = new Vector3(14f, 1f, 14f);
+                stage.camera.orthographic = false;
+                stage.camera.fieldOfView = 50f;
+                stage.camera.nearClipPlane = 0.1f;
+                stage.camera.farClipPlane = 60f;
+                stage.camera.enabled = true;
+                var drawing = root.gameObject.AddComponent<CutWorldCameraDrawing>();
+                SetPrivate(drawing, "world", root);
+                SetPrivate(drawing, "cameras", new[] { stage.camera });
+
+                var bodies = new Zantetsu.Sandbox.SandboxDrawCompareCutScene.Body[2];
+                Vector3[] at = { new Vector3(-2.5f, 3f, 0f), new Vector3(2.5f, 3f, 0f) };
+                var detector = new SlashHitDetector(root, in k_hitSettings);
+                for (int i = 0; placed && i < 2; i++)
+                {
+                    // The prop as placed: a cut target only (nothing of it in the world), the box its convexes fill.
+                    var data = JsonUtility.FromJson<Zantetsu.Sandbox.PlacedCuttableInput>(System.IO.File.ReadAllText(RefusalPropInputPath));
+                    at[i] = new Vector3(i == 0 ? -1.6f : 1.6f, 1.2f, 0f);
+                    GameObject instance = RefusalInstance("bench_001 cut scene " + i, at[i], out Renderer[] renderers, out Collider[] colliders);
+                    Zantetsu.Sandbox.PlacedCuttableCandidate candidate = Candidate(root, data, instance, renderers, colliders);
+                    detector.AddPlaced(candidate);
+                    Vector3 lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue), hi = -lo;
+                    foreach (Zantetsu.Sandbox.PlacedCuttableInput.Hull hull in data.hulls)
+                    {
+                        foreach (Vector3 v in hull.vertices)
+                        {
+                            lo = Vector3.Min(lo, v);
+                            hi = Vector3.Max(hi, v);
+                        }
+                    }
+
+                    var box = new Bounds(at[i] + 0.5f * (lo + hi), hi - lo);
+                    bodies[i] = new Zantetsu.Sandbox.SandboxDrawCompareCutScene.Body { name = i == 0 ? "first" : "second", position = at[i], rotation = Quaternion.identity, bounds = box };
+                    Assert.That(candidate.Source.IsSet, Is.False, "no fragment of the prop before a hit");
+                }
+
+                for (int i = 0; !placed && i < 2; i++)
+                {
+                    LogicalFragmentId fragment = AddBody(root, at[i]);
+                    Assert.That(root.Owners.TryGet(fragment, out PhysicsFragmentOwner owner), Is.True);
+                    owner.Body.isKinematic = true;
+                    Assert.That(Zantetsu.Sandbox.SandboxDrawCompareCutScene.TryWorldBounds(root, fragment, out Bounds box), Is.True, "the body has a collider to sweep through");
+                    bodies[i] = new Zantetsu.Sandbox.SandboxDrawCompareCutScene.Body { name = i == 0 ? "first" : "second", position = owner.Root.transform.position, rotation = owner.Root.transform.rotation, bounds = box };
+                }
+
+                yield return null;
+                yield return null;
+                var images = new List<Color32[]>();
+                var states = new List<string>();
+                var failures = new List<string>();
+                var io = new Zantetsu.Sandbox.SandboxDrawCompareCutScene.Io
+                {
+                    world = root,
+                    detector = detector,
+                    hold = holding =>
+                    {
+                        geometryPool.HoldEverything = holding;
+                        if (!holding) geometryPool.ReleaseEverything();
+                    },
+                    held = () => geometryPool.HoldingCount,
+                    pictures = name => CutScenePictures(stage, images, placed),
+                    log = line => TestContext.Out.WriteLine(line),
+                };
+                yield return Zantetsu.Sandbox.SandboxDrawCompareCutScene.Stages(io, bodies[0], bodies[1], states, failures);
+                TestContext.Out.WriteLine((native ? "plugin's route" : "Unity's calls") + (doubled ? ", uploaded for Single Pass Instanced" : "") + ":\n" + string.Join("\n", states));
+                Assert.That(root.Display.DrawsSinglePassInstanced, Is.EqualTo(doubled), "the body was uploaded " + (doubled ? "two instances a body" : "one instance a body"));
+                Assert.That(failures, Is.Empty, string.Join("; ", failures));
+                Assert.That(states.Count, Is.EqualTo(Zantetsu.Sandbox.SandboxDrawCompareCutScene.StageNames.Length), "every stage was made");
+                Assert.That(images.Count, Is.EqualTo(states.Count * CutSceneViews));
+
+                // Each stage is in its pictures: one view at least differs from the stage's before it.
+                for (int i = 1; i < states.Count; i++)
+                {
+                    int most = 0;
+                    for (int v = 0; v < CutSceneViews; v++)
+                    {
+                        Color32[] now = images[i * CutSceneViews + v], before = images[(i - 1) * CutSceneViews + v];
+                        int differing = 0;
+                        for (int q = 0; q < now.Length; q++)
+                        {
+                            differing += Math.Abs(now[q].r - before[q].r) > 16 || Math.Abs(now[q].g - before[q].g) > 16 || Math.Abs(now[q].b - before[q].b) > 16 ? 1 : 0;
+                        }
+
+                        most = Math.Max(most, differing);
+                    }
+
+                    // A commit alone is not held to this: the committed faces are drawn where the provisional caps were,
+                    // and a picture that hardly changes is what it should give (its line of state is what tells it
+                    // happened). The third stage is more than the commit: the second body is cut in it.
+                    bool commit = i == 5;
+                    TestContext.Out.WriteLine(Zantetsu.Sandbox.SandboxDrawCompareCutScene.StageNames[i] + ": pixels differing from the stage before, in the view that differs most: " + most + (commit ? " (a commit: not held to differ)" : ""));
+                    if (!commit) Assert.That(most, Is.GreaterThan(40), Zantetsu.Sandbox.SandboxDrawCompareCutScene.StageNames[i] + " is in the picture");
+                }
+
+                Assert.That(root.Display.IsHalted, Is.False);
+                Assert.That(root.TerminationRequested, Is.False);
+                if (native)
+                {
+                    Zantetsu.Rendering.Urp.VpNativeDrawRoute pluginRoute = drawing.NativeRoute;
+                    Assert.That(pluginRoute, Is.Not.Null, "the drawing put the plugin's pass in the frame");
+                    TestContext.Out.WriteLine("plugin's route: " + drawing.DescribeNativeRoute(out bool drewEverything) + "; drew everything " + drewEverything);
+                    Assert.That(pluginRoute.Refused, Is.Zero, pluginRoute.LastFailure);
+                    Assert.That(pluginRoute.RingFull, Is.Zero);
+                    Assert.That(pluginRoute.PipelineFailures, Is.Zero);
+                    Assert.That(drawing.NativeRefusals, Is.Zero, "no camera went undrawn for want of the plugin's pass");
+                    Assert.That(drewEverything, Is.True, "every body taken was issued");
+                    Assert.That(pluginRoute.BodiesIssued, Is.GreaterThan(10), "bodies were issued for the frames drawn");
+                    if (doubled)
+                    {
+                        Assert.That(pluginRoute.SingleViewBodiesFromDoubled, Is.EqualTo(pluginRoute.BodiesIssued), "every body was issued for a single view from doubled arguments");
+                    }
+                    else
+                    {
+                        Assert.That(pluginRoute.SingleViewBodiesFromDoubled, Is.Zero, "no body was issued from doubled arguments");
+                    }
+                }
+
+                s_cutSceneImages[(native, doubled, placed)] = images;
+                s_cutSceneStates[(native, doubled, placed)] = states;
+                stage.camera.enabled = false;
+                yield return null;
+                Object.Destroy(drawing);
+                yield return null;
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                VpGpuCullSetup.Requested = requestedBefore;
+                VpNativeDrawSetup.Request = nativeBefore;
+                ProvisionalCutDriver.SinglePassInstancedForTest = stereoBefore;
+                if (placed) DisposeCandidates();
+            }
+        }
+
+        // One stage of the cut scene from two views: both bodies from the front, and from the side and above.
+        private IEnumerator CutScenePictures(ShadowStage stage, List<Color32[]> images, bool near = false)
+        {
+            for (int view = 0; view < CutSceneViews; view++)
+            {
+                if (near)
+                {
+                    // The placed props are small: the same two directions, from nearer.
+                    stage.camera.transform.position = view == 0 ? new Vector3(0.3f, 2.2f, -5.5f) : new Vector3(4.5f, 3.8f, -3f);
+                    stage.camera.transform.LookAt(new Vector3(0.3f, 1.3f, 0f));
+                }
+                else
+                {
+                    stage.camera.transform.position = view == 0 ? new Vector3(0.5f, 4f, -11f) : new Vector3(9f, 7f, -6f);
+                    stage.camera.transform.LookAt(new Vector3(0.5f, 2.5f, 0f));
+                }
+
+                yield return null;
+                yield return null;
+                yield return null;
+                images.Add(ReadGpuCullTarget(stage.target));
+            }
+        }
+
         private static int GpuCullMaterialCopies()
         {
             int copies = 0;
@@ -140,11 +580,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             return copies;
         }
 
-        private IEnumerator GpuCullScenes(bool gpu)
+        private IEnumerator GpuCullScenes(bool gpu, bool native = false)
         {
             // The route is the one a Player's arguments give (D-198): its ordinary arguments are the GPU selection, and
-            // VP Stage 3 is asked for by its own argument.
+            // VP Stage 3 is asked for by its own argument. The plugin's route is asked for beside the GPU selection.
             bool requestedBefore = VpGpuCullSetup.Requested;
+            VpBodyRouteRequest nativeBefore = VpNativeDrawSetup.Request;
+            VpNativeDrawSetup.Request = native ? VpBodyRouteRequest.Native : VpBodyRouteRequest.UnityApi;
+            bool readBack = gpu && !native;   // the selection's counts are read back from the Unity-API route's arguments only
             VpGpuCullSetup.Read(
                 gpu ? new[] { "player.exe", "-zantetsuCityWalk" } : new[] { "player.exe", "-zantetsuCityWalk", VpGpuCullSetup.Vp3Argument },
                 out bool requested, out bool _);
@@ -152,7 +595,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             VpGpuCullSetup.Requested = requested;
             try
             {
-                s_gpuCullImages.Remove(gpu);
+                if (native) s_gpuCullNativeImages = null; else s_gpuCullImages.Remove(gpu);
                 Shader casterShader = Shader.Find("Zantetsu/VP Indexed Indirect Shadow Caster");
                 Assert.That(casterShader, Is.Not.Null, "the display's shadow caster is in this project");
                 Material stable = Track(new Material(casterShader) { name = "stable caster" });
@@ -179,7 +622,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 root.Display.CompactionMinimumInterval = int.MaxValue;   // held off until the stage that is about it
                 Assert.That(root.GpuCullFallback, Is.Null, "the world did not fall back");
                 Assert.That(root.Display.CullsOnGpu, Is.EqualTo(gpu), "the world draws by the route this case asked for");
-                Assert.That(GpuCullMaterialCopies(), gpu ? Is.EqualTo(4) : Is.Zero, "the selection's own materials: two surfaces and two casters");
+                if (native)
+                {
+                    Assert.That(root.NativeDrawFailure, Is.Null, root.NativeDrawFailure);
+                    Assert.That(root.TerminationRequested, Is.False);
+                    Assert.That(root.Display.NativeArguments, Is.True, "the display's batch writes the plugin's argument entries");
+                    TestContext.Out.WriteLine("plugin's route: the selection's own materials " + GpuCullMaterialCopies());
+                }
+                else
+                {
+                    Assert.That(GpuCullMaterialCopies(), gpu ? Is.EqualTo(4) : Is.Zero, "the selection's own materials: two surfaces and two casters");
+                }
 
                 // The stage of the shadow cases, its ground made large enough to take the row's shadows, with a camera
                 // of the ordinary kind: enabled, drawn by the frame.
@@ -206,7 +659,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
                 var images = new List<Color32[]>();
                 var kept = new List<string>();
-                yield return GpuCullTakeStage(root, stage, gpu, 0, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 0, images, kept);
 
                 // The cut, with its geometry held back: the display keeps the two sides clipped (immediate). Two more
                 // instances than the first room holds: the body's GPU buffers are replaced here.
@@ -236,7 +689,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 upper.Root.transform.SetPositionAndRotation(new Vector3(2.5f, 4f, 0f), Quaternion.identity);
                 yield return null;
                 yield return null;
-                yield return GpuCullTakeStage(root, stage, gpu, 1, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 1, images, kept);
                 Assert.That(
                     root.Ledger.TryGetOperation(operation, out LogicalCutOperation stillOut)
                     && stillOut.state != LogicalCutOperationState.Completed, Is.True, "still immediate: not committed");
@@ -253,7 +706,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     "the cut's geometry committed");
                 yield return null;
                 yield return null;
-                yield return GpuCullTakeStage(root, stage, gpu, 2, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 2, images, kept);
                 Assert.That(CountTwoSidedCommands(root), Is.Zero, "after the commit nothing casts two-sided");
 
                 // A row of bodies registered along the view: from in front of the camera, through every split of the
@@ -268,7 +721,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
                 yield return null;
                 yield return null;
-                yield return GpuCullTakeStage(root, stage, gpu, GpuCullRowStage, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, GpuCullRowStage, images, kept);
 
                 // One piece retired: what was drawn for it is drawn no more.
                 int commandsBefore = root.Display.CommandCount;
@@ -276,7 +729,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 yield return null;
                 yield return null;
                 yield return null;
-                yield return GpuCullTakeStage(root, stage, gpu, 4, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 4, images, kept);
                 Assert.That(root.Display.CommandCount, Is.LessThan(commandsBefore), "the retired piece's commands are gone");
 
                 // A body registered after the retirement (DESIGN 5.6): the retired piece left command slots among the
@@ -301,7 +754,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(lateStart, Is.EqualTo(endBefore), "at the end, not in the slots the retired piece left");
                 Assert.That(root.Display.DrawCommandEnd, Is.EqualTo(endBefore + lateCommands));
                 Assert.That(root.Display.DrawCommandEnd, Is.GreaterThan(root.Display.CommandCount), "which are still gone through, drawing nothing");
-                yield return GpuCullTakeStage(root, stage, gpu, 5, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 5, images, kept);
 
                 // The compaction of the instance regions (D-202), on the product's path: the world's gate decides the
                 // frame, the display whether it is a candidate -- the interval, held off until here, lowered to one
@@ -322,13 +775,26 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(root.Display.LastCompactionOldestFrame, Is.LessThanOrEqualTo(root.Display.LastCompactionNewestFrame), "ordered by the frame each was last written in");
                 yield return null;
                 yield return null;
-                yield return GpuCullTakeStage(root, stage, gpu, 6, images, kept);
+                yield return GpuCullTakeStage(root, stage, readBack, 6, images, kept);
                 Assert.That(root.Display.Compactions, Is.EqualTo(1), "and not again within the interval");
 
-                TestContext.Out.WriteLine((gpu ? "GPU selection" : "VP Stage 3") + ":\n" + string.Join("\n", kept));
+                TestContext.Out.WriteLine((native ? "plugin's route" : gpu ? "GPU selection" : "VP Stage 3") + ":\n" + string.Join("\n", kept));
                 Assert.That(root.Display.IsHalted, Is.False);
                 Assert.That(root.TerminationRequested, Is.False);
-                if (gpu)
+                if (native)
+                {
+                    Zantetsu.Rendering.Urp.VpNativeDrawRoute pluginRoute = drawing.NativeRoute;
+                    Assert.That(pluginRoute, Is.Not.Null, "the drawing put the plugin's pass in the frame");
+                    TestContext.Out.WriteLine("plugin's route: " + drawing.DescribeNativeRoute(out bool drewEverything) + "; drew everything " + drewEverything
+                        + "; display GPU replacements " + root.Display.GpuReplacements + ", compactions " + root.Display.Compactions);
+                    Assert.That(pluginRoute.BodiesIssued, Is.GreaterThan(10), "bodies were issued for the frames drawn");
+                    Assert.That(pluginRoute.Refused, Is.Zero, pluginRoute.LastFailure);
+                    Assert.That(pluginRoute.RingFull, Is.Zero);
+                    Assert.That(pluginRoute.PipelineFailures, Is.Zero);
+                    Assert.That(drawing.NativeRefusals, Is.Zero, "no camera went undrawn for want of the plugin's pass");
+                    Assert.That(drewEverything, Is.True, "every body taken was issued");
+                }
+                else if (gpu)
                 {
                     VpGpuCullCameraRoute route = drawing.CullRoute;
                     Assert.That(route, Is.Not.Null, "the drawing put the selection in the frame");
@@ -364,7 +830,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Assert.That(root.Display.CullViewBytes, Is.Zero);
                 }
 
-                s_gpuCullImages[gpu] = images;
+                if (native) s_gpuCullNativeImages = images; else s_gpuCullImages[gpu] = images;
                 stage.camera.enabled = false;
                 yield return null;
                 Object.Destroy(drawing);
@@ -378,6 +844,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             finally
             {
                 VpGpuCullSetup.Requested = requestedBefore;
+                VpNativeDrawSetup.Request = nativeBefore;
             }
         }
 
@@ -512,6 +979,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             read.ReadPixels(new Rect(0, 0, target.width, target.height), 0, 0);
             read.Apply(false);
             RenderTexture.active = previous;
+            s_gpuCullImageWidth = target.width;
+            s_gpuCullImageHeight = target.height;
             return read.GetPixels32();
         }
     }

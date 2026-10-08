@@ -295,6 +295,13 @@ namespace Zantetsu.Rendering.Urp
         public long Refused { get; private set; }
         public long RingFull { get; private set; }
         public long PipelineFailures { get; private set; }
+
+        /// <summary>
+        /// Bodies issued for a single-view camera from a batch uploaded for Single Pass Instanced (the second copy of
+        /// each instance dropped by the shader): a picture camera beside the XR one. Not a failure; counted so that a
+        /// run says whether it drew this way at all.
+        /// </summary>
+        public long SingleViewBodiesFromDoubled { get; private set; }
         public string LastFailure { get; private set; }
         public int LastFrameIssues { get; private set; }
         public string LastBodyVariant { get; private set; }
@@ -632,6 +639,7 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", XR frames not drawn ").Append(XrFramesNotDrawn)
                 .Append(", refused ").Append(Refused).Append(", ring full ").Append(RingFull)
                 .Append(", pipeline failures ").Append(PipelineFailures)
+                .Append(", single-view bodies from doubled arguments ").Append(SingleViewBodiesFromDoubled)
                 .Append(", shadow map format refusals ").Append(ShadowMapFormatRefusals)
                 .Append(", runs of frames never executed: bodies ").Append(BodiesDropped).Append(", casters ").Append(CasterRunsDropped)
                 .Append(", caster bounds declared ").Append(CasterBoundsDeclared)
@@ -1533,15 +1541,20 @@ namespace Zantetsu.Rendering.Urp
                         }
 
                         // The body's entries hold two physical instances a kept instance exactly when the batch was
-                        // uploaded for Single Pass Instanced; the stereo variant reads them so, and no other way.
-                        if (issue.batch.SinglePassInstanced != data.stereo)
+                        // uploaded for Single Pass Instanced. The stereo variant reads them one an eye, and cannot
+                        // draw a batch that holds one. A single-view camera of the same frame -- a picture camera
+                        // beside the XR one -- draws the doubled batch by the shader's own rule, as by Unity's calls
+                        // (ProvisionalCutDriver.CollectSnapshot): the multiplier says the entries are doubled and the
+                        // single-view variant drops the second copy of each instance (2026-10-09: until then such a
+                        // camera's bodies were not issued, and its pictures of a walk were without them).
+                        if (data.stereo && !issue.batch.SinglePassInstanced)
                         {
                             _route.PipelineFailures++;
-                            _route.LastFailure = data.stereo
-                                ? "a Single Pass Instanced frame, but the batch's arguments are not doubled for it"
-                                : "the batch's arguments are doubled for Single Pass Instanced, but the frame is not one";
+                            _route.LastFailure = "a Single Pass Instanced frame, but the batch's arguments are not doubled for it";
                             continue;
                         }
+
+                        inputs.instanceMultiplier = issue.batch.SinglePassInstanced ? 2 : 1;
 
                         issue.batch.NativeDrawBuffers(
                             issue.view, out GraphicsBuffer forwardArguments, out GraphicsBuffer forwardVisible, out _, out _,
@@ -1555,6 +1568,7 @@ namespace Zantetsu.Rendering.Urp
                         if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, viewport, inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
                         {
                             _route.BodiesIssued++;
+                            if (!data.stereo && issue.batch.SinglePassInstanced) _route.SingleViewBodiesFromDoubled++;
                             // No string is made here: the name is the binding's, read by the diagnosis that asks.
                             _route.LastBodyGpuBlocks.Clear();
                             for (int b = 0; b < entry.gpuBlocks.Count; b++)
