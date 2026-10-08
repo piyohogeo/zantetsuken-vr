@@ -52,10 +52,6 @@ Shader "Zantetsu/VP Indirect Shadow Caster"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                // Vulkan issues the commands as one multi-draw, so each command is identified by its draw ID.
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -72,11 +68,7 @@ Shader "Zantetsu/VP Indirect Shadow Caster"
             {
                 // Reads this draw's indirect arguments. On D3D11 Unity issues each command as a draw of its own with the
                 // command set as the base, so the draw ID is 0.
-            #if defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
-            #else
                 InitIndirectDrawArgs(0);
-            #endif
                 ShadowVaryings output = (ShadowVaryings)0;
                 UNITY_SETUP_INSTANCE_ID(input);
 

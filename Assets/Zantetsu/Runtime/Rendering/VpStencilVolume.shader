@@ -69,6 +69,7 @@ Shader "Zantetsu/VP Stencil Volume"
             {
                 float4 planes[8];
                 float planeCount;
+                float pad0, pad1, pad2; // 144-byte record; scalar padding avoids float3 alignment differences
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -99,9 +100,6 @@ Shader "Zantetsu/VP Stencil Volume"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-#if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-#endif
 #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
 #else
@@ -130,11 +128,7 @@ Shader "Zantetsu/VP Stencil Volume"
 
             void InitializeVpIndirectDraw(Attributes input)
             {
-#if defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
-#else
                 InitIndirectDrawArgs(0);
-#endif
             }
 
             Varyings Vertex(Attributes input)

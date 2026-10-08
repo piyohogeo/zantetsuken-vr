@@ -41,7 +41,7 @@ namespace Zantetsu.MeshCut.Tests
             public long[] Transfer => new[] { written, elements, transformCalls, clipCalls };
 
             public override string ToString() =>
-                "records written " + written + ", given from the other side " + caughtUp + ", sent " + elements + " (" + (elements * 196) + " bytes: 64 a transform, 132 a clip) in "
+                "records written " + written + ", given from the other side " + caughtUp + ", sent " + elements + " (" + (elements * 208) + " bytes: 64 a transform, 144 a clip) in "
                 + transformCalls + " transform and " + clipCalls + " clip buffer writes; sent whole " + wholeElements + "; commands sent " + commandElements + " in " + commandCalls + " writes";
         }
 

@@ -79,6 +79,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
                 float planeCount; // how many of the eight planes are valid
+                float pad0, pad1, pad2; // 144-byte record; scalar padding avoids float3 alignment differences
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -87,7 +88,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             // The instances the compute pass kept as casters for this view, as the forward pass reads its own list.
             StructuredBuffer<uint> _VpVisible;
 
-            // Matches Zantetsu.Rendering.VpCullCommand: 40 bytes. The bounds of a command's range in the geometry's
+            // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes. The bounds of a command's range in the geometry's
             // own frame, read by the command's number.
             struct VpCullCommand
             {
@@ -96,7 +97,9 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 uint startInstance;
                 uint instanceCount;
                 float3 centre;
+                float pad0;
                 float3 extents;
+                float pad1;
             };
 
             StructuredBuffer<VpCullCommand> _VpCullCommands;
@@ -156,9 +159,6 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -190,8 +190,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             {
             #if defined(VP_NATIVE_MULTIDRAW)
                 VpNativeInitIndirectDrawArgs();
-            #elif defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
+
             #else
                 InitIndirectDrawArgs(0);
             #endif

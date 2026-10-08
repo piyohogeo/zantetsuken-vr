@@ -198,14 +198,14 @@ namespace Zantetsu.MeshCut.Tests
                 Expect("display.capNormals", 112L * n, 16, 112L * limit);
                 Expect("display.stencilCommands", 8L * n, UnsafeSize<VpIndirectCommand>(), 8L * limit);
                 Expect("display.stencilTransforms", 8L * n, 64, 8L * limit);
-                Expect("display.stencilClips", 8L * n, 132, 8L * limit);
+                Expect("display.stencilClips", 8L * n, 144, 8L * limit);
                 Expect("display.capIndices", 288L * n, 4, 288L * limit);
                 foreach (string side in new[] { "", "'" })
                 {
                     Expect("display.commands" + side, n, UnsafeSize<VpIndirectCommand>(), limit);
                     Expect("display.commandProvisional" + side, n, 1, limit);
                     Expect("display.transforms" + side, n, 64, limit);
-                    Expect("display.clips" + side, n, 132, limit);
+                    Expect("display.clips" + side, n, 144, limit);
                     Expect("display.roots" + side, n, 4, limit);
                     Expect("display.rfCommandStart" + side, n, 4, limit);
                     Expect("display.rfCommandCount" + side, n, 4, limit);
@@ -249,9 +249,9 @@ namespace Zantetsu.MeshCut.Tests
                 }
 
                 // The GPU buffers of the first room: the body's batch, the cap normals and the one camera's stencil batch.
-                long body = (n * 20L * 2) + (n * (64L + 132L));
+                long body = (n * 20L * 2) + (n * (64L + 144L));
                 long normals = 112L * n * 16;
-                long camera = (8L * n * 20 * 2) + (8L * n * (64L + 132L)) + (112L * n * 16) + (288L * n * 4);
+                long camera = (8L * n * 20 * 2) + (8L * n * (64L + 144L)) + (112L * n * 16) + (288L * n * 4);
                 Assert.That(display.RoomGpuBytes, Is.EqualTo(body + normals + camera), "the GPU buffers, by the same multipliers");
 
                 VpRoomBytes bytes = display.RoomBytes();

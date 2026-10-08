@@ -45,10 +45,10 @@ namespace Zantetsu.Rendering
 
         /// <summary>
         /// One clip record: <see cref="VpInstanceClip"/>, its eight planes and then the valid
-        /// count -- eight float4s and one float, 132 bytes. Fixed whatever the count is: no instance takes a smaller
+        /// count -- eight float4s, one float and three padding floats, 144 bytes. Fixed whatever the count is: no instance takes a smaller
         /// or a larger record.
         /// </summary>
-        public const int InstanceClipStride = 132;
+        public const int InstanceClipStride = 144;
 
         private static readonly int VerticesId = Shader.PropertyToID("_VpVertices");
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");

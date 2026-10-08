@@ -107,7 +107,7 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The page backing of the **next** world built in this domain, read once and cleared there; null is the
-        /// product's (VirtualAlloc). It exists so that a test can make a reservation or a commit fail on purpose through
+        /// product's platform backing. It exists so that a test can make a reservation or a commit fail on purpose through
         /// the product's own initialisation and updates, without exhausting real memory.
         /// </summary>
         internal static IVpPageBacking nextWorldPageBacking;
@@ -858,7 +858,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private static IVpPageBacking TakeNextPageBacking()
         {
-            IVpPageBacking pages = nextWorldPageBacking ?? VpWindowsPageBacking.Instance;
+            IVpPageBacking pages = nextWorldPageBacking ?? VpPlatformPageBacking.Instance;
             nextWorldPageBacking = null;
             return pages;
         }
@@ -873,7 +873,7 @@ namespace Zantetsu.PhysicsCut
 
         private static IVpPageBacking TakeNextDisplayPageBacking()
         {
-            IVpPageBacking pages = nextWorldDisplayPageBacking ?? VpWindowsPageBacking.Instance;
+            IVpPageBacking pages = nextWorldDisplayPageBacking ?? VpPlatformPageBacking.Instance;
             nextWorldDisplayPageBacking = null;
             return pages;
         }

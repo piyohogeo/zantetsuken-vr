@@ -81,6 +81,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
                 float planeCount; // how many of the eight planes are valid
+                float pad0, pad1, pad2; // 144-byte record; scalar padding avoids float3 alignment differences
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -142,9 +143,6 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -179,8 +177,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
             #if defined(VP_NATIVE_MULTIDRAW)
                 VpNativeInitIndirectDrawArgs();
-            #elif defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
+
             #else
                 InitIndirectDrawArgs(0);
             #endif
@@ -263,6 +260,145 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 // The shading itself is VpShadeSurface (VpCutSurfaceShading.hlsl), which the stencil cap pass calls
                 // too, so a temporary cut face and a real one are shaded by the same code with the same light.
                 return half4(VpShadeSurface(base, input.normalWS, input.positionWS), 1.0);
+            }
+            ENDHLSL
+        }
+
+        // Static AppSW re-rasterization, adapted from vp-appsw-probe VpRaster (2026-10-07).
+        Pass
+        {
+            Name "VpXRMotionVectors"
+            Tags { "LightMode" = "XRMotionVectors" }
+
+            ColorMask RGBA
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+
+            // Stencil write for obj motion pixels (as URP's own XRMotionVectors passes)
+            Stencil
+            {
+                WriteMask 1
+                Ref 1
+                Comp Always
+                Pass Replace
+            }
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma multi_compile_local_vertex _ VP_GPU_CULLED
+            #pragma vertex VertexMotion
+            #pragma fragment FragmentMotion
+            #pragma multi_compile_instancing
+            #define APPLICATION_SPACE_WARP_MOTION 1
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MotionVectorsCommon.hlsl"
+            #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
+            #include "UnityIndirect.cginc"
+            #include "VpCompactVertex.hlsl"
+
+            StructuredBuffer<VpRenderVertex> _VpVertices;
+            StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+
+            struct VpInstanceClip
+            {
+                float4 planes[8];
+                float planeCount;
+                float pad0, pad1, pad2;
+            };
+
+            StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+
+        #if defined(VP_GPU_CULLED)
+            StructuredBuffer<uint> _VpVisible;
+        #endif
+
+            uint _VpInstanceMultiplier;
+
+
+            float VpHalfSpaceM(float4 signedPlane, float3 positionWS, uint index, uint count)
+            {
+                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
+            }
+
+            #define VP_REJECTED_POSITION_CS float4(2.0, 2.0, 2.0, 1.0)
+
+            struct AttributesM
+            {
+                uint vertexID : SV_VertexID;
+            #if UNITY_ANY_INSTANCING_ENABLED
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            #else
+                uint instanceID : SV_InstanceID;
+            #endif
+            };
+
+            struct VaryingsM
+            {
+                float4 positionCS : SV_POSITION;
+                float4 clipDistance0 : SV_ClipDistance0;
+                float4 clipDistance1 : SV_ClipDistance1;
+                float4 positionCSNoJitter : TEXCOORD0;
+                float4 previousPositionCSNoJitter : TEXCOORD1;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            VaryingsM VertexMotion(AttributesM input)
+            {
+                InitIndirectDrawArgs(0);
+                VaryingsM output = (VaryingsM)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                bool secondCopy = false;
+            #if !defined(UNITY_STEREO_INSTANCING_ENABLED)
+                secondCopy = _VpInstanceMultiplier == 2u && (GetIndirectInstanceID_Base(input.instanceID) & 1u) != 0u;
+            #endif
+                if (secondCopy)
+                {
+                    output.positionCS = VP_REJECTED_POSITION_CS;
+                    output.clipDistance0 = 1.0;
+                    output.clipDistance1 = 1.0;
+                    output.positionCSNoJitter = output.positionCS;
+                    output.previousPositionCSNoJitter = output.positionCS;
+                    return output;
+                }
+
+                VpRenderVertex vertex = _VpVertices[input.vertexID];
+                uint physicalInstance = GetIndirectInstanceID_Base(input.instanceID);
+                uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
+            #if defined(VP_GPU_CULLED)
+                logicalInstance = _VpVisible[logicalInstance];
+            #endif
+                float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
+                float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+
+                VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
+                uint count = (uint)clipState.planeCount;
+                output.clipDistance0 = float4(
+                    VpHalfSpaceM(clipState.planes[0], positionWS, 0, count),
+                    VpHalfSpaceM(clipState.planes[1], positionWS, 1, count),
+                    VpHalfSpaceM(clipState.planes[2], positionWS, 2, count),
+                    VpHalfSpaceM(clipState.planes[3], positionWS, 3, count));
+                output.clipDistance1 = float4(
+                    VpHalfSpaceM(clipState.planes[4], positionWS, 4, count),
+                    VpHalfSpaceM(clipState.planes[5], positionWS, 5, count),
+                    VpHalfSpaceM(clipState.planes[6], positionWS, 6, count),
+                    VpHalfSpaceM(clipState.planes[7], positionWS, 7, count));
+
+                // As URP's ObjectMotionVectors.hlsl under APPLICATION_SPACE_WARP_MOTION, with the instance transform
+                // already applied: current and previous clip positions of the same world point (camera-only motion).
+                output.positionCSNoJitter = mul(_NonJitteredViewProjMatrix, float4(positionWS, 1.0));
+                output.positionCS = output.positionCSNoJitter;
+                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, float4(positionWS, 1.0));
+                return output;
+            }
+
+            float4 FragmentMotion(VaryingsM input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return float4(CalcAswNdcMotionVectorFromCsPositions(input.positionCSNoJitter, input.previousPositionCSNoJitter), 1);
             }
             ENDHLSL
         }

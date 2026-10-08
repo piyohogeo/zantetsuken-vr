@@ -31,7 +31,7 @@ namespace Zantetsu.Rendering
         /// backing. The allocator is not used for the indices.
         /// </summary>
         public VpCpuIndexStorage(int indexCapacity, int descriptorCapacity, Allocator allocator)
-            : this(VpWindowsPageBacking.Instance, indexCapacity, indexCapacity, descriptorCapacity)
+            : this(VpPlatformPageBacking.Instance, indexCapacity, indexCapacity, descriptorCapacity)
         {
         }
 
