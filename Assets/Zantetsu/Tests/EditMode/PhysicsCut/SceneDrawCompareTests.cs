@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
@@ -89,6 +90,7 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(settings.warmupLaps, Is.EqualTo(2));
             Assert.That(settings.allowRefused, Is.False);
             Assert.That(settings.shots, Is.False);
+            Assert.That(settings.sceneObjectLimit, Is.Zero, "the PC comparison keeps the complete scene by default");
 
             string[] unity = { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "path.txt" };
             Assert.That(SandboxDrawComparePlayerCheck.TryRead(unity, out settings, out failure), Is.True, failure);
@@ -115,6 +117,81 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(SandboxDrawComparePlayerCheck.TryRead(arguments, out var settings, out string failure), Is.False);
             Assert.That(settings, Is.Null);
             StringAssert.Contains(expected, failure);
+        }
+
+        [TestCase(0)]
+        [TestCase(2)]
+        [TestCase(100)]
+        public void SceneObjectLimit_CompleteSceneKeepsTheOriginalListAndRendererState(int limit)
+        {
+            var obj = new GameObject("complete scene");
+            try
+            {
+                var renderer = obj.AddComponent<MeshRenderer>();
+                var all = new[]
+                {
+                    new KeyValuePair<string, Renderer[]>("first", new Renderer[] { renderer }),
+                    new KeyValuePair<string, Renderer[]>("second", null),
+                };
+                var selected = SandboxDrawComparePlayerCheck.SelectSceneObjectPrefix(all, limit, out var hidden);
+                Assert.That(selected, Is.SameAs(all), "no prefix allocation when the complete scene is kept");
+                Assert.That(hidden, Is.Null);
+                Assert.That(renderer.enabled, Is.True);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(obj);
+            }
+        }
+
+        [Test]
+        public void SceneObjectLimit_TakesWholeObjects_HidesOnlyTheirUnusedRenderers_AndRestoresTheirState()
+        {
+            var first = new GameObject("first");
+            var second = new GameObject("second");
+            try
+            {
+                var kept = first.AddComponent<MeshRenderer>();
+                var keptChild = new GameObject("kept child");
+                keptChild.transform.SetParent(first.transform);
+                var keptOther = keptChild.AddComponent<MeshRenderer>();
+                var unused = second.AddComponent<MeshRenderer>();
+                var offChild = new GameObject("already off");
+                offChild.transform.SetParent(second.transform);
+                var alreadyOff = offChild.AddComponent<MeshRenderer>();
+                alreadyOff.enabled = false;
+                second.transform.position = new Vector3(4f, 2f, 7f);
+                var all = new[]
+                {
+                    new KeyValuePair<string, Renderer[]>("first", new Renderer[] { kept, keptOther }),
+                    new KeyValuePair<string, Renderer[]>("second", new Renderer[] { unused, alreadyOff, kept, null }),
+                    new KeyValuePair<string, Renderer[]>("listed again", new Renderer[] { unused }),
+                };
+
+                var selected = SandboxDrawComparePlayerCheck.SelectSceneObjectPrefix(all, 1, out var hidden);
+                Assert.That(selected.Select(i => i.Key), Is.EqualTo(new[] { "first" }));
+                Assert.That(selected[0].Value, Is.SameAs(all[0].Value), "a placed object's renderers stay together");
+                Assert.That(kept.enabled && keptOther.enabled, Is.True, "a duplicate in an unused object cannot hide a kept renderer");
+                Assert.That(unused.enabled, Is.False, "body and shadow rendering are both disabled before the inventory is read");
+                Assert.That(alreadyOff.enabled, Is.False);
+                Assert.That(hidden, Is.EqualTo(new[] { unused }), "only a renderer whose state changed is restored, only once");
+                Assert.That(second.activeSelf, Is.True);
+                Assert.That(second.transform.position, Is.EqualTo(new Vector3(4f, 2f, 7f)), "the scene layout is unchanged");
+                var inventory = SceneDrawInventory.Collect(selected, Array.Empty<CutWorldRoot.MaterialBinding>(), new SceneDrawMeshBank());
+                Assert.That(inventory.Instances, Is.EqualTo(1), "unused objects cannot reach VP registration");
+
+                SandboxDrawComparePlayerCheck.RestoreSceneObjectPrefix(hidden);
+                Assert.That(unused.enabled, Is.True);
+                Assert.That(alreadyOff.enabled, Is.False);
+                Assert.That(hidden, Is.Empty);
+                SandboxDrawComparePlayerCheck.RestoreSceneObjectPrefix(hidden);
+                Assert.That(alreadyOff.enabled, Is.False, "cleanup is idempotent");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(first);
+                UnityEngine.Object.DestroyImmediate(second);
+            }
         }
 
         // A box whose top is a submesh of its own: 24 vertices, two submeshes (30 and 6 indices), UVs inside 0..1.

@@ -7,11 +7,16 @@ param(
     [string]$PathFile,
     [string]$GeometryFile,
     [int]$WarmupLaps = 1,
+    [ValidateRange(0, 2147483647)][int]$SceneObjectLimit = 0,
     [switch]$Profiler,
     [switch]$AppSwOff,
     [switch]$KeepOpen,
     [switch]$LegacyNativeColour,
     [switch]$DirectClipProbe,
+    [switch]$LegacyClipColour,
+    [switch]$LegacyClipMotion,
+    [switch]$LegacyClipShadows,
+    [switch]$NoConstantSharing,
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe'
 )
@@ -28,8 +33,13 @@ Invoke-Adb shell mkdir -p $deviceFiles
 $config = @{ mode = $Mode; warmupLaps = $WarmupLaps; appSw = !$AppSwOff; profiler = [bool]$Profiler; quitWhenDone = (!$KeepOpen -and $CameraMode -eq 'path'); headTracked = ($CameraMode -eq 'head') }
 if ($PathFile) { Invoke-Adb push $PathFile "$deviceFiles/compare-path.txt"; $config.pathFile = "$deviceFiles/compare-path.txt" }
 if ($GeometryFile) { Invoke-Adb push $GeometryFile "$deviceFiles/override-geometry.vpdc"; $config.geometryFile = "$deviceFiles/override-geometry.vpdc" }
+$config.sceneObjectLimit = $SceneObjectLimit
 $config.nativeColourPreparation = !$LegacyNativeColour
 $config.directClipProbe = [bool]$DirectClipProbe
+$config.nativeNoClipColour = !$LegacyClipColour
+$config.nativeNoClipMotion = !$LegacyClipMotion
+$config.nativeNoClipShadows = !$LegacyClipShadows
+$config.nativeShareGpuConstants = !$NoConstantSharing
 $configFile = Join-Path ([IO.Path]::GetTempPath()) ('quest-static-' + [guid]::NewGuid().ToString('N') + '.json')
 try {
     [IO.File]::WriteAllText($configFile, ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))

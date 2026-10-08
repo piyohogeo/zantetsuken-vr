@@ -1258,7 +1258,7 @@ namespace Zantetsu.Rendering.Urp
                 for (int b = 0; b < entry.gpuBlocks.Count; b++)
                 {
                     var sharedKey = (entry.gpuBlocks[b].layoutKey, constantContext);
-                    if (Plugin.Vulkan && _copiedGpuBlocks.TryGetValue(sharedKey, out int sharedOffset))
+                    if (Plugin.Vulkan && Plugin.VulkanShareGpuConstants && _copiedGpuBlocks.TryGetValue(sharedKey, out int sharedOffset))
                     {
                         gpuOffsets[b] = sharedOffset; SharedGpuConstantBlocks++; continue;
                     }
@@ -1297,7 +1297,7 @@ namespace Zantetsu.Rendering.Urp
 
                     commands.DispatchCompute(copy, kernel, 1, 1, 1);
                     GpuConstantDispatches++;
-                    if (Plugin.Vulkan) _copiedGpuBlocks[sharedKey] = gpuOffsets[b];
+                    if (Plugin.Vulkan && Plugin.VulkanShareGpuConstants) _copiedGpuBlocks[sharedKey] = gpuOffsets[b];
                 }
             }
 
@@ -1569,7 +1569,7 @@ namespace Zantetsu.Rendering.Urp
 
                 string variant = _route.BodyVariantOverride ?? VariantName(BodyVariantFor(frameData.Get<UniversalLightData>(), frameData.Get<UniversalShadowData>()), stereo);
                 if (_motion) variant = "motion-plugin-stereo";
-                if (Plugin.Vulkan) variant += "-noclip";
+                if (Plugin.Vulkan && (_motion ? Plugin.VulkanNoClipMotionShaders : Plugin.VulkanNoClipColourShaders)) variant += "-noclip";
                 if (!_motion) _route.LastBodyVariant = variant;
                 TextureHandle shadowMap = _motion ? TextureHandle.nullHandle : resourceData.mainShadowsTexture;
                 if (_motion)
@@ -2005,7 +2005,7 @@ namespace Zantetsu.Rendering.Urp
                             depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned,
                         };
-                        PipelineEntry entry = _route.PipelineFor(issue.material, Plugin.Vulkan ? CasterVariant + "-noclip" : CasterVariant, state, out string failure);
+                        PipelineEntry entry = _route.PipelineFor(issue.material, Plugin.Vulkan && Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant, state, out string failure);
                         if (entry == null)
                         {
                             _route.PipelineFailures++;

@@ -85,6 +85,8 @@ namespace Zantetsu.Sandbox
             public bool allowRefused, shots, lifetimeDrill;
             // Quest demo options; defaults keep the existing PC comparison and cleanup behavior.
             public bool headTracked, retainSceneAfterMeasurement;
+            /// <summary>Placed objects in the existing instance order; 0 keeps the complete scene.</summary>
+            public int sceneObjectLimit;
             public double[] captureTimes = Array.Empty<double>();
             public SceneDrawComparePath path;
         }
@@ -363,6 +365,51 @@ namespace Zantetsu.Sandbox
             return runner;
         }
 
+        // A limit takes whole placed objects, including all their renderers. The unused objects are not in the
+        // inventory and are not drawn by Unity either (including their shadows). A renderer listed again outside
+        // the prefix remains visible if a kept object also owns it.
+        internal static IReadOnlyList<KeyValuePair<string, Renderer[]>> SelectSceneObjectPrefix(
+            IReadOnlyList<KeyValuePair<string, Renderer[]>> all, int limit, out List<Renderer> hidden)
+        {
+            if (all == null) throw new ArgumentNullException(nameof(all));
+            hidden = null;
+            if (limit <= 0 || limit >= all.Count) return all;
+
+            var selected = new KeyValuePair<string, Renderer[]>[limit];
+            var seen = new HashSet<Renderer>();
+            for (int i = 0; i < limit; i++)
+            {
+                selected[i] = all[i];
+                foreach (Renderer renderer in all[i].Value ?? Array.Empty<Renderer>())
+                {
+                    if (renderer != null) seen.Add(renderer);
+                }
+            }
+
+            hidden = new List<Renderer>();
+            for (int i = limit; i < all.Count; i++)
+            {
+                foreach (Renderer renderer in all[i].Value ?? Array.Empty<Renderer>())
+                {
+                    if (renderer == null || !seen.Add(renderer) || !renderer.enabled) continue;
+                    hidden.Add(renderer);
+                    renderer.enabled = false;
+                }
+            }
+
+            return selected;
+        }
+
+        internal static void RestoreSceneObjectPrefix(List<Renderer> hidden)
+        {
+            if (hidden == null) return;
+            foreach (Renderer renderer in hidden)
+            {
+                if (renderer != null) renderer.enabled = true;
+            }
+            hidden.Clear();
+        }
+
         // The markers of every row: times in nanoseconds, the Render category's in counts.
         private static readonly (ProfilerCategory category, string name)[] FixedMarkers =
         {
@@ -490,6 +537,7 @@ namespace Zantetsu.Sandbox
             internal Transform rig;
             internal bool endWorld;
             private bool _headPosePlaced;
+            private List<Renderer> _sceneObjectLimitHidden;
             internal Action<int> quit;
 
             /// <summary>For tests: geometry the run starts with (a Player reads its file instead).</summary>
@@ -726,7 +774,10 @@ namespace Zantetsu.Sandbox
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 try
                 {
-                    Inventory = SceneDrawInventory.Collect(instances, world.MaterialBindings, geometry);
+                    IReadOnlyList<KeyValuePair<string, Renderer[]>> selected = SelectSceneObjectPrefix(instances, settings.sceneObjectLimit, out _sceneObjectLimitHidden);
+                    Note("scene object limit: " + settings.sceneObjectLimit + " (0 unlimited); selected " + selected.Count + " of " + instances.Count
+                        + " placed objects in existing order; hidden renderers " + (_sceneObjectLimitHidden?.Count ?? 0));
+                    Inventory = SceneDrawInventory.Collect(selected, world.MaterialBindings, geometry);
                 }
                 catch (Exception e)
                 {
@@ -1048,6 +1099,7 @@ namespace Zantetsu.Sandbox
                 ConditionsNote = note;
                 Code = code;
                 DisposeRecorders();
+                if (!completed || !settings.retainSceneAfterMeasurement) RestoreSceneObjectPrefix(_sceneObjectLimitHidden);
                 if (!completed)
                 {
                     try
@@ -1064,6 +1116,8 @@ namespace Zantetsu.Sandbox
                 Done = true;
                 quit?.Invoke(code);
             }
+
+            private void OnDestroy() => RestoreSceneObjectPrefix(_sceneObjectLimitHidden);
 
             // The rig placed so that the camera's eye is the pose's, whatever the head's own pose under the rig is.
             private void ApplyPose(in SceneDrawComparePath.Pose pose)
@@ -1736,7 +1790,12 @@ namespace Zantetsu.Sandbox
                 text.Append("camera: ").Append(settings.headTracked ? "head tracked (not a matched path comparison)" : "recorded path").Append('\n');
                 text.Append("launch: ").Append(SandboxLaunchRecord.Describe()).Append('\n');
                 text.Append("path: ").Append(settings.path.Describe()).Append('\n');
-                if (Inventory != null) text.Append("targets: ").Append(Inventory.Describe()).Append('\n');
+                if (Inventory != null)
+                {
+                    text.Append("scene object limit: ").Append(settings.sceneObjectLimit).Append(" (0 unlimited); selected ").Append(Inventory.Instances)
+                        .Append(" of ").Append(instances.Count).Append(" placed objects in existing order\n");
+                    text.Append("targets: ").Append(Inventory.Describe()).Append('\n');
+                }
                 if (completed)
                 {
                     text.Append("measurement frames: ").Append(MeasureStartFrame).Append("..").Append(MeasureEndFrame).Append("; rows ").Append(_rows).Append(" of a room of ").Append(_room)

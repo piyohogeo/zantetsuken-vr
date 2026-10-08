@@ -464,6 +464,11 @@ namespace Zantetsu.Rendering
         public static bool VulkanDirectClipProbe { get; set; }
         /// <summary>Quest comparison switch. Set before creating a native draw route.</summary>
         public static bool VulkanColourPreparation { get; set; } = true;
+        // Independent comparison switches for investigating AppSW regressions; production defaults stay enabled.
+        public static bool VulkanNoClipColourShaders { get; set; } = true;
+        public static bool VulkanNoClipMotionShaders { get; set; } = true;
+        public static bool VulkanNoClipShadowShaders { get; set; } = true;
+        public static bool VulkanShareGpuConstants { get; set; } = true;
 
         /// <summary>
         /// Whether the plugin can run events now: false once the device is gone, after which it touches no block
