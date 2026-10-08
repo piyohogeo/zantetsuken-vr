@@ -8,6 +8,7 @@
         "Zantetsu.PhysicsCut",
         "Zantetsu.MeshCut",
         "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Urp",
         "Zantetsu.ConvexCut",
         "Unity.Mathematics",
         "Unity.Collections",
