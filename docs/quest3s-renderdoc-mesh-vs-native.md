@@ -12,7 +12,8 @@
 | Vulkan描画API呼び出し数 | 602 | 198 |
 | 上記のうちVPネイティブmulti-draw | 0 | 3 |
 | RenderDocのdraw action数 | 602 | 5,001 |
-| Vulkan graphics render pass数 | 3 | 7 |
+| Vulkan graphics render pass開始数（空passを含む） | 3 | 10 |
+| 描画を含むgraphics render pass数 | 3 | 7 |
 | Compute dispatch数 | 0 | 9 |
 | VP indirect entry数 | — | 4,806 |
 | VP entryのうちinstance数 > 0 | — | 407 |
@@ -64,7 +65,7 @@ Unity Meshは影、motion、カラーの3 graphics render passes。
 | Native colour | 3,920–5,534 | C=Load, DS=Load | 1,602 |
 | Skybox | 5,540–5,558 | C=Load, DS=Load | 1 |
 
-nativeの `passes.json` は11グループを返すが、4グループはcompute等のrender pass外区間である。Vulkan graphics render passは7個。
+nativeの `passes.json` は11グループを返し、描画を含むgraphics render passは7個、残る4グループはcompute等の区間である。この一覧は描画のないpassを省略する。`events.json` のbegin/endを全数数えると、影・motion・カラーの各nativeイベント前に空passが1個ずつあり、graphics render pass開始数は合計10個。2026-10-09の準備分離作業で判明したため、当初の7個という総数表記を訂正した。
 
 実装のnative eventで `EnsureOutsideRenderPass` → resource access/barrier → `EnsureInsideRenderPass` を使い、キャプチャでもpassの終了・再開とattachment loadが増えた。attachmentの退避・再読込がGPU負荷を増やす可能性がある。ただし、今回のカウンターでは帯域や時間への寄与をnative側で定量化できていない。
 

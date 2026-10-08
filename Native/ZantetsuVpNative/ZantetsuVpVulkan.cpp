@@ -32,7 +32,7 @@ uint32_t regionCount = 8, regionBytes = 262144, regionDescriptors = 4096;
 bool available = false, featuresObserved = false, enabledMulti = false, enabledFirst = false, hold = false;
 PFN_vkGetInstanceProcAddr originalGipa = nullptr;
 PFN_vkCreateDevice originalCreateDevice = nullptr;
-int DrawEvent = 1, SentinelEvent = 2;
+int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4;
 std::vector<ZvnDraw*> held;
 VkPhysicalDeviceProperties properties{};
 
@@ -127,6 +127,17 @@ struct Region {
     }
 };
 std::vector<std::unique_ptr<Region>> regions;
+
+// A prepared issue keeps descriptor handles, not pointers into Unity's mutable command recording state.
+// Its managed block remains unconsumed until the draw callback or the camera's completion sentinel.
+struct PreparedDraw {
+    uint64_t frame = 0;
+    uint32_t serial = 0;
+    ZvnResult result = ZvnResult_Recorded;
+    UnityVulkanBuffer arguments{}, indices{};
+    std::vector<VkDescriptorSet> sets;
+};
+std::map<std::pair<ZvnDraw*,uint32_t>,PreparedDraw> preparedDraws;
 
 struct Slot { uint32_t set, binding, source; VkDescriptorType type; VkShaderStageFlags stages; VkSampler sampler=VK_NULL_HANDLE; };
 struct Pipeline {
@@ -273,6 +284,9 @@ VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state) {
     p.variants.emplace(key,pipeline);return pipeline;
 }
 void Retire(uint64_t safe) {
+    for(auto it=preparedDraws.begin();it!=preparedDraws.end();) {
+        if(it->second.frame<=safe)it=preparedDraws.erase(it);else ++it;
+    }
     for(auto it=pipelines.begin();it!=pipelines.end();) {
         if(it->second->released && it->second->lastFrame<=safe){it->second->Destroy();it=pipelines.erase(it);}else ++it;
     }
@@ -305,15 +319,15 @@ const ZvnConstants* Constants(const ZvnDraw* draw,uint32_t binding) {
 bool Buffer(void* pointer,VkPipelineStageFlags stage,VkAccessFlags access,UnityVulkanBuffer& buffer) {
     return pointer && unity->AccessBuffer(pointer,stage,access,kUnityVulkanResourceAccess_PipelineBarrier,&buffer) && buffer.buffer;
 }
-bool Draw(ZvnDraw* draw,Pipeline& pipeline) {
+bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
     if(!Range(draw->resourcesOffset,draw->resourceCount,sizeof(ZvnResource),draw->totalBytes) ||
-       !Range(draw->constantsOffset,draw->constantsCount,sizeof(ZvnConstants),draw->totalBytes)) {Refuse(draw,ZvnResult_BadResource);return false;}
+       !Range(draw->constantsOffset,draw->constantsCount,sizeof(ZvnConstants),draw->totalBytes)) {prepared.result=ZvnResult_BadResource;return false;}
     unity->EnsureOutsideRenderPass();
     UnityVulkanBuffer arguments{},indices{};
     if(!Buffer(draw->argumentBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,VK_ACCESS_INDIRECT_COMMAND_READ_BIT,arguments) ||
        !Buffer(draw->indexBuffer,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_INDEX_READ_BIT,indices) ||
        uint64_t(draw->argumentOffset)+uint64_t(draw->commandCount-1)*24+24>arguments.sizeInBytes ||
-       draw->indexBufferBytes>indices.sizeInBytes){Fail("invalid indirect or index buffer");Refuse(draw,ZvnResult_BadResource);return false;}
+       draw->indexBufferBytes>indices.sizeInBytes){Fail("invalid indirect or index buffer");prepared.result=ZvnResult_BadResource;return false;}
     // All resource accesses and their barriers precede re-entering the render pass and querying recording state.
     struct Resolved { UnityVulkanBuffer buffer{};UnityVulkanImage image{};VkImageLayout layout{};const ZvnResource* resource=nullptr;const ZvnConstants* constants=nullptr; };
     std::vector<Resolved> resolved(pipeline.slots.size());
@@ -326,37 +340,35 @@ bool Draw(ZvnDraw* draw,Pipeline& pipeline) {
             value.constants=Constants(draw,slot.source);const auto* c=value.constants;
             if(!c || (!c->resource && c->size!=binding.extra) || (!c->resource && !Range(c->offset,1,c->size,draw->totalBytes)) ||
                (c->resource && (!Buffer(c->resource,stages,VK_ACCESS_UNIFORM_READ_BIT,value.buffer) || uint64_t(c->resourceOffset)+binding.extra>value.buffer.sizeInBytes || c->resourceOffset%properties.limits.minUniformBufferOffsetAlignment))) {
-                Fail(binding.name);Refuse(draw,ZvnResult_BadConstants);return false;
+                Fail(binding.name);prepared.result=ZvnResult_BadConstants;return false;
             }
         } else if(slot.type==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
             value.resource=Resource(draw,slot.source);const auto* r=value.resource;
             if(!r || !Buffer(r->resource,stages,VK_ACCESS_SHADER_READ_BIT,value.buffer) || !r->elementCount ||
                 uint64_t(r->firstElement+r->elementCount)*(r->kind==0?4:r->stride)>value.buffer.sizeInBytes) {
-                Fail(binding.name);Refuse(draw,ZvnResult_BadResource);return false;
+                Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;
             }
         } else if(slot.type==VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || slot.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
             value.resource=Resource(draw,slot.source);const auto* r=value.resource;
-            if(!r || !r->resource){Fail(binding.name);Refuse(draw,ZvnResult_BadResource);return false;}
+            if(!r || !r->resource){Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;}
             bool isDepth=!std::strcmp(binding.name,"_MainLightShadowmapTexture");
             value.layout=isDepth?VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             bool success=r->kind==3 ? unity->AccessRenderBufferTexture(static_cast<UnityRenderBuffer>(r->resource),nullptr,value.layout,stages,VK_ACCESS_SHADER_READ_BIT,kUnityVulkanResourceAccess_PipelineBarrier,&value.image) :
                 unity->AccessTexture(r->resource,nullptr,value.layout,stages,VK_ACCESS_SHADER_READ_BIT,kUnityVulkanResourceAccess_PipelineBarrier,&value.image);
-            if(!success || !value.image.image){Fail(binding.name);Refuse(draw,ZvnResult_BadResource);return false;}
+            if(!success || !value.image.image){Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;}
         }
     }
-    unity->EnsureInsideRenderPass();
     UnityVulkanRecordingState state{};
-    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) || !state.commandBuffer || !state.renderPass || state.subPassIndex<0) {
-        Fail("no Unity Vulkan render pass");Refuse(draw,ZvnResult_NoCommandList);return false;
+    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) || !state.commandBuffer) {
+        Fail("no Unity Vulkan command buffer for preparation");prepared.result=ZvnResult_NoCommandList;return false;
     }
     currentFrame=state.currentFrameNumber;safeFrame=state.safeFrameNumber;Retire(state.safeFrameNumber);
     Region* region=RegionFor(state.currentFrameNumber,state.safeFrameNumber);
-    if(!region){Refuse(draw,ZvnResult_RingFull);return false;}
-    VkPipeline vkPipeline=Variant(pipeline,state);if(!vkPipeline){Refuse(draw,ZvnResult_NoPipeline);return false;}
+    if(!region){prepared.result=ZvnResult_RingFull;return false;}
     std::vector<VkDescriptorSet> sets(pipeline.layouts.size());
     VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};allocate.descriptorPool=region->pool;
     allocate.descriptorSetCount=uint32_t(sets.size());allocate.pSetLayouts=pipeline.layouts.data();
-    if(!Ok(vkAllocateDescriptorSets(instance.device,&allocate,sets.data()),"descriptor allocation")){Refuse(draw,ZvnResult_RingFull);return false;}
+    if(!Ok(vkAllocateDescriptorSets(instance.device,&allocate,sets.data()),"descriptor allocation")){prepared.result=ZvnResult_RingFull;return false;}
     region->sets+=uint32_t(sets.size());
     std::vector<VkWriteDescriptorSet> writes(pipeline.slots.size());
     std::vector<VkDescriptorBufferInfo> buffers(writes.size());std::vector<VkDescriptorImageInfo> images(writes.size());
@@ -367,7 +379,7 @@ bool Draw(ZvnDraw* draw,Pipeline& pipeline) {
             if(binding.kind==ZvnBinding_CommandConstant || !value.constants->resource) {
                 uint32_t alignment=uint32_t(properties.limits.minUniformBufferOffsetAlignment);
                 uint32_t offset=(region->used+alignment-1)/alignment*alignment,size=binding.kind==ZvnBinding_CommandConstant?4:value.constants->size;
-                if(uint64_t(offset)+size>regionBytes){Refuse(draw,ZvnResult_RingFull);return false;}
+                if(uint64_t(offset)+size>regionBytes){prepared.result=ZvnResult_RingFull;return false;}
                 if(binding.kind==ZvnBinding_CommandConstant){uint32_t base=draw->argumentOffset/24;std::memcpy(static_cast<char*>(region->mapped)+offset,&base,4);}
                 else std::memcpy(static_cast<char*>(region->mapped)+offset,reinterpret_cast<const char*>(draw)+value.constants->offset,size);
                 buffers[i]={region->upload,offset,size};region->used=offset+size;counters.constantBytesUploaded+=size;
@@ -383,13 +395,29 @@ bool Draw(ZvnDraw* draw,Pipeline& pipeline) {
                 view.viewType=binding.extra==ZvnTexture_Cube?VK_IMAGE_VIEW_TYPE_CUBE:binding.extra==ZvnTexture_2DArray?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D;
                 view.subresourceRange.aspectMask=value.image.aspect&VK_IMAGE_ASPECT_DEPTH_BIT?VK_IMAGE_ASPECT_DEPTH_BIT:VK_IMAGE_ASPECT_COLOR_BIT;
                 view.subresourceRange.levelCount=value.image.mipCount;view.subresourceRange.layerCount=binding.extra==ZvnTexture_2D?1:value.image.layers;
-                if(!Ok(vkCreateImageView(instance.device,&view,nullptr,&images[i].imageView),"texture view")){Refuse(draw,ZvnResult_BadResource);return false;}
+                if(!Ok(vkCreateImageView(instance.device,&view,nullptr,&images[i].imageView),"texture view")){prepared.result=ZvnResult_BadResource;return false;}
                 region->views.push_back(images[i].imageView);images[i].imageLayout=value.layout;
             }
             write.pImageInfo=&images[i];
         }
     }
     vkUpdateDescriptorSets(instance.device,uint32_t(writes.size()),writes.data(),0,nullptr);counters.descriptorsWritten+=writes.size();
+    prepared.arguments=arguments;prepared.indices=indices;prepared.sets=std::move(sets);
+    prepared.frame=state.currentFrameNumber;prepared.serial=draw->serial;
+    pipeline.lastFrame=state.currentFrameNumber;
+    return true;
+}
+bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared) {
+    if(prepared.result!=ZvnResult_Recorded){Refuse(draw,prepared.result);return false;}
+    unity->EnsureInsideRenderPass();
+    UnityVulkanRecordingState state{};
+    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) ||
+       !state.commandBuffer || !state.renderPass || state.subPassIndex<0 ||
+       state.currentFrameNumber!=prepared.frame || draw->serial!=prepared.serial) {
+        Fail("prepared Vulkan draw has no matching current render pass");Refuse(draw,ZvnResult_NoCommandList);return false;
+    }
+    VkPipeline vkPipeline=Variant(pipeline,state);if(!vkPipeline){Refuse(draw,ZvnResult_NoPipeline);return false;}
+    const auto& sets=prepared.sets;const auto& arguments=prepared.arguments;const auto& indices=prepared.indices;
     vkCmdBindPipeline(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,vkPipeline);
     vkCmdBindDescriptorSets(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline.layout,0,uint32_t(sets.size()),sets.data(),0,nullptr);
     vkCmdBindIndexBuffer(state.commandBuffer,indices.buffer,0,draw->indexFormat==42?VK_INDEX_TYPE_UINT32:VK_INDEX_TYPE_UINT16);
@@ -409,14 +437,30 @@ bool Draw(ZvnDraw* draw,Pipeline& pipeline) {
 void UNITY_INTERFACE_API Event(int id,void* data) {
     std::lock_guard<std::mutex> lock(gate);auto* draw=static_cast<ZvnDraw*>(data);if(!draw)return;
     if(id==SentinelEvent){counters.sentinelsRun++;Consume(draw,ZvnResult_Recorded);return;}
-    if(id!=DrawEvent)return;
-    if(draw->version!=ZVN_CONTRACT_VERSION){Refuse(draw,ZvnResult_BadVersion);return;}
-    if(!available){Refuse(draw,ZvnResult_NotAvailable);return;}
+    if(id!=DrawEvent && id!=PrepareEvent && id!=PreparedDrawEvent)return;
+    const auto key=std::make_pair(draw,draw->serial);
+    PreparedDraw prepared;
     auto p=pipelines.find(int(draw->pipeline));
-    if(p==pipelines.end() || p->second->released){Refuse(draw,ZvnResult_NoPipeline);return;}
-    if(!draw->commandCount || !draw->viewportCount || draw->viewportCount>4 || draw->argumentOffset%24 ||
-        (draw->indexFormat!=42 && draw->indexFormat!=57)){Refuse(draw,ZvnResult_BadResource);return;}
-    Draw(draw,*p->second);
+    ZvnResult invalid=ZvnResult_Recorded;
+    if(draw->version!=ZVN_CONTRACT_VERSION)invalid=ZvnResult_BadVersion;
+    else if(!available)invalid=ZvnResult_NotAvailable;
+    else if(p==pipelines.end() || p->second->released)invalid=ZvnResult_NoPipeline;
+    else if(!draw->commandCount || !draw->viewportCount || draw->viewportCount>4 || draw->argumentOffset%24 ||
+            (draw->indexFormat!=42 && draw->indexFormat!=57))invalid=ZvnResult_BadResource;
+    if(id==PreparedDrawEvent) {
+        auto pending=preparedDraws.find(key);
+        if(pending==preparedDraws.end()){Fail("Vulkan draw was not prepared");Refuse(draw,ZvnResult_BadResource);return;}
+        prepared=std::move(pending->second);preparedDraws.erase(pending);
+        if(invalid!=ZvnResult_Recorded){Refuse(draw,invalid);return;}
+        Record(draw,*p->second,prepared);return;
+    }
+    // A prepare callback never consumes the block: a subsequent draw callback still references it,
+    // even when preparation failed. The draw reports the error, or the camera sentinel proves discard.
+    prepared.serial=draw->serial;prepared.frame=currentFrame.load();prepared.result=invalid;
+    if(invalid==ZvnResult_Recorded)Prepare(draw,*p->second,prepared);
+    if(id==PrepareEvent){preparedDraws[key]=std::move(prepared);return;}
+    if(prepared.result!=ZvnResult_Recorded){Refuse(draw,prepared.result);return;}
+    Record(draw,*p->second,prepared);
 }
 void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
     std::lock_guard<std::mutex> lock(gate);
@@ -426,12 +470,19 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         if(!available)Fail("Vulkan plugin must preload before device creation; multiDrawIndirect and firstInstance must be enabled");
         UnityVulkanPluginEventConfig config{kUnityVulkanRenderPass_EnsureInside,kUnityVulkanGraphicsQueueAccess_DontCare,
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
+        unity->ConfigureEvent(PreparedDrawEvent,&config);
+        // The combined path prepares resources before it enters a pass. Entering in the precondition
+        // would create an empty pass which Prepare immediately ends again.
+        config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;
         unity->ConfigureEvent(DrawEvent,&config);
+        UnityVulkanPluginEventConfig prepareConfig{kUnityVulkanRenderPass_DontCare,kUnityVulkanGraphicsQueueAccess_DontCare,
+            kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission};
+        unity->ConfigureEvent(PrepareEvent,&prepareConfig);
         config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;config.flags=kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission;
         unity->ConfigureEvent(SentinelEvent,&config);
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","ready=%d maxDrawIndirectCount=%u",available,properties.limits.maxDrawIndirectCount);
     }else if(event==kUnityGfxDeviceEventShutdown) {
-        available=false;
+        available=false;preparedDraws.clear();
         // Device shutdown follows Unity's rendering drain. No waits or queue submissions on the draw path.
         for(auto& p:pipelines)p.second->Destroy();pipelines.clear();for(auto& r:regions)r->Destroy();regions.clear();
         for(auto* d:held)__atomic_store_n(&d->consumed,1,__ATOMIC_RELEASE);held.clear();instance={};
@@ -444,8 +495,8 @@ void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     graphics=interfaces->Get<IUnityGraphics>();unity=interfaces->Get<IUnityGraphicsVulkanV2>();
     if(!graphics || !unity){Fail("Unity Vulkan V2 interface missing");return;}
     unity->AddInterceptInitialization(Intercept,nullptr,0);
-    DrawEvent = graphics->ReserveEventIDRange(2);
-    SentinelEvent = DrawEvent + 1;
+    DrawEvent = graphics->ReserveEventIDRange(4);
+    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;
     graphics->RegisterDeviceEventCallback(Device);
     if(graphics->GetRenderer()==kUnityGfxRendererVulkan)Device(kUnityGfxDeviceEventInitialize);
 }
@@ -479,6 +530,8 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDescribePipeline(int id,char* 
 UnityRenderingEventAndData UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetRenderEventAndDataFunc(){return Event;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDrawEventId(){return DrawEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSentinelEventId(){return SentinelEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPrepareEventId(){return PrepareEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPreparedDrawEventId(){return PreparedDrawEvent;}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetCounters(ZvnCounters* out){std::lock_guard<std::mutex> lock(gate);if(out){*out=counters;out->ringRegions=regionCount;out->ringRegionBytes=regionBytes;}}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnFrameFence(uint64_t* completed,uint64_t* next){if(completed)*completed=safeFrame.load();if(next)*next=currentFrame.load();}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSetLockTiming(int){}

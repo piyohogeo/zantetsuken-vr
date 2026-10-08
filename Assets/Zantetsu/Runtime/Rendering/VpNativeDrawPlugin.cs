@@ -262,6 +262,14 @@ namespace Zantetsu.Rendering
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnSentinelEventId();
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnPrepareEventId();
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnPreparedDrawEventId();
+#endif
+
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern void ZvnGetCounters(Counters* output);
 
@@ -365,6 +373,10 @@ namespace Zantetsu.Rendering
                         s_eventFunction = ZvnGetRenderEventAndDataFunc();
                         s_eventId = ZvnDrawEventId();
                         s_sentinelEventId = ZvnSentinelEventId();
+#if UNITY_ANDROID && !UNITY_EDITOR
+                        s_prepareEventId = ZvnPrepareEventId();
+                        s_preparedDrawEventId = ZvnPreparedDrawEventId();
+#endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
                         {
@@ -422,6 +434,11 @@ namespace Zantetsu.Rendering
         public static int SentinelEventId => s_sentinelEventId;
 
         private static int s_sentinelEventId;
+        private static int s_prepareEventId, s_preparedDrawEventId;
+        public static int PrepareEventId => s_prepareEventId;
+        public static int PreparedDrawEventId => s_preparedDrawEventId;
+        /// <summary>Quest comparison switch. Set before creating a native draw route.</summary>
+        public static bool VulkanColourPreparation { get; set; } = true;
 
         /// <summary>
         /// Whether the plugin can run events now: false once the device is gone, after which it touches no block

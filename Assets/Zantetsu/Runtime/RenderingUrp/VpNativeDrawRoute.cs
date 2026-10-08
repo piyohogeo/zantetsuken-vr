@@ -221,6 +221,8 @@ namespace Zantetsu.Rendering.Urp
             public BodyPass body;
             public CasterPass casters;
             public BodyPass motion;
+            public ColourDrawPass colourDraw;
+            public readonly List<Block> colourBlocks = new List<Block>(8);
             public readonly List<Issue> motionBodies = new List<Issue>(8);
             public readonly List<Issue> bodies = new List<Issue>(8);
             public readonly List<Issue> casterRuns = new List<Issue>(8);
@@ -512,6 +514,7 @@ namespace Zantetsu.Rendering.Urp
             }
 
             passes.bodies.Clear();
+            passes.colourBlocks.Clear();
             passes.motionBodies.Clear();
             passes.casterRuns.Clear();
             passes.frame = Time.frameCount;
@@ -526,6 +529,7 @@ namespace Zantetsu.Rendering.Urp
             display.NativeDrawSink = this;
             renderer.EnqueuePass(passes.casters);
             renderer.EnqueuePass(passes.body);
+            if (passes.colourDraw != null) renderer.EnqueuePass(passes.colourDraw);
             if (Plugin.Vulkan) renderer.EnqueuePass(passes.motion);
             Enqueued++;
             return true;
@@ -817,6 +821,7 @@ namespace Zantetsu.Rendering.Urp
 
             var passes = new CameraPasses { camera = camera };
             passes.body = new BodyPass(this, passes);
+            if (passes.body.PreparesColour) passes.colourDraw = new ColourDrawPass(this, passes);
             passes.motion = new BodyPass(this, passes, true);
             passes.casters = new CasterPass(this, passes);
             _cameras.Add(passes);
@@ -1352,6 +1357,7 @@ namespace Zantetsu.Rendering.Urp
         private sealed class BodyPassData
         {
             public BodyPass pass;
+            public bool preparedProjectionFlipped;
             public TextureHandle colour;
             public TextureHandle depth;
             public TextureHandle shadowMap;
@@ -1371,6 +1377,7 @@ namespace Zantetsu.Rendering.Urp
             private readonly VpNativeDrawRoute _route;
             private readonly CameraPasses _passes;
             private readonly bool _motion;
+            public bool PreparesColour { get; }
             private RTHandle _motionColour, _motionDepth;
             private List<Issue> Bodies => _motion ? _passes.motionBodies : _passes.bodies;
             private GraphicsBuffer _gpuConstants;
@@ -1381,8 +1388,9 @@ namespace Zantetsu.Rendering.Urp
                 _route = route;
                 _passes = passes;
                 _motion = motion;
-                renderPassEvent = motion ? RenderPassEvent.AfterRenderingPrePasses : RenderPassEvent.AfterRenderingOpaques;
-                profilingSampler = new ProfilingSampler(motion ? "VP Native AppSW" : "VP Native Draw");
+                PreparesColour = !motion && Plugin.Vulkan && Plugin.VulkanColourPreparation;
+                renderPassEvent = motion ? RenderPassEvent.AfterRenderingPrePasses : PreparesColour ? RenderPassEvent.BeforeRenderingOpaques : RenderPassEvent.AfterRenderingOpaques;
+                profilingSampler = new ProfilingSampler(motion ? "VP Native AppSW" : PreparesColour ? "VP Native Colour Prepare" : "VP Native Draw");
             }
 
             /// <summary>Hands the GPU constant buffer over (to be released once no event reads it) and forgets it.</summary>
@@ -1462,6 +1470,11 @@ namespace Zantetsu.Rendering.Urp
                 using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out BodyPassData data, profilingSampler))
                 {
                     data.pass = this;
+                    // Match UniversalCameraData's target convention without resolving/reading the attachments
+                    // before their first draw. Such a read forces RenderGraph to open an empty clear pass.
+                    data.preparedProjectionFlipped = !SystemInfo.graphicsUVStartsAtTop ||
+                        cameraData.isSceneViewCamera || cameraData.isPreviewCamera || cameraData.targetTexture != null ||
+                        !resourceData.isActiveTargetBackBuffer;
                     data.colour = colour;
                     data.depth = depth;
                     data.shadowMap = shadowMap;
@@ -1474,8 +1487,11 @@ namespace Zantetsu.Rendering.Urp
                     data.height = colourDesc.height > 0 ? colourDesc.height : target.height;
                     data.stereo = stereo;
                     data.viewport = xr && !_motion ? cameraData.xr.GetViewport(0) : new Rect(0f, 0f, data.width, data.height);
-                    builder.UseTexture(colour, AccessFlags.ReadWrite);
-                    builder.UseTexture(depth, AccessFlags.ReadWrite);
+                    if (!PreparesColour)
+                    {
+                        builder.UseTexture(colour, AccessFlags.ReadWrite);
+                        builder.UseTexture(depth, AccessFlags.ReadWrite);
+                    }
                     if (shadowMap.IsValid())
                     {
                         builder.UseTexture(shadowMap, AccessFlags.Read);
@@ -1498,16 +1514,16 @@ namespace Zantetsu.Rendering.Urp
 
                 _route.DropUnrecorded();
                 CommandBuffer commands = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
-                RTHandle colourHandle = data.colour;
-                RTHandle depthHandle = data.depth;
-                if (data.stereo)
+                RTHandle colourHandle = PreparesColour ? null : data.colour;
+                RTHandle depthHandle = PreparesColour ? null : data.depth;
+                if (!PreparesColour && data.stereo)
                 {
                     // Every slice of the eye texture: the vertex stage picks the eye's slice (SV_RenderTargetArrayIndex).
                     commands.SetRenderTarget(colourHandle, depthHandle, 0, CubemapFace.Unknown, -1);
                 }
                 else
                 {
-                    commands.SetRenderTarget(colourHandle, depthHandle);
+                    if (!PreparesColour) commands.SetRenderTarget(colourHandle, depthHandle);
                 }
 
                 GlobalsInputs inputs;
@@ -1516,7 +1532,7 @@ namespace Zantetsu.Rendering.Urp
                 GraphicsBuffer gpuConstants;
                 using (BodyPrepareMarker.Auto())
                 {
-                    bool flipped = _motion ? false : data.cameraData.IsRenderTargetProjectionMatrixFlipped(colourHandle, depthHandle);
+                    bool flipped = _motion ? false : PreparesColour ? data.preparedProjectionFlipped : data.cameraData.IsRenderTargetProjectionMatrixFlipped(colourHandle, depthHandle);
                     inputs = new GlobalsInputs
                     {
                         matrixV = data.cameraData.GetViewMatrix(0),
@@ -1562,6 +1578,7 @@ namespace Zantetsu.Rendering.Urp
                     _gpuConstantsUsed = 0;
                 }
 
+                int firstBlock = _route._blocks.Count;
                 Rect viewport = data.viewport;
                 {
                     for (int i = 0; i < Bodies.Count; i++)
@@ -1609,7 +1626,55 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 Bodies.Clear();
-                _route.IssuePendingEvents(commands);
+                if (PreparesColour)
+                {
+                    for (int i = firstBlock; i < _route._blocks.Count; i++) _passes.colourBlocks.Add(_route._blocks[i]);
+                    // Mark Recorded now so the ring and camera sentinel protect both callbacks' shared block.
+                    _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
+                }
+                else _route.IssuePendingEvents(commands);
+            }
+        }
+
+        // Colour preparation ran before opaques. This pass only records prepared native draws into the
+        // existing attachments; no compute dispatch, AccessBuffer or texture transition occurs here.
+        private sealed class ColourDrawPass : ScriptableRenderPass
+        {
+            private readonly VpNativeDrawRoute _route;
+            private readonly CameraPasses _passes;
+            private sealed class Data { public ColourDrawPass pass; }
+            public ColourDrawPass(VpNativeDrawRoute route, CameraPasses passes)
+            {
+                _route = route; _passes = passes;
+                renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+                profilingSampler = new ProfilingSampler("VP Native Colour Draw");
+            }
+            public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
+            {
+                var camera = frameData.Get<UniversalCameraData>();
+                if (!ReferenceEquals(camera.camera, _passes.camera)) return;
+                var resources = frameData.Get<UniversalResourceData>();
+                if (!resources.activeColorTexture.IsValid() || !resources.activeDepthTexture.IsValid()) return;
+                using (var builder = graph.AddRasterRenderPass<Data>(passName, out var data, profilingSampler))
+                {
+                    data.pass = this;
+                    builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
+                    builder.SetRenderAttachmentDepth(resources.activeDepthTexture, AccessFlags.ReadWrite);
+                    if (resources.mainShadowsTexture.IsValid()) builder.UseTexture(resources.mainShadowsTexture, AccessFlags.Read);
+                    builder.AllowGlobalStateModification(true);
+                    builder.AllowPassCulling(false);
+                    builder.SetRenderFunc(static (Data value, RasterGraphContext context) => value.pass.Execute(context));
+                }
+            }
+            private void Execute(RasterGraphContext context)
+            {
+                if (_route._disposed) return;
+                foreach (var block in _passes.colourBlocks)
+                {
+                    if (block.frame != _passes.frame) continue;
+                    context.cmd.IssuePluginEventAndData(Plugin.RenderEventFunction, Plugin.PreparedDrawEventId, block.data);
+                }
+                _passes.colourBlocks.Clear();
             }
         }
 
