@@ -145,6 +145,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // For a world that selects on the GPU (the default, D-198): what puts the selection into the frame, as the
             // world's own camera drawing does. This stage draws the display itself, so it does that itself too.
             internal readonly Zantetsu.Rendering.Urp.VpGpuCullCameraRoute cullRoute = new Zantetsu.Rendering.Urp.VpGpuCullCameraRoute();
+
+            // For a world drawn by the Direct3D 12 plugin (DESIGN 4.5.8, asked for by VpNativeDrawSetup): the route
+            // that takes the display's draws, as the world's own camera drawing does. Made when first needed.
+            internal Zantetsu.Rendering.Urp.VpNativeDrawRoute nativeRoute;
         }
 
         private ShadowStage NewShadowStage()
@@ -319,6 +323,13 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             {
                 // The selection first, then the draws that read it: the pass is taken by the render request below.
                 Assert.That(stage.cullRoute.TryEnqueue(stage.camera, root.Display, out string cullFailure), Is.True, cullFailure);
+            }
+
+            if (root.Display.NativeArguments)
+            {
+                // The plugin's pass after the selection and before the draws it takes.
+                stage.nativeRoute ??= new Zantetsu.Rendering.Urp.VpNativeDrawRoute();
+                Assert.That(stage.nativeRoute.TryEnqueue(stage.camera, root.Display, out string nativeFailure), Is.True, nativeFailure);
             }
 
             root.Display.Render(0, stage.camera);

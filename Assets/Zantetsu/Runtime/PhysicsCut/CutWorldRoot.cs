@@ -124,6 +124,12 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The profile this world was built with. Read only.</summary>
         public CutWorldProfile Profile => profile;
 
+        /// <summary>
+        /// The material each submesh source index is drawn with, as this world was given them. Read only: what a
+        /// display draws with is settled when the world is built.
+        /// </summary>
+        public IReadOnlyList<MaterialBinding> MaterialBindings => materials;
+
         /// <summary>The logical state of every cut in this world.</summary>
         public LogicalCutLedger Ledger { get; private set; }
 
