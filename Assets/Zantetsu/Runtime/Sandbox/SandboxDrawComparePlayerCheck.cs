@@ -515,6 +515,48 @@ namespace Zantetsu.Sandbox
             private long[] _builds, _placementPasses, _queries, _static, _argumentElements, _instanceElements, _setDataCalls, _wholeCalls;
             private long[] _passesSkipped, _fixedOmitted, _heldOmitted, _fixedHeld, _tallies, _talliesSkipped, _instanceTakes, _instanceTakesSkipped;
             private double[] _tallyMs, _instanceTakeMs;
+
+            // The Main P95 investigation (TL, 2026-10-08). Every row: its QPC stamp (Stopwatch ticks, the clock a Windows
+            // trace uses) with, read at the same moment, the id of the thread that made the row and the number of the
+            // logical processor that thread was on -- AT THAT INSTANT: one read a frame, so it does not say where the
+            // rest of the frame ran, and must not be read as the frame's processor.
+            // Only with the detailed observation on (VpNativeDrawPlugin.DetailTimingArgument; off by default, and then
+            // these columns stay 0 and the processors -1, and nothing is read for them): the plugin's state query as the
+            // main thread saw it and as the plugin's mutex counted it, the rendering thread's draw events' hold of
+            // that mutex, where the last acquisition of each was made (thread, QPC stamp, processor at that instant),
+            // and the keeper's work at the ends of the cameras' renderings by part. Cumulative sources are read once a
+            // row and differenced here.
+            private long[] _qpc, _tid, _availCalls, _availContended, _drawEvents, _drawContended, _availLastQpc, _drawLastQpc, _drawTid;
+            private int[] _cpu, _availLastCpu, _drawLastCpu;
+            private bool _detail;
+            private double[] _availWholeMs, _availWholeMaxMs, _availWaitMs, _availWaitMaxMs, _availHeldMs, _drawHeldMs, _drawHeldMaxMs, _drawWaitMs;
+            private int[] _ecrCalls, _tickCalls, _sentinelsIssued, _promoted, _prepDropped, _entriesPending;
+            private long[] _ringsScanned, _blocksScanned, _entriesJudged, _entriesReleased, _resourcesReleased;
+            private double[] _dropMs, _wantMs, _sealDeviceMs, _issueMs, _promoteMs, _tickDeviceMs, _readSentinelsMs, _ringsMs, _entriesMs, _releaseMs;
+            private long _lastAvailCalls, _lastAvailTicks;
+            private Zantetsu.Rendering.VpNativeDrawPlugin.LockStats _lastLock;
+            private bool _lockBaselineTaken;
+
+            [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+            private static extern uint GetCurrentThreadId();
+
+            [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+            private static extern uint GetCurrentProcessorNumber();
+
+            // The trace's clock itself. Stopwatch.GetTimestamp gave the same value in the IL2CPP Player (natW1,
+            // 2026-10-08) but does not in the Editor's runtime (another origin: the focus test of the plugin's stamp),
+            // so the row's stamp does not go through it.
+            [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+            private static extern bool QueryPerformanceCounter(out long value);
+
+            [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+            private static extern bool QueryPerformanceFrequency(out long value);
+            private static long QpcFrequency()
+            {
+                QueryPerformanceFrequency(out long frequency);
+                return frequency;
+            }
+
             private long[][] _values;
             private bool _ownsDirectory;
 
@@ -778,6 +820,17 @@ namespace Zantetsu.Sandbox
                 Note("scene colliders changed while preparing, by name (the comparison's own condition is the targets' physics, below): " + (changedWhilePreparing ?? "none"));
                 Note("the targets' own physics at the measurement's start: " + TargetPhysics());
                 Note("activity at the measurement's start: " + Activity(out _));
+                _detail = Zantetsu.Rendering.VpNativeDrawPlugin.DetailTiming;
+                Zantetsu.Rendering.VpNativeDrawPlugin.LockStats lockAtStart = Zantetsu.Rendering.VpNativeDrawPlugin.ReadLockStats();
+                Note("native draw detailed observation (" + Zantetsu.Rendering.VpNativeDrawPlugin.DetailTimingArgument + "): " + (_detail ? "ON" : "off")
+                    + "; the plugin's mutex timing " + (lockAtStart.timingOn ? "ON" : "off")
+                    + (_detail ? " -- the state query, the mutex and the keeper's parts are timed and counted every frame: this run carries that cost"
+                               : " -- frames.csv's lock, keeper and last-acquisition columns stay 0 (processors -1)"));
+                Note("threads (Windows ids, for a trace): main " + GetCurrentThreadId() + ", rendering (the plugin's draw events so far) "
+                    + (_detail ? lockAtStart.renderThreadId.ToString(Inv) : "not observed (the detailed observation is off)")
+                    + "; QPC frequency " + QpcFrequency() + " (QueryPerformanceFrequency; the rows' stamps are QueryPerformanceCounter's) / " + System.Diagnostics.Stopwatch.Frequency + " (Stopwatch, the durations') / "
+                    + lockAtStart.qpcFrequency + " (plugin); each row's qpc, thread id and processor number are in frames.csv"
+                    + " (the processor number is the one the thread was on at the instant of the row's stamp, not the frame's)");
                 Note("frame timing: FrameTimingManager enabled=" + FrameTimingManager.IsFeatureEnabled() + " (its values reach a row a few frames late)"
                     + "; xr active=" + UnityEngine.XR.XRSettings.isDeviceActive + " device=" + UnityEngine.XR.XRSettings.loadedDeviceName + " stereo=" + UnityEngine.XR.XRSettings.stereoRenderingMode
                     + " eyeTexture=" + UnityEngine.XR.XRSettings.eyeTextureWidth + "x" + UnityEngine.XR.XRSettings.eyeTextureHeight + " renderScale=" + UnityEngine.XR.XRSettings.eyeTextureResolutionScale.ToString("R", Inv)
@@ -1029,6 +1082,16 @@ namespace Zantetsu.Sandbox
                 _passesSkipped = new long[_room]; _fixedOmitted = new long[_room]; _heldOmitted = new long[_room]; _fixedHeld = new long[_room];
                 _tallies = new long[_room]; _talliesSkipped = new long[_room]; _instanceTakes = new long[_room]; _instanceTakesSkipped = new long[_room];
                 _tallyMs = new double[_room]; _instanceTakeMs = new double[_room];
+                _qpc = new long[_room]; _availCalls = new long[_room]; _availContended = new long[_room]; _drawEvents = new long[_room]; _drawContended = new long[_room];
+                _tid = new long[_room]; _cpu = new int[_room]; _availLastQpc = new long[_room]; _drawLastQpc = new long[_room]; _drawTid = new long[_room];
+                _availLastCpu = new int[_room]; _drawLastCpu = new int[_room];
+                _detail = Zantetsu.Rendering.VpNativeDrawPlugin.DetailTiming;   // as the launch asked; the rows' detailed columns follow it
+                _availWholeMs = new double[_room]; _availWholeMaxMs = new double[_room]; _availWaitMs = new double[_room]; _availWaitMaxMs = new double[_room]; _availHeldMs = new double[_room];
+                _drawHeldMs = new double[_room]; _drawHeldMaxMs = new double[_room]; _drawWaitMs = new double[_room];
+                _ecrCalls = new int[_room]; _tickCalls = new int[_room]; _sentinelsIssued = new int[_room]; _promoted = new int[_room]; _prepDropped = new int[_room]; _entriesPending = new int[_room];
+                _ringsScanned = new long[_room]; _blocksScanned = new long[_room]; _entriesJudged = new long[_room]; _entriesReleased = new long[_room]; _resourcesReleased = new long[_room];
+                _dropMs = new double[_room]; _wantMs = new double[_room]; _sealDeviceMs = new double[_room]; _issueMs = new double[_room]; _promoteMs = new double[_room];
+                _tickDeviceMs = new double[_room]; _readSentinelsMs = new double[_room]; _ringsMs = new double[_room]; _entriesMs = new double[_room]; _releaseMs = new double[_room];
                 _argumentElements = new long[_room]; _instanceElements = new long[_room]; _setDataCalls = new long[_room]; _wholeCalls = new long[_room];
                 _values = new long[_markers.Length][];
                 for (int i = 0; i < _markers.Length; i++) _values[i] = new long[_room];
@@ -1082,6 +1145,47 @@ namespace Zantetsu.Sandbox
                         _wholeCalls[before] = counts.draw.wholeCalls;
                         _collectMs[before] = counts.times.collectSeconds * 1000.0;
                     }
+
+                    // The plugin's state query and the keeper's parts, for the frame before (its collections and camera
+                    // ends are over; this frame's are not). The cumulative sources are differenced against the last row.
+                    // Only with the detailed observation on: off, nothing is read here.
+                    if (_detail)
+                    {
+                        double msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                        long availCalls = Zantetsu.Rendering.VpNativeDrawPlugin.AvailabilityCalls, availTicks = Zantetsu.Rendering.VpNativeDrawPlugin.AvailabilityTicks;
+                        _availCalls[before] = availCalls - _lastAvailCalls;
+                        _availWholeMs[before] = (availTicks - _lastAvailTicks) * msPerTick;
+                        _lastAvailCalls = availCalls; _lastAvailTicks = availTicks;
+                        Zantetsu.Rendering.VpNativeDrawPlugin.LockStats lock_ = Zantetsu.Rendering.VpNativeDrawPlugin.ReadLockStats();
+                        if (!_lockBaselineTaken) { _lastLock = lock_; _lockBaselineTaken = true; }
+                        _availContended[before] = (long)(lock_.availabilityContended - _lastLock.availabilityContended);
+                        _availWaitMs[before] = lock_.Ms(lock_.availabilityWaitTicks - _lastLock.availabilityWaitTicks);
+                        _availWaitMaxMs[before] = lock_.Ms(lock_.availabilityWaitMaxTicks);   // the run's maximum so far, not a frame's
+                        _availHeldMs[before] = lock_.Ms(lock_.availabilityHeldTicks - _lastLock.availabilityHeldTicks);
+                        _drawEvents[before] = (long)(lock_.drawEvents - _lastLock.drawEvents);
+                        _drawContended[before] = (long)(lock_.drawContended - _lastLock.drawContended);
+                        _drawHeldMs[before] = lock_.Ms(lock_.drawHeldTicks - _lastLock.drawHeldTicks);
+                        _drawHeldMaxMs[before] = lock_.Ms(lock_.drawHeldMaxTicks);   // the run's maximum so far
+                        _drawWaitMs[before] = lock_.Ms(lock_.drawWaitTicks - _lastLock.drawWaitTicks);
+                        // Where the last acquisitions were made, as they stand when this row is completed: each with its own
+                        // QPC stamp (the rendering thread's three values are written while this reads; they may straddle).
+                        _availLastQpc[before] = (long)lock_.availabilityLastQpc; _availLastCpu[before] = lock_.availabilityLastQpc != 0 ? (int)lock_.availabilityLastProcessor : -1;
+                        _drawLastQpc[before] = (long)lock_.drawLastQpc; _drawLastCpu[before] = lock_.drawLastQpc != 0 ? (int)lock_.drawLastProcessor : -1;
+                        _drawTid[before] = (long)lock_.renderThreadId;
+                        _lastLock = lock_;
+                        if (Zantetsu.Rendering.VpNativeDrawRelease.TryGetFrameWork(frame - 1, out Zantetsu.Rendering.VpNativeDrawRelease.FrameWork work))
+                        {
+                            _ecrCalls[before] = work.endCameraCalls; _tickCalls[before] = work.tickCalls; _sentinelsIssued[before] = work.sentinelsIssued; _promoted[before] = work.promoted;
+                            _prepDropped[before] = work.prepDropped; _entriesPending[before] = work.entriesPendingAtEnd;
+                            _ringsScanned[before] = work.ringsScanned; _blocksScanned[before] = work.blocksScanned; _entriesJudged[before] = work.entriesJudged;
+                            _entriesReleased[before] = work.entriesReleased; _resourcesReleased[before] = work.resourcesReleased;
+                            _dropMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.dropTicks); _wantMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.wantTicks);
+                            _sealDeviceMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.sealDeviceTicks); _issueMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.issueTicks);
+                            _promoteMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.promoteTicks); _tickDeviceMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.tickDeviceTicks);
+                            _readSentinelsMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.readSentinelsTicks); _ringsMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.ringsTicks);
+                            _entriesMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.entriesTicks); _releaseMs[before] = Zantetsu.Rendering.VpNativeDrawRelease.FrameWork.Ms(work.releaseTicks);
+                        }
+                    }
                 }
 
                 if (!take)
@@ -1097,6 +1201,12 @@ namespace Zantetsu.Sandbox
 
                 int r = _rows++;
                 _frame[r] = frame;
+                // The stamp, the thread and the processor together: QueryPerformanceCounter (a Windows trace's clock), the
+                // id of this thread, and the logical processor it is on at this instant (it may be moved right after).
+                QueryPerformanceCounter(out _qpc[r]);
+                _tid[r] = GetCurrentThreadId();
+                _cpu[r] = (int)GetCurrentProcessorNumber();
+                _availLastCpu[r] = _drawLastCpu[r] = -1;
                 _segment[r] = pose.segment;
                 _t[r] = t;
                 _real[r] = Time.realtimeSinceStartupAsDouble;
@@ -1529,7 +1639,11 @@ namespace Zantetsu.Sandbox
                 text.Append("frame,t,segment,real,deltaMs,ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,eyeX,eyeY,eyeZ,yaw,camX,camY,camZ,camYaw,gcCount"
                     + ",displayCollections,displayRoomGrowths,displaySnapshotRegrowths,displayBuilds,displayPlacementPasses,placeQueries,placeStatic,displayRenderFragments,displayGpuReplacements"
                     + ",drawCommandsLive,drawInstancesLive,argumentElements,instanceElements,setDataCalls,wholeCalls,collectMs"
-                    + ",placePassesSkipped,placeFixedOmitted,placeHeldOmitted,placeFixed,structTallies,structTalliesSkipped,structTallyMs,instanceTakes,instanceTakesSkipped,instanceTakeMs");
+                    + ",placePassesSkipped,placeFixedOmitted,placeHeldOmitted,placeFixed,structTallies,structTalliesSkipped,structTallyMs,instanceTakes,instanceTakesSkipped,instanceTakeMs"
+                    + ",qpc,tid,cpuAtStamp,availCalls,availWholeMs,availContended,availWaitMs,availWaitMaxMsSoFar,availHeldMs,drawEvents,drawContended,drawHeldMs,drawHeldMaxMsSoFar,drawWaitMs"
+                    + ",availLastQpc,availLastCpu,drawTid,drawLastQpc,drawLastCpu"
+                    + ",ecrCalls,tickCalls,sentinelsIssued,promoted,prepDropped,entriesPending,ringsScanned,blocksScanned,entriesJudged,entriesReleased,resourcesReleased"
+                    + ",ecrDropMs,ecrWantMs,ecrDeviceMs,ecrIssueMs,ecrPromoteMs,tickDeviceMs,tickReadSentinelsMs,tickRingsMs,tickEntriesMs,tickReleaseMs");
                 foreach ((ProfilerCategory _, string name) in _markers) text.Append(',').Append(name);
                 text.Append('\n');
                 for (int r = 0; r < _rows; r++)
@@ -1546,7 +1660,15 @@ namespace Zantetsu.Sandbox
                         .Append(',').Append(_setDataCalls[r]).Append(',').Append(_wholeCalls[r]).Append(',').Append(_collectMs[r].ToString("R", Inv))
                         .Append(',').Append(_passesSkipped[r]).Append(',').Append(_fixedOmitted[r]).Append(',').Append(_heldOmitted[r]).Append(',').Append(_fixedHeld[r])
                         .Append(',').Append(_tallies[r]).Append(',').Append(_talliesSkipped[r]).Append(',').Append(_tallyMs[r].ToString("R", Inv))
-                        .Append(',').Append(_instanceTakes[r]).Append(',').Append(_instanceTakesSkipped[r]).Append(',').Append(_instanceTakeMs[r].ToString("R", Inv));
+                        .Append(',').Append(_instanceTakes[r]).Append(',').Append(_instanceTakesSkipped[r]).Append(',').Append(_instanceTakeMs[r].ToString("R", Inv))
+                        .Append(',').Append(_qpc[r]).Append(',').Append(_tid[r]).Append(',').Append(_cpu[r]).Append(',').Append(_availCalls[r]).Append(',').Append(_availWholeMs[r].ToString("R", Inv)).Append(',').Append(_availContended[r])
+                        .Append(',').Append(_availWaitMs[r].ToString("R", Inv)).Append(',').Append(_availWaitMaxMs[r].ToString("R", Inv)).Append(',').Append(_availHeldMs[r].ToString("R", Inv))
+                        .Append(',').Append(_drawEvents[r]).Append(',').Append(_drawContended[r]).Append(',').Append(_drawHeldMs[r].ToString("R", Inv)).Append(',').Append(_drawHeldMaxMs[r].ToString("R", Inv)).Append(',').Append(_drawWaitMs[r].ToString("R", Inv))
+                        .Append(',').Append(_availLastQpc[r]).Append(',').Append(_availLastCpu[r]).Append(',').Append(_drawTid[r]).Append(',').Append(_drawLastQpc[r]).Append(',').Append(_drawLastCpu[r])
+                        .Append(',').Append(_ecrCalls[r]).Append(',').Append(_tickCalls[r]).Append(',').Append(_sentinelsIssued[r]).Append(',').Append(_promoted[r]).Append(',').Append(_prepDropped[r]).Append(',').Append(_entriesPending[r])
+                        .Append(',').Append(_ringsScanned[r]).Append(',').Append(_blocksScanned[r]).Append(',').Append(_entriesJudged[r]).Append(',').Append(_entriesReleased[r]).Append(',').Append(_resourcesReleased[r])
+                        .Append(',').Append(_dropMs[r].ToString("R", Inv)).Append(',').Append(_wantMs[r].ToString("R", Inv)).Append(',').Append(_sealDeviceMs[r].ToString("R", Inv)).Append(',').Append(_issueMs[r].ToString("R", Inv)).Append(',').Append(_promoteMs[r].ToString("R", Inv))
+                        .Append(',').Append(_tickDeviceMs[r].ToString("R", Inv)).Append(',').Append(_readSentinelsMs[r].ToString("R", Inv)).Append(',').Append(_ringsMs[r].ToString("R", Inv)).Append(',').Append(_entriesMs[r].ToString("R", Inv)).Append(',').Append(_releaseMs[r].ToString("R", Inv));
                     for (int i = 0; i < _markers.Length; i++) text.Append(',').Append(_values[i][r]);
                     text.Append('\n');
                 }
