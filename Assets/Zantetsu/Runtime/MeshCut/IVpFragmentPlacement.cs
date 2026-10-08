@@ -67,4 +67,28 @@ namespace Zantetsu.MeshCut
         VpFragmentPlacementKind TryGetGeometryLocalToWorld(
             LogicalFragmentId fragment, CutOperationId operation, float side, out Matrix4x4 geometryLocalToWorld);
     }
+
+    /// <summary>
+    /// A placement lookup that can vouch, fragment by fragment, that where the fragment's shape stands does not change
+    /// with a physics step (TL, 2026-10-08; DESIGN 5.6). A display asks it once for a fragment it has just asked where
+    /// it stands; a fragment vouched for is **fixed**: a later step alone is no reason to ask it again, and it is drawn
+    /// where it was last answered until one of these:
+    /// <list type="bullet">
+    /// <item>the change is told -- <c>CutPhysicsStep.NotePlacementInputChanged(fragment)</c> (D-207), or one told with
+    /// no target: the fixed ones of that fragment's family (or every one) are asked once, and vouched for again or not;</item>
+    /// <item>the display's lookup is replaced (<c>VpLogicalCutDisplay.Placement</c>): every held and fixed one is asked once;</item>
+    /// <item>the fragment's structure part is made again (a cut, a commit, a split, a retirement, a new registration):
+    /// it starts ordinary and is asked;</item>
+    /// <item>the host stops vouching for its step count: everything is forgotten, as for the held ones.</item>
+    /// </list>
+    /// This is a guarantee the lookup gives, not a reading: a dynamic fragment whose answer happened to be the same
+    /// twice is **held** (D-205) and asked again when near a camera -- never fixed. Whoever vouches is responsible for
+    /// telling the change, as the static placed-target index's contract has it (D-192). A lookup that does not implement
+    /// this vouches for nothing.
+    /// </summary>
+    public interface IVpFixedPlacementSource
+    {
+        /// <summary>Whether <paramref name="fragment"/>'s placement changes only by a change told, never by a step alone.</summary>
+        bool IsPlacementFixed(LogicalFragmentId fragment);
+    }
 }

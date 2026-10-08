@@ -513,6 +513,8 @@ namespace Zantetsu.Sandbox
             private double[] _t, _real, _deltaMs, _ftCpu, _ftMain, _ftWait, _ftRender, _ftGpu, _xrGpu, _xrCompositor, _x, _y, _z, _yaw, _collectMs;
             private double[] _camX, _camY, _camZ, _camYaw;
             private long[] _builds, _placementPasses, _queries, _static, _argumentElements, _instanceElements, _setDataCalls, _wholeCalls;
+            private long[] _passesSkipped, _fixedOmitted, _heldOmitted, _fixedHeld, _tallies, _talliesSkipped, _instanceTakes, _instanceTakesSkipped;
+            private double[] _tallyMs, _instanceTakeMs;
             private long[][] _values;
             private bool _ownsDirectory;
 
@@ -903,6 +905,13 @@ namespace Zantetsu.Sandbox
                     }
                 }
                 string placement = VpDisplay != null ? "; the display asked where a target stands " + VpDisplay.PlacementAnswers + " times in all" : "";
+                if (world != null && world.Display != null && !world.Display.IsDisposed)
+                {
+                    VpLogicalCutDisplay d = world.Display;
+                    placement += "; static data kept (2026-10-08): placement passes skipped " + d.PlacementPassesSkipped + " (reused without a step " + d.PlacementReuses + "), fixed placements now " + d.FixedPlacements
+                        + " / held " + d.HeldPlacements + ", structure tallies run " + d.StructureTallies + " / kept " + d.StructureTalliesSkipped
+                        + ", instance takes run " + d.InstanceTakes + " / kept " + d.InstanceTakesSkipped;
+                }
                 bool wrote = true;
                 try
                 {
@@ -1017,6 +1026,9 @@ namespace Zantetsu.Sandbox
                 _x = new double[_room]; _y = new double[_room]; _z = new double[_room]; _yaw = new double[_room]; _collectMs = new double[_room];
                 _camX = new double[_room]; _camY = new double[_room]; _camZ = new double[_room]; _camYaw = new double[_room];
                 _builds = new long[_room]; _placementPasses = new long[_room]; _queries = new long[_room]; _static = new long[_room];
+                _passesSkipped = new long[_room]; _fixedOmitted = new long[_room]; _heldOmitted = new long[_room]; _fixedHeld = new long[_room];
+                _tallies = new long[_room]; _talliesSkipped = new long[_room]; _instanceTakes = new long[_room]; _instanceTakesSkipped = new long[_room];
+                _tallyMs = new double[_room]; _instanceTakeMs = new double[_room];
                 _argumentElements = new long[_room]; _instanceElements = new long[_room]; _setDataCalls = new long[_room]; _wholeCalls = new long[_room];
                 _values = new long[_markers.Length][];
                 for (int i = 0; i < _markers.Length; i++) _values[i] = new long[_room];
@@ -1050,6 +1062,18 @@ namespace Zantetsu.Sandbox
                         _placementPasses[before] = counts.placementPasses;
                         _queries[before] = (counts.placeStructural != null ? counts.placeStructural.queries : 0) + (counts.placePlacementOnly != null ? counts.placePlacementOnly.queries : 0);
                         _static[before] = (counts.placeStructural != null ? counts.placeStructural.staticPlacements : 0) + (counts.placePlacementOnly != null ? counts.placePlacementOnly.staticPlacements : 0);
+                        // The static data's reuse (TL, 2026-10-08): passes a step did not make, the fixed and held ones not asked, and
+                        // the structure tallies and instance takes run or kept.
+                        _passesSkipped[before] = counts.statics.passesSkipped;
+                        _fixedOmitted[before] = counts.holds.omittedFixed;
+                        _heldOmitted[before] = counts.holds.omitted;
+                        _fixedHeld[before] = counts.holds.fixedAtEnd;
+                        _tallies[before] = counts.statics.tallies;
+                        _talliesSkipped[before] = counts.statics.talliesSkipped;
+                        _instanceTakes[before] = counts.statics.instanceTakes;
+                        _instanceTakesSkipped[before] = counts.statics.instanceTakesSkipped;
+                        _tallyMs[before] = counts.statics.tallySeconds * 1000.0;
+                        _instanceTakeMs[before] = counts.statics.instanceTakeSeconds * 1000.0;
                         _commandsLive[before] = counts.draw.commandsLive;
                         _instancesLive[before] = counts.draw.instancesLive;
                         _argumentElements[before] = counts.draw.argumentElements;
@@ -1504,7 +1528,8 @@ namespace Zantetsu.Sandbox
                 var text = new StringBuilder(_rows * 320);
                 text.Append("frame,t,segment,real,deltaMs,ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,eyeX,eyeY,eyeZ,yaw,camX,camY,camZ,camYaw,gcCount"
                     + ",displayCollections,displayRoomGrowths,displaySnapshotRegrowths,displayBuilds,displayPlacementPasses,placeQueries,placeStatic,displayRenderFragments,displayGpuReplacements"
-                    + ",drawCommandsLive,drawInstancesLive,argumentElements,instanceElements,setDataCalls,wholeCalls,collectMs");
+                    + ",drawCommandsLive,drawInstancesLive,argumentElements,instanceElements,setDataCalls,wholeCalls,collectMs"
+                    + ",placePassesSkipped,placeFixedOmitted,placeHeldOmitted,placeFixed,structTallies,structTalliesSkipped,structTallyMs,instanceTakes,instanceTakesSkipped,instanceTakeMs");
                 foreach ((ProfilerCategory _, string name) in _markers) text.Append(',').Append(name);
                 text.Append('\n');
                 for (int r = 0; r < _rows; r++)
@@ -1518,7 +1543,10 @@ namespace Zantetsu.Sandbox
                         .Append(',').Append(_gc[r]).Append(',').Append(_collections[r]).Append(',').Append(_roomGrowths[r]).Append(',').Append(_snapshotRegrowths[r]).Append(',').Append(_builds[r])
                         .Append(',').Append(_placementPasses[r]).Append(',').Append(_queries[r]).Append(',').Append(_static[r]).Append(',').Append(_renderFragments[r]).Append(',').Append(_gpuReplacements[r])
                         .Append(',').Append(_commandsLive[r]).Append(',').Append(_instancesLive[r]).Append(',').Append(_argumentElements[r]).Append(',').Append(_instanceElements[r])
-                        .Append(',').Append(_setDataCalls[r]).Append(',').Append(_wholeCalls[r]).Append(',').Append(_collectMs[r].ToString("R", Inv));
+                        .Append(',').Append(_setDataCalls[r]).Append(',').Append(_wholeCalls[r]).Append(',').Append(_collectMs[r].ToString("R", Inv))
+                        .Append(',').Append(_passesSkipped[r]).Append(',').Append(_fixedOmitted[r]).Append(',').Append(_heldOmitted[r]).Append(',').Append(_fixedHeld[r])
+                        .Append(',').Append(_tallies[r]).Append(',').Append(_talliesSkipped[r]).Append(',').Append(_tallyMs[r].ToString("R", Inv))
+                        .Append(',').Append(_instanceTakes[r]).Append(',').Append(_instanceTakesSkipped[r]).Append(',').Append(_instanceTakeMs[r].ToString("R", Inv));
                     for (int i = 0; i < _markers.Length; i++) text.Append(',').Append(_values[i][r]);
                     text.Append('\n');
                 }

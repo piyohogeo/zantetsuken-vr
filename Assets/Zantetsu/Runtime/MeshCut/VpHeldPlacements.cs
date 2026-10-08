@@ -86,11 +86,19 @@ namespace Zantetsu.MeshCut
         // forgetting empties the tree at once and is counted in structureResets, not here).
         public long treeInserts, treeRemovals;
 
+        // The fixed ones (TL, 2026-10-08; IVpFixedPlacementSource): not asked in a pass because the lookup vouches that
+        // a step does not move them (apart from omitted, which is the held and far); asked all the same, for a change
+        // told of their family or with no target, or a lookup replaced; ordinary ones that became fixed (vouched for
+        // when asked and standing); fixed ones that became ordinary (asked and no longer vouched for, or moved).
+        public long omittedFixed, queriedFixed, fixedTaken, unfixed;
+
         // Not sums: as they stood after the last collection added.
-        public int heldAtEnd, ordinaryAtEnd, pointsAtEnd;
+        public int heldAtEnd, ordinaryAtEnd, pointsAtEnd, fixedAtEnd;
 
         public void Add(in VpHeldPlacementTotals a)
         {
+            omittedFixed += a.omittedFixed; queriedFixed += a.queriedFixed; fixedTaken += a.fixedTaken; unfixed += a.unfixed;
+            fixedAtEnd = a.fixedAtEnd;
             passesSelective += a.passesSelective; passesStructure += a.passesStructure; passesUnvouched += a.passesUnvouched; passesOther += a.passesOther;
             omitted += a.omitted; queriedOrdinary += a.queriedOrdinary; queriedNear += a.queriedNear; queriedSelected += a.queriedSelected; queriedNotified += a.queriedNotified;
             queriedUnvouched += a.queriedUnvouched; queriedOther += a.queriedOther; toldFamilies += a.toldFamilies;
@@ -106,6 +114,7 @@ namespace Zantetsu.MeshCut
 
         public void Subtract(in VpHeldPlacementTotals a)
         {
+            omittedFixed -= a.omittedFixed; queriedFixed -= a.queriedFixed; fixedTaken -= a.fixedTaken; unfixed -= a.unfixed;
             passesSelective -= a.passesSelective; passesStructure -= a.passesStructure; passesUnvouched -= a.passesUnvouched; passesOther -= a.passesOther;
             omitted -= a.omitted; queriedOrdinary -= a.queriedOrdinary; queriedNear -= a.queriedNear; queriedSelected -= a.queriedSelected; queriedNotified -= a.queriedNotified;
             queriedUnvouched -= a.queriedUnvouched; queriedOther -= a.queriedOther; toldFamilies -= a.toldFamilies;
@@ -201,13 +210,14 @@ namespace Zantetsu.MeshCut
 
         private readonly Tree _tree = new Tree();
         private long[] _readStep = Array.Empty<long>(), _readStepNext = Array.Empty<long>();   // the step whose result the adopted placement was first seen at
-        private int[] _leaf = Array.Empty<int>(), _leafNext = Array.Empty<int>();              // a held one's leaf in the tree; -1 while ordinary
-        private int[] _ordinaryAt = Array.Empty<int>();   // an ordinary one's place in _ordinary; -1 while held
+        private int[] _leaf = Array.Empty<int>(), _leafNext = Array.Empty<int>();              // a held one's leaf in the tree; -1 while ordinary or fixed
+        private bool[] _fixed = Array.Empty<bool>(), _fixedNext = Array.Empty<bool>();          // vouched for by the lookup (IVpFixedPlacementSource): not in the tree, not ordinary
+        private int[] _ordinaryAt = Array.Empty<int>();   // an ordinary one's place in _ordinary; -1 while held or fixed
         private int[] _ordinary = Array.Empty<int>();
-        private int _ordinaryCount, _count, _nextCount;
+        private int _ordinaryCount, _fixedCount, _count, _nextCount;
         private ulong[] _picked = Array.Empty<ulong>();   // this pass's targets: the ordinary and the held found near
-        private int _pickedWords;
-        private bool _valid, _outsideKnown, _allHeldAsked;
+        private int _pickedWords, _pickedCount;
+        private bool _valid, _outsideKnown, _allHeldAsked, _pickedThisPass;
         private long _stampLedger = -1, _stampInputs = -1, _outside;
 
         // Which mapping the parts' marks are of: a part marked with another number was not in the last mapping.
@@ -248,13 +258,18 @@ namespace Zantetsu.MeshCut
             get
             {
                 VpHeldPlacementTotals t = _totals;
-                t.heldAtEnd = HeldCount; t.ordinaryAtEnd = _valid ? _ordinaryCount : 0; t.pointsAtEnd = _points.Count;
+                t.heldAtEnd = HeldCount; t.ordinaryAtEnd = _valid ? _ordinaryCount : 0; t.pointsAtEnd = _points.Count; t.fixedAtEnd = FixedCount;
                 return t;
             }
         }
 
-        public int HeldCount => _valid ? _count - _ordinaryCount : 0;
+        public int HeldCount => _valid ? _count - _ordinaryCount - _fixedCount : 0;
+        public int FixedCount => _valid ? _fixedCount : 0;
         public bool IsHeld(int renderFragment) => _valid && renderFragment < _count && _leaf[renderFragment] >= 0;
+        public bool IsFixed(int renderFragment) => _valid && renderFragment < _count && _fixed[renderFragment];
+
+        /// <summary>How many targets the last picking took: the pass asks these and no other (0: a pass that would ask nothing).</summary>
+        public int PickedCount => _pickedThisPass ? _pickedCount : -1;
 
         /// <summary>
         /// Before a snapshot is built: whether the host vouches for its counts and names reference points (it may name
@@ -265,6 +280,7 @@ namespace Zantetsu.MeshCut
             _active = active;
             _step = step;
             _passOutside = outside;
+            _pickedThisPass = false;   // a new pass: its targets are picked once, by whichever asks first
             _points.Clear();
             if (active && points != null) for (int i = 0; i < points.Count; i++) _points.Add(points[i]);
             if (_viewEyes.Length < _points.Count)
@@ -324,6 +340,7 @@ namespace Zantetsu.MeshCut
             _valid = false;
             _tree.Clear();
             _ordinaryCount = 0;
+            _fixedCount = 0;
             _count = 0;
             _outsideKnown = false;
             _epoch++;   // no part's mark is of this mapping any more
@@ -383,6 +400,7 @@ namespace Zantetsu.MeshCut
                     int leaf = _leaf[old + j];
                     _readStepNext[start + j] = _readStep[old + j];
                     _leafNext[start + j] = leaf;
+                    _fixedNext[start + j] = _fixed[old + j];   // the same part: the lookup's word stands with it
                     if (leaf >= 0)
                     {
                         _tree.SetItem(leaf, start + j);   // the box stands as it is; only what it is called changes
@@ -398,6 +416,7 @@ namespace Zantetsu.MeshCut
                 {
                     _readStepNext[start + j] = Unknown;
                     _leafNext[start + j] = -1;
+                    _fixedNext[start + j] = false;   // a part made again starts ordinary: asked, and vouched for again or not
                 }
 
                 _totals.fresh += n;
@@ -443,13 +462,20 @@ namespace Zantetsu.MeshCut
 
             (_readStep, _readStepNext) = (_readStepNext, _readStep);
             (_leaf, _leafNext) = (_leafNext, _leaf);
+            (_fixed, _fixedNext) = (_fixedNext, _fixed);
             _count = _nextCount;
             _ordinaryCount = 0;
+            _fixedCount = 0;
             for (int r = 0; r < _count; r++)
             {
                 if (_leaf[r] >= 0)
                 {
                     _ordinaryAt[r] = -1;
+                }
+                else if (_fixed[r])
+                {
+                    _ordinaryAt[r] = -1;
+                    _fixedCount++;
                 }
                 else
                 {
@@ -480,6 +506,13 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            if (_pickedThisPass)
+            {
+                // The display picked this pass's targets before the build, to know whether the pass had any: the same
+                // pass, the same structure (SetPass began it); nothing is picked twice.
+                return true;
+            }
+
             if (!_valid || _count != count || _stampLedger != stampLedger || _stampInputs != stampInputs)
             {
                 // A structure these were not mapped for (they are mapped in the pass that goes through the structure):
@@ -488,10 +521,12 @@ namespace Zantetsu.MeshCut
                 Room(count);
                 _count = count;
                 _ordinaryCount = count;
+                _fixedCount = 0;
                 for (int r = 0; r < count; r++)
                 {
                     _readStep[r] = Unknown;
                     _leaf[r] = -1;
+                    _fixed[r] = false;
                     _ordinaryAt[r] = r;
                     _ordinary[r] = r;
                 }
@@ -515,6 +550,7 @@ namespace Zantetsu.MeshCut
             _allHeldAsked = all && _count != _ordinaryCount;
             if (_allHeldAsked) _totals.invalidations++;
             _toldAny = false;
+            _pickedThisPass = true;
 
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             _pickedWords = (_count + 63) >> 6;
@@ -522,6 +558,7 @@ namespace Zantetsu.MeshCut
             {
                 for (int w = 0; w < _pickedWords; w++) _picked[w] = ulong.MaxValue;
                 if ((_count & 63) != 0) _picked[_pickedWords - 1] = (1UL << (_count & 63)) - 1UL;
+                _pickedCount = _count;
             }
             else
             {
@@ -582,8 +619,9 @@ namespace Zantetsu.MeshCut
                 _totals.viewSeconds += viewSeconds;
                 began += (long)(viewSeconds * System.Diagnostics.Stopwatch.Frequency);   // the search's time, without the view's
 
-                // The held ones of the families told: through the family's registrations, as the last mapping had them.
-                int toldNow = 0;
+                // The held and the fixed ones of the families told: through the family's registrations, as the last
+                // mapping had them.
+                int toldNow = 0, toldFixed = 0;
                 if (_told.Count > 0)
                 {
                     if (_toldBits.Length < _pickedWords) _toldBits = new ulong[_picked.Length];
@@ -597,18 +635,20 @@ namespace Zantetsu.MeshCut
                         {
                             for (int r = _partStart[part], end = r + _partRenders[part]; r < end; r++)
                             {
-                                if (_leaf[r] < 0) continue;   // ordinary: asked anyway
+                                if (_leaf[r] < 0 && !_fixed[r]) continue;   // ordinary: asked anyway
                                 ulong bit = 1UL << (r & 63);
                                 _toldBits[r >> 6] |= bit;
                                 if ((_picked[r >> 6] & bit) != 0) continue;
                                 _picked[r >> 6] |= bit;
-                                toldNow++;
+                                if (_fixed[r]) toldFixed++; else toldNow++;
                             }
                         }
                     }
                 }
 
-                _totals.omitted += _count - _ordinaryCount - near - toldNow;
+                _totals.omitted += _count - _ordinaryCount - _fixedCount - near - toldNow;
+                _totals.omittedFixed += _fixedCount - toldFixed;
+                _pickedCount = _ordinaryCount + near + toldNow + toldFixed;
 
                 // Of the near ones, those left unasked: they met no view (one told of is asked, in view or not).
                 if (candidates > near)
@@ -652,17 +692,47 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// A render fragment was asked and stands, bit for bit, where the adopted snapshot has it (the keep test held).
-        /// An ordinary one whose adopted placement is known from another step's result becomes held.
+        /// One the lookup vouches for (<paramref name="fixedVouched"/>, IVpFixedPlacementSource) is fixed from here: not
+        /// asked again for a step. Otherwise an ordinary one whose adopted placement is known from another step's result
+        /// becomes held; a fixed one no longer vouched for is ordinary again.
         /// </summary>
-        public void Stood(int r, bool wasHeld, in Bounds localBounds, in Matrix4x4 geometryLocalToWorld)
+        public void Stood(int r, bool wasHeld, in Bounds localBounds, in Matrix4x4 geometryLocalToWorld, bool fixedVouched)
         {
+            if (_fixed[r])
+            {
+                // Asked though fixed: told of, or every one asked. Standing where it was, it stays fixed while vouched for.
+                _totals.queriedFixed++;
+                if (!fixedVouched) Unfix(r);
+                return;
+            }
+
             if (wasHeld)
             {
                 CountHeldAsked(r);
+                if (fixedVouched)
+                {
+                    // Held by a reading, and now vouched for by the lookup: fixed, and out of the tree (nearness asks it no more).
+                    long leaving = System.Diagnostics.Stopwatch.GetTimestamp();
+                    _tree.Remove(_leaf[r]);
+                    _totals.treeRemovals++;
+                    _leaf[r] = -1;
+                    _fixed[r] = true;
+                    _fixedCount++;
+                    _totals.fixedTaken++;
+                    _totals.updateSeconds += SecondsSince(leaving);
+                }
+
                 return;
             }
 
             _totals.queriedOrdinary++;
+            if (fixedVouched)
+            {
+                // The lookup's guarantee, not a reading of two steps: fixed at once, outside the tree.
+                MakeFixed(r);
+                return;
+            }
+
             long read = _readStep[r];
             if (read == Unknown)
             {
@@ -692,8 +762,18 @@ namespace Zantetsu.MeshCut
         /// held one is ordinary again -- unless <paramref name="standsWhereHeld"/>: it was built again only for its
         /// ranges and stands, bit for bit, where it is held. Otherwise its placement is of this step.
         /// </summary>
-        public void PlacedAnew(int r, bool wasHeld, bool selected, bool standsWhereHeld)
+        public void PlacedAnew(int r, bool wasHeld, bool selected, bool standsWhereHeld, bool fixedVouched)
         {
+            if (_fixed[r])
+            {
+                // Asked though fixed (told of, or every one asked) and placed anew: it moved as told, or it is clipped
+                // now. Ordinary from here; a standing answer at a later pass, still vouched for, makes it fixed again.
+                _totals.queriedFixed++;
+                Unfix(r);
+                _readStep[r] = _step;
+                return;
+            }
+
             if (wasHeld)
             {
                 CountHeldAsked(r);
@@ -719,6 +799,28 @@ namespace Zantetsu.MeshCut
             _readStep[r] = _step;
         }
 
+        // An ordinary one becomes fixed: out of the ordinary list, no leaf (nearness never asks it).
+        private void MakeFixed(int r)
+        {
+            _fixed[r] = true;
+            _fixedCount++;
+            int at = _ordinaryAt[r], last = _ordinary[--_ordinaryCount];
+            _ordinary[at] = last;
+            _ordinaryAt[last] = at;
+            _ordinaryAt[r] = -1;
+            _totals.fixedTaken++;
+        }
+
+        // A fixed one becomes ordinary: asked in every pass until it stands and is vouched for again.
+        private void Unfix(int r)
+        {
+            _fixed[r] = false;
+            _fixedCount--;
+            _ordinaryAt[r] = _ordinaryCount;
+            _ordinary[_ordinaryCount++] = r;
+            _totals.unfixed++;
+        }
+
         // A held one was asked: for a change told (of its family, or with no target), or because a proximity box met it
         // and, where that box's camera has a view, the view did too.
         private void CountHeldAsked(int r)
@@ -736,6 +838,8 @@ namespace Zantetsu.MeshCut
             Array.Resize(ref _readStepNext, room);
             Array.Resize(ref _leaf, room);
             Array.Resize(ref _leafNext, room);
+            Array.Resize(ref _fixed, room);
+            Array.Resize(ref _fixedNext, room);
             Array.Resize(ref _ordinaryAt, room);
             Array.Resize(ref _ordinary, room);
             Array.Resize(ref _picked, (room + 63) >> 6);
