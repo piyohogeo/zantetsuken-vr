@@ -2,6 +2,8 @@
 
 2026-10-09 JST。専用worktree `%USERPROFILE%/src/zantetsuken-vr-quest3s`、ブランチ `quest3s-appsw`。
 
+最新のカラー準備分離・pass統合と測定結果は[準備分離の記録](quest3s-vulkan-colour-pass-preparation.md)を参照。以下の初期実装の計測値は履歴として保持する。
+
 ## 実装
 
 Android ARM64の `libZantetsuVpVulkan.so` を追加。Questの `vp3c-native` モードはUnityのVulkan command buffer上に `vkCmdDrawIndexedIndirect` を記録する。GPUが作った24-byte entryの先頭command IDを飛ばし、残る20-byte indexed argumentsをstride 24で読む。1602 commandをCPUで1602回発行せず、一つのmulti-drawで渡す。

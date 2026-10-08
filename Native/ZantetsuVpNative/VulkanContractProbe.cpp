@@ -25,6 +25,31 @@ int main(int argc, char** argv) {
         std::printf("%s: uniform=%u storage=%u images=%u samplers=%u\n",argv[i],uniform,storage,images,samplers);
     }
     assert(Range(8,2,4,16) && !Range(8,3,4,16) && !Range(UINT32_MAX,2,4,16));
-    std::printf("ABI / parser / malformed input / event ranges: passed\n");
+    // Preparation errors must not release the shared managed block before its queued draw callback.
+    available=true;
+    pipelines[100]=std::make_unique<Pipeline>();
+    ZvnDraw draw{};
+    draw.version=ZVN_CONTRACT_VERSION;draw.pipeline=100;draw.serial=7;
+    draw.commandCount=1;draw.viewportCount=1;draw.indexFormat=42;
+    draw.totalBytes=sizeof draw;draw.resourcesOffset=sizeof draw+1;draw.resourceCount=1;
+    auto refused=counters.drawsRefused;
+    Event(PrepareEvent,&draw);
+    assert(draw.consumed==0 && counters.drawsRefused==refused && preparedDraws.size()==1);
+    Event(PreparedDrawEvent,&draw);
+    assert(draw.consumed==1 && draw.result==ZvnResult_BadResource && counters.drawsRefused==refused+1 && preparedDraws.empty());
+    draw.consumed=0;draw.serial++;
+    Event(PreparedDrawEvent,&draw); // A new generation cannot use an earlier generation's prepared descriptors.
+    assert(draw.consumed==1 && draw.result==ZvnResult_BadResource && counters.drawsRefused==refused+2);
+    draw.consumed=0;draw.serial++;draw.version=0;
+    Event(PrepareEvent,&draw);
+    assert(draw.consumed==0 && preparedDraws.size()==1);
+    Event(PreparedDrawEvent,&draw);
+    assert(draw.consumed==1 && draw.result==ZvnResult_BadVersion && preparedDraws.empty());
+    draw.consumed=0;draw.serial++;
+    Event(PrepareEvent,&draw); // An abandoned preparation is retired by frame safety, without reading the block.
+    Retire(currentFrame.load());
+    assert(preparedDraws.empty());
+    pipelines.erase(100);available=false;
+    std::printf("ABI / parser / malformed input / event ranges / paired preparation lifetime: passed\n");
     return 0;
 }
