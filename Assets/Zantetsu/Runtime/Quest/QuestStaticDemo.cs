@@ -23,10 +23,12 @@ namespace Zantetsu.Quest
             public int warmupLaps = 1;
             public bool appSw = true;
             public bool profiler = false;
-            public bool quitWhenDone = true;
+            public bool quitWhenDone = false;
+            public bool headTracked = true;
         }
         private Config _config;
         private Camera _camera;
+        private SandboxDrawComparePlayerCheck.Runner _runner;
         private bool _spaceWarpApplied;
         private float _nextStatus;
         private readonly System.Collections.Generic.List<XRDisplaySubsystem> _displays = new System.Collections.Generic.List<XRDisplaySubsystem>();
@@ -46,6 +48,8 @@ namespace Zantetsu.Quest
         {
             _camera = Camera.main;
             if (_camera == null) throw new InvalidOperationException("Quest static demo requires MainCamera");
+            if (GraphicsSettings.currentRenderPipeline == null || GraphicsSettings.currentRenderPipeline.name != "Quest_RPAsset")
+                throw new InvalidOperationException("Quest static demo requires Quest_RPAsset; scenario pipeline was not configured");
             string configPath = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
             _config = File.Exists(configPath) ? JsonUtility.FromJson<Config>(File.ReadAllText(configPath)) : new Config();
             if (_config == null || (_config.mode != "unity" && _config.mode != "vp3c")) throw new InvalidOperationException("mode must be unity or vp3c");
@@ -67,7 +71,7 @@ namespace Zantetsu.Quest
             Application.targetFrameRate = -1; // OpenXR AppSW controls cadence; 45 targetFrameRate alone is insufficient.
             string directory = Path.Combine(Application.persistentDataPath, "runs", DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ") + "-" + _config.mode + "-" + Guid.NewGuid().ToString("N").Substring(0, 6));
             Directory.CreateDirectory(directory);
-            File.WriteAllLines(Path.Combine(directory, "platform.txt"), new[] { "buildGUID=" + Application.buildGUID, "unity=" + Application.unityVersion, "device=" + SystemInfo.deviceModel, "graphics=" + SystemInfo.graphicsDeviceType + " / " + SystemInfo.graphicsDeviceName, "AppSW requested=" + _config.appSw + "; display requested=90 Hz; verify QUEST STATIC and VrApi logcat for actual cadence" });
+            File.WriteAllLines(Path.Combine(directory, "platform.txt"), new[] { "buildGUID=" + Application.buildGUID, "unity=" + Application.unityVersion, "device=" + SystemInfo.deviceModel, "graphics=" + SystemInfo.graphicsDeviceType + " / " + SystemInfo.graphicsDeviceName, "MSAA requested=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount, "AppSW requested=" + _config.appSw + "; display requested=90 Hz; verify QUEST STATIC and VrApi logcat for actual cadence" });
             File.WriteAllText(Path.Combine(directory, "quest-config.json"), JsonUtility.ToJson(_config, true));
             File.WriteAllText(Path.Combine(directory, "path.txt"), pathText);
             // The shared runner requires its own initially empty output directory.
@@ -76,11 +80,12 @@ namespace Zantetsu.Quest
                 directory = Path.Combine(directory, "comparison"), path = path, geometryFile = geometryPath,
                 mode = _config.mode == "unity" ? SandboxDrawComparePlayerCheck.Mode.Unity : SandboxDrawComparePlayerCheck.Mode.Vp3c,
                 warmupLaps = _config.warmupLaps,
+                headTracked = _config.headTracked, retainSceneAfterMeasurement = !_config.quitWhenDone,
                 profilerFile = _config.profiler ? Path.Combine(directory, "profile.raw") : null,
             };
             RenderPipelineManager.beginCameraRendering += BeforeCamera;
             Debug.Log("QUEST STATIC: mode=" + _config.mode + " AppSW=" + _config.appSw + " output=" + directory + " geometry=" + geometryPath);
-            SandboxDrawComparePlayerCheck.StartPrepared(settings, _config.quitWhenDone);
+            _runner = SandboxDrawComparePlayerCheck.StartPrepared(settings, _config.quitWhenDone);
         }
 
         private void Update()
@@ -95,7 +100,8 @@ namespace Zantetsu.Quest
             {
                 xr.TryGetDisplayRefreshRate(out float refresh);
                 xr.TryGetAppGPUTimeLastFrame(out float gpu);
-                Debug.Log("QUEST STATIC: refreshHz=" + refresh + " AppSWApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
+                QuestDisplayRefreshRateFeature.TryReadReported(out float physicalRefresh);
+                Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
 
