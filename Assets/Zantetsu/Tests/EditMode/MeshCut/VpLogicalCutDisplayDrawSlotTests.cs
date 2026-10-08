@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using Zantetsu.Rendering;
@@ -125,6 +126,73 @@ namespace Zantetsu.MeshCut.Tests
             }
 
             return differing;
+        }
+
+        [Test]
+        public void SeparateClipDraws_CollectsActualClippedInstancesInsideMixedStableCommands_WithoutDrawingFreeSlots()
+        {
+            var box = new Bounds(Vector3.zero, Vector3.one);
+            var commands = new NativeArray<VpIndirectCommand>(3, Allocator.Temp);
+            var starts = new NativeArray<int>(3, Allocator.Temp);
+            var clips = new NativeArray<VpInstanceClip>(12, Allocator.Temp);
+            try
+            {
+                commands[0] = new VpIndirectCommand(new VpGeometryRange(0, 3, 0, 3), box, 3);
+                commands[1] = new VpIndirectCommand(new VpGeometryRange(0, 3, 3, 3), box, 0);
+                commands[2] = new VpIndirectCommand(new VpGeometryRange(0, 3, 6, 3), box, 2);
+                starts[0] = 6;
+                starts[1] = 0;
+                starts[2] = 2;
+                VpInstanceClip cut = VpInstanceClip.Keep(new Vector4(0f, 1f, 0f, 0f), 1f);
+                clips[0] = cut; // a retired record, named by no live command
+                clips[7] = cut; // the middle instance in a mixed command
+                clips[3] = cut;
+                var records = new List<VpLogicalCutDisplay.ClipDrawRecord>();
+                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 3, records);
+                Assert.That(records.Count, Is.EqualTo(2));
+                Assert.That(new[] { records[0].command, records[0].instance, records[1].command, records[1].instance },
+                    Is.EqualTo(new[] { 0, 7, 2, 3 }), "no command-level classification or packed-prefix assumption");
+                clips[7] = VpInstanceClip.None;
+                clips[3] = VpInstanceClip.None;
+                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 3, records);
+                Assert.That(records, Is.Empty, "old membership is removed; the retired clipped record stays undrawn");
+            }
+            finally
+            {
+                clips.Dispose();
+                starts.Dispose();
+                commands.Dispose();
+            }
+        }
+
+        [Test]
+        public void SeparateClipDraws_CacheUsesAdoptedSlots_StandsForPlacements_AndEmptiesAfterGeometryCommit()
+        {
+            using (Twin twin = NewTwin(3, 64, true))
+            {
+                CollectBoth(twin, "whole bodies");
+                VpLogicalCutDisplay display = twin.kept.Display;
+                Assert.That(display.ClipDrawCountForTest, Is.Zero);
+                var plane = Normalized(new float4(0.2f, 1f, 0.1f, -0.1f));
+                (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) made = default;
+                Both(twin, run => made = CutAndPlace(run, 1, plane, Stand(1)));
+                CollectBoth(twin, "cut published");
+                Assert.That(display.ClipDrawCountForTest, Is.EqualTo(2), "only the two temporary clipped sides");
+                var first = display.ClipDrawRecordForTest(0);
+                var second = display.ClipDrawRecordForTest(1);
+                Assert.That(first.command, Is.EqualTo(second.command), "both clipped sides share the stable CPU command");
+                long builds = display.ClipDrawListBuildsForTest;
+                Both(twin, run => run.at.Put(made.positive, Stand(1, 2f)).Put(run.bodies[0], Stand(0, 1f)));
+                CollectBoth(twin, "placements changed");
+                Assert.That(display.ClipDrawListBuildsForTest, Is.EqualTo(builds), "moving a body does not scan the scene for clips again");
+                Assert.That(display.ClipDrawRecordForTest(0).instance, Is.EqualTo(first.instance));
+                Assert.That(display.InstanceRecordClipForTest(first.instance).PlaneCount, Is.GreaterThan(0));
+                Assert.That(display.ClipDrawRecordForTest(1).instance, Is.EqualTo(second.instance));
+                _frame++;
+                Both(twin, run => Assert.That(CommitBothSides(run, 1, made.cut, plane, made.positive, made.negative), Is.True));
+                CollectBoth(twin, "geometry committed");
+                Assert.That(display.ClipDrawCountForTest, Is.Zero, "settled geometry returns to the ordinary no-clip route");
+            }
         }
 
         [Test]

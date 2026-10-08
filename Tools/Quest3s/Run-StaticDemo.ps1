@@ -11,6 +11,7 @@ param(
     [switch]$AppSwOff,
     [switch]$KeepOpen,
     [switch]$LegacyNativeColour,
+    [switch]$DirectClipProbe,
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe'
 )
@@ -28,6 +29,7 @@ $config = @{ mode = $Mode; warmupLaps = $WarmupLaps; appSw = !$AppSwOff; profile
 if ($PathFile) { Invoke-Adb push $PathFile "$deviceFiles/compare-path.txt"; $config.pathFile = "$deviceFiles/compare-path.txt" }
 if ($GeometryFile) { Invoke-Adb push $GeometryFile "$deviceFiles/override-geometry.vpdc"; $config.geometryFile = "$deviceFiles/override-geometry.vpdc" }
 $config.nativeColourPreparation = !$LegacyNativeColour
+$config.directClipProbe = [bool]$DirectClipProbe
 $configFile = Join-Path ([IO.Path]::GetTempPath()) ('quest-static-' + [guid]::NewGuid().ToString('N') + '.json')
 try {
     [IO.File]::WriteAllText($configFile, ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))

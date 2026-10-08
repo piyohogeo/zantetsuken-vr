@@ -58,6 +58,7 @@ namespace Zantetsu.Rendering
         private static readonly int CullCommandsId = Shader.PropertyToID("_VpCullCommands");
         private static readonly int ShadowSliceSelectionId = Shader.PropertyToID("_VpShadowSliceSelection");
         private static readonly int CommandCountId = Shader.PropertyToID("_VpCommandCount");
+        private static readonly int CullExcludeClippedId = Shader.PropertyToID("_VpCullExcludeClipped");
         private static readonly int ArgumentStrideId = Shader.PropertyToID("_VpArgumentStride");
         private static readonly int ArgumentOffsetId = Shader.PropertyToID("_VpArgumentOffset");
         private static readonly int ForwardMultiplierId = Shader.PropertyToID("_VpForwardMultiplier");
@@ -1383,11 +1384,14 @@ namespace Zantetsu.Rendering
         /// and <see cref="RenderShadows(Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera, int)"/>
         /// are drawn, and it is the caller that puts it there. Nothing is read back and nothing waits.
         /// <para>
+        /// When <paramref name="excludeClipped"/> is true, instances with a valid clip plane are omitted from both
+        /// lists: a separate direct draw owns them. False preserves the Unity and Direct3D 12 selection. With no clip
+        /// instance in the scene the caller leaves it false, and the compute reads no clip record.
         /// Every uploaded command's arguments are written, whatever was kept. With no command uploaded there is nothing
         /// to draw and nothing is issued. The conditions are copied as they are now.
         /// </para>
         /// </summary>
-        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions)
+        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions, bool excludeClipped = false)
         {
             ThrowIfDisposed();
             ThrowIfNotCulled();
@@ -1410,6 +1414,7 @@ namespace Zantetsu.Rendering
             ComputeShader shader = _cull.Shader;
             int kernel = _cull.Kernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
+            commands.SetComputeIntParam(shader, CullExcludeClippedId, excludeClipped ? 1 : 0);
             commands.SetComputeIntParam(shader, ArgumentStrideId, _cull.ArgumentStride);
             commands.SetComputeIntParam(shader, ArgumentOffsetId, _cull.ArgumentOffset);
             commands.SetComputeIntParam(shader, ForwardMultiplierId, SinglePassInstanced ? 2 : 1);
@@ -1420,6 +1425,9 @@ namespace Zantetsu.Rendering
             commands.SetComputeVectorArrayParam(shader, ShadowPlanesId, conditions.shadowPlanes);
             commands.SetComputeBufferParam(shader, kernel, CullCommandsId, _cullCommandBuffer);
             commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
+            // Even when the switch is off the resource must be bound for the compute kernel. The dynamic branch
+            // reads no clip record unless clipped instances are being drawn through the separate CPU list.
+            commands.SetComputeBufferParam(shader, kernel, InstanceClipId, _instanceClipBuffer);
             commands.SetComputeBufferParam(shader, kernel, ForwardVisibleId, target.forwardVisible);
             commands.SetComputeBufferParam(shader, kernel, ForwardArgumentsId, target.forwardArguments);
             commands.SetComputeBufferParam(shader, kernel, ShadowVisibleId, target.shadowVisible);

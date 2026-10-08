@@ -200,6 +200,21 @@ namespace Zantetsu.Rendering
             public volatile uint consumed;
         }
 
+        public const uint ExtendedDrawVersion = 2;
+        public enum DrawMode : uint { Indirect = 0, Direct = 1, Group = 2 }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DrawExtension
+        {
+            public uint mode, commandsOffset, commandsCount, reserved;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DirectCommand
+        {
+            public uint indexCount, instanceCount, firstIndex;
+            public int vertexOffset;
+            public uint firstInstance;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct Counters
         {
@@ -268,6 +283,10 @@ namespace Zantetsu.Rendering
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnPreparedDrawEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnGroupPrepareEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnGroupPreparedEventId();
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -376,6 +395,8 @@ namespace Zantetsu.Rendering
 #if UNITY_ANDROID && !UNITY_EDITOR
                         s_prepareEventId = ZvnPrepareEventId();
                         s_preparedDrawEventId = ZvnPreparedDrawEventId();
+                        s_groupPrepareEventId = ZvnGroupPrepareEventId();
+                        s_groupPreparedEventId = ZvnGroupPreparedEventId();
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -434,9 +455,13 @@ namespace Zantetsu.Rendering
         public static int SentinelEventId => s_sentinelEventId;
 
         private static int s_sentinelEventId;
-        private static int s_prepareEventId, s_preparedDrawEventId;
+        private static int s_prepareEventId, s_preparedDrawEventId, s_groupPrepareEventId, s_groupPreparedEventId;
+        public static int GroupPrepareEventId => s_groupPrepareEventId;
+        public static int GroupPreparedEventId => s_groupPreparedEventId;
         public static int PrepareEventId => s_prepareEventId;
         public static int PreparedDrawEventId => s_preparedDrawEventId;
+        /// <summary>Optional diagnostic geometry for the rare native Clip path; off by default.</summary>
+        public static bool VulkanDirectClipProbe { get; set; }
         /// <summary>Quest comparison switch. Set before creating a native draw route.</summary>
         public static bool VulkanColourPreparation { get; set; } = true;
 

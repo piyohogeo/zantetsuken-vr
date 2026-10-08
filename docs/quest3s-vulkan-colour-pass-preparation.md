@@ -2,6 +2,8 @@
 
 2026-10-09 JST。専用worktree `C:/Users/junic/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。
 
+後続の[通常物体／Clip direct描画の分離](quest3s-vulkan-clip-route-split.md)で、通常VSのClip処理を除去した。以下はその前段のカラー準備分離の記録。
+
 ## 結果
 
 カラーのconstantコピー、resource barrier、descriptor準備をURP opaquesより前へ移し、native描画をUnityのカラーpass内に記録する経路を実装した。Unity opaques、VP native、Skyboxが1個のVulkan render passにまとまった。また、従来のnativeイベントの事前条件が作っていた空passを影・motion・カラーから取り除いた。
