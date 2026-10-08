@@ -149,6 +149,12 @@ namespace Zantetsu.PhysicsCut
         public string GpuCullFallback { get; private set; }
 
         /// <summary>
+        /// Why the Direct3D 12 plugin's route (DESIGN 4.5.8), when asked for by <see cref="VpNativeDrawSetup.Argument"/>,
+        /// could not be taken -- in which case this world ended rather than draw by another route; null otherwise.
+        /// </summary>
+        public string NativeDrawFailure { get; private set; }
+
+        /// <summary>
         /// The input connectivity the characters prepared in this world have passed (DESIGN 6.2's edge and fan checks), so
         /// that another character of the same model -- a replacement -- is not checked again for it; each character's own
         /// values are still checked. Kept for this world's lifetime and let go at its release.
@@ -366,14 +372,36 @@ namespace Zantetsu.PhysicsCut
             IVpPageBacking displayPages = TakeNextDisplayPageBacking();
             VpGpuCullSetup culling = null;
             GpuCullFallback = null;
-            if (VpGpuCullSetup.Requested)
+            NativeDrawFailure = null;
+
+            // The plugin's route (DESIGN 4.5.8), asked for by its own argument on top of the selection: its batch
+            // writes entries only the plugin can draw, so a plugin that cannot be had is not a fallback to Unity's
+            // calls but the end of this world -- a comparison never mixes the two routes without saying so.
+            bool nativeRequested = VpNativeDrawSetup.Requested;
+            if (VpGpuCullSetup.Requested || nativeRequested)
             {
                 GpuCullFallback = Zantetsu.Rendering.Urp.VpGpuCullCameraRoute.CheckEnvironment();
-                if (GpuCullFallback == null
-                    && !VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, out culling, out string cullFailure))
+                if (GpuCullFallback == null && nativeRequested)
+                {
+                    NativeDrawFailure = Zantetsu.Rendering.Urp.VpNativeDrawRoute.CheckEnvironment();
+                }
+
+                if (GpuCullFallback == null && NativeDrawFailure == null
+                    && !VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, nativeRequested, out culling, out string cullFailure))
                 {
                     GpuCullFallback = cullFailure;
                 }
+            }
+
+            if (nativeRequested && (GpuCullFallback != null || NativeDrawFailure != null))
+            {
+                enabled = false;
+                NativeDrawFailure = NativeDrawFailure ?? GpuCullFallback;
+                string nativeRefusal = "VP BODY ROUTE: VP3C-NATIVE REQUESTED (" + VpNativeDrawSetup.Argument + ") BUT NOT AVAILABLE: "
+                    + NativeDrawFailure + "; no other route is taken";
+                UnityEngine.Debug.LogError(nativeRefusal, this);
+                RequestTermination(nativeRefusal);
+                return;
             }
 
             VpLogicalCutDisplay display = null;
@@ -388,7 +416,24 @@ namespace Zantetsu.PhysicsCut
                 culling = null;
             }
 
-            if (VpGpuCullSetup.Requested)
+            if (nativeRequested && culling != null && display != null)
+            {
+                UnityEngine.Debug.Log(
+                    "VP BODY ROUTE: VP3C-NATIVE -- GPU selection with the Direct3D 12 plugin's argument entries, drawn by the plugin "
+                    + "(one ExecuteIndirect per run of commands), " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
+                    + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off") + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
+                    this);
+            }
+            else if (nativeRequested)
+            {
+                enabled = false;
+                NativeDrawFailure = GpuCullFallback;
+                string nativeRefusal = "VP BODY ROUTE: VP3C-NATIVE REQUESTED BUT THE DISPLAY COULD NOT BE MADE WITH IT: " + GpuCullFallback + "; no other route is taken";
+                UnityEngine.Debug.LogError(nativeRefusal, this);
+                RequestTermination(nativeRefusal);
+                return;
+            }
+            else if (VpGpuCullSetup.Requested)
             {
                 UnityEngine.Debug.Log(
                     culling != null

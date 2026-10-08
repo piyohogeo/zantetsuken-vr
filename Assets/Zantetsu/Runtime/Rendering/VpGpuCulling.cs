@@ -169,11 +169,21 @@ namespace Zantetsu.Rendering
         private static bool s_requested = true;
         private static bool s_sliceSelection = true;
 
-        private VpGpuCullSetup(ComputeShader shader, int kernel, int viewCapacity)
+        /// <summary>The argument entry Unity's own indirect draw reads: GraphicsBuffer.IndirectDrawIndexedArgs.</summary>
+        public const int UnityArgumentStride = 20;
+
+        /// <summary>
+        /// The argument entry the Direct3D 12 plugin's command signature reads (DESIGN 4.5.8): the command's number,
+        /// then the five indexed arguments. Unity's own draw cannot read these entries.
+        /// </summary>
+        public const int NativeArgumentStride = 24;
+
+        private VpGpuCullSetup(ComputeShader shader, int kernel, int viewCapacity, bool nativeArguments)
         {
             Shader = shader;
             Kernel = kernel;
             ViewCapacity = viewCapacity;
+            NativeArguments = nativeArguments;
         }
 
         public ComputeShader Shader { get; }
@@ -181,6 +191,18 @@ namespace Zantetsu.Rendering
         public int Kernel { get; }
 
         public int ViewCapacity { get; }
+
+        /// <summary>
+        /// Whether the selection writes the plugin's argument entries (<see cref="NativeArgumentStride"/>) rather than
+        /// Unity's. Settled when the setup is made: a batch made with it draws through the plugin alone.
+        /// </summary>
+        public bool NativeArguments { get; }
+
+        /// <summary>Bytes per argument entry the selection writes.</summary>
+        public int ArgumentStride => NativeArguments ? NativeArgumentStride : UnityArgumentStride;
+
+        /// <summary>Bytes into an entry at which the five indexed arguments begin.</summary>
+        public int ArgumentOffset => NativeArguments ? 4 : 0;
 
         /// <summary>
         /// Whether a world is to draw its bodies through the GPU selection: true unless the Player's arguments say
@@ -258,6 +280,15 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static bool TryCreate(int viewCapacity, out VpGpuCullSetup setup, out string failure)
         {
+            return TryCreate(viewCapacity, false, out setup, out failure);
+        }
+
+        /// <summary>
+        /// The same setup writing the plugin's argument entries when <paramref name="nativeArguments"/> is true (see
+        /// <see cref="NativeArguments"/>).
+        /// </summary>
+        public static bool TryCreate(int viewCapacity, bool nativeArguments, out VpGpuCullSetup setup, out string failure)
+        {
             setup = null;
             failure = null;
             if (viewCapacity <= 0)
@@ -285,7 +316,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            setup = new VpGpuCullSetup(shader, shader.FindKernel("CullCommands"), viewCapacity);
+            setup = new VpGpuCullSetup(shader, shader.FindKernel("CullCommands"), viewCapacity, nativeArguments);
             return true;
         }
     }

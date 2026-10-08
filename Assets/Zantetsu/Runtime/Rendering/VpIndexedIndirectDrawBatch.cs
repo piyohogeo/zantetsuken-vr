@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -58,6 +58,8 @@ namespace Zantetsu.Rendering
         private static readonly int CullCommandsId = Shader.PropertyToID("_VpCullCommands");
         private static readonly int ShadowSliceSelectionId = Shader.PropertyToID("_VpShadowSliceSelection");
         private static readonly int CommandCountId = Shader.PropertyToID("_VpCommandCount");
+        private static readonly int ArgumentStrideId = Shader.PropertyToID("_VpArgumentStride");
+        private static readonly int ArgumentOffsetId = Shader.PropertyToID("_VpArgumentOffset");
         private static readonly int ForwardMultiplierId = Shader.PropertyToID("_VpForwardMultiplier");
         private static readonly int EyeCountId = Shader.PropertyToID("_VpEyeCount");
         private static readonly int EyePlanesId = Shader.PropertyToID("_VpEyePlanes");
@@ -204,15 +206,15 @@ namespace Zantetsu.Rendering
                         // pass writes such a buffer through a RWByteAddressBuffer as the draw's shader reads it through a
                         // ByteAddressBuffer (UnityIndirect.cginc). Asking for Raw or Structured as well is refused or
                         // unneeded there (probed 2026-10-06: perf/gpu-cull/probe-args).
+                        // An entry is Unity's five arguments, or -- for a batch the Direct3D 12 plugin draws -- the
+                        // command's number and then the five (DESIGN 4.5.8): the stride is the setup's.
                         cullViews[v].forwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
                         cullViews[v].forwardVisible.name = "VP Cull Forward Visible " + v;
-                        cullViews[v].forwardArguments = new GraphicsBuffer(
-                            GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                        cullViews[v].forwardArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride);
                         cullViews[v].forwardArguments.name = "VP Cull Forward Arguments " + v;
                         cullViews[v].shadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
                         cullViews[v].shadowVisible.name = "VP Cull Shadow Visible " + v;
-                        cullViews[v].shadowArguments = new GraphicsBuffer(
-                            GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                        cullViews[v].shadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride);
                         cullViews[v].shadowArguments.name = "VP Cull Shadow Arguments " + v;
                     }
                 }
@@ -317,6 +319,48 @@ namespace Zantetsu.Rendering
         internal GraphicsBuffer CullForwardVisible(int view) => View(view).forwardVisible;
         internal GraphicsBuffer CullShadowArguments(int view) => View(view).shadowArguments;
         internal GraphicsBuffer CullShadowVisible(int view) => View(view).shadowVisible;
+
+        /// <summary>
+        /// What the Direct3D 12 plugin's draw binds for a view (DESIGN 4.5.8): the selection's entries and lists for
+        /// the body and the casters, and the shared instance, clip and command buffers. For a batch whose setup
+        /// writes the plugin's entries (<see cref="VpGpuCullSetup.NativeArguments"/>); throws for any other.
+        /// Not to be written through.
+        /// </summary>
+        public void NativeDrawBuffers(
+            int view, out GraphicsBuffer forwardArguments, out GraphicsBuffer forwardVisible, out GraphicsBuffer shadowArguments, out GraphicsBuffer shadowVisible,
+            out GraphicsBuffer instances, out GraphicsBuffer instanceClips, out GraphicsBuffer cullCommands)
+        {
+            CullView target = View(view);
+            if (!_cull.NativeArguments)
+            {
+                throw new InvalidOperationException("this batch writes Unity's argument entries; the plugin cannot draw from them");
+            }
+
+            forwardArguments = target.forwardArguments;
+            forwardVisible = target.forwardVisible;
+            shadowArguments = target.shadowArguments;
+            shadowVisible = target.shadowVisible;
+            instances = _instanceBuffer;
+            instanceClips = _instanceClipBuffer;
+            cullCommands = _cullCommandBuffer;
+        }
+
+        /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
+        public bool NativeArguments => _cull != null && _cull.NativeArguments;
+
+        /// <summary>
+        /// The CPU-write generations of the buffers the plugin's draws bind (DESIGN 4.5.8): raised at every SetData
+        /// into the instance transforms, the clips, the commands, and any view's lists or arguments. The plugin's
+        /// route keeps a native pointer only while the generation it was taken at stands (Unity may change the native
+        /// buffer when its data is written through its APIs). A write by the selection's compute pass raises nothing.
+        /// </summary>
+        public uint InstanceGeneration { get; private set; }
+
+        public uint ClipGeneration { get; private set; }
+
+        public uint CullCommandGeneration { get; private set; }
+
+        public uint CullViewGeneration { get; private set; }
         internal GraphicsBuffer CullCommandBuffer
         {
             get
@@ -480,7 +524,9 @@ namespace Zantetsu.Rendering
             if (instanceTotal > 0)
             {
                 _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                InstanceGeneration++;
                 _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal);
+                ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += instanceTotal;
@@ -582,7 +628,9 @@ namespace Zantetsu.Rendering
             {
                 int count = instanceEnd - instanceStart;
                 _instanceBuffer.SetData(objectToWorlds, instanceStart, instanceStart, count);
+                InstanceGeneration++;
                 _instanceClipBuffer.SetData(clips, instanceStart, instanceStart, count);
+                ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += count;
@@ -761,7 +809,9 @@ namespace Zantetsu.Rendering
                 if (instanceEnd > 0)
                 {
                     _instanceBuffer.SetData(objectToWorlds, 0, 0, instanceEnd);
+                    InstanceGeneration++;
                     _instanceClipBuffer.SetData(clips, 0, 0, instanceEnd);
+                    ClipGeneration++;
                     WholeInstanceElementsTransferred += instanceEnd;
                     WholeSetDataCalls += 2;
                     sent = true;
@@ -774,8 +824,10 @@ namespace Zantetsu.Rendering
                 if (to > from)
                 {
                     _instanceBuffer.SetData(objectToWorlds, from, from, to - from);
+                    InstanceGeneration++;
                     InstanceTransformSetDataCalls++;
                     _instanceClipBuffer.SetData(clips, from, from, to - from);
+                    ClipGeneration++;
                     InstanceClipSetDataCalls++;
                     InstanceSetDataCalls += 2;
                     InstanceElementsTransferred += to - from;
@@ -845,10 +897,12 @@ namespace Zantetsu.Rendering
                 if (_cullStaging != null)
                 {
                     _cullCommandBuffer.SetData(_cullStaging.First(to), from, from, count);
+                    CullCommandGeneration++;
                 }
                 else
                 {
                     _cullCommandBuffer.SetData(_cullCommands, from, from, count);
+                    CullCommandGeneration++;
                 }
 
                 return 1;
@@ -945,6 +999,7 @@ namespace Zantetsu.Rendering
             NativeArray<VpInstanceClip> clips = default;
             NativeArray<VpCullCommand> cullCommands = default;
             NativeArray<uint> visible = default;
+            NativeArray<uint> cullArguments = default;
             try
             {
                 arguments = VpWholeWrite.Zeros<GraphicsBuffer.IndirectDrawIndexedArgs>("arguments", CommandCapacity);
@@ -953,18 +1008,25 @@ namespace Zantetsu.Rendering
                 if (_cull != null)
                 {
                     // What the selection reads and writes stands on the device too: zero arguments draw nothing, so a
-                    // view drawn before its first selection draws nothing rather than something undefined.
+                    // view drawn before its first selection draws nothing rather than something undefined. The
+                    // arguments are written as words: an entry is Unity's or the plugin's stride (both whole words).
                     cullCommands = VpWholeWrite.Zeros<VpCullCommand>("cull commands", CommandCapacity);
                     visible = VpWholeWrite.Zeros<uint>("visible instances", InstanceCapacity);
+                    cullArguments = VpWholeWrite.Zeros<uint>("cull arguments", CommandCapacity * _cull.ArgumentStride / sizeof(uint));
                     VpWholeWrite.Step("write cull commands");
                     _cullCommandBuffer.SetData(cullCommands, 0, 0, CommandCapacity);
+                    CullCommandGeneration++;
                     for (int v = 0; v < _cullViews.Length; v++)
                     {
                         VpWholeWrite.Step("write a view's lists and arguments");
                         _cullViews[v].forwardVisible.SetData(visible, 0, 0, InstanceCapacity);
-                        _cullViews[v].forwardArguments.SetData(arguments, 0, 0, CommandCapacity);
+                        CullViewGeneration++;
+                        _cullViews[v].forwardArguments.SetData(cullArguments, 0, 0, cullArguments.Length);
+                        CullViewGeneration++;
                         _cullViews[v].shadowVisible.SetData(visible, 0, 0, InstanceCapacity);
-                        _cullViews[v].shadowArguments.SetData(arguments, 0, 0, CommandCapacity);
+                        CullViewGeneration++;
+                        _cullViews[v].shadowArguments.SetData(cullArguments, 0, 0, cullArguments.Length);
+                        CullViewGeneration++;
                     }
                 }
                 else
@@ -977,8 +1039,10 @@ namespace Zantetsu.Rendering
 
                 VpWholeWrite.Step("write transforms");
                 _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity);
+                InstanceGeneration++;
                 VpWholeWrite.Step("write clips");
                 _instanceClipBuffer.SetData(clips, 0, 0, InstanceCapacity);
+                ClipGeneration++;
             }
             finally
             {
@@ -987,6 +1051,7 @@ namespace Zantetsu.Rendering
                 VpWholeWrite.Release(ref clips);
                 VpWholeWrite.Release(ref cullCommands);
                 VpWholeWrite.Release(ref visible);
+                VpWholeWrite.Release(ref cullArguments);
             }
         }
 
@@ -1005,18 +1070,22 @@ namespace Zantetsu.Rendering
                 return;
             }
 
-            var arguments = new GraphicsBuffer.IndirectDrawIndexedArgs[CommandCount];
+            // Read as words: an entry is Unity's five arguments or the plugin's number and five, and the instance
+            // count is the second argument either way.
+            int wordsPerEntry = _cull.ArgumentStride / sizeof(uint);
+            int countWord = _cull.ArgumentOffset / sizeof(uint) + 1;
+            var words = new uint[CommandCount * wordsPerEntry];
             uint multiplier = SinglePassInstanced ? 2u : 1u;
-            target.forwardArguments.GetData(arguments, 0, 0, CommandCount);
-            for (int c = 0; c < arguments.Length; c++)
+            target.forwardArguments.GetData(words, 0, 0, words.Length);
+            for (int c = 0; c < CommandCount; c++)
             {
-                forwardKept += (int)(arguments[c].instanceCount / multiplier);
+                forwardKept += (int)(words[c * wordsPerEntry + countWord] / multiplier);
             }
 
-            target.shadowArguments.GetData(arguments, 0, 0, CommandCount);
-            for (int c = 0; c < arguments.Length; c++)
+            target.shadowArguments.GetData(words, 0, 0, words.Length);
+            for (int c = 0; c < CommandCount; c++)
             {
-                shadowKept += (int)arguments[c].instanceCount;
+                shadowKept += (int)words[c * wordsPerEntry + countWord];
             }
         }
 
@@ -1033,13 +1102,15 @@ namespace Zantetsu.Rendering
                 return;
             }
 
-            var zeros = new NativeArray<GraphicsBuffer.IndirectDrawIndexedArgs>(CommandCapacity, Allocator.Temp, NativeArrayOptions.ClearMemory);
+            var zeros = new NativeArray<uint>(CommandCapacity * _cull.ArgumentStride / sizeof(uint), Allocator.Temp, NativeArrayOptions.ClearMemory);
             try
             {
                 for (int v = 0; v < _cullViews.Length; v++)
                 {
-                    _cullViews[v].forwardArguments.SetData(zeros, 0, 0, CommandCapacity);
-                    _cullViews[v].shadowArguments.SetData(zeros, 0, 0, CommandCapacity);
+                    _cullViews[v].forwardArguments.SetData(zeros, 0, 0, zeros.Length);
+                    CullViewGeneration++;
+                    _cullViews[v].shadowArguments.SetData(zeros, 0, 0, zeros.Length);
+                    CullViewGeneration++;
                 }
             }
             finally
@@ -1059,7 +1130,7 @@ namespace Zantetsu.Rendering
         /// <summary>The bytes the selection's own results take on the GPU, every view together; zero without selection.</summary>
         public long CullViewBytes => _cull == null
             ? 0L
-            : (long)_cull.ViewCapacity * 2L * (((long)CommandCapacity * GraphicsBuffer.IndirectDrawIndexedArgs.size) + ((long)InstanceCapacity * sizeof(uint)));
+            : (long)_cull.ViewCapacity * 2L * (((long)CommandCapacity * _cull.ArgumentStride) + ((long)InstanceCapacity * sizeof(uint)));
 
         /// <summary>What this batch's staging is made of, in bytes.</summary>
         public void DescribeStaging(System.Collections.Generic.List<VpRoomLine> into, string owner)
@@ -1152,6 +1223,7 @@ namespace Zantetsu.Rendering
             if (instanceTotal > 0)
             {
                 _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                InstanceGeneration++;
 
                 // No clips given is the ordinary display: every instance takes a record that clips nothing and
                 // moves nothing. Each record is written whole, count and all eight planes together, so a record
@@ -1167,6 +1239,7 @@ namespace Zantetsu.Rendering
                 }
 
                 _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
+                ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
                 InstanceElementsTransferred += instanceTotal;
@@ -1288,10 +1361,12 @@ namespace Zantetsu.Rendering
                 if (_cullStaging != null)
                 {
                     _cullCommandBuffer.SetData(_cullStaging.First(commandCount), 0, 0, commandCount);
+                    CullCommandGeneration++;
                 }
                 else
                 {
                     _cullCommandBuffer.SetData(_cullCommands, 0, 0, commandCount);
+                    CullCommandGeneration++;
                 }
 
                 ArgumentSetDataCalls++;
@@ -1335,6 +1410,8 @@ namespace Zantetsu.Rendering
             ComputeShader shader = _cull.Shader;
             int kernel = _cull.Kernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
+            commands.SetComputeIntParam(shader, ArgumentStrideId, _cull.ArgumentStride);
+            commands.SetComputeIntParam(shader, ArgumentOffsetId, _cull.ArgumentOffset);
             commands.SetComputeIntParam(shader, ForwardMultiplierId, SinglePassInstanced ? 2 : 1);
             commands.SetComputeIntParam(shader, EyeCountId, conditions.eyeCount);
             commands.SetComputeVectorArrayParam(shader, EyePlanesId, conditions.eyePlanes);
@@ -1532,6 +1609,17 @@ namespace Zantetsu.Rendering
 
         public void Dispose()
         {
+            Dispose(null);
+        }
+
+        /// <summary>
+        /// Ends the batch. With <paramref name="giveUp"/> (the owner's hand-over to the plugin's route or routes this
+        /// batch was drawn through), the buffers their issued events may still name are given up to it, and disposed
+        /// by the keeper once no such event can still run; without one they are disposed here (Unity keeps the native
+        /// buffers until the GPU is done with its own draws).
+        /// </summary>
+        public void Dispose(Action<GraphicsBuffer> giveUp)
+        {
             if (_disposed)
             {
                 return;
@@ -1540,19 +1628,28 @@ namespace Zantetsu.Rendering
             _disposed = true;
             _forwardArgumentBuffer?.Dispose();
             _shadowArgumentBuffer?.Dispose();
-            _instanceBuffer.Dispose();
-            _instanceClipBuffer.Dispose();
+            GiveUp(giveUp, _instanceBuffer);
+            GiveUp(giveUp, _instanceClipBuffer);
             _forwardStaging?.Dispose();
             _shadowStaging?.Dispose();
-            _cullCommandBuffer?.Dispose();
+            GiveUp(giveUp, _cullCommandBuffer);
             _cullStaging?.Dispose();
             if (_cullViews != null)
             {
                 for (int v = 0; v < _cullViews.Length; v++)
                 {
-                    _cullViews[v].Dispose();
+                    GiveUp(giveUp, _cullViews[v].forwardVisible);
+                    GiveUp(giveUp, _cullViews[v].forwardArguments);
+                    GiveUp(giveUp, _cullViews[v].shadowVisible);
+                    GiveUp(giveUp, _cullViews[v].shadowArguments);
                 }
             }
+        }
+
+        private static void GiveUp(Action<GraphicsBuffer> giveUp, GraphicsBuffer buffer)
+        {
+            if (buffer == null) return;
+            if (giveUp != null) giveUp(buffer); else buffer.Dispose();
         }
 
         private CullView View(int view)

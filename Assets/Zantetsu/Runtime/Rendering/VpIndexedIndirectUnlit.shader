@@ -16,6 +16,9 @@
 // VP_GPU_CULLED is the variant of a batch that selects its instances on the GPU (VP Stage 3C, DESIGN 4.5.7): the draw's
 // instances are then the slots of a list the compute pass wrote, and each slot names the logical instance to draw.
 // Everything after that -- transform, clip record, shading -- is the same. Without the keyword nothing here changes.
+// VP_NATIVE_MULTIDRAW is the variant the Direct3D 12 plugin draws (DESIGN 4.5.8), where one ExecuteIndirect issues a run
+// of commands: the command's number arrives as a per-command root constant and the arguments are read by it
+// (VpNativeMultiDraw.hlsl). No material enables it; the Editor compiles it for the plugin alone.
 Shader "Zantetsu/VP Indexed Indirect Unlit"
 {
     Properties
@@ -47,6 +50,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #pragma target 4.5
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
+            #pragma shader_feature_local VP_NATIVE_MULTIDRAW
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
@@ -56,6 +60,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
+        #if defined(VP_NATIVE_MULTIDRAW)
+            #include "VpNativeMultiDraw.hlsl"
+        #endif
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
 
@@ -166,10 +173,13 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             };
 
             // Reads this draw's indirect arguments; call first in the vertex shader. On D3D11 Unity issues each command
-            // as a draw of its own with the command set as the base, so the draw ID is 0.
+            // as a draw of its own with the command set as the base, so the draw ID is 0. The plugin's variant reads
+            // them by the command number its root constant carries.
             void InitializeVpIndirectDraw(Attributes input)
             {
-            #if defined(SHADER_API_VULKAN)
+            #if defined(VP_NATIVE_MULTIDRAW)
+                VpNativeInitIndirectDrawArgs();
+            #elif defined(SHADER_API_VULKAN)
                 InitIndirectDrawArgs(input.drawID);
             #else
                 InitIndirectDrawArgs(0);

@@ -388,6 +388,16 @@ Phase 5.6の追加分割で必要になる面の配分、新Index領域への振
 
 **カメラ別の資源と寿命。** 可視列と引数は、カメラ枠ごとに本体用と影用を持つ。そのカメラの選別だけが書き、そのカメラの描画だけが読むので、他のカメラ・眼・Splitの選別で上書きされない。本体Batchを大きいものへ交換するとき（4.5.4）、可視列と引数も新しいBatchのものへ替わり、引数は0（何も描かない）で初期化する。旧Batchは既存の退役規則に従い、GPUが使い終えたことを確認してから解放する。Stage 3C用に表示が複製したMaterial（対応Variantを有効にしたもの）は表示が所有し、表示の解放時に破棄する。
 
+#### 4.5.8 Direct3D 12ネイティブ一括間接描画（明示選択）
+
+Windows x64／Direct3D 12で、Playerを `-zantetsuVp3cNative` 付きで起動すると、Stage 3Cの本体と主光源Shadow Casterをネイティブプラグインで描く。引数なしの既定は4.5.7のUnity描画のままとする。選択は世界の構築時に固定し、明示要求した経路を構築できない場合は理由を記録して共通終了へ進む。別経路への自動Fallbackで比較結果を混在させない。
+
+GPU選別が生成する引数は、Command番号と5個のIndexed Draw引数を持つ24 byteのRecordとする。MaterialとCaster区分が同じCommandの連なりごとに、本体は1回、影はCascadeごとに1回の `ExecuteIndirect` を発行する。CPUへの可視件数の読み戻し、Geometry全体の再コピーは行わない。既存の本体・Caster Shaderの専用VariantをUnityのShader Compilerで事前生成し、定数の配置情報とともにResourcesへ保持する。光・影・左右眼の定数は、そのカメラのURP Command列内のComputeで組み立てる。Clip・照明・GPU選別と仮Cap／Stencilの契約は維持し、仮Cap／Stencilは既存のUnity描画を使う。
+
+イベントデータはPrepared（未記録）、Recorded（PassのCommand Bufferへ記録済み）、Submitted（カメラ描画終了時の同じContextの提出後に番兵で封印済み）を区別する。未記録のデータ、プラグインが消費印を書いたデータ、または提出後の番兵が消費され実行されないことが確定したデータだけを再利用する。固定フレーム待ちや通常描画への強制同期は設けない。経路の破棄・再生成とBuffer置換では、旧経路を含むすべての未消費イベントが終わるまで参照資源を保持する。プラグインの定数・Descriptor領域とPipelineは、最後に使ったGPU Fenceの完了まで保持する。
+
+比較専用の `-zantetsuDrawCompare` は通常の街歩きと分離し、同じ配置済みMeshをUnity／VP3C／VP3C-nativeで描く。読取り不可のMeshはEditorで事前変換し、準備・ウォームアップと時間計測を分ける。眼別画像・影Atlas・遅延消費を用いた寿命確認は診断として実行し、性能標本と区別する。DX12のEditor焦点試験とDevelopment PlayerのSPIで表示・寿命を確認済みだが、Release Playerと実機の動作・性能は未確認であり、製品既定の採用判断とは分ける。
+
 ## 5. 即時表示レンダラ
 
 即切断と実切断後の表示／Stencilは4.5の同じVP Geometryを使用する。本章の即時表示は必要なベイク・VP変換後に開始し、有効な先行準備を再利用する。実切断CPU結果完成後も4.5.6のGeometry Commitまでは同じ規則で継続する。Cap単位compaction／部分更新の禁止はStencil描画最適化の制限であり、グローバルプールの必要な更新・拡張を禁止しない。

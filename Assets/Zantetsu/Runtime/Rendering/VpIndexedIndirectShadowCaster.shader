@@ -18,6 +18,10 @@
 // an instance whose bounds, as carried by its transform, lie wholly outside the slice being rendered (a directional
 // light's, where the projection is a box): every vertex of it is rejected before its clip record or its bias is
 // evaluated. Nothing is rejected for a punctual light. _Cull, the clip record and the bias are unchanged.
+//
+// VP_NATIVE_MULTIDRAW is the variant the Direct3D 12 plugin draws (DESIGN 4.5.8), where one ExecuteIndirect issues a run
+// of commands: the command's number arrives as a per-command root constant, and the arguments and the command's bounds
+// are read by it (VpNativeMultiDraw.hlsl). No material enables it; the Editor compiles it for the plugin alone.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
     Properties
@@ -48,6 +52,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma target 4.5
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
+            #pragma shader_feature_local VP_NATIVE_MULTIDRAW
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_instancing
@@ -56,6 +61,9 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
+        #if defined(VP_NATIVE_MULTIDRAW)
+            #include "VpNativeMultiDraw.hlsl"
+        #endif
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
             // Matches Zantetsu.Rendering.VpRenderVertex: 16 bytes.
@@ -167,9 +175,22 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 float4 clipDistance1 : SV_ClipDistance1;
             };
 
+            // The number of the command this draw's instances belong to: Unity's per-draw constant, or the plugin's
+            // per-command root constant.
+            uint VpCommandId()
+            {
+            #if defined(VP_NATIVE_MULTIDRAW)
+                return VpNativeCommandId();
+            #else
+                return GetCommandID(0);
+            #endif
+            }
+
             ShadowVaryings ShadowVertex(Attributes input)
             {
-            #if defined(SHADER_API_VULKAN)
+            #if defined(VP_NATIVE_MULTIDRAW)
+                VpNativeInitIndirectDrawArgs();
+            #elif defined(SHADER_API_VULKAN)
                 InitIndirectDrawArgs(input.drawID);
             #else
                 InitIndirectDrawArgs(0);
@@ -187,7 +208,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 // A directional slice projects a box (w is 1 everywhere), which is the only projection the test is
                 // written for; anything else draws every kept caster.
                 if (_VpShadowSliceSelection > 0.5 && UNITY_MATRIX_P[3][3] == 1.0
-                    && VpOutsideSlice(_VpCullCommands[GetCommandID(0)], objectToWorld))
+                    && VpOutsideSlice(_VpCullCommands[VpCommandId()], objectToWorld))
                 {
                     // The position alone rejects the instance; the clip distances stay positive (DESIGN 5.2).
                     output.positionCS = float4(2.0, 2.0, 2.0, 1.0);

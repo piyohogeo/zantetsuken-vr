@@ -1,0 +1,18 @@
+{
+    "name": "Zantetsu.Rendering.Editor",
+    "rootNamespace": "Zantetsu.EditorTools.Rendering",
+    "references": [
+        "Zantetsu.Rendering"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

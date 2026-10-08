@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
@@ -115,6 +115,15 @@ namespace Zantetsu.Rendering
         /// <summary>Replaced buffers not yet released.</summary>
         public int RetiredCount => _retired.Count;
 
+        /// <summary>
+        /// The CPU-write generations of the vertex and index buffers (DESIGN 4.5.8): raised at every upload, so that
+        /// the plugin's route takes a native pointer again after one (Unity may change the native buffer when its
+        /// data is written through its APIs). A replaced buffer is a new object, seen by itself.
+        /// </summary>
+        public uint VertexGeneration { get; private set; }
+
+        public uint IndexGeneration { get; private set; }
+
         /// <summary>The structured vertex buffer, for binding. It stays owned and released by this object.</summary>
         public GraphicsBuffer VertexBuffer
         {
@@ -222,6 +231,15 @@ namespace Zantetsu.Rendering
         /// </summary>
         public void ReleaseRetired()
         {
+            ReleaseRetired(null);
+        }
+
+        /// <summary>
+        /// The same; with <paramref name="giveUp"/> (the owner's hand-over to the plugin's route or routes the buffers
+        /// were drawn through) a replaced buffer is given up to it, and disposed once no issued event can still name it.
+        /// </summary>
+        public void ReleaseRetired(Action<GraphicsBuffer> giveUp)
+        {
             for (int i = _retired.Count - 1; i >= 0; i--)
             {
                 Retired retired = _retired[i];
@@ -241,7 +259,7 @@ namespace Zantetsu.Rendering
                     continue;
                 }
 
-                retired.buffer.Dispose();
+                if (giveUp != null) giveUp(retired.buffer); else retired.buffer.Dispose();
                 _retired.RemoveAt(i);
             }
         }
@@ -273,11 +291,13 @@ namespace Zantetsu.Rendering
             if (vertices.Length > 0)
             {
                 _vertexBuffer.SetData(vertices);
+                VertexGeneration++;
             }
 
             if (indices.Length > 0)
             {
                 _indexBuffer.SetData(indices);
+                IndexGeneration++;
             }
 
             return true;
@@ -285,14 +305,24 @@ namespace Zantetsu.Rendering
 
         public void Dispose()
         {
+            Dispose(null);
+        }
+
+        /// <summary>
+        /// Ends the buffers. With <paramref name="giveUp"/> (the owner's hand-over to the plugin's route or routes they
+        /// were drawn through) the current and the replaced buffers are given up to it, and disposed each once no
+        /// issued event can still name it; without one they are disposed here.
+        /// </summary>
+        public void Dispose(Action<GraphicsBuffer> giveUp)
+        {
             if (_disposed)
             {
                 return;
             }
 
             _disposed = true;
-            _vertexBuffer.Dispose();
-            _indexBuffer.Dispose();
+            if (giveUp != null) giveUp(_vertexBuffer); else _vertexBuffer.Dispose();
+            if (giveUp != null) giveUp(_indexBuffer); else _indexBuffer.Dispose();
 
             // Teardown alone waits: for each replaced buffer's readback, so the GPU is past it when it is released.
             foreach (Retired retired in _retired)
@@ -302,7 +332,7 @@ namespace Zantetsu.Rendering
                     retired.request.WaitForCompletion();
                 }
 
-                retired.buffer.Dispose();
+                if (giveUp != null) giveUp(retired.buffer); else retired.buffer.Dispose();
             }
 
             _retired.Clear();

@@ -1,0 +1,254 @@
+// Native indirect draw (DESIGN 4.5.8): assembles, on the GPU and in the frame's own command stream, the bytes of a
+// constant buffer the plugin's pipeline reads -- a shader stage's $Globals or LightShadows -- from the global values
+// Unity has set for this frame (the main light, the shadow cascades, the VP surface constants, the camera's own) and
+// from the values the pass gives (the view-projection as URP would set it, the instance multiplier, a slice's bias).
+// Reading the globals here, as any shader of the frame reads them, means no value Unity sets is guessed at or read a
+// frame late on the CPU. One thread; one dispatch per block.
+//
+// Each known value has a slot; _VpNativeOffsets[slot] is the byte offset of that value in the block, as the compiled
+// shader laid it out (VpNativeShaderBinary), or VP_NATIVE_UNUSED when the stage does not read it. A matrix is stored
+// column by column, which is how Unity's compiler lays a float4x4 out (column-major).
+#pragma kernel AssembleGlobals
+
+#define VP_NATIVE_UNUSED 0xFFFFFFFFu
+#define VP_NATIVE_SLOT_COUNT 48
+
+// Slots. Matches Zantetsu.Rendering.Urp.VpNativeDrawRoute.Slot.
+#define VP_SLOT_MAIN_LIGHT_POSITION 0
+#define VP_SLOT_MAIN_LIGHT_COLOR 1
+#define VP_SLOT_WORLD_SPACE_CAMERA_POS 2
+#define VP_SLOT_GLOBAL_MIP_BIAS 3
+#define VP_SLOT_ORTHO_PARAMS 4
+#define VP_SLOT_VP_SURFACE_COLOR_SCALE 5
+#define VP_SLOT_VP_SURFACE_MATERIAL 6
+#define VP_SLOT_VP_PALETTE_ATLAS_ENABLED 7
+#define VP_SLOT_VP_CUT_SURFACE_COLOR 8
+#define VP_SLOT_VP_CUT_SURFACE_DEBUG_COLOR 9
+#define VP_SLOT_VP_CUT_SURFACE_DEBUG 10
+#define VP_SLOT_MAIN_LIGHT_WORLD_TO_SHADOW 11
+#define VP_SLOT_CASCADE_SPHERES0 12
+#define VP_SLOT_CASCADE_SPHERES1 13
+#define VP_SLOT_CASCADE_SPHERES2 14
+#define VP_SLOT_CASCADE_SPHERES3 15
+#define VP_SLOT_CASCADE_SPHERE_RADII 16
+#define VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET0 17
+#define VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET1 18
+#define VP_SLOT_MAIN_LIGHT_SHADOW_PARAMS 19
+#define VP_SLOT_MAIN_LIGHT_SHADOWMAP_SIZE 20
+#define VP_SLOT_MATRIX_VP 21
+#define VP_SLOT_MATRIX_V 22
+#define VP_SLOT_PROJECTION 23
+#define VP_SLOT_INSTANCE_MULTIPLIER 24
+#define VP_SLOT_SHADOW_BIAS 25
+#define VP_SLOT_LIGHT_DIRECTION 26
+#define VP_SLOT_SHADOW_SLICE_SELECTION 27
+// Single Pass Instanced stereo (UnityStereoGlobals, UnityStereoEyeIndices): two of each, one an eye.
+#define VP_SLOT_STEREO_MATRIX_VP 28
+#define VP_SLOT_STEREO_MATRIX_V 29
+#define VP_SLOT_STEREO_CAMERA_POS 30
+#define VP_SLOT_STEREO_EYE_INDICES 31
+#define VP_SLOT_STEREO_MATRIX_P 32
+#define VP_SLOT_STEREO_MATRIX_INV_V 33
+#define VP_SLOT_STEREO_CAMERA_PROJECTION 34
+#define VP_SLOT_STEREO_CAMERA_INV_PROJECTION 35
+#define VP_SLOT_STEREO_MATRIX_INV_VP 36
+#define VP_SLOT_STEREO_MATRIX_INV_P 37
+
+// What Unity set for the frame, read as the frame's shaders read it.
+float4 _MainLightPosition;
+float4 _MainLightColor;
+float3 _WorldSpaceCameraPos;
+float2 _GlobalMipBias;
+float4 unity_OrthoParams;
+float4 _VpSurfaceColorScale;
+float4 _VpSurfaceMaterial;
+float _VpPaletteAtlasEnabled;
+float4 _VpCutSurfaceColor;
+float4 _VpCutSurfaceDebugColor;
+float _VpCutSurfaceDebug;
+float4x4 _MainLightWorldToShadow[5];
+float4 _CascadeShadowSplitSpheres0;
+float4 _CascadeShadowSplitSpheres1;
+float4 _CascadeShadowSplitSpheres2;
+float4 _CascadeShadowSplitSpheres3;
+float4 _CascadeShadowSplitSphereRadii;
+float4 _MainLightShadowOffset0;
+float4 _MainLightShadowOffset1;
+float4 _MainLightShadowParams;
+float4 _MainLightShadowmapSize;
+
+// What the pass gives.
+float4x4 _VpNativeMatrixVP;
+float4x4 _VpNativeMatrixV;
+float4x4 _VpNativeProjection;
+uint _VpNativeInstanceMultiplier;
+float4 _VpNativeShadowBias;
+float4 _VpNativeLightDirection;
+float _VpNativeShadowSliceSelection;
+
+// Both eyes' matrices for a Single Pass Instanced draw (0 left, 1 right), as URP derives them for the frame.
+float4x4 _VpNativeStereoMatrixVP[2];
+float4x4 _VpNativeStereoMatrixV[2];
+float4x4 _VpNativeStereoMatrixP[2];
+float4x4 _VpNativeStereoCameraProjection[2];
+float4 _VpNativeStereoCameraPos[2];
+
+StructuredBuffer<uint> _VpNativeOffsets;
+uint _VpNativeDestination;
+RWByteAddressBuffer _VpNativeConstants;
+
+void Put1(uint slot, float value)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(_VpNativeDestination + o, asuint(value));
+}
+
+void PutUint(uint slot, uint value)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store(_VpNativeDestination + o, value);
+}
+
+void Put2(uint slot, float2 value)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store2(_VpNativeDestination + o, asuint(value));
+}
+
+void Put3(uint slot, float3 value)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store3(_VpNativeDestination + o, asuint(value));
+}
+
+void Put4(uint slot, float4 value)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) _VpNativeConstants.Store4(_VpNativeDestination + o, asuint(value));
+}
+
+void PutMatrixAt(uint at, float4x4 m)
+{
+    _VpNativeConstants.Store4(at, asuint(float4(m._m00, m._m10, m._m20, m._m30)));
+    _VpNativeConstants.Store4(at + 16u, asuint(float4(m._m01, m._m11, m._m21, m._m31)));
+    _VpNativeConstants.Store4(at + 32u, asuint(float4(m._m02, m._m12, m._m22, m._m32)));
+    _VpNativeConstants.Store4(at + 48u, asuint(float4(m._m03, m._m13, m._m23, m._m33)));
+}
+
+void PutMatrix(uint slot, float4x4 m)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED) PutMatrixAt(_VpNativeDestination + o, m);
+}
+
+void PutMatrixPair(uint slot, float4x4 a, float4x4 b)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED)
+    {
+        PutMatrixAt(_VpNativeDestination + o, a);
+        PutMatrixAt(_VpNativeDestination + o + 64u, b);
+    }
+}
+
+void PutPair4(uint slot, float4 a, float4 b)
+{
+    uint o = _VpNativeOffsets[slot];
+    if (o != VP_NATIVE_UNUSED)
+    {
+        _VpNativeConstants.Store4(_VpNativeDestination + o, asuint(a));
+        _VpNativeConstants.Store4(_VpNativeDestination + o + 16u, asuint(b));
+    }
+}
+
+// The inverse of an affine or projective 4x4, for the inverse matrices the stereo block carries.
+float4x4 Inverse(float4x4 m)
+{
+    float n11 = m[0][0], n12 = m[1][0], n13 = m[2][0], n14 = m[3][0];
+    float n21 = m[0][1], n22 = m[1][1], n23 = m[2][1], n24 = m[3][1];
+    float n31 = m[0][2], n32 = m[1][2], n33 = m[2][2], n34 = m[3][2];
+    float n41 = m[0][3], n42 = m[1][3], n43 = m[2][3], n44 = m[3][3];
+    float t11 = n23 * n34 * n42 - n24 * n33 * n42 + n24 * n32 * n43 - n22 * n34 * n43 - n23 * n32 * n44 + n22 * n33 * n44;
+    float t12 = n14 * n33 * n42 - n13 * n34 * n42 - n14 * n32 * n43 + n12 * n34 * n43 + n13 * n32 * n44 - n12 * n33 * n44;
+    float t13 = n13 * n24 * n42 - n14 * n23 * n42 + n14 * n22 * n43 - n12 * n24 * n43 - n13 * n22 * n44 + n12 * n23 * n44;
+    float t14 = n14 * n23 * n32 - n13 * n24 * n32 - n14 * n22 * n33 + n12 * n24 * n33 + n13 * n22 * n34 - n12 * n23 * n34;
+    float det = n11 * t11 + n21 * t12 + n31 * t13 + n41 * t14;
+    float idet = 1.0 / det;
+    float4x4 r;
+    r[0][0] = t11 * idet;
+    r[0][1] = (n24 * n33 * n41 - n23 * n34 * n41 - n24 * n31 * n43 + n21 * n34 * n43 + n23 * n31 * n44 - n21 * n33 * n44) * idet;
+    r[0][2] = (n22 * n34 * n41 - n24 * n32 * n41 + n24 * n31 * n42 - n21 * n34 * n42 - n22 * n31 * n44 + n21 * n32 * n44) * idet;
+    r[0][3] = (n23 * n32 * n41 - n22 * n33 * n41 - n23 * n31 * n42 + n21 * n33 * n42 + n22 * n31 * n43 - n21 * n32 * n43) * idet;
+    r[1][0] = t12 * idet;
+    r[1][1] = (n13 * n34 * n41 - n14 * n33 * n41 + n14 * n31 * n43 - n11 * n34 * n43 - n13 * n31 * n44 + n11 * n33 * n44) * idet;
+    r[1][2] = (n14 * n32 * n41 - n12 * n34 * n41 - n14 * n31 * n42 + n11 * n34 * n42 + n12 * n31 * n44 - n11 * n32 * n44) * idet;
+    r[1][3] = (n12 * n33 * n41 - n13 * n32 * n41 + n13 * n31 * n42 - n11 * n33 * n42 - n12 * n31 * n43 + n11 * n32 * n43) * idet;
+    r[2][0] = t13 * idet;
+    r[2][1] = (n14 * n23 * n41 - n13 * n24 * n41 - n14 * n21 * n43 + n11 * n24 * n43 + n13 * n21 * n44 - n11 * n23 * n44) * idet;
+    r[2][2] = (n12 * n24 * n41 - n14 * n22 * n41 + n14 * n21 * n42 - n11 * n24 * n42 - n12 * n21 * n44 + n11 * n22 * n44) * idet;
+    r[2][3] = (n13 * n22 * n41 - n12 * n23 * n41 - n13 * n21 * n42 + n11 * n23 * n42 + n12 * n21 * n43 - n11 * n22 * n43) * idet;
+    r[3][0] = t14 * idet;
+    r[3][1] = (n13 * n24 * n31 - n14 * n23 * n31 + n14 * n21 * n33 - n11 * n24 * n33 - n13 * n21 * n34 + n11 * n23 * n34) * idet;
+    r[3][2] = (n14 * n22 * n31 - n12 * n24 * n31 - n14 * n21 * n32 + n11 * n24 * n32 + n12 * n21 * n34 - n11 * n22 * n34) * idet;
+    r[3][3] = (n12 * n23 * n31 - n13 * n22 * n31 + n13 * n21 * n32 - n11 * n23 * n32 - n12 * n21 * n33 + n11 * n22 * n33) * idet;
+    return r;
+}
+
+[numthreads(1, 1, 1)]
+void AssembleGlobals(uint3 id : SV_DispatchThreadID)
+{
+    Put4(VP_SLOT_MAIN_LIGHT_POSITION, _MainLightPosition);
+    Put4(VP_SLOT_MAIN_LIGHT_COLOR, _MainLightColor);
+    Put3(VP_SLOT_WORLD_SPACE_CAMERA_POS, _WorldSpaceCameraPos);
+    Put2(VP_SLOT_GLOBAL_MIP_BIAS, _GlobalMipBias);
+    Put4(VP_SLOT_ORTHO_PARAMS, unity_OrthoParams);
+    Put4(VP_SLOT_VP_SURFACE_COLOR_SCALE, _VpSurfaceColorScale);
+    Put4(VP_SLOT_VP_SURFACE_MATERIAL, _VpSurfaceMaterial);
+    Put1(VP_SLOT_VP_PALETTE_ATLAS_ENABLED, _VpPaletteAtlasEnabled);
+    Put4(VP_SLOT_VP_CUT_SURFACE_COLOR, _VpCutSurfaceColor);
+    Put4(VP_SLOT_VP_CUT_SURFACE_DEBUG_COLOR, _VpCutSurfaceDebugColor);
+    Put1(VP_SLOT_VP_CUT_SURFACE_DEBUG, _VpCutSurfaceDebug);
+    uint shadows = _VpNativeOffsets[VP_SLOT_MAIN_LIGHT_WORLD_TO_SHADOW];
+    if (shadows != VP_NATIVE_UNUSED)
+    {
+        [unroll]
+        for (uint i = 0u; i < 5u; i++)
+        {
+            PutMatrixAt(_VpNativeDestination + shadows + i * 64u, _MainLightWorldToShadow[i]);
+        }
+    }
+
+    Put4(VP_SLOT_CASCADE_SPHERES0, _CascadeShadowSplitSpheres0);
+    Put4(VP_SLOT_CASCADE_SPHERES1, _CascadeShadowSplitSpheres1);
+    Put4(VP_SLOT_CASCADE_SPHERES2, _CascadeShadowSplitSpheres2);
+    Put4(VP_SLOT_CASCADE_SPHERES3, _CascadeShadowSplitSpheres3);
+    Put4(VP_SLOT_CASCADE_SPHERE_RADII, _CascadeShadowSplitSphereRadii);
+    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET0, _MainLightShadowOffset0);
+    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_OFFSET1, _MainLightShadowOffset1);
+    Put4(VP_SLOT_MAIN_LIGHT_SHADOW_PARAMS, _MainLightShadowParams);
+    Put4(VP_SLOT_MAIN_LIGHT_SHADOWMAP_SIZE, _MainLightShadowmapSize);
+    PutMatrix(VP_SLOT_MATRIX_VP, _VpNativeMatrixVP);
+    PutMatrix(VP_SLOT_MATRIX_V, _VpNativeMatrixV);
+    PutMatrix(VP_SLOT_PROJECTION, _VpNativeProjection);
+    PutUint(VP_SLOT_INSTANCE_MULTIPLIER, _VpNativeInstanceMultiplier);
+    Put4(VP_SLOT_SHADOW_BIAS, _VpNativeShadowBias);
+    Put3(VP_SLOT_LIGHT_DIRECTION, _VpNativeLightDirection.xyz);
+    Put1(VP_SLOT_SHADOW_SLICE_SELECTION, _VpNativeShadowSliceSelection);
+
+    // Stereo: the inverses are made here from the matrices given, so that the pass hands over four matrices and two
+    // positions and nothing is inverted on the CPU for a block that may not read it.
+    PutMatrixPair(VP_SLOT_STEREO_MATRIX_VP, _VpNativeStereoMatrixVP[0], _VpNativeStereoMatrixVP[1]);
+    PutMatrixPair(VP_SLOT_STEREO_MATRIX_V, _VpNativeStereoMatrixV[0], _VpNativeStereoMatrixV[1]);
+    PutMatrixPair(VP_SLOT_STEREO_MATRIX_P, _VpNativeStereoMatrixP[0], _VpNativeStereoMatrixP[1]);
+    PutMatrixPair(VP_SLOT_STEREO_CAMERA_PROJECTION, _VpNativeStereoCameraProjection[0], _VpNativeStereoCameraProjection[1]);
+    PutPair4(VP_SLOT_STEREO_CAMERA_POS, _VpNativeStereoCameraPos[0], _VpNativeStereoCameraPos[1]);
+    PutPair4(VP_SLOT_STEREO_EYE_INDICES, float4(0.0, 0.0, 0.0, 0.0), float4(1.0, 0.0, 0.0, 0.0));
+    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_V] != VP_NATIVE_UNUSED)
+        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_V, Inverse(_VpNativeStereoMatrixV[0]), Inverse(_VpNativeStereoMatrixV[1]));
+    if (_VpNativeOffsets[VP_SLOT_STEREO_CAMERA_INV_PROJECTION] != VP_NATIVE_UNUSED)
+        PutMatrixPair(VP_SLOT_STEREO_CAMERA_INV_PROJECTION, Inverse(_VpNativeStereoCameraProjection[0]), Inverse(_VpNativeStereoCameraProjection[1]));
+    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_VP] != VP_NATIVE_UNUSED)
+        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_VP, Inverse(_VpNativeStereoMatrixVP[0]), Inverse(_VpNativeStereoMatrixVP[1]));
+    if (_VpNativeOffsets[VP_SLOT_STEREO_MATRIX_INV_P] != VP_NATIVE_UNUSED)
+        PutMatrixPair(VP_SLOT_STEREO_MATRIX_INV_P, Inverse(_VpNativeStereoMatrixP[0]), Inverse(_VpNativeStereoMatrixP[1]));
+}
