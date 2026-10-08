@@ -165,5 +165,28 @@ Shader "Zantetsu/VP Mesh Surface"
             }
             ENDHLSL
         }
+
+        // Populate the AppSW low-resolution depth and motion targets through URP's XRDepthMotionPass.
+        // This opaque mesh surface uses Unity's standard previous object and stereo camera matrices.
+        Pass
+        {
+            Name "XRMotionVectors"
+            Tags { "LightMode" = "XRMotionVectors" }
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+            ColorMask RGBA
+            Stencil { WriteMask 1 Ref 1 Comp Always Pass Replace }
+            HLSLPROGRAM
+            #define APPLICATION_SPACE_WARP_MOTION 1
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                float _VpUsePaletteAtlas;
+            CBUFFER_END
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ObjectMotionVectors.hlsl"
+            ENDHLSL
+        }
     }
 }

@@ -1,0 +1,5 @@
+# Initial smoke path; replace with the PC comparison path for matched profiling.
+start,99,1.7,-32,180
+hold,5
+turn,360,30
+hold,5

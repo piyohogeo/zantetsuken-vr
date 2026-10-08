@@ -16,7 +16,7 @@
 // keep what may intersect the culling volume of any shadow split. An eye count or a split count of zero keeps everything.
 #pragma kernel CullCommands
 
-// Matches Zantetsu.Rendering.VpCullCommand: 40 bytes.
+// Matches Zantetsu.Rendering.VpCullCommand: 48 bytes; float3 bounds have an explicit fourth component.
 struct VpCullCommand
 {
     uint indexCount;
@@ -24,7 +24,9 @@ struct VpCullCommand
     uint startInstance;
     uint instanceCount;
     float3 centre;
+    float pad0;
     float3 extents;
+    float pad1;
 };
 
 #define VP_CULL_MARGIN 1e-3

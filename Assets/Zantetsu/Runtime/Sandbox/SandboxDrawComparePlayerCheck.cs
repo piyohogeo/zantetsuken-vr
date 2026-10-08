@@ -340,6 +340,27 @@ namespace Zantetsu.Sandbox
             return runner;
         }
 
+        /// <summary>Starts the existing comparison with prepared settings, including the normal scene hold and completion behavior.</summary>
+        public static Runner StartPrepared(Settings settings, bool quitWhenDone)
+        {
+            Log("scene: " + QuietScene());
+            CutWorldRoot world = UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>();
+            var cuttables = UnityEngine.Object.FindObjectsByType<PlayableCityCuttable>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var instances = new List<KeyValuePair<string, Renderer[]>>(cuttables.Length);
+            var roots = new List<Transform>(cuttables.Length);
+            foreach (var c in cuttables)
+            {
+                instances.Add(new KeyValuePair<string, Renderer[]>(c.name, c.instanceRenderers));
+                if (c.target != null) roots.Add(c.target);
+            }
+            instances.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            Runner runner = Begin(settings, world, instances, Camera.main, null);
+            runner.targetRoots = roots;
+            runner.endWorld = true;
+            if (quitWhenDone) runner.quit = Application.Quit;
+            return runner;
+        }
+
         // The markers of every row: times in nanoseconds, the Render category's in counts.
         private static readonly (ProfilerCategory category, string name)[] FixedMarkers =
         {
@@ -537,6 +558,7 @@ namespace Zantetsu.Sandbox
             private Zantetsu.Rendering.VpNativeDrawPlugin.LockStats _lastLock;
             private bool _lockBaselineTaken;
 
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
             [System.Runtime.InteropServices.DllImport("kernel32.dll")]
             private static extern uint GetCurrentThreadId();
 
@@ -556,6 +578,20 @@ namespace Zantetsu.Sandbox
                 QueryPerformanceFrequency(out long frequency);
                 return frequency;
             }
+
+#elif UNITY_ANDROID
+            [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "gettid")]
+            private static extern uint GetCurrentThreadId();
+            [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "sched_getcpu")]
+            private static extern uint GetCurrentProcessorNumber();
+            private static bool QueryPerformanceCounter(out long value) { value = System.Diagnostics.Stopwatch.GetTimestamp(); return true; }
+            private static long QpcFrequency() => System.Diagnostics.Stopwatch.Frequency;
+#else
+            private static uint GetCurrentThreadId() => (uint)System.Threading.Thread.CurrentThread.ManagedThreadId;
+            private static uint GetCurrentProcessorNumber() => uint.MaxValue;
+            private static bool QueryPerformanceCounter(out long value) { value = System.Diagnostics.Stopwatch.GetTimestamp(); return true; }
+            private static long QpcFrequency() => System.Diagnostics.Stopwatch.Frequency;
+#endif
 
             private long[][] _values;
             private bool _ownsDirectory;
@@ -826,9 +862,9 @@ namespace Zantetsu.Sandbox
                     + "; the plugin's mutex timing " + (lockAtStart.timingOn ? "ON" : "off")
                     + (_detail ? " -- the state query, the mutex and the keeper's parts are timed and counted every frame: this run carries that cost"
                                : " -- frames.csv's lock, keeper and last-acquisition columns stay 0 (processors -1)"));
-                Note("threads (Windows ids, for a trace): main " + GetCurrentThreadId() + ", rendering (the plugin's draw events so far) "
+                Note("threads (native OS ids): main " + GetCurrentThreadId() + ", rendering (the plugin's draw events so far) "
                     + (_detail ? lockAtStart.renderThreadId.ToString(Inv) : "not observed (the detailed observation is off)")
-                    + "; QPC frequency " + QpcFrequency() + " (QueryPerformanceFrequency; the rows' stamps are QueryPerformanceCounter's) / " + System.Diagnostics.Stopwatch.Frequency + " (Stopwatch, the durations') / "
+                    + "; QPC frequency " + QpcFrequency() + " (Windows: QPC; Android: Stopwatch ticks) / " + System.Diagnostics.Stopwatch.Frequency + " (Stopwatch, the durations') / "
                     + lockAtStart.qpcFrequency + " (plugin); each row's qpc, thread id and processor number are in frames.csv"
                     + " (the processor number is the one the thread was on at the instant of the row's stamp, not the frame's)");
                 Note("frame timing: FrameTimingManager enabled=" + FrameTimingManager.IsFeatureEnabled() + " (its values reach a row a few frames late)"

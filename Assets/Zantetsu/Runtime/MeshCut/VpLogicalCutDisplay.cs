@@ -1864,7 +1864,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            pages = pages ?? VpWindowsPageBacking.Instance;
+            pages = pages ?? VpPlatformPageBacking.Instance;
 
             // No limits means every count stays where it starts.
             if (limits.IsDefault)

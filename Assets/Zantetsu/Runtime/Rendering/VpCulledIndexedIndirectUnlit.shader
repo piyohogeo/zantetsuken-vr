@@ -68,9 +68,6 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -89,11 +86,7 @@ Shader "Zantetsu/VP Culled Indexed Indirect Unlit"
 
             void InitializeVpIndirectDraw(Attributes input)
             {
-            #if defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
-            #else
-                InitIndirectDrawArgs(0);
-            #endif
+            InitIndirectDrawArgs(0);
             }
 
             bool IsVpSecondCopyInSingleView(Attributes input)

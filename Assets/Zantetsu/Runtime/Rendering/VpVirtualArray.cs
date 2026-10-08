@@ -10,7 +10,7 @@ namespace Zantetsu.Rendering
     /// committed into it on demand (DESIGN 4.5.4). A reservation is address space only; committing is what takes
     /// memory, and a reservation that succeeded does not promise that a later commit will.
     /// <para>
-    /// The product's backing is <see cref="VpWindowsPageBacking"/>. Another backing exists to let a test make a reserve
+    /// The product's backing is selected by <see cref="VpPlatformPageBacking"/>. Another backing exists to let a test make a reserve
     /// or a commit fail on purpose, without exhausting real memory.
     /// </para>
     /// </summary>
