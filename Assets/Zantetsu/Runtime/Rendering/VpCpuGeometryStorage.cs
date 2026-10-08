@@ -249,8 +249,26 @@ namespace Zantetsu.Rendering
         /// with what is free, covers what was asked. False when nothing of that kind is held, when even all of it would
         /// not cover the request (past the reservation, or a management area nobody returns), and for a backing
         /// failure. A caller that waits on it asks again later, and each refusal is classified anew.
+        /// <para>
+        /// An append of a mesh or of prepared arrays asked while any cut output reservation is open is refused whole
+        /// (it takes no new geometry until they close) and is of this kind: the reservations close at their commit or
+        /// their cancel, and the same append then goes through (2026-10-09; until then that refusal was not counted
+        /// as one of room, and a placed cuttable first cut at such a moment was refused for good).
+        /// </para>
         /// </summary>
         public bool LastRefusalIsTemporary { get; private set; }
+
+        // An append asked while cut outputs are outstanding: refused as before, and counted as room that comes back.
+        private bool AppendWaitsOnOpenCutOutputs()
+        {
+            if (_openCutOutputs.Count == 0)
+            {
+                return false;
+            }
+
+            Refused("an append while " + _openCutOutputs.Count + " cut output reservation(s) are open: no new geometry is taken until they close", true);
+            return true;
+        }
 
         private void FailBacking(string what, string failure)
         {
@@ -339,7 +357,7 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             geometry = default;
-            if (mesh == null || _openCutOutputs.Count > 0)
+            if (mesh == null || AppendWaitsOnOpenCutOutputs())
             {
                 return false;
             }
@@ -490,7 +508,7 @@ namespace Zantetsu.Rendering
         {
             ThrowIfDisposed();
             geometry = default;
-            if (vertices == null || localIndices == null || topologyOfVertex == null || submeshes == null || _openCutOutputs.Count > 0)
+            if (vertices == null || localIndices == null || topologyOfVertex == null || submeshes == null || AppendWaitsOnOpenCutOutputs())
             {
                 return false;
             }

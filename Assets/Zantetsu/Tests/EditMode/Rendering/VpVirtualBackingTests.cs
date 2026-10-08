@@ -369,6 +369,47 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(storage.LastRefusalIsTemporary, Is.False, "published blocks are not returned");
             }
         }
+
+        /// <summary>
+        /// **An append asked while a cut's output is outstanding is refused as room that comes back** (2026-10-09). The
+        /// storage takes no new geometry while any cut output reservation is open -- with all the room in the world
+        /// free -- and until this was said as a refusal of room, a caller could not tell it from a refused input: a
+        /// placed cuttable first cut at such a moment was refused for good. It is counted, it is temporary, and the
+        /// same append goes through once the reservation has closed, by its cancel or by its commit's end.
+        /// </summary>
+        [Test]
+        public void AnAppendWhileACutOutputIsOpen_IsRefusedAsRoomThatComesBack_AndGoesThroughOnceItCloses()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage(VpWindowsPageBacking.Instance))
+            {
+                VpStoredGeometry box = AppendBox(storage);
+                var vertices = new VpRenderVertex[8];
+                for (int i = 0; i < 8; i++) vertices[i] = V(new Vector3(i, 0, 0), Vector3.up);
+                uint[] indices = { 0, 2, 1 };
+                var topology = new[] { 0, 1, 2, 3, 4, 5, 6, 7 };
+                var submesh = new[] { new VpGeometrySubmesh(0, 3, 0) };
+
+                int refusals = storage.RoomRefusalCount;
+                Assert.That(storage.TryAppendPrepared(vertices, indices, topology, 8, submesh, out _), Is.True, "nothing outstanding: appended");
+                Assert.That(storage.RoomRefusalCount, Is.EqualTo(refusals), "and no room refused");
+
+                Assert.That(storage.TryReserveCutOutput(box, 8, 24, 2, 2, out VpCutOutputReservation open), Is.True, "a cut's output outstanding");
+                Assert.That(storage.TryAppendPrepared(vertices, indices, topology, 8, submesh, out _), Is.False, "no new geometry while it is open");
+                Assert.That(storage.RoomRefusalCount, Is.EqualTo(refusals + 1), "counted as a refusal of room");
+                Assert.That(storage.LastRefusalIsTemporary, Is.True, "of the kind that comes back");
+                Assert.That(storage.BackingFailure, Is.Null);
+                StringAssert.Contains("1 cut output reservation(s) are open", storage.LastRefusal);
+                StringAssert.Contains("can clear", storage.LastRefusal);
+
+                // An input that is not one is still not a refusal of room, open reservation or not.
+                Assert.That(storage.TryAppendPrepared(null, indices, topology, 8, submesh, out _), Is.False);
+                Assert.That(storage.RoomRefusalCount, Is.EqualTo(refusals + 1), "a null input is not counted as room");
+
+                Assert.That(storage.TryCancelCutOutput(open), Is.True, "the reservation closes");
+                Assert.That(storage.TryAppendPrepared(vertices, indices, topology, 8, submesh, out _), Is.True, "and the same append goes through");
+                Assert.That(storage.RoomRefusalCount, Is.EqualTo(refusals + 1), "with nothing more refused");
+            }
+        }
     }
 
     /// <summary>

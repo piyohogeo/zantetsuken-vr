@@ -432,6 +432,179 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+        /// <summary>
+        /// **A prop first cut while another cut's geometry is outstanding stays a candidate, and is cut once it has
+        /// committed** (2026-10-09; found by the draw comparison's cut scene in a Player, where the second prop was
+        /// refused for good and could never be cut again). The storage takes no new geometry while a cut's output
+        /// reservation is open, and a placed prop's display input is appended by its first cut: the answer is the one a
+        /// room held for now gets -- not accepted, a candidate still, the instance as it was, nothing of it in the
+        /// world -- and the next Slash, once the outstanding cut has committed, cuts it. The first cut's geometry is held
+        /// back here so that the moment lasts; in the ordinary course it is the frames a cut's geometry takes.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator PlacedDeferred_APropFirstCutWhileAnotherCutsGeometryIsOutstanding_IsACandidateStill_ThenCut()
+        {
+            if (!File.Exists(RefusalPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + RefusalPropInputPath);
+            var data = JsonUtility.FromJson<PlacedCuttableInput>(File.ReadAllText(RefusalPropInputPath));
+            HoldingExecutor pool = null;
+            CutWorldRoot.nextWorldExecutors = destination => destination == WorkDestination.GeometryPool
+                ? pool = Held(new HoldingExecutor(WorkerPoolExecutor.GeometryPool(2)))
+                : null;
+            CutWorldRoot root = NewPlacedHullWorld();
+            try
+            {
+                Assert.That(pool, Is.Not.Null, "the world took the holding pool");
+                yield return null;
+                var detector = new SlashHitDetector(root, in k_hitSettings);
+                Vector3 atA = new Vector3(-4f, -1f, 0f), atB = new Vector3(4f, -1f, 0f);
+                GameObject a = RefusalInstance("bench_001 cut first", atA, out Renderer[] aRenderers, out Collider[] aColliders);
+                GameObject b = RefusalInstance("bench_001 hit while the first is outstanding", atB, out Renderer[] bRenderers, out Collider[] bColliders);
+                PlacedCuttableCandidate first = Candidate(root, data, a, aRenderers, aColliders);
+                PlacedCuttableCandidate second = Candidate(root, data, b, bRenderers, bColliders);
+                detector.AddPlaced(first);
+                detector.AddPlaced(second);
+                for (int f = 0; f < 3; f++) yield return null;
+                string asPlaced = States(bRenderers, bColliders);
+
+                // The first is cut and its geometry held back: a cut output reservation stays open.
+                pool.HoldEverything = true;
+                Evaluate(detector, ThroughTheMiddle(1, data, atA), 1);
+                List<SlashHitConfirmed> hits = Hits(detector);
+                Assert.That(hits.Count, Is.EqualTo(1));
+                Assert.That(first.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Cut), "the first is cut: " + hits[0].Acceptance);
+                CutOperationId firstCut = hits[0].Operation;
+                yield return Until(() => pool.HoldingCount > 0, "the first cut's geometry is held back");
+                StringAssert.Contains("open cut reservations 1", root.Storage.DescribeRoom(), "its output reservation is open");
+
+                int groups = root.Storage.VertexGroupCount, shown = root.Display.ShownCount, bodies = Bodies(), refusals = root.Storage.RoomRefusalCount;
+                Evaluate(detector, ThroughTheMiddle(2, data, atB), 2);
+                hits = Hits(detector);
+                TestContext.Out.WriteLine("hit while outstanding: " + string.Join("; ", hits.Select(h => h.Acceptance + " / " + h.Admission)) + "; " + second.LastRefusal);
+                Assert.That(hits.Count, Is.EqualTo(1), "one hit");
+                Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.NotAccepted), "not accepted now");
+                Assert.That(hits[0].Admission, Is.EqualTo(LogicalCutAdmission.Full), "answered as room held for now is");
+                Assert.That(second.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Candidate), "a candidate still, not refused for good");
+                Assert.That(detector.HasPlaced(second), Is.True, "still a candidate of the detector");
+                Assert.That(second.IsHitTarget, Is.True);
+                StringAssert.Contains("held for now", second.LastRefusal);
+                Assert.That(root.Storage.RoomRefusalCount, Is.EqualTo(refusals + 1), "the storage counted one refusal of room");
+                Assert.That(root.Storage.LastRefusalIsTemporary, Is.True);
+                Assert.That(root.Storage.VertexGroupCount, Is.EqualTo(groups), "nothing of it in the storage");
+                Assert.That(root.Display.ShownCount, Is.EqualTo(shown), "nor in the display");
+                Assert.That(States(bRenderers, bColliders), Is.EqualTo(asPlaced), "the instance drawn and colliding as placed");
+                Assert.That(root.TerminationRequested, Is.False, "the world goes on");
+                yield return null;
+                Assert.That(Bodies(), Is.EqualTo(bodies), "no body of it");
+
+                // The outstanding cut commits; the next Slash cuts the second.
+                pool.HoldEverything = false;
+                pool.ReleaseEverything();
+                yield return Until(() => root.Geometry.StageOf(firstCut) == CutGeometryStage.Committed, "the first cut committed");
+                yield return null;
+                Evaluate(detector, ThroughTheMiddle(3, data, atB), 3);
+                hits = Hits(detector);
+                TestContext.Out.WriteLine("hit after the commit: " + string.Join("; ", hits.Select(h => h.Acceptance + " / " + h.Admission)));
+                Assert.That(hits.Count, Is.EqualTo(1), "met again");
+                Assert.That(hits[0].Acceptance == ProvisionalCutAcceptance.Published || hits[0].Acceptance == ProvisionalCutAcceptance.Pending, Is.True, "cut: " + hits[0].Acceptance);
+                Assert.That(second.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Cut));
+                CutOperationId secondCut = hits[0].Operation;
+                yield return Until(() => root.Geometry.StageOf(secondCut) == CutGeometryStage.Committed, "the second cut committed");
+                Assert.That(States(bRenderers, bColliders), Is.EqualTo("off,off|off,off"), "the instance has left");
+                Assert.That(root.GeometryFaults, Is.Zero);
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                CutWorldRoot.nextWorldExecutors = null;
+                DisposeCandidates();
+            }
+        }
+
+        /// <summary>
+        /// The same for a building, which goes into the hull trial at its first hit: refused there for the storage's
+        /// room held for now, it is taken back out -- the instance as it was, everything given back, a candidate again
+        /// with a fresh fragment -- and the next Slash, once the outstanding cut has committed, is taken.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator PlacedDeferred_ABuildingFirstCutWhileAnotherCutsGeometryIsOutstanding_IsACandidateAgain_ThenTaken()
+        {
+            if (!File.Exists(CollegeInputPath)) Assert.Ignore("the licensed college_001 one-anchor input is not in this checkout: " + CollegeInputPath);
+            if (!File.Exists(RefusalPropInputPath)) Assert.Ignore("the licensed city walk input is not in this checkout: " + RefusalPropInputPath);
+            var college = JsonUtility.FromJson<PlacedCuttableInput>(File.ReadAllText(CollegeInputPath));
+            var bench = JsonUtility.FromJson<PlacedCuttableInput>(File.ReadAllText(RefusalPropInputPath));
+            HoldingExecutor pool = null;
+            CutWorldRoot.nextWorldExecutors = destination => destination == WorkDestination.GeometryPool
+                ? pool = Held(new HoldingExecutor(WorkerPoolExecutor.GeometryPool(2)))
+                : null;
+            CutWorldRoot root = NewKinematicWorld(BindSourceZero);
+            try
+            {
+                Assert.That(pool, Is.Not.Null, "the world took the holding pool");
+                yield return null;
+                var detector = new SlashHitDetector(root, in k_hitSettings);
+                Vector3 atBench = new Vector3(-40f, -1f, 0f), at = new Vector3(0f, -1f, 0f);
+                GameObject benchInstance = RefusalInstance("bench_001 cut first", atBench, out Renderer[] benchRenderers, out Collider[] benchColliders);
+                PlacedCuttableCandidate prop = Candidate(root, bench, benchInstance, benchRenderers, benchColliders);
+                detector.AddPlaced(prop);
+                GameObject instance = RefusalInstance("college_001 hit while a cut is outstanding", at, out Renderer[] renderers, out Collider[] colliders);
+                string asPlaced = States(renderers, colliders);
+                var candidate = new PlacedCuttableCandidate(root, college, instance.transform, renderers, colliders, 10000f, SideMaterial);
+                _candidates.Add(candidate);
+                detector.AddPlaced(candidate);
+                for (int f = 0; f < 3; f++) yield return null;
+
+                pool.HoldEverything = true;
+                Evaluate(detector, ThroughTheMiddle(1, bench, atBench), 1);
+                List<SlashHitConfirmed> hits = Hits(detector);
+                Assert.That(hits.Count, Is.EqualTo(1));
+                Assert.That(prop.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Cut), "the prop is cut: " + hits[0].Acceptance);
+                CutOperationId propCut = hits[0].Operation;
+                yield return Until(() => pool.HoldingCount > 0, "the prop's geometry is held back");
+                StringAssert.Contains("open cut reservations 1", root.Storage.DescribeRoom(), "its output reservation is open");
+
+                int groups = root.Storage.VertexGroupCount, hullGroups = root.Hulls.GroupCount, shown = root.Display.ShownCount, bodies = Bodies(), free = root.Storage.FreeVertexRoom;
+                Evaluate(detector, ThroughTheMiddle(2, college, at), 2);
+                hits = Hits(detector);
+                LogicalFragmentId identified = hits[0].Fragment;
+                TestContext.Out.WriteLine("building hit while outstanding: " + string.Join("; ", hits.Select(h => h.Acceptance + " / " + h.Admission)) + "; " + candidate.LastRefusal);
+                Assert.That(hits.Count, Is.EqualTo(1));
+                Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.NotAccepted), "not accepted now");
+                Assert.That(candidate.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Candidate), "a candidate again, not refused for good");
+                Assert.That(candidate.Source.IsSet, Is.False, "its fragment let go");
+                Assert.That(root.Ledger.IsCurrentTarget(identified), Is.False, "the fragment it was identified as retired");
+                Assert.That(detector.HasPlaced(candidate), Is.True, "still a candidate of the detector");
+                StringAssert.Contains("held for now", candidate.LastRefusal);
+                Assert.That(root.Hulls.GroupCount, Is.EqualTo(hullGroups), "no group");
+                Assert.That(root.Storage.VertexGroupCount, Is.EqualTo(groups), "nothing of it in the storage");
+                Assert.That(root.Storage.FreeVertexRoom, Is.EqualTo(free));
+                Assert.That(root.Display.ShownCount, Is.EqualTo(shown), "never shown");
+                Assert.That(States(renderers, colliders), Is.EqualTo(asPlaced), "its own drawing and colliders as placed");
+                Assert.That(root.TerminationRequested, Is.False, "the world goes on");
+                yield return null;
+                Assert.That(Bodies(), Is.EqualTo(bodies), "no body of it");
+
+                pool.HoldEverything = false;
+                pool.ReleaseEverything();
+                yield return Until(() => root.Geometry.StageOf(propCut) == CutGeometryStage.Committed, "the prop's cut committed");
+                yield return null;
+                Evaluate(detector, ThroughTheMiddle(3, college, at), 3);
+                hits = Hits(detector);
+                TestContext.Out.WriteLine("building hit after the commit: " + string.Join("; ", hits.Select(h => h.Acceptance + " / " + h.Admission)));
+                Assert.That(hits.Count, Is.EqualTo(1));
+                Assert.That(hits[0].Acceptance, Is.EqualTo(ProvisionalCutAcceptance.Pending), "its next hit taken");
+                Assert.That(hits[0].Fragment, Is.Not.EqualTo(identified), "a fresh fragment");
+                Assert.That(candidate.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Cut));
+                yield return Until(() => !candidate.Registration.Group.AwaitsFirstCut, "its first cut published");
+                Assert.That(States(renderers, colliders), Is.EqualTo("off,off|off,off"));
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                CutWorldRoot.nextWorldExecutors = null;
+                DisposeCandidates();
+            }
+        }
+
         [UnityTest]
         public IEnumerator PlacedDeferred_ABuildingOutsideTheAlwaysKinematicMode_IsRefusedAtItsRegistration_TheInstanceAsItWas()
         {
