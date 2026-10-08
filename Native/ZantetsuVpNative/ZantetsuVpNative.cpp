@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -180,6 +181,89 @@ namespace
     // managed lifetimes guard, and one on a threaded Player can widen it. Never on in a product run.
     bool s_holdConsumption = false;
     std::vector<ZvnDraw*> s_held;
+
+    // Observation of the one mutex (TL, 2026-10-08, the Main P95 investigation): how long the main thread's state query
+    // (ZvnIsAvailable) waits for it and holds it, and how long the rendering thread's draw event holds it -- so that a
+    // wait of the main thread can be told from its own work, and set against what it waited for. Plain atomics, written
+    // by the thread that measured (QueryPerformanceCounter ticks; the frequency is given with them); read without the
+    // mutex by ZvnLockStats. No new lock, no allocation, nothing logged.
+    //
+    // It is OFF unless asked for (ZvnSetLockTiming; the managed side asks when the launch has its option): off, the
+    // mutex is taken as it was before the observation existed -- one relaxed read of the switch, no clock read, no
+    // counter written. On, each acquisition also leaves where it was made: the thread's id, the QPC stamp and the
+    // number of the logical processor the thread was running on AT THAT INSTANT (GetCurrentProcessorNumber: the thread
+    // may be moved at any moment after, so the number says nothing of where the rest of the frame ran).
+    struct LockStat
+    {
+        std::atomic<uint64_t> calls{ 0 }, contended{ 0 }, waitTicks{ 0 }, waitMaxTicks{ 0 }, heldTicks{ 0 }, heldMaxTicks{ 0 };
+        std::atomic<uint64_t> lastThreadId{ 0 }, lastQpc{ 0 }, lastProcessor{ 0 };
+    };
+
+    LockStat s_availabilityLock;   // the main thread's ZvnIsAvailable
+    LockStat s_drawLock;           // the rendering thread's OnDrawEvent (draw and sentinel events)
+    std::atomic<bool> s_lockTiming{ false };
+
+    inline uint64_t Qpc()
+    {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        return (uint64_t)t.QuadPart;
+    }
+
+    inline void Max(std::atomic<uint64_t>& m, uint64_t v)
+    {
+        uint64_t seen = m.load(std::memory_order_relaxed);
+        while (v > seen && !m.compare_exchange_weak(seen, v, std::memory_order_relaxed)) {}
+    }
+
+    // Takes s_mutex. With the timing off (the default) that is all it does: the plain blocking lock, released at this
+    // object's end of scope. With it on it measures: a try_lock first (counted as contended when it fails), then the
+    // blocking lock; the wait is the time to acquisition, the hold the time to release. Whether it measures is decided
+    // once, at the acquisition, so a switch made while the mutex is held leaves that hold unmeasured rather than half.
+    struct TimedLock
+    {
+        LockStat* stat;   // null: not measured
+        std::unique_lock<std::mutex> lock;
+        uint64_t acquired;
+
+        explicit TimedLock(LockStat& s) : stat(s_lockTiming.load(std::memory_order_relaxed) ? &s : nullptr), lock(s_mutex, std::defer_lock), acquired(0)
+        {
+            if (stat == nullptr)
+            {
+                lock.lock();
+                return;
+            }
+
+            uint64_t began = Qpc();
+            if (!lock.try_lock())
+            {
+                stat->contended.fetch_add(1, std::memory_order_relaxed);
+                lock.lock();
+            }
+
+            acquired = Qpc();
+            uint64_t wait = acquired - began;
+            stat->calls.fetch_add(1, std::memory_order_relaxed);
+            stat->waitTicks.fetch_add(wait, std::memory_order_relaxed);
+            Max(stat->waitMaxTicks, wait);
+            stat->lastThreadId.store((uint64_t)GetCurrentThreadId(), std::memory_order_relaxed);
+            stat->lastQpc.store(acquired, std::memory_order_relaxed);
+            stat->lastProcessor.store((uint64_t)GetCurrentProcessorNumber(), std::memory_order_relaxed);
+        }
+
+        ~TimedLock()
+        {
+            if (stat == nullptr)
+            {
+                return;   // the unique_lock releases
+            }
+
+            uint64_t held = Qpc() - acquired;
+            lock.unlock();
+            stat->heldTicks.fetch_add(held, std::memory_order_relaxed);
+            Max(stat->heldMaxTicks, held);
+        }
+    };
 
     // Every event ends here: the result, then the consumed mark after everything was read -- or, held, later.
     void Consume(ZvnDraw* draw, ZvnResult result)
@@ -807,7 +891,7 @@ namespace
         }
 
         ZvnDraw* draw = (ZvnDraw*)data;
-        std::lock_guard<std::mutex> lock(s_mutex);
+        TimedLock lock(s_drawLock);
 
         // Once the device is gone (shutdown, or never there) the plugin touches no block at all: the managed side
         // frees the blocks of events that can no longer run once it sees the plugin unavailable, and a write here
@@ -1084,8 +1168,49 @@ extern "C"
     // 1 when the plugin can record draws (Direct3D 12 with IUnityGraphicsD3D12v8); else 0. The reason is in the state.
     int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIsAvailable()
     {
-        std::lock_guard<std::mutex> lock(s_mutex);
+        TimedLock lock(s_availabilityLock);
         return AvailableLocked() ? 1 : 0;
+    }
+
+    // Observation (2026-10-08): the detailed timing of the mutex on (non-zero) or off. Off from the load; the managed
+    // side turns it on when the launch asks. What was counted while it was on stays (the statistics are cumulative).
+    void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSetLockTiming(int on)
+    {
+        s_lockTiming.store(on != 0, std::memory_order_relaxed);
+    }
+
+    // Observation (2026-10-08): the mutex statistics, read without the mutex (each value is one atomic; the set may
+    // straddle a concurrent update, the three "last" values of the rendering thread among themselves included). They
+    // advance only while the timing is on. Fills up to `count` of: [0] availability calls, [1] of them contended
+    // (try_lock failed), [2] wait ticks summed, [3] wait ticks max, [4] held ticks summed, [5] held ticks max,
+    // [6] draw events, [7] draw contended, [8] draw wait ticks, [9] draw wait max, [10] draw held ticks,
+    // [11] draw held max, [12] the id of the thread of the last draw event (0 before any measured one),
+    // [13] QueryPerformanceFrequency, [14] the id of the thread of the last availability query, [15] its QPC stamp at
+    // the acquisition, [16] the logical processor it was on at that instant, [17] the last draw event's QPC stamp at
+    // the acquisition, [18] the logical processor its thread was on at that instant, [19] 1 while the timing is on.
+    // Returns how many were filled.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnLockStats(uint64_t* out, int count)
+    {
+        if (out == nullptr || count <= 0) return 0;
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        uint64_t values[20] =
+        {
+            s_availabilityLock.calls.load(std::memory_order_relaxed), s_availabilityLock.contended.load(std::memory_order_relaxed),
+            s_availabilityLock.waitTicks.load(std::memory_order_relaxed), s_availabilityLock.waitMaxTicks.load(std::memory_order_relaxed),
+            s_availabilityLock.heldTicks.load(std::memory_order_relaxed), s_availabilityLock.heldMaxTicks.load(std::memory_order_relaxed),
+            s_drawLock.calls.load(std::memory_order_relaxed), s_drawLock.contended.load(std::memory_order_relaxed),
+            s_drawLock.waitTicks.load(std::memory_order_relaxed), s_drawLock.waitMaxTicks.load(std::memory_order_relaxed),
+            s_drawLock.heldTicks.load(std::memory_order_relaxed), s_drawLock.heldMaxTicks.load(std::memory_order_relaxed),
+            s_drawLock.lastThreadId.load(std::memory_order_relaxed), (uint64_t)f.QuadPart,
+            s_availabilityLock.lastThreadId.load(std::memory_order_relaxed), s_availabilityLock.lastQpc.load(std::memory_order_relaxed),
+            s_availabilityLock.lastProcessor.load(std::memory_order_relaxed),
+            s_drawLock.lastQpc.load(std::memory_order_relaxed), s_drawLock.lastProcessor.load(std::memory_order_relaxed),
+            s_lockTiming.load(std::memory_order_relaxed) ? 1ull : 0ull,
+        };
+        int n = count < 20 ? count : 20;
+        for (int i = 0; i < n; i++) out[i] = values[i];
+        return n;
     }
 
     // The plugin's state in words, for a log. Returns the text's length; writes at most outSize - 1 characters.

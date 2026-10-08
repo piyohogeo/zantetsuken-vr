@@ -61,6 +61,9 @@ namespace Zantetsu.Rendering
             void Free();
 
             string Describe();
+
+            /// <summary>How many ring blocks one <see cref="AllReleased"/> may look at (observation: the scan's size).</summary>
+            int Blocks { get; }
         }
 
         /// <summary>A view of a ring the entry does not own: it waits on the blocks taken before the view was made, frees nothing.</summary>
@@ -85,6 +88,8 @@ namespace Zantetsu.Rendering
             }
 
             public string Describe() => _ring.Name + " up to serial " + _serial;
+
+            public int Blocks => _ring.IsDisposed ? 0 : _ring.Blocks;
         }
 
         /// <summary>Every wait of several: over when each is over (a buffer named by the events of more than one route).</summary>
@@ -120,6 +125,16 @@ namespace Zantetsu.Rendering
                 for (int i = 0; i < _waits.Count; i++) text.Append(i > 0 ? "; " : "").Append(_waits[i].Describe());
                 return text.Append(']').ToString();
             }
+
+            public int Blocks
+            {
+                get
+                {
+                    int n = 0;
+                    for (int i = 0; i < _waits.Count; i++) n += _waits[i].Blocks;
+                    return n;
+                }
+            }
         }
 
         private sealed class OwnedRing : IRingWait
@@ -140,7 +155,75 @@ namespace Zantetsu.Rendering
             }
 
             public string Describe() => _ring.Name + " (owned, " + _ring.InFlight + " in flight)";
+
+            public int Blocks => _ring.IsDisposed ? 0 : _ring.Blocks;
         }
+
+        /// <summary>
+        /// Observation (TL, 2026-10-08, the Main P95 investigation): what the keeper did on the main thread in one frame,
+        /// by part, with Stopwatch ticks and counts -- the ends of cameras' renderings (<see cref="OnEndCameraRendering"/>):
+        /// the Prepared blocks dropped, the sentinel decision's scan, the device query, the sentinel's issue (the
+        /// submission through the context included) and the promotion; and the ticks (<see cref="Tick"/>): the device
+        /// query, the sentinels read, the rings told, the entries judged and the releases. Nothing is allocated: two
+        /// values of this struct are kept, this frame's and the one before.
+        /// <para>
+        /// Kept only while the detailed observation is on (<see cref="VpNativeDrawPlugin.DetailTiming"/>, the launch
+        /// option <see cref="VpNativeDrawPlugin.DetailTimingArgument"/>; off by default). Off, the keeper reads no clock
+        /// and asks nothing more than its work needs: the frame's number is not read, the waits' sizes are not asked,
+        /// and the few counts its code still adds go to a value that is never read.
+        /// </para>
+        /// </summary>
+        public struct FrameWork
+        {
+            public int frame;
+            public int endCameraCalls, tickCalls, sentinelsIssued, promoted, prepDropped;
+            public long dropTicks, wantTicks, sealDeviceTicks, issueTicks, promoteTicks;
+            public long tickDeviceTicks, readSentinelsTicks, ringsTicks, entriesTicks, releaseTicks;
+            public long ringsScanned, blocksScanned, entriesJudged, entriesReleased, resourcesReleased;
+            public int entriesPendingAtEnd;
+
+            public static double Ms(long ticks) => ticks * s_msPerTick;
+        }
+
+        private static readonly double s_msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        private static FrameWork s_workNow = new FrameWork { frame = int.MinValue }, s_workBefore = new FrameWork { frame = int.MinValue };
+        private static FrameWork s_workUnobserved;   // where the counts go while the observation is off: never read
+
+        private static bool Detail => Plugin.DetailTiming;
+
+        /// <summary>
+        /// The keeper's work in <paramref name="frame"/>: false while the detailed observation is off, and for a frame
+        /// older than the two kept; true with zeros for one it did nothing in.
+        /// </summary>
+        public static bool TryGetFrameWork(int frame, out FrameWork work)
+        {
+            if (!Detail) { work = new FrameWork { frame = frame }; return false; }
+            if (frame == s_workNow.frame) { work = s_workNow; return true; }
+            if (frame == s_workBefore.frame) { work = s_workBefore; return true; }
+            work = new FrameWork { frame = frame };
+            return frame > s_workBefore.frame;
+        }
+
+        // This frame's work, the frame before kept when this is a new one. Off: the value nobody reads.
+        private static ref FrameWork Work()
+        {
+            if (!Detail)
+            {
+                return ref s_workUnobserved;
+            }
+
+            int frame = Time.frameCount;
+            if (s_workNow.frame != frame)
+            {
+                s_workBefore = s_workNow;
+                s_workNow = new FrameWork { frame = frame };
+            }
+
+            return ref s_workNow;
+        }
+
+        // The clock, read only while the observation is on.
+        private static long Now() => Detail ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
 
         private sealed class Entry
         {
@@ -326,28 +409,52 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static int Tick()
         {
+            bool detail = Detail;
+            ref FrameWork work = ref Work();
+            work.tickCalls++;
+            long t0 = Now();
             bool deviceGone = !DeviceAvailable();
+            long t1 = Now();
             ReadSentinels();
+            long t2 = Now();
             foreach (VpNativeDrawData ring in s_rings)
             {
                 ring.SetConsumedSentinel(s_consumedSentinel);
                 if (deviceGone) ring.DeviceGone();
             }
 
+            work.ringsScanned += s_rings.Count;
+            long t3 = Now();
             int released = 0;
+            long judging = 0, releasing = 0;
             for (int i = s_entries.Count - 1; i >= 0; i--)
             {
                 Entry entry = s_entries[i];
-                if (entry.wait != null && !deviceGone && !entry.wait.AllReleased(s_consumedSentinel))
+                long j0 = Now();
+                work.entriesJudged++;
+                if (detail && entry.wait != null) work.blocksScanned += entry.wait.Blocks;
+                bool over = entry.wait == null || deviceGone || entry.wait.AllReleased(s_consumedSentinel);
+                long j1 = Now();
+                judging += j1 - j0;
+                if (!over)
                 {
                     continue;
                 }
 
+                work.resourcesReleased += entry.gpuResources.Count;
                 Release(entry, deviceGone ? "device gone" : entry.wait == null ? "nothing to wait on" : "its events are over");
                 s_entries.RemoveAt(i);
                 released++;
+                releasing += Now() - j1;
             }
 
+            work.tickDeviceTicks += t1 - t0;
+            work.readSentinelsTicks += t2 - t1;
+            work.ringsTicks += t3 - t2;
+            work.entriesTicks += judging;
+            work.releaseTicks += releasing;
+            work.entriesReleased += released;
+            work.entriesPendingAtEnd = s_entries.Count;
             return released;
         }
 
@@ -362,6 +469,7 @@ namespace Zantetsu.Rendering
         {
             // The camera's name is read only for a journal line or a warning: a string a frame is an allocation
             // (natP11, 2026-10-08: +48 B a frame against natP10).
+            Work().endCameraCalls++;
             Seal(context, camera);
             Tick();
         }
@@ -377,17 +485,27 @@ namespace Zantetsu.Rendering
 
         private static void Seal(ScriptableRenderContext? context, Camera camera)
         {
+            ref FrameWork work = ref Work();
+            long t0 = Now();
             foreach (VpNativeDrawData ring in s_rings)
             {
-                ring.DropPrepared();
+                work.prepDropped += ring.DropPrepared();
             }
 
-            if (!WantsSentinel())
+            long t1 = Now();
+            bool wants = WantsSentinel(ref work);
+            long t2 = Now();
+            work.dropTicks += t1 - t0;
+            work.wantTicks += t2 - t1;
+            if (!wants)
             {
                 return;
             }
 
-            if (!DeviceAvailable())
+            bool available = DeviceAvailable();
+            long t3 = Now();
+            work.sealDeviceTicks += t3 - t2;
+            if (!available)
             {
                 return;   // Tick releases everything
             }
@@ -429,28 +547,38 @@ namespace Zantetsu.Rendering
                 Debug.LogWarning("VP native draw release: the sentinel could not be issued at " + Where(camera) + ": " + e.Message);
                 return;
             }
+            finally
+            {
+                work.issueTicks += Now() - t3;
+            }
 
             // Issued, behind the camera's submission on its context: the Recorded blocks are Submitted under it.
+            long t4 = Now();
             s_sentinelSerial = serial;
             s_sentinelSerials[slot] = serial;
             s_sentinelNoted[slot] = false;
             SentinelsIssued++;
+            work.sentinelsIssued++;
             int promoted = 0;
             foreach (VpNativeDrawData ring in s_rings)
             {
                 promoted += ring.SubmitRecorded(serial);
             }
 
+            work.promoted += promoted;
+            work.promoteTicks += Now() - t4;
             if (JournalOn) Note("sentinel " + serial + " issued at the end of " + Where(camera) + "'s rendering; " + promoted + " recorded blocks submitted under it");
         }
 
-        private static bool WantsSentinel()
+        private static bool WantsSentinel(ref FrameWork work)
         {
             bool recordedUnconsumed = false;
             int recorded = 0, capacity = 0;
             foreach (VpNativeDrawData ring in s_rings)
             {
                 if (ring.IsDisposed) continue;
+                work.ringsScanned++;
+                work.blocksScanned += ring.Blocks;   // HasRecordedUnconsumed looks at the blocks until it finds one
                 if (!ring.HasRecordedUnconsumed) continue;
                 recordedUnconsumed = true;
                 recorded += ring.InFlightIn(VpNativeDrawData.BlockState.Recorded);
@@ -553,6 +681,7 @@ namespace Zantetsu.Rendering
 
             s_subscribed = true;
             if (!JournalOn && Array.IndexOf(Environment.GetCommandLineArgs(), "-zantetsuNativeJournal") >= 0) JournalOn = true;
+            Plugin.ReadDetailTimingArgument();   // the detailed observation (off unless the launch asks)
             RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
             RenderPipelineManager.endContextRendering += OnEndContextRendering;
             Application.quitting += OnQuitting;

@@ -818,5 +818,281 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(failure, Does.Contain("Direct3D 12").Or.Contain("not in this Player"));
             }
         }
+
+        // ----- the detailed observation (the Main P95 investigation, 2026-10-08): off unless asked ------------------
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool QueryPerformanceCounter(out long value);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern bool QueryPerformanceFrequency(out long value);
+
+        // GC.Alloc samples on this thread while `action` runs `times` times (the measure of the preparation tests).
+        private static int AllocationSamples(Action action, int times)
+        {
+            UnityEngine.Profiling.Recorder recorder = UnityEngine.Profiling.Recorder.Get("GC.Alloc");
+            recorder.enabled = false;
+            recorder.FilterToCurrentThread();
+            recorder.enabled = true;
+            for (int i = 0; i < times; i++) action();
+            recorder.enabled = false;
+            recorder.CollectFromAllThreads();
+            return recorder.sampleBlockCount;
+        }
+
+        // The positive control: a recorder that counts nothing must not pass for "no allocation".
+        private static byte[] s_known;
+
+        private static void AssertAllocationIsSeen()
+        {
+            int seen = AllocationSamples(() => s_known = new byte[4096], 1);
+            GC.KeepAlive(s_known);
+            Assert.That(seen, Is.GreaterThanOrEqualTo(1), "the recorder counts a known allocation on this thread");
+        }
+
+        private static readonly Action s_tick = () => VpNativeDrawRelease.Tick();
+        private static readonly Action s_seal = () => VpNativeDrawRelease.SealForTest();
+        private static readonly Action s_query = () => Plugin.IsAvailableNow();
+        private static readonly Action s_stats = () => Plugin.ReadLockStats();
+
+        [Test]
+        public void DetailObservation_IsOffUnlessAsked_AndOffTheKeeperKeepsNothing()
+        {
+            Assert.That(Plugin.DetailTimingArgument, Is.EqualTo("-zantetsuNativeDrawTiming"));
+            Assert.That(Array.IndexOf(Environment.GetCommandLineArgs(), Plugin.DetailTimingArgument), Is.LessThan(0), "this Editor was not launched with the option");
+            Plugin.ReadDetailTimingArgument();
+            Assert.That(Plugin.DetailTiming, Is.False, "off by default: nothing asked for it");
+
+            var ring = Track(new VpNativeDrawData(4, 4, 2, 256) { Name = "observation ring" });
+            bool journalBefore = VpNativeDrawRelease.JournalOn;
+            VpNativeDrawRelease.JournalOn = false;
+
+            // The device query takes a moment here (a spin), so that a part timed at all shows a time above the clock's step.
+            VpNativeDrawRelease.DeviceAvailableForTest = () =>
+            {
+                System.Threading.Thread.SpinWait(20000);
+                return true;
+            };
+            VpNativeDrawRelease.IssueSentinelForTest = _ => { };
+            try
+            {
+                VpNativeDrawRelease.Register(ring);
+                int frame = Time.frameCount;
+
+                // Off: the keeper does its work and keeps nothing of it.
+                VpNativeDrawRelease.SealForTest();
+                VpNativeDrawRelease.Tick();
+                Assert.That(VpNativeDrawRelease.TryGetFrameWork(frame, out VpNativeDrawRelease.FrameWork off), Is.False, "off: no frame's work is handed out");
+                Assert.That(off.tickCalls, Is.Zero);
+                Assert.That(off.ringsScanned, Is.Zero);
+
+                // On: the same calls are counted and timed -- a seal (with its tick) and a tick.
+                Plugin.SetDetailTiming(true);
+                Assert.That(Plugin.DetailTiming, Is.True);
+                VpNativeDrawRelease.SealForTest();
+                VpNativeDrawRelease.Tick();
+                Assert.That(VpNativeDrawRelease.TryGetFrameWork(frame, out VpNativeDrawRelease.FrameWork on), Is.True);
+                Assert.That(on.frame, Is.EqualTo(frame));
+                Assert.That(on.tickCalls, Is.EqualTo(2), "the seal's tick and the tick; none of the calls made while it was off");
+                Assert.That(on.ringsScanned, Is.GreaterThanOrEqualTo(3), "the seal's decision and the two ticks each looked at the ring");
+                Assert.That(on.blocksScanned, Is.GreaterThanOrEqualTo(ring.Blocks));
+                Assert.That(on.entriesPendingAtEnd, Is.EqualTo(VpNativeDrawRelease.Pending));
+                Assert.That(on.tickDeviceTicks, Is.GreaterThan(0), "the ticks' device query was timed");
+                Assert.That(on.dropTicks, Is.GreaterThanOrEqualTo(0));
+                Assert.That(on.wantTicks, Is.GreaterThanOrEqualTo(0));
+
+                // Off again: nothing is handed out, and what runs now is not added to what was kept.
+                Plugin.SetDetailTiming(false);
+                VpNativeDrawRelease.Tick();
+                VpNativeDrawRelease.Tick();
+                Assert.That(VpNativeDrawRelease.TryGetFrameWork(frame, out _), Is.False);
+                Plugin.SetDetailTiming(true);
+                Assert.That(VpNativeDrawRelease.TryGetFrameWork(frame, out VpNativeDrawRelease.FrameWork again), Is.True);
+                Assert.That(again.tickCalls, Is.EqualTo(2), "the two ticks made while it was off were not counted");
+
+                // Neither state allocates: the keeper's tick and its seal, a few hundred times each.
+                AssertAllocationIsSeen();
+                int onTick = AllocationSamples(s_tick, 300), onSeal = AllocationSamples(s_seal, 300);
+                Plugin.SetDetailTiming(false);
+                int offTick = AllocationSamples(s_tick, 300), offSeal = AllocationSamples(s_seal, 300);
+                TestContext.WriteLine("GC.Alloc samples on this thread over 300 calls: tick on " + onTick + ", seal on " + onSeal + ", tick off " + offTick + ", seal off " + offSeal);
+                Assert.That(onTick, Is.Zero);
+                Assert.That(onSeal, Is.Zero);
+                Assert.That(offTick, Is.Zero);
+                Assert.That(offSeal, Is.Zero);
+            }
+            finally
+            {
+                Plugin.SetDetailTiming(false);
+                VpNativeDrawRelease.Unregister(ring);
+                VpNativeDrawRelease.IssueSentinelForTest = null;
+                VpNativeDrawRelease.DeviceAvailableForTest = null;
+                VpNativeDrawRelease.JournalOn = journalBefore;
+            }
+        }
+
+        [Test]
+        public void Plugin_TimesItsMutexOnlyWhenAsked_AndLeavesWhereTheLastQueryWasMade()
+        {
+            bool loaded = Plugin.TryLoad(out string failure);
+            try
+            {
+                if (!loaded)
+                {
+                    // No plugin on this device (it draws on Direct3D 12 only): asked for or not, there is nothing to
+                    // time, and the query answers no without counting.
+                    Assert.That(SystemInfo.graphicsDeviceType, Is.Not.EqualTo(GraphicsDeviceType.Direct3D12), failure);
+                    long callsBefore = Plugin.AvailabilityCalls;
+                    Plugin.SetDetailTiming(true);
+                    Assert.That(Plugin.IsAvailableNow(), Is.False);
+                    Assert.That(Plugin.AvailabilityCalls, Is.EqualTo(callsBefore));
+                    Plugin.LockStats none = Plugin.ReadLockStats();
+                    Assert.That(none.timingOn, Is.False);
+                    Assert.That(none.availabilityCalls, Is.Zero);
+                    TestContext.WriteLine("device " + SystemInfo.graphicsDeviceType + ": the plugin is not loaded; nothing is timed");
+                    return;
+                }
+
+                const int Calls = 100;
+
+                // Off (the default): the query is made, and neither side counts or times it.
+                Plugin.SetDetailTiming(false);
+                Plugin.LockStats s0 = Plugin.ReadLockStats();
+                long managed0 = Plugin.AvailabilityCalls, ticks0 = Plugin.AvailabilityTicks;
+                Assert.That(s0.timingOn, Is.False, "the plugin's timing is off");
+                for (int i = 0; i < Calls; i++) Assert.That(Plugin.IsAvailableNow(), Is.True);
+                Plugin.LockStats s1 = Plugin.ReadLockStats();
+                Assert.That(s1.availabilityCalls, Is.EqualTo(s0.availabilityCalls), "off: the plugin counted no query");
+                Assert.That(s1.availabilityWaitTicks, Is.EqualTo(s0.availabilityWaitTicks));
+                Assert.That(s1.availabilityHeldTicks, Is.EqualTo(s0.availabilityHeldTicks));
+                Assert.That(s1.availabilityLastQpc, Is.EqualTo(s0.availabilityLastQpc), "off: no acquisition left its place");
+                Assert.That(Plugin.AvailabilityCalls, Is.EqualTo(managed0), "off: the managed side counted no query");
+                Assert.That(Plugin.AvailabilityTicks, Is.EqualTo(ticks0));
+
+                // On: every query is counted on both sides, and the last one leaves its thread, stamp and processor.
+                Plugin.SetDetailTiming(true);
+                Plugin.LockStats s2 = Plugin.ReadLockStats();
+                Assert.That(s2.timingOn, Is.True);
+                QueryPerformanceFrequency(out long frequency);
+                Assert.That(s2.qpcFrequency, Is.EqualTo((ulong)frequency), "the plugin's stamps and the rows' (QueryPerformanceCounter, read directly) are of one clock");
+
+                // Written, not held: whether this runtime's Stopwatch is that clock too (it is in the IL2CPP Player, by
+                // natW1's rows; it need not be -- which is why the rows' stamps do not go through it).
+                QueryPerformanceCounter(out long before);
+                long stopwatch = System.Diagnostics.Stopwatch.GetTimestamp();
+                TestContext.WriteLine("QueryPerformanceCounter " + before + " at frequency " + frequency + "; Stopwatch.GetTimestamp " + stopwatch + " at frequency " + System.Diagnostics.Stopwatch.Frequency
+                    + ": " + (Math.Abs(stopwatch - before) < frequency ? "the same clock in this runtime" : "NOT the same origin in this runtime"));
+                for (int i = 0; i < Calls; i++) Assert.That(Plugin.IsAvailableNow(), Is.True);
+                QueryPerformanceCounter(out long after);
+                Plugin.LockStats s3 = Plugin.ReadLockStats();
+                Assert.That(s3.availabilityCalls - s2.availabilityCalls, Is.EqualTo((ulong)Calls));
+                Assert.That(Plugin.AvailabilityCalls - managed0, Is.EqualTo(Calls));
+                Assert.That(Plugin.AvailabilityTicks, Is.GreaterThan(ticks0));
+                Assert.That(s3.availabilityHeldTicks, Is.GreaterThan(s2.availabilityHeldTicks), "the hold was timed");
+                Assert.That(s3.availabilityThreadId, Is.EqualTo((ulong)GetCurrentThreadId()), "the thread that asked");
+                Assert.That((long)s3.availabilityLastQpc, Is.InRange(before, after), "the last acquisition's stamp, on the clock the rows use (QueryPerformanceCounter)");
+                Assert.That(s3.availabilityLastProcessor, Is.LessThan((ulong)Environment.ProcessorCount), "a logical processor's number (where the thread was at that instant, nothing more)");
+                TestContext.WriteLine("on: " + Calls + " queries, wait " + s3.Ms(s3.availabilityWaitTicks - s2.availabilityWaitTicks).ToString("F6") + " ms, held "
+                    + s3.Ms(s3.availabilityHeldTicks - s2.availabilityHeldTicks).ToString("F6") + " ms; last on thread " + s3.availabilityThreadId + " at qpc " + s3.availabilityLastQpc
+                    + " on processor " + s3.availabilityLastProcessor + "; draw events measured so far " + s3.drawEvents);
+
+                // Off again: the counts stand where they were.
+                Plugin.SetDetailTiming(false);
+                for (int i = 0; i < Calls; i++) Plugin.IsAvailableNow();
+                Plugin.LockStats s4 = Plugin.ReadLockStats();
+                Assert.That(s4.timingOn, Is.False);
+                Assert.That(s4.availabilityCalls, Is.EqualTo(s3.availabilityCalls));
+                Assert.That(s4.availabilityLastQpc, Is.EqualTo(s3.availabilityLastQpc));
+
+                // Neither the query nor the reading of the statistics allocates, on or off.
+                AssertAllocationIsSeen();
+                int offQuery = AllocationSamples(s_query, 300), offStats = AllocationSamples(s_stats, 300);
+                Plugin.SetDetailTiming(true);
+                int onQuery = AllocationSamples(s_query, 300), onStats = AllocationSamples(s_stats, 300);
+                TestContext.WriteLine("GC.Alloc samples on this thread over 300 calls: query off " + offQuery + ", statistics off " + offStats + ", query on " + onQuery + ", statistics on " + onStats);
+                Assert.That(offQuery, Is.Zero);
+                Assert.That(offStats, Is.Zero);
+                Assert.That(onQuery, Is.Zero);
+                Assert.That(onStats, Is.Zero);
+            }
+            finally
+            {
+                Plugin.SetDetailTiming(false);
+            }
+        }
+
+        /// <summary>
+        /// What the detailed observation costs, measured rather than supposed: the state query, the keeper's tick (no
+        /// entry waiting, one ring: the steady state of the draw comparison) and the reading of the statistics, each
+        /// timed over blocks of calls with the observation off and on in turn, in this one process. The figures are
+        /// written, not judged, but for a wide bound that only a broken switch would pass: they are this Editor's
+        /// (Mono, not the Player's IL2CPP), and say what one call adds, not what a frame of a Player loses.
+        /// </summary>
+        [Test]
+        public void DetailObservation_ItsAddedCostIsMeasured_OffAndOnInTurn()
+        {
+            const int Rounds = 31, Calls = 20000;
+            bool loaded = Plugin.TryLoad(out _);
+            var ring = Track(new VpNativeDrawData(4, 4, 2, 256) { Name = "cost ring" });
+            bool journalBefore = VpNativeDrawRelease.JournalOn;
+            VpNativeDrawRelease.JournalOn = false;
+            VpNativeDrawRelease.DeviceAvailableForTest = () => true;
+            var tickOff = new double[Rounds]; var tickOn = new double[Rounds];
+            var queryOff = new double[Rounds]; var queryOn = new double[Rounds];
+            var statsOn = new double[Rounds];
+            try
+            {
+                VpNativeDrawRelease.Register(ring);
+                for (int round = -1; round < Rounds; round++)   // round -1 warms the paths up and is not kept
+                {
+                    for (int state = 0; state < 2; state++)
+                    {
+                        Plugin.SetDetailTiming(state == 1);
+                        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        for (int i = 0; i < Calls; i++) VpNativeDrawRelease.Tick();
+                        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (loaded) for (int i = 0; i < Calls; i++) Plugin.IsAvailableNow();
+                        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (loaded && state == 1) for (int i = 0; i < Calls; i++) Plugin.ReadLockStats();
+                        long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (round < 0) continue;
+                        double nsPerTick = 1e9 / System.Diagnostics.Stopwatch.Frequency / Calls;
+                        (state == 1 ? tickOn : tickOff)[round] = (t1 - t0) * nsPerTick;
+                        (state == 1 ? queryOn : queryOff)[round] = (t2 - t1) * nsPerTick;
+                        if (state == 1) statsOn[round] = (t3 - t2) * nsPerTick;
+                    }
+                }
+            }
+            finally
+            {
+                Plugin.SetDetailTiming(false);
+                VpNativeDrawRelease.Unregister(ring);
+                VpNativeDrawRelease.DeviceAvailableForTest = null;
+                VpNativeDrawRelease.JournalOn = journalBefore;
+            }
+
+            Array.Sort(tickOff); Array.Sort(tickOn); Array.Sort(queryOff); Array.Sort(queryOn); Array.Sort(statsOn);
+            int mid = Rounds / 2, low = Rounds / 10, high = Rounds - 1 - Rounds / 10;
+            string Line(string what, double[] off, double[] on) => what + ": off median " + off[mid].ToString("F1") + " ns a call (" + off[low].ToString("F1") + " to " + off[high].ToString("F1")
+                + "), on median " + on[mid].ToString("F1") + " (" + on[low].ToString("F1") + " to " + on[high].ToString("F1") + "), difference of the medians " + (on[mid] - off[mid]).ToString("F1") + " ns";
+            TestContext.WriteLine("device " + SystemInfo.graphicsDeviceType + ", plugin loaded " + loaded + "; " + Rounds + " rounds of " + Calls + " calls, off and on in turn; ranges are the 10th to the 90th percentile of the rounds");
+            TestContext.WriteLine(Line("keeper tick (device query stubbed, one ring, no entry)", tickOff, tickOn));
+            if (loaded)
+            {
+                TestContext.WriteLine(Line("state query (P/Invoke, the plugin's mutex)", queryOff, queryOn));
+                TestContext.WriteLine("reading the statistics (on only; once a row in the comparison's runner): median " + statsOn[mid].ToString("F1") + " ns a call (" + statsOn[low].ToString("F1") + " to " + statsOn[high].ToString("F1") + ")");
+            }
+            else
+            {
+                TestContext.WriteLine("state query: not measured (the plugin is not loaded on this device)");
+            }
+
+            Assert.That(tickOff[mid], Is.GreaterThan(0.0));
+            Assert.That(tickOn[mid] - tickOff[mid], Is.LessThan(5000.0), "a tick's added cost is far under 5 microseconds");
+            if (loaded) Assert.That(queryOn[mid] - queryOff[mid], Is.LessThan(5000.0), "a query's added cost is far under 5 microseconds");
+        }
     }
 }

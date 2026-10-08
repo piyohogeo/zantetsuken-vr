@@ -272,6 +272,63 @@ namespace Zantetsu.Rendering
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnHeldCount();
 
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnLockStats(ulong* output, int count);
+
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern void ZvnSetLockTiming(int on);
+
+        /// <summary>
+        /// The launch option of the detailed observation (the Main P95 investigation, 2026-10-08): with it, the plugin
+        /// times its mutex (<see cref="ReadLockStats"/>), the state query is timed as the main thread sees it and the
+        /// keeper breaks its end-of-rendering work into parts (<see cref="VpNativeDrawRelease.TryGetFrameWork"/>).
+        /// Without it -- the default -- none of that runs: the plugin takes its mutex as it did before the observation
+        /// existed, the query is made alone, and the keeper reads no clock and keeps nothing.
+        /// </summary>
+        public const string DetailTimingArgument = "-zantetsuNativeDrawTiming";
+
+        /// <summary>Whether the detailed observation is on (off unless the launch asked, or a test did).</summary>
+        public static bool DetailTiming { get; private set; }
+
+        private static bool s_detailArgumentRead;
+
+        /// <summary>
+        /// Reads the launch option once (the first caller: the plugin's load or the keeper's subscription, whichever
+        /// comes first); the option only ever turns the observation on.
+        /// </summary>
+        public static void ReadDetailTimingArgument()
+        {
+            if (s_detailArgumentRead)
+            {
+                return;
+            }
+
+            s_detailArgumentRead = true;
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), DetailTimingArgument) >= 0) SetDetailTiming(true);
+        }
+
+        /// <summary>
+        /// Turns the detailed observation on or off, here and in the plugin when it is loaded (when it is not yet, the
+        /// load applies it). What was counted while it was on stays: the sources are cumulative.
+        /// </summary>
+        public static void SetDetailTiming(bool on)
+        {
+            DetailTiming = on;
+            if (!s_loaded)
+            {
+                return;
+            }
+
+            try
+            {
+                ZvnSetLockTiming(on ? 1 : 0);
+            }
+            catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                // A library without the switch has no timing either: nothing to turn.
+            }
+        }
+
         private static bool s_checked;
         private static bool s_loaded;
         private static string s_failure;
@@ -322,6 +379,12 @@ namespace Zantetsu.Rendering
                 {
                     s_failure = "the native library " + Library + " is not loadable here: " + e.Message;
                 }
+
+                // The detailed observation: on when the launch (or a test, before the load) asked for it, else off. The
+                // plugin is told either way: in the Editor the library outlives a reload of the managed side, and its
+                // switch must not be left where an earlier session put it.
+                ReadDetailTimingArgument();
+                if (s_loaded) SetDetailTiming(DetailTiming);
             }
 
             failure = s_failure;
@@ -361,14 +424,107 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static bool IsAvailableNow()
         {
+            if (!s_loaded)
+            {
+                return false;
+            }
+
+            if (!DetailTiming)
+            {
+                // The default: the query alone, as it was before the observation existed.
+                try
+                {
+                    return ZvnIsAvailable() != 0;
+                }
+                catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+                {
+                    return false;
+                }
+            }
+
+            // Observation (TL, 2026-10-08; on by DetailTimingArgument only): the whole call as the main thread sees it --
+            // the P/Invoke, the plugin's wait for its mutex, its moment under it -- counted and timed (Stopwatch ticks; no
+            // allocation). The plugin's own share of the wait and the hold is in LockStats.
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
-                return s_loaded && ZvnIsAvailable() != 0;
+                return ZvnIsAvailable() != 0;
             }
             catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
             {
                 return false;
             }
+            finally
+            {
+                long took = System.Diagnostics.Stopwatch.GetTimestamp() - began;
+                AvailabilityCalls++;
+                AvailabilityTicks += took;
+                if (took > AvailabilityMaxTicks) AvailabilityMaxTicks = took;
+            }
+        }
+
+        /// <summary>
+        /// Observation: <see cref="IsAvailableNow"/> calls, their time in Stopwatch ticks summed, and the longest one
+        /// (cumulative; a reader takes differences). They advance only while <see cref="DetailTiming"/> is on.
+        /// </summary>
+        public static long AvailabilityCalls { get; private set; }
+        public static long AvailabilityTicks { get; private set; }
+        public static long AvailabilityMaxTicks { get; private set; }
+
+        /// <summary>
+        /// The plugin's mutex statistics (2026-10-08), cumulative, read without the mutex: the main thread's state
+        /// queries (calls, contended, wait and hold in QPC ticks, sums and maxima) and the rendering thread's draw
+        /// events (the same), the QPC frequency, and where the last acquisition of each was made -- the thread's id,
+        /// the QPC stamp, and the logical processor the thread was on at that instant (an instant's observation: it
+        /// says nothing of where the thread ran before or after). They advance only while the plugin's timing is on
+        /// (<see cref="timingOn"/>); zeros when the plugin is not loaded.
+        /// </summary>
+        public struct LockStats
+        {
+            public ulong availabilityCalls, availabilityContended, availabilityWaitTicks, availabilityWaitMaxTicks, availabilityHeldTicks, availabilityHeldMaxTicks;
+            public ulong drawEvents, drawContended, drawWaitTicks, drawWaitMaxTicks, drawHeldTicks, drawHeldMaxTicks;
+            public ulong renderThreadId, qpcFrequency;
+            public ulong availabilityThreadId, availabilityLastQpc, availabilityLastProcessor, drawLastQpc, drawLastProcessor;
+            public bool timingOn;
+
+            public double Ms(ulong ticks) => qpcFrequency > 0 ? ticks * 1000.0 / qpcFrequency : 0.0;
+        }
+
+        private const int LockStatValues = 20;
+
+        public static LockStats ReadLockStats()
+        {
+            var stats = new LockStats();
+            if (!s_loaded)
+            {
+                return stats;
+            }
+
+            ulong* values = stackalloc ulong[LockStatValues];
+            int n;
+            try
+            {
+                n = ZvnLockStats(values, LockStatValues);
+            }
+            catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                return stats;
+            }
+
+            if (n < LockStatValues)
+            {
+                return stats;
+            }
+
+            stats.availabilityCalls = values[0]; stats.availabilityContended = values[1]; stats.availabilityWaitTicks = values[2]; stats.availabilityWaitMaxTicks = values[3];
+            stats.availabilityHeldTicks = values[4]; stats.availabilityHeldMaxTicks = values[5];
+            stats.drawEvents = values[6]; stats.drawContended = values[7]; stats.drawWaitTicks = values[8]; stats.drawWaitMaxTicks = values[9];
+            stats.drawHeldTicks = values[10]; stats.drawHeldMaxTicks = values[11];
+            stats.renderThreadId = values[12]; stats.qpcFrequency = values[13];
+            stats.availabilityThreadId = values[14]; stats.availabilityLastQpc = values[15]; stats.availabilityLastProcessor = values[16];
+            stats.drawLastQpc = values[17]; stats.drawLastProcessor = values[18];
+            stats.timingOn = values[19] != 0;
+            return stats;
         }
 
         /// <summary>Before the first draw: regions (frames in flight the rings can hold) and bytes and descriptors per region.</summary>
