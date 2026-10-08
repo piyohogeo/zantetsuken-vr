@@ -105,7 +105,8 @@ namespace Zantetsu.PhysicsCut
             }
 
             drewEverything = _nativeRoute.Refused == 0 && _nativeRoute.RingFull == 0 && _nativeRoute.PipelineFailures == 0
-                && _nativeRoute.XrFramesNotDrawn == 0 && NativeRefusals == 0 && _nativeRoute.BodiesIssued == _nativeRoute.BodiesTaken;
+                && _nativeRoute.XrFramesNotDrawn == 0 && NativeRefusals == 0 && _nativeRoute.BodiesIssued == _nativeRoute.BodiesTaken
+                && _nativeRoute.MotionIssued == _nativeRoute.MotionTaken;
             return _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals;
         }
 

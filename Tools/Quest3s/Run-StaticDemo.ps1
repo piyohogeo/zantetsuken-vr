@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('unity', 'vp3c')][string]$Mode = 'vp3c',
+    [ValidateSet('unity', 'vp3c', 'vp3c-native')][string]$Mode = 'vp3c',
     [string]$Apk,
     [ValidateSet('head', 'path')][string]$CameraMode = 'head',
     [string]$PathFile,

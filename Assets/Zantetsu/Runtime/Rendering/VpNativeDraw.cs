@@ -519,6 +519,7 @@ namespace Zantetsu.Rendering
                         break;
                     case Plugin.BindingKind.Texture:
                         bindings[i].extra = (uint)info.TextureKind;
+                        if (Plugin.Vulkan) bindings[i].extra2 = (uint)samplerOf(info.Name).kind;
                         break;
                     case Plugin.BindingKind.Sampler:
                         (Plugin.SamplerKind kind, int anisotropy) = samplerOf(info.Name);

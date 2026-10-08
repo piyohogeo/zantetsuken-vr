@@ -92,6 +92,10 @@ float4x4 _VpNativeStereoMatrixV[2];
 float4x4 _VpNativeStereoMatrixP[2];
 float4x4 _VpNativeStereoCameraProjection[2];
 float4 _VpNativeStereoCameraPos[2];
+// Set by URP's XRDepthMotionPass in this same command stream, before the native motion pass.
+float4x4 _PrevViewProjMatrixStereo[2];
+float4x4 _NonJitteredViewProjMatrixStereo[2];
+float _SpaceWarpNDCModifier;
 
 StructuredBuffer<uint> _VpNativeOffsets;
 uint _VpNativeDestination;
@@ -197,6 +201,9 @@ float4x4 Inverse(float4x4 m)
 [numthreads(1, 1, 1)]
 void AssembleGlobals(uint3 id : SV_DispatchThreadID)
 {
+    PutMatrixPair(38u, _PrevViewProjMatrixStereo[0], _PrevViewProjMatrixStereo[1]);
+    PutMatrixPair(39u, _NonJitteredViewProjMatrixStereo[0], _NonJitteredViewProjMatrixStereo[1]);
+    Put1(40u, _SpaceWarpNDCModifier);
     Put4(VP_SLOT_MAIN_LIGHT_POSITION, _MainLightPosition);
     Put4(VP_SLOT_MAIN_LIGHT_COLOR, _MainLightColor);
     Put3(VP_SLOT_WORLD_SPACE_CAMERA_POS, _WorldSpaceCameraPos);

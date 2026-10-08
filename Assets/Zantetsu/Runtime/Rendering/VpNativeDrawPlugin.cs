@@ -16,7 +16,12 @@ namespace Zantetsu.Rendering
     /// </summary>
     public static unsafe class VpNativeDrawPlugin
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        public const string Library = "ZantetsuVpVulkan";
+#else
         public const string Library = "ZantetsuVpNative";
+#endif
+        public static bool Vulkan => SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan;
         public const int ContractVersion = 1;
         public const int NameLength = 64;
         public const int MaxViewports = 4;

@@ -4,6 +4,8 @@
 
 ## 現在の状態
 
+追記: Android ARM64のVulkan版VP3C-NATIVEを追加。実装・新しい計測・再現手順は [Quest 3S VP3C-NATIVE Vulkan](quest3s-vp3c-native-vulkan.md) を参照。以下の初回計測はUnity描画経路の記録として残す。
+
 `tiled_seed14` のUnity Mesh／Unity描画のVP3CをQuest 3Sで起動し、CSVとUnity Profilerのrawファイルを取得した。MSAA 4xではUnity Meshは45fpsのAppSWに到達したが、VP3Cは約22fpsで未達。VP3Cの45fps達成を完了扱いにしない。
 
 最新版の通常起動はヘッドトラッキング。自動経路を使う比較は `-CameraMode path` を明示する。`-KeepOpen` または通常のhead起動では、計測後も選択した描画経路とWorldを保持する。以前の実装は測定終了時にVPを解放して元のMeshRendererを復帰させていたため、終了後の快適さをVP3Cの性能とみなせなかった。この切り替えを修正した。

@@ -425,9 +425,9 @@ namespace Zantetsu.PhysicsCut
             if (nativeRequested && culling != null && display != null)
             {
                 UnityEngine.Debug.Log(
-                    "VP BODY ROUTE: VP3C-NATIVE -- GPU selection with the Direct3D 12 plugin's argument entries, drawn by the plugin "
-                    + "(one ExecuteIndirect per run of commands), " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
-                    + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off") + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
+                    "VP BODY ROUTE: VP3C-NATIVE -- GPU selection with native argument entries, drawn by the "
+                    + (VpNativeDrawPlugin.Vulkan ? "Vulkan indexed multi-draw" : "Direct3D 12 ExecuteIndirect") + " plugin, " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
+                    + (VpGpuCullSetup.ShadowSliceSelection && !VpNativeDrawPlugin.Vulkan ? "on" : "off") + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
                     this);
             }
             else if (nativeRequested)

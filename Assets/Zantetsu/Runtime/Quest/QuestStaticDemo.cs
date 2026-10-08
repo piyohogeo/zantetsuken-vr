@@ -33,6 +33,15 @@ namespace Zantetsu.Quest
         private float _nextStatus;
         private readonly System.Collections.Generic.List<XRDisplaySubsystem> _displays = new System.Collections.Generic.List<XRDisplaySubsystem>();
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void SelectNativeRoute()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            string file = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
+            if (File.Exists(file)) Zantetsu.Rendering.VpNativeDrawSetup.Requested = JsonUtility.FromJson<Config>(File.ReadAllText(file))?.mode == "vp3c-native";
+#endif
+        }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
         {
@@ -52,7 +61,7 @@ namespace Zantetsu.Quest
                 throw new InvalidOperationException("Quest static demo requires Quest_RPAsset; scenario pipeline was not configured");
             string configPath = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
             _config = File.Exists(configPath) ? JsonUtility.FromJson<Config>(File.ReadAllText(configPath)) : new Config();
-            if (_config == null || (_config.mode != "unity" && _config.mode != "vp3c")) throw new InvalidOperationException("mode must be unity or vp3c");
+            if (_config == null || (_config.mode != "unity" && _config.mode != "vp3c" && _config.mode != "vp3c-native")) throw new InvalidOperationException("mode must be unity, vp3c or vp3c-native");
             string pathText = !string.IsNullOrEmpty(_config.pathFile) ? File.ReadAllText(_config.pathFile)
                 : Resources.Load<TextAsset>("Quest3sStaticDemoPath").text;
             if (!SceneDrawComparePath.TryParse(pathText, out var path, out string failure)) throw new InvalidOperationException(failure);
@@ -78,7 +87,7 @@ namespace Zantetsu.Quest
             var settings = new SandboxDrawComparePlayerCheck.Settings
             {
                 directory = Path.Combine(directory, "comparison"), path = path, geometryFile = geometryPath,
-                mode = _config.mode == "unity" ? SandboxDrawComparePlayerCheck.Mode.Unity : SandboxDrawComparePlayerCheck.Mode.Vp3c,
+                mode = _config.mode == "unity" ? SandboxDrawComparePlayerCheck.Mode.Unity : _config.mode == "vp3c-native" ? SandboxDrawComparePlayerCheck.Mode.Vp3cNative : SandboxDrawComparePlayerCheck.Mode.Vp3c,
                 warmupLaps = _config.warmupLaps,
                 headTracked = _config.headTracked, retainSceneAfterMeasurement = !_config.quitWhenDone,
                 profilerFile = _config.profiler ? Path.Combine(directory, "profile.raw") : null,
@@ -101,6 +110,7 @@ namespace Zantetsu.Quest
                 xr.TryGetDisplayRefreshRate(out float refresh);
                 xr.TryGetAppGPUTimeLastFrame(out float gpu);
                 QuestDisplayRefreshRateFeature.TryReadReported(out float physicalRefresh);
+                if (_config.mode == "vp3c-native" && Zantetsu.Rendering.VpNativeDrawPlugin.TryLoad(out _)) Debug.Log("QUEST NATIVE: " + Zantetsu.Rendering.VpNativeDrawPlugin.ReadCounters() + "; " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeState());
                 Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
