@@ -100,6 +100,16 @@ namespace Zantetsu.PhysicsCut.Tests
             string[] capture = { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "vp3c", "-zantetsuDrawComparePath", "path.txt", "-zantetsuDrawCompareCapture", "1;4.5" };
             Assert.That(SandboxDrawComparePlayerCheck.TryRead(capture, out settings, out failure), Is.True, failure);
             Assert.That(settings.captureTimes, Is.EqualTo(new[] { 1.0, 4.5 }));
+            Assert.That(settings.cutScene, Is.False, "no cut scene unless asked for");
+
+            // The cut scene: in mode unity, with the route its launch names -- either one.
+            foreach (string route in new[] { "-zantetsuVp3cNative", "-zantetsuVp3cUnityApi" })
+            {
+                string[] cut = { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "path.txt", "-zantetsuDrawCompareCutScene", route };
+                Assert.That(SandboxDrawComparePlayerCheck.TryRead(cut, out settings, out failure), Is.True, failure);
+                Assert.That(settings.cutScene, Is.True, route);
+                Assert.That(settings.mode, Is.EqualTo(SandboxDrawComparePlayerCheck.Mode.Unity));
+            }
         }
 
         [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawComparePath", "p.txt" }, "must be 'unity', 'vp3c' or 'vp3c-native'")]
@@ -110,6 +120,9 @@ namespace Zantetsu.PhysicsCut.Tests
         [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "p.txt", "-zantetsuPropSlash", "C:/run" }, "does not run beside")]
         [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "p.txt", "-zantetsuDrawCompareWarmupLaps", "many" }, "must be 0..8")]
         [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "p.txt", "-zantetsuDrawCompareCapture", "soon" }, "takes path times")]
+        [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuDrawComparePath", "p.txt", "-zantetsuDrawCompareCutScene" }, "compares routes: the Player must be launched with")]
+        [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "vp3c", "-zantetsuVp3cUnityApi", "-zantetsuDrawComparePath", "p.txt", "-zantetsuDrawCompareCutScene" }, "mode unity only")]
+        [TestCase(new[] { "Player.exe", "-zantetsuDrawCompare", "C:/out", "-zantetsuDrawCompareMode", "unity", "-zantetsuVp3cNative", "-zantetsuDrawComparePath", "p.txt" }, "which only mode vp3c-native compares")]
         public void Arguments_ThatCannotBeRun_AreAFailure_NotADifferentRun(string[] arguments, string expected)
         {
             Assert.That(SandboxDrawComparePlayerCheck.TryRead(arguments, out var settings, out string failure), Is.False);

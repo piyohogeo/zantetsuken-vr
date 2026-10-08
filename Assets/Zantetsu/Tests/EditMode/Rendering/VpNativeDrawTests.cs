@@ -311,6 +311,91 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(VpNativeDrawSetup.Read(null), Is.False);
         }
 
+        /// <summary>
+        /// The body's route by request, device and platform (D-215): with nothing asked, the plugin on a Windows
+        /// Direct3D 12 Player and Unity's calls everywhere else -- another device, another platform, the Editor; the
+        /// plugin anywhere when asked for (whether it can be had there is the world's matter, and its failure); Unity's
+        /// calls anywhere when asked for, which wins over the plugin's argument.
+        /// </summary>
+        [Test]
+        public void Setup_WithNothingAsked_TakesThePluginOnAWindowsDirect3D12Player_AndUnitysCallsElsewhere()
+        {
+            Assert.That(VpNativeDrawSetup.ReadRequest(new[] { "player.exe" }), Is.EqualTo(VpBodyRouteRequest.Default));
+            Assert.That(VpNativeDrawSetup.ReadRequest(null), Is.EqualTo(VpBodyRouteRequest.Default));
+            Assert.That(VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.Argument }), Is.EqualTo(VpBodyRouteRequest.Native));
+            Assert.That(VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.UnityApiArgument }), Is.EqualTo(VpBodyRouteRequest.UnityApi));
+            Assert.That(
+                VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.Argument, VpNativeDrawSetup.UnityApiArgument }),
+                Is.EqualTo(VpBodyRouteRequest.UnityApi), "the argument for Unity's calls wins");
+            Assert.That(VpNativeDrawSetup.UnityApiArgument, Is.EqualTo("-zantetsuVp3cUnityApi"));
+
+            VpNativeDrawSetup.Selection Of(VpBodyRouteRequest request, GraphicsDeviceType device, bool editor, RuntimePlatform platform)
+            {
+                VpNativeDrawSetup.Selection selection = VpNativeDrawSetup.Select(request, device, editor, platform);
+                TestContext.Out.WriteLine(request + ", " + device + ", " + (editor ? "Editor" : platform.ToString()) + ": " + (selection.Native ? "the plugin" : "Unity's calls")
+                    + (selection.Asked ? " (asked)" : " (default)") + " -- " + selection.Reason);
+                return selection;
+            }
+
+            // Nothing asked.
+            VpNativeDrawSetup.Selection player12 = Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Direct3D12, false, RuntimePlatform.WindowsPlayer);
+            Assert.That(player12.Native, Is.True, "a Windows Direct3D 12 Player draws through the plugin by default");
+            Assert.That(player12.Asked, Is.False);
+            Assert.That(player12.Reason, Does.Contain("default"));
+            VpNativeDrawSetup.Selection player11 = Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Direct3D11, false, RuntimePlatform.WindowsPlayer);
+            Assert.That(player11.Native, Is.False, "Direct3D 11 is not forced onto the plugin");
+            Assert.That(player11.Asked, Is.False);
+            Assert.That(player11.Reason, Does.Contain("Direct3D11").And.Contain("Direct3D 12 only"));
+            Assert.That(Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Vulkan, false, RuntimePlatform.WindowsPlayer).Native, Is.False, "nor Vulkan");
+            Assert.That(Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Direct3D12, false, RuntimePlatform.LinuxPlayer).Native, Is.False, "nor another platform");
+            Assert.That(Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Vulkan, false, RuntimePlatform.Android).Native, Is.False);
+            VpNativeDrawSetup.Selection editor12 = Of(VpBodyRouteRequest.Default, GraphicsDeviceType.Direct3D12, true, RuntimePlatform.WindowsEditor);
+            Assert.That(editor12.Native, Is.False, "the Editor takes the plugin only when asked");
+            Assert.That(editor12.Reason, Does.Contain("Editor"));
+
+            // The plugin asked for: taken as the request anywhere -- that it cannot be had there is the world's failure.
+            foreach ((GraphicsDeviceType device, bool editor, RuntimePlatform platform) in new[]
+                     {
+                         (GraphicsDeviceType.Direct3D12, false, RuntimePlatform.WindowsPlayer), (GraphicsDeviceType.Direct3D11, false, RuntimePlatform.WindowsPlayer),
+                         (GraphicsDeviceType.Direct3D12, true, RuntimePlatform.WindowsEditor), (GraphicsDeviceType.Vulkan, false, RuntimePlatform.LinuxPlayer),
+                     })
+            {
+                VpNativeDrawSetup.Selection asked = Of(VpBodyRouteRequest.Native, device, editor, platform);
+                Assert.That(asked.Native, Is.True);
+                Assert.That(asked.Asked, Is.True);
+                Assert.That(asked.Reason, Does.Contain(VpNativeDrawSetup.Argument));
+            }
+
+            // Unity's calls asked for: the comparison's route, also where the plugin is the default.
+            VpNativeDrawSetup.Selection unity12 = Of(VpBodyRouteRequest.UnityApi, GraphicsDeviceType.Direct3D12, false, RuntimePlatform.WindowsPlayer);
+            Assert.That(unity12.Native, Is.False);
+            Assert.That(unity12.Asked, Is.True);
+            Assert.That(unity12.Reason, Does.Contain(VpNativeDrawSetup.UnityApiArgument));
+
+            // The launch's record says the request and what it selects on this device (this Editor: Unity's calls unless asked).
+            string byDefault = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeBodyRoute(new[] { "player.exe" });
+            string askedNative = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeBodyRoute(new[] { "player.exe", VpNativeDrawSetup.Argument });
+            TestContext.Out.WriteLine("launch record, nothing asked: " + byDefault + "\nlaunch record, the plugin asked: " + askedNative);
+            Assert.That(byDefault, Does.StartWith("Default -> Unity's calls").And.Contain("Editor"));
+            Assert.That(askedNative, Does.StartWith("Native -> VP3C-NATIVE").And.Contain(VpNativeDrawSetup.Argument));
+            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("body route asked: Default -> ").And.Contain("graphics=" + SystemInfo.graphicsDeviceType));
+
+            // The older switch: true asks for the plugin, false asks for Unity's calls (never the default).
+            VpBodyRouteRequest before = VpNativeDrawSetup.Request;
+            try
+            {
+                VpNativeDrawSetup.Requested = true;
+                Assert.That(VpNativeDrawSetup.Request, Is.EqualTo(VpBodyRouteRequest.Native));
+                VpNativeDrawSetup.Requested = false;
+                Assert.That(VpNativeDrawSetup.Request, Is.EqualTo(VpBodyRouteRequest.UnityApi));
+                Assert.That(VpNativeDrawSetup.Requested, Is.False);
+            }
+            finally
+            {
+                VpNativeDrawSetup.Request = before;
+            }
+        }
+
         [Test]
         public void SphericalHarmonics_PackAsUnitysSevenConstants()
         {

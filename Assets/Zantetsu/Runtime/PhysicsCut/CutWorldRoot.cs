@@ -161,6 +161,20 @@ namespace Zantetsu.PhysicsCut
         public string NativeDrawFailure { get; private set; }
 
         /// <summary>
+        /// Why the plugin's route, the default of this configuration (D-215: a Windows Direct3D 12 Player), was not
+        /// taken although nothing asked for another -- in which case this world draws by Unity's calls and has said so
+        /// as an error: a failure of the default that is recorded, not a success by another route. Null where the
+        /// plugin's route was taken, was not the default, or another route was asked for.
+        /// </summary>
+        public string NativeDefaultUnavailable { get; private set; }
+
+        /// <summary>The body's route this world settled at its construction: "VP3", "VP3C" (Unity's calls) or "VP3C-NATIVE" (the plugin).</summary>
+        public string BodyRoute { get; private set; }
+
+        /// <summary>Why that route: asked for by which argument, or the default of which configuration.</summary>
+        public string BodyRouteReason { get; private set; }
+
+        /// <summary>
         /// The input connectivity the characters prepared in this world have passed (DESIGN 6.2's edge and fan checks), so
         /// that another character of the same model -- a replacement -- is not checked again for it; each character's own
         /// values are still checked. Kept for this world's lifetime and let go at its release.
@@ -380,22 +394,63 @@ namespace Zantetsu.PhysicsCut
             GpuCullFallback = null;
             NativeDrawFailure = null;
 
-            // The plugin's route (DESIGN 4.5.8), asked for by its own argument on top of the selection: its batch
-            // writes entries only the plugin can draw, so a plugin that cannot be had is not a fallback to Unity's
-            // calls but the end of this world -- a comparison never mixes the two routes without saying so.
-            bool nativeRequested = VpNativeDrawSetup.Requested;
+            // The plugin's route (DESIGN 4.5.8, D-215), on top of the selection: the default of a Windows Direct3D 12
+            // Player, or asked for by its argument anywhere. Its batch writes entries only the plugin can draw.
+            //   asked for and not to be had : the end of this world -- no other route is taken;
+            //   the default and not to be had: Unity's calls, said as an error with the reason (a recorded failure of
+            //                                  the default, never a success by another route);
+            //   another device or platform  : Unity's calls, the plugin not being the default there.
+            // Settled here once: a world that draws through the plugin never makes up for a refusal by Unity's calls.
+            VpNativeDrawSetup.Selection routeSelection = VpNativeDrawSetup.Select();
+            bool nativeRequested = routeSelection.Native && routeSelection.Asked;
+            bool nativeWanted = routeSelection.Native && (routeSelection.Asked || VpGpuCullSetup.Requested);
+            NativeDefaultUnavailable = null;
+            BodyRoute = null;
+            BodyRouteReason = routeSelection.Reason;
+
+            bool MakeDisplay(VpGpuCullSetup with, out VpLogicalCutDisplay made)
+            {
+                return VpLogicalCutDisplay.TryCreate(
+                    Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
+                    profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
+                    profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
+                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
+                    displayPages, with, out made);
+            }
+
             if (VpGpuCullSetup.Requested || nativeRequested)
             {
                 GpuCullFallback = Zantetsu.Rendering.Urp.VpGpuCullCameraRoute.CheckEnvironment();
-                if (GpuCullFallback == null && nativeRequested)
+                if (GpuCullFallback == null && nativeWanted)
                 {
-                    NativeDrawFailure = Zantetsu.Rendering.Urp.VpNativeDrawRoute.CheckEnvironment();
+                    string unavailable = Zantetsu.Rendering.Urp.VpNativeDrawRoute.CheckEnvironment();
+                    if (unavailable != null && nativeRequested)
+                    {
+                        NativeDrawFailure = unavailable;
+                    }
+                    else if (unavailable != null)
+                    {
+                        NativeDefaultUnavailable = unavailable;
+                        nativeWanted = false;
+                    }
                 }
 
                 if (GpuCullFallback == null && NativeDrawFailure == null
-                    && !VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, nativeRequested, out culling, out string cullFailure))
+                    && !VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, nativeWanted, out culling, out string cullFailure))
                 {
-                    GpuCullFallback = cullFailure;
+                    culling = null;
+                    if (nativeWanted && !nativeRequested
+                        && VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, false, out VpGpuCullSetup unityCulling, out string _))
+                    {
+                        // The selection can be had, but not with the plugin's argument entries.
+                        culling = unityCulling;
+                        NativeDefaultUnavailable = cullFailure;
+                        nativeWanted = false;
+                    }
+                    else
+                    {
+                        GpuCullFallback = cullFailure;
+                    }
                 }
             }
 
@@ -411,23 +466,35 @@ namespace Zantetsu.PhysicsCut
             }
 
             VpLogicalCutDisplay display = null;
-            if (culling != null && !VpLogicalCutDisplay.TryCreate(
-                    Storage, References, Ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
-                    profile.DrawCommandCapacity, profile.DrawInstanceCapacity, profile.BranchCapacity,
-                    profile.CandidateCapacity, profile.ChainDepth, profile.StencilSettings,
-                    profile.GpuVertexInitialCapacity, profile.GpuIndexInitialCapacity, profile.DisplayLimits,
-                    displayPages, culling, out display))
+            if (culling != null && !MakeDisplay(culling, out display))
             {
-                GpuCullFallback = VpLogicalCutDisplay.LastCreationFailure ?? "the display could not be made with it";
+                string displayFailure = VpLogicalCutDisplay.LastCreationFailure ?? "the display could not be made with it";
                 culling = null;
+                display = null;
+                if (nativeWanted && !nativeRequested
+                    && VpGpuCullSetup.TryCreate(profile.StencilSettings.cameraCapacity, false, out VpGpuCullSetup unityCulling, out string _)
+                    && MakeDisplay(unityCulling, out display))
+                {
+                    // The display can be made with the selection, but not with the plugin's argument entries.
+                    culling = unityCulling;
+                    NativeDefaultUnavailable = displayFailure;
+                    nativeWanted = false;
+                }
+                else
+                {
+                    display = null;
+                    GpuCullFallback = displayFailure;
+                }
             }
 
-            if (nativeRequested && culling != null && display != null)
+            if (nativeWanted && culling != null && display != null)
             {
+                BodyRoute = "VP3C-NATIVE";
                 UnityEngine.Debug.Log(
                     "VP BODY ROUTE: VP3C-NATIVE -- GPU selection with the Direct3D 12 plugin's argument entries, drawn by the plugin "
                     + "(one ExecuteIndirect per run of commands), " + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
-                    + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off") + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
+                    + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off") + "; selected: " + BodyRouteReason
+                    + "; plugin: " + VpNativeDrawPlugin.DescribeState(),
                     this);
             }
             else if (nativeRequested)
@@ -441,16 +508,32 @@ namespace Zantetsu.PhysicsCut
             }
             else if (VpGpuCullSetup.Requested)
             {
-                UnityEngine.Debug.Log(
-                    culling != null
-                        ? "VP BODY ROUTE: VP3C -- GPU selection (compute frustum culling, GPU-written indirect arguments), "
-                          + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
-                          + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off")
-                        : "VP BODY ROUTE: VP3 -- FALLBACK, the GPU selection (the default) is not used: " + GpuCullFallback,
-                    this);
+                BodyRoute = culling != null ? "VP3C" : "VP3";
+                if (culling != null && NativeDefaultUnavailable != null)
+                {
+                    // Not a silent change of route: the default was the plugin, it is not to be had, and the run says so.
+                    UnityEngine.Debug.LogError(
+                        "VP BODY ROUTE: VP3C -- GPU selection (compute frustum culling, GPU-written indirect arguments), "
+                        + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
+                        + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off")
+                        + "; drawn by Unity's calls BECAUSE THE PLUGIN'S ROUTE, THE DEFAULT HERE, IS NOT AVAILABLE: " + NativeDefaultUnavailable
+                        + " (" + BodyRouteReason + "); a failure of the default, recorded -- not a success by another route",
+                        this);
+                }
+                else
+                {
+                    UnityEngine.Debug.Log(
+                        culling != null
+                            ? "VP BODY ROUTE: VP3C -- GPU selection (compute frustum culling, GPU-written indirect arguments), "
+                              + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "
+                              + (VpGpuCullSetup.ShadowSliceSelection ? "on" : "off") + "; drawn by Unity's calls: " + BodyRouteReason
+                            : "VP BODY ROUTE: VP3 -- FALLBACK, the GPU selection (the default) is not used: " + GpuCullFallback,
+                        this);
+                }
             }
             else
             {
+                BodyRoute = "VP3";
                 UnityEngine.Debug.Log(
                     "VP BODY ROUTE: VP3 (asked for: " + VpGpuCullSetup.Vp3Argument + ", or set so by the caller; no GPU selection)", this);
             }

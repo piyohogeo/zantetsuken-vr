@@ -511,6 +511,16 @@ namespace Zantetsu.Sandbox
                 public double stepCollectMs = double.NaN;
                 public int notes = -1, gcCount = -1;
                 public long roomCommittedBytes = -1;
+
+                // The Direct3D 12 plugin's route (DESIGN 4.5.8), where the world draws by it (2026-10-08): its counters
+                // as they stood when this row was completed, summed over the cameras' drawings -- pointers asked of
+                // Unity and pointers kept from the cache, body and caster issues, what was not drawn (refusals, a full
+                // ring, pipeline failures, XR frames or cameras not drawn), buffers retired through the route, and the
+                // event blocks in flight then. Cumulative but the last: the table writes each row's difference from
+                // the row before. nativeKnown false where the world does not draw by the plugin.
+                public bool nativeKnown;
+                public long nPointersAsked, nPointersKept, nBodyIssues, nCasterIssues, nNotDrawn, nBuffersRetired;
+                public int nBlocksInFlight;
                 public VpPlaceCounts placeStructural, placePlacementOnly;   // the Place passes of this frame, structural and placement-only (copies), null when not known
             }
 
@@ -1342,6 +1352,8 @@ namespace Zantetsu.Sandbox
                 return after - before;
             }
 
+            private CutWorldCameraDrawing[] _nativeDrawings;   // the cameras' drawings, looked for once where the world draws by the plugin
+
             private FrameRow TakeRow()
             {
                 if (_timeline.Count < _rowRoom) return _rowPool[_timeline.Count];
@@ -1386,6 +1398,28 @@ namespace Zantetsu.Sandbox
                         if (counts.validate != null) { previous.validate = previous.validateRoom ?? new VpValidateCounts(); previous.validate.CopyFrom(counts.validate); }
                         if (counts.placeStructural != null) { previous.placeStructural = previous.placeStructuralRoom ?? new VpPlaceCounts(); previous.placeStructural.CopyFrom(counts.placeStructural); }
                         if (counts.placePlacementOnly != null) { previous.placePlacementOnly = previous.placePlacementOnlyRoom ?? new VpPlaceCounts(); previous.placePlacementOnly.CopyFrom(counts.placePlacementOnly); }
+                    }
+
+                    // The plugin's route, where the world draws by it: the drawings are looked for once, in the first
+                    // row of such a world (elsewhere this is one test a frame); nothing is made after that.
+                    if (_world != null && _world.Display != null && !_world.Display.IsDisposed && _world.Display.NativeArguments)
+                    {
+                        _nativeDrawings ??= UnityEngine.Object.FindObjectsByType<CutWorldCameraDrawing>(FindObjectsSortMode.None);
+                        previous.nativeKnown = true;
+                        foreach (CutWorldCameraDrawing drawing in _nativeDrawings)
+                        {
+                            if (drawing == null) continue;
+                            previous.nNotDrawn += drawing.NativeRefusals;
+                            Zantetsu.Rendering.Urp.VpNativeDrawRoute route = drawing.NativeRoute;
+                            if (route == null) continue;
+                            previous.nPointersAsked += route.PointerAcquisitions;
+                            previous.nPointersKept += route.PointerHits;
+                            previous.nBodyIssues += route.BodiesIssued;
+                            previous.nCasterIssues += route.CastersIssued;
+                            previous.nNotDrawn += route.Refused + route.RingFull + route.PipelineFailures + route.XrFramesNotDrawn;
+                            previous.nBuffersRetired += route.BuffersRetired;
+                            previous.nBlocksInFlight += route.BlocksInFlight;
+                        }
                     }
                 }
 
@@ -1498,13 +1532,15 @@ namespace Zantetsu.Sandbox
 
                 var text = new StringBuilder(_timeline.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
-                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes");
+                text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes"
+                    + ",nPointersAsked,nPointersKept,nBodyIssues,nCasterIssues,nNotDrawn,nBuffersRetired,nBlocksInFlight");
                 foreach ((ProfilerCategory _, string name) in _timelineMarkers)
                 {
                     text.Append(',').Append(name);
                 }
 
                 text.Append('\n');
+                FrameRow nativeBefore = null;   // the last row whose plugin counts are known: a row's counts are its difference from it
                 foreach (FrameRow r in _timeline)
                 {
                     text.Append(r.frame).Append(',').Append(r.phase).Append(',').Append(r.real.ToString("R", Inv)).Append(',')
@@ -1661,6 +1697,20 @@ namespace Zantetsu.Sandbox
                     text.Append(',').Append(double.IsNaN(r.stepCollectMs) ? "" : r.stepCollectMs.ToString("R", Inv))
                         .Append(',').Append(r.notes < 0 ? "" : r.notes.ToString(Inv)).Append(',').Append(r.gcCount < 0 ? "" : r.gcCount.ToString(Inv))
                         .Append(',').Append(r.roomCommittedBytes < 0 ? "" : r.roomCommittedBytes.ToString(Inv));
+                    if (r.nativeKnown && nativeBefore != null)
+                    {
+                        text.Append(',').Append(r.nPointersAsked - nativeBefore.nPointersAsked).Append(',').Append(r.nPointersKept - nativeBefore.nPointersKept)
+                            .Append(',').Append(r.nBodyIssues - nativeBefore.nBodyIssues).Append(',').Append(r.nCasterIssues - nativeBefore.nCasterIssues)
+                            .Append(',').Append(r.nNotDrawn - nativeBefore.nNotDrawn).Append(',').Append(r.nBuffersRetired - nativeBefore.nBuffersRetired)
+                            .Append(',').Append(r.nBlocksInFlight);
+                    }
+                    else
+                    {
+                        // Not the plugin's world, or the first row of one (no row before to take the difference from).
+                        text.Append(",,,,,,,");
+                    }
+
+                    if (r.nativeKnown) nativeBefore = r;
                     for (int i = 0; i < _timelineMarkers.Length; i++)
                     {
                         text.Append(',').Append(r.markers != null ? r.markers[i] : -1);

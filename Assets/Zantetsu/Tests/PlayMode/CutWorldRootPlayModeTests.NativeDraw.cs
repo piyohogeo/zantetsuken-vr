@@ -665,6 +665,47 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         // Named to run after the picture case: a world ended by contract is kept uncollected by the fixture, which
         // holds back whatever case of the fixture follows it in the same run.
+        /// <summary>
+        /// **The default that cannot be had (D-215).** Where the plugin's route is the configuration's default -- here a
+        /// test's selection, since the Editor's default is never the plugin -- and the plugin cannot draw (this Editor's
+        /// Direct3D 11), the world is not ended: it draws by Unity's calls, says so as an error with the reason, and
+        /// keeps the reason. Asked for by its argument the same lack ends the world (the next case).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator NativeDraw_TheDefaultWhereThePluginCannotDraw_DrawsByUnitysCalls_AndRecordsTheFailure()
+        {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+            {
+                Assert.Ignore("the plugin can draw on this Editor's device; this case needs one it cannot (the Editor's default, Direct3D 11)");
+            }
+
+            VpBodyRouteRequest requestBefore = VpNativeDrawSetup.Request;
+            VpNativeDrawSetup.Request = VpBodyRouteRequest.Default;
+            VpNativeDrawSetup.SelectionForTest = new VpNativeDrawSetup.Selection(true, false, "a test's default (as a Windows Direct3D 12 Player's)");
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("VP BODY ROUTE: VP3C -- .*THE PLUGIN'S ROUTE, THE DEFAULT HERE, IS NOT AVAILABLE"));
+                DrawCompareScene scene = NewDrawCompareScene();
+                CutWorldRoot root = scene.root;
+                yield return null;
+                TestContext.Out.WriteLine("route " + root.BodyRoute + " (" + root.BodyRouteReason + "); the default not had: " + root.NativeDefaultUnavailable);
+                Assert.That(root.TerminationRequested, Is.False, "a default that cannot be had does not end the world");
+                Assert.That(root.NativeDrawFailure, Is.Null, "nothing asked for the plugin");
+                Assert.That(root.NativeDefaultUnavailable, Is.Not.Null, "the failure of the default is kept");
+                Assert.That(root.NativeDefaultUnavailable, Does.Contain("Direct3D 12"));
+                Assert.That(root.BodyRoute, Is.EqualTo("VP3C"));
+                Assert.That(root.Display, Is.Not.Null);
+                Assert.That(root.Display.CullsOnGpu, Is.True, "the GPU selection, drawn by Unity's calls");
+                Assert.That(root.Display.NativeArguments, Is.False, "no entry only the plugin could draw");
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                VpNativeDrawSetup.SelectionForTest = null;
+                VpNativeDrawSetup.Request = requestBefore;
+            }
+        }
+
         [UnityTest]
         public IEnumerator NativeDraw_WhereThePluginCannotDraw_AskedFor_EndsTheWorld_RatherThanDrawByAnotherRoute()
         {
