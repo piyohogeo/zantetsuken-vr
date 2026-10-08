@@ -83,6 +83,8 @@ namespace Zantetsu.Sandbox
             public Mode mode;
             public int warmupLaps = 1;
             public bool allowRefused, shots, lifetimeDrill;
+            // Quest demo options; defaults keep the existing PC comparison and cleanup behavior.
+            public bool headTracked, retainSceneAfterMeasurement;
             public double[] captureTimes = Array.Empty<double>();
             public SceneDrawComparePath path;
         }
@@ -356,7 +358,7 @@ namespace Zantetsu.Sandbox
             instances.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
             Runner runner = Begin(settings, world, instances, Camera.main, null);
             runner.targetRoots = roots;
-            runner.endWorld = true;
+            runner.endWorld = !settings.retainSceneAfterMeasurement;
             if (quitWhenDone) runner.quit = Application.Quit;
             return runner;
         }
@@ -487,6 +489,7 @@ namespace Zantetsu.Sandbox
             internal Camera eye;
             internal Transform rig;
             internal bool endWorld;
+            private bool _headPosePlaced;
             internal Action<int> quit;
 
             /// <summary>For tests: geometry the run starts with (a Player reads its file instead).</summary>
@@ -663,6 +666,7 @@ namespace Zantetsu.Sandbox
                           : world.Display.CullsOnGpu ? "VP3C, GPU selection"
                           : "VP3, no GPU selection" + (world.GpuCullFallback != null ? ": FALLBACK " + world.GpuCullFallback : "")) + ")"
                     : "unity (the targets' own MeshRenderers)"));
+                Note("camera: " + (settings.headTracked ? "head tracked; path sets initial position and run duration only" : "recorded path"));
                 Note("launch: " + SandboxLaunchRecord.Describe());
                 bool profilerAlready = Profiler.enabled && Profiler.enableBinaryLog;
                 if (profilerAlready) Note("the Profiler was ALREADY recording when the preparation began (" + Profiler.logFile + "): the preparation is in that recording");
@@ -910,6 +914,7 @@ namespace Zantetsu.Sandbox
                     Vector3 seen = eye.transform.position;
                     float seenYaw = eye.transform.eulerAngles.y;
                     ApplyPose(pose);
+                    if (settings.headTracked) { pose.eye = eye.transform.position; pose.yaw = eye.transform.eulerAngles.y; }
                     Record(t, pose, !last, seen, seenYaw);
                     if (movingShotSegment >= 0 && t >= settings.path.BeginOf(movingShotSegment) + 0.5 * settings.path.SecondsOf(movingShotSegment))
                     {
@@ -1024,10 +1029,11 @@ namespace Zantetsu.Sandbox
                     Log("world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
                 }
 
-                if (VpDisplay != null)
+                if (VpDisplay != null && !settings.retainSceneAfterMeasurement)
                 {
                     VpDisplay.Dispose();
                 }
+                if (settings.retainSceneAfterMeasurement) Log("scene retained: " + ModeName(settings.mode) + "; head tracking active after measurement; renderers and world kept");
 
                 Finish(!wrote ? 23 : notes.Count == 0 ? 0 : 21, wrote, notes.Count == 0, notes.Count == 0 ? null : string.Join("; ", notes));
             }
@@ -1062,6 +1068,11 @@ namespace Zantetsu.Sandbox
             // The rig placed so that the camera's eye is the pose's, whatever the head's own pose under the rig is.
             private void ApplyPose(in SceneDrawComparePath.Pose pose)
             {
+                if (settings.headTracked)
+                {
+                    if (_headPosePlaced) return;
+                    _headPosePlaced = true;
+                }
                 Transform camera = eye.transform;
                 if (rig == camera)
                 {
@@ -1722,6 +1733,7 @@ namespace Zantetsu.Sandbox
                 foreach (string note in notes) text.Append("note: ").Append(note).Append('\n');
                 text.Append("checks: not run (this run measures; it judges nothing of the product)\n");
                 text.Append("mode: ").Append(ModeName(settings.mode)).Append('\n');
+                text.Append("camera: ").Append(settings.headTracked ? "head tracked (not a matched path comparison)" : "recorded path").Append('\n');
                 text.Append("launch: ").Append(SandboxLaunchRecord.Describe()).Append('\n');
                 text.Append("path: ").Append(settings.path.Describe()).Append('\n');
                 if (Inventory != null) text.Append("targets: ").Append(Inventory.Describe()).Append('\n');
@@ -1736,7 +1748,7 @@ namespace Zantetsu.Sandbox
                     text.Append("physics: ").Append(physics).Append('\n');
                     text.Append("GPU time: ").Append(GpuTimeNote()).Append('\n');
                     if (CaptureRecord != null) text.Append("captures: ").Append(CaptureRecord).Append('\n');
-                    text.Append("eye against the path: largest distance ").Append(LargestEyeDistance.ToString("F4", Inv)).Append(" m, largest heading difference ")
+                    text.Append(settings.headTracked ? "head pose changes between rows: largest distance " : "eye against the path: largest distance ").Append(LargestEyeDistance.ToString("F4", Inv)).Append(" m, largest heading difference ")
                         .Append(LargestEyeHeadingDifference.ToString("F3", Inv)).Append(" degrees (the camera as it stood through each row's frame, read at the next frame's start)\n");
                 }
 

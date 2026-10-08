@@ -103,7 +103,7 @@ namespace Zantetsu.EditorTools.Quest
             renderers.arraySize = 1;
             renderers.GetArrayElementAtIndex(0).objectReferenceValue = renderer;
             pso.FindProperty("m_DefaultRendererIndex").intValue = 0;
-            pso.FindProperty("m_MSAA").intValue = 1;
+            pso.FindProperty("m_MSAA").intValue = 4;
             pso.FindProperty("m_RenderScale").floatValue = 1f;
             pso.FindProperty("m_SupportsHDR").boolValue = false;
             pso.FindProperty("m_RequireDepthTexture").boolValue = false;
@@ -112,7 +112,15 @@ namespace Zantetsu.EditorTools.Quest
             int previous = QualitySettings.GetQualityLevel();
             QualitySettings.SetQualityLevel(0, false); // Android's existing default quality; PC quality keeps its own asset.
             QualitySettings.renderPipeline = pipeline;
+            QualitySettings.antiAliasing = 4;
             QualitySettings.SetQualityLevel(previous, false);
+            if (!renderer.rendererFeatures.OfType<QuestXrTargetInfoFeature>().Any())
+            {
+                var info = ScriptableObject.CreateInstance<QuestXrTargetInfoFeature>();
+                info.name = "Quest XR target info";
+                AssetDatabase.AddObjectToAsset(info, renderer);
+                renderer.rendererFeatures.Add(info);
+            }
             EditorUtility.SetDirty(renderer); EditorUtility.SetDirty(pipeline);
         }
 
@@ -160,14 +168,20 @@ namespace Zantetsu.EditorTools.Quest
             EditorUtility.SetDirty(profile);
             var wso = new SerializedObject(world); wso.FindProperty("profile").objectReferenceValue = profile; wso.ApplyModifiedPropertiesWithoutUndo();
             foreach (var crowd in Object.FindObjectsByType<MobPlanCrowd>(FindObjectsInactive.Include, FindObjectsSortMode.None)) crowd.enabled = false;
+            foreach (var scenario in Object.FindObjectsByType<ScenarioRenderPipeline>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                scenario.pipeline = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(PipelinePath);
+                EditorUtility.SetDirty(scenario);
+            }
             var camera = Camera.main;
             report.Add("source " + SourceScene + "; camera " + camera.transform.position.ToString("F2") + " yaw " + camera.transform.eulerAngles.y);
             camera.allowHDR = false;
+            camera.allowMSAA = true;
             var data = camera.GetUniversalAdditionalCameraData();
             data.SetRenderer(0); data.renderPostProcessing = false;
             EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
             AssetDatabase.Refresh();
-            report.Add("scene " + ScenePath + ": targets " + inventory.Targets.Count + ", vertices " + inventory.Vertices + ", indices " + inventory.Indices + ", bank " + bank.Count + ", refused " + inventory.Refusals.Count + " (Unity in both modes), AppSW via XRMotionVectors re-rasterization, MSAA1/scale1");
+            report.Add("scene " + ScenePath + ": targets " + inventory.Targets.Count + ", vertices " + inventory.Vertices + ", indices " + inventory.Indices + ", bank " + bank.Count + ", refused " + inventory.Refusals.Count + " (Unity in both modes), AppSW via XRMotionVectors re-rasterization, MSAA4/scale1");
         }
 
         private static void EnsureFolder(string path)

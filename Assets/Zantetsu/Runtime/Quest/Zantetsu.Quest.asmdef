@@ -6,6 +6,7 @@
         "Unity.XR.OpenXR",
         "Unity.XR.OpenXR.Features.MetaQuestSupport",
         "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
         "Unity.InputSystem",
         "Zantetsu.Rendering",
         "Unity.Collections"
