@@ -71,12 +71,43 @@ namespace Zantetsu.PhysicsCut
         private VpGpuCullCameraRoute _cullRoute;
         private VpLogicalCutDisplay _cullDisplay;
         private bool _cullRefusalLogged;
+        private VpNativeDrawRoute _nativeRoute;
+        private bool _nativeRefusalLogged;
 
         /// <summary>The route the GPU selection is put into the pipeline by, once a display that selects has been drawn; else null.</summary>
         public VpGpuCullCameraRoute CullRoute => _cullRoute;
 
+        /// <summary>The route the Direct3D 12 plugin draws by (DESIGN 4.5.8), once a display drawn by it has been drawn; else null.</summary>
+        public VpNativeDrawRoute NativeRoute => _nativeRoute;
+
         /// <summary>How many times a camera was not drawn for because its selection could not be enqueued.</summary>
         public int CullRefusals { get; private set; }
+
+        /// <summary>How many times a camera was not drawn for because the plugin's pass could not be enqueued.</summary>
+        public int NativeRefusals { get; private set; }
+
+        /// <summary>Diagnosis only (a shot run): the plugin route's GPU-assembled constants of the last body issue for the camera; null without the route.</summary>
+        public string DescribeNativeGpuBlocksForDiagnosis(Camera camera)
+        {
+            return _nativeRoute?.DescribeGpuBlocksForDiagnosis(camera);
+        }
+
+        /// <summary>
+        /// The plugin's route in words, with whether it drew every issue it was given (no refusal, no full ring, no
+        /// pipeline failure, no frame left undrawn); null when this has not drawn through the plugin.
+        /// </summary>
+        public string DescribeNativeRoute(out bool drewEverything)
+        {
+            drewEverything = false;
+            if (_nativeRoute == null)
+            {
+                return null;
+            }
+
+            drewEverything = _nativeRoute.Refused == 0 && _nativeRoute.RingFull == 0 && _nativeRoute.PipelineFailures == 0
+                && _nativeRoute.XrFramesNotDrawn == 0 && NativeRefusals == 0 && _nativeRoute.BodiesIssued == _nativeRoute.BodiesTaken;
+            return _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals;
+        }
 
         /// <summary>How many frames this has registered a draw in. It counts the drawing, not what was drawn.</summary>
         public int DrawnFrames { get; private set; }
@@ -105,6 +136,13 @@ namespace Zantetsu.PhysicsCut
         // What the GPU selection did while this drew, once, for the log: a run reads it to know that it selected.
         private void ReportCullRoute()
         {
+            if (_nativeRoute != null)
+            {
+                Debug.Log("VP BODY ROUTE (end): " + name + " " + _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals, this);
+                _nativeRoute.Dispose();
+                _nativeRoute = null;
+            }
+
             if (_cullRoute == null)
             {
                 return;
@@ -227,6 +265,31 @@ namespace Zantetsu.PhysicsCut
                     }
 
                     return;
+                }
+
+                // The plugin's pass (DESIGN 4.5.8) after the selection it reads, and before the draws it takes: a
+                // camera it cannot be enqueued for is not drawn for either, and never by Unity's calls instead.
+                if (display.NativeArguments)
+                {
+                    if (_nativeRoute == null)
+                    {
+                        _nativeRoute = new VpNativeDrawRoute();
+                    }
+
+                    if (!_nativeRoute.TryEnqueue(camera, display, out string nativeFailure))
+                    {
+                        NativeRefusals++;
+                        LastRefusedFrame = Time.frameCount;
+                        if (!_nativeRefusalLogged)
+                        {
+                            _nativeRefusalLogged = true;
+                            Debug.LogError(
+                                name + ": the plugin's draw pass could not be put in " + camera.name + "'s frame (" + nativeFailure
+                                + "); that camera is not drawn for. Told once.", this);
+                        }
+
+                        return;
+                    }
                 }
             }
 

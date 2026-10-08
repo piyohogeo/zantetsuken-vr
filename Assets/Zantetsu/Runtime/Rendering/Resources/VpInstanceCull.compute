@@ -34,8 +34,11 @@ struct VpCullCommand
 #define VP_CULL_SPLIT_PLANES 10
 
 // GraphicsBuffer.IndirectDrawIndexedArgs, five uints: indexCountPerInstance, instanceCount, startIndex,
-// baseVertexIndex, startInstance.
-#define VP_ARGUMENT_STRIDE 20
+// baseVertexIndex, startInstance. An entry is _VpArgumentStride bytes and the five begin _VpArgumentOffset bytes
+// into it: 20 and 0 for the arguments Unity's draw reads; 24 and 4 for the Direct3D 12 plugin's (DESIGN 4.5.8),
+// whose entry begins with the command's own number, which its command signature hands the shader per command.
+uint _VpArgumentStride;
+uint _VpArgumentOffset;
 
 StructuredBuffer<VpCullCommand> _VpCullCommands;
 StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
@@ -134,7 +137,14 @@ void CullCommands(uint3 id : SV_DispatchThreadID)
         }
     }
 
-    uint offset = c * VP_ARGUMENT_STRIDE;
+    uint entry = c * _VpArgumentStride;
+    if (_VpArgumentOffset != 0u)
+    {
+        _VpForwardArguments.Store(entry, c);
+        _VpShadowArguments.Store(entry, c);
+    }
+
+    uint offset = entry + _VpArgumentOffset;
     _VpForwardArguments.Store4(offset, uint4(command.indexCount, forwardKept * _VpForwardMultiplier, command.startIndex, 0u));
     _VpForwardArguments.Store(offset + 16u, command.startInstance * _VpForwardMultiplier);
     _VpShadowArguments.Store4(offset, uint4(command.indexCount, shadowKept, command.startIndex, 0u));

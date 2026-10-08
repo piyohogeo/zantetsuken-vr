@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
@@ -445,7 +445,7 @@ namespace Zantetsu.MeshCut
         public readonly long generation;
     }
 
-    public sealed partial class VpLogicalCutDisplay : IDisposable, IVpGpuCullTarget
+    public sealed partial class VpLogicalCutDisplay : IDisposable, IVpGpuCullTarget, IVpNativeDrawHost
     {
         internal sealed class Shown
         {
@@ -614,6 +614,22 @@ namespace Zantetsu.MeshCut
         private bool _retiredReadbackErrorLogged;
         private bool _roomFailed;
 
+
+        // A replaced batch, disposed through the display's hand-over: every plugin route whose events may still name
+        // its buffers is waited on.
+        private sealed class RetiredBatch : IDisposable
+        {
+            private readonly VpIndexedIndirectDrawBatch _batch;
+            private readonly VpLogicalCutDisplay _display;
+
+            public RetiredBatch(VpIndexedIndirectDrawBatch batch, VpLogicalCutDisplay display)
+            {
+                _batch = batch;
+                _display = display;
+            }
+
+            public void Dispose() => _batch.Dispose(_display._giveUpBuffer);
+        }
 
         private sealed class RetiredGpu
         {
@@ -910,6 +926,7 @@ namespace Zantetsu.MeshCut
             _provisionalShadowMaterial = provisionalShadowMaterial;
             _buffers = buffers;
             _batch = batch;
+            _giveUpBuffer = GiveUpBuffer;
             _stencilMaterials = stencilMaterials;
             _settings = settings;
             _snapshot = snapshot;
@@ -2898,6 +2915,9 @@ namespace Zantetsu.MeshCut
         /// <summary>The GPU copy's room, in words. Log text only.</summary>
         public string DescribeGpuRoom() => _buffers.DescribeRoom();
 
+        /// <summary>Diagnosis only (a lifetime test or drill): the GPU copy's current vertex buffer, to see whether it is still valid after the display gave it up.</summary>
+        public GraphicsBuffer GpuVertexBufferForDiagnosis => _buffers.VertexBuffer;
+
         /// <summary>The GPU copy's current capacities and how often it has grown, for observation.</summary>
         public int GpuVertexCapacity => _buffers.VertexCapacity;
 
@@ -2945,7 +2965,7 @@ namespace Zantetsu.MeshCut
         {
             GpuVertexHighWater = Math.Max(GpuVertexHighWater, vertexEnd);
             GpuIndexHighWater = Math.Max(GpuIndexHighWater, indexEnd);
-            _buffers.ReleaseRetired();
+            _buffers.ReleaseRetired(_giveUpBuffer);
             if (vertexEnd <= _buffers.VertexCapacity && indexEnd <= _buffers.IndexCapacity)
             {
                 return true;
@@ -3884,7 +3904,7 @@ namespace Zantetsu.MeshCut
 
             // Replaced GPU buffers the GPU is past go here as well as at drawing, so that a frame with no camera does not
             // keep them.
-            _buffers.ReleaseRetired();
+            _buffers.ReleaseRetired(_giveUpBuffer);
             ReleaseRetiredRoom();
             if (_hasSnapshot && _settledFrame == frame)
             {
@@ -3926,7 +3946,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public void Render(int layer, Camera camera)
         {
-            _buffers.ReleaseRetired();
+            _buffers.ReleaseRetired(_giveUpBuffer);
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfHalted();
@@ -3974,6 +3994,15 @@ namespace Zantetsu.MeshCut
                 NoteCullRequest(cameraStencil);
             }
 
+            // A batch whose selection writes the plugin's argument entries (DESIGN 4.5.8) is drawn by the plugin alone:
+            // Unity's own draw cannot read those entries, so without a sink nothing is issued and the caller is told.
+            IVpNativeDrawSink nativeSink = NativeDrawSink;
+            if (_batch.NativeArguments && nativeSink == null)
+            {
+                throw new InvalidOperationException(
+                    "this display's batch writes the plugin's argument entries; set NativeDrawSink before drawing");
+            }
+
             // The surfaces, grouped by material: one forward call per run of command slots whose commands share one.
             // A free slot -- no material, a command of no instance -- breaks no run and begins none: it is drawn
             // through, drawing nothing, when it lies inside a run, and passed over otherwise (DESIGN 5.6).
@@ -4004,7 +4033,11 @@ namespace Zantetsu.MeshCut
                     next++;
                 }
 
-                if (culled)
+                if (nativeSink != null)
+                {
+                    nativeSink.AddBody(camera, _batch, _buffers, material, start, end - start, cameraStencil.view, layer);
+                }
+                else if (culled)
                 {
                     _batch.RenderForward(material, _properties, _buffers, layer, start, end - start, camera, cameraStencil.view);
                 }
@@ -4046,7 +4079,12 @@ namespace Zantetsu.MeshCut
                         next++;
                     }
 
-                    if (culled)
+                    if (nativeSink != null)
+                    {
+                        nativeSink.AddCasters(
+                            camera, _batch, _buffers, provisional ? _provisionalShadowMaterial : _shadowMaterial, start, end - start, cameraStencil.view, layer);
+                    }
+                    else if (culled)
                     {
                         _batch.RenderShadows(
                             provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
@@ -4075,6 +4113,64 @@ namespace Zantetsu.MeshCut
             // The counting and the caps, after the surfaces: their queues put them after the opaque bodies.
             cameraStencil.batch.Render(_stencilMaterials, _buffers, layer, camera);
         }
+
+        /// <summary>
+        /// Where the draws go when the batch writes the plugin's argument entries (DESIGN 4.5.8; see
+        /// <see cref="VpIndexedIndirectDrawBatch.NativeArguments"/>): set by whoever puts the display in the frame,
+        /// before <see cref="Render"/>. Null for a display drawn by Unity's own calls. Every sink set here is
+        /// remembered (<see cref="SinksUsed"/>): a buffer this display gives up waits on all of them, since a former
+        /// route's events may still name it when a new route has taken over (the drawing component disabled and
+        /// enabled makes a new route while the old one's events can be unconsumed -- TL, 2026-10-08).
+        /// </summary>
+        public IVpNativeDrawSink NativeDrawSink
+        {
+            get => _nativeDrawSink;
+            set
+            {
+                _nativeDrawSink = value;
+                if (value != null && !_sinksUsed.Contains(value)) _sinksUsed.Add(value);
+            }
+        }
+
+        private IVpNativeDrawSink _nativeDrawSink;
+        private readonly List<IVpNativeDrawSink> _sinksUsed = new List<IVpNativeDrawSink>(2);
+        private readonly Action<GraphicsBuffer> _giveUpBuffer;
+
+        /// <summary>The sinks this display has drawn through whose events may still name its buffers (the current one always).</summary>
+        public IReadOnlyList<IVpNativeDrawSink> SinksUsed => _sinksUsed;
+
+        /// <summary>How many buffers this display gave up with more than one route's events to wait on.</summary>
+        public long BuffersRetiredAcrossRoutes { get; private set; }
+
+        // A buffer this display is done with (replaced, or the display ending): disposed at once when no plugin route
+        // ever drew it; given up to the one route that did; or, when several did, kept until every one of their issued
+        // events is over (VpNativeDrawRelease.Retire) -- the last sink is never taken for the buffer's only user.
+        private void GiveUpBuffer(GraphicsBuffer buffer)
+        {
+            if (buffer == null) return;
+            for (int i = _sinksUsed.Count - 1; i >= 0; i--)
+            {
+                // A former sink none of whose events can still read anything draws for this display no more: forgotten.
+                if (!ReferenceEquals(_sinksUsed[i], _nativeDrawSink) && _sinksUsed[i].IssuedEventsWait() == null) _sinksUsed.RemoveAt(i);
+            }
+
+            if (_sinksUsed.Count == 0)
+            {
+                buffer.Dispose();
+            }
+            else if (_sinksUsed.Count == 1)
+            {
+                _sinksUsed[0].Retire(buffer);
+            }
+            else
+            {
+                BuffersRetiredAcrossRoutes++;
+                VpNativeDrawRelease.Retire("VP display buffer (several routes)", _sinksUsed, buffer);
+            }
+        }
+
+        /// <summary>Whether the batch's selection writes the plugin's argument entries, so that only <see cref="NativeDrawSink"/> can draw it.</summary>
+        public bool NativeArguments => _batch != null && _batch.NativeArguments;
 
         /// <summary>Whether the body is drawn through the GPU selection of DESIGN 4.5.7. Fixed when the display is made.</summary>
         public bool CullsOnGpu => _cull != null;
@@ -4398,8 +4494,8 @@ namespace Zantetsu.MeshCut
 
             _stencilMaterials.Dispose();
             _capNormalBuffer.Dispose();
-            _batch.Dispose();
-            _buffers.Dispose();
+            _batch.Dispose(_giveUpBuffer);
+            _buffers.Dispose(_giveUpBuffer);
             DestroyMaterials(_ownedMaterials);
 
             // Teardown alone waits: for each replaced object's readback, so the GPU is past it when it is released.
@@ -6049,7 +6145,7 @@ namespace Zantetsu.MeshCut
 
             if (grownBatch != null)
             {
-                RetireLater(_batch, _batch.RetirementFence);
+                RetireLater(new RetiredBatch(_batch, this), _batch.RetirementFence);
                 _pastArgumentTransfers += _batch.ArgumentTransfers;
                 _pastArgumentElements += _batch.ArgumentElementsTransferred;
                 _pastInstanceTransfers += _batch.InstanceTransfers;
