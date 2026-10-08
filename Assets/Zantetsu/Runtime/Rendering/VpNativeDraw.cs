@@ -95,6 +95,16 @@ namespace Zantetsu.Rendering
         VpNativeDrawRelease.IRingWait IssuedEventsWait();
     }
 
+    /// <summary>Optional Quest route which removes clipped instances from the ordinary GPU batch.</summary>
+    public interface IVpNativeClipDrawSink
+    {
+        bool SeparateClipDraws { get; }
+        void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer);
+        void AddClipCasters(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer);
+    }
+
     /// <summary>Per-draw constant values the plugin's draws are given as Unity would give them.</summary>
     public static class VpNativeConstants
     {
@@ -741,6 +751,24 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        /// <summary>The direct VS's std140-compatible matrix/plane/count record; no allocation per value.</summary>
+        public unsafe void SetDirectClipRecord(int record, Matrix4x4 matrix, VpInstanceClip clip)
+        {
+            if (Bytes.Length != 6656 || record < 0 || record >= 32) throw new ArgumentOutOfRangeException(nameof(record));
+            fixed (byte* bytes = Bytes)
+            {
+                float* values = (float*)(bytes + record * 208);
+                new Span<byte>(values, 208).Clear();
+                for (int i = 0; i < 16; i++) values[i] = matrix[i];
+                for (int plane = 0; plane < clip.PlaneCount; plane++)
+                {
+                    Vector4 value = clip.SignedPlane(plane);
+                    for (int component = 0; component < 4; component++) values[16 + plane * 4 + component] = value[component];
+                }
+                values[48] = clip.PlaneCount;
+            }
+        }
+
         // Written in place: no byte array is made for a value.
         private void WriteVector(int offset, Vector4 value, int columns)
         {
@@ -847,6 +875,9 @@ namespace Zantetsu.Rendering
         /// <summary>Submitted blocks released by their sentinel without their own consumed mark: their commands never ran.</summary>
         public long DiscardsConfirmed { get; private set; }
         private readonly int _blockBytes;
+        private readonly byte[] _groupScratch;
+        private readonly List<int> _groupSources = new List<int>(32);
+        private readonly List<int> _groupRoots = new List<int>(4);
         private readonly int _resourceCapacity;
         private readonly int _constantsCapacity;
         private int _next;
@@ -873,6 +904,7 @@ namespace Zantetsu.Rendering
             _resourceCapacity = resourceCapacity;
             _constantsCapacity = constantsCapacity;
             _blockBytes = HeaderBytes + resourceCapacity * sizeof(Plugin.Resource) + constantsCapacity * sizeof(Plugin.Constants) + constantBytesCapacity;
+            _groupScratch = new byte[_blockBytes];
             _blocks = new IntPtr[blocks];
             _state = new BlockState[blocks];
             _sentinel = new ulong[blocks];
@@ -884,7 +916,7 @@ namespace Zantetsu.Rendering
             }
         }
 
-        private static int HeaderBytes => (sizeof(Plugin.Draw) + 15) / 16 * 16;
+        private static int HeaderBytes => (sizeof(Plugin.Draw) + sizeof(Plugin.DrawExtension) + 15) / 16 * 16;
 
         private int ResourcesOffset => HeaderBytes;
 
@@ -921,9 +953,29 @@ namespace Zantetsu.Rendering
         /// is asked of Unity here.
         /// </summary>
         public bool TryBegin(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride)
+            => BeginCore(pipelineId, arguments, firstCommand, commandCount, indexBuffer, indexBufferBytes, indexStride, false);
+
+        public bool TryBeginDirect(int pipelineId, IntPtr indexBuffer, long indexBufferBytes, int indexStride,
+            ReadOnlySpan<Plugin.DirectCommand> draws)
+        {
+            if (draws.Length == 0 || draws.Length > 32) throw new ArgumentOutOfRangeException(nameof(draws));
+            if (!BeginCore(pipelineId, IntPtr.Zero, 0, draws.Length, indexBuffer, indexBufferBytes, indexStride, true)) return false;
+            var header = (Plugin.Draw*)_current;
+            header->version = Plugin.ExtendedDrawVersion;
+            var extension = (Plugin.DrawExtension*)(_current + sizeof(Plugin.Draw));
+            *extension = new Plugin.DrawExtension { mode = (uint)Plugin.DrawMode.Direct, commandsOffset = (uint)DataOffset, commandsCount = (uint)draws.Length };
+            int bytes = draws.Length * sizeof(Plugin.DirectCommand);
+            if (DataOffset + bytes > _blockBytes) throw new InvalidOperationException("direct commands exceed the ring block");
+            fixed (Plugin.DirectCommand* source = draws)
+                Buffer.MemoryCopy(source, _current + DataOffset, _blockBytes - DataOffset, bytes);
+            _dataUsed = bytes;
+            return true;
+        }
+
+        private bool BeginCore(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride, bool direct)
         {
             ThrowIfDisposed();
-            if (pipelineId < 0 || arguments == IntPtr.Zero || indexBuffer == IntPtr.Zero)
+            if (pipelineId < 0 || (!direct && arguments == IntPtr.Zero) || indexBuffer == IntPtr.Zero)
             {
                 throw new ArgumentException("the issue needs a pipeline number, an argument buffer and an index buffer");
             }
@@ -1166,6 +1218,7 @@ namespace Zantetsu.Rendering
 
             header->resourceCount = (uint)_resourceCount;
             header->constantsCount = (uint)_constantsCount;
+            header->totalBytes = (uint)(DataOffset + _dataUsed);
             header->serial = ++_serial;
             header->result = 0;
             header->consumed = 0;
@@ -1179,6 +1232,60 @@ namespace Zantetsu.Rendering
             VpNativeDrawRelease.Note(this, "prepared", index, serial);
             return block;
         }
+
+        /// <summary>Copies prepared draws into bounded, inline Vulkan groups. No source has been recorded yet.</summary>
+        public int GroupPrepared(List<IntPtr> groups)
+        {
+            ThrowIfDisposed();
+            if (_current != null) throw new InvalidOperationException("Finish the current draw before grouping");
+            groups.Clear(); _groupSources.Clear(); _groupRoots.Clear();
+            _groupSources.AddRange(_prepared);
+            int first = 0;
+            fixed (byte* scratch = _groupScratch)
+            {
+                while (first < _groupSources.Count)
+                {
+                    int count = 0, bytes = HeaderBytes;
+                    while (first + count < _groupSources.Count && count < 32)
+                    {
+                        var source = (Plugin.Draw*)_blocks[_groupSources[first + count]];
+                        int candidateBytes = Align16((int)source->totalBytes);
+                        int table = Align16(HeaderBytes + (count + 1) * sizeof(uint));
+                        int payload = bytes - HeaderBytes + candidateBytes;
+                        if (table + payload > _blockBytes) break;
+                        bytes += candidateBytes; count++;
+                    }
+                    if (count == 0) throw new InvalidOperationException("a prepared draw cannot fit into an inline group");
+                    int offset = Align16(HeaderBytes + count * sizeof(uint));
+                    new Span<byte>(scratch, offset).Clear();
+                    var header = (Plugin.Draw*)scratch;
+                    header->version = Plugin.ExtendedDrawVersion;
+                    header->commandCount = (uint)count;
+                    header->serial = ++_serial;
+                    var ext = (Plugin.DrawExtension*)(scratch + sizeof(Plugin.Draw));
+                    *ext = new Plugin.DrawExtension { mode = (uint)Plugin.DrawMode.Group, commandsOffset = (uint)HeaderBytes, commandsCount = (uint)count };
+                    uint* offsets = (uint*)(scratch + HeaderBytes);
+                    for (int i = 0; i < count; i++)
+                    {
+                        int index = _groupSources[first + i];
+                        var source = (Plugin.Draw*)_blocks[index];
+                        offsets[i] = (uint)offset;
+                        Buffer.MemoryCopy(source, scratch + offset, _blockBytes - offset, source->totalBytes);
+                        offset += Align16((int)source->totalBytes);
+                        _state[index] = BlockState.Free; _sentinel[index] = 0;
+                    }
+                    header->totalBytes = (uint)offset;
+                    int rootIndex = _groupSources[first];
+                    Buffer.MemoryCopy(scratch, (void*)_blocks[rootIndex], _blockBytes, offset);
+                    _state[rootIndex] = BlockState.Prepared; _frame[rootIndex] = Time.frameCount;
+                    _groupRoots.Add(rootIndex); groups.Add(_blocks[rootIndex]);
+                    first += count;
+                }
+            }
+            _prepared.Clear(); _prepared.AddRange(_groupRoots);
+            return groups.Count;
+        }
+        private static int Align16(int bytes) => (bytes + 15) & ~15;
 
         /// <summary>
         /// Records the event of every Prepared block, in the order they were prepared, into <paramref name="commands"/>
@@ -1415,6 +1522,13 @@ namespace Zantetsu.Rendering
         {
             var header = (Plugin.Draw*)block;
             return header->consumed != 0 ? (Plugin.Result?)(Plugin.Result)header->result : null;
+        }
+
+        public static Plugin.DrawMode ModeOf(IntPtr block)
+        {
+            var draw = (Plugin.Draw*)block;
+            return draw->version == Plugin.ExtendedDrawVersion
+                ? (Plugin.DrawMode)((Plugin.DrawExtension*)((byte*)draw + sizeof(Plugin.Draw)))->mode : Plugin.DrawMode.Indirect;
         }
 
         public static uint SerialOf(IntPtr block)

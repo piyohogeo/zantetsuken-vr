@@ -23,6 +23,7 @@ namespace Zantetsu.Quest
             public int warmupLaps = 1;
             public bool appSw = true;
             public bool nativeColourPreparation = true;
+            public bool directClipProbe = false;
             public bool profiler = false;
             public bool quitWhenDone = false;
             public bool headTracked = true;
@@ -65,6 +66,8 @@ namespace Zantetsu.Quest
             if (_config == null || (_config.mode != "unity" && _config.mode != "vp3c" && _config.mode != "vp3c-native")) throw new InvalidOperationException("mode must be unity, vp3c or vp3c-native");
             Zantetsu.Rendering.VpNativeDrawPlugin.VulkanColourPreparation = _config.nativeColourPreparation;
             Debug.Log("QUEST STATIC: nativeColourPreparation=" + _config.nativeColourPreparation);
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanDirectClipProbe = _config.directClipProbe;
+            Debug.Log("QUEST STATIC: directClipProbe=" + _config.directClipProbe);
             string pathText = !string.IsNullOrEmpty(_config.pathFile) ? File.ReadAllText(_config.pathFile)
                 : Resources.Load<TextAsset>("Quest3sStaticDemoPath").text;
             if (!SceneDrawComparePath.TryParse(pathText, out var path, out string failure)) throw new InvalidOperationException(failure);

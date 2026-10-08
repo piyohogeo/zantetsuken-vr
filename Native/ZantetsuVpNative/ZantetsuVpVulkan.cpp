@@ -19,6 +19,7 @@
 static_assert(sizeof(ZvnBinding)==84 && sizeof(ZvnPipelineDesc)==168, "pipeline ABI differs from C#");
 static_assert(sizeof(ZvnResource)==48 && sizeof(ZvnConstants)==32, "binding ABI differs from C#");
 static_assert(sizeof(ZvnDraw)==240 && sizeof(ZvnCounters)==80, "event ABI differs from C#");
+static_assert(sizeof(ZvnDrawExtension)==16 && sizeof(ZvnDirectCommand)==20, "Vulkan draw extension ABI differs from C#");
 
 namespace {
 IUnityGraphics* graphics = nullptr;
@@ -32,7 +33,7 @@ uint32_t regionCount = 8, regionBytes = 262144, regionDescriptors = 4096;
 bool available = false, featuresObserved = false, enabledMulti = false, enabledFirst = false, hold = false;
 PFN_vkGetInstanceProcAddr originalGipa = nullptr;
 PFN_vkCreateDevice originalCreateDevice = nullptr;
-int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4;
+int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6;
 std::vector<ZvnDraw*> held;
 VkPhysicalDeviceProperties properties{};
 
@@ -132,12 +133,21 @@ std::vector<std::unique_ptr<Region>> regions;
 // Its managed block remains unconsumed until the draw callback or the camera's completion sentinel.
 struct PreparedDraw {
     uint64_t frame = 0;
-    uint32_t serial = 0;
+    uint32_t serial = 0, pipeline = 0;
     ZvnResult result = ZvnResult_Recorded;
     UnityVulkanBuffer arguments{}, indices{};
     std::vector<VkDescriptorSet> sets;
+    std::vector<ZvnDirectCommand> directCommands;
 };
 std::map<std::pair<ZvnDraw*,uint32_t>,PreparedDraw> preparedDraws;
+struct PreparedGroup {
+    uint64_t frame = 0;
+    uint32_t serial = 0;
+    ZvnResult result = ZvnResult_Recorded;
+    std::vector<uint32_t> offsets;
+    std::vector<PreparedDraw> draws;
+};
+std::map<std::pair<ZvnDraw*,uint32_t>,PreparedGroup> preparedGroups;
 
 struct Slot { uint32_t set, binding, source; VkDescriptorType type; VkShaderStageFlags stages; VkSampler sampler=VK_NULL_HANDLE; };
 struct Pipeline {
@@ -266,7 +276,7 @@ VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state) {
     VkPipelineMultisampleStateCreateInfo samples{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};samples.rasterizationSamples=VkSampleCountFlagBits(p.desc.sampleCount);
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth.depthTestEnable=p.desc.depthFormat!=0;depth.depthWriteEnable=p.desc.depthWrite;depth.depthCompareOp=VkCompareOp(p.desc.depthFunc-1);
-    if(std::strstr(p.desc.name,"motion-plugin")) {
+    if(std::strstr(p.desc.name,"motion-plugin") || std::strstr(p.desc.name,"motion-direct")) {
         depth.stencilTestEnable=VK_TRUE;
         depth.front=depth.back={VK_STENCIL_OP_KEEP,VK_STENCIL_OP_REPLACE,VK_STENCIL_OP_KEEP,VK_COMPARE_OP_ALWAYS,1,1,1};
     }
@@ -284,6 +294,11 @@ VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state) {
     p.variants.emplace(key,pipeline);return pipeline;
 }
 void Retire(uint64_t safe) {
+    // Keys contain managed addresses, but retirement never dereferences them: the camera sentinel may
+    // already have released an abandoned allocation before the GPU's frame region becomes safe.
+    for(auto it=preparedGroups.begin();it!=preparedGroups.end();) {
+        if(it->second.frame<=safe)it=preparedGroups.erase(it);else ++it;
+    }
     for(auto it=preparedDraws.begin();it!=preparedDraws.end();) {
         if(it->second.frame<=safe)it=preparedDraws.erase(it);else ++it;
     }
@@ -316,6 +331,72 @@ const ZvnConstants* Constants(const ZvnDraw* draw,uint32_t binding) {
     for(uint32_t i=0;i<draw->constantsCount;i++)if(constants[i].binding==binding)return constants+i;
     return nullptr;
 }
+const ZvnDrawExtension* Extension(const ZvnDraw* draw) {
+    return reinterpret_cast<const ZvnDrawExtension*>(reinterpret_cast<const char*>(draw)+sizeof(ZvnDraw));
+}
+bool Direct(const ZvnDraw* draw) {
+    return draw->version==ZVN_VULKAN_DRAW_VERSION && Extension(draw)->mode==ZvnDrawMode_Direct;
+}
+ZvnResult ValidateDraw(const ZvnDraw* draw) {
+    if(draw->version!=ZVN_CONTRACT_VERSION && draw->version!=ZVN_VULKAN_DRAW_VERSION)return ZvnResult_BadVersion;
+    if(draw->totalBytes<sizeof(ZvnDraw))return ZvnResult_BadResource;
+    if(draw->version==ZVN_VULKAN_DRAW_VERSION) {
+        if(draw->totalBytes<sizeof(ZvnDraw)+sizeof(ZvnDrawExtension))return ZvnResult_BadResource;
+        const auto* extension=Extension(draw);
+        if(extension->reserved || extension->mode>ZvnDrawMode_Direct)return ZvnResult_BadResource;
+        if(extension->mode==ZvnDrawMode_Direct) {
+            if(!extension->commandsCount || extension->commandsCount>ZVN_MAX_DIRECT_COMMANDS ||
+               extension->commandsOffset<sizeof(ZvnDraw)+sizeof(ZvnDrawExtension) || extension->commandsOffset%4 ||
+               !Range(extension->commandsOffset,extension->commandsCount,sizeof(ZvnDirectCommand),draw->totalBytes))return ZvnResult_BadResource;
+            const auto* commands=reinterpret_cast<const ZvnDirectCommand*>(reinterpret_cast<const char*>(draw)+extension->commandsOffset);
+            uint32_t indexWidth=draw->indexFormat==42?4:2;
+            for(uint32_t i=0;i<extension->commandsCount;i++) {
+                const auto& command=commands[i];
+                if(!command.indexCount || !command.instanceCount || uint64_t(command.firstInstance)+command.instanceCount>ZVN_MAX_DIRECT_COMMANDS ||
+                   uint64_t(command.firstIndex)+command.indexCount>draw->indexBufferBytes/indexWidth)return ZvnResult_BadResource;
+            }
+        } else if(extension->commandsOffset || extension->commandsCount)return ZvnResult_BadResource;
+    }
+    if(!draw->viewportCount || draw->viewportCount>ZVN_MAX_VIEWPORTS || (draw->indexFormat!=42 && draw->indexFormat!=57) ||
+       (draw->resourceCount && draw->resourcesOffset%alignof(ZvnResource)) ||
+       (draw->constantsCount && draw->constantsOffset%alignof(ZvnConstants)) ||
+       !Range(draw->resourcesOffset,draw->resourceCount,sizeof(ZvnResource),draw->totalBytes) ||
+       !Range(draw->constantsOffset,draw->constantsCount,sizeof(ZvnConstants),draw->totalBytes))return ZvnResult_BadResource;
+    if(!Direct(draw) && (!draw->commandCount || draw->argumentOffset%24))return ZvnResult_BadResource;
+    if(!available)return ZvnResult_NotAvailable;
+    auto p=pipelines.find(int(draw->pipeline));
+    if(p==pipelines.end() || p->second->released)return ZvnResult_NoPipeline;
+    return ZvnResult_Recorded;
+}
+ZvnResult ParseGroup(const ZvnDraw* root,std::vector<uint32_t>& offsets) {
+    if(root->version!=ZVN_VULKAN_DRAW_VERSION)return ZvnResult_BadVersion;
+    const uint32_t headerBytes=sizeof(ZvnDraw)+sizeof(ZvnDrawExtension);
+    if(root->totalBytes<headerBytes)return ZvnResult_BadResource;
+    const auto* extension=Extension(root);
+    if(extension->mode!=ZvnDrawMode_Group || extension->reserved || !extension->commandsCount ||
+       extension->commandsCount>ZVN_MAX_GROUP_DRAWS || extension->commandsOffset<headerBytes || extension->commandsOffset%4 ||
+       !Range(extension->commandsOffset,extension->commandsCount,sizeof(uint32_t),root->totalBytes))return ZvnResult_BadResource;
+    const auto* table=reinterpret_cast<const uint32_t*>(reinterpret_cast<const char*>(root)+extension->commandsOffset);
+    // The completion header, offset table and inline child allocations must not alias. A malformed offset
+    // is checked before reading the child header, including its totalBytes field. Nested groups are refused.
+    std::vector<std::pair<uint32_t,uint32_t>> intervals={{0,headerBytes},
+        {extension->commandsOffset,extension->commandsOffset+extension->commandsCount*uint32_t(sizeof(uint32_t))}};
+    offsets.clear();offsets.reserve(extension->commandsCount);
+    for(uint32_t i=0;i<extension->commandsCount;i++) {
+        uint32_t offset=table[i];
+        if(offset%8 || !Range(offset,1,sizeof(ZvnDraw),root->totalBytes))return ZvnResult_BadResource;
+        for(const auto& interval:intervals)if(offset>=interval.first && offset<interval.second)return ZvnResult_BadResource;
+        const auto* child=reinterpret_cast<const ZvnDraw*>(reinterpret_cast<const char*>(root)+offset);
+        if(child->version!=ZVN_CONTRACT_VERSION && child->version!=ZVN_VULKAN_DRAW_VERSION)return ZvnResult_BadVersion;
+        uint32_t childHeader=child->version==ZVN_VULKAN_DRAW_VERSION?headerBytes:uint32_t(sizeof(ZvnDraw));
+        if(child->totalBytes<childHeader || !Range(offset,1,child->totalBytes,root->totalBytes))return ZvnResult_BadResource;
+        if(child->version==ZVN_VULKAN_DRAW_VERSION && Extension(child)->mode==ZvnDrawMode_Group)return ZvnResult_BadResource;
+        uint32_t end=offset+child->totalBytes;
+        for(const auto& interval:intervals)if(offset<interval.second && interval.first<end)return ZvnResult_BadResource;
+        intervals.emplace_back(offset,end);offsets.push_back(offset);
+    }
+    return ZvnResult_Recorded;
+}
 bool Buffer(void* pointer,VkPipelineStageFlags stage,VkAccessFlags access,UnityVulkanBuffer& buffer) {
     return pointer && unity->AccessBuffer(pointer,stage,access,kUnityVulkanResourceAccess_PipelineBarrier,&buffer) && buffer.buffer;
 }
@@ -324,10 +405,16 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
        !Range(draw->constantsOffset,draw->constantsCount,sizeof(ZvnConstants),draw->totalBytes)) {prepared.result=ZvnResult_BadResource;return false;}
     unity->EnsureOutsideRenderPass();
     UnityVulkanBuffer arguments{},indices{};
-    if(!Buffer(draw->argumentBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,VK_ACCESS_INDIRECT_COMMAND_READ_BIT,arguments) ||
+    bool direct=Direct(draw);
+    if((!direct && (!Buffer(draw->argumentBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,VK_ACCESS_INDIRECT_COMMAND_READ_BIT,arguments) ||
+        uint64_t(draw->argumentOffset)+uint64_t(draw->commandCount-1)*24+24>arguments.sizeInBytes)) ||
        !Buffer(draw->indexBuffer,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_INDEX_READ_BIT,indices) ||
-       uint64_t(draw->argumentOffset)+uint64_t(draw->commandCount-1)*24+24>arguments.sizeInBytes ||
        draw->indexBufferBytes>indices.sizeInBytes){Fail("invalid indirect or index buffer");prepared.result=ZvnResult_BadResource;return false;}
+    if(direct) {
+        const auto* extension=Extension(draw);
+        const auto* commands=reinterpret_cast<const ZvnDirectCommand*>(reinterpret_cast<const char*>(draw)+extension->commandsOffset);
+        prepared.directCommands.assign(commands,commands+extension->commandsCount);
+    }
     // All resource accesses and their barriers precede re-entering the render pass and querying recording state.
     struct Resolved { UnityVulkanBuffer buffer{};UnityVulkanImage image{};VkImageLayout layout{};const ZvnResource* resource=nullptr;const ZvnConstants* constants=nullptr; };
     std::vector<Resolved> resolved(pipeline.slots.size());
@@ -344,13 +431,14 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
             }
         } else if(slot.type==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
             value.resource=Resource(draw,slot.source);const auto* r=value.resource;
-            if(!r || !Buffer(r->resource,stages,VK_ACCESS_SHADER_READ_BIT,value.buffer) || !r->elementCount ||
-                uint64_t(r->firstElement+r->elementCount)*(r->kind==0?4:r->stride)>value.buffer.sizeInBytes) {
+            if(!r || r->kind>1 || (r->kind==1 && !r->stride) ||
+                !Buffer(r->resource,stages,VK_ACCESS_SHADER_READ_BIT,value.buffer) || !r->elementCount ||
+                (uint64_t(r->firstElement)+r->elementCount)*(r->kind==0?4:r->stride)>value.buffer.sizeInBytes) {
                 Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;
             }
         } else if(slot.type==VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || slot.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
             value.resource=Resource(draw,slot.source);const auto* r=value.resource;
-            if(!r || !r->resource){Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;}
+            if(!r || (r->kind!=2 && r->kind!=3) || !r->resource){Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;}
             bool isDepth=!std::strcmp(binding.name,"_MainLightShadowmapTexture");
             value.layout=isDepth?VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             bool success=r->kind==3 ? unity->AccessRenderBufferTexture(static_cast<UnityRenderBuffer>(r->resource),nullptr,value.layout,stages,VK_ACCESS_SHADER_READ_BIT,kUnityVulkanResourceAccess_PipelineBarrier,&value.image) :
@@ -403,20 +491,21 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
     }
     vkUpdateDescriptorSets(instance.device,uint32_t(writes.size()),writes.data(),0,nullptr);counters.descriptorsWritten+=writes.size();
     prepared.arguments=arguments;prepared.indices=indices;prepared.sets=std::move(sets);
-    prepared.frame=state.currentFrameNumber;prepared.serial=draw->serial;
+    prepared.frame=state.currentFrameNumber;prepared.serial=draw->serial;prepared.pipeline=draw->pipeline;
     pipeline.lastFrame=state.currentFrameNumber;
     return true;
 }
-bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared) {
-    if(prepared.result!=ZvnResult_Recorded){Refuse(draw,prepared.result);return false;}
+bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared,bool completion=true) {
+    auto refuse=[&](ZvnResult result){if(completion)Refuse(draw,result);else draw->result=result;return false;};
+    if(prepared.result!=ZvnResult_Recorded)return refuse(prepared.result);
     unity->EnsureInsideRenderPass();
     UnityVulkanRecordingState state{};
     if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) ||
        !state.commandBuffer || !state.renderPass || state.subPassIndex<0 ||
-       state.currentFrameNumber!=prepared.frame || draw->serial!=prepared.serial) {
-        Fail("prepared Vulkan draw has no matching current render pass");Refuse(draw,ZvnResult_NoCommandList);return false;
+       state.currentFrameNumber!=prepared.frame || draw->serial!=prepared.serial || draw->pipeline!=prepared.pipeline) {
+        Fail("prepared Vulkan draw has no matching current render pass");return refuse(ZvnResult_NoCommandList);
     }
-    VkPipeline vkPipeline=Variant(pipeline,state);if(!vkPipeline){Refuse(draw,ZvnResult_NoPipeline);return false;}
+    VkPipeline vkPipeline=Variant(pipeline,state);if(!vkPipeline)return refuse(ZvnResult_NoPipeline);
     const auto& sets=prepared.sets;const auto& arguments=prepared.arguments;const auto& indices=prepared.indices;
     vkCmdBindPipeline(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,vkPipeline);
     vkCmdBindDescriptorSets(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline.layout,0,uint32_t(sets.size()),sets.data(),0,nullptr);
@@ -426,27 +515,77 @@ bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared) {
         const auto& v=draw->viewports[i];VkViewport viewport{v.x,v.y,v.width,v.height,v.minDepth,v.maxDepth};
         VkRect2D scissor{{v.scissorLeft,v.scissorTop},{uint32_t(v.scissorRight-v.scissorLeft),uint32_t(v.scissorBottom-v.scissorTop)}};
         vkCmdSetViewport(state.commandBuffer,0,1,&viewport);vkCmdSetScissor(state.commandBuffer,0,1,&scissor);
-        for(uint32_t start=0;start<draw->commandCount;) {
+        if(Direct(draw)) {
+            // One pipeline/descriptor bind for the packet, then only the few CPU-selected indexed calls.
+            // firstInstance chooses the UBO entry; no indirect buffer, GPU selection or argument read is involved.
+            for(const auto& command:prepared.directCommands) {
+                vkCmdDrawIndexed(state.commandBuffer,command.indexCount,command.instanceCount,command.firstIndex,command.vertexOffset,command.firstInstance);
+                counters.drawsRecorded++;counters.commandsRecorded++;
+            }
+        } else for(uint32_t start=0;start<draw->commandCount;) {
             uint32_t count=std::min(limit,draw->commandCount-start);
             vkCmdDrawIndexedIndirect(state.commandBuffer,arguments.buffer,uint64_t(draw->argumentOffset)+uint64_t(start)*24+4,count,24);
             counters.drawsRecorded++;counters.commandsRecorded+=count;start+=count;
         }
     }
-    pipeline.lastFrame=state.currentFrameNumber;Consume(draw,ZvnResult_Recorded);return true;
+    pipeline.lastFrame=state.currentFrameNumber;if(completion)Consume(draw,ZvnResult_Recorded);else draw->result=ZvnResult_Recorded;return true;
+}
+void GroupEvent(int id,ZvnDraw* root) {
+    const auto key=std::make_pair(root,root->serial);
+    if(id==GroupPreparedEvent) {
+        auto pending=preparedGroups.find(key);
+        if(pending==preparedGroups.end()){Fail("Vulkan group was not prepared");Refuse(root,ZvnResult_BadResource);return;}
+        auto prepared=std::move(pending->second);preparedGroups.erase(pending);
+        if(prepared.result!=ZvnResult_Recorded){Refuse(root,prepared.result);return;}
+        std::vector<uint32_t> offsets;ZvnResult validation=ParseGroup(root,offsets);
+        if(validation!=ZvnResult_Recorded || offsets!=prepared.offsets || root->serial!=prepared.serial || currentFrame.load()!=prepared.frame) {
+            Refuse(root,validation!=ZvnResult_Recorded?validation:ZvnResult_NoCommandList);return;
+        }
+        // Validate every child before recording any draw. Resource preparation is already complete, so
+        // each Record stays inside the same Unity render pass, including the normal -> Clip pipeline switch.
+        for(size_t i=0;i<offsets.size();i++) {
+            auto* child=reinterpret_cast<ZvnDraw*>(reinterpret_cast<char*>(root)+offsets[i]);
+            validation=ValidateDraw(child);if(validation!=ZvnResult_Recorded){Refuse(root,validation);return;}
+            if(child->serial!=prepared.draws[i].serial || child->pipeline!=prepared.draws[i].pipeline) {
+                Refuse(root,ZvnResult_BadResource);return;
+            }
+        }
+        for(size_t i=0;i<offsets.size();i++) {
+            auto* child=reinterpret_cast<ZvnDraw*>(reinterpret_cast<char*>(root)+offsets[i]);
+            if(!Record(child,*pipelines[int(child->pipeline)],prepared.draws[i],false)){Refuse(root,static_cast<ZvnResult>(child->result));return;}
+        }
+        Consume(root,ZvnResult_Recorded);return;
+    }
+    PreparedGroup prepared;prepared.serial=root->serial;prepared.frame=currentFrame.load();
+    prepared.result=ParseGroup(root,prepared.offsets);
+    if(prepared.result==ZvnResult_Recorded) {
+        for(uint32_t offset:prepared.offsets) {
+            auto* child=reinterpret_cast<ZvnDraw*>(reinterpret_cast<char*>(root)+offset);
+            prepared.result=ValidateDraw(child);if(prepared.result!=ZvnResult_Recorded)break;
+        }
+    }
+    if(prepared.result==ZvnResult_Recorded) {
+        prepared.draws.resize(prepared.offsets.size());
+        for(size_t i=0;i<prepared.offsets.size();i++) {
+            auto* child=reinterpret_cast<ZvnDraw*>(reinterpret_cast<char*>(root)+prepared.offsets[i]);
+            auto& draw=prepared.draws[i];draw.serial=child->serial;draw.frame=currentFrame.load();
+            if(!Prepare(child,*pipelines[int(child->pipeline)],draw)){prepared.result=draw.result;break;}
+            if(i==0)prepared.frame=draw.frame;
+            else if(draw.frame!=prepared.frame){prepared.result=ZvnResult_NoCommandList;break;}
+        }
+    }
+    // A failed preparation still leaves the root unconsumed until its queued draw or camera sentinel.
+    preparedGroups[key]=std::move(prepared);
 }
 void UNITY_INTERFACE_API Event(int id,void* data) {
     std::lock_guard<std::mutex> lock(gate);auto* draw=static_cast<ZvnDraw*>(data);if(!draw)return;
     if(id==SentinelEvent){counters.sentinelsRun++;Consume(draw,ZvnResult_Recorded);return;}
+    if(id==GroupPrepareEvent || id==GroupPreparedEvent){GroupEvent(id,draw);return;}
     if(id!=DrawEvent && id!=PrepareEvent && id!=PreparedDrawEvent)return;
     const auto key=std::make_pair(draw,draw->serial);
     PreparedDraw prepared;
     auto p=pipelines.find(int(draw->pipeline));
-    ZvnResult invalid=ZvnResult_Recorded;
-    if(draw->version!=ZVN_CONTRACT_VERSION)invalid=ZvnResult_BadVersion;
-    else if(!available)invalid=ZvnResult_NotAvailable;
-    else if(p==pipelines.end() || p->second->released)invalid=ZvnResult_NoPipeline;
-    else if(!draw->commandCount || !draw->viewportCount || draw->viewportCount>4 || draw->argumentOffset%24 ||
-            (draw->indexFormat!=42 && draw->indexFormat!=57))invalid=ZvnResult_BadResource;
+    ZvnResult invalid=ValidateDraw(draw);
     if(id==PreparedDrawEvent) {
         auto pending=preparedDraws.find(key);
         if(pending==preparedDraws.end()){Fail("Vulkan draw was not prepared");Refuse(draw,ZvnResult_BadResource);return;}
@@ -471,6 +610,7 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         UnityVulkanPluginEventConfig config{kUnityVulkanRenderPass_EnsureInside,kUnityVulkanGraphicsQueueAccess_DontCare,
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
         unity->ConfigureEvent(PreparedDrawEvent,&config);
+        unity->ConfigureEvent(GroupPreparedEvent,&config);
         // The combined path prepares resources before it enters a pass. Entering in the precondition
         // would create an empty pass which Prepare immediately ends again.
         config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;
@@ -478,11 +618,12 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         UnityVulkanPluginEventConfig prepareConfig{kUnityVulkanRenderPass_DontCare,kUnityVulkanGraphicsQueueAccess_DontCare,
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission};
         unity->ConfigureEvent(PrepareEvent,&prepareConfig);
+        unity->ConfigureEvent(GroupPrepareEvent,&prepareConfig);
         config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;config.flags=kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission;
         unity->ConfigureEvent(SentinelEvent,&config);
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","ready=%d maxDrawIndirectCount=%u",available,properties.limits.maxDrawIndirectCount);
     }else if(event==kUnityGfxDeviceEventShutdown) {
-        available=false;preparedDraws.clear();
+        available=false;preparedDraws.clear();preparedGroups.clear();
         // Device shutdown follows Unity's rendering drain. No waits or queue submissions on the draw path.
         for(auto& p:pipelines)p.second->Destroy();pipelines.clear();for(auto& r:regions)r->Destroy();regions.clear();
         for(auto* d:held)__atomic_store_n(&d->consumed,1,__ATOMIC_RELEASE);held.clear();instance={};
@@ -495,8 +636,8 @@ void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     graphics=interfaces->Get<IUnityGraphics>();unity=interfaces->Get<IUnityGraphicsVulkanV2>();
     if(!graphics || !unity){Fail("Unity Vulkan V2 interface missing");return;}
     unity->AddInterceptInitialization(Intercept,nullptr,0);
-    DrawEvent = graphics->ReserveEventIDRange(4);
-    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;
+    DrawEvent = graphics->ReserveEventIDRange(6);
+    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;GroupPrepareEvent = DrawEvent + 4;GroupPreparedEvent = DrawEvent + 5;
     graphics->RegisterDeviceEventCallback(Device);
     if(graphics->GetRenderer()==kUnityGfxRendererVulkan)Device(kUnityGfxDeviceEventInitialize);
 }
@@ -532,6 +673,8 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDrawEventId(){return DrawEvent
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSentinelEventId(){return SentinelEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPrepareEventId(){return PrepareEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPreparedDrawEventId(){return PreparedDrawEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGroupPrepareEventId(){return GroupPrepareEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGroupPreparedEventId(){return GroupPreparedEvent;}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetCounters(ZvnCounters* out){std::lock_guard<std::mutex> lock(gate);if(out){*out=counters;out->ringRegions=regionCount;out->ringRegionBytes=regionBytes;}}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnFrameFence(uint64_t* completed,uint64_t* next){if(completed)*completed=safeFrame.load();if(next)*next=currentFrame.load();}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSetLockTiming(int){}

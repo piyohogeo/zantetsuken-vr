@@ -699,6 +699,20 @@ namespace Zantetsu.MeshCut
         private VpNumericRoom<bool> _commandProvisional;
         private VpNumericRoom<Matrix4x4> _transforms;
         private VpNumericRoom<VpInstanceClip> _clips;
+
+        // Stable command slots may mix clipped and ordinary instances. Membership follows the structure;
+        // placement-only collections keep these record numbers and Render reads their current values. The
+        // candidate is built before any GPU upload so adoption only swaps already complete lists.
+        internal readonly struct ClipDrawRecord
+        {
+            public readonly int command, instance;
+            public ClipDrawRecord(int command, int instance) { this.command = command; this.instance = instance; }
+        }
+        private List<ClipDrawRecord> _clipDrawRecords = new List<ClipDrawRecord>(4);
+        private List<ClipDrawRecord> _candidateClipDrawRecords = new List<ClipDrawRecord>(4);
+        internal int ClipDrawCountForTest => _clipDrawRecords.Count;
+        internal long ClipDrawListBuildsForTest { get; private set; }
+        internal ClipDrawRecord ClipDrawRecordForTest(int index) => _clipDrawRecords[index];
         private VpNumericRoom<LogicalCutCapRecord> _capRecords;
         private VpNumericRoom<int> _rfCommandStart;
         private VpNumericRoom<int> _rfCommandCount;
@@ -841,6 +855,7 @@ namespace Zantetsu.MeshCut
             public VpIndexedIndirectDrawBatch cullBatch;
             public int cullRequestedFrame = int.MinValue;
             public int cullIssuedFrame = int.MinValue;
+            public bool cullExcludeClipped;
 
             // The view this camera was last rendered with (D-210), as its host noted it at the end of that rendering:
             // how many eyes, six planes an eye (normals inward), and the frame it was noted in. Read by the held
@@ -1146,6 +1161,9 @@ namespace Zantetsu.MeshCut
             into.Add(VpRoomLine.Of("display.transforms'", _candidateTransforms));
             into.Add(VpRoomLine.Of("display.clips", _clips));
             into.Add(VpRoomLine.Of("display.clips'", _candidateClips));
+            int clipDrawBytes = Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<ClipDrawRecord>();
+            into.Add(VpRoomLine.OfManaged("display.clipDrawRecords", clipDrawBytes, _clipDrawRecords.Capacity));
+            into.Add(VpRoomLine.OfManaged("display.clipDrawRecords'", clipDrawBytes, _candidateClipDrawRecords.Capacity));
             into.Add(VpRoomLine.Of("display.roots", _roots));
             into.Add(VpRoomLine.Of("display.roots'", _candidateRoots));
             into.Add(VpRoomLine.Of("display.rfCommandStart", _rfCommandStart));
@@ -4007,10 +4025,6 @@ namespace Zantetsu.MeshCut
             // display in the frame issues before the camera's passes run (IssueCull). The batch they read is noted
             // here, so that the selection is issued for that very batch.
             bool culled = _batch.CullsOnGpu;
-            if (culled)
-            {
-                NoteCullRequest(cameraStencil);
-            }
 
             // A batch whose selection writes the plugin's argument entries (DESIGN 4.5.8) is drawn by the plugin alone:
             // Unity's own draw cannot read those entries, so without a sink nothing is issued and the caller is told.
@@ -4019,6 +4033,13 @@ namespace Zantetsu.MeshCut
             {
                 throw new InvalidOperationException(
                     "this display's batch writes the plugin's argument entries; set NativeDrawSink before drawing");
+            }
+
+            IVpNativeClipDrawSink clipSink = nativeSink as IVpNativeClipDrawSink;
+            bool separateClipDraws = culled && clipSink != null && clipSink.SeparateClipDraws;
+            if (culled)
+            {
+                NoteCullRequest(cameraStencil, separateClipDraws && _clipDrawRecords.Count > 0);
             }
 
             // The surfaces, grouped by material: one forward call per run of command slots whose commands share one.
@@ -4125,6 +4146,26 @@ namespace Zantetsu.MeshCut
                     }
 
                     start = next;
+                }
+            }
+
+            if (separateClipDraws)
+            {
+                for (int i = 0; i < _clipDrawRecords.Count; i++)
+                {
+                    ClipDrawRecord record = _clipDrawRecords[i];
+                    VpIndirectCommand command = _commands[record.command];
+                    VpInstanceClip clip = _clips[record.instance];
+                    Matrix4x4 objectToWorld = _transforms[record.instance];
+                    Bounds worldBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorld);
+                    clipSink.AddClipBody(camera, _buffers, _commandMaterials[record.command], command.range,
+                        objectToWorld, clip, worldBounds, layer);
+                    if (_shadowMaterial != null)
+                    {
+                        clipSink.AddClipCasters(camera, _buffers,
+                            _commandProvisional[record.command] ? _provisionalShadowMaterial : _shadowMaterial,
+                            command.range, objectToWorld, clip, worldBounds, layer);
+                    }
                 }
             }
 
@@ -4235,7 +4276,7 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        private void NoteCullRequest(CameraStencil slot)
+        private void NoteCullRequest(CameraStencil slot, bool excludeClipped)
         {
             if (slot.cullRequestedFrame != int.MinValue && slot.cullRequestedFrame != CurrentFrame
                 && slot.cullIssuedFrame != slot.cullRequestedFrame)
@@ -4253,6 +4294,7 @@ namespace Zantetsu.MeshCut
 
             slot.cullRequestedFrame = CurrentFrame;
             slot.cullBatch = _batch;
+            slot.cullExcludeClipped = excludeClipped;
         }
 
         /// <summary>
@@ -4276,7 +4318,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            slot.cullBatch.IssueCull(commands, slot.view, conditions);
+            slot.cullBatch.IssueCull(commands, slot.view, conditions, slot.cullExcludeClipped);
             slot.cullIssuedFrame = CurrentFrame;
             CullSelectionsIssued++;
             return true;
@@ -6113,6 +6155,12 @@ namespace Zantetsu.MeshCut
             //    it was not; then the registrations whose slots this collection writes, and the instance records of
             //    what the placement pass placed anew. Every other slot stands as it is.
             BuildCandidate(stampLedger, structural, commandEnd, instanceEnd);
+            bool rebuildClipDraws = structural || _compactThisPass || !_hasSnapshot;
+            if (rebuildClipDraws)
+            {
+                CollectClipDrawRecords(_candidateCommands.Valid, _candidateCommandStarts.Valid,
+                    _candidateClips.Valid, commandEnd, _candidateClipDrawRecords);
+            }
 
             EnterCollectStage(6);
             // 6. The largest stencil arrangement this candidate could need -- every non-empty cap a job of its own, its
@@ -6259,7 +6307,7 @@ namespace Zantetsu.MeshCut
             EnterCollectStage(8);
             // 8. Only the complete candidate is adopted. Shared family results stay owned by both snapshots
             //    until the old reader is cleared on the next build; GPU resources keep their existing retirement.
-            Adopt(commandEnd, instanceEnd);
+            Adopt(commandEnd, instanceEnd, rebuildClipDraws);
             CommandUploads++;
 
             EnterCollectStage(9);
@@ -6773,7 +6821,7 @@ namespace Zantetsu.MeshCut
         /// can grow here. The draw slots stay where they are: what the side just replaced lacks of this one is the
         /// ranges this collection wrote, kept for the collection that builds in it next (DESIGN 5.6).
         /// </summary>
-        private void Adopt(int commandEnd, int instanceEnd)
+        private void Adopt(int commandEnd, int instanceEnd, bool rebuildClipDraws)
         {
             Swap(ref _snapshot, ref _building);
             Swap(ref _commands, ref _candidateCommands);
@@ -6782,6 +6830,11 @@ namespace Zantetsu.MeshCut
             Swap(ref _commandProvisional, ref _candidateCommandProvisional);
             Swap(ref _transforms, ref _candidateTransforms);
             Swap(ref _clips, ref _candidateClips);
+            if (rebuildClipDraws)
+            {
+                Swap(ref _clipDrawRecords, ref _candidateClipDrawRecords);
+                ClipDrawListBuildsForTest++;
+            }
             Swap(ref _capRecords, ref _candidateCapRecords);
             Swap(ref _rfCommandStart, ref _candidateRfCommandStart);
             Swap(ref _rfCommandCount, ref _candidateRfCommandCount);
@@ -6822,6 +6875,26 @@ namespace Zantetsu.MeshCut
 
             // Every camera's preparation was for the snapshot just replaced.
             _generation++;
+        }
+
+        // The same per-instance predicate as the GPU selection, including mixed runs. Free slots have no instances.
+        internal static void CollectClipDrawRecords(
+            NativeArray<VpIndirectCommand> commands, NativeArray<int> starts, NativeArray<VpInstanceClip> clips,
+            int commandEnd, List<ClipDrawRecord> into)
+        {
+            into.Clear();
+            for (int c = 0; c < commandEnd; c++)
+            {
+                int first = starts[c], count = commands[c].instanceCount;
+                for (int i = 0; i < count; i++)
+                {
+                    int instance = first + i;
+                    if (clips[instance].PlaneCount > 0)
+                    {
+                        into.Add(new ClipDrawRecord(c, instance));
+                    }
+                }
+            }
         }
 
         private static void Swap<T>(ref T a, ref T b)
