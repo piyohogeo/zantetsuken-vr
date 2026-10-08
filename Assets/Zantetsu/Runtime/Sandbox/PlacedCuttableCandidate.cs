@@ -380,12 +380,24 @@ namespace Zantetsu.Sandbox
                     at = standIn.transform;
                 }
 
+                int roomRefusals = _world.Storage.RoomRefusalCount;
                 try
                 {
                     Registration = PlacedCuttableRegistration.RegisterHullDeferred(_world, _data, at, _mass, _materialIndex, Source, Withdraw, TakenBack);
                 }
                 catch (InvalidOperationException e)
                 {
+                    if (_world.Storage.RoomRefusalCount != roomRefusals && _world.Storage.BackingFailure == null && _world.Storage.LastRefusalIsTemporary)
+                    {
+                        // Room others hold and will give back -- another cut's output is outstanding, or its room is
+                        // (2026-10-09): the registration gave back what it made, the instance is as it was, and it is a
+                        // candidate again with a fresh fragment, as when its first cut is answered at once below.
+                        if (Source.IsSet && _world.Ledger.IsCurrentTarget(Source)) _world.Ledger.Retire(Source);
+                        State = CandidateState.Candidate;
+                        Source = default;
+                        return Answer(ProvisionalCutAcceptance.NotAccepted, LogicalCutAdmission.Full, false, "the storage's room is held for now: " + _world.Storage.DescribeRoom() + "; " + e.Message);
+                    }
+
                     SlashPlacedCutResult refused = Refuse(ProvisionalCutAcceptance.InvalidRequest, LogicalCutAdmission.NoOp, e.Message);
                     if (Source.IsSet && _world.Ledger.IsCurrentTarget(Source)) _world.Ledger.Retire(Source);
                     return refused;

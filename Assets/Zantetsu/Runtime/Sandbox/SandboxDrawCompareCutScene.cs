@@ -25,8 +25,9 @@ namespace Zantetsu.Sandbox
     /// **The second body is cut only once the first body's cut has committed** (2026-10-09, after the first run in a
     /// Player). A placed prop is taken into the world by its first cut -- its display geometry is appended then -- and
     /// the storage takes no new geometry while any cut's output is outstanding, which the first body's is while its
-    /// geometry is held back: the prop's first cut is then refused, for good. A piece already in the world is cut
-    /// while another cut is outstanding as ever.
+    /// geometry is held back: the prop's first cut is then not accepted, and the prop stays a candidate until that cut
+    /// has committed (until 2026-10-09 it was refused for good, which is how the first run in a Player ended). A piece
+    /// already in the world is cut while another cut is outstanding as ever.
     /// </para>
     /// <para>
     /// **Nothing here is left to the simulation.** A cut is asked by one synthetic sweep given to the ordinary hit
