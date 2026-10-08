@@ -88,6 +88,9 @@ namespace Zantetsu.EditorTools.Quest
             }
             var rso = new SerializedObject(renderer);
             rso.FindProperty("m_RenderingMode").intValue = (int)RenderingMode.Forward;
+            // Vulkan plugin events use Unity's legacy current render pass through unsafe RenderGraph passes.
+            // IUnityGraphicsVulkan explicitly excludes SRP RenderPass API preconditions.
+            rso.FindProperty("m_UseNativeRenderPass").boolValue = false;
             rso.FindProperty("m_DepthPrimingMode").intValue = (int)DepthPrimingMode.Disabled;
             rso.FindProperty("m_CopyDepthMode").intValue = (int)CopyDepthMode.AfterOpaques;
             rso.ApplyModifiedPropertiesWithoutUndo();
@@ -195,6 +198,17 @@ namespace Zantetsu.EditorTools.Quest
         {
             try
             {
+                const string nativePath = "Assets/Zantetsu/Runtime/Rendering/Plugins/Android/arm64-v8a/libZantetsuVpVulkan.so";
+                AssetDatabase.ImportAsset(nativePath, ImportAssetOptions.ForceUpdate);
+                var native = AssetImporter.GetAtPath(nativePath) as PluginImporter;
+                if (native == null) throw new InvalidOperationException("Vulkan native plugin has no PluginImporter: " + nativePath);
+                native.SetCompatibleWithAnyPlatform(false);
+                native.SetCompatibleWithEditor(false);
+                native.SetCompatibleWithPlatform(BuildTarget.Android, true);
+                native.SetPlatformData(BuildTarget.Android, "CPU", "ARM64");
+                native.isPreloaded = true;
+                native.SaveAndReimport();
+                Debug.Log("QUEST NATIVE BUILD: Android=" + native.GetCompatibleWithPlatform(BuildTarget.Android) + " CPU=" + native.GetPlatformData(BuildTarget.Android, "CPU") + " preload=" + native.isPreloaded);
                 string[] args = Environment.GetCommandLineArgs();
                 int index = Array.IndexOf(args, "-zantetsuQuestOut");
                 string output = index >= 0 ? args[index + 1] : Path.Combine(Directory.GetCurrentDirectory(), "Build", "quest-static.apk");

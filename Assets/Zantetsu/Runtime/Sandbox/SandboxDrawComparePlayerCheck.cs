@@ -662,7 +662,7 @@ namespace Zantetsu.Sandbox
                 int prepBeganFrame = Time.frameCount;
                 Note("mode: " + (settings.mode != Mode.Unity
                     ? ModeName(settings.mode) + " (the cut world's display draws the targets; "
-                      + (world.Display.NativeArguments ? "VP3C-NATIVE, GPU selection drawn by the Direct3D 12 plugin"
+                      + (world.Display.NativeArguments ? "VP3C-NATIVE, GPU selection drawn by the native plugin"
                           : world.Display.CullsOnGpu ? "VP3C, GPU selection"
                           : "VP3, no GPU selection" + (world.GpuCullFallback != null ? ": FALLBACK " + world.GpuCullFallback : "")) + ")"
                     : "unity (the targets' own MeshRenderers)"));

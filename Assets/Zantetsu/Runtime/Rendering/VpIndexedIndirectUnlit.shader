@@ -287,6 +287,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             HLSLPROGRAM
             #pragma target 4.5
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
+            #pragma shader_feature_local VP_NATIVE_MULTIDRAW
             #pragma vertex VertexMotion
             #pragma fragment FragmentMotion
             #pragma multi_compile_instancing
@@ -297,6 +298,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MotionVectorsCommon.hlsl"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
+        #if defined(VP_NATIVE_MULTIDRAW)
+            #include "VpNativeMultiDraw.hlsl"
+        #endif
             #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
@@ -347,7 +351,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             VaryingsM VertexMotion(AttributesM input)
             {
+            #if defined(VP_NATIVE_MULTIDRAW)
+                VpNativeInitIndirectDrawArgs();
+            #else
                 InitIndirectDrawArgs(0);
+            #endif
                 VaryingsM output = (VaryingsM)0;
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
