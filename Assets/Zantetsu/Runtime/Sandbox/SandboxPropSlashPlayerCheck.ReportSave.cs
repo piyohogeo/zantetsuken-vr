@@ -74,7 +74,7 @@ namespace Zantetsu.Sandbox
                 get
                 {
 #if UNITY_ANDROID && !UNITY_EDITOR
-                    return multiNpc && replayInRealtime && retainSceneAfterMeasurement && !MobPlanMode && !building && !cityWalk;
+                    return replayInRealtime && retainSceneAfterMeasurement && !building && (cityWalk || (multiNpc && !MobPlanMode));
 #else
                     return false;
 #endif

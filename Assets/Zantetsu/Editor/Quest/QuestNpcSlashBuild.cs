@@ -119,7 +119,7 @@ namespace Zantetsu.EditorTools.Quest
             catch (Exception e) { Debug.LogError(e); if (Application.isBatchMode) EditorApplication.Exit(1); throw; }
         }
 
-        private static void ConfigureReplayVisualMaterials(List<string> report)
+        internal static void ConfigureReplayVisualMaterials(List<string> report, string materialRoot = MaterialRoot)
         {
             MeshRenderer[] renderers = SandboxPropSlashPlayerCheck.ReplayVisualRenderers()
                 .OrderBy(r => HierarchyPath(r.transform), StringComparer.Ordinal).ToArray();
@@ -157,7 +157,7 @@ namespace Zantetsu.EditorTools.Quest
                     {
                         string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(source));
                         if (string.IsNullOrEmpty(guid)) throw new InvalidOperationException("Replay visual material must be an authored asset: " + source.name);
-                        string path = MaterialRoot + "/Visual-" + guid + ".mat";
+                        string path = materialRoot + "/Visual-" + guid + ".mat";
                         copy = AssetDatabase.LoadAssetAtPath<Material>(path);
                         if (copy == null) { copy = new Material(wrapper); AssetDatabase.CreateAsset(copy, path); }
                         else copy.shader = wrapper;

@@ -19,11 +19,13 @@ using Zantetsu.Sandbox;
 
 namespace Zantetsu.Quest
 {
-    /// <summary>Ten prepared NPCs cut by the recorded Slash input, with a live Quest head and camera-only AppSW motion.</summary>
+    /// <summary>Quest NPC Slash and city-walk scenarios, with real-time recorded input and live camera-only AppSW.</summary>
     public sealed class QuestNpcSlashDemo : MonoBehaviour
     {
         public const string SceneName = "QuestNpcSlash10";
         public const string PackageName = "com.junic.zantetsu.questnpcslash";
+        public const string CityWalkSceneName = "QuestCityWalk";
+        public const string CityWalkPackageName = "com.junic.zantetsu.questcitywalk";
 
         [Serializable] private sealed class Config
         {
@@ -36,6 +38,8 @@ namespace Zantetsu.Quest
             public bool profiler = true;
             public bool prewarm = true;
             public string inputFile;
+            public string cityWalkScriptFile;
+            public float cityWalkBudgetSeconds = 565f;
             public int inputStart = 2227;
             public int inputRows = 512;
             public float startDelaySeconds = 5f;
@@ -49,6 +53,8 @@ namespace Zantetsu.Quest
 
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         private Config _config;
+        private bool _cityWalk;
+        private string LogPrefix => _cityWalk ? "QUEST CITY WALK: " : "QUEST NPC: ";
         private Camera _camera;
         private Transform _appSpaceOrigin;
         private Quaternion _lastHeadRotation, _lastAppSpaceRotation;
@@ -80,7 +86,7 @@ namespace Zantetsu.Quest
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
             // The package selects the initial route before the scene's world is made; other Quest demos keep theirs.
-            if (Application.identifier != PackageName) return;
+            if (Application.identifier != PackageName && Application.identifier != CityWalkPackageName) return;
             Config config = ReadConfig();
             VpNativeDrawSetup.Requested = (config ?? new Config()).mode == "vp3c-native";
             ApplyNativeOptions(config ?? new Config());
@@ -101,7 +107,14 @@ namespace Zantetsu.Quest
         private static void Install()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (SceneManager.GetActiveScene().name != SceneName) return;
+            bool cityWalk = SceneManager.GetActiveScene().name == CityWalkSceneName;
+            if (SceneManager.GetActiveScene().name != SceneName && !cityWalk) return;
+            if (cityWalk)
+            {
+                // Extraction takes several frames. Keep admission and crowd activation for StartPrepared's observers.
+                PlayableCityCuttable.Held = true;
+                foreach (var crowd in UnityEngine.Object.FindObjectsByType<MobPlanCrowd>(FindObjectsSortMode.None)) crowd.enabled = false;
+            }
             // The direct skin input requires the same four-weight contract as the authored NPC cut data.
             foreach (var npc in UnityEngine.Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None))
                 if (npc.CharacterRoot != null)
@@ -112,16 +125,19 @@ namespace Zantetsu.Quest
             foreach (var input in UnityEngine.Object.FindObjectsByType<MobPlanPlayerInput>(FindObjectsSortMode.None)) input.enabled = false;
             foreach (var recorder in UnityEngine.Object.FindObjectsByType<SandboxSlashPoseRecorder>(FindObjectsSortMode.None)) recorder.ShowControls = false;
             foreach (var overlay in UnityEngine.Object.FindObjectsByType<SandboxSlashDiagnosticsOverlay>(FindObjectsSortMode.None)) overlay.Visible = false;
-            new GameObject("Quest ten NPC Slash demo").AddComponent<QuestNpcSlashDemo>();
+            new GameObject(cityWalk ? "Quest city walk demo" : "Quest ten NPC Slash demo").AddComponent<QuestNpcSlashDemo>();
 #endif
         }
 
         private IEnumerator Start()
         {
+            _cityWalk = SceneManager.GetActiveScene().name == CityWalkSceneName;
             _config = ReadConfig();
             if (_config == null || (_config.mode != "vp3c" && _config.mode != "vp3c-native")) { Fail("mode must be vp3c or vp3c-native"); yield break; }
             if (_config.inputStart < 0 || _config.inputRows < 1 || _config.inputRows > 4096
                 || !float.IsFinite(_config.startDelaySeconds) || _config.startDelaySeconds < 0f) { Fail("invalid input range or start delay"); yield break; }
+            if (_cityWalk && (!float.IsFinite(_config.cityWalkBudgetSeconds) || _config.cityWalkBudgetSeconds <= 0f))
+            { Fail("invalid city walk budget"); yield break; }
             _camera = Camera.main;
             if (_camera == null) { Fail("MainCamera is required"); yield break; }
             if (_config.appSpacePoseMode != "camera" && _config.appSpacePoseMode != "tracking-origin")
@@ -141,7 +157,7 @@ namespace Zantetsu.Quest
             Application.targetFrameRate = -1; // The 90 Hz OpenXR display and AppSW select the application cadence.
             Application.runInBackground = true;
             _directory = Path.Combine(Application.persistentDataPath, "runs", DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ")
-                + "-npc10-" + _config.mode + "-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                + (_cityWalk ? "-citywalk-" : "-npc10-") + _config.mode + "-" + Guid.NewGuid().ToString("N").Substring(0, 6));
             Directory.CreateDirectory(_directory);
             File.WriteAllText(Path.Combine(_directory, "quest-config.json"), JsonUtility.ToJson(_config, true));
             File.WriteAllLines(Path.Combine(_directory, "platform.txt"), new[]
@@ -155,7 +171,7 @@ namespace Zantetsu.Quest
                 "replay=recorded timestamps in real time; head tracking live; camera-only AppSW motion; object motion ignored",
                 "AppSpace pose=" + _config.appSpacePoseMode + "; camera parent=" + (_appSpaceOrigin != null ? _appSpaceOrigin.name : "none"),
                 "checks=on; metrics=on; light run, no picture capture; scene retained=" + _config.keepOpen,
-                "profile scope=ten NPCs ready, check preparation and start delay pre-roll, replay, cut completion; replay CSV scope unchanged",
+                "profile scope=" + (_cityWalk ? "crowd and city registration, pipeline prewarm, route and cuts" : "ten NPCs ready, check preparation and start delay pre-roll, replay, cut completion; replay CSV scope unchanged"),
             });
             if (_distanceSetup != null) File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { _distanceSetup.Describe });
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), NpcSkinQualityLines());
@@ -178,16 +194,29 @@ namespace Zantetsu.Quest
             }
             if (!File.Exists(inputFile)) { Fail("input file does not exist: " + inputFile); yield break; }
 
-            _phase = "Preparing NPCs";
+            string scriptFile = _config.cityWalkScriptFile;
+            if (_cityWalk && string.IsNullOrEmpty(scriptFile))
+            {
+                scriptFile = Path.Combine(Application.persistentDataPath, "CityWalkScript.txt");
+                using (var request = UnityWebRequest.Get(Application.streamingAssetsPath + "/Quest3s/CityWalkScript.txt"))
+                {
+                    request.downloadHandler = new DownloadHandlerFile(scriptFile);
+                    yield return request.SendWebRequest();
+                    if (request.result != UnityWebRequest.Result.Success) { Fail("city walk script extraction: " + request.error); yield break; }
+                }
+            }
+            if (_cityWalk && !File.Exists(scriptFile)) { Fail("city walk script does not exist: " + scriptFile); yield break; }
+
+            _phase = _cityWalk ? "Preparing world" : "Preparing NPCs";
             var world = _world = UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>();
             _drawing = world != null ? world.GetComponent<CutWorldCameraDrawing>() : null;
             var npcs = UnityEngine.Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None);
-            if (npcs.Length != 10) { Fail("expected ten NPCs, found " + npcs.Length); yield break; }
+            if (!_cityWalk && npcs.Length != 10) { Fail("expected ten NPCs, found " + npcs.Length); yield break; }
             double readyBy = Time.unscaledTimeAsDouble + 120.0;
             while (Time.unscaledTimeAsDouble < readyBy)
             {
                 bool ready = world != null && world.IsReady;
-                foreach (var npc in npcs)
+                foreach (var npc in _cityWalk ? Array.Empty<SandboxNpcCharacter>() : npcs)
                 {
                     if (npc.Failure != null) { Fail("NPC preparation: " + npc.name + ": " + npc.Failure); yield break; }
                     ready &= npc.IsTarget;
@@ -196,20 +225,29 @@ namespace Zantetsu.Quest
                 yield return null;
             }
             bool allReady = world != null && world.IsReady;
-            foreach (var npc in npcs) allReady &= npc.IsTarget;
-            if (!allReady) { Fail("ten NPCs did not prepare within 120 s"); yield break; }
+            if (!_cityWalk) foreach (var npc in npcs) allReady &= npc.IsTarget;
+            if (!allReady) { Fail(_cityWalk ? "world did not prepare within 120 s" : "ten NPCs did not prepare within 120 s"); yield break; }
             if (_distanceSetup != null) File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { _distanceSetup.Describe });
 
             string[] arguments =
             {
-                "QuestNpcSlashDemo", SandboxPropSlashPlayerCheck.Argument, Path.Combine(_directory, "comparison"),
+                (_cityWalk ? "QuestCityWalkDemo" : "QuestNpcSlashDemo"), SandboxPropSlashPlayerCheck.Argument, Path.Combine(_directory, "comparison"),
                 SandboxSlashReplayPlayerCheck.InputArgument, inputFile,
                 SandboxSlashReplayPlayerCheck.StartArgument, _config.inputStart.ToString(Inv),
                 SandboxPropSlashPlayerCheck.RowsArgument, _config.inputRows.ToString(Inv),
                 SandboxPropSlashPlayerCheck.FrameRateArgument, "-1", SandboxPropSlashPlayerCheck.IterationsArgument, "1",
-                SandboxPropSlashPlayerCheck.MultiNpcArgument, SandboxPropSlashPlayerCheck.LightArgument,
+                SandboxPropSlashPlayerCheck.LightArgument,
                 SandboxPropSlashPlayerCheck.MarkersArgument, "FrameEvents.XRBeginFrame;FrameEvents.OnBeforeRenderCallback;Scripts:Zantetsu.PoseLod.Decide;Scripts:Zantetsu.PoseLod.Force",
             };
+            var scenarioArguments = new List<string>(arguments);
+            if (_cityWalk)
+            {
+                scenarioArguments.AddRange(new[] { SandboxPropSlashPlayerCheck.CityWalkArgument,
+                    SandboxPropSlashPlayerCheck.MobPlanArgument, scriptFile,
+                    SandboxPropSlashPlayerCheck.CityWalkBudgetArgument, _config.cityWalkBudgetSeconds.ToString(Inv) });
+            }
+            else scenarioArguments.Add(SandboxPropSlashPlayerCheck.MultiNpcArgument);
+            arguments = scenarioArguments.ToArray();
             File.WriteAllLines(Path.Combine(_directory, "run-arguments.txt"), arguments);
 #if DEBUG
             _loggerBeginAdmission = DevelopmentLogger.Instance.write_log("QuestNpcSlashDemo", "npc_run_begin", _directory).ToString();
@@ -218,26 +256,37 @@ namespace Zantetsu.Quest
             foreach (var npc in npcs)
                 File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { "prepared NPC skin=" + npc.name + "; quality=" + (npc.Renderer != null ? npc.Renderer.quality.ToString() : "none") });
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), ReplayVisualShaderLines());
-            Debug.Log("QUEST NPC: ready ten NPCs; inputStart=" + _config.inputStart + " rows=" + _config.inputRows
+            Debug.Log(LogPrefix + (_cityWalk ? "world ready; city route prepared; inputStart=" : "ready ten NPCs; inputStart=") + _config.inputStart + " rows=" + _config.inputRows
                 + " delay=" + _config.startDelaySeconds + " mode=" + _config.mode + " AppSW=" + _config.appSw + " output=" + _directory);
             RecordPhase("ready");
             _phase = "Pre-roll";
             StartProfiler();
-            if (_config.prewarm)
+            if (_config.prewarm && !_cityWalk)
             {
                 yield return PrewarmBeforeReplay();
                 if (_warmFailure != null) { Fail("pipeline prewarm: " + _warmFailure); yield break; }
             }
-            else
+            else if (!_config.prewarm)
             {
                 RecordPhase("warm-disabled");
                 File.WriteAllText(Path.Combine(_directory, "prewarm.txt"), "prewarm disabled by config\n");
             }
-            _run = SandboxPropSlashPlayerCheck.StartPrepared(arguments, _config.keepOpen, true, _config.startDelaySeconds);
+            _run = SandboxPropSlashPlayerCheck.StartPrepared(arguments, _config.keepOpen, true, _config.startDelaySeconds,
+                _cityWalk ? PrepareCityReplay : null);
+            if (_cityWalk)
+                foreach (var crowd in UnityEngine.Object.FindObjectsByType<MobPlanCrowd>(FindObjectsSortMode.None)) crowd.enabled = true;
             while (!_run.Done) yield return null;
             StopProfiler();
             _phase = _run.Phase;
             RecordDone();
+        }
+
+        private IEnumerator PrepareCityReplay()
+        {
+            RecordPhase("city-registered");
+            if (_config.prewarm) yield return PrewarmBeforeReplay();
+            _run.PreparationFailure = _warmFailure;
+            if (_warmFailure == null) RecordPhase("city-ready");
         }
 
         private IEnumerator PrewarmBeforeReplay()
@@ -406,7 +455,7 @@ namespace Zantetsu.Quest
             string line = "phase=" + phase + "; frame=" + Time.frameCount + "; unscaledSeconds=" + Time.unscaledTimeAsDouble.ToString("R", Inv)
                 + "; realtimeSeconds=" + Time.realtimeSinceStartupAsDouble.ToString("R", Inv) + "; utc=" + DateTime.UtcNow.ToString("O", Inv);
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { line });
-            Debug.Log("QUEST NPC PHASE: " + line);
+            Debug.Log((_cityWalk ? "QUEST CITY WALK PHASE: " : "QUEST NPC PHASE: ") + line);
         }
 
         private void StartProfiler()
@@ -419,7 +468,7 @@ namespace Zantetsu.Quest
             Profiler.enableBinaryLog = true;
             Profiler.enabled = true;
             _profileStarted = true;
-            Debug.Log("QUEST NPC: Profiler pre-roll recording begins after ten NPCs are ready at frame " + Time.frameCount + " into " + Profiler.logFile);
+            Debug.Log(LogPrefix + "Profiler recording begins " + (_cityWalk ? "before crowd and city preparation" : "after ten NPCs are ready") + " at frame " + Time.frameCount + " into " + Profiler.logFile);
         }
 
         private void StopProfiler()
@@ -430,7 +479,7 @@ namespace Zantetsu.Quest
             Profiler.logFile = _profileFileBefore;
             Profiler.enabled = _profilerBefore;
             _profileStarted = false;
-            Debug.Log("QUEST NPC: Profiler recording ended at frame " + Time.frameCount);
+            Debug.Log(LogPrefix + "Profiler recording ended at frame " + Time.frameCount);
         }
 
         private void RecordDone()
@@ -453,13 +502,13 @@ namespace Zantetsu.Quest
                 + "\ndevelopment logger directory=" + Path.Combine(Application.persistentDataPath, "logger")
                 + "\ndevelopment logger begin enqueue=" + _loggerBeginAdmission + "\ndevelopment logger end enqueue=" + loggerEndAdmission
                 + "\nlogger enqueue accepted does not guarantee persistence; verify npc_run_end in the saved JSONL\n");
-            Debug.Log("QUEST NPC: measurement done code=" + _run.Code + " sceneRetained=" + _run.SceneRetained + " output=" + _directory);
+            Debug.Log(LogPrefix + "measurement done code=" + _run.Code + " sceneRetained=" + _run.SceneRetained + " output=" + _directory);
         }
 
         private void Fail(string failure)
         {
             _phase = "Failed";
-            Debug.LogError("QUEST NPC: " + failure);
+            Debug.LogError(LogPrefix + failure);
             StopProfiler();
             if (!string.IsNullOrEmpty(_directory)) File.WriteAllText(Path.Combine(_directory, "demo-result.txt"), "NOT started: " + failure + "\n");
             if (_config != null && !_config.keepOpen) Application.Quit(13);
@@ -486,7 +535,7 @@ namespace Zantetsu.Quest
                 if (_drawing != null && _config.mode == "vp3c-native") Debug.Log("QUEST NPC ROUTE: " + _drawing.DescribeNativeRoute(out _));
                 if (_config.mode == "vp3c-native" && VpNativeDrawPlugin.TryLoad(out _))
                     Debug.Log("QUEST NPC NATIVE: " + VpNativeDrawPlugin.ReadCounters() + "; " + VpNativeDrawPlugin.DescribeState());
-                Debug.Log("QUEST NPC: mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
+                Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
                     + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
@@ -497,7 +546,7 @@ namespace Zantetsu.Quest
             if (!_spaceWarpApplied || !_config.appSw || camera != _camera) return;
             _distanceSetup?.BeforeCamera(context);
             // The camera local pose includes physical HMD tracking. The parent maps tracking space into the scene.
-            // XR_FB_space_warp appSpaceDeltaPose describes application locomotion, which is constant in this demo.
+            // XR_FB_space_warp appSpaceDeltaPose describes application locomotion, which includes the city route's artificial translation and rotation.
             Transform appSpace = _config.appSpacePoseMode == "tracking-origin" ? _appSpaceOrigin : camera.transform;
             if (_appSpacePoseSampled)
             {
