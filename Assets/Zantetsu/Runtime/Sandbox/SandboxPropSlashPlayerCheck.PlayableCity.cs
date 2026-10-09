@@ -12,7 +12,7 @@ namespace Zantetsu.Sandbox
     // Only reads; nothing is cut, moved or retired from here.
     //   [scenario] each kind cut, published and committed from a Slash; one Slash accepted on two kinds or more; a piece cut
     //              again; the anchored pieces fixed where they were cut, the free ones dynamic; no building or prop piece gone
-    //              other than by its own cut; the crowd's plan cycles going on across a building or prop cut (the plan
+    //              other than by its own cut or the collection of settled-empty geometry; the crowd's plan cycles going on across a building or prop cut (the plan
     //              cycles either side of each cut window no further apart than 3 s: a cycle is published about once a second,
     //              and a cut window is often shorter than that).
     //   The pieces' motion (how far and how fast the free ones went) is written down, not judged: that the cuts were all
@@ -116,6 +116,7 @@ namespace Zantetsu.Sandbox
                 public string kind, birthOverlap, fastContacts;
                 public int fastFrame = -1;
                 public bool anchored, kinematicAlways = true;
+                public bool collectedEmpty;
                 public Vector3 firstCentre;
                 public float maxDisplacement, maxSpeed;
                 public int firstFrame, lastFrame;
@@ -154,6 +155,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 _crowd.ActorRetired += PlayableCityRetired;
+                if (runParts.checks) _world.Owners.OwnerRetiring += PlayableCityOwnerRetiring;
                 _pcLastCycles = _crowd.PublishedCycles;
                 _pcLastReplacements = _crowd.ReplacementsAdded;
                 if (!runParts.checks) return;   // what stands where at the start is gone through and judged by the checks alone
@@ -231,6 +233,15 @@ namespace Zantetsu.Sandbox
             }
 
             private void PlayableCityRetired(int id, SandboxNpcCharacter c) => _pcRetired++;
+
+            private void PlayableCityOwnerRetiring(LogicalFragmentId fragment, PhysicsFragmentOwner owner)
+            {
+                if (_world.EmptyOwners != null && _world.EmptyOwners.RetiringFragment == fragment
+                    && _world.Geometry.HasNoGeometry(fragment) && _pcPieces.TryGetValue(fragment, out PlayablePiece piece))
+                {
+                    piece.collectedEmpty = true;
+                }
+            }
 
             private const float PlayableFastSpeed = 8f;
             private readonly Collider[] _pcNear = new Collider[32];
@@ -377,6 +388,7 @@ namespace Zantetsu.Sandbox
                     + " of " + _pcSubmeshCapacity + ", vertex blocks " + _pcMaxBlocks + " of " + _pcBlockCapacity + " (every 30 frames and at the end); system constraints at most "
                     + _pcMaxConstraints + " of " + _world.Profile.SystemConstraintCapacity + "; storage now: " + _world.Storage.DescribeRoom());
                 if (_crowd != null) _crowd.ActorRetired -= PlayableCityRetired;
+                _world.Owners.OwnerRetiring -= PlayableCityOwnerRetiring;
                 Guarded("playable diag summary", PlayableDiagSummary);
 
                 // Each kind's cuts: roots and children, accepted, published, committed; Pending ones and how they ended.
@@ -424,7 +436,8 @@ namespace Zantetsu.Sandbox
                 else Expect(mixed.Count > 0, "[scenario] one Slash was accepted on two kinds of target or more (" + mixed.Count + " such Slashes)");
                 Expect(_accepted.Any(a => a.child && a.committedFrame >= 0), "[scenario] a piece made by a cut was cut again and committed");
 
-                // The pieces: anchored ones stayed fixed where they were cut; free ones were dynamic. Gone ones: only by a cut.
+                // The pieces: anchored ones stayed fixed where they were cut; free ones were dynamic. A gone piece
+                // must have its own cut or an observed retirement by the settled-empty collection.
                 var cutSources = new HashSet<LogicalFragmentId>(_accepted.Select(a => a.fragment));
                 var live = new HashSet<LogicalFragmentId>(_pcFragments);
                 foreach (string kind in new[] { "building", "prop" })
@@ -441,16 +454,17 @@ namespace Zantetsu.Sandbox
                     List<KeyValuePair<LogicalFragmentId, PlayablePiece>> pieces = _pcPieces.Where(p => p.Value.kind == kind).ToList();
                     List<PlayablePiece> anchored = pieces.Where(p => p.Value.anchored).Select(p => p.Value).ToList();
                     List<PlayablePiece> free = pieces.Where(p => !p.Value.anchored).Select(p => p.Value).ToList();
-                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key));
+                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key) && !p.Value.collectedEmpty);
+                    int collectedEmpty = pieces.Count(p => !live.Contains(p.Key) && p.Value.collectedEmpty);
                     Log("playable city " + kind + " pieces: seen " + pieces.Count + ", anchored " + anchored.Count + " (all kinematic "
                         + anchored.All(p => p.kinematicAlways) + ", max displacement " + (anchored.Count > 0 ? anchored.Max(p => p.maxDisplacement) : 0f).ToString("F4", Inv)
                         + " m), free " + free.Count + " (dynamic " + free.Count(p => !p.kinematicAlways) + ", max displacement "
                         + (free.Count > 0 ? free.Max(p => p.maxDisplacement) : 0f).ToString("F2", Inv) + " m, max speed "
                         + (free.Count > 0 ? free.Max(p => p.maxSpeed) : 0f).ToString("F2", Inv) + " m/s), live at the end " + pieces.Count(p => live.Contains(p.Key))
-                        + ", gone other than by a cut " + gone);
+                        + ", collected settled-empty " + collectedEmpty + ", gone without a cut or collection " + gone);
                     Expect(anchored.All(p => p.kinematicAlways && p.maxDisplacement < 0.001f), "[scenario] every anchored " + kind + " piece stayed kinematic where it was made");
                     Expect(free.Count == 0 || free.All(p => !p.kinematicAlways), "[scenario] every free " + kind + " piece is dynamic");
-                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut (" + gone + ")");
+                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut or settled-empty collection (" + gone + ")");
                 }
 
                 // Each window's plan cycles (TL, 2026-09-30: a window open to the run's end had no cycle after it, and its gap was

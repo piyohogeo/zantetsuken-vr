@@ -171,6 +171,17 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float pieceLifetimeMinRemainingMainSeconds = 0.004f;
         [SerializeField] private float pieceLifetimeMaxStepSeconds = 0.0005f;
 
+        [Header("Empty owner collection (DESIGN 7.9.3, Phase 5.7, provisional)")]
+        [Tooltip("Retire live fragments whose shared geometry a commit settled as empty, with their physics owners. Off: nothing is looked at and nothing new is started.")]
+        [SerializeField] private bool emptyOwnerCollectionEnabled = true;
+
+        [Tooltip("Fragments looked at per frame at most (16: with the piece lifetime's walk; a city of 900 owners is walked in about 57 frames), and retirements started per frame at most (1: the cost of one is all a turn's budget is asked for).")]
+        [SerializeField] private int emptyOwnerCollectionExaminePerFrame = 16;
+        [SerializeField] private int emptyOwnerCollectionRetirePerFrame = 1;
+
+        [Tooltip("The expected cost of a turn that starts a retirement, in seconds, before any was measured (from no Player measurement). The median of the last five measured replaces it.")]
+        [SerializeField] private float emptyOwnerCollectionSeedExpectedSeconds = 0.0003f;
+
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
         [SerializeField] private bool buildingRestEnabled = false;
@@ -374,6 +385,15 @@ namespace Zantetsu.PhysicsCut
                 pieceLifetimeEnabled, pieceLifetimeThreshold, pieceLifetimeDistance, pieceLifetimeExaminePerFrame,
                 pieceLifetimeRetirePerFrame, pieceLifetimeMinRemainingMainSeconds, pieceLifetimeMaxStepSeconds);
 
+        /// <summary>
+        /// The empty owner collection's settings (DESIGN 7.9.3), from the provisional values above. The budget a turn
+        /// leaves to the rest of the frame is the compaction's reserve: both start at the same place in the frame.
+        /// </summary>
+        public CutEmptyOwnerCollectionSettings EmptyOwnerCollection =>
+            new CutEmptyOwnerCollectionSettings(
+                emptyOwnerCollectionEnabled, emptyOwnerCollectionExaminePerFrame, emptyOwnerCollectionRetirePerFrame,
+                CutWorldRoot.CompactionReserveSeconds, emptyOwnerCollectionSeedExpectedSeconds);
+
         /// <summary>The trial fusion of held building pieces (2026-09-29): off unless the profile switches it on.</summary>
         public BuildingFusionSettings BuildingFusion => new BuildingFusionSettings(buildingFusionEnabled, buildingFusionPerFrame, buildingFusionDeadlineSeconds, buildingFusionMainBudgetMs * 0.001);
 
@@ -491,6 +511,10 @@ namespace Zantetsu.PhysicsCut
             else if (!PieceLifetime.IsValid)
             {
                 reason = "the piece lifetime's counts and times must be positive and its threshold and distance not negative";
+            }
+            else if (!EmptyOwnerCollection.IsValid)
+            {
+                reason = "the empty owner collection's counts must be positive and its expected cost not negative";
             }
             else if (!BuildingRest.IsValid)
             {
