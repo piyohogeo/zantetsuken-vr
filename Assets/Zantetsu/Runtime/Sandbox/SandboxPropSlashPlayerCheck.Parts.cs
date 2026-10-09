@@ -152,6 +152,17 @@ namespace Zantetsu.Sandbox
         /// </summary>
         public static int CodeOf(bool checksRun, int failures, bool completed, bool replayBeforeReady) =>
             CheckEnding.CodeOf(failures + (!checksRun && !completed ? 1 : 0), replayBeforeReady);
+
+        /// <summary>
+        /// Why a run whose step script stopped did not complete, or null when the script ran every step (or there is
+        /// none). A halted script is the scenario's own failure, whatever parts run: with the checks left out it is
+        /// what makes the run NOT completed and its code 14 (grpM1, 2026-10-10: a walk halted at step 52 of 73 was
+        /// written "completed" with code 0, the checks that would have said so being off).
+        /// </summary>
+        public static string WhyTheScriptStopped(CityWalkSteps steps) =>
+            steps != null && steps.Halted
+                ? "the step script halted: " + steps.HaltReason + "; the " + Math.Max(0, steps.Steps.Count - steps.Current - 1) + " steps after it not run"
+                : null;
     }
 
     public static partial class SandboxPropSlashPlayerCheck
@@ -422,6 +433,8 @@ namespace Zantetsu.Sandbox
                 if (_cwRegistrationCutShort) why.Add("the registration was cut short at its deadline");
                 if (!fixedCode.HasValue && !_cwRegistrationCutShort && !_scriptCompleted) why.Add("the script and the cuts' completion did not finish before the deadline");
                 foreach (string stage in _cwDeadlinesReached) why.Add("deadline reached: " + stage);
+                string scriptStopped = PropSlashRunResult.WhyTheScriptStopped(_mpSteps);
+                if (scriptStopped != null) why.Add(scriptStopped);
                 foreach (string failure in _runFailures) why.Add(failure);
                 if (ending != null && !fixedCode.HasValue && !retainSceneAfterMeasurement && !ending.WorldReleased) why.Add("the world was not released by the ordinary ending");
                 if (closingFailures > 0) why.Add(closingFailures + " closing step(s) failed");
