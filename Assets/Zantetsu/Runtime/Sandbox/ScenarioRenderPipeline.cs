@@ -63,6 +63,27 @@ namespace Zantetsu.Sandbox
             return text.ToString();
         }
 
+        // An absent SSAO feature also disables SSAO. Read the feature type and its
+        // actual flag; an unreadable renderer or flag cannot establish this.
+        internal static bool HasNoActiveSsao(RenderPipelineAsset asset)
+        {
+            if (asset == null || !(Field(asset, "m_RendererDataList") is IEnumerable renderers)) return false;
+            bool readableRenderer = false;
+            foreach (object data in renderers)
+            {
+                if (!(data is Object renderer) || renderer == null) continue;
+                if (!(Field(data, "m_RendererFeatures") is IEnumerable features)) return false;
+                readableRenderer = true;
+                foreach (object feature in features)
+                {
+                    if (!(feature is Object item) || item == null || feature.GetType().Name != "ScreenSpaceAmbientOcclusion") continue;
+                    if (!(Field(feature, "m_Active") is bool active) || active) return false;
+                }
+            }
+
+            return readableRenderer;
+        }
+
         private static object Field(object owner, string name)
         {
             for (System.Type t = owner.GetType(); t != null; t = t.BaseType)

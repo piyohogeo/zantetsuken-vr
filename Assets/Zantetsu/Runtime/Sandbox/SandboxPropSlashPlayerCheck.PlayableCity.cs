@@ -129,6 +129,7 @@ namespace Zantetsu.Sandbox
             private readonly List<double> _pcCycleTimes = new List<double>();
             private readonly List<(double from, double to)> _pcWindows = new List<(double, double)>();
             private double _pcWindowFrom = -1;
+            private double _pcLastObservedTime;
             private const double PlayableCycleGapSeconds = 3.0;
             // The storage's fixed tables and the system constraints: the most used at once (read every 30 frames from the
             // storage's own room description), against their capacity -- written down, not judged.
@@ -220,8 +221,8 @@ namespace Zantetsu.Sandbox
                     Log("rendering in effect at the walk's start: " + inEffect + "; the scene's scenario pipeline " + (scenario == null ? "none" : (scenario.pipeline != null ? scenario.pipeline.name : "unset") + (scenario.Applied ? " applied" : " NOT applied")));
                     if (scenario != null)
                     {
-                        Expect(scenario.Applied && UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline == scenario.pipeline && inEffect.Contains("ScreenSpaceAmbientOcclusion=inactive")
-                            && !inEffect.Contains("ScreenSpaceAmbientOcclusion=active"), "[scenario] the scenario's render pipeline is in effect with its SSAO inactive");
+                        Expect(scenario.Applied && UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline == scenario.pipeline
+                            && ScenarioRenderPipeline.HasNoActiveSsao(scenario.pipeline), "[scenario] the scenario's render pipeline is in effect with SSAO disabled or absent");
                     }
 
                     Expect(_pcDeferredNotTarget.Count == 0, "[scenario] every deferred placed cuttable stands as the scene placed it, a cut target until its first cut (" + _pcDeferredAtStart
@@ -338,6 +339,7 @@ namespace Zantetsu.Sandbox
                     || (_world.Fusion != null && !_world.Fusion.IsSettled)
                     || (_world.Hulls != null && !_world.Hulls.IsSettled);
                 double now = Time.realtimeSinceStartupAsDouble;
+                _pcLastObservedTime = now;
                 if (_crowd.PublishedCycles != _pcLastCycles) _pcCycleTimes.Add(now);
                 if (window && _pcWindowFrom < 0) _pcWindowFrom = now;
                 if (!window && _pcWindowFrom >= 0) { _pcWindows.Add((_pcWindowFrom, now)); _pcWindowFrom = -1; }
@@ -457,7 +459,9 @@ namespace Zantetsu.Sandbox
                 // time from that end of the window to the nearest cycle is the least the stop could have been -- a stop when it
                 // passes the limit, and otherwise a missing end, recorded as such.
                 bool openAtEnd = _pcWindowFrom >= 0;
-                if (openAtEnd) _pcWindows.Add((_pcWindowFrom, Time.realtimeSinceStartupAsDouble));
+                // The cycles stop being sampled when observation ends. Report work
+                // after that boundary must not extend an unobserved open window.
+                if (openAtEnd) _pcWindows.Add((_pcWindowFrom, _pcLastObservedTime));
                 CycleWindows cw = AnalyseCycleWindows(_pcWindows, _pcCycleTimes, openAtEnd);
                 double widest = cw.widest, widestOpenEnd = cw.widestOpenEnd;
                 int missingStarts = cw.missingStarts, missingEnds = cw.missingEnds;

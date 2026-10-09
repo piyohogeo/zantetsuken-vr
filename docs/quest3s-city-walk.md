@@ -47,4 +47,49 @@ Tools/Quest3s/Run-CityWalk.ps1
 
 ## 実機確認
 
-Androidビルドは成功・errors=0。設定ログで切断対象885個、G=1/B=1、カラーfar100mを確認した。`Build/quest-citywalk-dev.apk`のSHA256は`075F2EF2CAB947548FEF17A2924F77B13033B0840F96CD642E9525FA56A660F0`。最終APKをQuestへインストール済み。実機は装着待ちのため、経路の確認待ち。ビルドログは`Logs/quest-citywalk/build.log`、設定ログは`configure.log`。
+2026-10-09、Quest 3SでPC版v7の経路を2回実行した。修正版の記録は
+`20261009T034648Z-citywalk-vp3c-native-7d5d75`。
+Androidビルド成功・errors=0、更新APKをインストール済み。終了後も街の表示とヘッドトラッキングを保持している。
+
+- 切断対象885個を登録、拒否0。開始時のNPCは20体。
+- 73ステップ（Goto 49、Face 11、Slash 13）、13地点をすべて完了。歩行324.7m（脚本の329.1mに対して98.7%）。
+- 脚本と切断完了まで380.1秒。終了コード0、チェック1,081項目を通過。
+- 建物10棟を切断（53回、10棟を再切断）、小物31個（切断片への再切断159回）、NPC104体（補充84体、切断片への再切断25回）。
+- 道中のNPC攻撃27回、対象命中27回、外れ0。NPCの出会い方によって回数は変わる（初回は30回）。
+- native描画の拒否、ring full、pipeline failures、shadow format refusals、未描画XR frameはすべて0。prewarm 16/16、prewarm後のpipeline miss 0。
+- 両眼の実機画像で街・NPC・影の表示を確認。
+- 実機nice値はUnityMain=-20、GeometryPool-0=-17、BackgroundPool=-14。起動時のMain affinity指定は0x3c、実行中のOS側許可maskは0x38（CPU 3–5）だった。
+
+最終APK `Build/quest-citywalk-dev.apk` のSHA256:
+`BF66EE34305E41438BFD1211FBC8D495E69B33C3B70A800FCA222CF62D7FD267`。
+ビルド・設定ログは `Logs/quest-citywalk/build.log`、`configure.log`。
+回収した記録は `Logs/quest-citywalk/verified-run/<run>/`、集計は `analysis-verified.json`、実行ログは `live-verified.txt`。
+
+### 計測値
+
+Development Player、scenario / metrics / checks / detailed diagnosticsを有効にし、Unity Profilerのbinary記録はOFFで測定した。
+`frames.csv`全17,070行、記録時間382.9秒（replay 17,064行、observe 5行、ending 1行）。
+登録・prewarmや、その後のログ保存をすべて含む計測区間ではない。
+
+| 指標 | 平均 | p50 | p95 | p99 | 最大 |
+|---|---:|---:|---:|---:|---:|
+| フレーム間隔 | 22.43ms | 22.22ms | 23.39ms | 27.10ms | 113.07ms |
+| Main（FrameTimingManager、待ちを含む） | 8.40ms | 8.15ms | 10.92ms | 15.35ms | 106.50ms |
+| XR App GPU | 14.93ms | 14.49ms | 20.64ms | 23.33ms | 26.34ms |
+
+平均フレーム間隔からのFPSは44.58。33.33ms超48フレーム、44.44ms超19フレーム、66.67ms超2フレーム。
+最大113.07msは経路開始直後（replayの0.11秒）。後半にはGPUが45fpsの予算22.22msを超える区間もある。
+VrApiでAppSW `Type=App`の動作を確認したが、全区間45fpsを維持できたという結果ではない。
+GPU側の負荷削減と開始時の短い停止は今後の最適化対象。
+XRのGPU時間はAPIの最新値を保持した非同期サンプルで、各行のCPU・フレーム間隔と同じframeに対応するとは限らない。
+`ftGpuMs` / `ftRenderMs` は0であり、計測不能として扱う。
+
+### 初回チェックの修正
+
+初回は経路・切断を完了したが終了コード14（2 failed / 1,001 held）だった。
+
+1. SSAOを持たないQuest rendererでもSSAO無効を判定できるよう、機能の型と実際のactive flagを読む。renderer情報やflagが読めない場合は失敗として扱い、pipelineの適用・一致も確認する。
+2. NPCのplan cycleを観測する最後の時刻を保持し、開いたcut windowはその時刻までで判定する。観測終了後のtimeline保存・集計時間が、cycleの停止時間へ入っていた。停止の上限3秒は維持する。
+
+修正版では、cut windowをまたぐcycle間隔は最大1.54秒、最終windowの未観測端は0.85秒で、両方の判定を通過した。
+シーンを保持する確認なので、worldの解放は検証対象に含まれない。
