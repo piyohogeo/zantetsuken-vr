@@ -167,9 +167,26 @@ namespace Zantetsu.Rendering
         /// <summary>The shader keyword of the variants that read the selection's list.</summary>
         public const string Keyword = "VP_GPU_CULLED";
 
+        /// <summary>
+        /// Start-up argument: clipped instances stay in the selection's own draws, which then evaluate the clip
+        /// record for every instance, as before the separation (DESIGN 4.5.9). For comparing the two in one build.
+        /// </summary>
+        public const string ClipTogetherArgument = "-zantetsuVp3cClipTogether";
+
+        /// <summary>The variant of an ordinary instance's draw: no clip buffer, no clip arithmetic, no clip output.</summary>
+        public const string NoClipKeyword = "VP_NO_CLIP";
+
+        /// <summary>
+        /// The variant of the clip list's shadow draw by Unity's own call (DESIGN 4.5.9): the vertex stage passes over
+        /// an entry whose bounds lie outside the slice being rendered, as the selection's casters do, reading the
+        /// entry's bounds by the entry's own number. It changes no output, so it is the vertex stage's alone.
+        /// </summary>
+        public const string ClipListSliceKeyword = "VP_CLIP_LIST_SLICES";
+
         private static bool s_argumentsRead;
         private static bool s_requested = true;
         private static bool s_sliceSelection = true;
+        private static bool s_separateClip = true;
 
         /// <summary>The argument entry Unity's own indirect draw reads: GraphicsBuffer.IndirectDrawIndexedArgs.</summary>
         public const int UnityArgumentStride = 20;
@@ -186,6 +203,7 @@ namespace Zantetsu.Rendering
             Kernel = kernel;
             ViewCapacity = viewCapacity;
             NativeArguments = nativeArguments;
+            _separateClipRequested = SeparateClipRequested;
         }
 
         public ComputeShader Shader { get; }
@@ -199,6 +217,22 @@ namespace Zantetsu.Rendering
         /// Unity's. Settled when the setup is made: a batch made with it draws through the plugin alone.
         /// </summary>
         public bool NativeArguments { get; }
+
+        /// <summary>
+        /// Whether a display made with this setup draws its clipped instances apart from the selection (DESIGN 4.5.9):
+        /// <see cref="SeparateClipRequested"/> as it stood when the setup was made, fixed for the setup's life.
+        /// </summary>
+        public bool SeparateClip => _separateClipRequested && ClipSeparationUnavailable == null;
+
+        private readonly bool _separateClipRequested;
+
+        /// <summary>
+        /// Why whatever will draw a display made with this setup cannot draw clipped instances apart (DESIGN 4.5.9),
+        /// or null when it can. Set, before the display is made, by whoever knows the route: a plugin route whose
+        /// variants for it are not in the build. A display made with it then draws as before the separation -- every
+        /// instance through the selection, with its clip record, by materials that evaluate it -- and says why.
+        /// </summary>
+        public string ClipSeparationUnavailable { get; set; }
 
         /// <summary>Bytes per argument entry the selection writes.</summary>
         public int ArgumentStride => NativeArguments ? NativeArgumentStride : UnityArgumentStride;
@@ -242,6 +276,30 @@ namespace Zantetsu.Rendering
             }
         }
 
+        /// <summary>
+        /// Whether the setups made from now on draw clipped instances apart (the default), read once from the command
+        /// line (<see cref="ClipTogetherArgument"/> turns it off); a test sets it and puts it back.
+        /// </summary>
+        public static bool SeparateClipRequested
+        {
+            get
+            {
+                ReadArguments();
+                return s_separateClip;
+            }
+            set
+            {
+                ReadArguments();
+                s_separateClip = value;
+            }
+        }
+
+        /// <summary>Whether <paramref name="arguments"/> leave the separation on: every case but <see cref="ClipTogetherArgument"/> given.</summary>
+        public static bool ReadSeparateClip(string[] arguments)
+        {
+            return arguments == null || Array.IndexOf(arguments, ClipTogetherArgument) < 0;
+        }
+
         /// <summary>What the two properties answer for a set of arguments. For tests of the reading itself.</summary>
         public static void Read(string[] arguments, out bool requested, out bool sliceSelection)
         {
@@ -274,6 +332,7 @@ namespace Zantetsu.Rendering
 
             s_argumentsRead = true;
             Read(Environment.GetCommandLineArgs(), out s_requested, out s_sliceSelection);
+            s_separateClip = ReadSeparateClip(Environment.GetCommandLineArgs());
         }
 
         /// <summary>

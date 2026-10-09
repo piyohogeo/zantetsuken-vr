@@ -529,6 +529,86 @@ namespace Zantetsu.MeshCut
         // with the variant that reads the selection's list switched on, which are its own to destroy.
         private VpGpuCullSetup _cull;
         private List<Material> _ownedMaterials;
+
+        // Clipped instances drawn apart (DESIGN 4.5.9). Whether this display does so is fixed when it is made: the
+        // setup asked for it and every material has the variant with no clip. The selection's own draws are then of
+        // that variant, and each copy made for them is kept beside the material it was copied from -- the variant
+        // that reads no selection and evaluates the clip record -- with which Unity's calls draw the clip list.
+        private bool _separateClip;
+        private Dictionary<Material, Material> _clipMaterials;
+        private VpIndexedIndirectDrawBatch.ClipEntry[] _clipEntries = new VpIndexedIndirectDrawBatch.ClipEntry[4];
+        private int _clipListVersion;
+        private int _clipUploadedVersion = -1;
+        private VpIndexedIndirectDrawBatch _clipUploadedBatch;
+
+        /// <summary>Whether this display draws its clipped instances apart from the selection (DESIGN 4.5.9); false for VP Stage 3.</summary>
+        public bool SeparatesClipDraws => _separateClip;
+
+        /// <summary>Why a display asked to draw clipped instances apart does not, or null.</summary>
+        public string ClipSeparationRefusal { get; private set; }
+
+        /// <summary>How many clipped instances the adopted clip list holds.</summary>
+        public int ClipDrawCount => _clipDrawRecords.Count;
+
+        /// <summary>Observation: runs of the clip list issued as bodies, and as casters, since the display was made.</summary>
+        public long ClipBodyIssues { get; private set; }
+        public long ClipCasterIssues { get; private set; }
+
+        /// <summary>Observation: how many times the clip list was given to a batch (a non-empty list only).</summary>
+        public long ClipListUploads { get; private set; }
+
+        /// <summary>
+        /// Observation of the clip list's own selection (DESIGN 4.5.9), made on the CPU for a camera when that camera's
+        /// GPU selection is issued: how many times it was made, the entries it went through, how many of them it kept
+        /// for the body and how many as casters (into some slice; which slices is the drawing route's to say), the
+        /// time it took (Stopwatch ticks, the writing of Unity's argument entries included), and the bytes of argument
+        /// entries written for it (Unity's own draw only: the plugin's entries are not rewritten).
+        /// </summary>
+        public long ClipCullRuns { get; private set; }
+        public long ClipCullEntries { get; private set; }
+        public long ClipCullBodyKept { get; private set; }
+        public long ClipCullCasterKept { get; private set; }
+        public long ClipCullTicks { get; private set; }
+        public long ClipSelectionBytes { get; private set; }
+
+        /// <summary>
+        /// Observation: the bytes of Unity's argument entries put back whole when a camera's draws were registered
+        /// (an earlier frame's selection had written some zero): a frame with no selection draws every entry.
+        /// </summary>
+        public long ClipRestoreBytes { get; private set; }
+
+        /// <summary>Observation: every write of clip list data the batches made (lists, a view's entries, a selection's), and its bytes.</summary>
+        public long ClipArgumentWrites => _pastClipArgumentWrites + _batch.ClipArgumentWrites;
+        public long ClipArgumentBytes => _pastClipArgumentBytes + _batch.ClipArgumentBytes;
+        private long _pastClipArgumentWrites, _pastClipArgumentBytes;
+
+        /// <summary>
+        /// Why <paramref name="sink"/> cannot draw this display, or null when it can: a display that draws its clipped
+        /// instances apart has ordinary draws that evaluate no clip, so a route that draws neither a clip list nor
+        /// direct clip draws would show a cut body uncut. <see cref="Render"/> refuses such a route; nothing is given
+        /// back to the selection silently (DESIGN 4.5.9).
+        /// </summary>
+        public string ClipDrawRefusal(IVpNativeDrawSink sink)
+        {
+            if (!_separateClip || _cull == null || sink == null)
+            {
+                return null;
+            }
+
+            if (sink is IVpNativeClipDrawSink direct && direct.SeparateClipDraws)
+            {
+                return null;
+            }
+
+            if (sink is IVpNativeClipListDrawSink list)
+            {
+                return list.DrawsClipLists
+                    ? null
+                    : "this display draws its clipped instances apart (its ordinary draws evaluate no clip), but the route given does not draw clip lists: its variants for them are not in the build. Make the display with VpGpuCullSetup.ClipSeparationUnavailable set, or draw it by a route that can";
+            }
+
+            return "this display draws its clipped instances apart (its ordinary draws evaluate no clip), but the route given takes neither a clip list nor direct clip draws. Make the display with VpGpuCullSetup.ClipSeparationUnavailable set, or draw it by a route that can";
+        }
         private bool _cullMissLogged;
         private long _pastCullDispatches;
         private readonly VpStencilCapMaterials _stencilMaterials;
@@ -856,6 +936,11 @@ namespace Zantetsu.MeshCut
             public int cullRequestedFrame = int.MinValue;
             public int cullIssuedFrame = int.MinValue;
             public bool cullExcludeClipped;
+
+            // What this camera keeps of the clip list (DESIGN 4.5.9): made when its selection is issued, for the list
+            // its draws were registered with (clipVersion); not valid, and so keeping everything, until then.
+            public VpClipSelection clipSelection;
+            public int clipVersion = -1;
 
             // The view this camera was last rendered with (D-210), as its host noted it at the end of that rendering:
             // how many eyes, six planes an eye (normals inward), and the frame it was noted in. Read by the held
@@ -1745,11 +1830,79 @@ namespace Zantetsu.MeshCut
         // made is put in `owned`, whatever the outcome, for the caller to destroy or to hand to the display.
         private static bool TryMakeCulledMaterials(
             IReadOnlyDictionary<int, Material> given, ref Material shadowMaterial, ref Material provisionalShadowMaterial,
-            List<Material> owned, out Dictionary<int, Material> culled, out string failure)
+            List<Material> owned, out Dictionary<int, Material> culled, out string failure,
+            bool separateClip, out Dictionary<Material, Material> sources)
         {
             culled = new Dictionary<int, Material>(given.Count);
             failure = null;
             var copies = new Dictionary<Material, Material>(given.Count);
+            sources = new Dictionary<Material, Material>(given.Count + 2);
+            try
+            {
+                return TryMakeCulledMaterials(given, ref shadowMaterial, ref provisionalShadowMaterial, owned, culled, copies, separateClip, out failure);
+            }
+            finally
+            {
+                foreach (KeyValuePair<Material, Material> copy in copies)
+                {
+                    sources[copy.Value] = copy.Key;
+                }
+            }
+        }
+
+        // Whether every material given (the casters' too) has the variant with no clip: only then can the selection's
+        // own draws be of it, and the display draw its clipped instances apart.
+        private static bool AllHaveNoClipVariant(IReadOnlyDictionary<int, Material> given, Material shadowMaterial, Material provisionalShadowMaterial, out string lacking)
+        {
+            lacking = null;
+            foreach (KeyValuePair<int, Material> entry in given)
+            {
+                if (entry.Value != null && !HasNoClipVariant(entry.Value))
+                {
+                    lacking = entry.Value.name;
+                    return false;
+                }
+            }
+
+            if (shadowMaterial != null && !HasNoClipVariant(shadowMaterial))
+            {
+                lacking = shadowMaterial.name;
+                return false;
+            }
+
+            if (provisionalShadowMaterial != null && !HasNoClipVariant(provisionalShadowMaterial))
+            {
+                lacking = provisionalShadowMaterial.name;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void AddClipListCaster(Material culledCaster, Dictionary<Material, Material> sources, List<Material> owned)
+        {
+            if (culledCaster == null || !sources.TryGetValue(culledCaster, out Material source) || source == null || source.shader == null
+                || !source.shader.keywordSpace.FindKeyword(VpGpuCullSetup.ClipListSliceKeyword).isValid)
+            {
+                return;
+            }
+
+            var copy = new Material(source) { name = source.name + " (clip list)" };
+            copy.EnableKeyword(VpGpuCullSetup.ClipListSliceKeyword);
+            owned.Add(copy);
+            sources[culledCaster] = copy;
+        }
+
+        private static bool HasNoClipVariant(Material material)
+        {
+            return material.shader != null && material.shader.keywordSpace.FindKeyword(VpGpuCullSetup.NoClipKeyword).isValid;
+        }
+
+        private static bool TryMakeCulledMaterials(
+            IReadOnlyDictionary<int, Material> given, ref Material shadowMaterial, ref Material provisionalShadowMaterial,
+            List<Material> owned, Dictionary<int, Material> culled, Dictionary<Material, Material> copies, bool separateClip, out string failure)
+        {
+            failure = null;
             foreach (KeyValuePair<int, Material> entry in given)
             {
                 if (entry.Value == null)
@@ -1758,7 +1911,7 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
-                if (!TryCulledCopy(entry.Value, copies, owned, out Material copy, out failure))
+                if (!TryCulledCopy(entry.Value, copies, owned, out Material copy, out failure, separateClip))
                 {
                     return false;
                 }
@@ -1766,17 +1919,17 @@ namespace Zantetsu.MeshCut
                 culled[entry.Key] = copy;
             }
 
-            if (shadowMaterial != null && !TryCulledCopy(shadowMaterial, copies, owned, out shadowMaterial, out failure))
+            if (shadowMaterial != null && !TryCulledCopy(shadowMaterial, copies, owned, out shadowMaterial, out failure, separateClip))
             {
                 return false;
             }
 
             return provisionalShadowMaterial == null
-                || TryCulledCopy(provisionalShadowMaterial, copies, owned, out provisionalShadowMaterial, out failure);
+                || TryCulledCopy(provisionalShadowMaterial, copies, owned, out provisionalShadowMaterial, out failure, separateClip);
         }
 
         private static bool TryCulledCopy(
-            Material source, Dictionary<Material, Material> copies, List<Material> owned, out Material copy, out string failure)
+            Material source, Dictionary<Material, Material> copies, List<Material> owned, out Material copy, out string failure, bool noClip)
         {
             failure = null;
             if (copies.TryGetValue(source, out copy))
@@ -1793,6 +1946,11 @@ namespace Zantetsu.MeshCut
 
             copy = new Material(source) { name = source.name + " (GPU culled)" };
             copy.EnableKeyword(VpGpuCullSetup.Keyword);
+            if (noClip)
+            {
+                // The selection's own draws: the clipped instances are left out of them and drawn from the clip list.
+                copy.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
+            }
             owned.Add(copy);
             copies[source] = copy;
             return true;
@@ -1940,6 +2098,9 @@ namespace Zantetsu.MeshCut
             // Selecting on the GPU: a view per camera slot, and the materials' copies. Nothing else is made before
             // these are known to stand.
             List<Material> ownedMaterials = null;
+            bool separateClip = false;
+            string clipRefusal = null;
+            Dictionary<Material, Material> clipMaterials = null;
             if (culling != null)
             {
                 if (culling.ViewCapacity < stencilSettings.cameraCapacity)
@@ -1950,9 +2111,21 @@ namespace Zantetsu.MeshCut
                 }
 
                 ownedMaterials = new List<Material>(materialsBySourceIndex.Count + 2);
+                separateClip = culling.SeparateClip;
+                if (!separateClip && VpGpuCullSetup.SeparateClipRequested && culling.ClipSeparationUnavailable != null)
+                {
+                    clipRefusal = culling.ClipSeparationUnavailable + ": every instance is drawn through the selection, with its clip record";
+                }
+
+                if (separateClip && !AllHaveNoClipVariant(materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, out string lacking))
+                {
+                    separateClip = false;
+                    clipRefusal = "the material '" + lacking + "' has no variant without clip (" + VpGpuCullSetup.NoClipKeyword + "): every instance is drawn through the selection, with its clip record";
+                }
+
                 if (!TryMakeCulledMaterials(
                         materialsBySourceIndex, ref shadowMaterial, ref provisionalShadowMaterial, ownedMaterials,
-                        out Dictionary<int, Material> culledMaterials, out string materialFailure))
+                        out Dictionary<int, Material> culledMaterials, out string materialFailure, separateClip, out clipMaterials))
                 {
                     DestroyMaterials(ownedMaterials);
                     LastCreationFailure = "the GPU selection cannot be drawn: " + materialFailure;
@@ -1960,6 +2133,14 @@ namespace Zantetsu.MeshCut
                 }
 
                 materialsBySourceIndex = culledMaterials;
+                if (separateClip && !culling.NativeArguments)
+                {
+                    // Unity's own draw of the clip list's casters: the source material with the per-slice judgement
+                    // on (the entries' bounds are bound by the batch). A copy of the display's; the caller's material
+                    // is not touched.
+                    AddClipListCaster(shadowMaterial, clipMaterials, ownedMaterials);
+                    AddClipListCaster(provisionalShadowMaterial, clipMaterials, ownedMaterials);
+                }
             }
 
             VpGpuIndexedGeometryBuffers buffers = null;
@@ -2043,6 +2224,9 @@ namespace Zantetsu.MeshCut
 
                 display._cull = culling;
                 display._ownedMaterials = ownedMaterials;
+                display._separateClip = separateClip;
+                display._clipMaterials = clipMaterials;
+                display.ClipSeparationRefusal = clipRefusal;
                 display.RoomReadyAt = System.Diagnostics.Stopwatch.GetTimestamp();
                 display.RoomPreparationMilliseconds = (display.RoomReadyAt - preparationBegin) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 taken = true;
@@ -4035,11 +4219,41 @@ namespace Zantetsu.MeshCut
                     "this display's batch writes the plugin's argument entries; set NativeDrawSink before drawing");
             }
 
+            // The clipped instances apart (DESIGN 4.5.9): the display's own decision, settled when it was made, for a
+            // batch that selects on the GPU, whatever draws it. Unity's calls draw the clip list themselves; a sink
+            // draws the list, or -- the Vulkan route -- each clipped instance directly. A sink that does neither is
+            // refused: this display's ordinary draws evaluate no clip, so the clipped instances cannot be given back
+            // to them (a display for such a route is made with the separation off, materials and selection alike).
+            string clipRefusal = ClipDrawRefusal(nativeSink);
+            if (clipRefusal != null)
+            {
+                throw new InvalidOperationException(clipRefusal);
+            }
+
             IVpNativeClipDrawSink clipSink = nativeSink as IVpNativeClipDrawSink;
-            bool separateClipDraws = culled && clipSink != null && clipSink.SeparateClipDraws;
+            IVpNativeClipListDrawSink clipListSink = nativeSink as IVpNativeClipListDrawSink;
+            bool directClipDraws = clipSink != null && clipSink.SeparateClipDraws;
+            bool listClipDraws = !directClipDraws;
+            bool separateClipDraws = culled && _separateClip;
+            bool clipped = separateClipDraws && _clipDrawRecords.Count > 0;
             if (culled)
             {
-                NoteCullRequest(cameraStencil, separateClipDraws && _clipDrawRecords.Count > 0);
+                NoteCullRequest(cameraStencil, clipped);
+            }
+
+            // What this camera keeps of the clip list is judged when its selection is issued (IssueCull), after these
+            // draws are registered: until then the judgement of an earlier frame says nothing of them.
+            VpClipSelection clipSelection = null;
+            if (clipped)
+            {
+                clipSelection = cameraStencil.clipSelection ??= new VpClipSelection();
+                clipSelection.Invalidate();
+                cameraStencil.clipVersion = _clipListVersion;
+            }
+            else
+            {
+                cameraStencil.clipSelection?.Invalidate();
+                cameraStencil.clipVersion = -1;
             }
 
             // The surfaces, grouped by material: one forward call per run of command slots whose commands share one.
@@ -4149,7 +4363,11 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            if (separateClipDraws)
+            if (clipped && listClipDraws)
+            {
+                RenderClipList(camera, layer, clipListSink, cameraStencil.view, clipSelection);
+            }
+            else if (clipped)
             {
                 for (int i = 0; i < _clipDrawRecords.Count; i++)
                 {
@@ -4159,12 +4377,12 @@ namespace Zantetsu.MeshCut
                     Matrix4x4 objectToWorld = _transforms[record.instance];
                     Bounds worldBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorld);
                     clipSink.AddClipBody(camera, _buffers, _commandMaterials[record.command], command.range,
-                        objectToWorld, clip, worldBounds, layer);
+                        objectToWorld, clip, worldBounds, layer, clipSelection, i);
                     if (_shadowMaterial != null)
                     {
                         clipSink.AddClipCasters(camera, _buffers,
                             _commandProvisional[record.command] ? _provisionalShadowMaterial : _shadowMaterial,
-                            command.range, objectToWorld, clip, worldBounds, layer);
+                            command.range, objectToWorld, clip, worldBounds, layer, clipSelection, i);
                     }
                 }
             }
@@ -4295,6 +4513,103 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        // The clip list's draws for one camera: the adopted list given to the batch when it is not the one the batch
+        // holds, then one issue per run of entries whose commands share a material, and one caster issue per run of
+        // one side of DESIGN 5.4's division. The entries are in the order of the commands, so the runs are those of
+        // the selection's own draws. Nothing is sent for a list that only moved: the entries name instance records.
+        // Which of the entries the camera keeps is not known yet (the selection's conditions are the frame's own, taken
+        // later): the sink is given the judgement's slot and reads it when it issues; Unity's calls are registered for
+        // every entry, and the selection writes a count of zero into the entries it does not keep.
+        private void RenderClipList(Camera camera, int layer, IVpNativeClipListDrawSink sink, int view, VpClipSelection selection)
+        {
+            int count = _clipDrawRecords.Count;
+            if (_clipUploadedVersion != _clipListVersion || !ReferenceEquals(_clipUploadedBatch, _batch)
+                || _batch.ClipEntryCount != count || _batch.ClipEntriesSinglePassInstanced != _batch.SinglePassInstanced)
+            {
+                if (_clipEntries.Length < count)
+                {
+                    _clipEntries = new VpIndexedIndirectDrawBatch.ClipEntry[Math.Max(count, _clipEntries.Length * 2)];
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    ClipDrawRecord record = _clipDrawRecords[i];
+                    VpIndirectCommand command = _commands[record.command];
+                    _clipEntries[i] = new VpIndexedIndirectDrawBatch.ClipEntry(command.range, record.instance, command.localBounds);
+                }
+
+                _batch.UploadClipEntries(_clipEntries, count);
+                _clipUploadedVersion = _clipListVersion;
+                _clipUploadedBatch = _batch;
+                ClipListUploads++;
+            }
+
+            // The list's calls by Unity's own draw are given the batch's bounds, as the selection's own calls are: which
+            // entries are drawn is the list's selection's to say (and, a slice at a time, the caster's vertex stage's).
+            // Narrowed to the entries' own bounds, Unity's culling of the call was one more selection of the casters,
+            // by conditions that are not the selection's and that nothing here counts (2026-10-09, cs2UniOn: the two
+            // sides of a recut piece were in no slice of the shadow map although the list's selection kept them).
+            Bounds listBounds = _batch.WorldBounds;
+            if (sink == null)
+            {
+                // No selection has been issued for this frame's draws yet, and none may be: the view's entries are
+                // whole until one is -- what the last frame's selection wrote zero is put back now.
+                ClipRestoreBytes += _batch.RestoreClipEntries(view);
+            }
+
+            int first = 0;
+            while (first < count)
+            {
+                Material material = _commandMaterials[_clipDrawRecords[first].command];
+                int run = 1;
+                while (first + run < count && ReferenceEquals(_commandMaterials[_clipDrawRecords[first + run].command], material))
+                {
+                    run++;
+                }
+
+                if (sink != null)
+                {
+                    sink.AddClipBodyRun(camera, _batch, _buffers, material, first, run, layer, selection);
+                }
+                else
+                {
+                    _batch.RenderClipForward(_clipMaterials[material], _properties, _buffers, layer, first, run, camera, view, listBounds);
+                }
+
+                ClipBodyIssues++;
+                first += run;
+            }
+
+            if (_shadowMaterial == null)
+            {
+                return;
+            }
+
+            first = 0;
+            while (first < count)
+            {
+                bool provisional = _commandProvisional[_clipDrawRecords[first].command];
+                int run = 1;
+                while (first + run < count && _commandProvisional[_clipDrawRecords[first + run].command] == provisional)
+                {
+                    run++;
+                }
+
+                Material caster = provisional ? _provisionalShadowMaterial : _shadowMaterial;
+                if (sink != null)
+                {
+                    sink.AddClipCasterRun(camera, _batch, _buffers, caster, first, run, layer, selection);
+                }
+                else
+                {
+                    _batch.RenderClipShadows(_clipMaterials[caster], _properties, _buffers, layer, first, run, camera, view, listBounds);
+                }
+
+                ClipCasterIssues++;
+                first += run;
+            }
+        }
+
         private void NoteCullRequest(CameraStencil slot, bool excludeClipped)
         {
             if (slot.cullRequestedFrame != int.MinValue && slot.cullRequestedFrame != CurrentFrame
@@ -4340,7 +4655,59 @@ namespace Zantetsu.MeshCut
             slot.cullBatch.IssueCull(commands, slot.view, conditions, slot.cullExcludeClipped);
             slot.cullIssuedFrame = CurrentFrame;
             CullSelectionsIssued++;
+            if (slot.cullExcludeClipped)
+            {
+                SelectClipped(commands, slot, conditions);
+            }
+
             return true;
+        }
+
+        // The clip list's own selection for one camera (DESIGN 4.5.9): the instances the GPU selection was just told
+        // to leave out are judged here, by the conditions it was issued with and the tests it makes, on each entry's
+        // command bounds as the entry's present transform carries them. Only the list is gone through. A list that is
+        // not the one the camera's draws were registered with is not judged: everything of it is then kept.
+        private void SelectClipped(UnityEngine.Rendering.CommandBuffer commands, CameraStencil slot, VpCullConditions conditions)
+        {
+            VpClipSelection selection = slot.clipSelection;
+            int count = _clipDrawRecords.Count;
+            if (selection == null || count == 0 || slot.clipVersion != _clipListVersion || !ReferenceEquals(slot.cullBatch, _batch))
+            {
+                return;
+            }
+
+            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            selection.Begin(count);
+            for (int i = 0; i < count; i++)
+            {
+                ClipDrawRecord record = _clipDrawRecords[i];
+                selection.Set(i, _commands[record.command].localBounds, _transforms[record.instance], conditions);
+            }
+
+            selection.End();
+            ClipCullRuns++;
+            ClipCullEntries += count;
+            ClipCullBodyKept += selection.BodyKeptCount;
+            ClipCullCasterKept += selection.CasterKeptCount;
+            if (!_batch.NativeArguments)
+            {
+                ClipSelectionBytes += _batch.WriteClipSelection(commands, slot.view, selection);
+            }
+
+            ClipCullTicks += System.Diagnostics.Stopwatch.GetTimestamp() - begin;
+        }
+
+        /// <summary>What <paramref name="camera"/> keeps of the clip list, for tests: null when it has registered no clip list draw.</summary>
+        internal VpClipSelection ClipSelectionForTest(Camera camera)
+        {
+            return FindCamera(camera)?.clipSelection;
+        }
+
+        /// <summary>Which of the body batch's views is <paramref name="camera"/>'s, for tests; -1 for a camera that is not registered.</summary>
+        internal int CullViewForTest(Camera camera)
+        {
+            CameraStencil slot = FindCamera(camera);
+            return slot != null ? slot.view : -1;
         }
 
         // ----- what is shown ---------------------------------------------------------------------------------------
@@ -6320,6 +6687,8 @@ namespace Zantetsu.MeshCut
                 _pastWholeInstances += _batch.WholeInstanceElementsTransferred;
                 _pastWholeCalls += _batch.WholeSetDataCalls;
                 _pastCullDispatches += _batch.CullDispatches;
+                _pastClipArgumentWrites += _batch.ClipArgumentWrites;
+                _pastClipArgumentBytes += _batch.ClipArgumentBytes;
                 _batch = grownBatch;
             }
 
@@ -6853,6 +7222,7 @@ namespace Zantetsu.MeshCut
             {
                 Swap(ref _clipDrawRecords, ref _candidateClipDrawRecords);
                 ClipDrawListBuildsForTest++;
+                _clipListVersion++;
             }
             Swap(ref _capRecords, ref _candidateCapRecords);
             Swap(ref _rfCommandStart, ref _candidateRfCommandStart);

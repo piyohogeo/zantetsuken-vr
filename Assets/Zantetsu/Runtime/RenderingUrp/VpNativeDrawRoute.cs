@@ -35,7 +35,7 @@ namespace Zantetsu.Rendering.Urp
     /// route records; it never draws through Unity's calls instead.
     /// </para>
     /// </summary>
-    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IDisposable
+    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IVpNativeClipListDrawSink, IDisposable
     {
         public const string CasterVariant = "caster-plugin";
         public const string CopyShaderResource = "VpNativeConstantCopy";
@@ -178,6 +178,12 @@ namespace Zantetsu.Rendering.Urp
             public int startCommand;
             public int commandCount;
             public int view;
+
+            // A run of the batch's clip list (DESIGN 4.5.9): startCommand and commandCount are then entries of the
+            // list, and no view's selection is read. Which of the entries are issued is read, when the pass runs, from
+            // the camera's judgement of the list; null, or not valid, issues every entry.
+            public bool clipList;
+            public VpClipSelection selection;
         }
 
         private struct ClipIssue
@@ -187,8 +193,126 @@ namespace Zantetsu.Rendering.Urp
             public VpGeometryRange range;
             public Matrix4x4 objectToWorld;
             public VpInstanceClip clip;
+
+            // The camera's judgement of the clip list and this record's entry in it; null or below zero: always drawn.
+            public VpClipSelection selection;
+            public int entry;
         }
         public bool SeparateClipDraws => Plugin.Vulkan;
+
+        /// <summary>
+        /// Why this build's plugin route cannot draw clipped instances apart (DESIGN 4.5.9), or null when it can: the
+        /// Direct3D 12 route draws them from clip lists, by variants that must be in the build. Asked by whoever makes
+        /// the display, before it is made (<see cref="VpGpuCullSetup.ClipSeparationUnavailable"/>).
+        /// </summary>
+        public static string ClipDrawsUnavailable => Plugin.Vulkan || ClipListVariantsBaked
+            ? null
+            : "the plugin's variants for clip lists (" + ClipListCasterVariant + ", " + CasterVariant + NoClipSuffix + ") are not in the build";
+
+        /// <summary>
+        /// The Direct3D 12 route draws a batch's clip list (DESIGN 4.5.9) through the same ExecuteIndirect as every
+        /// other issue, from the list's own entries, by the variants baked for it ("-list": the plugin's command
+        /// number, no selection, the clip record evaluated); the Vulkan route draws each clipped instance directly
+        /// (<see cref="SeparateClipDraws"/>). False when those variants are not in the build: a display that separates
+        /// its clipped instances then refuses this route (it is to be made with the separation off:
+        /// <see cref="ClipDrawsUnavailable"/>).
+        /// </summary>
+        public bool DrawsClipLists => !Plugin.Vulkan && ClipListVariantsBaked;
+
+        /// <summary>The body variant of an ordinary instance's draw, of a clip list's draw, and the casters' of each.</summary>
+        public const string NoClipSuffix = "-noclip";
+        public const string ClipListCasterVariant = "caster-list";
+        public static string ClipListVariantOf(string pluginVariant) => pluginVariant.Replace("-plugin", "-list");
+
+        private static bool? s_clipListVariantsBaked;
+
+        /// <summary>Whether the build holds the Direct3D variants the separation draws by (asked once).</summary>
+        public static bool ClipListVariantsBaked
+        {
+            get
+            {
+                if (!s_clipListVariantsBaked.HasValue)
+                {
+                    s_clipListVariantsBaked =
+                        Resources.Load<TextAsset>(VpNativeShaderBinary.ResourceFolder + "/" + ClipListCasterVariant) != null
+                        && Resources.Load<TextAsset>(VpNativeShaderBinary.ResourceFolder + "/" + CasterVariant + NoClipSuffix) != null;
+                }
+
+                return s_clipListVariantsBaked.Value;
+            }
+        }
+
+        // Whether a material's own draws are of the variant with no clip: the display switched that keyword on in the
+        // copy it draws the selection with when it draws its clipped instances apart (asked once a material).
+        private readonly Dictionary<Material, bool> _noClipMaterials = new Dictionary<Material, bool>();
+
+        private bool OrdinaryDrawsHaveNoClip(Material material)
+        {
+            if (!_noClipMaterials.TryGetValue(material, out bool noClip))
+            {
+                noClip = material.IsKeywordEnabled(VpGpuCullSetup.NoClipKeyword);
+                _noClipMaterials.Add(material, noClip);
+            }
+
+            return noClip;
+        }
+
+        /// <summary>
+        /// The clip lists drawn (DESIGN 4.5.9), an entry being one clipped instance. Bodies: the runs and the entries
+        /// taken, the entries the camera's judgement kept, and the issues made for them -- one for each run of kept
+        /// entries, so kept entries that are not next to each other make more issues than runs. Casters: the runs and
+        /// the entries taken, the entries kept in each split (an entry is counted once for every split it is drawn
+        /// into), and the issues made. What is counted is what was issued, not what the GPU then drew.
+        /// </summary>
+        public long ClipBodyRunsTaken { get; private set; }
+        public long ClipBodyEntriesTaken { get; private set; }
+        public long ClipBodyEntriesKept { get; private set; }
+        public long ClipBodyIssues { get; private set; }
+        public long ClipCasterRunsTaken { get; private set; }
+        public long ClipCasterEntriesTaken { get; private set; }
+        public long ClipCasterIssues { get; private set; }
+        private readonly long[] _clipCasterEntriesKept = new long[VpCullConditions.SplitCapacity];
+        public long ClipCasterEntriesKept(int split) => _clipCasterEntriesKept[split];
+
+        /// <summary>
+        /// The direct clip draws of the Vulkan route: the records taken for the colour, the motion vectors and the
+        /// casters (a caster record once, whatever the splits), and the records kept for each -- the casters' by split.
+        /// </summary>
+        public long DirectClipBodiesTaken { get; private set; }
+        public long DirectClipBodiesKept { get; private set; }
+        public long DirectClipMotionTaken { get; private set; }
+        public long DirectClipMotionKept { get; private set; }
+        public long DirectClipCastersTaken { get; private set; }
+        private readonly long[] _directClipCastersKept = new long[VpCullConditions.SplitCapacity];
+        public long DirectClipCastersKept(int split) => _directClipCastersKept[split];
+
+        public void AddClipBodyRun(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int firstEntry, int entryCount, int layer, VpClipSelection selection)
+        {
+            if (!DrawsClipLists || entryCount == 0) return;
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null)
+            {
+                return;
+            }
+
+            ClipBodyRunsTaken++;
+            passes.bodies.Add(new Issue { batch = batch, buffers = buffers, material = material, startCommand = firstEntry, commandCount = entryCount, view = -1, clipList = true, selection = selection });
+        }
+
+        public void AddClipCasterRun(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int firstEntry, int entryCount, int layer, VpClipSelection selection)
+        {
+            if (!DrawsClipLists || entryCount == 0) return;
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null)
+            {
+                return;
+            }
+
+            // The casters' bounds are declared by the ordinary AddCasters of the same camera: they are the batch's,
+            // every adopted instance's, the clipped ones included.
+            ClipCasterRunsTaken++;
+            passes.casterRuns.Add(new Issue { batch = batch, buffers = buffers, material = material, startCommand = firstEntry, commandCount = entryCount, view = -1, clipList = true, selection = selection });
+        }
         private VpNativeDirectClipProbe _directClipProbe;
         private readonly Plugin.DirectCommand[] _directCommands = new Plugin.DirectCommand[32];
         private readonly List<IntPtr> _groupPointers = new List<IntPtr>(4);
@@ -807,21 +931,21 @@ namespace Zantetsu.Rendering.Urp
         }
 
         public void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
-            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer)
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1)
         {
             if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
             CameraPasses passes = PassesOf(camera, false);
             if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip draw camera was not enqueued");
-            var issue = new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip };
+            var issue = new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip, selection = selection, entry = entry };
             passes.clipBodies.Add(issue); passes.clipMotion.Add(issue);
         }
         public void AddClipCasters(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
-            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer)
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1)
         {
             if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
             CameraPasses passes = PassesOf(camera, false);
             if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip caster camera was not enqueued");
-            passes.clipCasters.Add(new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip });
+            passes.clipCasters.Add(new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip, selection = selection, entry = entry });
             // The ordinary AddCasters declaration already includes every adopted instance's bounds, including
             // those excluded from the ordinary GPU lists. Do not duplicate that zero-instance Unity declaration.
         }
@@ -900,6 +1024,16 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", events never run ").Append(EventsNeverRan).Append(", results lost to reuse ").Append(ResultsLost).Append("; ").Append(VpNativeDrawRelease.Describe())
                 .Append(", last frame issues ").Append(LastFrameIssues)
                 .Append(", direct clip draws ").Append(DirectClipDrawsIssued)
+                .Append(", direct clip records: colour taken ").Append(DirectClipBodiesTaken).Append(" / kept ").Append(DirectClipBodiesKept)
+                .Append(", motion taken ").Append(DirectClipMotionTaken).Append(" / kept ").Append(DirectClipMotionKept)
+                .Append(", casters taken ").Append(DirectClipCastersTaken).Append(" / kept by split ")
+                .Append(_directClipCastersKept[0]).Append("/").Append(_directClipCastersKept[1]).Append("/").Append(_directClipCastersKept[2]).Append("/").Append(_directClipCastersKept[3])
+                .Append(", clip list bodies: runs taken ").Append(ClipBodyRunsTaken).Append(", entries taken ").Append(ClipBodyEntriesTaken)
+                .Append(" / kept ").Append(ClipBodyEntriesKept).Append(", issues ").Append(ClipBodyIssues)
+                .Append(", clip list casters: runs taken ").Append(ClipCasterRunsTaken).Append(", entries taken ").Append(ClipCasterEntriesTaken)
+                .Append(" / kept by split ")
+                .Append(_clipCasterEntriesKept[0]).Append("/").Append(_clipCasterEntriesKept[1]).Append("/").Append(_clipCasterEntriesKept[2]).Append("/").Append(_clipCasterEntriesKept[3])
+                .Append(", issues ").Append(ClipCasterIssues)
                 .Append(", GPU constant dispatches ").Append(GpuConstantDispatches)
                 .Append(", shared constant blocks ").Append(SharedGpuConstantBlocks);
             VpNativeDrawData ring = _drawData ?? _ringAfterDispose;
@@ -1592,6 +1726,44 @@ namespace Zantetsu.Rendering.Urp
                 block.SetDirectClipRecord(record, issue.objectToWorld, issue.clip);
             }
         }
+        // The records of <paramref name="all"/> the camera's judgement of the clip list keeps for one stage, into
+        // _keptClips: the colour by the body's judgement; the motion vectors by their own conditions when they have
+        // some (eyes that end nearer), else by the body's; a shadow split by the casters' judgement and that slice's
+        // own. A record with no judgement (the probe's, or a camera whose selection was not issued) is kept.
+        private readonly List<ClipIssue> _keptClips = new List<ClipIssue>(8);
+
+        private List<ClipIssue> KeptClipBodies(List<ClipIssue> all, VpCullConditions motionConditions)
+        {
+            _keptClips.Clear();
+            for (int i = 0; i < all.Count; i++)
+            {
+                ClipIssue record = all[i];
+                if (record.selection == null || record.entry < 0
+                    || (motionConditions != null ? record.selection.KeptBy(record.entry, motionConditions) : record.selection.BodyKept(record.entry)))
+                {
+                    _keptClips.Add(record);
+                }
+            }
+
+            return _keptClips;
+        }
+
+        private List<ClipIssue> KeptClipCasters(List<ClipIssue> all, Matrix4x4 sliceViewProjection, float bias, bool sliceSelection)
+        {
+            _keptClips.Clear();
+            for (int i = 0; i < all.Count; i++)
+            {
+                ClipIssue record = all[i];
+                if (record.selection == null || record.entry < 0
+                    || record.selection.CasterKeptInSlice(record.entry, sliceViewProjection, bias, sliceSelection))
+                {
+                    _keptClips.Add(record);
+                }
+            }
+
+            return _keptClips;
+        }
+
         private int IssueClipDraws(CommandBuffer commands, List<ClipIssue> records, string variant, VpNativeRenderState state,
             RenderTexture shadowMap, Rect viewport, GlobalsInputs inputs, GraphicsBuffer gpuConstants, ref int used, int frame, int context = 0)
         {
@@ -1930,11 +2102,69 @@ namespace Zantetsu.Rendering.Urp
                     for (int i = 0; i < Bodies.Count; i++)
                     {
                         Issue issue = Bodies[i];
-                        PipelineEntry entry = _route.PipelineFor(issue.material, data.variant, state, out string failure);
+                        // Direct3D 12: a clip list's run is drawn by the variant that reads no selection; the
+                        // selection's own commands by the variant with no clip when the display draws its clipped
+                        // instances apart (its material says so), and with the clip record otherwise. The Vulkan
+                        // route's variant was settled when the pass was recorded.
+                        string issueVariant = Plugin.Vulkan ? data.variant
+                            : issue.clipList ? ClipListVariantOf(data.variant)
+                            : _route.OrdinaryDrawsHaveNoClip(issue.material) ? data.variant + NoClipSuffix : data.variant;
+                        PipelineEntry entry = _route.PipelineFor(issue.material, issueVariant, state, out string failure);
                         if (entry == null)
                         {
                             _route.PipelineFailures++;
                             _route.LastFailure = failure;
+                            continue;
+                        }
+
+                        if (issue.clipList)
+                        {
+                            // The list's entries are doubled as the batch's are; the same rule as below.
+                            if (data.stereo && !issue.batch.ClipEntriesSinglePassInstanced)
+                            {
+                                _route.PipelineFailures++;
+                                _route.LastFailure = "a Single Pass Instanced frame, but the clip list's arguments are not doubled for it";
+                                continue;
+                            }
+
+                            inputs.instanceMultiplier = issue.batch.ClipEntriesSinglePassInstanced ? 2 : 1;
+                            issue.batch.NativeClipDrawBuffers(out GraphicsBuffer listArguments, out _, out GraphicsBuffer listInstances, out GraphicsBuffer listClips);
+                            var listBound = new Bound
+                            {
+                                arguments = listArguments, instances = listInstances, clips = listClips,
+                                indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer, shadowMap = shadowMap,
+                            };
+                            listBound.TakeGenerations(issue.batch, issue.buffers);
+                            listBound.argumentsGeneration = issue.batch.ClipArgumentGeneration;
+
+                            // The camera's judgement of the list, made when its selection was issued (before this
+                            // pass): one issue for each run of entries it keeps. The argument buffers are the list's
+                            // own, unchanged; an entry not kept is simply in no run.
+                            int listEnd = issue.startCommand + issue.commandCount;
+                            _route.ClipBodyEntriesTaken += issue.commandCount;
+                            for (int at = issue.startCommand; at < listEnd;)
+                            {
+                                if (issue.selection != null && !issue.selection.BodyKept(at))
+                                {
+                                    at++;
+                                    continue;
+                                }
+
+                                int run = 1;
+                                while (at + run < listEnd && (issue.selection == null || issue.selection.BodyKept(at + run)))
+                                {
+                                    run++;
+                                }
+
+                                _route.ClipBodyEntriesKept += run;
+                                if (_route.IssueOne(commands, entry, issue.material, listBound, at, run, viewport, inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
+                                {
+                                    _route.ClipBodyIssues++;
+                                }
+
+                                at += run;
+                            }
+
                             continue;
                         }
 
@@ -1988,9 +2218,28 @@ namespace Zantetsu.Rendering.Urp
                     }
                 }
 
-                bool grouped = Clips.Count > 0;
-                if (grouped) _route.IssueClipDraws(commands, Clips, data.variant.Replace("-noclip", ""), state, shadowMap, viewport,
-                    inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame);
+                // The direct clip draws: only the records the camera keeps for this stage. With none kept the pass ends
+                // as one with no clipped instance does (the ordinary selection above still left every one of them out).
+                bool grouped = false;
+                if (Clips.Count > 0)
+                {
+                    List<ClipIssue> kept = _route.KeptClipBodies(Clips, _motion && motionFar > 0f ? _motionConditions : null);
+                    if (_motion)
+                    {
+                        _route.DirectClipMotionTaken += Clips.Count;
+                        _route.DirectClipMotionKept += kept.Count;
+                    }
+                    else
+                    {
+                        _route.DirectClipBodiesTaken += Clips.Count;
+                        _route.DirectClipBodiesKept += kept.Count;
+                    }
+
+                    grouped = kept.Count > 0;
+                    if (grouped) _route.IssueClipDraws(commands, kept, data.variant.Replace("-noclip", ""), state, shadowMap, viewport,
+                        inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame);
+                }
+
                 Clips.Clear();
                 Bodies.Clear();
                 if (PreparesColour)
@@ -2282,7 +2531,10 @@ namespace Zantetsu.Rendering.Urp
                             depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned,
                         };
-                        PipelineEntry entry = _route.PipelineFor(issue.material, Plugin.Vulkan && Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant, state, out string failure);
+                        string casterVariant = Plugin.Vulkan ? (Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant)
+                            : issue.clipList ? ClipListCasterVariant
+                            : _route.OrdinaryDrawsHaveNoClip(issue.material) ? CasterVariant + NoClipSuffix : CasterVariant;
+                        PipelineEntry entry = _route.PipelineFor(issue.material, casterVariant, state, out string failure);
                         if (entry == null)
                         {
                             _route.PipelineFailures++;
@@ -2290,15 +2542,32 @@ namespace Zantetsu.Rendering.Urp
                             continue;
                         }
 
-                        issue.batch.NativeDrawBuffers(
-                            issue.view, out _, out _, out GraphicsBuffer shadowArguments, out GraphicsBuffer shadowVisible,
-                            out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
-                        var bound = new Bound
+                        Bound bound;
+                        if (issue.clipList)
                         {
-                            arguments = shadowArguments, visible = shadowVisible, instances = instances, clips = clips, cullCommands = cullCommands,
-                            indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer,
-                        };
-                        bound.TakeGenerations(issue.batch, issue.buffers);
+                            // A clip list's casters: the list's shadow entries (one logical instance each), the shared
+                            // instance and clip buffers, no selection and no command bounds -- drawn into every split.
+                            issue.batch.NativeClipDrawBuffers(out _, out GraphicsBuffer listShadowArguments, out GraphicsBuffer listInstances, out GraphicsBuffer listClips);
+                            bound = new Bound
+                            {
+                                arguments = listShadowArguments, instances = listInstances, clips = listClips,
+                                indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer,
+                            };
+                            bound.TakeGenerations(issue.batch, issue.buffers);
+                            bound.argumentsGeneration = issue.batch.ClipArgumentGeneration;
+                        }
+                        else
+                        {
+                            issue.batch.NativeDrawBuffers(
+                                issue.view, out _, out _, out GraphicsBuffer shadowArguments, out GraphicsBuffer shadowVisible,
+                                out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
+                            bound = new Bound
+                            {
+                                arguments = shadowArguments, visible = shadowVisible, instances = instances, clips = clips, cullCommands = cullCommands,
+                                indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer,
+                            };
+                            bound.TakeGenerations(issue.batch, issue.buffers);
+                        }
                         for (int split = 0; split < data.splitCount; split++)
                         {
                             // The shadow map is a render texture: the same GPU projection SetViewProjectionMatrices would derive.
@@ -2312,6 +2581,42 @@ namespace Zantetsu.Rendering.Urp
                                 sliceSelection = sliceSelection,
                             };
                             inputs.matrixVP = inputs.projection * inputs.matrixV;
+                            if (issue.clipList)
+                            {
+                                // A clip list's casters in this split: one issue for each run of entries the camera's
+                                // judgement keeps here -- an entry that casts into some split, and whose box does not
+                                // lie wholly outside this slice (the judgement the selection's casters make in their
+                                // vertex stage, asked under the same conditions: the switch on, a slice that is a box).
+                                bool slices = sliceSelection > 0.5f && inputs.projection.m33 == 1f;
+                                float bias = Mathf.Abs(_biases[split].x) + Mathf.Abs(_biases[split].y);
+                                int listEnd = issue.startCommand + issue.commandCount;
+                                if (split == 0) _route.ClipCasterEntriesTaken += issue.commandCount;
+                                for (int at = issue.startCommand; at < listEnd;)
+                                {
+                                    if (issue.selection != null && !issue.selection.CasterKeptInSlice(at, inputs.matrixVP, bias, slices))
+                                    {
+                                        at++;
+                                        continue;
+                                    }
+
+                                    int run = 1;
+                                    while (at + run < listEnd && (issue.selection == null || issue.selection.CasterKeptInSlice(at + run, inputs.matrixVP, bias, slices)))
+                                    {
+                                        run++;
+                                    }
+
+                                    if (split < VpCullConditions.SplitCapacity) _route._clipCasterEntriesKept[split] += run;
+                                    if (_route.IssueOne(commands, entry, issue.material, bound, at, run, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: split))
+                                    {
+                                        _route.ClipCasterIssues++;
+                                    }
+
+                                    at += run;
+                                }
+
+                                continue;
+                            }
+
                             if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: split))
                             {
                                 _route.CastersIssued++;
@@ -2325,9 +2630,12 @@ namespace Zantetsu.Rendering.Urp
                     }
                 }
 
-                bool grouped = _passes.clipCasters.Count > 0;
-                if (grouped)
+                // The direct clip casters: for each split, only the records the camera keeps there. With none kept in
+                // any split the pass ends as one with no clipped instance does.
+                bool grouped = false;
+                if (_passes.clipCasters.Count > 0)
                 {
+                    _route.DirectClipCastersTaken += _passes.clipCasters.Count;
                     // Clip casters retain their two-sided rasterizer setting. Share each split's prepared frame blocks.
                     for (int split = 0; split < data.splitCount; split++)
                     {
@@ -2340,7 +2648,13 @@ namespace Zantetsu.Rendering.Urp
                             depthFunc = SystemInfo.usesReversedZBuffer ? Plugin.Compare.GreaterEqual : Plugin.Compare.LessEqual,
                             depthWrite = true, colourWrite = false, depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned };
-                        _route.CastersIssued += _route.IssueClipDraws(commands, _passes.clipCasters, CasterVariant, state, null,
+                        List<ClipIssue> kept = _route.KeptClipCasters(_passes.clipCasters, inputs.matrixVP,
+                            Mathf.Abs(_biases[split].x) + Mathf.Abs(_biases[split].y), sliceSelection > 0.5f && inputs.projection.m33 == 1f);
+                        if (split < VpCullConditions.SplitCapacity) _route._directClipCastersKept[split] += kept.Count;
+                        if (kept.Count == 0) continue;
+                        grouped = true;
+                        state.cullMode = CullOf(kept[0].material);
+                        _route.CastersIssued += _route.IssueClipDraws(commands, kept, CasterVariant, state, null,
                             _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, split);
                     }
                 }

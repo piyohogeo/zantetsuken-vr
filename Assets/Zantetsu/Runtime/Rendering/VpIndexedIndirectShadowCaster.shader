@@ -23,6 +23,10 @@
 // of commands: the command's number arrives as a per-command root constant, and the arguments and the command's bounds
 // are read by it (VpNativeMultiDraw.hlsl). No material enables it; the Editor compiles it for the plugin alone.
 // VP_NO_CLIP is the ordinary-object variant: Clip records, calculations and SV_ClipDistance outputs are absent.
+// VP_CLIP_LIST_SLICES is the variant of the clip list's casters drawn by Unity's own call (DESIGN 4.5.9): no selection
+// is read, the draw's commands are the list's entries, and the vertex stage passes over an entry outside the slice
+// being rendered by the very judgement of VP_GPU_CULLED, reading the entry's bounds by the entry's number (the batch
+// binds the list's bounds as _VpCullCommands). It changes no output, so it is the vertex stage's alone.
 // VP_NATIVE_DIRECT is the rare provisional Clip path: CPU direct commands select transform/Clip records from a small
 // uniform buffer. It reads neither the indirect arguments nor the GPU selection/instance storage buffers.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
@@ -56,7 +60,11 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma shader_feature_local VP_NATIVE_MULTIDRAW
-            #pragma multi_compile_local_vertex _ VP_NO_CLIP
+            // Both stages: the pixel stage's input must not declare the clip distances that a no-clip vertex stage
+            // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
+            // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
+            #pragma multi_compile_local _ VP_NO_CLIP
+            #pragma multi_compile_local_vertex _ VP_CLIP_LIST_SLICES
             #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
@@ -101,9 +109,13 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
         #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             // The instances the compute pass kept as casters for this view, as the forward pass reads its own list.
             StructuredBuffer<uint> _VpVisible;
+        #endif
+
+        #if (defined(VP_GPU_CULLED) || defined(VP_CLIP_LIST_SLICES)) && !defined(VP_NATIVE_DIRECT)
+            #define VP_SLICE_JUDGEMENT 1
 
             // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes. The bounds of a command's range in the geometry's
-            // own frame, read by the command's number.
+            // own frame, read by the command's number -- for the clip list, the entry's.
             struct VpCullCommand
             {
                 uint indexCount;
@@ -229,7 +241,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #else
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
             #endif
-            #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
+            #if defined(VP_SLICE_JUDGEMENT) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
                 // A directional slice projects a box (w is 1 everywhere), which is the only projection the test is
                 // written for; anything else draws every kept caster.
                 if (_VpShadowSliceSelection > 0.5 && UNITY_MATRIX_P[3][3] == 1.0

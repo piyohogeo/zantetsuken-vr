@@ -199,14 +199,42 @@ namespace Zantetsu.Rendering
         VpNativeDrawRelease.IRingWait IssuedEventsWait();
     }
 
+    /// <summary>
+    /// A sink that draws a batch's clip list (DESIGN 4.5.9): the argument entries of the clipped instances, which the
+    /// display leaves out of the selection and gives the batch (<see cref="VpIndexedIndirectDrawBatch.UploadClipEntries"/>).
+    /// The sink draws them by the variant that reads no selection and evaluates the clip record, and draws the
+    /// selection's own commands by the variant with no clip at all. A sink that answers false to
+    /// <see cref="DrawsClipLists"/> cannot draw a display that separates its clipped instances: the display refuses it
+    /// (<see cref="Zantetsu.MeshCut.VpLogicalCutDisplay.ClipDrawRefusal"/>); a display for such a route is made with
+    /// the separation off (<see cref="VpGpuCullSetup.ClipSeparationUnavailable"/>).
+    /// <para>
+    /// Which entries a camera keeps is judged after the runs are given, when the camera's selection is issued: the
+    /// sink is handed the judgement's slot (<see cref="VpClipSelection"/>) and reads it when it issues -- the body by
+    /// <see cref="VpClipSelection.BodyKept"/>, a shadow slice by <see cref="VpClipSelection.CasterKeptInSlice"/> --
+    /// issuing only the runs of entries kept. A slot that is null or not valid keeps every entry.
+    /// </para>
+    /// </summary>
+    public interface IVpNativeClipListDrawSink
+    {
+        bool DrawsClipLists { get; }
+
+        /// <summary>The body of the clip list's entries [firstEntry, firstEntry + entryCount), which share <paramref name="material"/>.</summary>
+        void AddClipBodyRun(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int firstEntry, int entryCount, int layer, VpClipSelection selection);
+
+        /// <summary>The casters of the same entries, with the caster material they are cast with.</summary>
+        void AddClipCasterRun(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int firstEntry, int entryCount, int layer, VpClipSelection selection);
+    }
+
     /// <summary>Optional Quest route which removes clipped instances from the ordinary GPU batch.</summary>
     public interface IVpNativeClipDrawSink
     {
         bool SeparateClipDraws { get; }
+        // selection and entry: the slot of the camera's judgement of the clip list and this instance's number in the
+        // list (see IVpNativeClipListDrawSink); a null slot, or an entry below zero, is always drawn.
         void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
-            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer);
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1);
         void AddClipCasters(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
-            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer);
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1);
     }
 
     /// <summary>Optional startup preparation, naming the exact material instances the display will draw.</summary>
