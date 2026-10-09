@@ -29,6 +29,7 @@ namespace Zantetsu.Quest
         {
             public string mode = "vp3c-native";
             public bool appSw = true;
+            public string appSpacePoseMode = "tracking-origin"; // Camera pose is retained only for the controlled comparison.
             public bool profiler = true;
             public bool prewarm = true;
             public string inputFile;
@@ -46,6 +47,10 @@ namespace Zantetsu.Quest
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         private Config _config;
         private Camera _camera;
+        private Transform _appSpaceOrigin;
+        private Quaternion _lastHeadRotation, _lastAppSpaceRotation;
+        private bool _appSpacePoseSampled;
+        private float _headAngleMax, _appSpaceAngleMax;
         private CutWorldRoot _world;
         private CutWorldCameraDrawing _drawing;
         private SandboxPropSlashPlayerCheck.PreparedRun _run;
@@ -115,6 +120,11 @@ namespace Zantetsu.Quest
                 || !float.IsFinite(_config.startDelaySeconds) || _config.startDelaySeconds < 0f) { Fail("invalid input range or start delay"); yield break; }
             _camera = Camera.main;
             if (_camera == null) { Fail("MainCamera is required"); yield break; }
+            if (_config.appSpacePoseMode != "camera" && _config.appSpacePoseMode != "tracking-origin")
+            { Fail("appSpacePoseMode must be camera or tracking-origin"); yield break; }
+            _appSpaceOrigin = _camera.transform.parent;
+            if (_config.appSpacePoseMode == "tracking-origin" && _appSpaceOrigin == null)
+            { Fail("tracking-origin requires the tracked camera parent"); yield break; }
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline) || pipeline.name != "Quest_RPAsset")
             { Fail("Quest_RPAsset is required"); yield break; }
             ApplyNativeOptions(_config);
@@ -134,6 +144,7 @@ namespace Zantetsu.Quest
                 "development logger directory=" + Path.Combine(Application.persistentDataPath, "logger"),
                 "MSAA requested=" + pipeline.msaaSampleCount, "AppSW requested=" + _config.appSw + "; display requested=90 Hz; application cadence verified by QUEST NPC and VrApi logs",
                 "replay=recorded timestamps in real time; head tracking live; camera-only AppSW motion; object motion ignored",
+                "AppSpace pose=" + _config.appSpacePoseMode + "; camera parent=" + (_appSpaceOrigin != null ? _appSpaceOrigin.name : "none"),
                 "checks=on; metrics=on; light run, no picture capture; scene retained=" + _config.keepOpen,
                 "profile scope=ten NPCs ready, check preparation and start delay pre-roll, replay, cut completion; replay CSV scope unchanged",
             });
@@ -441,10 +452,14 @@ namespace Zantetsu.Quest
 
         private void Update()
         {
-            if (_config == null) return;
+            if (_config == null || _camera == null) return;
             if (!_spaceWarpApplied) _spaceWarpApplied = SpaceWarpFeature.SetSpaceWarp(_config.appSw);
             if (Time.unscaledTime < _nextStatus) return;
             _nextStatus = Time.unscaledTime + 5f;
+            Debug.Log("QUEST APPSPACE: mode=" + _config.appSpacePoseMode + " parent=" + (_appSpaceOrigin != null ? _appSpaceOrigin.name : "none")
+                + " maxHeadDeltaDeg=" + _headAngleMax.ToString("F4", Inv) + " maxSentDeltaDeg=" + _appSpaceAngleMax.ToString("F4", Inv)
+                + " near=" + _camera.nearClipPlane + " far=" + _camera.farClipPlane);
+            _headAngleMax = _appSpaceAngleMax = 0f;
             _displays.Clear();
             SubsystemManager.GetSubsystems(_displays);
             foreach (var xr in _displays)
@@ -464,8 +479,17 @@ namespace Zantetsu.Quest
         private void BeforeCamera(ScriptableRenderContext context, Camera camera)
         {
             if (!_spaceWarpApplied || !_config.appSw || camera != _camera) return;
-            SpaceWarpFeature.SetAppSpacePosition(camera.transform.position);
-            SpaceWarpFeature.SetAppSpaceRotation(camera.transform.rotation);
+            // The camera local pose includes physical HMD tracking. The parent maps tracking space into the scene.
+            // XR_FB_space_warp appSpaceDeltaPose describes application locomotion, which is constant in this demo.
+            Transform appSpace = _config.appSpacePoseMode == "tracking-origin" ? _appSpaceOrigin : camera.transform;
+            if (_appSpacePoseSampled)
+            {
+                _headAngleMax = Mathf.Max(_headAngleMax, Quaternion.Angle(_lastHeadRotation, camera.transform.rotation));
+                _appSpaceAngleMax = Mathf.Max(_appSpaceAngleMax, Quaternion.Angle(_lastAppSpaceRotation, appSpace.rotation));
+            }
+            _lastHeadRotation = camera.transform.rotation; _lastAppSpaceRotation = appSpace.rotation; _appSpacePoseSampled = true;
+            SpaceWarpFeature.SetAppSpacePosition(appSpace.position);
+            SpaceWarpFeature.SetAppSpaceRotation(appSpace.rotation);
         }
 
         private void OnDestroy()
