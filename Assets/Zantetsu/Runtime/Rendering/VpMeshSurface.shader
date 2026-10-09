@@ -5,6 +5,10 @@
 //
 // Single Pass Instanced stereo is supported the standard way (instance ID in, stereo eye out): under SPI one draw reaches
 // both eyes. The test-only "Hidden/Zantetsu/Compact16uv Mesh Oracle" stays what it is, an independent reference.
+//
+// The forward pass ends with the sky fog (VpSkyFog.hlsl, DESIGN 5.3.1): past seven tenths of the camera's far plane the
+// lit colour goes linearly to the sky's, so a far mesh meets the skybox behind it. It is this pass's alone -- the cut
+// display's bodies and caps, which share the lighting, are not fogged -- and the other passes (shadow, motion) have none.
 Shader "Zantetsu/VP Mesh Surface"
 {
     Properties
@@ -38,6 +42,7 @@ Shader "Zantetsu/VP Mesh Surface"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
             #include "VpPaletteAtlas.hlsl"
+            #include "VpSkyFog.hlsl"
 
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
@@ -63,6 +68,7 @@ Shader "Zantetsu/VP Mesh Surface"
                 float3 normalWS : TEXCOORD1;
                 float2 uv : TEXCOORD2;
                 float2 rawUv : TEXCOORD3;
+                float viewDepth : TEXCOORD4;   // along the view, for the sky fog
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -77,6 +83,7 @@ Shader "Zantetsu/VP Mesh Surface"
                 output.normalWS = mul((float3x3)GetObjectToWorldMatrix(), input.normalOS);
                 output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 output.rawUv = input.uv;
+                output.viewDepth = VpSkyFogViewDepth(output.positionWS);
                 return output;
             }
 
@@ -93,7 +100,8 @@ Shader "Zantetsu/VP Mesh Surface"
                     base = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
                 }
 
-                return half4(VpShadeSurface(base, input.normalWS, input.positionWS), 1.0);
+                half3 lit = VpShadeSurface(base, input.normalWS, input.positionWS);
+                return half4(VpApplySkyFog(lit, input.positionWS, input.viewDepth), 1.0);
             }
             ENDHLSL
         }
