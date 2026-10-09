@@ -8016,6 +8016,57 @@ namespace Zantetsu.MeshCut
             return false;
         }
 
+        /// <summary>How many collections this display has adopted: what a reader compares to know that one was adopted since.</summary>
+        public long AdoptedCollections => _adoptedPasses;
+
+        /// <summary>
+        /// Whether this display still holds anything of the family of <paramref name="root"/> (a registered fragment
+        /// and everything cut from it): a registration it collects from, or one it stopped collecting whose drawing an
+        /// adoption has not replaced yet. False once every piece of the family has retired and a collection adopted
+        /// since has let all of it go -- the moment something else may be drawn in its place (DESIGN 7.10). Goes
+        /// through the registrations once; reads only.
+        /// </summary>
+        public bool HoldsAnythingOf(LogicalFragmentId root)
+        {
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_ledger.TryGetFamily(_shown[i].fragment, out LogicalFragmentId family, out _) && family == root)
+                {
+                    return true;
+                }
+            }
+
+            for (int i = 0; i < _retiring.Count; i++)
+            {
+                if (_ledger.TryGetFamily(_retiring[i].fragment, out LogicalFragmentId family, out _) && family == root)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The registrations this display collects from that are of the family of <paramref name="root"/>: each one's
+        /// fragment and the bounds of the geometry it draws, in that geometry's own coordinates, added to the two
+        /// lists in step. A piece is drawn from the registration of its own fragment once its cut has committed, and
+        /// until then -- or past an Ignored boundary -- from the nearest fragment above it that has one, whose bounds
+        /// then hold more than the piece. Goes through the registrations once; reads only.
+        /// </summary>
+        public void CopyRegistrationsOf(LogicalFragmentId root, List<LogicalFragmentId> fragments, List<Bounds> localBounds)
+        {
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                Shown entry = _shown[i];
+                if (_ledger.TryGetFamily(entry.fragment, out LogicalFragmentId family, out _) && family == root)
+                {
+                    fragments.Add(entry.fragment);
+                    localBounds.Add(entry.localBounds);
+                }
+            }
+        }
+
         /// <summary>
         /// Whether a replaced fragment has a live fragment below it: through the cut that replaced it, either child,
         /// recursively. Reads the ledger only.

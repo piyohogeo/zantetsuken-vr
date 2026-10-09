@@ -740,6 +740,65 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
+        /// A whole group retired at once (DESIGN 7.10): the same nine cuts, and then every live fragment of the family
+        /// retired. Nothing of the registration is drawn any more, so nothing could draw a retired piece back: the
+        /// build goes through with no branch, although pieces lie past an Ignored boundary. With one piece left alive
+        /// the same retirement is reported, as before. The ledger's count of live cut fragments follows each step.
+        /// </summary>
+        [Test]
+        public void AFamilyWhoseEveryPieceIsRetired_DrawsNothing_AndIsNotReported_WhileOneLeftAliveIs()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            Assert.That(ledger.LiveCutFragmentCount, Is.Zero, "a registered fragment no cut made is not counted");
+            LogicalFragmentId at = root;
+            for (int k = 0; k < 8; k++)
+            {
+                at = Cut(ledger, at, new float4(0f, 1f, 0f, 0.8f - (0.2f * k))).positive;
+            }
+
+            var (_, l9Plus, l9Minus) = Cut(ledger, at, new float4(1f, 0f, 0f, 0f));
+            Assert.That(ledger.LiveCutFragmentCount, Is.EqualTo(10), "nine cuts leave ten live pieces: a cut replaces one by two");
+            Assert.That(ledger.LiveCutCountOf(root), Is.EqualTo(10));
+            Assert.That(ledger.TryGetRoot(l9Plus, out LogicalFragmentId family) && family == root, Is.True);
+
+            // One piece retired, the others alive: reported, as before.
+            Assert.That(ledger.Retire(l9Plus), Is.True);
+            Assert.That(ledger.LiveCutFragmentCount, Is.EqualTo(9));
+            VpMultiCutSnapshot some = NewSnapshot();
+            Assert.That(Build(some, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.RetiredInsideAggregate), "a live piece's shape would draw it back");
+
+            // Every piece retired: nothing is drawn, and nothing is reported.
+            var live = new List<LogicalFragmentId>();
+            ledger.CopyLiveCutFragmentsOf(root, live);
+            Assert.That(live.Count, Is.EqualTo(9));
+            Assert.That(live, Does.Contain(l9Minus));
+            foreach (LogicalFragmentId piece in live)
+            {
+                Assert.That(ledger.Retire(piece), Is.True);
+            }
+
+            Assert.That(ledger.LiveCutFragmentCount, Is.Zero);
+            Assert.That(ledger.LiveCutCountOf(root), Is.Zero);
+            VpMultiCutSnapshot none = NewSnapshot();
+            Assert.That(Build(none, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.Built), "a registration with no live piece draws nothing");
+            Assert.That(none.BranchCount, Is.Zero);
+            Assert.That(none.RenderFragmentCount, Is.Zero);
+
+            // An aborted cut takes its source out of the count as a retirement does.
+            LogicalFragmentId other = ledger.AddFragment();
+            var (_, plus, minus) = Cut(ledger, other, new float4(0f, 1f, 0f, 0f));
+            Assert.That(ledger.LiveCutCountOf(other), Is.EqualTo(2));
+            CutOperationId aborted = Admit(ledger, plus, new float4(1f, 0f, 0f, 0f));
+            Assert.That(ledger.Abort(aborted), Is.EqualTo(LogicalCutResultOutcome.Applied));
+            Assert.That(ledger.LiveCutCountOf(other), Is.EqualTo(1));
+            live.Clear();
+            ledger.CopyLiveCutFragmentsOf(other, live);
+            Assert.That(live, Is.EqualTo(new[] { minus }));
+            Assert.That(ledger.LiveCutFragmentCount, Is.EqualTo(1));
+        }
+
+        /// <summary>
         /// Two different aggregation roots with the same selected prefix: eight cuts down to L8, then A on L8 with both
         /// of A's sides given as reflected, so P (A+) and N (A-) have the same unreflected chain; a ninth cut on each makes
         /// both aggregate. P's branches and N's branches are two render fragments, rooted at P and at N -- a shared prefix

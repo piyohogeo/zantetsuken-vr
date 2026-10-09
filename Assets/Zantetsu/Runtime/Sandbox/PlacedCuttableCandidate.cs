@@ -34,8 +34,232 @@ namespace Zantetsu.Sandbox
     /// What it holds before a cut (its hit shape, the prepared convexes and their cooked meshes) is given back by
     /// <see cref="Dispose"/>; a cut's owner and group are the world's from their registration.
     /// </summary>
-    public sealed class PlacedCuttableCandidate : ISlashPlacedTarget, IDisposable
+    public sealed class PlacedCuttableCandidate : ISlashPlacedTarget, ICutGroupOrigin, IDisposable
     {
+        // The instance as it stood before anything of it was switched off (DESIGN 7.10): which of its renderers and
+        // colliders were on, how its bodies were set, and where it was drawn -- read once, before the first switch-off,
+        // and what it is given back by when its pieces are collected. What was off then stays off.
+        private bool[] _rendererWasOn, _colliderWasOn;
+        private List<(Rigidbody body, bool kinematic, bool detectCollisions, Vector3 position, Quaternion rotation)> _bodiesBefore;
+        private Bounds _boundsBefore;
+        private Vector3 _positionBefore;
+        private Quaternion _rotationBefore;
+        private bool _stateRecorded, _hasBoundsBefore;
+
+        /// <summary>Whether the instance stands again after its pieces were collected and is not yet a cut target again.</summary>
+        public bool IsReturned { get; private set; }
+
+        /// <summary>How many times its pieces were collected and it was made a cut target again.</summary>
+        public int Rearms { get; private set; }
+
+        /// <summary>Set by whoever gave it to a detector: called when it is a cut target again, to be given to the detector again.</summary>
+        internal Action<PlacedCuttableCandidate> Rearmed;
+
+        /// <summary>The instance's own renderers and colliders and its placement, as it was given them: for a check that reads their states itself.</summary>
+        internal IReadOnlyList<Renderer> InstanceRenderers => _renderers;
+        internal IReadOnlyList<Collider> InstanceColliders => _colliders;
+        internal Transform InstanceTransform => _target;
+
+        /// <summary>Where the instance stood when its cut began, as recorded then; false before a cut of it began.</summary>
+        public bool TryGetPoseAtItsCut(out Vector3 position, out Quaternion rotation)
+        {
+            position = _positionBefore;
+            rotation = _rotationBefore;
+            return _stateRecorded;
+        }
+
+        // Read when a cut of it begins (TryCut, the instance whole: again for each attempt), and otherwise once, before
+        // the first of it is switched off. The pose, the bounds it is drawn in and what is on are of the one moment:
+        // an instance that moves on between its cut's acceptance and its leaving (a body of its own) comes back where
+        // its cut began, and that is where the judgement of its return looks.
+        private void RecordInstanceState(bool again = false)
+        {
+            if (_stateRecorded && !again)
+            {
+                return;
+            }
+
+            _stateRecorded = true;
+            if (_target != null)
+            {
+                _target.GetPositionAndRotation(out _positionBefore, out _rotationBefore);
+            }
+
+            _rendererWasOn = new bool[_renderers.Length];
+            _hasBoundsBefore = false;
+            for (int i = 0; i < _renderers.Length; i++)
+            {
+                Renderer r = _renderers[i];
+                _rendererWasOn[i] = r != null && r.enabled;
+                if (_rendererWasOn[i])
+                {
+                    if (_hasBoundsBefore) _boundsBefore.Encapsulate(r.bounds);
+                    else _boundsBefore = r.bounds;
+                    _hasBoundsBefore = true;
+                }
+            }
+
+            _colliderWasOn = new bool[_colliders.Length];
+            for (int i = 0; i < _colliders.Length; i++)
+            {
+                Collider c = _colliders[i];
+                _colliderWasOn[i] = c != null && c.enabled;
+                if (_colliderWasOn[i] && !_hasBoundsBefore)
+                {
+                    _boundsBefore = c.bounds;
+                    _hasBoundsBefore = true;
+                }
+            }
+
+            _bodiesBefore = new List<(Rigidbody, bool, bool, Vector3, Quaternion)>();
+            if (_target != null)
+            {
+                foreach (Rigidbody r in _target.GetComponentsInChildren<Rigidbody>())
+                {
+                    r.transform.GetPositionAndRotation(out Vector3 position, out Quaternion rotation);
+                    _bodiesBefore.Add((r, r.isKinematic, r.detectCollisions, position, rotation));
+                }
+            }
+        }
+
+        CutGroupKind ICutGroupOrigin.Kind => _data.isBuilding ? CutGroupKind.Building : CutGroupKind.Prop;
+
+        bool ICutGroupOrigin.TryGetRestoreBounds(out Bounds world)
+        {
+            world = _boundsBefore;
+            return _hasBoundsBefore;
+        }
+
+        bool ICutGroupOrigin.TryGetSharedBounds(out Bounds world)
+        {
+            HullGroup group = Registration?.Group;
+            if (group != null && group.Collider != null)
+            {
+                world = group.Collider.bounds;
+                return true;
+            }
+
+            world = default;
+            return false;
+        }
+
+        bool ICutGroupOrigin.MayEndNow(out string why)
+        {
+            why = null;
+            if (_disposed || State != CandidateState.Cut || !_withdrawn || IsReturned || _target == null || _world == null || !_world.IsReady || _world.IsEnding)
+            {
+                why = "the instance has not left, or is not there";
+                return false;
+            }
+
+            if (!_data.isBuilding)
+            {
+                return true;
+            }
+
+            if (Registration == null || _world.Hulls == null)
+            {
+                why = "no registration of the building stands";
+                return false;
+            }
+
+            return _world.Hulls.IsBuildingQuiet(Registration.Group, out why);
+        }
+
+        void ICutGroupOrigin.EndShared(string why)
+        {
+            // A building's pieces share its group's body, hull and tracking: they end here, with the pieces.
+            if (_data.isBuilding && Registration != null && _world.Hulls != null)
+            {
+                _world.Hulls.EndBuilding(Registration.Group, why);
+            }
+
+            Registration = null;
+        }
+
+        bool ICutGroupOrigin.TryReturn()
+        {
+            if (_disposed || _target == null || !_stateRecorded)
+            {
+                return false;
+            }
+
+            // Where it stood when its cut began, first: the pose its bounds were recorded with, and the one its return
+            // was judged by. Then its bodies where they stood, and only then what was on.
+            _target.SetPositionAndRotation(_positionBefore, _rotationBefore);
+            foreach ((Rigidbody body, bool _, bool _, Vector3 position, Quaternion rotation) in _bodiesBefore)
+            {
+                if (body == null) continue;
+                body.transform.SetPositionAndRotation(position, rotation);
+                body.position = position;
+                body.rotation = rotation;
+            }
+
+            for (int i = 0; i < _renderers.Length; i++)
+            {
+                if (_renderers[i] != null && _rendererWasOn[i]) _renderers[i].enabled = true;
+            }
+
+            for (int i = 0; i < _colliders.Length; i++)
+            {
+                if (_colliders[i] != null && _colliderWasOn[i]) _colliders[i].enabled = true;
+            }
+
+            foreach ((Rigidbody body, bool kinematic, bool detectCollisions, Vector3 _, Quaternion _) in _bodiesBefore)
+            {
+                if (body == null) continue;
+                body.detectCollisions = detectCollisions;
+                body.isKinematic = kinematic;
+                if (!kinematic)
+                {
+                    // It stands where it was cut, at rest: its pieces carried its motion away.
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                }
+            }
+
+            _withdrawn = false;
+            _stateRecorded = false;   // read again before it next leaves
+            IsReturned = true;
+            return true;
+        }
+
+        bool ICutGroupOrigin.TryRearm()
+        {
+            if (_disposed || _target == null || !IsReturned || _world == null || !_world.IsReady || _world.IsEnding)
+            {
+                return false;
+            }
+
+            if (!_data.isBuilding)
+            {
+                // A prop's convexes are prepared and cooked again: the ones it had went to its cut's owner.
+                var natives = new List<IDisposable>();
+                try
+                {
+                    ConvexBrepBank bank = PlacedCuttableRegistration.BuildBank(_data.hulls, natives, out List<ConvexBrepRange> ranges);
+                    _physics?.Dispose();
+                    _physics = new VpPreparedPhysicsInput(bank, ranges);
+                }
+                finally
+                {
+                    foreach (IDisposable n in natives) n.Dispose();
+                }
+            }
+
+            // An uncut one again: its next hit identifies it as a new fragment. The fragment it was is retired with its
+            // pieces' history and is never given again.
+            IsReturned = false;
+            State = CandidateState.Candidate;
+            Source = default;
+            Operation = default;
+            Registration = null;
+            LastRefusal = null;
+            Rearms++;
+            Rearmed?.Invoke(this);
+            return true;
+        }
+
         private readonly CutWorldRoot _world;
         private readonly PlacedCuttableInput _data;
         private readonly Transform _target;
@@ -171,6 +395,10 @@ namespace Zantetsu.Sandbox
             if (!IsHitTarget || !Source.IsSet) return Answer(ProvisionalCutAcceptance.NotAccepted, LogicalCutAdmission.SourceNotLive, false, "not a hit target now");
             if (!math.all(math.isfinite(hit.plane)) || math.lengthsq(hit.plane.xyz) <= 0f) return Answer(ProvisionalCutAcceptance.InvalidRequest, LogicalCutAdmission.NoOp, false, "the plane");
             if (!_world.BeginPreparedCharacterCall()) return Answer(ProvisionalCutAcceptance.NotAccepted, LogicalCutAdmission.SourceNotLive, false, "the world is in a prepared cut, ending or terminating");
+
+            // The instance as it stands now, whole: its pose, its bounds and what of it is on, of this one moment -- the
+            // cut's beginning (DESIGN 7.10). An attempt answered without a cut leaves it a candidate, read again by the next.
+            RecordInstanceState(again: true);
             try
             {
                 return _data.isBuilding ? CutBuilding(in hit) : CutProp(in hit);
@@ -319,6 +547,9 @@ namespace Zantetsu.Sandbox
                 }
 
                 if (transaction != null) Operation = transaction.Operation;
+
+                // Its cut goes on: from here its fragment and everything cut from it is one group, this its origin (DESIGN 7.10).
+                if (accepted == ProvisionalCutAcceptance.Pending || accepted == ProvisionalCutAcceptance.Published) _world.Groups?.Register(Source, this);
                 if (accepted == ProvisionalCutAcceptance.Pending)
                 {
                     // The admitted cut's display draws it from here: the instance's drawing goes now; its colliders stand until the publication.
@@ -422,6 +653,8 @@ namespace Zantetsu.Sandbox
 
                 if (accepted == ProvisionalCutAcceptance.Pending || accepted == ProvisionalCutAcceptance.Held)
                 {
+                    // Its first cut goes on: its display fragment and everything cut from it is one group from here (DESIGN 7.10).
+                    _world.Groups?.Register(Source, this);
                     return new SlashPlacedCutResult(accepted, LogicalCutAdmission.NoOp, default, true);
                 }
 
@@ -460,6 +693,7 @@ namespace Zantetsu.Sandbox
             {
                 State = CandidateState.Cut;
                 if (operation.IsSet) Operation = operation;
+                _world.Groups?.Register(Source, this);
                 if (!_withdrawn) SwitchOff(_renderers);
                 LastRefusal = "its cut threw after its admission: the driver's record holds it until it is ended";
                 return;
@@ -484,6 +718,7 @@ namespace Zantetsu.Sandbox
         // when its first cut ended after the hit's answer (a candidate again only when that answer itself refused, above).
         private void TakenBack(string why)
         {
+            if (Source.IsSet) _world.Groups?.Forget(Source);   // nothing of it was cut: no group
             Registration = null;
             State = CandidateState.Refused;
             LastRefusal = "taken back out before its first cut: " + why;
@@ -505,8 +740,9 @@ namespace Zantetsu.Sandbox
             return Answer(acceptance, admission, true, why);
         }
 
-        private static void SwitchOff(Renderer[] renderers)
+        private void SwitchOff(Renderer[] renderers)
         {
+            RecordInstanceState();   // as it stood, before the first of it goes
             foreach (Renderer r in renderers) if (r != null) r.enabled = false;
         }
 
@@ -514,6 +750,7 @@ namespace Zantetsu.Sandbox
         private void Withdraw()
         {
             if (_withdrawn) return;
+            RecordInstanceState();
             _withdrawn = true;
             SwitchOff(_renderers);
             foreach (Collider c in _colliders) if (c != null) c.enabled = false;
@@ -542,6 +779,9 @@ namespace Zantetsu.Sandbox
         {
             if (_disposed) return;
             _disposed = true;
+
+            // Its registrar is going: the group it is the origin of is no longer one that can be given back. Its pieces live on.
+            if (Source.IsSet && _world != null && !_world.IsReleased) _world.Groups?.Forget(Source);
             if (State == CandidateState.Candidate)
             {
                 State = CandidateState.Disposed;

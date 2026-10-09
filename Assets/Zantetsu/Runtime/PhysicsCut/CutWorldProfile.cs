@@ -182,6 +182,23 @@ namespace Zantetsu.PhysicsCut
         [Tooltip("The expected cost of a turn that starts a retirement, in seconds, before any was measured (from no Player measurement). The median of the last five measured replaces it.")]
         [SerializeField] private float emptyOwnerCollectionSeedExpectedSeconds = 0.0003f;
 
+        [Header("Fragment group collection (DESIGN 7.10, Phase 7.1, provisional)")]
+        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are far and unseen, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started.")]
+        [SerializeField] private bool fragmentGroupCollectionEnabled = false;
+
+        [Tooltip("Live cut fragments (every kind, a building's display fragments too; uncut objects not counted) above which groups are looked at. Where a collection starts, not a limit kept. 256: the piece lifetime's threshold as a start.")]
+        [SerializeField] private int fragmentGroupMaxLiveCutFragments = 256;
+
+        [Tooltip("Every bounds of a chosen group -- its pieces', what they share, where its original would stand again -- is at least this far from the viewer, in metres, and outside both eyes' views.")]
+        [SerializeField] private float fragmentGroupDistance = 20f;
+
+        [Tooltip("Groups looked at per frame at most (4: each is read whole, piece by piece); one group is retired a frame at most.")]
+        [SerializeField] private int fragmentGroupExaminePerFrame = 4;
+
+        [Tooltip("The expected cost of retiring one piece of a group, and of a group besides its pieces, in seconds, before any was measured (from no Player measurement). A piece's becomes the median of the last five measured.")]
+        [SerializeField] private float fragmentGroupSeedSecondsPerFragment = 0.00005f;
+        [SerializeField] private float fragmentGroupSeedSecondsPerGroup = 0.0002f;
+
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
         [SerializeField] private bool buildingRestEnabled = false;
@@ -389,6 +406,15 @@ namespace Zantetsu.PhysicsCut
         /// The empty owner collection's settings (DESIGN 7.9.3), from the provisional values above. The budget a turn
         /// leaves to the rest of the frame is the compaction's reserve: both start at the same place in the frame.
         /// </summary>
+        /// <summary>
+        /// The fragment group collection's settings (DESIGN 7.10), from the provisional values above. The budget a
+        /// retirement leaves to the rest of the frame is the compaction's reserve: all three start at the same place.
+        /// </summary>
+        public CutFragmentGroupSettings FragmentGroupCollection =>
+            new CutFragmentGroupSettings(
+                fragmentGroupCollectionEnabled, fragmentGroupMaxLiveCutFragments, fragmentGroupDistance, fragmentGroupExaminePerFrame,
+                CutWorldRoot.CompactionReserveSeconds, fragmentGroupSeedSecondsPerFragment, fragmentGroupSeedSecondsPerGroup);
+
         public CutEmptyOwnerCollectionSettings EmptyOwnerCollection =>
             new CutEmptyOwnerCollectionSettings(
                 emptyOwnerCollectionEnabled, emptyOwnerCollectionExaminePerFrame, emptyOwnerCollectionRetirePerFrame,
@@ -511,6 +537,10 @@ namespace Zantetsu.PhysicsCut
             else if (!PieceLifetime.IsValid)
             {
                 reason = "the piece lifetime's counts and times must be positive and its threshold and distance not negative";
+            }
+            else if (!FragmentGroupCollection.IsValid)
+            {
+                reason = "the fragment group collection's maximum and distance must not be negative, its count positive and its expected costs not negative";
             }
             else if (!EmptyOwnerCollection.IsValid)
             {

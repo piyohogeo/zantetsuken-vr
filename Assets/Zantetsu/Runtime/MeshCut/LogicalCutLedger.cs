@@ -74,6 +74,11 @@ namespace Zantetsu.MeshCut
             internal LogicalFragmentId root;
             internal long revision;
             internal readonly List<int> operations = new List<int>();
+
+            // The family's live fragments that a cut made (list positions of _fragments), kept where a fragment is
+            // issued and where it stops being live: what a group's lifetime counts and ends (DESIGN 7.10). The root,
+            // which no cut made, is never in it.
+            internal readonly List<int> liveCut = new List<int>();
         }
 
         private struct Fragment
@@ -94,6 +99,10 @@ namespace Zantetsu.MeshCut
             // fact about where this fragment came from and that does not change.
             public CutOperationId origin;
             public float originSide;
+
+            // Where this fragment stands in its family's list of live cut fragments, plus one; 0 while it is not in it
+            // (a root, or a fragment no longer live).
+            public int liveSlot;
 
             // The source's ownership authority as a counter: bumped by NoteOwnershipChanged, snapshotted at admission,
             // and compared when the result arrives. Local to this fragment on purpose.
@@ -687,6 +696,7 @@ namespace Zantetsu.MeshCut
             // The children hold what they inherited, so the replaced source lets its own set go rather than keeping it
             // for the lifetime of the ledger. The list itself is not cleared — the children's sets are separate lists.
             source.anchors = null;
+            NoLongerLive(ref source);
             _fragments[sourceIndex] = source;
             Changed(operation.source);
 
@@ -731,6 +741,7 @@ namespace Zantetsu.MeshCut
 
             // A retired source is nothing's target any more, so it lets its set go as well. Nothing inherited it.
             source.anchors = null;
+            NoLongerLive(ref source);
             _fragments[sourceIndex] = source;
             Changed(new LogicalFragmentId(sourceIndex + 1));
 
@@ -787,6 +798,7 @@ namespace Zantetsu.MeshCut
             record.state = LogicalFragmentState.Retired;
             record.activeOperation = default;
             record.anchors = null;
+            NoLongerLive(ref record);
             _fragments[index] = record;
             Changed(fragment);
             return true;
@@ -983,6 +995,17 @@ namespace Zantetsu.MeshCut
             Family family = origin.IsSet
                 ? _fragments[_operations[origin.value - 1].source.value - 1].family
                 : new Family { root = new LogicalFragmentId(id) };
+            int liveSlot = 0;
+            if (origin.IsSet)
+            {
+                // A cut made it: one more live cut fragment of its family, and of the ledger.
+                List<int> live = family.liveCut;
+                if (live.Capacity == live.Count) live.Capacity = Math.Max(4, checked(live.Count * 2));
+                live.Add(id - 1);
+                liveSlot = live.Count;
+                LiveCutFragmentCount++;
+            }
+
             _fragments.Add(new Fragment
             {
                 family = family,
@@ -990,9 +1013,95 @@ namespace Zantetsu.MeshCut
                 anchors = anchors,
                 origin = origin,
                 originSide = originSide,
+                liveSlot = liveSlot,
             });
             Changed(new LogicalFragmentId(id));
             return new LogicalFragmentId(id);
+        }
+
+        // A fragment stops being live (replaced by its cut, retired, or the source of an abort): out of its family's
+        // list of live cut fragments, if it was in it. The last of the list takes its place, so nothing is searched.
+        // The caller writes <paramref name="record"/> back itself.
+        private void NoLongerLive(ref Fragment record)
+        {
+            if (record.liveSlot == 0)
+            {
+                return;
+            }
+
+            List<int> live = record.family.liveCut;
+            int at = record.liveSlot - 1;
+            int last = live.Count - 1;
+            if (at != last)
+            {
+                int moved = live[last];
+                live[at] = moved;
+                Fragment other = _fragments[moved];
+                other.liveSlot = at + 1;
+                _fragments[moved] = other;
+            }
+
+            live.RemoveAt(last);
+            record.liveSlot = 0;
+            LiveCutFragmentCount--;
+        }
+
+        /// <summary>
+        /// How many live fragments a cut made, over every family of this ledger (DESIGN 7.10): counted where a child
+        /// is published and where a fragment stops being live. A registered object not yet cut is not one, and a
+        /// fragment replaced by its own cut is not one any more -- its two children are.
+        /// </summary>
+        public int LiveCutFragmentCount { get; private set; }
+
+        /// <summary>
+        /// The registered fragment <paramref name="fragment"/> descends from -- itself for one no cut made. Read from
+        /// the fragment's own record: no history is walked.
+        /// </summary>
+        public bool TryGetRoot(LogicalFragmentId fragment, out LogicalFragmentId root)
+        {
+            if (!TryIndex(fragment, out int index))
+            {
+                root = default;
+                return false;
+            }
+
+            root = _fragments[index].family.root;
+            return true;
+        }
+
+        /// <summary>How many live fragments a cut made descend from <paramref name="root"/>; 0 for one that is not a root here.</summary>
+        public int LiveCutCountOf(LogicalFragmentId root)
+        {
+            return TryIndex(root, out int index) && _fragments[index].family.root == root ? _fragments[index].family.liveCut.Count : 0;
+        }
+
+        /// <summary>
+        /// The live fragments a cut made that descend from <paramref name="root"/>, added to <paramref name="into"/>
+        /// in no particular order. What is handed out is the caller's own list: a change here afterwards does not
+        /// change it.
+        /// </summary>
+        public void CopyLiveCutFragmentsOf(LogicalFragmentId root, List<LogicalFragmentId> into)
+        {
+            if (!TryIndex(root, out int index) || _fragments[index].family.root != root)
+            {
+                return;
+            }
+
+            List<int> live = _fragments[index].family.liveCut;
+            for (int i = 0; i < live.Count; i++)
+            {
+                into.Add(new LogicalFragmentId(live[i] + 1));
+            }
+        }
+
+        /// <summary>
+        /// How often anything of <paramref name="root"/>'s family has changed here (a cut admitted, published or
+        /// ended, a fragment retired, an ownership note): what a reader that chose something of the family compares
+        /// before it acts on the choice. 0 for one that is not a root here.
+        /// </summary>
+        public long FamilyRevisionOf(LogicalFragmentId root)
+        {
+            return TryIndex(root, out int index) && _fragments[index].family.root == root ? _fragments[index].family.revision : 0;
         }
 
         // Only after ReserveOperations, likewise.

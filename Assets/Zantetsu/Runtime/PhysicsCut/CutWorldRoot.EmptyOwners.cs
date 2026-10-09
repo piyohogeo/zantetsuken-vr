@@ -28,6 +28,7 @@ namespace Zantetsu.PhysicsCut
         private void MakeEmptyOwners(CutWorldProfile profile)
         {
             EmptyOwners = new CutEmptyOwnerCollection(this, profile.EmptyOwnerCollection);
+            Groups = new CutFragmentGroupCollection(this, GroupSettings(profile));
 
             // After everything a frame collects: what the frame published, grew and compacted is known by then.
             _stepEmptyOwners = StepEmptyOwners;
@@ -48,16 +49,101 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            if (!EmptyOwners.Settings.enabled && EmptyOwners.ActorsLeaving == 0 && EmptyOwners.ShapesLeaving == 0)
+            // Off, and nothing it started is still on its way out: nothing at all.
+            if (EmptyOwners.Settings.enabled || EmptyOwners.ActorsLeaving != 0 || EmptyOwners.ShapesLeaving != 0)
             {
-                // Off, and nothing it started is still on its way out: nothing at all.
-                return;
+                using (s_emptyOwnersMarker.Auto())
+                {
+                    EmptyOwners.Step();
+                }
             }
 
-            using (s_emptyOwnersMarker.Auto())
+            // The groups' turn comes after it, in this one call: it does not start in a frame the empty owners retired in.
+            if (Groups != null && (Groups.Settings.enabled || Groups.ComingBack != 0))
             {
-                EmptyOwners.Step();
+                using (s_groupsMarker.Auto())
+                {
+                    Groups.Step();
+                }
             }
+        }
+
+        private static readonly ProfilerMarker s_groupsMarker = new ProfilerMarker("Zantetsu.FragmentGroups.Step");
+
+        /// <summary>
+        /// The Player argument that switches the fragment group collection on for a run, followed by the maximum of live
+        /// cut fragments it starts above (DESIGN 7.10): for looking at it, and for comparing with and without it in one
+        /// build, while the profile leaves it off. Every other value is the profile's.
+        /// </summary>
+        public const string FragmentGroupsArgument = "-zantetsuFragmentGroups";
+
+        // The profile's settings, or -- asked for by the argument -- the same with the collection on and its maximum given.
+        private CutFragmentGroupSettings GroupSettings(CutWorldProfile profile)
+        {
+            CutFragmentGroupSettings settings = profile.FragmentGroupCollection;
+            string[] arguments = Environment.GetCommandLineArgs();
+            int at = Array.IndexOf(arguments, FragmentGroupsArgument);
+            if (at < 0)
+            {
+                return settings;
+            }
+
+            if (at + 1 >= arguments.Length || !int.TryParse(arguments[at + 1], out int maximum) || maximum < 0)
+            {
+                UnityEngine.Debug.LogError(
+                    "FRAGMENT GROUPS: " + FragmentGroupsArgument + " takes the maximum of live cut fragments (0 or more); it was not given one, so the profile's setting stands ("
+                    + (settings.enabled ? "on" : "off") + ").", this);
+                return settings;
+            }
+
+            UnityEngine.Debug.Log(
+                "FRAGMENT GROUPS: on -- asked for by " + FragmentGroupsArgument + " " + maximum + ": whole groups are collected above " + maximum
+                + " live cut fragments, " + settings.minDistance.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+                + " m or more away and outside the eyes' views; the piece lifetime does not run", this);
+            return new CutFragmentGroupSettings(
+                true, maximum, settings.minDistance, settings.examinePerFrame, settings.reserveSeconds,
+                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
+        }
+
+        /// <summary>The optional lifetime of cut fragments by the object they came from (DESIGN 7.10, Phase 7.1).</summary>
+        public CutFragmentGroupCollection Groups { get; private set; }
+
+        /// <summary>
+        /// Switches the fragment group collection on for this world with the maximum given, every other value the
+        /// profile's: what <see cref="FragmentGroupsArgument"/> does, for a host that has no command line (a device
+        /// run's configuration file). To be called before the run's cuts; false when the world has no collection.
+        /// </summary>
+        public bool EnableFragmentGroups(int maximum, string askedBy)
+        {
+            if (Groups == null || maximum < 0)
+            {
+                return false;
+            }
+
+            CutFragmentGroupSettings settings = Groups.Settings;
+            Groups.Settings = new CutFragmentGroupSettings(
+                true, maximum, settings.minDistance, settings.examinePerFrame, settings.reserveSeconds,
+                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
+            UnityEngine.Debug.Log(
+                "FRAGMENT GROUPS: on -- asked for by " + askedBy + " " + maximum + ": whole groups are collected above " + maximum
+                + " live cut fragments, " + settings.minDistance.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+                + " m or more away and outside the eyes' views; the piece lifetime does not run", this);
+            return true;
+        }
+
+        /// <summary>
+        /// The display's growths and replacements -- its room, its snapshot, a GPU object, the reference table -- as one
+        /// number that moves when any of them does: what optional work compares to know a frame grew something.
+        /// </summary>
+        internal long DisplayRoomSerial()
+        {
+            long room = References != null ? References.GrowthCount : 0;
+            if (Display != null)
+            {
+                room += (long)Display.RoomGrowths + Display.SnapshotRegrowths + Display.GpuReplacements + Display.GpuGrowthCount;
+            }
+
+            return room;
         }
 
         private void ReleaseEmptyOwners()
@@ -69,6 +155,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             EmptyOwners = null;
+            Groups = null;
         }
     }
 }

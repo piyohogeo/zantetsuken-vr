@@ -2805,6 +2805,12 @@ namespace Zantetsu.MeshCut
         {
             int top = 0;
             _stack[top++] = root;
+
+            // A retired fragment past an Ignored boundary stops the display only when something of this registration
+            // is drawn: the shape before that boundary would draw it back. A registration whose every piece is retired
+            // (a whole group ended at once, DESIGN 7.10) draws nothing, so nothing can draw a retired piece back.
+            int branchesBefore = _branchCount;
+            bool retiredInsideAggregate = false;
             while (top > 0)
             {
                 LogicalFragmentId at = _stack[--top];
@@ -2868,7 +2874,11 @@ namespace Zantetsu.MeshCut
                     default:
                     {
                         VpMultiCutBuildOutcome retired = CheckRetired(ledger, at, reflected);
-                        if (retired != VpMultiCutBuildOutcome.Built)
+                        if (retired == VpMultiCutBuildOutcome.RetiredInsideAggregate)
+                        {
+                            retiredInsideAggregate = true;
+                        }
+                        else if (retired != VpMultiCutBuildOutcome.Built)
                         {
                             return retired;
                         }
@@ -2878,7 +2888,9 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            return VpMultiCutBuildOutcome.Built;
+            return retiredInsideAggregate && _branchCount > branchesBefore
+                ? VpMultiCutBuildOutcome.RetiredInsideAggregate
+                : VpMultiCutBuildOutcome.Built;
         }
 
         private VpMultiCutBuildOutcome TryAddBranch(

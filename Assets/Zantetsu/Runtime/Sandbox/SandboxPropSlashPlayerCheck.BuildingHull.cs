@@ -36,13 +36,35 @@ namespace Zantetsu.Sandbox
             private float _bhMaxSpeed;
             private int _bhMaxSpeedFrame = -1;
             private double _bhLastWaveReal = double.NaN;   // the last frame a wave of the ordinary input flew (real seconds)
-            private int _bhLastWaveFrame = -1, _bhMaxMembers, _bhMaxPairs, _bhMaxConstraints, _bhNonKinematicFrames, _bhMaxWithGeometry, _bhFramesNotOneEach, _bhFirstNotOneEach = -1;
-            private string _bhNotOneEachWhy;
+            private int _bhLastWaveFrame = -1, _bhMaxMembers, _bhMaxPairs, _bhMaxConstraints, _bhNonKinematicFrames, _bhMaxWithGeometry;
             private readonly FrameTiming[] _bhTimings = new FrameTiming[1];
 
             private static double RestSeconds(BuildingRest rest) => rest == null ? 0.0 : rest.ContactSeconds + rest.SupportSeconds + rest.SleepSeconds + rest.ReleaseSeconds;
 
             private readonly List<Collider> _bhColliders = new List<Collider>();
+            private HullBuildingCensus _bhCensus;
+            private bool _bhCensusGiven;
+
+            // Made at the first frame read. Every placed building of the city is given to it once the city's cut targets
+            // are made (before the script, when nothing is cut yet): it reads each as the scene placed it.
+            private HullBuildingCensus BuildingCensus(BuildingHullFusion h)
+            {
+                if (_bhCensus == null) _bhCensus = new HullBuildingCensus(_world);
+                if (!_bhCensusGiven && _pcCuttables.Length > 0)
+                {
+                    bool all = true;
+                    foreach (PlayableCityCuttable c in _pcCuttables)
+                    {
+                        if (c == null || !c.building) continue;
+                        if (c.Candidate != null) _bhCensus.Add(c.Candidate);
+                        else if (c.deferUntilCut && c.Failure == null) all = false;
+                    }
+
+                    _bhCensusGiven = all;
+                }
+
+                return _bhCensus;
+            }
             private readonly HashSet<Collider> _bhOwn = new HashSet<Collider>();
             private bool _bhSettingsLogged;
 
@@ -157,21 +179,11 @@ namespace Zantetsu.Sandbox
                 {
                     HullDropsFrame(h);   // each drop's members read back against its curve (2026-10-01)
                     foreach (HullGroup g in h.Groups) if (g.Body != null && (!g.Body.isKinematic || !g.Kinematic)) { _bhNonKinematicFrames++; break; }
-                    // Exactly one of each a building at this frame (not a maximum): its group, its body, its one enabled collider, its one hull.
-                    var groupsOf = new Dictionary<int, int>();
-                    string why = null;
-                    foreach (HullGroup g in h.Groups)
-                    {
-                        if (g.State == HullGroupState.Gone) continue;
-                        groupsOf.TryGetValue(g.Building, out int n); groupsOf[g.Building] = n + 1;
-                        int enabled = 0;
-                        if (g.Root != null) { g.Root.GetComponentsInChildren(true, _bhColliders); foreach (Collider c in _bhColliders) if (c.enabled) enabled++; }
-                        if (g.Body == null || enabled != 1 || g.HullCount != 1 || g.Shape == null) why = "group " + g.Id + ": body " + (g.Body != null) + ", enabled colliders " + enabled + ", hulls " + g.HullCount;
-                    }
-
-                    foreach (KeyValuePair<int, int> b in groupsOf) if (b.Value != 1) why = "building " + b.Key + ": " + b.Value + " groups";
-                    if (groupsOf.Count != h.GroupsMade) why = "buildings standing " + groupsOf.Count + " of " + h.GroupsMade;
-                    if (why != null) { _bhFramesNotOneEach++; if (_bhFirstNotOneEach < 0) { _bhFirstNotOneEach = frame; _bhNotOneEachWhy = why; } }
+                    // Exactly one of each a building that stands at this frame (not a maximum): its group, its body, its one
+                    // enabled collider, its one hull. A building no longer standing is one a group collection ended whole
+                    // (DESIGN 7.10) -- read then for what it left and for its original's return -- or it is lost, a fault as
+                    // before (2026-10-10; HullBuildingCensus).
+                    BuildingCensus(h).Observe(frame);
                 }
 
                 // The display's structure builds, validations and placement passes are in frames.csv, stamped with the frame
@@ -195,6 +207,7 @@ namespace Zantetsu.Sandbox
             {
                 _bhRows?.Dispose();
                 _bhRows = null;
+                _bhCensus?.Dispose();
             }
 
             private static double Percentile(List<double> values, double q)
@@ -577,7 +590,7 @@ namespace Zantetsu.Sandbox
                     int refusedOrKept = h.HullUpdatesRefused + h.HullUpdatesStale + h.HullUpdatesCancelled;
                     Log("building hull always kinematic: drops started " + h.AnimationsStarted + ", completed " + h.AnimationsCompleted + ", stopped by a re-cut " + h.AnimationsStoppedByReCut + ", running " + h.AnimationsRunning
                         + "; hull updates begun " + h.HullUpdatesBegun + ", exchanged " + h.HullUpdatesAdopted + ", refused " + h.HullUpdatesRefused + ", stale " + h.HullUpdatesStale + ", cancelled " + h.HullUpdatesCancelled + "; requests made " + h.HullRequestsMade + ", skipped " + h.HullRequestsSkipped + ", dropped (refused) " + h.HullRequestsDropped + ", waiting " + h.WaitingHullRequests + " (most running at once " + h.MaxHullUpdatesInFlight + ", most waiting " + h.MaxWaitingHullRequests + ")"
-                        + "; hull Main " + (h.HullUpdateMainSeconds * 1000).ToString("F2", Inv) + " ms, worker " + (h.HullUpdateWorkerSeconds * 1000).ToString("F2", Inv) + " ms; frames with a building body not kinematic " + _bhNonKinematicFrames + "; frames not exactly one body, enabled collider and hull a building " + _bhFramesNotOneEach + (_bhFirstNotOneEach >= 0 ? " (first at frame " + _bhFirstNotOneEach + ": " + _bhNotOneEachWhy + ")" : ""));
+                        + "; hull Main " + (h.HullUpdateMainSeconds * 1000).ToString("F2", Inv) + " ms, worker " + (h.HullUpdateWorkerSeconds * 1000).ToString("F2", Inv) + " ms; frames with a building body not kinematic " + _bhNonKinematicFrames + "; " + (_bhCensus != null ? _bhCensus.Describe() : "the buildings were not counted"));
                     Log("building hull display (a separate problem, not solved by one body and one hull): members held " + held + " (most " + _bhMaxMembers + "): committed " + committed + " (most " + _bhMaxWithGeometry + "), known empty " + emptyMembers + ", not yet committed " + pendingMembers + ";, the ledger's history " + ledgerFragments + " fragments / " + ledgerOperations + " operations, display cuts " + h.DisplayCuts
                         + "; ms total: classification " + (h.PrepareDisplaySeconds * 1000).ToString("F2", Inv) + ", publication " + (h.PublishDisplaySeconds * 1000).ToString("F2", Inv) + ", drops' placement " + (h.AnimationSeconds * 1000).ToString("F2", Inv) + " (the snapshot per frame in frames.csv)");
                     foreach (string r in h.HullUpdateRecords) Log("building hull update: " + r);
@@ -635,7 +648,21 @@ namespace Zantetsu.Sandbox
                     }
 
                     Expect(_bhNonKinematicFrames == 0, "[hull kinematic] every building body stayed kinematic at every frame and none was the rest's (" + _bhNonKinematicFrames + " frames with one not)");
-                    Expect(_bhFramesNotOneEach == 0, "[hull kinematic] exactly one body, one enabled collider and one hull a building at every frame (" + _bhFramesNotOneEach + " frames otherwise" + (_bhFirstNotOneEach >= 0 ? ", the first at frame " + _bhFirstNotOneEach + ": " + _bhNotOneEachWhy : "") + ")");
+                    // The count is not relaxed for the group collection (DESIGN 7.10): a building that does not stand was
+                    // ended by a collection of its own group, or the frame is counted here.
+                    int notOneEach = _bhCensus != null ? _bhCensus.FramesNotOneEach : -1, endedByCollection = _bhCensus != null ? _bhCensus.EndedByCollection : 0;
+                    _bhCensus?.AtEnd(Time.frameCount);
+                    Expect(notOneEach == 0, "[hull kinematic] exactly one body, one enabled collider and one hull a building at every frame (" + notOneEach + " frames otherwise"
+                        + (_bhCensus != null && _bhCensus.FirstNotOneEachFrame >= 0 ? ", the first at frame " + _bhCensus.FirstNotOneEachFrame + ": " + _bhCensus.NotOneEachWhy : "")
+                        + (endedByCollection > 0 ? "; " + endedByCollection + " ended whole by a group collection, not standing since and not counted as missing" : "") + ")");
+                    if (_bhCensus != null && (endedByCollection > 0 || _bhCensus.Faults.Count > 0 || (_world.Groups != null && _world.Groups.Settings.enabled)))
+                    {
+                        foreach (string fault in _bhCensus.Faults.Take(8)) Log("building hull ended by a group collection: " + fault);
+                        Expect(_bhCensus.Faults.Count == 0 && _bhCensus.Lost == 0, "[hull kinematic] every building ended by a group collection left nothing its pieces shared, and its original came back as it stood once the display held nothing of its pieces ("
+                            + endedByCollection + " ended, " + _bhCensus.OriginalsBack + " originals read back, " + _bhCensus.Lost + " gone otherwise, " + _bhCensus.Faults.Count + " faults"
+                            + (_bhCensus.Faults.Count > 0 ? ": " + _bhCensus.Faults[0] : "") + ")");
+                    }
+
                     Expect(h.AnimationsRunning == 0 && h.AnimationsCompleted + h.AnimationsStoppedByReCut == h.AnimationsStarted && h.AnimationsStarted > 0, "[hull kinematic] every drop completed or was stopped by a re-cut (" + h.AnimationsStarted + " started)");
                     Expect(h.GroupCuts >= 2, "[hull kinematic] the building was cut again after a cut (" + h.GroupCuts + " display cuts published)");
                     Log("building hull re-cuts during a drop: " + h.AnimationsStoppedByReCut + " drops stopped where they were by a re-cut (" + (h.AnimationsStoppedByReCut > 0 ? "exercised" : "not exercised in this run") + ")");
@@ -656,7 +683,7 @@ namespace Zantetsu.Sandbox
                 // At most one fixed and one free group a building (2026-10-03: per building, for a city of many; the same for one).
                 int kinematicGroups = h.Groups.Count(g => g.Kinematic), freeGroups = h.Groups.Count(g => !g.Kinematic);
                 int buildingsPastOne = BuildingsPastOneEach(h.Groups.Select(g => (g.Building, g.Kinematic)));
-                Expect(h.IsOneHullAchieved && h.GroupCount >= 1 && buildingsPastOne == 0 && hulls == h.GroupCount && sceneBodies == h.GroupCount && sceneColliders == h.LiveColliders && h.LiveColliders == hulls,
+                Expect(h.IsOneHullAchieved && (h.GroupCount >= 1 || (_bhCensus != null && _bhCensus.EndedByCollection > 0)) && buildingsPastOne == 0 && hulls == h.GroupCount && sceneBodies == h.GroupCount && sceneColliders == h.LiveColliders && h.LiveColliders == hulls,
                     "[hull] one hull achieved on the real counts: at the end at most one fixed and one free group a building, each one hull on one real body with one collider (" + h.DescribeCounts() + "; fixed groups " + kinematicGroups + ", free " + freeGroups + ", buildings past one of either " + buildingsPastOne + "; the buildings' bodies " + sceneBodies + ", colliders " + sceneColliders + "; not achieved " + h.HullsNotAchieved + ", given up " + h.FusionsGivenUp + ")");
                 Expect(h.MaxGroupSpeed < 20f && _bhMaxSpeed < 20f, "[hull] no group moved faster than 20 m/s after a cut or an exchange (fastest " + h.MaxGroupSpeed.ToString("F2", Inv) + " m/s at " + (h.MaxGroupSpeedAt ?? "none") + ")");
                 Expect(_bhMaxSkips < 2 * CutPhysicsStep.VerifyAfterSkippedFrames, "[hull] the physics never stopped: the longest run of skipped frames " + _bhMaxSkips + " is under " + 2 * CutPhysicsStep.VerifyAfterSkippedFrames);

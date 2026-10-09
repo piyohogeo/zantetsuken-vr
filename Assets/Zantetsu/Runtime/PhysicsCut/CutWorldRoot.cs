@@ -239,6 +239,12 @@ namespace Zantetsu.PhysicsCut
             {
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + EmptyOwners.Describe(), this);
             }
+
+            if (Groups != null && Groups.Turns > 0)
+            {
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Groups.Describe(), this);
+                Groups.LogEvents();   // each collection, return and re-arming with its frame: kept until now, not written in its frame
+            }
         }
 
         private void OnDestroy()
@@ -287,9 +293,14 @@ namespace Zantetsu.PhysicsCut
                     Geometry?.ReclaimVertexRoom();
                 }
 
-                using (s_lifetimeMarker.Auto())
+                // The pieces' own lifetime, one at a time -- unless the groups' is on, which ends an NPC's pieces together
+                // (DESIGN 7.10): the two do not both act on the same pieces.
+                if (Groups == null || !Groups.Settings.enabled)
                 {
-                    Lifetime?.Step();
+                    using (s_lifetimeMarker.Auto())
+                    {
+                        Lifetime?.Step();
+                    }
                 }
 
                 // The trial rest's turn: before this frame's step, with the steps that happened since its last turn.
