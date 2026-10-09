@@ -116,7 +116,33 @@ int main(int argc, char** argv) {
     root->consumed=0;root->serial++;
     Event(GroupPrepareEvent,root);root->version=UINT32_MAX; // Retirement must not read abandoned managed memory.
     Retire(currentFrame.load());assert(preparedGroups.empty());
+    // The warm event keeps version 1 / existing header size. No resources, descriptors or draw commands.
+    static_assert(sizeof(ZvnDraw)==240,"warm does not change the draw ABI");
+    ZvnDraw warm{};warm.version=ZVN_CONTRACT_VERSION;warm.totalBytes=sizeof warm;warm.pipeline=100;warm.serial=200;
+    auto actualDraws=counters.drawsRecorded;refused=counters.drawsRefused;
+    Event(WarmPipelineEvent,&warm); // Valid header, but this probe has no Unity graphics device.
+    assert(warm.consumed==1 && warm.result==ZvnResult_NoCommandList && pipelines[100]->warmCalls==0);
+    warm.consumed=0;warm.serial++;warm.version=0;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_BadVersion);warm.version=ZVN_CONTRACT_VERSION;
+    warm.consumed=0;warm.serial++;warm.totalBytes=239;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_BadResource);warm.totalBytes=sizeof warm;
+    warm.consumed=0;warm.serial++;warm.commandCount=1;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_BadResource);warm.commandCount=0;
+    warm.consumed=0;warm.serial++;warm.argumentOffset=2;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_BadResource);warm.argumentOffset=1;
+    warm.consumed=0;warm.serial++;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_NoCommandList);warm.argumentOffset=0;
+    warm.consumed=0;warm.serial++;warm.resourceCount=1;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_BadResource);warm.resourceCount=0;
+    warm.consumed=0;warm.serial++;warm.pipeline=999;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_NoPipeline);warm.pipeline=100;
+    warm.consumed=0;warm.serial++;available=false;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==1 && warm.result==ZvnResult_NotAvailable);available=true;
+    assert(counters.drawsRecorded==actualDraws && counters.drawsRefused==refused && preparedDraws.empty() && preparedGroups.empty());
+    warm.consumed=0;warm.serial++;hold=true;Event(WarmPipelineEvent,&warm);
+    assert(warm.consumed==0 && held.size()==1);hold=false;
+    __atomic_store_n(&held.back()->consumed,1,__ATOMIC_RELEASE);held.clear();
     pipelines.erase(100);available=false;
-    std::printf("ABI / parser / malformed input / direct ranges / group overlap / paired preparation lifetime: passed\n");
+    std::printf("ABI / parser / malformed input / direct ranges / group overlap / paired preparation lifetime / warm event: passed\n");
     return 0;
 }

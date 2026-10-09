@@ -1,6 +1,10 @@
 #if DEBUG
 using System;
 using System.IO;
+#if UNITY_ANDROID && !UNITY_EDITOR
+using System.Collections;
+using UnityEngine.Networking;
+#endif
 using UnityEngine;
 
 namespace Zantetsu.Core
@@ -18,6 +22,7 @@ namespace Zantetsu.Core
             Application.quitting += StopSession;
             // SubsystemRegistration runs on every Play entry, including without Domain Reload.
             StopSession();
+#if !UNITY_ANDROID || UNITY_EDITOR
             try
             {
 #if UNITY_EDITOR
@@ -30,6 +35,7 @@ namespace Zantetsu.Core
                 DevelopmentLogger.Instance.StartSession(@"C:\log\zantetsuken-vr\logger", commit);
             }
             catch (Exception) { /* Optional diagnostics must not prevent Play/Player startup. */ }
+#endif
         }
 
         internal static bool IsCommit(string commit)
@@ -53,6 +59,57 @@ namespace Zantetsu.Core
             catch (Exception) { /* Frame sampling is optional too. */ }
         }
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private UnityWebRequest commitRequest;
+
+        // Android StreamingAssets lives inside the APK and must be read as a URI. The
+        // session remains unavailable until this asynchronous metadata read is validated.
+        private IEnumerator Start()
+        {
+            if (frameSampler != gameObject) yield break;
+            UnityWebRequestAsyncOperation metadata = null;
+            try
+            {
+                commitRequest = UnityWebRequest.Get(Path.Combine(Application.streamingAssetsPath, CommitFileName));
+                commitRequest.timeout = 10;
+                metadata = commitRequest.SendWebRequest();
+            }
+            catch (Exception) { ReleaseCommitRequest(); }
+            if (metadata == null) yield break;
+            yield return metadata;
+            try
+            {
+                if (commitRequest != null && frameSampler == gameObject && commitRequest.result == UnityWebRequest.Result.Success)
+                {
+                    string commit = commitRequest.downloadHandler.text.Trim();
+                    // The APK must contain its actual revision. Never substitute a missing or malformed value.
+                    if (IsCommit(commit))
+                    {
+                        string directory = Path.Combine(Application.persistentDataPath, "logger");
+                        DevelopmentLogger.Instance.StartSession(directory, commit);
+                        DevelopmentLogger.Instance.SetFrame(Time.frameCount);
+                        Debug.Log("Development Logger: session requested at " + directory + "; commit=" + commit);
+                    }
+                }
+            }
+            catch (Exception) { /* Optional diagnostics must not prevent Player startup. */ }
+            finally { ReleaseCommitRequest(); }
+        }
+
+        private void ReleaseCommitRequest()
+        {
+            UnityWebRequest request = commitRequest;
+            commitRequest = null;
+            if (request == null) return;
+            try { request.Abort(); }
+            catch (Exception) { }
+            try { request.Dispose(); }
+            catch (Exception) { }
+        }
+
+        private void OnDestroy() => ReleaseCommitRequest();
+#endif
+
         private void Update() => DevelopmentLogger.Instance.SetFrame(Time.frameCount);
         private static void StopSession()
         {
@@ -63,6 +120,9 @@ namespace Zantetsu.Core
             {
                 if (frameSampler != null)
                 {
+#if UNITY_ANDROID && !UNITY_EDITOR
+                    frameSampler.GetComponent<DevelopmentLoggerLifecycle>()?.ReleaseCommitRequest();
+#endif
 #if UNITY_EDITOR
                     DestroyImmediate(frameSampler);
 #else

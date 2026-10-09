@@ -445,7 +445,7 @@ namespace Zantetsu.MeshCut
         public readonly long generation;
     }
 
-    public sealed partial class VpLogicalCutDisplay : IDisposable, IVpGpuCullTarget, IVpNativeDrawHost
+    public sealed partial class VpLogicalCutDisplay : IDisposable, IVpGpuCullTarget, IVpNativeDrawHost, IVpNativeDrawWarmupHost
     {
         internal sealed class Shown
         {
@@ -4181,6 +4181,25 @@ namespace Zantetsu.MeshCut
         /// route's events may still name it when a new route has taken over (the drawing component disabled and
         /// enabled makes a new route while the old one's events can be unconsumed -- TL, 2026-10-08).
         /// </summary>
+        /// <summary>The actual culled material copies, for optional native startup preparation.</summary>
+        public void CopyNativePrewarmMaterials(List<Material> bodies, out Material shadow, out Material provisionalShadow)
+        {
+            if (bodies == null) throw new ArgumentNullException(nameof(bodies));
+            foreach (Material material in _materials.Values)
+                if (material != null && !bodies.Contains(material)) bodies.Add(material);
+            shadow = _shadowMaterial;
+            provisionalShadow = _provisionalShadowMaterial;
+        }
+
+        public void NativePrewarmBuffers(out VpIndexedIndirectDrawBatch batch, out VpGpuIndexedGeometryBuffers buffers)
+        {
+            batch = _batch;
+            buffers = _buffers;
+        }
+
+        /// <summary>Read-only access for the Quest startup's Unity procedural stencil preparation.</summary>
+        public VpStencilCapMaterials PrewarmStencilMaterials => _stencilMaterials;
+
         public IVpNativeDrawSink NativeDrawSink
         {
             get => _nativeDrawSink;

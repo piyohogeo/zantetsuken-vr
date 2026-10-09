@@ -8,6 +8,7 @@
 #include <android/log.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <map>
@@ -33,7 +34,7 @@ uint32_t regionCount = 8, regionBytes = 262144, regionDescriptors = 4096;
 bool available = false, featuresObserved = false, enabledMulti = false, enabledFirst = false, hold = false;
 PFN_vkGetInstanceProcAddr originalGipa = nullptr;
 PFN_vkCreateDevice originalCreateDevice = nullptr;
-int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6;
+int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6, WarmPipelineEvent = 7;
 std::vector<ZvnDraw*> held;
 VkPhysicalDeviceProperties properties{};
 
@@ -159,6 +160,8 @@ struct Pipeline {
     VkPipelineLayout layout=VK_NULL_HANDLE;
     std::map<std::pair<VkRenderPass,int>,VkPipeline> variants;
     uint64_t lastFrame=0;
+    uint64_t warmCalls=0, warmCreates=0, drawVariantHits=0, drawMissesAfterWarm=0;
+    uint32_t initialPrepareCalls=0, initialRecordCalls=0;
     bool released=false;
     void Destroy() {
         for(auto& entry:variants)vkDestroyPipeline(instance.device,entry.second,nullptr);
@@ -169,6 +172,27 @@ struct Pipeline {
         if(vertex)vkDestroyShaderModule(instance.device,vertex,nullptr);
         if(pixel)vkDestroyShaderModule(instance.device,pixel,nullptr);
     }
+};
+// Only the first two real preparations/records of each pipeline read the clock. Warm-only calls do not spend these probes.
+struct InitialTiming {
+    using Clock=std::chrono::steady_clock;
+    bool enabled;
+    const char* operation;
+    const ZvnDraw* draw;
+    const Pipeline& pipeline;
+    Clock::time_point start{},last{};
+    InitialTiming(bool enabled,const char* operation,const ZvnDraw* draw,const Pipeline& pipeline)
+        : enabled(enabled),operation(operation),draw(draw),pipeline(pipeline) { if(enabled)start=last=Clock::now(); }
+    void Log(const char* phase,double milliseconds) const {
+        if(milliseconds>5.0)__android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan",
+            "initial %s %s %.3f ms pipeline=%u serial=%u frame=%llu name=%s",operation,phase,milliseconds,
+            draw->pipeline,draw->serial,static_cast<unsigned long long>(currentFrame.load()),pipeline.desc.name);
+    }
+    void Stage(const char* phase) {
+        if(!enabled)return;
+        auto now=Clock::now();Log(phase,std::chrono::duration<double,std::milli>(now-last).count());last=now;
+    }
+    ~InitialTiming() { if(enabled){Stage("remaining");Log("total",std::chrono::duration<double,std::milli>(Clock::now()-start).count());} }
 };
 std::map<int,std::unique_ptr<Pipeline>> pipelines;
 int nextPipeline=0;
@@ -259,9 +283,10 @@ bool CreatePipeline(Pipeline& p,const ZvnPipelineDesc& desc) {
     VkPipelineLayoutCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};info.setLayoutCount=count;info.pSetLayouts=p.layouts.data();
     return Ok(vkCreatePipelineLayout(instance.device,&info,nullptr,&p.layout),"pipeline layout");
 }
-VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state) {
+VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state,bool warming=false) {
     const auto key=std::make_pair(state.renderPass,state.subPassIndex);
-    auto found=p.variants.find(key);if(found!=p.variants.end())return found->second;
+    auto found=p.variants.find(key);if(found!=p.variants.end()){if(!warming)p.drawVariantHits++;return found->second;}
+    if(!warming && p.warmCalls)p.drawMissesAfterWarm++;
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0]={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_VERTEX_BIT,p.vertex,"main",nullptr};
     stages[1]={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_FRAGMENT_BIT,p.pixel,"main",nullptr};
@@ -291,7 +316,7 @@ VkPipeline Variant(Pipeline& p,const UnityVulkanRecordingState& state) {
     info.pColorBlendState=&blend;info.pDynamicState=&dynamic;info.layout=p.layout;info.renderPass=state.renderPass;info.subpass=uint32_t(state.subPassIndex);
     VkPipeline pipeline=VK_NULL_HANDLE;
     if(!Ok(vkCreateGraphicsPipelines(instance.device,VK_NULL_HANDLE,1,&info,nullptr,&pipeline),"graphics pipeline"))return VK_NULL_HANDLE;
-    p.variants.emplace(key,pipeline);return pipeline;
+    p.variants.emplace(key,pipeline);if(warming)p.warmCreates++;return pipeline;
 }
 void Retire(uint64_t safe) {
     // Keys contain managed addresses, but retirement never dereferences them: the camera sentinel may
@@ -401,15 +426,18 @@ bool Buffer(void* pointer,VkPipelineStageFlags stage,VkAccessFlags access,UnityV
     return pointer && unity->AccessBuffer(pointer,stage,access,kUnityVulkanResourceAccess_PipelineBarrier,&buffer) && buffer.buffer;
 }
 bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
+    bool diagnose=pipeline.initialPrepareCalls<2;if(diagnose)pipeline.initialPrepareCalls++;
+    InitialTiming timing(diagnose,"Prepare",draw,pipeline);
     if(!Range(draw->resourcesOffset,draw->resourceCount,sizeof(ZvnResource),draw->totalBytes) ||
        !Range(draw->constantsOffset,draw->constantsCount,sizeof(ZvnConstants),draw->totalBytes)) {prepared.result=ZvnResult_BadResource;return false;}
-    unity->EnsureOutsideRenderPass();
+    unity->EnsureOutsideRenderPass();timing.Stage("EnsureOutside");
     UnityVulkanBuffer arguments{},indices{};
     bool direct=Direct(draw);
     if((!direct && (!Buffer(draw->argumentBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,VK_ACCESS_INDIRECT_COMMAND_READ_BIT,arguments) ||
         uint64_t(draw->argumentOffset)+uint64_t(draw->commandCount-1)*24+24>arguments.sizeInBytes)) ||
        !Buffer(draw->indexBuffer,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_INDEX_READ_BIT,indices) ||
        draw->indexBufferBytes>indices.sizeInBytes){Fail("invalid indirect or index buffer");prepared.result=ZvnResult_BadResource;return false;}
+    timing.Stage("AccessArgumentsIndex");
     if(direct) {
         const auto* extension=Extension(draw);
         const auto* commands=reinterpret_cast<const ZvnDirectCommand*>(reinterpret_cast<const char*>(draw)+extension->commandsOffset);
@@ -446,18 +474,22 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
             if(!success || !value.image.image){Fail(binding.name);prepared.result=ZvnResult_BadResource;return false;}
         }
     }
+    timing.Stage("AccessResources");
     UnityVulkanRecordingState state{};
     if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) || !state.commandBuffer) {
         Fail("no Unity Vulkan command buffer for preparation");prepared.result=ZvnResult_NoCommandList;return false;
     }
     currentFrame=state.currentFrameNumber;safeFrame=state.safeFrameNumber;Retire(state.safeFrameNumber);
+    timing.Stage("RecordingStateRetire");
     Region* region=RegionFor(state.currentFrameNumber,state.safeFrameNumber);
     if(!region){prepared.result=ZvnResult_RingFull;return false;}
+    timing.Stage("Region");
     std::vector<VkDescriptorSet> sets(pipeline.layouts.size());
     VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};allocate.descriptorPool=region->pool;
     allocate.descriptorSetCount=uint32_t(sets.size());allocate.pSetLayouts=pipeline.layouts.data();
     if(!Ok(vkAllocateDescriptorSets(instance.device,&allocate,sets.data()),"descriptor allocation")){prepared.result=ZvnResult_RingFull;return false;}
     region->sets+=uint32_t(sets.size());
+    timing.Stage("DescriptorAllocate");
     std::vector<VkWriteDescriptorSet> writes(pipeline.slots.size());
     std::vector<VkDescriptorBufferInfo> buffers(writes.size());std::vector<VkDescriptorImageInfo> images(writes.size());
     for(size_t i=0;i<writes.size();i++) {
@@ -490,22 +522,27 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
         }
     }
     vkUpdateDescriptorSets(instance.device,uint32_t(writes.size()),writes.data(),0,nullptr);counters.descriptorsWritten+=writes.size();
+    timing.Stage("DescriptorWrite");
     prepared.arguments=arguments;prepared.indices=indices;prepared.sets=std::move(sets);
     prepared.frame=state.currentFrameNumber;prepared.serial=draw->serial;prepared.pipeline=draw->pipeline;
     pipeline.lastFrame=state.currentFrameNumber;
     return true;
 }
 bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared,bool completion=true) {
+    bool diagnose=pipeline.initialRecordCalls<2;if(diagnose)pipeline.initialRecordCalls++;
+    InitialTiming timing(diagnose,"Record",draw,pipeline);
     auto refuse=[&](ZvnResult result){if(completion)Refuse(draw,result);else draw->result=result;return false;};
     if(prepared.result!=ZvnResult_Recorded)return refuse(prepared.result);
-    unity->EnsureInsideRenderPass();
+    unity->EnsureInsideRenderPass();timing.Stage("EnsureInside");
     UnityVulkanRecordingState state{};
     if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) ||
        !state.commandBuffer || !state.renderPass || state.subPassIndex<0 ||
        state.currentFrameNumber!=prepared.frame || draw->serial!=prepared.serial || draw->pipeline!=prepared.pipeline) {
         Fail("prepared Vulkan draw has no matching current render pass");return refuse(ZvnResult_NoCommandList);
     }
+    timing.Stage("RecordingState");
     VkPipeline vkPipeline=Variant(pipeline,state);if(!vkPipeline)return refuse(ZvnResult_NoPipeline);
+    timing.Stage("Variant");
     const auto& sets=prepared.sets;const auto& arguments=prepared.arguments;const auto& indices=prepared.indices;
     vkCmdBindPipeline(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,vkPipeline);
     vkCmdBindDescriptorSets(state.commandBuffer,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline.layout,0,uint32_t(sets.size()),sets.data(),0,nullptr);
@@ -528,6 +565,7 @@ bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared,bool c
             counters.drawsRecorded++;counters.commandsRecorded+=count;start+=count;
         }
     }
+    timing.Stage("BindDraw");
     pipeline.lastFrame=state.currentFrameNumber;if(completion)Consume(draw,ZvnResult_Recorded);else draw->result=ZvnResult_Recorded;return true;
 }
 void GroupEvent(int id,ZvnDraw* root) {
@@ -577,9 +615,32 @@ void GroupEvent(int id,ZvnDraw* root) {
     // A failed preparation still leaves the root unconsumed until its queued draw or camera sentinel.
     preparedGroups[key]=std::move(prepared);
 }
+// Separate optional event: the existing Draw / Direct / Group headers and version stay unchanged.
+// Its resource-free header uses the existing managed ring ownership and consumption protocol.
+void WarmPipeline(ZvnDraw* draw) {
+    if(draw->version!=ZVN_CONTRACT_VERSION){Consume(draw,ZvnResult_BadVersion);return;}
+    if(draw->totalBytes<sizeof(ZvnDraw) || draw->resourceCount || draw->constantsCount || draw->commandCount ||
+       draw->argumentBuffer || draw->indexBuffer || draw->argumentOffset>1){Consume(draw,ZvnResult_BadResource);return;}
+    if(!available){Consume(draw,ZvnResult_NotAvailable);return;}
+    auto found=pipelines.find(int(draw->pipeline));
+    if(found==pipelines.end() || found->second->released){Consume(draw,ZvnResult_NoPipeline);return;}
+    if(!unity || !instance.device){Consume(draw,ZvnResult_NoCommandList);return;}
+    // Casters and AppSW normally prepare outside and resume with LOAD. Match that render-pass variant.
+    // Colour's prepared events stay in URP's existing opaque pass, so their warm headers leave it open.
+    if(draw->argumentOffset)unity->EnsureOutsideRenderPass();
+    unity->EnsureInsideRenderPass();
+    UnityVulkanRecordingState state{};
+    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) ||
+       !state.commandBuffer || !state.renderPass || state.subPassIndex<0){Consume(draw,ZvnResult_NoCommandList);return;}
+    Pipeline& pipeline=*found->second;pipeline.warmCalls++;
+    VkPipeline variant=Variant(pipeline,state,true);
+    if(variant)pipeline.lastFrame=state.currentFrameNumber;
+    Consume(draw,variant?ZvnResult_Recorded:ZvnResult_NoPipeline);
+}
 void UNITY_INTERFACE_API Event(int id,void* data) {
     std::lock_guard<std::mutex> lock(gate);auto* draw=static_cast<ZvnDraw*>(data);if(!draw)return;
     if(id==SentinelEvent){counters.sentinelsRun++;Consume(draw,ZvnResult_Recorded);return;}
+    if(id==WarmPipelineEvent){WarmPipeline(draw);return;}
     if(id==GroupPrepareEvent || id==GroupPreparedEvent){GroupEvent(id,draw);return;}
     if(id!=DrawEvent && id!=PrepareEvent && id!=PreparedDrawEvent)return;
     const auto key=std::make_pair(draw,draw->serial);
@@ -611,6 +672,9 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
         unity->ConfigureEvent(PreparedDrawEvent,&config);
         unity->ConfigureEvent(GroupPreparedEvent,&config);
+        UnityVulkanPluginEventConfig warmConfig{kUnityVulkanRenderPass_DontCare,kUnityVulkanGraphicsQueueAccess_DontCare,
+            kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
+        unity->ConfigureEvent(WarmPipelineEvent,&warmConfig);
         // The combined path prepares resources before it enters a pass. Entering in the precondition
         // would create an empty pass which Prepare immediately ends again.
         config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;
@@ -636,8 +700,8 @@ void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     graphics=interfaces->Get<IUnityGraphics>();unity=interfaces->Get<IUnityGraphicsVulkanV2>();
     if(!graphics || !unity){Fail("Unity Vulkan V2 interface missing");return;}
     unity->AddInterceptInitialization(Intercept,nullptr,0);
-    DrawEvent = graphics->ReserveEventIDRange(6);
-    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;GroupPrepareEvent = DrawEvent + 4;GroupPreparedEvent = DrawEvent + 5;
+    DrawEvent = graphics->ReserveEventIDRange(7);
+    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;GroupPrepareEvent = DrawEvent + 4;GroupPreparedEvent = DrawEvent + 5;WarmPipelineEvent = DrawEvent + 6;
     graphics->RegisterDeviceEventCallback(Device);
     if(graphics->GetRenderer()==kUnityGfxRendererVulkan)Device(kUnityGfxDeviceEventInitialize);
 }
@@ -666,9 +730,15 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnCreatePipeline(const ZvnPipeli
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnReleasePipeline(int id){std::lock_guard<std::mutex> lock(gate);auto p=pipelines.find(id);if(p!=pipelines.end())p->second->released=true;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDescribePipeline(int id,char* out,int bytes) {
     std::lock_guard<std::mutex> lock(gate);auto p=pipelines.find(id);
-    return Text(p==pipelines.end()?"missing pipeline":std::string(p->second->desc.name)+" SPIR-V descriptors="+std::to_string(p->second->slots.size()),out,bytes);
+    if(p==pipelines.end())return Text("missing pipeline",out,bytes);
+    const auto& value=*p->second;
+    return Text(std::string(value.desc.name)+" SPIR-V descriptors="+std::to_string(value.slots.size())+
+        " variants="+std::to_string(value.variants.size())+" warmCalls="+std::to_string(value.warmCalls)+
+        " warmCreates="+std::to_string(value.warmCreates)+" drawVariantHits="+std::to_string(value.drawVariantHits)+
+        " drawMissesAfterWarm="+std::to_string(value.drawMissesAfterWarm),out,bytes);
 }
 UnityRenderingEventAndData UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetRenderEventAndDataFunc(){return Event;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnWarmPipelineEventId(){return WarmPipelineEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDrawEventId(){return DrawEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSentinelEventId(){return SentinelEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPrepareEventId(){return PrepareEvent;}

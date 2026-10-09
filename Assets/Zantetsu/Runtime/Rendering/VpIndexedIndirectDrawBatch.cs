@@ -1390,8 +1390,13 @@ namespace Zantetsu.Rendering
         /// Every uploaded command's arguments are written, whatever was kept. With no command uploaded there is nothing
         /// to draw and nothing is issued. The conditions are copied as they are now.
         /// </para>
+        /// <para>
+        /// Startup may opt into <paramref name="warmEmpty"/> to dispatch one group when CommandCount is zero.
+        /// The existing, nonempty buffers remain bound, and CullCommands returns before reading or writing them.
+        /// This prepares the compute pipeline without uploading commands or changing draw arguments.
+        /// </para>
         /// </summary>
-        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions, bool excludeClipped = false)
+        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions, bool excludeClipped = false, bool warmEmpty = false)
         {
             ThrowIfDisposed();
             ThrowIfNotCulled();
@@ -1406,7 +1411,7 @@ namespace Zantetsu.Rendering
             }
 
             CullView target = View(view);
-            if (CommandCount == 0)
+            if (CommandCount == 0 && !warmEmpty)
             {
                 return;
             }
@@ -1432,7 +1437,7 @@ namespace Zantetsu.Rendering
             commands.SetComputeBufferParam(shader, kernel, ForwardArgumentsId, target.forwardArguments);
             commands.SetComputeBufferParam(shader, kernel, ShadowVisibleId, target.shadowVisible);
             commands.SetComputeBufferParam(shader, kernel, ShadowArgumentsId, target.shadowArguments);
-            commands.DispatchCompute(shader, kernel, (CommandCount + 63) / 64, 1, 1);
+            commands.DispatchCompute(shader, kernel, Math.Max(1, (CommandCount + 63) / 64), 1, 1);
             CullDispatches++;
         }
 
