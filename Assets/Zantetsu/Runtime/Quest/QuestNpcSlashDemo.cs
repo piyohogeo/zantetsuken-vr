@@ -30,8 +30,8 @@ namespace Zantetsu.Quest
             public string mode = "vp3c-native";
             public bool appSw = true;
             public string appSpacePoseMode = "tracking-origin"; // Camera pose is retained only for the controlled comparison.
-            public bool appSwDistanceExperiment = false;
-            public float appSwFarMeters = 0f;
+            public bool appSwDistanceExperiment = true;
+            public float appSwFarMeters = 30f;
             public string appSwFixedView = "off";
             public bool profiler = true;
             public bool prewarm = true;
@@ -132,9 +132,9 @@ namespace Zantetsu.Quest
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline) || pipeline.name != "Quest_RPAsset")
             { Fail("Quest_RPAsset is required"); yield break; }
             ApplyNativeOptions(_config);
-            if (_config.appSwDistanceExperiment)
+            if (_config.appSw && _config.appSwDistanceExperiment)
             {
-                if (!_config.appSw || _config.mode != "vp3c-native") { Fail("distance experiment requires AppSW and vp3c-native"); yield break; }
+                if (_config.mode != "vp3c-native") { Fail("distance experiment requires AppSW and vp3c-native"); yield break; }
                 _distanceSetup = new QuestAppSwDistanceSetup(_camera, _config.appSwFarMeters, _config.appSwFixedView, Application.persistentDataPath);
             }
             QualitySettings.vSyncCount = 0;
