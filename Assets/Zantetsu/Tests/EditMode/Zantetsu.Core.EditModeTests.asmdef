@@ -16,6 +16,7 @@
         "Zantetsu.MeshCut.ReferenceIntake",
         "Zantetsu.Sandbox",
         "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Editor",
         "Unity.XR.Management",
         "Unity.XR.Management.Editor",
         "Unity.XR.OpenXR"

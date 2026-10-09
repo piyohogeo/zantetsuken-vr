@@ -574,6 +574,23 @@ Geometry Commit前は仮断面、Commit後は計算経路によらず実断面�
 
 計算経路、待機、Reject／Fallback理由、Physics状態の詳細は既存Trace／Profilerで確認し、断面色へ割り当てない。断面専用の点滅・縞・縁取り、常時テキスト、固定パネル、色覚補助表示、公開schema・状態機械を追加しない。Exact RGB、色遷移Animation、表示保持時間は固定しない。
 
+#### 5.3.1 通常のUnity Meshの遠方Fog
+
+遠方のUnity Meshを背景のSkyboxへつなげるため、`Zantetsu/VP Mesh Surface` の前方描画Passだけが、照明の後にリニアFogを合成する（`VpSkyFog.hlsl`、`VpSkyFog.cs`）。5.3の共通照明にはFogを入れない（上の「含めないもの」のとおり）。切断表示の本体、実Cap、仮Cap、どの描画経路（VP3／VP3C／ネイティブ）にもFogは掛からない。したがって、物体は切断前にはFogが掛かり、切断後には掛からない。これはこの範囲の制限として残す。影・Motion・Stencilの各PassにもFogは無い。
+
+```
+fog   = saturate((viewDepth - 0.7 × Far) / (0.3 × Far))
+色    = lerp(照明済みの表面色, Fog色, fog)
+```
+
+- **係数。** 視点空間の奥行き（眼からの距離ではない）で決める。Farの7割で0、Farで1。Farは描画中のカメラのもので、パイプラインがカメラごとに設定する定数（`_ProjectionParams.z`）をそのまま読む。Fogのために、カメラ・フレーム・Renderer・Materialごとに書く定数は無い。
+- **Fog色。** 眼から面へ向かうワールド方向で、Skyboxだけを焼いた小さなcubemapのMip 0を1回サンプルする。法線や反射方向ではない。材質の色倍率、照明、影、Reflection Intensityを掛けない。背景と同じ段階のリニア色で、その後の後処理は表面と同じに受ける。
+- **Single Pass Instanced。** 奥行き、眼の位置、Farは、照明と同じ眼別の定数から取る。
+- **起動時に1回。** cubemapとスイッチ（有り＝1）をGlobal Shader Constantとして、プレイ開始時に1回だけ設定する。cubemapがビルドに無い場合はスイッチが0になり、従来どおり描く（エラーとして1度出す。Fog有りとは扱わない）。比較のために、起動引数 `-zantetsuNoSkyFog` でFog無しにできる。
+- **cubemap。** 1面128×128、`RGBAHalf` のリニアHDR値、Mipなし（`Resources/VpSkyFog/VpSkyFog.asset`）。値は焼いたときのままで、符号化も畳み込みもしないので、シェーダーは復号も露出の掛け直しもしない。焼くのはEditorの `VpSkyFogBake`：製品シーンのSkyboxを、シーンの上空2 km・Far 1 kmのカメラで、HDR・MSAAなし・後処理なしで6面に描き、半精度のまま読み戻す。同じ6面を単色の背景でも描き、単色以外の画素が無いこと（シーンの形状が入っていないこと）を確かめる。Skyboxの回転・露出は材質の値として、太陽はシーンの光として、描画にそのまま反映される。
+- **Skyboxは固定。** 実行中にcubemapを作り直す仕組みは無い。Skyboxの材質やその値、太陽（向き・色・強さ）、Skyboxが読む環境設定を変えたら、製品シーンを開いてメニュー `Zantetsu/Rendering/Bake Sky Fog Cubemap`、またはバッチの `-executeMethod Zantetsu.EditorTools.Rendering.VpSkyFogBake.Batch -zantetsuSkyFogScene <シーン> -zantetsuSkyFogRecord <記録の出力先>` で焼き直す。焼いた条件は記録（`sky-fog-bake.txt`）に出る。
+- **残る差。** cubemapの1画素は約0.7度である。Skyboxの色が急に変わる所（地平線の上下2度ほど、太陽の円盤）では、Fog色は背景をなめらかにした色になる。Farの直前（最後の0.1%ほど）のMeshは、Skybox自身が上に描かれる。
+
 ### 5.4 即時切断中のShadow Map
 
 影はRealtime Shadow Mapを使用する。即時切断中の論理破片はShadowCaster PassでもカラーPassと同じper-instance切断平面と論理破片Sideを適用する。一方、Shadow Mapには色付き断面を描く必要がないため、Stencilによる仮断面キャップは生成せず、ShadowCasterだけを両面描画して開口の奥にある外殻裏面を遮蔽面として使用する。
