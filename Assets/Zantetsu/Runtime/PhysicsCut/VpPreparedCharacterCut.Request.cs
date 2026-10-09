@@ -364,6 +364,8 @@ namespace Zantetsu.PhysicsCut
                 }
                 // The pieces this character's cuts leave are the lifetime's (DESIGN 7.10); the character itself never is.
                 world.Lifetime?.MarkLineage(Source);
+                // And one group, this individual's: ended whole when its turn comes, nothing of it brought back (Phase 7.1).
+                world.Groups?.Register(Source,null);
                 taken=physics.TakeShape();
                 PhysicsFragmentOwner owner;
                 try { owner=world.Owners.RegisterAuthored(Source,actor,actorBody,taken,false,Matrix4x4.identity); }

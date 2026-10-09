@@ -250,6 +250,8 @@ namespace Zantetsu.Sandbox
                 {
                     // A cut target only: its convexes (and a prop's, posed and cooked once) at the instance as placed, nothing in the world.
                     Candidate = new PlacedCuttableCandidate(world, data, target, instanceRenderers, instanceColliders, mass);
+                    // When its pieces are collected and it is an uncut target again (DESIGN 7.10): given to the detector again, as here.
+                    Candidate.Rearmed = AddToDetectorAgain;
                     // Whether its placement is told (DESIGN 19.1.7, D-192): only when whoever placed it undertook so.
                     // That it is not cut yet, or has no body, is no ground for it -- and a body on it or above it moves
                     // it without a word (the simulation, or whatever drives a kinematic one), whatever was undertaken.
@@ -294,6 +296,28 @@ namespace Zantetsu.Sandbox
             }
 
             enabled = false;
+        }
+
+        // The instance is a cut target again after its pieces were collected: the detector let it go when its cut went
+        // on, so it is added again, the way it was added first -- found by its box when its placement is told.
+        private void AddToDetectorAgain(PlacedCuttableCandidate candidate)
+        {
+            if (_detector == null || !ReferenceEquals(candidate, Candidate))
+            {
+                return;
+            }
+
+            if (PlacementTold)
+            {
+                _detector.AddPlacedStanding(candidate);
+            }
+            else
+            {
+                _detector.AddPlaced(candidate);
+            }
+
+            // No line here: this runs in a frame of the walk, and the group collection keeps the event (its frame and
+            // its time) for the world's end.
         }
 
         private void OnDestroy()

@@ -117,6 +117,7 @@ namespace Zantetsu.Sandbox
                 public int fastFrame = -1;
                 public bool anchored, kinematicAlways = true;
                 public bool collectedEmpty;
+                public bool collectedGroup;   // retired with its whole group by the fragment group collection (observed at the owner's retirement)
                 public Vector3 firstCentre;
                 public float maxDisplacement, maxSpeed;
                 public int firstFrame, lastFrame;
@@ -240,6 +241,15 @@ namespace Zantetsu.Sandbox
                     && _world.Geometry.HasNoGeometry(fragment) && _pcPieces.TryGetValue(fragment, out PlayablePiece piece))
                 {
                     piece.collectedEmpty = true;
+                }
+
+                // The same for a piece that goes with its whole group (DESIGN 7.10): observed here, at this retirement,
+                // while the group collection names the group it is retiring -- the piece's own family, read from the ledger.
+                if (_world.Groups != null && _world.Groups.RetiringRoot.IsSet
+                    && _world.Ledger.TryGetRoot(fragment, out LogicalFragmentId root) && root == _world.Groups.RetiringRoot
+                    && _pcPieces.TryGetValue(fragment, out PlayablePiece grouped))
+                {
+                    grouped.collectedGroup = true;
                 }
             }
 
@@ -454,17 +464,18 @@ namespace Zantetsu.Sandbox
                     List<KeyValuePair<LogicalFragmentId, PlayablePiece>> pieces = _pcPieces.Where(p => p.Value.kind == kind).ToList();
                     List<PlayablePiece> anchored = pieces.Where(p => p.Value.anchored).Select(p => p.Value).ToList();
                     List<PlayablePiece> free = pieces.Where(p => !p.Value.anchored).Select(p => p.Value).ToList();
-                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key) && !p.Value.collectedEmpty);
+                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key) && !p.Value.collectedEmpty && !p.Value.collectedGroup);
                     int collectedEmpty = pieces.Count(p => !live.Contains(p.Key) && p.Value.collectedEmpty);
+                    int collectedGroup = pieces.Count(p => !live.Contains(p.Key) && p.Value.collectedGroup);
                     Log("playable city " + kind + " pieces: seen " + pieces.Count + ", anchored " + anchored.Count + " (all kinematic "
                         + anchored.All(p => p.kinematicAlways) + ", max displacement " + (anchored.Count > 0 ? anchored.Max(p => p.maxDisplacement) : 0f).ToString("F4", Inv)
                         + " m), free " + free.Count + " (dynamic " + free.Count(p => !p.kinematicAlways) + ", max displacement "
                         + (free.Count > 0 ? free.Max(p => p.maxDisplacement) : 0f).ToString("F2", Inv) + " m, max speed "
                         + (free.Count > 0 ? free.Max(p => p.maxSpeed) : 0f).ToString("F2", Inv) + " m/s), live at the end " + pieces.Count(p => live.Contains(p.Key))
-                        + ", collected settled-empty " + collectedEmpty + ", gone without a cut or collection " + gone);
+                        + ", collected settled-empty " + collectedEmpty + ", collected with their group " + collectedGroup + ", gone without a cut or collection " + gone);
                     Expect(anchored.All(p => p.kinematicAlways && p.maxDisplacement < 0.001f), "[scenario] every anchored " + kind + " piece stayed kinematic where it was made");
                     Expect(free.Count == 0 || free.All(p => !p.kinematicAlways), "[scenario] every free " + kind + " piece is dynamic");
-                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut or settled-empty collection (" + gone + ")");
+                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut, a settled-empty collection or its group's collection (" + gone + ")");
                 }
 
                 // Each window's plan cycles (TL, 2026-09-30: a window open to the run's end had no cycle after it, and its gap was
