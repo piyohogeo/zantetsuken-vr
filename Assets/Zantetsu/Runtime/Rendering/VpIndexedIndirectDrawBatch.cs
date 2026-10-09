@@ -349,6 +349,559 @@ namespace Zantetsu.Rendering
         /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
         public bool NativeArguments => _cull != null && _cull.NativeArguments;
 
+        // ---- the clip list (DESIGN 4.5.9) ----------------------------------------------------------------------
+        // The clipped instances of a batch that selects on the GPU are drawn apart from the selection, so that the
+        // selection's own draws need no clip at all: the owner tells the selection to leave them out
+        // (IssueCull's excludeClipped) and gives them here as a list, one argument entry an instance, which is
+        // drawn by the variant that reads no selection -- the instance's transform and clip record from the very
+        // buffers the selection's draws read, so a clipped instance that only moves needs nothing sent for it.
+        //
+        // The plugin's draw (Direct3D 12) reads ONE pair of argument buffers, written when the list is given and not
+        // again: which entries a camera keeps is settled by which runs of them are issued. Unity's own draw cannot
+        // leave a command out once it is registered, so there the entries are kept A VIEW EACH (a camera's, as the
+        // selection's results are): that view's selection writes an instance count of zero into the entries it does
+        // not keep (WriteClipSelection), and no other camera's writing reaches them.
+        private GraphicsBuffer _clipForwardArguments;
+        private GraphicsBuffer _clipShadowArguments;
+
+        // Unity's draw only: the bounds of each entry's command in the geometry's own frame (VpCullCommand records,
+        // read by the entry's number), for the shadow draw's per-slice judgement. Sent with the list, not when an
+        // entry moves: the transform is read from the instance buffer.
+        private GraphicsBuffer _clipBounds;
+        private ClipView[] _clipViews;
+        private ClipEntry[] _clipList = Array.Empty<ClipEntry>();
+        private int _clipListSerial;
+
+        private sealed class ClipView
+        {
+            public GraphicsBuffer forward, shadow;
+            public uint[] forwardWords = Array.Empty<uint>(), shadowWords = Array.Empty<uint>();
+
+            // What the buffers hold now, an entry: bit 0 the body drawn, bit 1 the caster drawn.
+            public byte[] written = Array.Empty<byte>();
+            public int serial = -1;
+        }
+
+        /// <summary>
+        /// One entry of the clip list: a clipped instance, by the index range of its command, the number of its instance
+        /// record and its command's bounds in the geometry's own frame.
+        /// </summary>
+        public readonly struct ClipEntry
+        {
+            public readonly VpGeometryRange range;
+            public readonly int instance;
+            public readonly Bounds localBounds;
+
+            public ClipEntry(VpGeometryRange range, int instance, Bounds localBounds = default)
+            {
+                this.range = range;
+                this.instance = instance;
+                this.localBounds = localBounds;
+            }
+        }
+
+        /// <summary>How many entries the clip list holds now; zero until one is uploaded, and after an empty one.</summary>
+        public int ClipEntryCount { get; private set; }
+
+        /// <summary>Whether the clip list's forward entries hold two physical instances an entry (see <see cref="SinglePassInstanced"/>).</summary>
+        public bool ClipEntriesSinglePassInstanced { get; private set; }
+
+        /// <summary>Raised by every upload of the clip list, for a reader that keeps the native pointer (DESIGN 4.5.8).</summary>
+        public uint ClipArgumentGeneration { get; private set; }
+
+        /// <summary>Observation: how many times a clip list was given to the GPU. An empty list sends nothing.</summary>
+        public long ClipArgumentUploads { get; private set; }
+
+        /// <summary>
+        /// Observation: how many writes of clip list data were made to the GPU -- the list's own (the plugin's two
+        /// argument buffers, or the bounds of Unity's), a view's entries written whole, and a view's entries written
+        /// again by its selection -- and the bytes of them all.
+        /// </summary>
+        public long ClipArgumentWrites { get; private set; }
+        public long ClipArgumentBytes { get; private set; }
+
+        /// <summary>Observation: of those, the writes a view's selection made (<see cref="WriteClipSelection"/>).</summary>
+        public long ClipSelectionWrites { get; private set; }
+
+        /// <summary>Observation: of those, the writes that put a view's entries back whole before a frame's selection (<see cref="RestoreClipEntries"/>).</summary>
+        public long ClipRestoreWrites { get; private set; }
+
+        /// <summary>
+        /// Takes the clip list: <paramref name="count"/> entries, each the index range of its command and the
+        /// number of its instance record. The forward entry of an instance draws one physical instance, or two under
+        /// Single Pass Instanced, starting at the instance's own record (times two); the shadow entry draws the one
+        /// logical instance, as the shadow arguments always do. An entry is Unity's five arguments, or -- for a batch
+        /// the plugin draws -- its own number in this list and then the five (the entry is read by that number).
+        /// The buffers are made at the first non-empty list, for as many entries as the batch holds instances, and
+        /// are the batch's until it ends. An empty list makes nothing, sends nothing and draws nothing.
+        /// <para>
+        /// For the plugin the two argument buffers are written here. For Unity's draw the entries' bounds are written
+        /// here and each view's arguments when that view next draws the list (see the notes above).
+        /// </para>
+        /// </summary>
+        public void UploadClipEntries(ClipEntry[] entries, int count)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (count < 0 || (count > 0 && (entries == null || count > entries.Length)) || count > InstanceCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count), count, "The clip list must be within the entries given and the batch's instances.");
+            }
+
+            for (int k = 0; k < count; k++)
+            {
+                if (entries[k].instance < 0 || entries[k].instance >= InstanceCount)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(entries), entries[k].instance, "A clip entry names an instance the batch does not hold.");
+                }
+            }
+
+            ClipEntryCount = count;
+            ClipEntriesSinglePassInstanced = SinglePassInstanced;
+            _clipListSerial++;
+            if (count == 0)
+            {
+                return;
+            }
+
+            if (_clipList.Length < count)
+            {
+                _clipList = new ClipEntry[Math.Max(count, Math.Max(16, _clipList.Length * 2))];
+            }
+
+            Array.Copy(entries, _clipList, count);
+            int stride = _cull.ArgumentStride;
+            if (_cull.NativeArguments)
+            {
+                if (_clipForwardArguments == null)
+                {
+                    MakeClipArguments(out _clipForwardArguments, out _clipShadowArguments, "VP Clip List");
+                }
+
+                int words = stride / sizeof(uint);
+                var forwardWords = new NativeArray<uint>(count * words, Allocator.Temp, NativeArrayOptions.ClearMemory);
+                var shadowWords = new NativeArray<uint>(count * words, Allocator.Temp, NativeArrayOptions.ClearMemory);
+                try
+                {
+                    uint multiplier = SinglePassInstanced ? 2u : 1u;
+                    for (int k = 0; k < count; k++)
+                    {
+                        ClipEntry entry = entries[k];
+                        int at = k * words;
+
+                        // The plugin's entry begins with the number its shader reads the entry back by.
+                        forwardWords[at] = (uint)k;
+                        shadowWords[at] = (uint)k;
+                        at++;
+                        forwardWords[at] = (uint)entry.range.indexCount;
+                        forwardWords[at + 1] = multiplier;
+                        forwardWords[at + 2] = (uint)entry.range.indexStart;
+                        forwardWords[at + 3] = 0u;
+                        forwardWords[at + 4] = (uint)entry.instance * multiplier;
+                        shadowWords[at] = (uint)entry.range.indexCount;
+                        shadowWords[at + 1] = 1u;
+                        shadowWords[at + 2] = (uint)entry.range.indexStart;
+                        shadowWords[at + 3] = 0u;
+                        shadowWords[at + 4] = (uint)entry.instance;
+                    }
+
+                    _clipForwardArguments.SetData(forwardWords, 0, 0, count * words);
+                    _clipShadowArguments.SetData(shadowWords, 0, 0, count * words);
+                }
+                finally
+                {
+                    forwardWords.Dispose();
+                    shadowWords.Dispose();
+                }
+
+                ClipArgumentWrites += 2;
+                ClipArgumentBytes += 2L * count * stride;
+            }
+            else
+            {
+                if (_clipBounds == null)
+                {
+                    _clipBounds = new GraphicsBuffer(GraphicsBuffer.Target.Structured, InstanceCapacity, VpCullCommand.Stride) { name = "VP Clip List Bounds" };
+                }
+
+                var bounds = new NativeArray<VpCullCommand>(count, Allocator.Temp, NativeArrayOptions.ClearMemory);
+                try
+                {
+                    for (int k = 0; k < count; k++)
+                    {
+                        ClipEntry entry = entries[k];
+                        bounds[k] = new VpCullCommand
+                        {
+                            indexCount = (uint)entry.range.indexCount,
+                            startIndex = (uint)entry.range.indexStart,
+                            startInstance = (uint)entry.instance,
+                            instanceCount = 1u,
+                            centre = entry.localBounds.center,
+                            extents = entry.localBounds.extents,
+                        };
+                    }
+
+                    _clipBounds.SetData(bounds, 0, 0, count);
+                }
+                finally
+                {
+                    bounds.Dispose();
+                }
+
+                ClipArgumentWrites++;
+                ClipArgumentBytes += (long)count * VpCullCommand.Stride;
+            }
+
+            ClipArgumentGeneration++;
+            ClipArgumentUploads++;
+        }
+
+        private void MakeClipArguments(out GraphicsBuffer forward, out GraphicsBuffer shadow, string name)
+        {
+            forward = null;
+            shadow = null;
+            GraphicsBuffer made = null;
+            try
+            {
+                made = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride) { name = name + " Forward Arguments" };
+                shadow = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride) { name = name + " Shadow Arguments" };
+                forward = made;
+            }
+            catch
+            {
+                made?.Dispose();
+                throw;
+            }
+        }
+
+        // Unity's draw: view <paramref name="view"/>'s entries hold the list given last, every entry drawn, unless they
+        // already hold it (with whatever that view's selection wrote since). Written at once, when the view's draws
+        // are registered, so that a draw whose selection is never issued still reads entries of this list.
+        private ClipView EnsureClipView(int view)
+        {
+            if (_cull.NativeArguments)
+            {
+                throw new InvalidOperationException("this batch writes the plugin's argument entries; Unity's own draw cannot read them");
+            }
+
+            if (view < 0 || view >= _cull.ViewCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(view), view, "The view must be one of the selection's.");
+            }
+
+            _clipViews ??= new ClipView[_cull.ViewCapacity];
+            ClipView slot = _clipViews[view] ??= new ClipView();
+            int count = ClipEntryCount;
+            if (slot.serial == _clipListSerial || count == 0)
+            {
+                return slot;
+            }
+
+            if (slot.forward == null)
+            {
+                MakeClipArguments(out slot.forward, out slot.shadow, "VP Clip List View " + view);
+            }
+
+            const int words = VpGpuCullSetup.UnityArgumentStride / sizeof(uint);
+            if (slot.forwardWords.Length < count * words)
+            {
+                int room = Math.Max(count, Math.Max(16, slot.written.Length * 2));
+                slot.forwardWords = new uint[room * words];
+                slot.shadowWords = new uint[room * words];
+                slot.written = new byte[room];
+            }
+
+            uint multiplier = ClipEntriesSinglePassInstanced ? 2u : 1u;
+            for (int k = 0; k < count; k++)
+            {
+                ClipEntry entry = _clipList[k];
+                int at = k * words;
+                slot.forwardWords[at] = (uint)entry.range.indexCount;
+                slot.forwardWords[at + 1] = multiplier;
+                slot.forwardWords[at + 2] = (uint)entry.range.indexStart;
+                slot.forwardWords[at + 3] = 0u;
+                slot.forwardWords[at + 4] = (uint)entry.instance * multiplier;
+                slot.shadowWords[at] = (uint)entry.range.indexCount;
+                slot.shadowWords[at + 1] = 1u;
+                slot.shadowWords[at + 2] = (uint)entry.range.indexStart;
+                slot.shadowWords[at + 3] = 0u;
+                slot.shadowWords[at + 4] = (uint)entry.instance;
+                slot.written[k] = 3;
+            }
+
+            slot.forward.SetData(slot.forwardWords, 0, 0, count * words);
+            slot.shadow.SetData(slot.shadowWords, 0, 0, count * words);
+            slot.serial = _clipListSerial;
+            ClipArgumentWrites += 2;
+            ClipArgumentBytes += 2L * count * VpGpuCullSetup.UnityArgumentStride;
+            return slot;
+        }
+
+        /// <summary>
+        /// Unity's draw: view <paramref name="view"/>'s entries drawn whole again -- every entry with its instance
+        /// count -- before the draws of a new frame are registered for that view. **A frame with no selection keeps
+        /// everything, in the entries themselves**: what an earlier frame's selection wrote zero does not outlast that
+        /// frame; a selection issued for this frame writes its zeros again after this (<see cref="WriteClipSelection"/>).
+        /// Written at once, as the view's entries are when it first draws a list. Nothing is written when no entry
+        /// holds a zero. A batch the plugin draws has nothing to put back. Returns the bytes written.
+        /// </summary>
+        public int RestoreClipEntries(int view)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            int count = ClipEntryCount;
+            if (_cull.NativeArguments || count == 0)
+            {
+                return 0;
+            }
+
+            ClipView slot = EnsureClipView(view);
+            const int words = VpGpuCullSetup.UnityArgumentStride / sizeof(uint);
+            uint multiplier = ClipEntriesSinglePassInstanced ? 2u : 1u;
+            bool forwardChanged = false, shadowChanged = false;
+            for (int k = 0; k < count; k++)
+            {
+                byte held = slot.written[k];
+                if ((held & 1) == 0)
+                {
+                    slot.forwardWords[k * words + 1] = multiplier;
+                    forwardChanged = true;
+                }
+
+                if ((held & 2) == 0)
+                {
+                    slot.shadowWords[k * words + 1] = 1u;
+                    shadowChanged = true;
+                }
+
+                slot.written[k] = 3;
+            }
+
+            int bytes = 0;
+            if (forwardChanged)
+            {
+                slot.forward.SetData(slot.forwardWords, 0, 0, count * words);
+                bytes += count * VpGpuCullSetup.UnityArgumentStride;
+                ClipArgumentWrites++;
+                ClipRestoreWrites++;
+            }
+
+            if (shadowChanged)
+            {
+                slot.shadow.SetData(slot.shadowWords, 0, 0, count * words);
+                bytes += count * VpGpuCullSetup.UnityArgumentStride;
+                ClipArgumentWrites++;
+                ClipRestoreWrites++;
+            }
+
+            ClipArgumentBytes += bytes;
+            return bytes;
+        }
+
+        /// <summary>
+        /// Unity's draw: writes into view <paramref name="view"/>'s entries what <paramref name="selection"/> keeps for
+        /// that view's camera -- the instance count of an entry whose body is not kept, and of an entry that casts into
+        /// no slice, is zero; an entry kept again has its count back. The write is put into
+        /// <paramref name="commands"/>, the camera's own selection pass, so it is executed before that camera's draws
+        /// and after every draw issued before it; the words written are the view's own and are next touched when that
+        /// view's draws are registered again (the command buffer holds what was recorded: a later change does not
+        /// reach a write already recorded). Nothing is written when the entries already hold what is asked. A batch the plugin
+        /// draws writes nothing here: its runs are chosen by whoever issues them. Returns the bytes written.
+        /// </summary>
+        public int WriteClipSelection(UnityEngine.Rendering.CommandBuffer commands, int view, VpClipSelection selection)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (commands == null)
+            {
+                throw new ArgumentNullException(nameof(commands));
+            }
+
+            if (selection == null)
+            {
+                throw new ArgumentNullException(nameof(selection));
+            }
+
+            int count = ClipEntryCount;
+            if (_cull.NativeArguments || count == 0 || _clipViews == null || view < 0 || view >= _clipViews.Length)
+            {
+                return 0;
+            }
+
+            ClipView slot = _clipViews[view];
+            if (slot == null || slot.serial != _clipListSerial || selection.Count != count)
+            {
+                // No draw of this list was registered for the view, or the selection is of another list: nothing of
+                // it can be said of these entries, which stay as they are (every entry drawn when written whole).
+                return 0;
+            }
+
+            const int words = VpGpuCullSetup.UnityArgumentStride / sizeof(uint);
+            uint multiplier = ClipEntriesSinglePassInstanced ? 2u : 1u;
+            bool forwardChanged = false, shadowChanged = false;
+            for (int k = 0; k < count; k++)
+            {
+                byte wanted = (byte)((selection.BodyKept(k) ? 1 : 0) | (selection.CasterKept(k) ? 2 : 0));
+                byte held = slot.written[k];
+                if (wanted == held)
+                {
+                    continue;
+                }
+
+                if (((wanted ^ held) & 1) != 0)
+                {
+                    slot.forwardWords[k * words + 1] = (wanted & 1) != 0 ? multiplier : 0u;
+                    forwardChanged = true;
+                }
+
+                if (((wanted ^ held) & 2) != 0)
+                {
+                    slot.shadowWords[k * words + 1] = (wanted & 2) != 0 ? 1u : 0u;
+                    shadowChanged = true;
+                }
+
+                slot.written[k] = wanted;
+            }
+
+            int bytes = 0;
+            if (forwardChanged)
+            {
+                commands.SetBufferData(slot.forward, slot.forwardWords, 0, 0, count * words);
+                bytes += count * VpGpuCullSetup.UnityArgumentStride;
+                ClipArgumentWrites++;
+                ClipSelectionWrites++;
+            }
+
+            if (shadowChanged)
+            {
+                commands.SetBufferData(slot.shadow, slot.shadowWords, 0, 0, count * words);
+                bytes += count * VpGpuCullSetup.UnityArgumentStride;
+                ClipArgumentWrites++;
+                ClipSelectionWrites++;
+            }
+
+            ClipArgumentBytes += bytes;
+            return bytes;
+        }
+
+        /// <summary>
+        /// The forward call of the clip list's entries [firstEntry, firstEntry + entryCount) for view
+        /// <paramref name="view"/>, by Unity's own call: <paramref name="forwardMaterial"/> is of the variant that
+        /// reads no selection and evaluates the clip record. <paramref name="worldBounds"/> is what Unity's own
+        /// culling of the call goes by: the batch's (<see cref="WorldBounds"/>), as for the selection's own calls, so
+        /// that Unity's culling is no further selection of the entries. Issues nothing for no entry.
+        /// </summary>
+        public void RenderClipForward(
+            Material forwardMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
+            int firstEntry, int entryCount, Camera camera, int view, Bounds worldBounds)
+        {
+            if (!BindClipEntries(properties, buffers, firstEntry, entryCount))
+            {
+                return;
+            }
+
+            ClipView slot = EnsureClipView(view);
+            properties.SetInteger(InstanceMultiplierId, ClipEntriesSinglePassInstanced ? 2 : 1);
+            var renderParams = new RenderParams(forwardMaterial)
+            {
+                camera = camera,
+                layer = layer,
+                matProps = properties,
+                worldBounds = worldBounds,
+                shadowCastingMode = ShadowCastingMode.Off,
+                receiveShadows = true,
+                lightProbeUsage = LightProbeUsage.Off,
+                reflectionProbeUsage = ReflectionProbeUsage.Off,
+            };
+            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.forward, entryCount, firstEntry);
+        }
+
+        /// <summary>
+        /// The shadow call of the clip list's entries, by Unity's own call; see <see cref="RenderClipForward"/>. The
+        /// entries' bounds are bound for the per-slice judgement of a material of
+        /// <see cref="VpGpuCullSetup.ClipListSliceKeyword"/>, made as the selection's casters make it.
+        /// </summary>
+        public void RenderClipShadows(
+            Material shadowMaterial, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int layer,
+            int firstEntry, int entryCount, Camera camera, int view, Bounds worldBounds)
+        {
+            if (!BindClipEntries(properties, buffers, firstEntry, entryCount))
+            {
+                return;
+            }
+
+            ClipView slot = EnsureClipView(view);
+            properties.SetBuffer(CullCommandsId, _clipBounds);
+            properties.SetFloat(ShadowSliceSelectionId, VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f);
+            var renderParams = new RenderParams(shadowMaterial)
+            {
+                camera = camera,
+                layer = layer,
+                matProps = properties,
+                worldBounds = worldBounds,
+                shadowCastingMode = ShadowCastingMode.On,
+                receiveShadows = false,
+            };
+            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.shadow, entryCount, firstEntry);
+        }
+
+        /// <summary>
+        /// What the plugin's draw of the clip list binds (DESIGN 4.5.8, 4.5.9): the list's entries for the body and
+        /// for the casters, and the shared instance and clip buffers. Not to be written through.
+        /// </summary>
+        public void NativeClipDrawBuffers(
+            out GraphicsBuffer forwardArguments, out GraphicsBuffer shadowArguments, out GraphicsBuffer instances, out GraphicsBuffer instanceClips)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (!_cull.NativeArguments)
+            {
+                throw new InvalidOperationException("this batch writes Unity's argument entries; the plugin cannot draw from them");
+            }
+
+            forwardArguments = _clipForwardArguments;
+            shadowArguments = _clipShadowArguments;
+            instances = _instanceBuffer;
+            instanceClips = _instanceClipBuffer;
+        }
+
+        /// <summary>
+        /// The clip list's argument buffers, for reading back by tests: the plugin's one pair, or view
+        /// <paramref name="view"/>'s of Unity's (written whole for the list given last if they do not hold it yet).
+        /// Null until a non-empty list was uploaded.
+        /// </summary>
+        internal GraphicsBuffer ClipForwardArgumentsForTest(int view = 0)
+        {
+            return _cull.NativeArguments ? _clipForwardArguments : ClipEntryCount == 0 && (_clipViews == null || _clipViews[view] == null) ? null : EnsureClipView(view).forward;
+        }
+
+        internal GraphicsBuffer ClipShadowArgumentsForTest(int view = 0)
+        {
+            return _cull.NativeArguments ? _clipShadowArguments : ClipEntryCount == 0 && (_clipViews == null || _clipViews[view] == null) ? null : EnsureClipView(view).shadow;
+        }
+
+        internal GraphicsBuffer ClipBoundsForTest => _clipBounds;
+
+        private bool BindClipEntries(MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, int firstEntry, int entryCount)
+        {
+            ThrowIfDisposed();
+            ThrowIfNotCulled();
+            if (firstEntry < 0 || entryCount < 0 || firstEntry > ClipEntryCount - entryCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entryCount), entryCount, "The entries must be within the uploaded clip list.");
+            }
+
+            if (entryCount == 0)
+            {
+                return false;
+            }
+
+            properties.SetBuffer(VerticesId, buffers.VertexBuffer);
+            properties.SetBuffer(InstanceObjectToWorldId, _instanceBuffer);
+            properties.SetBuffer(InstanceClipId, _instanceClipBuffer);
+            return true;
+        }
+
         /// <summary>A caller-owned selection for an additional pass; release only after its draws finish.</summary>
         public sealed class CullOutput : IDisposable
         {
@@ -1692,6 +2245,20 @@ namespace Zantetsu.Rendering
             _forwardStaging?.Dispose();
             _shadowStaging?.Dispose();
             GiveUp(giveUp, _cullCommandBuffer);
+            GiveUp(giveUp, _clipForwardArguments);
+            GiveUp(giveUp, _clipShadowArguments);
+            GiveUp(giveUp, _clipBounds);
+            if (_clipViews != null)
+            {
+                for (int v = 0; v < _clipViews.Length; v++)
+                {
+                    if (_clipViews[v] != null)
+                    {
+                        GiveUp(giveUp, _clipViews[v].forward);
+                        GiveUp(giveUp, _clipViews[v].shadow);
+                    }
+                }
+            }
             _cullStaging?.Dispose();
             if (_cullViews != null)
             {

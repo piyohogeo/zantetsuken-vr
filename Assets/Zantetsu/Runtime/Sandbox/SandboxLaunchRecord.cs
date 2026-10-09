@@ -48,6 +48,7 @@ namespace Zantetsu.Sandbox
                 + ", " + DeepProfilingArgument + "=" + (Has(DeepProfilingArgument) ? "given" : "not given")
                 + ", " + ProfilerEnableArgument + "=" + (Has(ProfilerEnableArgument) ? "given" : "not given")
                 + "; graphics=" + SystemInfo.graphicsDeviceType + "; body route asked: " + DescribeBodyRoute(arguments)
+                + "; clipped instances asked: " + (Zantetsu.Rendering.VpGpuCullSetup.ReadSeparateClip(arguments) ? "apart (the default)" : "with the selection (" + Zantetsu.Rendering.VpGpuCullSetup.ClipTogetherArgument + ")")
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
                 + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);

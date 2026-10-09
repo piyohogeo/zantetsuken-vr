@@ -660,6 +660,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 var images = new List<Color32[]>();
                 var kept = new List<string>();
                 yield return GpuCullTakeStage(root, stage, readBack, 0, images, kept);
+                // The clipped instances drawn apart (DESIGN 4.5.9): a world that selects on the GPU does so, by Unity's
+                // calls and by the plugin alike; with no clipped instance there is no clip list, and nothing is sent
+                // or drawn for one.
+                // (The comparison switch -- VpGpuCullSetup.ClipTogetherArgument -- leaves every instance with the selection.)
+                bool apart = gpu && VpGpuCullSetup.SeparateClipRequested;
+                Assert.That(root.Display.SeparatesClipDraws, Is.EqualTo(apart), root.Display.ClipSeparationRefusal);
+                Assert.That(
+                    new long[] { root.Display.ClipDrawCount, root.Display.ClipListUploads, root.Display.ClipBodyIssues, root.Display.ClipCasterIssues },
+                    Is.EqualTo(new long[4]), "whole: no clipped instance, no clip list");
 
                 // The cut, with its geometry held back: the display keeps the two sides clipped (immediate). Two more
                 // instances than the first room holds: the body's GPU buffers are replaced here.
@@ -696,6 +705,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(CountTwoSidedCommands(root), Is.GreaterThan(0), "the clipped sides cast two-sided");
                 Assert.That(root.Display.CapRecordCount, Is.GreaterThan(0), "and the cut face is a cap the stencil work draws");
                 Assert.That(root.Display.GpuReplacements, Is.GreaterThan(replacementsAtFirst), "the body's GPU buffers were replaced by larger ones");
+                Assert.That(root.Display.ClipDrawCount, Is.EqualTo(4), "the clip list: the two clipped sides, an instance of each of the body's two commands");
+                if (apart)
+                {
+                    Assert.That(root.Display.ClipBodyIssues, Is.GreaterThan(0L), "drawn apart as bodies");
+                    Assert.That(root.Display.ClipCasterIssues, Is.GreaterThan(0L), "and as casters");
+                    Assert.That(
+                        root.Display.ClipListUploads, Is.InRange(1L, 2L),
+                        "the list is sent when it changes, and again to a batch that replaced the one it was sent to -- not in every frame it is drawn");
+                }
+                else
+                {
+                    Assert.That(new[] { root.Display.ClipBodyIssues, root.Display.ClipCasterIssues, root.Display.ClipListUploads }, Is.EqualTo(new long[3]), "VP Stage 3, and a selection asked to keep them, draw every instance with its clip record");
+                }
 
                 // The geometry commits: the children are closed shapes.
                 geometryPool.HoldEverything = false;
@@ -708,6 +730,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 yield return null;
                 yield return GpuCullTakeStage(root, stage, readBack, 2, images, kept);
                 Assert.That(CountTwoSidedCommands(root), Is.Zero, "after the commit nothing casts two-sided");
+                Assert.That(root.Display.ClipDrawCount, Is.Zero, "the committed children are ordinary: the clip list is empty");
+                long clipBodyIssues = root.Display.ClipBodyIssues, clipCasterIssues = root.Display.ClipCasterIssues, clipUploads = root.Display.ClipListUploads;
 
                 // A row of bodies registered along the view: from in front of the camera, through every split of the
                 // shadow map, to past the far plane and past the shadow's range.
@@ -722,6 +746,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 yield return null;
                 yield return null;
                 yield return GpuCullTakeStage(root, stage, readBack, GpuCullRowStage, images, kept);
+                Assert.That(
+                    new[] { root.Display.ClipBodyIssues, root.Display.ClipCasterIssues, root.Display.ClipListUploads },
+                    Is.EqualTo(new[] { clipBodyIssues, clipCasterIssues, clipUploads }),
+                    "with no clipped instance, nothing more was drawn from a clip list and nothing sent for one, through all these frames");
 
                 // One piece retired: what was drawn for it is drawn no more.
                 int commandsBefore = root.Display.CommandCount;
@@ -793,6 +821,28 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Assert.That(pluginRoute.PipelineFailures, Is.Zero);
                     Assert.That(drawing.NativeRefusals, Is.Zero, "no camera went undrawn for want of the plugin's pass");
                     Assert.That(drewEverything, Is.True, "every body taken was issued");
+                    Assert.That(pluginRoute.DrawsClipLists, Is.True, "the plugin's route draws clip lists");
+                    long casterEntriesKept = pluginRoute.ClipCasterEntriesKept(0) + pluginRoute.ClipCasterEntriesKept(1) + pluginRoute.ClipCasterEntriesKept(2) + pluginRoute.ClipCasterEntriesKept(3);
+                    TestContext.Out.WriteLine("plugin's clip lists: bodies entries taken " + pluginRoute.ClipBodyEntriesTaken + " / kept " + pluginRoute.ClipBodyEntriesKept + ", issues " + pluginRoute.ClipBodyIssues
+                        + "; casters entries taken " + pluginRoute.ClipCasterEntriesTaken + " / kept by split " + pluginRoute.ClipCasterEntriesKept(0) + "/" + pluginRoute.ClipCasterEntriesKept(1) + "/"
+                        + pluginRoute.ClipCasterEntriesKept(2) + "/" + pluginRoute.ClipCasterEntriesKept(3) + ", issues " + pluginRoute.ClipCasterIssues
+                        + "; display's selection runs " + root.Display.ClipCullRuns + ", entries " + root.Display.ClipCullEntries + ", kept for the body " + root.Display.ClipCullBodyKept + ", as casters " + root.Display.ClipCullCasterKept);
+                    Assert.That(pluginRoute.ClipBodyEntriesKept, Is.LessThanOrEqualTo(pluginRoute.ClipBodyEntriesTaken), "the entries issued are among those given");
+                    Assert.That(pluginRoute.ClipBodyIssues, Is.LessThanOrEqualTo(pluginRoute.ClipBodyEntriesKept), "one issue a run of kept entries: never more issues than entries kept");
+                    Assert.That(pluginRoute.ClipBodyIssues > 0, Is.EqualTo(pluginRoute.ClipBodyEntriesKept > 0), "kept entries were issued (no issue failed), and nothing was issued for none");
+                    Assert.That(pluginRoute.ClipCasterIssues, Is.LessThanOrEqualTo(casterEntriesKept), "the casters likewise, a split at a time");
+                    Assert.That(pluginRoute.ClipCasterIssues > 0, Is.EqualTo(casterEntriesKept > 0));
+                    Assert.That(root.Display.ClipSelectionBytes, Is.Zero, "the plugin's entries are not rewritten by a selection");
+                    if (apart)
+                    {
+                        Assert.That(pluginRoute.ClipBodyRunsTaken, Is.GreaterThan(0L), "the clipped sides were given to it as runs of the clip list");
+                        Assert.That(pluginRoute.ClipCasterRunsTaken, Is.GreaterThan(0L));
+                        Assert.That(root.Display.ClipCullRuns, Is.GreaterThan(0L), "and the list was judged for the cameras that drew it");
+                    }
+                    else
+                    {
+                        Assert.That(new[] { pluginRoute.ClipBodyRunsTaken, pluginRoute.ClipCasterRunsTaken }, Is.EqualTo(new long[2]), "asked to keep them with the selection: no clip list is given");
+                    }
                 }
                 else if (gpu)
                 {
@@ -931,6 +981,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     line += "; instances " + instances + ", body kept " + forwardKept + ", casters kept " + shadowKept;
                     Assert.That(instances, Is.GreaterThan(0), label);
                     bool row = stageIndex >= GpuCullRowStage;
+                    // The clipped instances are drawn apart (DESIGN 4.5.9): the selection leaves them out, body and
+                    // casters, and keeps the ordinary ones as before.
+                    int clippedApart = root.Display.SeparatesClipDraws ? root.Display.ClipDrawCount : 0;
+                    int ordinary = instances - clippedApart;
+                    line += ", drawn apart from the clip list " + clippedApart;
                     switch (view)
                     {
                         case 1:
@@ -939,7 +994,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                                 Assert.That(forwardKept, Is.Zero, label + ": the camera sees no body");
                             }
 
-                            Assert.That(shadowKept, Is.GreaterThan(0), label + ": but what casts into its view is kept as a caster");
+                            if (ordinary > 0)
+                            {
+                                Assert.That(shadowKept, Is.GreaterThan(0), label + ": but what casts into its view is kept as a caster");
+                            }
+                            else
+                            {
+                                Assert.That(shadowKept, Is.Zero, label + ": every instance is clipped, and cast from the clip list");
+                            }
+
                             break;
                         case 2:
                             Assert.That(forwardKept, Is.Zero, label + ": the camera sees no body");
@@ -955,8 +1018,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                         default:
                             if (!row)
                             {
-                                Assert.That(forwardKept, Is.EqualTo(instances), label + ": every instance is in view");
-                                Assert.That(shadowKept, Is.EqualTo(instances), label + ": and casts into it");
+                                Assert.That(forwardKept, Is.EqualTo(ordinary), label + ": every ordinary instance is in view, and no clipped one is selected");
+                                Assert.That(shadowKept, Is.EqualTo(ordinary), label + ": and casts into it");
                             }
                             else
                             {

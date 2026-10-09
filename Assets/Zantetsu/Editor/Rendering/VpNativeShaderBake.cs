@@ -93,11 +93,19 @@ namespace Zantetsu.EditorTools.Rendering
                 var variants = new List<Variant>(Variants);
                 if (s_vulkan) variants.Add(new Variant("motion-plugin-stereo", ForwardShader, GpuCulledKeyword, PluginKeyword, "STEREO_MULTIVIEW_ON"));
                 // Keep the historical Clip-enabled assets unchanged, and bake ordinary-object variants separately.
-                // Direct Clip draws are Vulkan-only until the other native backend implements the CPU command path.
+                // Direct Clip draws are the Vulkan route's. The Direct3D 12 route draws the clipped instances from a
+                // clip list instead (DESIGN 4.5.9): the plugin's variant without the selection ("-list"), which reads
+                // the instance's transform and clip record by the entry's own start instance.
                 foreach (Variant original in variants.ToArray())
                 {
                     var noClipKeys = new List<string>(original.Keywords) { NoClipKeyword };
                     variants.Add(new Variant(original.Name + "-noclip", original.Shader, noClipKeys.ToArray()));
+                    if (!s_vulkan && original.Name.Contains("-plugin"))
+                    {
+                        var listKeys = new List<string>(original.Keywords);
+                        listKeys.Remove(GpuCulledKeyword);
+                        variants.Add(new Variant(original.Name.Replace("-plugin", "-list"), original.Shader, listKeys.ToArray()));
+                    }
                     if (s_vulkan && original.Name.Contains("-plugin"))
                     {
                         var directKeys = new List<string>(original.Keywords);
@@ -232,7 +240,27 @@ namespace Zantetsu.EditorTools.Rendering
             {
                 valid &= vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip");
                 if (s_vulkan && vertex != null) valid &= !HasSpirvClipDistance(vertex.Bytecode);
+                if (!s_vulkan && vertex != null) valid &= !HasDxbcClipDistanceOutput(vertex.Bytecode, report);
                 report.AppendLine("  no-Clip VS gate: " + (valid ? "passed" : "FAILED (Clip buffer/capability/output remains)"));
+            }
+            else if (!s_vulkan && !direct && vertex != null)
+            {
+                // A Direct3D variant that keeps the clip: it must bind the clip buffer and declare the output.
+                bool clip = vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip") && HasDxbcClipDistanceOutput(vertex.Bytecode, report);
+                bool list = variant.Name.Contains("-list");
+                if (list)
+                {
+                    string[] absent = { "_VpVisible", "_VpCullCommands", "unity_IndirectDrawArgs" };
+                    bool unselected = true;
+                    foreach (string name in absent) unselected &= !vertex.Buffers.Exists(b => b.Name == name);
+                    bool entries = vertex.Buffers.Exists(b => b.Name == "_VpNativeArguments") && vertex.Buffers.Exists(b => b.Name == "_VpInstanceObjectToWorld");
+                    valid &= clip && unselected && entries;
+                    report.AppendLine("  clip list VS gate: " + (clip && unselected && entries ? "passed (entries, instance transform and clip record; no selection)" : "FAILED (clip " + clip + ", no selection " + unselected + ", entries " + entries + ")"));
+                }
+                else
+                {
+                    report.AppendLine("  Clip VS (kept): clip buffer and SV_ClipDistance output " + (clip ? "present" : "ABSENT"));
+                }
             }
             if (direct)
             {
@@ -249,6 +277,47 @@ namespace Zantetsu.EditorTools.Rendering
                 report.AppendLine("  direct Clip VS gate: " + (valid ? "passed (vertices + 6656-byte record UBO; Clip output)" : "FAILED (unexpected buffer/record layout/output)"));
             }
             return valid;
+        }
+
+        /// <summary>
+        /// Whether a Direct3D shader's output signature declares SV_ClipDistance: read from the compiled bytecode's
+        /// own signature chunk (OSGN, or OSG5 / OSG1), which Unity leaves in when it strips the reflection. A vertex
+        /// stage that writes no clip distance has no such element; the hardware clips nothing for it.
+        /// </summary>
+        public static bool HasDxbcClipDistanceOutput(byte[] bytes, StringBuilder report = null)
+        {
+            if (bytes == null || bytes.Length < 32 || bytes[0] != 'D' || bytes[1] != 'X' || bytes[2] != 'B' || bytes[3] != 'C')
+            {
+                throw new InvalidDataException("not a DXBC container");
+            }
+
+            int chunks = BitConverter.ToInt32(bytes, 28);
+            bool found = false, signature = false;
+            var names = new List<string>();
+            for (int c = 0; c < chunks; c++)
+            {
+                int at = BitConverter.ToInt32(bytes, 32 + c * 4);
+                string tag = Encoding.ASCII.GetString(bytes, at, 4);
+                int stride = tag == "OSGN" ? 24 : tag == "OSG5" ? 28 : tag == "OSG1" ? 32 : 0;
+                if (stride == 0) continue;
+                signature = true;
+                int data = at + 8, count = BitConverter.ToInt32(bytes, data), nameField = tag == "OSGN" ? 0 : 4;
+                for (int e = 0; e < count; e++)
+                {
+                    int element = data + 8 + e * stride;
+                    int name = data + BitConverter.ToInt32(bytes, element + nameField), end = name;
+                    while (end < bytes.Length && bytes[end] != 0) end++;
+                    string semantic = Encoding.ASCII.GetString(bytes, name, end - name);
+                    int systemValue = BitConverter.ToInt32(bytes, element + nameField + 8);
+                    names.Add(semantic + BitConverter.ToInt32(bytes, element + nameField + 4));
+                    // D3D_NAME_CLIP_DISTANCE is 2; the name is checked as well, whatever the system value says.
+                    found |= systemValue == 2 || semantic.Equals("SV_ClipDistance", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            if (!signature) throw new InvalidDataException("the DXBC has no output signature chunk");
+            report?.AppendLine("    output signature: " + string.Join(" ", names) + "; SV_ClipDistance " + (found ? "present" : "absent"));
+            return found;
         }
 
         private static bool HasSpirvClipDistance(byte[] bytes)

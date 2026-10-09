@@ -87,16 +87,36 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static bool MayIntersect(Bounds local, Matrix4x4 objectToWorld, Vector4[] planes, int firstPlane, int planeCount)
         {
-            Vector3 centre = objectToWorld.MultiplyPoint3x4(local.center);
+            Carry(local, objectToWorld, out Vector3 centre, out Vector3 axisX, out Vector3 axisY, out Vector3 axisZ);
+            return MayIntersect(centre, axisX, axisY, axisZ, planes, firstPlane, planeCount);
+        }
+
+        /// <summary>
+        /// Bounds given in their own frame, carried by <paramref name="objectToWorld"/>: the centre in the world and the
+        /// three half-edges of the turned box, as every test here and the GPU selection take them.
+        /// </summary>
+        public static void Carry(Bounds local, Matrix4x4 objectToWorld, out Vector3 centre, out Vector3 axisX, out Vector3 axisY, out Vector3 axisZ)
+        {
+            centre = objectToWorld.MultiplyPoint3x4(local.center);
             Vector3 extents = local.extents;
-            Vector3 axisX = new Vector3(objectToWorld.m00, objectToWorld.m10, objectToWorld.m20) * extents.x;
-            Vector3 axisY = new Vector3(objectToWorld.m01, objectToWorld.m11, objectToWorld.m21) * extents.y;
-            Vector3 axisZ = new Vector3(objectToWorld.m02, objectToWorld.m12, objectToWorld.m22) * extents.z;
+            axisX = new Vector3(objectToWorld.m00, objectToWorld.m10, objectToWorld.m20) * extents.x;
+            axisY = new Vector3(objectToWorld.m01, objectToWorld.m11, objectToWorld.m21) * extents.y;
+            axisZ = new Vector3(objectToWorld.m02, objectToWorld.m12, objectToWorld.m22) * extents.z;
+        }
+
+        /// <summary>
+        /// The same judgement on a box already carried (<see cref="Carry"/>). <paramref name="extraMargin"/> widens the
+        /// tolerance on the keeping side: a judgement made on the CPU in place of the selection's own is given some,
+        /// so that other rounding never removes what the selection would have kept.
+        /// </summary>
+        public static bool MayIntersect(Vector3 centre, Vector3 axisX, Vector3 axisY, Vector3 axisZ, Vector4[] planes, int firstPlane, int planeCount, float extraMargin = 0f)
+        {
+            float margin = Margin + extraMargin;
             for (int i = firstPlane; i < firstPlane + planeCount; i++)
             {
                 Vector3 normal = new Vector3(planes[i].x, planes[i].y, planes[i].z);
                 float radius = Mathf.Abs(Vector3.Dot(normal, axisX)) + Mathf.Abs(Vector3.Dot(normal, axisY)) + Mathf.Abs(Vector3.Dot(normal, axisZ));
-                if (Vector3.Dot(normal, centre) + planes[i].w + radius < -Margin)
+                if (Vector3.Dot(normal, centre) + planes[i].w + radius < -margin)
                 {
                     return false;
                 }
@@ -108,6 +128,13 @@ namespace Zantetsu.Rendering
         /// <summary>Whether the GPU selection keeps the instance for the body: it may intersect either eye, or no eye is given.</summary>
         public static bool KeptForBody(Bounds local, Matrix4x4 objectToWorld, VpCullConditions conditions)
         {
+            Carry(local, objectToWorld, out Vector3 centre, out Vector3 axisX, out Vector3 axisY, out Vector3 axisZ);
+            return KeptForBody(centre, axisX, axisY, axisZ, conditions);
+        }
+
+        /// <summary>The same judgement on a box already carried (<see cref="Carry"/>).</summary>
+        public static bool KeptForBody(Vector3 centre, Vector3 axisX, Vector3 axisY, Vector3 axisZ, VpCullConditions conditions, float extraMargin = 0f)
+        {
             if (conditions.eyeCount == 0)
             {
                 return true;
@@ -115,7 +142,7 @@ namespace Zantetsu.Rendering
 
             for (int eye = 0; eye < conditions.eyeCount; eye++)
             {
-                if (MayIntersect(local, objectToWorld, conditions.eyePlanes, eye * VpCullConditions.EyePlaneCount, VpCullConditions.EyePlaneCount))
+                if (MayIntersect(centre, axisX, axisY, axisZ, conditions.eyePlanes, eye * VpCullConditions.EyePlaneCount, VpCullConditions.EyePlaneCount, extraMargin))
                 {
                     return true;
                 }
@@ -127,6 +154,13 @@ namespace Zantetsu.Rendering
         /// <summary>Whether the GPU selection keeps the instance as a caster: it may intersect any split's volume, or no split is given.</summary>
         public static bool KeptAsCaster(Bounds local, Matrix4x4 objectToWorld, VpCullConditions conditions)
         {
+            Carry(local, objectToWorld, out Vector3 centre, out Vector3 axisX, out Vector3 axisY, out Vector3 axisZ);
+            return KeptAsCaster(centre, axisX, axisY, axisZ, conditions);
+        }
+
+        /// <summary>The same judgement on a box already carried (<see cref="Carry"/>).</summary>
+        public static bool KeptAsCaster(Vector3 centre, Vector3 axisX, Vector3 axisY, Vector3 axisZ, VpCullConditions conditions, float extraMargin = 0f)
+        {
             if (conditions.shadowSplitCount == 0)
             {
                 return true;
@@ -135,14 +169,51 @@ namespace Zantetsu.Rendering
             for (int split = 0; split < conditions.shadowSplitCount; split++)
             {
                 if (MayIntersect(
-                        local, objectToWorld, conditions.shadowPlanes, split * VpCullConditions.SplitPlaneCapacity,
-                        (int)conditions.shadowPlaneCounts[split]))
+                        centre, axisX, axisY, axisZ, conditions.shadowPlanes, split * VpCullConditions.SplitPlaneCapacity,
+                        (int)conditions.shadowPlaneCounts[split], extraMargin))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Clip-space tolerance of <see cref="OutsideSlice(Vector3, Vector3, Vector3, Vector3, Matrix4x4, float)"/>: a
+        /// box is called outside only when it is outside by more than this, so that a judgement made here on the CPU
+        /// never removes what the shader's own, made with other rounding, would have drawn.
+        /// </summary>
+        public const float SliceMargin = 1e-4f;
+
+        /// <summary>
+        /// The shadow caster's per-slice judgement (VpIndexedIndirectShadowCaster.shader, VpOutsideSlice), written here
+        /// once more as its reference: whether the carried box lies wholly outside the slice's projection to its left,
+        /// right, bottom or top, the bias's reach (the sum of the magnitudes of the slice's two bias terms) added to the
+        /// box's. Depth is not asked: a caster nearer the light than the slice's near plane still casts into it. It
+        /// is written for a projection that is a box (a directional light's slice); the caller asks nothing of any
+        /// other. A box it calls outside rasterises nothing in that slice, so leaving it out changes no texel.
+        /// </summary>
+        public static bool OutsideSlice(Vector3 centre, Vector3 axisX, Vector3 axisY, Vector3 axisZ, Matrix4x4 viewProjection, float bias)
+        {
+            Vector4 x = viewProjection.GetRow(0);
+            Vector4 y = viewProjection.GetRow(1);
+            Vector4 w = viewProjection.GetRow(3);
+            Vector3 rowX = new Vector3(x.x, x.y, x.z);
+            Vector3 rowY = new Vector3(y.x, y.y, y.z);
+            float centreX = Vector3.Dot(rowX, centre) + x.w;
+            float centreY = Vector3.Dot(rowY, centre) + y.w;
+            float centreW = w.x * centre.x + w.y * centre.y + w.z * centre.z + w.w;
+            float reachX = Mathf.Abs(Vector3.Dot(rowX, axisX)) + Mathf.Abs(Vector3.Dot(rowX, axisY)) + Mathf.Abs(Vector3.Dot(rowX, axisZ)) + bias * rowX.magnitude;
+            float reachY = Mathf.Abs(Vector3.Dot(rowY, axisX)) + Mathf.Abs(Vector3.Dot(rowY, axisY)) + Mathf.Abs(Vector3.Dot(rowY, axisZ)) + bias * rowY.magnitude;
+            return Mathf.Abs(centreX) - reachX > centreW + SliceMargin || Mathf.Abs(centreY) - reachY > centreW + SliceMargin;
+        }
+
+        /// <summary>The same judgement on bounds given in their own frame and carried by <paramref name="objectToWorld"/>.</summary>
+        public static bool OutsideSlice(Bounds local, Matrix4x4 objectToWorld, Matrix4x4 viewProjection, float bias)
+        {
+            Carry(local, objectToWorld, out Vector3 centre, out Vector3 axisX, out Vector3 axisY, out Vector3 axisZ);
+            return OutsideSlice(centre, axisX, axisY, axisZ, viewProjection, bias);
         }
     }
 }

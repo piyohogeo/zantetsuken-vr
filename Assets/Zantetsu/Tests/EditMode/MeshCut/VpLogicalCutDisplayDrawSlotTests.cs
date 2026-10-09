@@ -165,6 +165,80 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// **A collection that is not adopted leaves the clip list as it was, and a compaction gives it the moved
+        /// records** (DESIGN 4.5.9): the list is made beside the candidate and takes the adopted one's place only at
+        /// the adoption. A cut's clipped sides are in the adopted list; a body below them is retired, so that the
+        /// compaction to come moves their instance records; the collection that plans it is refused, and the adopted
+        /// list -- what the draws and the selection go by -- is as it was, by the same records, not built again, its
+        /// records clipped still in what is adopted. The compaction then adopted, the list is built anew and every
+        /// record it names is a clipped one.
+        /// </summary>
+        [Test]
+        public void SeparateClipDraws_ACollectionThatIsNotAdopted_LeavesTheAdoptedClipListAsItWas_AndACompactionRenamesItsRecords()
+        {
+            using (Twin twin = NewTwin(3, 64, true))
+            {
+                CollectBoth(twin, "whole bodies");
+                VpLogicalCutDisplay display = twin.kept.Display;
+                var plane = Normalized(new float4(0.2f, 1f, 0.1f, -0.1f));
+                (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) made = default;
+                Both(twin, run => made = CutAndPlace(run, 1, plane, Stand(1)));
+                CollectBoth(twin, "cut published");
+                int count = display.ClipDrawCount;
+                Assert.That(count, Is.GreaterThan(0), "the clipped sides");
+
+                // A hole below them, so that a compaction is planned -- where the test's failure is put.
+                Both(twin, run => Assert.That(run.scene.ledger.Retire(run.bodies[0]), Is.True));
+                for (int i = 0; i < 3; i++) CollectBoth(twin, "one retired, " + i);
+                Assert.That(display.ClipDrawCount, Is.EqualTo(count), "the retirement of another body leaves the clipped sides");
+                var before = new int[count * 2];
+                for (int i = 0; i < count; i++)
+                {
+                    before[i * 2] = display.ClipDrawRecordForTest(i).command;
+                    before[i * 2 + 1] = display.ClipDrawRecordForTest(i).instance;
+                }
+
+                long builds = display.ClipDrawListBuildsForTest;
+                long compactions = display.Compactions;
+                Both(twin, run => run.Display.CompactionMinimumInterval = 1);
+                Both(twin, run => run.at.Put(run.bodies[2], Stand(2, 1f)));
+                display.FailAfterCompactionPlanForTest = true;
+                _frame++;
+                Assert.That(display.TryBeginFrame(), Is.False, "refused");
+                display.FailAfterCompactionPlanForTest = false;
+                Assert.That(display.IsHalted, Is.False, "not a stop");
+                Assert.That(display.ClipDrawCount, Is.EqualTo(count), "the adopted list is as it was");
+                Assert.That(display.ClipDrawListBuildsForTest, Is.EqualTo(builds), "no list took the adopted one's place");
+                var after = new int[count * 2];
+                for (int i = 0; i < count; i++)
+                {
+                    after[i * 2] = display.ClipDrawRecordForTest(i).command;
+                    after[i * 2 + 1] = display.ClipDrawRecordForTest(i).instance;
+                    Assert.That(display.InstanceRecordClipForTest(after[i * 2 + 1]).PlaneCount, Is.GreaterThan(0), "record " + i + " is clipped still in what is adopted");
+                }
+
+                Assert.That(after, Is.EqualTo(before), "by the same records");
+
+                // The compaction adopted: the list is built anew, and names clipped records.
+                Assert.That(twin.everything.Display.TryBeginFrame(), Is.True, "the reference collected in that frame");
+                for (int i = 0; i < 4 && display.Compactions == compactions; i++) CollectBoth(twin, "after the refusal, " + i);
+                Assert.That(display.Compactions, Is.GreaterThan(compactions), "the compaction ran: " + display.LastCompactionSkipReason);
+                Assert.That(display.ClipDrawListBuildsForTest, Is.GreaterThan(builds), "and the clip list was built with it");
+                Assert.That(display.ClipDrawCount, Is.EqualTo(count));
+                var moved = new int[count * 2];
+                for (int i = 0; i < count; i++)
+                {
+                    moved[i * 2] = display.ClipDrawRecordForTest(i).command;
+                    moved[i * 2 + 1] = display.ClipDrawRecordForTest(i).instance;
+                    Assert.That(display.InstanceRecordClipForTest(moved[i * 2 + 1]).PlaneCount, Is.GreaterThan(0), "record " + i + " names a clipped instance after the compaction");
+                }
+
+                TestContext.Out.WriteLine("clip records (command, instance) before the compaction: " + string.Join(" ", before) + "; after: " + string.Join(" ", moved));
+                Assert.That(moved, Is.Not.EqualTo(before), "the layout: the compaction moved the clipped sides' instance records");
+            }
+        }
+
         [Test]
         public void SeparateClipDraws_CacheUsesAdoptedSlots_StandsForPlacements_AndEmptiesAfterGeometryCommit()
         {

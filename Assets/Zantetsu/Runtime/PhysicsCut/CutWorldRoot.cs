@@ -465,6 +465,14 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+            // Whether the route that will draw the display can draw clipped instances apart (DESIGN 4.5.9) is said
+            // before the display is made: a display made without it draws as before the separation, materials and
+            // selection alike, and says why. Unity's own calls always can.
+            if (culling != null && nativeWanted)
+            {
+                culling.ClipSeparationUnavailable = Zantetsu.Rendering.Urp.VpNativeDrawRoute.ClipDrawsUnavailable;
+            }
+
             VpLogicalCutDisplay display = null;
             if (culling != null && !MakeDisplay(culling, out display))
             {
@@ -561,6 +569,16 @@ namespace Zantetsu.PhysicsCut
 
             Display = display;
             Display.BackingFailureHandler = RequestTermination;
+
+            // How the clipped instances are drawn (DESIGN 4.5.9), said once: a comparison of the two ways reads it here.
+            if (Display.CullsOnGpu)
+            {
+                UnityEngine.Debug.Log(
+                    "VP CLIP DRAWS: " + (Display.SeparatesClipDraws
+                        ? "apart -- the selection's own draws have no clip (" + VpGpuCullSetup.NoClipKeyword + "); clipped instances are left out of the selection and drawn from the clip list"
+                        : "with the selection -- every instance is drawn with its clip record: "
+                          + (Display.ClipSeparationRefusal ?? "asked for by " + VpGpuCullSetup.ClipTogetherArgument + ", or set so by the caller")), this);
+            }
 
             // Display room past its limits, or room that could not be made, is the same common termination: the
             // display stops rather than keep drawing an older snapshot while the game goes on.

@@ -162,6 +162,13 @@ namespace Zantetsu.PhysicsCut
                 + (display != null
                     ? "; display selections issued " + display.CullSelectionsIssued + ", missed " + display.CullSelectionsMissed
                       + ", dispatches " + display.CullDispatches + ", selection bytes on the GPU " + display.CullViewBytes
+                      + "; clipped instances " + (display.SeparatesClipDraws ? "apart" : "with the selection")
+                      + ": in the list now " + display.ClipDrawCount + ", clip list body issues " + display.ClipBodyIssues
+                      + ", clip list caster issues " + display.ClipCasterIssues + ", clip list uploads " + display.ClipListUploads
+                      + "; clip selection runs " + display.ClipCullRuns + ", entries " + display.ClipCullEntries
+                      + ", kept for the body " + display.ClipCullBodyKept + ", kept as casters " + display.ClipCullCasterKept
+                      + ", time " + (display.ClipCullTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + " ms"
+                      + ", clip list writes " + display.ClipArgumentWrites + " (" + display.ClipArgumentBytes + " bytes; by a selection " + display.ClipSelectionBytes + " bytes, put back whole before a frame's selection " + display.ClipRestoreBytes + " bytes)"
                     : "; no display"),
                 this);
             _cullRoute = null;
