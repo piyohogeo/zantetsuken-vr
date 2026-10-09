@@ -49,10 +49,18 @@ namespace Zantetsu.MeshCut
     public sealed class WorkerPoolExecutor : IWorkExecutor, IDisposable
     {
         /// <summary>DESIGN 4.3's provisional G: the Geometry pool's always-on worker count.</summary>
+        #if UNITY_ANDROID && !UNITY_EDITOR
+        public const int DefaultGeometryWorkerCount = 1;
+#else
         public const int DefaultGeometryWorkerCount = 8;
+#endif
 
         /// <summary>DESIGN 4.3's provisional B: the Background pool's always-on worker count.</summary>
+        #if UNITY_ANDROID && !UNITY_EDITOR
+        public const int DefaultBackgroundWorkerCount = 1;
+#else
         public const int DefaultBackgroundWorkerCount = 2;
+#endif
 
         /// <summary>What one worker did, for observation from the main thread.</summary>
         public sealed class WorkerObservation
@@ -572,7 +580,11 @@ namespace Zantetsu.MeshCut
             {
                 _onWorkerStarting?.Invoke();
                 Thread current = Thread.CurrentThread;
+#if UNITY_ANDROID && !UNITY_EDITOR
+                AndroidWorkerPriority.Apply(Destination);
+#else
                 current.Priority = _priority;
+#endif
                 observation.NoteStarted(current.ManagedThreadId, current.Priority);
                 NoteStartupFinished(observation, null);
 

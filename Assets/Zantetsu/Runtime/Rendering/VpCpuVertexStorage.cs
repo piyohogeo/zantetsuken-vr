@@ -30,7 +30,7 @@ namespace Zantetsu.Rendering
         /// storage it used to be, on the product's page backing. The allocator is not used for the vertices.
         /// </summary>
         public VpCpuVertexStorage(int vertexCapacity, Allocator allocator)
-            : this(VpWindowsPageBacking.Instance, vertexCapacity, vertexCapacity)
+            : this(VpPlatformPageBacking.Instance, vertexCapacity, vertexCapacity)
         {
         }
 

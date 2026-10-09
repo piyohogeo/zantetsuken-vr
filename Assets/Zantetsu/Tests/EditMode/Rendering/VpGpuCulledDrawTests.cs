@@ -77,12 +77,12 @@ namespace Zantetsu.Rendering.Tests
             return material;
         }
 
-        private static void Cull(VpIndexedIndirectDrawBatch batch, int view, VpCullConditions conditions)
+        private static void Cull(VpIndexedIndirectDrawBatch batch, int view, VpCullConditions conditions, bool excludeClipped = false)
         {
             var commands = new CommandBuffer { name = "VP GPU Cull Test" };
             try
             {
-                batch.IssueCull(commands, view, conditions);
+                batch.IssueCull(commands, view, conditions, excludeClipped);
                 Graphics.ExecuteCommandBuffer(commands);
             }
             finally
@@ -416,6 +416,51 @@ namespace Zantetsu.Rendering.Tests
 
                 // The other view was not written by this one.
                 Assert.That(Arguments(batch.CullForwardArguments(0), 1)[0].instanceCount, Is.EqualTo(6u), "view 0 still holds its own selection");
+            }
+        }
+
+        [Test]
+        public void SeparateClipDraws_MixedCommandOmitsOnlyClippedInstances_ForBodyAndCasters_AndOtherViewsKeepThem()
+        {
+            var box = new Bounds(Vector3.zero, Vector3.one);
+            var commands = new[]
+            {
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 4, 6), box, 5),
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 10, 3), box, 2),
+            };
+            var transforms = new Matrix4x4[7];
+            for (int i = 0; i < transforms.Length; i++) transforms[i] = Matrix4x4.identity;
+            VpInstanceClip cut = VpInstanceClip.Keep(new Vector4(1f, 0f, 0f, 0f), 1f);
+            var clips = new[] { VpInstanceClip.None, cut, VpInstanceClip.None, cut, VpInstanceClip.None, cut, cut };
+            var conditions = new VpCullConditions();
+            conditions.KeepEverything();
+            using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, Setup()))
+            {
+                Assert.That(batch.TryUpload(commands, transforms, clips, true), Is.True);
+                Cull(batch, 0, conditions, true);
+                var body = Arguments(batch.CullForwardArguments(0), 2);
+                var casters = Arguments(batch.CullShadowArguments(0), 2);
+                Assert.That(body[0].instanceCount, Is.EqualTo(6u), "three ordinary instances, two physical eyes each");
+                Assert.That(casters[0].instanceCount, Is.EqualTo(3u));
+                Assert.That(Visible(batch.CullForwardVisible(0), 3), Is.EqualTo(new uint[] { 0, 2, 4 }));
+                Assert.That(Visible(batch.CullShadowVisible(0), 3), Is.EqualTo(new uint[] { 0, 2, 4 }));
+                Assert.That(body[1].instanceCount, Is.Zero, "an entirely clipped command has no ordinary body");
+                Assert.That(casters[1].instanceCount, Is.Zero, "nor ordinary casters");
+                Assert.That(body[0].startIndex, Is.EqualTo(4u));
+                Assert.That(body[1].startInstance, Is.EqualTo(10u), "command layout and stereo addressing are unchanged");
+
+                Cull(batch, 1, conditions);
+                Assert.That(Arguments(batch.CullForwardArguments(1), 2)[0].instanceCount, Is.EqualTo(10u), "Unity or another camera's selection keeps its clips");
+                Assert.That(Arguments(batch.CullShadowArguments(1), 2)[1].instanceCount, Is.EqualTo(2u));
+                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[0].instanceCount, Is.EqualTo(6u), "the separate view was not overwritten");
+
+                Cull(batch, 0, conditions);
+                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[1].instanceCount, Is.EqualTo(4u), "the exclusion switch is explicitly reset on every dispatch");
+                for (int i = 0; i < clips.Length; i++) clips[i] = VpInstanceClip.None;
+                Assert.That(batch.TryUpload(commands, transforms, clips, true), Is.True);
+                Cull(batch, 0, conditions, true);
+                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[0].instanceCount, Is.EqualTo(10u), "clips removed by geometry commit return to ordinary draws");
+                Assert.That(Arguments(batch.CullShadowArguments(0), 2)[1].instanceCount, Is.EqualTo(2u));
             }
         }
 

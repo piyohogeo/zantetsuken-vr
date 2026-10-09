@@ -11,7 +11,7 @@ using Zantetsu.Rendering;
 namespace Zantetsu.EditorTools.Rendering
 {
     /// <summary>
-    /// Compiles, with Unity's own shader compiler, the variants of the two indirect VP shaders that the Direct3D 12 plugin
+    /// Compiles, with Unity's own shader compiler, the variants of the indirect VP shaders that the Direct3D 12 / Android Vulkan plugins
     /// draws (DESIGN 4.5.8; keyword VP_NATIVE_MULTIDRAW), and writes each stage's bytecode with what Unity reports it
     /// binds -- constant buffers and their constants, textures and samplers, buffers. The plugin builds its pipeline
     /// state from these; nothing of Unity's own binding of the ordinary variants is inferred. Beside each plugin variant
@@ -30,6 +30,8 @@ namespace Zantetsu.EditorTools.Rendering
         public const string ShadowCasterShader = "Zantetsu/VP Indexed Indirect Shadow Caster";
         public const string PluginKeyword = "VP_NATIVE_MULTIDRAW";
         public const string GpuCulledKeyword = "VP_GPU_CULLED";
+        public const string NoClipKeyword = "VP_NO_CLIP";
+        public const string DirectKeyword = "VP_NATIVE_DIRECT";
 
         public readonly struct Variant
         {
@@ -74,6 +76,8 @@ namespace Zantetsu.EditorTools.Rendering
         /// </summary>
         public const string StereoKeyword = "STEREO_INSTANCING_ON";
 
+        private static bool s_vulkan;
+        public static void VulkanBatch() { s_vulkan = true; Batch(); }
         public static void Batch()
         {
             int code = 1;
@@ -86,8 +90,28 @@ namespace Zantetsu.EditorTools.Rendering
                 var report = new StringBuilder();
                 report.AppendLine("VpNativeShaderBake " + DateTime.Now.ToString("o") + " Unity " + Application.unityVersion);
                 bool allCompiled = true;
-                foreach (Variant variant in Variants)
+                var variants = new List<Variant>(Variants);
+                if (s_vulkan) variants.Add(new Variant("motion-plugin-stereo", ForwardShader, GpuCulledKeyword, PluginKeyword, "STEREO_MULTIVIEW_ON"));
+                // Keep the historical Clip-enabled assets unchanged, and bake ordinary-object variants separately.
+                // Direct Clip draws are Vulkan-only until the other native backend implements the CPU command path.
+                foreach (Variant original in variants.ToArray())
                 {
+                    var noClipKeys = new List<string>(original.Keywords) { NoClipKeyword };
+                    variants.Add(new Variant(original.Name + "-noclip", original.Shader, noClipKeys.ToArray()));
+                    if (s_vulkan && original.Name.Contains("-plugin"))
+                    {
+                        var directKeys = new List<string>(original.Keywords);
+                        directKeys.Remove(GpuCulledKeyword);
+                        directKeys.Remove(PluginKeyword);
+                        directKeys.Add(DirectKeyword);
+                        variants.Add(new Variant(original.Name.Replace("-plugin", "-direct"), original.Shader, directKeys.ToArray()));
+                    }
+                }
+                foreach (Variant original in variants)
+                {
+                    var keys = (string[])original.Keywords.Clone();
+                    if (s_vulkan) for (int i = 0; i < keys.Length; i++) if (keys[i] == StereoKeyword) keys[i] = "STEREO_MULTIVIEW_ON";
+                    var variant = new Variant(original.Name, original.Shader, keys);
                     allCompiled &= Bake(variant, folder, report);
                 }
 
@@ -122,7 +146,7 @@ namespace Zantetsu.EditorTools.Rendering
                 return false;
             }
 
-            ShaderData.Pass pass = data.GetSubshader(0).GetPass(0);
+            ShaderData.Pass pass = data.GetSubshader(0).GetPass(variant.Name.StartsWith("motion-") ? 1 : 0);
             report.AppendLine("  pass " + pass.Name + " subshaders " + data.SubshaderCount + " passes " + data.GetSubshader(0).PassCount);
             bool compiled = true;
             var binary = new VpNativeShaderBinary
@@ -133,9 +157,9 @@ namespace Zantetsu.EditorTools.Rendering
             {
                 string suffix = stage == ShaderType.Vertex ? "vs" : "ps";
 
-                // forExternalTool: the bytes are the DXBC alone, from its first byte (checked 2026-10-07; without it
+                // forExternalTool: D3D returns raw DXBC and Vulkan returns raw SPIR-V. For D3D (checked 2026-10-07), without it
                 // Unity's own 38-byte header precedes the same DXBC). Unity strips the reflection chunk either way.
-                ShaderData.VariantCompileInfo info = pass.CompileVariant(stage, variant.Keywords, ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64, true);
+                ShaderData.VariantCompileInfo info = pass.CompileVariant(stage, variant.Keywords, s_vulkan ? ShaderCompilerPlatform.Vulkan : ShaderCompilerPlatform.D3D, s_vulkan ? BuildTarget.Android : BuildTarget.StandaloneWindows64, true);
                 report.AppendLine("  " + suffix + ": success " + info.Success + "; bytes " + (info.ShaderData != null ? info.ShaderData.Length : 0));
                 foreach (ShaderMessage message in info.Messages ?? Array.Empty<ShaderMessage>())
                 {
@@ -153,14 +177,14 @@ namespace Zantetsu.EditorTools.Rendering
                 binary.Stages.Add(ToStage(stage == ShaderType.Vertex ? VpNativeShaderBinary.StageKind.Vertex : VpNativeShaderBinary.StageKind.Pixel, info));
             }
 
-            if (!compiled)
+            if (!compiled || !VerifyBindingCapacity(binary, report) || !VerifyClipVariant(variant, binary, report))
             {
                 return false;
             }
 
             // The asset a Player loads (Resources/VpNative/<name>.bytes), with a meta whose GUID is the name's, so a
             // re-bake replaces the asset in place.
-            string assets = Path.Combine(folder, "assets", VpNativeShaderBinary.ResourceFolder);
+            string assets = Path.Combine(folder, "assets", s_vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder);
             Directory.CreateDirectory(assets);
             byte[] bytes = binary.Write();
             File.WriteAllBytes(Path.Combine(assets, variant.Name + ".bytes"), bytes);
@@ -174,6 +198,101 @@ namespace Zantetsu.EditorTools.Rendering
             }
 
             return true;
+        }
+
+        // The event ring has separate 16-entry arrays for resource and constant bindings on Vulkan. Count the
+        // stage-qualified bindings the managed pipeline creates, including repeated names in VS and PS. A sampler
+        // is pipeline-static and VpNativeCommand is the native command constant, so neither uses a draw array slot.
+        private static bool VerifyBindingCapacity(VpNativeShaderBinary binary, StringBuilder report)
+        {
+            int constants = 0, resources = 0;
+            foreach (VpNativeShaderBinary.Stage stage in binary.Stages)
+            {
+                foreach (VpNativeShaderBinary.ConstantBuffer buffer in stage.ConstantBuffers)
+                    if (buffer.Name != VpNativePipeline.CommandConstantBuffer) constants++;
+                resources += stage.Buffers.Count + stage.Textures.Count;
+            }
+            int constantCapacity = s_vulkan ? 16 : 8;
+            bool valid = constants <= constantCapacity && resources <= 16;
+            report.AppendLine("  draw binding capacity gate: " + (valid ? "passed" : "FAILED")
+                + "; constants " + constants + "/" + constantCapacity + ", resources " + resources + "/16");
+            return valid;
+        }
+
+        // Verify the compiled shader rather than relying on a source-level branch. This is the gate that makes an
+        // ordinary object's VS free of Clip buffers, work and outputs, and keeps the small direct path free of GPU
+        // selection/argument/instance buffers. SPIR-V's ClipDistance capability and built-in cover the output contract.
+        private static bool VerifyClipVariant(Variant variant, VpNativeShaderBinary binary, StringBuilder report)
+        {
+            VpNativeShaderBinary.Stage vertex = binary.FindStage(VpNativeShaderBinary.StageKind.Vertex);
+            bool noClip = Array.IndexOf(variant.Keywords, NoClipKeyword) >= 0;
+            bool direct = Array.IndexOf(variant.Keywords, DirectKeyword) >= 0;
+            bool valid = vertex != null;
+            if (noClip)
+            {
+                valid &= vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip");
+                if (s_vulkan && vertex != null) valid &= !HasSpirvClipDistance(vertex.Bytecode);
+                report.AppendLine("  no-Clip VS gate: " + (valid ? "passed" : "FAILED (Clip buffer/capability/output remains)"));
+            }
+            if (direct)
+            {
+                string[] absent = { "_VpNativeArguments", "unity_IndirectDrawArgs", "_VpVisible", "_VpInstanceObjectToWorld", "_VpInstanceClip", "_VpCullCommands" };
+                if (vertex != null)
+                {
+                    foreach (string name in absent) valid &= !vertex.Buffers.Exists(b => b.Name == name);
+                    VpNativeShaderBinary.ConstantBuffer records = vertex.FindConstantBuffer("VpNativeDirect");
+                    valid &= records != null && records.Size == 32 * 208;
+                    valid &= vertex.Buffers.Count == 1 && vertex.Buffers[0].Name == "_VpVertices";
+                    if (s_vulkan) valid &= HasSpirvClipDistance(vertex.Bytecode);
+                }
+                valid &= !noClip;
+                report.AppendLine("  direct Clip VS gate: " + (valid ? "passed (vertices + 6656-byte record UBO; Clip output)" : "FAILED (unexpected buffer/record layout/output)"));
+            }
+            return valid;
+        }
+
+        private static bool HasSpirvClipDistance(byte[] bytes)
+        {
+            // Unity declares a dormant float[1] ClipDistance member in its common gl_PerVertex block even without
+            // the capability or a write. A decoration alone therefore cannot establish an active Clip output.
+            // Check the capability, standalone built-in, and actual accesses to the decorated output member.
+            var pointerTargets = new Dictionary<uint, uint>();
+            var outputTypes = new Dictionary<uint, uint>();
+            var clipMembers = new Dictionary<uint, uint>();
+            var constants = new Dictionary<uint, uint>();
+            var accesses = new List<(uint output, uint member)>();
+            var wholeStores = new HashSet<uint>();
+            for (int at = 20; at < bytes.Length;)
+            {
+                uint instruction = BitConverter.ToUInt32(bytes, at);
+                int length = (int)(instruction >> 16) * 4;
+                if (length < 4 || at + length > bytes.Length) throw new InvalidDataException("invalid SPIR-V instruction");
+                uint op = instruction & 65535;
+                if (op == 17 && length >= 8 && BitConverter.ToUInt32(bytes, at + 4) == 32) return true;
+                if (op == 71 && length >= 16 && BitConverter.ToUInt32(bytes, at + 8) == 11 && BitConverter.ToUInt32(bytes, at + 12) == 3) return true;
+                if (op == 72 && length >= 20 && BitConverter.ToUInt32(bytes, at + 12) == 11 && BitConverter.ToUInt32(bytes, at + 16) == 3)
+                    clipMembers[BitConverter.ToUInt32(bytes, at + 4)] = BitConverter.ToUInt32(bytes, at + 8);
+                if (op == 32 && length >= 16)
+                    pointerTargets[BitConverter.ToUInt32(bytes, at + 4)] = BitConverter.ToUInt32(bytes, at + 12);
+                if (op == 43 && length >= 16)
+                    constants[BitConverter.ToUInt32(bytes, at + 8)] = BitConverter.ToUInt32(bytes, at + 12);
+                if (op == 59 && length >= 16 && BitConverter.ToUInt32(bytes, at + 12) == 3)
+                    outputTypes[BitConverter.ToUInt32(bytes, at + 8)] = BitConverter.ToUInt32(bytes, at + 4);
+                if ((op == 65 || op == 66) && length >= 20)
+                    accesses.Add((BitConverter.ToUInt32(bytes, at + 12), BitConverter.ToUInt32(bytes, at + 16)));
+                if (op == 62 && length >= 12) wholeStores.Add(BitConverter.ToUInt32(bytes, at + 4));
+                at += length;
+            }
+            foreach (var access in accesses)
+            {
+                if (outputTypes.TryGetValue(access.output, out uint pointer) && pointerTargets.TryGetValue(pointer, out uint structure)
+                    && clipMembers.TryGetValue(structure, out uint member) && constants.TryGetValue(access.member, out uint index)
+                    && index == member) return true;
+            }
+            foreach (var output in outputTypes)
+                if (pointerTargets.TryGetValue(output.Value, out uint structure) && clipMembers.ContainsKey(structure)
+                    && wholeStores.Contains(output.Key)) return true;
+            return false;
         }
 
         private static VpNativeShaderBinary.Stage ToStage(VpNativeShaderBinary.StageKind kind, ShaderData.VariantCompileInfo info)
@@ -223,14 +342,49 @@ namespace Zantetsu.EditorTools.Rendering
                 });
             }
 
+            if (s_vulkan) FilterVulkan(stage);
             return stage;
+        }
+
+        // Vulkan compilation reports the whole pass's reflection for both stages. Keep only descriptors actually
+        // present in this stage's SPIR-V. The low 24 bits of Unity's index encode set and binding.
+        private static void FilterVulkan(VpNativeShaderBinary.Stage stage)
+        {
+            byte[] bytes = stage.Bytecode;
+            if (bytes.Length < 20 || bytes.Length % 4 != 0 || BitConverter.ToUInt32(bytes, 0) != 0x07230203)
+                throw new InvalidDataException("Unity did not return SPIR-V");
+            var sets = new Dictionary<uint, uint>();
+            var bindings = new Dictionary<uint, uint>();
+            for (int at = 20; at < bytes.Length;)
+            {
+                uint instruction = BitConverter.ToUInt32(bytes, at);
+                int length = (int)(instruction >> 16) * 4;
+                if (length < 4 || at + length > bytes.Length) throw new InvalidDataException("invalid SPIR-V instruction");
+                if ((instruction & 65535) == 71 && length >= 16)
+                {
+                    uint id = BitConverter.ToUInt32(bytes, at + 4), decoration = BitConverter.ToUInt32(bytes, at + 8), value = BitConverter.ToUInt32(bytes, at + 12);
+                    if (decoration == 33) bindings[id] = value;
+                    if (decoration == 34) sets[id] = value;
+                }
+                at += length;
+            }
+            var active = new HashSet<int>();
+            foreach (var binding in bindings)
+                if (sets.TryGetValue(binding.Key, out uint set)) active.Add((int)((set << 16) | binding.Value));
+            bool Missing(int register) => !active.Contains(register & 0xffffff);
+            stage.ConstantBuffers.RemoveAll(b => Missing(b.Register));
+            stage.Buffers.RemoveAll(b => Missing(b.Register));
+            stage.Textures.RemoveAll(b => Missing(b.Register));
+            stage.Samplers.RemoveAll(b => Missing(b.Register));
+            foreach (var texture in stage.Textures)
+                if (texture.SamplerRegister >= 0 && Missing(texture.SamplerRegister)) texture.SamplerRegister = -1;
         }
 
         private static string GuidOf(string name)
         {
             using (var md5 = System.Security.Cryptography.MD5.Create())
             {
-                byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes("Zantetsu.VpNativeShaderBinary:" + name));
+                byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes((s_vulkan ? "Zantetsu.VpNativeVulkanShaderBinary:" : "Zantetsu.VpNativeShaderBinary:") + name));
                 var text = new StringBuilder(32);
                 foreach (byte b in hash) text.Append(b.ToString("x2"));
                 return text.ToString();

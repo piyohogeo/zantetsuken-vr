@@ -16,7 +16,7 @@
 // keep what may intersect the culling volume of any shadow split. An eye count or a split count of zero keeps everything.
 #pragma kernel CullCommands
 
-// Matches Zantetsu.Rendering.VpCullCommand: 40 bytes.
+// Matches Zantetsu.Rendering.VpCullCommand: 48 bytes; float3 bounds have an explicit fourth component.
 struct VpCullCommand
 {
     uint indexCount;
@@ -24,7 +24,9 @@ struct VpCullCommand
     uint startInstance;
     uint instanceCount;
     float3 centre;
+    float pad0;
     float3 extents;
+    float pad1;
 };
 
 #define VP_CULL_MARGIN 1e-3
@@ -42,6 +44,17 @@ uint _VpArgumentOffset;
 
 StructuredBuffer<VpCullCommand> _VpCullCommands;
 StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+
+// The 144-byte CPU clip record. Selection only reads the count, once per candidate instance, and only when
+// the camera routes valid clip instances to its separate CPU direct draws. No plane is used by selection.
+struct VpCullInstanceClip
+{
+    float4 planes[8];
+    float planeCount;
+    float pad0, pad1, pad2; // scalar padding keeps the Vulkan array stride at 144 bytes
+};
+StructuredBuffer<VpCullInstanceClip> _VpInstanceClip;
+uint _VpCullExcludeClipped;
 
 RWStructuredBuffer<uint> _VpForwardVisible;
 RWByteAddressBuffer _VpForwardArguments;
@@ -118,6 +131,15 @@ void CullCommands(uint3 id : SV_DispatchThreadID)
     for (uint i = 0u; i < command.instanceCount; i++)
     {
         uint instance = command.startInstance + i;
+        [branch]
+        if (_VpCullExcludeClipped != 0u)
+        {
+            if (_VpInstanceClip[instance].planeCount > 0.0)
+            {
+                continue;
+            }
+        }
+
         float4x4 objectToWorld = _VpInstanceObjectToWorld[instance];
         float3 centre = mul(objectToWorld, float4(command.centre, 1.0)).xyz;
         float3 axisX = float3(objectToWorld._m00, objectToWorld._m10, objectToWorld._m20) * command.extents.x;

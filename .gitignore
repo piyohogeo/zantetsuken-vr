@@ -39,8 +39,15 @@ sysinfo.txt
 *.aab
 *.unitypackage
 
+# Quest build inputs baked from licensed meshes
+Assets/StreamingAssets/Quest3s/
+Assets/StreamingAssets/Quest3s.meta
+
 # Licensed third-party assets are kept outside the public repository
 Assets/Licensed/
 Assets/Licensed.meta
 Assets/ThirdPartyPrivate/
 
+
+# Android Gradle native build intermediates
+.utmp/

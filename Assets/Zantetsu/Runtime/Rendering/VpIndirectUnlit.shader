@@ -72,10 +72,6 @@ Shader "Zantetsu/VP Indirect Unlit"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                // Vulkan issues the commands as one multi-draw, so each command is identified by its draw ID.
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -96,11 +92,7 @@ Shader "Zantetsu/VP Indirect Unlit"
             // as a draw of its own with the command set as the base, so the draw ID is 0.
             void InitializeVpIndirectDraw(Attributes input)
             {
-            #if defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
-            #else
                 InitIndirectDrawArgs(0);
-            #endif
             }
 
             // GetIndirectVertexID and GetIndirectInstanceID count from 0 within each command. The _Base variants add the

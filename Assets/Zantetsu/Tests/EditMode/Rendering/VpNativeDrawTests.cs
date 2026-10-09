@@ -36,6 +36,86 @@ namespace Zantetsu.Rendering.Tests
             return disposable;
         }
 
+        [Test]
+        public unsafe void WarmupData_UsesTheVersionOneResourceFreeHeader_AndWaitsForItsOwnConsumption()
+        {
+            var ring = Track(new VpNativeDrawData(2, 4, 2, 256));
+            Assert.That(ring.TryBeginWarmup(1), Is.True);
+            IntPtr block = ring.Finish(out uint serial);
+            var header = (Plugin.Draw*)block;
+            Assert.That(header->version, Is.EqualTo(Plugin.ContractVersion));
+            Assert.That(header->pipeline, Is.EqualTo(1u));
+            Assert.That((IntPtr)header->argumentBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That((IntPtr)header->indexBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That(header->argumentOffset, Is.Zero);
+            Assert.That(header->commandCount, Is.Zero);
+            Assert.That(header->resourceCount, Is.Zero);
+            Assert.That(header->constantsCount, Is.Zero);
+            Assert.That(ring.StateOf(serial), Is.EqualTo(VpNativeDrawData.BlockState.Prepared));
+            var recorded = new List<IntPtr>();
+            Assert.That(ring.RecordPrepared(recorded.Add), Is.EqualTo(1));
+            Assert.That(recorded, Is.EqualTo(new[] { block }));
+            ring.SetConsumedSentinel(5);
+            Assert.That(ring.InFlight, Is.EqualTo(1), "a recorded warm event still owns its header");
+            Assert.That(VpNativeDrawData.ResultOf(block), Is.Null);
+            header->result = (uint)Plugin.Result.Recorded;
+            header->consumed = 1;
+            Assert.That(VpNativeDrawData.ResultOf(block), Is.EqualTo(Plugin.Result.Recorded));
+            Assert.That(ring.InFlight, Is.Zero);
+
+            Assert.That(ring.TryBeginWarmup(2, true), Is.True);
+            block = ring.Finish(out _);
+            Assert.That(((Plugin.Draw*)block)->argumentOffset, Is.EqualTo(1u), "caster and motion request the real pass restart path");
+            Assert.That(ring.DropPrepared(), Is.EqualTo(1));
+            Assert.Throws<ArgumentException>(() => ring.TryBegin(1, IntPtr.Zero, 0, 0, IntPtr.Zero, 0, 4),
+                "resource-free headers are accepted only through the optional warm event API");
+        }
+
+        [Test]
+        public unsafe void DirectClipGroup_CopiesPayloadsAndTracksOnlyItsCompletion_UntilConsumedOrDiscarded()
+        {
+            var ring = Track(new VpNativeDrawData(4, 4, 2, 20000));
+            var draw = new Plugin.DirectCommand { indexCount = 6, instanceCount = 1, firstIndex = 3, firstInstance = 1 };
+            var constants = new VpNativeConstantBlock(new VpNativeShaderBinary.ConstantBuffer { Name = "VpNativeDirect", Size = 6656 });
+            constants.SetDirectClipRecord(1, Matrix4x4.Translate(new Vector3(2,3,4)), VpInstanceClip.Keep(new Vector4(1,0,0,-5), 1));
+            Assert.That(ring.TryBeginDirect(2, new IntPtr(123), 40, 4, new[] { draw }), Is.True);
+            ring.AddViewport(new Rect(0,0,32,32)); ring.SetConstants(0, constants);
+            IntPtr source = ring.Finish(out _);
+            Assert.That(ring.TryBegin(1,new IntPtr(124),0,1,new IntPtr(123),40,4), Is.True);
+            ring.AddViewport(new Rect(0,0,32,32)); ring.Finish(out _);
+            var groups = new List<IntPtr>();
+            Assert.That(ring.GroupPrepared(groups), Is.EqualTo(1));
+            Assert.That(groups[0], Is.EqualTo(source), "the group reuses an unrecorded source slot safely");
+            Assert.That(ring.InFlight, Is.EqualTo(1));
+            var root = (Plugin.Draw*)groups[0];
+            Assert.That(VpNativeDrawData.ModeOf(groups[0]), Is.EqualTo(Plugin.DrawMode.Group));
+            var ext = (Plugin.DrawExtension*)((byte*)root+sizeof(Plugin.Draw));
+            Assert.That(ext->commandsCount, Is.EqualTo(2));
+            var offsets = (uint*)((byte*)root+ext->commandsOffset);
+            var child = (Plugin.Draw*)((byte*)root+offsets[0]);
+            Assert.That(child->totalBytes+offsets[0], Is.LessThanOrEqualTo(root->totalBytes));
+            var direct = (Plugin.DrawExtension*)((byte*)child+sizeof(Plugin.Draw));
+            var copied = (Plugin.DirectCommand*)((byte*)child+direct->commandsOffset);
+            Assert.That(copied->firstIndex, Is.EqualTo(3)); Assert.That(copied->firstInstance, Is.EqualTo(1));
+            var cb = (Plugin.Constants*)((byte*)child+child->constantsOffset);
+            float* record = (float*)((byte*)child+cb->offset+208);
+            Assert.That(record[12], Is.EqualTo(2)); Assert.That(record[19], Is.EqualTo(-5)); Assert.That(record[48], Is.EqualTo(1));
+            Assert.That(ring.RecordPrepared(null,IntPtr.Zero,0), Is.EqualTo(1));
+            ring.SetConsumedSentinel(100);
+            Assert.That(ring.InFlight, Is.EqualTo(1), "a recorded group needs its own completion or submission sentinel");
+            root->consumed=1;
+            Assert.That(ring.InFlight, Is.Zero);
+        }
+
+        [Test]
+        public void DirectClipGroup_EmptyListDoesNotTakeOrUploadAnyBlock_AndTooManyDirectRecordsAreRejected()
+        {
+            var ring=Track(new VpNativeDrawData(2,4,2,1000));
+            var groups=new List<IntPtr>();
+            Assert.That(ring.GroupPrepared(groups), Is.Zero); Assert.That(ring.Taken, Is.Zero);
+            Assert.Throws<ArgumentOutOfRangeException>(()=>ring.TryBeginDirect(1,new IntPtr(1),40,4,new Plugin.DirectCommand[33]));
+        }
+
         private static VpNativeShaderBinary Sample()
         {
             var binary = new VpNativeShaderBinary { Name = "sample", Shader = "Zantetsu/Sample", Keywords = "A B", UnityVersion = "6000.3.22f1" };
