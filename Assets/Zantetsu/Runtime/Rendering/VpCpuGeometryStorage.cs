@@ -127,7 +127,7 @@ namespace Zantetsu.Rendering
             : this(
                 new VpCpuGeometryBacking
                 {
-                    pages = VpWindowsPageBacking.Instance,
+                    pages = VpPlatformPageBacking.Instance,
                     vertexReserve = vertexCapacity,
                     vertexInitialCommit = vertexCapacity,
                     indexReserve = indexCapacity,

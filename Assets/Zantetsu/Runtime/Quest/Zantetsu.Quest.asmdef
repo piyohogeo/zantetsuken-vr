@@ -1,0 +1,18 @@
+{
+    "name": "Zantetsu.Quest",
+    "references": [
+        "Zantetsu.Core",
+        "Zantetsu.Sandbox",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.MeshCut",
+        "Unity.XR.OpenXR",
+        "Unity.XR.OpenXR.Features.MetaQuestSupport",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.InputSystem",
+        "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Urp",
+        "Unity.Collections"
+    ],
+    "allowUnsafeCode": true
+}

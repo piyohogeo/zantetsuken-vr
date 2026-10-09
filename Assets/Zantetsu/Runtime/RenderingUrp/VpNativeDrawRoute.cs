@@ -35,7 +35,7 @@ namespace Zantetsu.Rendering.Urp
     /// route records; it never draws through Unity's calls instead.
     /// </para>
     /// </summary>
-    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IDisposable
+    public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IDisposable
     {
         public const string CasterVariant = "caster-plugin";
         public const string CopyShaderResource = "VpNativeConstantCopy";
@@ -49,6 +49,9 @@ namespace Zantetsu.Rendering.Urp
         private static readonly ProfilerMarker BodyPrepareMarker = new ProfilerMarker("Zantetsu.NativeDraw.BodyPrepare");    // the camera's matrices, the target, the variant
         private static readonly ProfilerMarker CasterSlicesMarker = new ProfilerMarker("Zantetsu.NativeDraw.CasterSlices");  // the cascades' matrices, viewports and biases
         private static readonly ProfilerMarker DeclareMarker = new ProfilerMarker("Zantetsu.NativeDraw.DeclareCasters");     // the caster bounds told to Unity's culling
+        private static readonly ProfilingSampler ConstantCopySampler = new ProfilingSampler("VP Native Constant Copy");
+        private static readonly ProfilingSampler ConstantCopyWarmSampler = new ProfilingSampler("VP Native Constant Copy Warm");
+        private static readonly ProfilingSampler CullWarmSampler = new ProfilingSampler("VP GPU Cull Warm");
         private static readonly int OffsetsId = Shader.PropertyToID("_VpNativeOffsets");
         private static readonly int DestinationId = Shader.PropertyToID("_VpNativeDestination");
         private static readonly int ConstantsId = Shader.PropertyToID("_VpNativeConstants");
@@ -87,6 +90,7 @@ namespace Zantetsu.Rendering.Urp
             ("unity_StereoMatrixVP", 28), ("unity_StereoMatrixV", 29), ("unity_StereoWorldSpaceCameraPos", 30), ("unity_StereoEyeIndices", 31),
             ("unity_StereoMatrixP", 32), ("unity_StereoMatrixInvV", 33), ("unity_StereoCameraProjection", 34), ("unity_StereoCameraInvProjection", 35),
             ("unity_StereoMatrixInvVP", 36), ("unity_StereoMatrixInvP", 37),
+            ("_PrevViewProjMatrixStereo", 38), ("_NonJitteredViewProjMatrixStereo", 39), ("_SpaceWarpNDCModifier", 40),
         };
 
         private static readonly int StereoMatrixVpId = Shader.PropertyToID("_VpNativeStereoMatrixVP");
@@ -156,6 +160,7 @@ namespace Zantetsu.Rendering.Urp
             public int binding;
             public int size;
             public GraphicsBuffer offsets;
+            public string layoutKey;
         }
 
         private sealed class CpuBlock
@@ -175,11 +180,43 @@ namespace Zantetsu.Rendering.Urp
             public int view;
         }
 
+        private struct ClipIssue
+        {
+            public VpGpuIndexedGeometryBuffers buffers;
+            public Material material;
+            public VpGeometryRange range;
+            public Matrix4x4 objectToWorld;
+            public VpInstanceClip clip;
+        }
+        public bool SeparateClipDraws => Plugin.Vulkan;
+        private VpNativeDirectClipProbe _directClipProbe;
+        private readonly Plugin.DirectCommand[] _directCommands = new Plugin.DirectCommand[32];
+        private readonly List<IntPtr> _groupPointers = new List<IntPtr>(4);
+        private readonly Dictionary<(string layout, int context), int> _copiedGpuBlocks = new Dictionary<(string, int), int>();
+        public long DirectClipDrawsIssued { get; private set; }
+        public long GpuConstantDispatches { get; private set; }
+        public long SharedGpuConstantBlocks { get; private set; }
+
+        private sealed class PrewarmRequest
+        {
+            public readonly List<Material> bodies = new List<Material>(4);
+            public readonly List<PipelineEntry> entries = new List<PipelineEntry>(16);
+            public readonly List<PipelineEntry> colourEntries = new List<PipelineEntry>(8);
+            public Material shadow, provisionalShadow;
+            public VpIndexedIndirectDrawBatch batch;
+            public VpGpuIndexedGeometryBuffers buffers;
+            public bool unityCastersDeclared;
+            public bool colourPrepared, colourSubmitted, motionSubmitted, shadowSubmitted, computeSubmitted;
+            public int pending, completed;
+            public string failure;
+        }
+
         private struct Block
         {
             public IntPtr data;
             public int frame;
             public uint serial;
+            public PrewarmRequest warmup;
         }
 
         // What the GPU-assembled stage constants are given beside the frame's globals. For a Single Pass Instanced
@@ -219,9 +256,18 @@ namespace Zantetsu.Rendering.Urp
             public Camera camera;
             public BodyPass body;
             public CasterPass casters;
+            public BodyPass motion;
+            public ColourDrawPass colourDraw;
+            public readonly List<Block> colourBlocks = new List<Block>(8);
+            public readonly List<Issue> motionBodies = new List<Issue>(8);
             public readonly List<Issue> bodies = new List<Issue>(8);
             public readonly List<Issue> casterRuns = new List<Issue>(8);
+            public readonly List<ClipIssue> clipBodies = new List<ClipIssue>(4);
+            public readonly List<ClipIssue> clipMotion = new List<ClipIssue>(4);
+            public readonly List<ClipIssue> clipCasters = new List<ClipIssue>(4);
             public int frame;
+            public int directProbeFrame = -1;
+            public PrewarmRequest prewarm;
         }
 
         /// <summary>Null: the body's variant follows the frame's main light shadow keywords. A name forces one, for a test.</summary>
@@ -250,9 +296,9 @@ namespace Zantetsu.Rendering.Urp
         /// is not public. Measured against URP's soft-shadow picture on a D16 map (2026-10-07, play-20/21): the
         /// difference falls from a depth bias of 0 (mean 4.7) to a plateau from about 160 on (0.9, the same up to
         /// 65536), and the slope term 2.5 is needed (0: 2.2). 256 is taken, inside the plateau; the city's picture is
-        /// to confirm it.
+        /// to confirm it. Vulkan uses the URP value 1 directly in depthBiasConstantFactor; the D3D12 calibration does not apply.
         /// </summary>
-        public int CasterDepthBias { get; set; } = 256;
+        public int CasterDepthBias { get; set; } = Plugin.Vulkan ? 1 : 256;
 
         /// <summary>
         /// The rasterizer bias as the pipeline takes it: away from the light. With a reversed Z buffer the depth grows
@@ -271,6 +317,8 @@ namespace Zantetsu.Rendering.Urp
         public long BodiesTaken { get; private set; }
         public long CastersTaken { get; private set; }
         public long BodiesIssued { get; private set; }
+        public long MotionTaken { get; private set; }
+        public long MotionIssued { get; private set; }
         public long CastersIssued { get; private set; }
         public long CasterRunsNotDrawn { get; private set; }
 
@@ -359,7 +407,7 @@ namespace Zantetsu.Rendering.Urp
 
         private static bool AppendBlocks(StringBuilder text, string variant, uint[] words, List<(VpNativePipeline.BindingInfo binding, int offset, int size, int split)> blocks)
         {
-            var asset = Resources.Load<TextAsset>(VpNativeShaderBinary.ResourceFolder + "/" + variant);
+            var asset = Resources.Load<TextAsset>((Plugin.Vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder) + "/" + variant);
             if (asset == null || !VpNativeShaderBinary.TryRead(asset.bytes, out VpNativeShaderBinary binary, out string _))
             {
                 text.Append("the variant's binary could not be read: ").Append(variant).Append('\n');
@@ -437,9 +485,9 @@ namespace Zantetsu.Rendering.Urp
                 return failure;
             }
 
-            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12)
+            if (SystemInfo.graphicsDeviceType != GraphicsDeviceType.Direct3D12 && !Plugin.Vulkan)
             {
-                return "the graphics device is " + SystemInfo.graphicsDeviceType + ", not Direct3D 12";
+                return "the graphics device is " + SystemInfo.graphicsDeviceType + "; native drawing requires Direct3D 12 or Vulkan";
             }
 
             if (!Plugin.TryLoad(out failure))
@@ -471,7 +519,7 @@ namespace Zantetsu.Rendering.Urp
                 {
                     _copy = Resources.Load<ComputeShader>(CopyShaderResource);
                     _copyKernel = _copy.FindKernel("AssembleGlobals");
-                    _drawData = new VpNativeDrawData(DrawBlocks, 16, 8, 8192) { Name = "route ring " + (++s_ringsMade) };
+                    _drawData = new VpNativeDrawData(DrawBlocks, 16, Plugin.Vulkan ? 16 : 8, Plugin.Vulkan ? 65536 : 8192) { Name = "route ring " + (++s_ringsMade) };
                     VpNativeDrawRelease.Register(_drawData);
                 }
             }
@@ -514,8 +562,20 @@ namespace Zantetsu.Rendering.Urp
             }
 
             passes.bodies.Clear();
+            passes.colourBlocks.Clear();
+            passes.clipBodies.Clear(); passes.clipMotion.Clear(); passes.clipCasters.Clear();
+            passes.motionBodies.Clear();
             passes.casterRuns.Clear();
             passes.frame = Time.frameCount;
+            if (passes.prewarm != null && passes.prewarm.failure == null && !passes.prewarm.unityCastersDeclared)
+            {
+                PrewarmRequest request = passes.prewarm;
+                // Same zero-instance procedural declarations as real native casters, using the actual materials.
+                if (request.shadow != null) DeclareCasterBounds(camera, request.batch, request.buffers, request.shadow, 0, true);
+                if (request.provisionalShadow != null && request.provisionalShadow != request.shadow)
+                    DeclareCasterBounds(camera, request.batch, request.buffers, request.provisionalShadow, 0, true);
+                request.unityCastersDeclared = true;
+            }
             if (_pointersSweptFrame != passes.frame)
             {
                 // Once a frame: pointers of buffers disposed and textures destroyed since are dropped, so that a new
@@ -527,6 +587,8 @@ namespace Zantetsu.Rendering.Urp
             display.NativeDrawSink = this;
             renderer.EnqueuePass(passes.casters);
             renderer.EnqueuePass(passes.body);
+            if (passes.colourDraw != null) renderer.EnqueuePass(passes.colourDraw);
+            if (Plugin.Vulkan) renderer.EnqueuePass(passes.motion);
             Enqueued++;
             return true;
         }
@@ -555,8 +617,161 @@ namespace Zantetsu.Rendering.Urp
         // holder that answers for it.
         private void DeferCameraBuffers(CameraPasses passes)
         {
-            VpNativeDrawRelease.Defer("VP native draw route camera", IssuedEventsWait(),
-                new IDisposable[] { passes.body.TakeGpuConstants(), passes.casters.TakeGpuConstants() });
+            var resources = new List<IDisposable> { passes.body.TakeGpuConstants(), passes.casters.TakeGpuConstants(), passes.motion.TakeGpuConstants() };
+            resources.AddRange(passes.motion.TakeMotionSelections());
+            VpNativeDrawRelease.Defer("VP native draw route camera", IssuedEventsWait(), resources.ToArray());
+        }
+
+        public long PrewarmRecorded { get; private set; }
+        public long PrewarmCompleted { get; private set; }
+        public long PrewarmConstantDispatches { get; private set; }
+        public long PrewarmCullDispatches { get; private set; }
+
+        /// <summary>Quest-only startup request. Materials must be the display's own culled copies, not asset clones.</summary>
+        public bool RequestPrewarm(Camera camera, IVpNativeDrawHost display, out string failure, bool motion = true)
+        {
+            ThrowIfDisposed();
+            failure = null;
+            if (!Plugin.Vulkan || Plugin.WarmPipelineEventId == 0) { failure = "native Vulkan warm event is unavailable"; return false; }
+            if (_drawData == null) { failure = "the camera's native route has not been enqueued yet"; return false; }
+            if (!(display is IVpNativeDrawWarmupHost host) || camera == null) { failure = "no native display warmup material source"; return false; }
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null) { failure = "the native camera is not enqueued"; return false; }
+            if (passes.prewarm != null) { failure = passes.prewarm.failure; return failure == null; }
+            var request = new PrewarmRequest { motionSubmitted = !motion };
+            host.CopyNativePrewarmMaterials(request.bodies, out request.shadow, out request.provisionalShadow);
+            host.NativePrewarmBuffers(out request.batch, out request.buffers);
+            if (request.bodies.Count == 0) { failure = "the native display has no materials to prepare"; return false; }
+            request.shadowSubmitted = request.shadow == null && request.provisionalShadow == null;
+            passes.prewarm = request;
+            return true;
+        }
+
+        /// <summary>Complete only after every requested pass's warm events were consumed successfully.</summary>
+        public bool GetPrewarmStatus(Camera camera, out bool complete, out string failure)
+        {
+            complete = false; failure = null;
+            PrewarmRequest request = PassesOf(camera, false)?.prewarm;
+            if (request == null) return false;
+            CollectResults(Time.frameCount);
+            failure = request.failure;
+            complete = failure == null && request.colourSubmitted && request.motionSubmitted && request.shadowSubmitted && request.computeSubmitted && request.pending == 0;
+            return true;
+        }
+
+        public string DescribePrewarm(Camera camera)
+        {
+            PrewarmRequest request = PassesOf(camera, false)?.prewarm;
+            if (request == null) return "native prewarm: not requested";
+            GetPrewarmStatus(camera, out bool complete, out string failure);
+            var text = new StringBuilder("native prewarm: complete=").Append(complete)
+                .Append(" colour=").Append(request.colourSubmitted).Append(" motion=").Append(request.motionSubmitted)
+                .Append(" shadow=").Append(request.shadowSubmitted).Append(" compute=").Append(request.computeSubmitted)
+                .Append(" constantDispatches=").Append(PrewarmConstantDispatches).Append(" cullDispatches=").Append(PrewarmCullDispatches)
+                .Append(" pending=").Append(request.pending)
+                .Append(" consumed=").Append(request.completed).Append(" failure=").Append(failure ?? "none");
+            foreach (PipelineEntry entry in request.entries) text.AppendLine().Append(entry.pipeline.Describe());
+            return text.ToString();
+        }
+
+        private PipelineEntry PrewarmPipeline(PrewarmRequest request, Material material, string variant, VpNativeRenderState state)
+        {
+            if (material == null || request.failure != null) return null;
+            PipelineEntry entry = PipelineFor(material, variant, state, out string failure);
+            if (entry == null) { request.failure = "native prewarm " + variant + ": " + failure; return null; }
+            if (!request.entries.Contains(entry)) request.entries.Add(entry);
+            return entry;
+        }
+
+        private void PrepareBodyPrewarm(PrewarmRequest request, string variant, VpNativeRenderState state, List<PipelineEntry> into)
+        {
+            foreach (Material material in request.bodies)
+            {
+                PipelineEntry ordinary = PrewarmPipeline(request, material, variant, state);
+                PipelineEntry clip = PrewarmPipeline(request, material, variant.Replace("-noclip", "").Replace("-plugin", "-direct"), state);
+                if (ordinary != null) into.Add(ordinary);
+                if (clip != null) into.Add(clip);
+            }
+        }
+
+        private void PrewarmCompute(CommandBuffer commands, PrewarmRequest request, List<PipelineEntry> entries,
+            GraphicsBuffer gpuConstants, in GlobalsInputs inputs)
+        {
+            if (request.failure != null || request.computeSubmitted) return;
+            // The NPC startup batch is empty. The kernel's count guard makes this dispatch touch no commands/instances.
+            // A populated batch already ran normal culling; do not rewrite its selection for startup preparation.
+            if (request.batch != null && request.batch.CommandCount == 0)
+            {
+                var conditions = new VpCullConditions();
+                conditions.KeepEverything();
+                using (new ProfilingScope(commands, CullWarmSampler))
+                    request.batch.IssueCull(commands, 0, conditions, false, true);
+                PrewarmCullDispatches++;
+            }
+            foreach (PipelineEntry entry in entries)
+            {
+                if (entry.gpuBlocks.Count == 0) continue;
+                // Borrow the actual offset table and write at zero in this pass's existing scratch buffer.
+                // No draw reads these warm bytes. Real IssueOne resets its allocation and overwrites them afterwards.
+                using (new ProfilingScope(commands, ConstantCopyWarmSampler))
+                    RecordConstantCopy(commands, entry.gpuBlocks[0], gpuConstants, 0, inputs);
+                PrewarmConstantDispatches++;
+                break; // One kernel without keywords: body, shadow and stereo bindings share the compute pipeline.
+            }
+            request.computeSubmitted = true;
+        }
+
+        private void RecordConstantCopy(CommandBuffer commands, GpuBlock block, GraphicsBuffer gpuConstants,
+            int destination, in GlobalsInputs inputs)
+        {
+            using (new ProfilingScope(commands, ConstantCopySampler))
+            {
+                ComputeShader copy = _copy;
+                int kernel = _copyKernel;
+                commands.SetComputeBufferParam(copy, kernel, OffsetsId, block.offsets);
+                commands.SetComputeBufferParam(copy, kernel, ConstantsId, gpuConstants);
+                commands.SetComputeIntParam(copy, DestinationId, destination);
+                commands.SetComputeMatrixParam(copy, MatrixVpId, inputs.matrixVP);
+                commands.SetComputeMatrixParam(copy, MatrixVId, inputs.matrixV);
+                commands.SetComputeMatrixParam(copy, ProjectionId, inputs.projection);
+                commands.SetComputeIntParam(copy, InstanceMultiplierId, inputs.instanceMultiplier);
+                commands.SetComputeVectorParam(copy, ShadowBiasId, inputs.shadowBias);
+                commands.SetComputeVectorParam(copy, LightDirectionId, inputs.lightDirection);
+                commands.SetComputeFloatParam(copy, ShadowSliceSelectionId, Plugin.Vulkan ? 0f : inputs.sliceSelection);
+                if (inputs.stereo)
+                {
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixVpId, _stereoVP);
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixVId, _stereoV);
+                    commands.SetComputeMatrixArrayParam(copy, StereoMatrixPId, _stereoP);
+                    commands.SetComputeMatrixArrayParam(copy, StereoCameraProjectionId, _stereoCameraProjection);
+                    commands.SetComputeVectorArrayParam(copy, StereoCameraPosId, _stereoPos);
+                }
+                commands.DispatchCompute(copy, kernel, 1, 1, 1);
+            }
+        }
+
+        private void RecordPrewarm(CommandBuffer commands, PrewarmRequest request, List<PipelineEntry> entries, int frame, bool restartRenderPass, Action<IntPtr> recordEvent = null)
+        {
+            if (request.failure != null) return;
+            // Flush this event class before actual draw preparations: no warm header can reach a draw callback.
+            foreach (PipelineEntry entry in entries)
+            {
+                if (!_drawData.TryBeginWarmup(entry.pipeline.Id, restartRenderPass)) { request.failure = "native prewarm ring is full"; break; }
+                IntPtr data = _drawData.Finish(out uint serial);
+                _blocks.Add(new Block { data = data, frame = frame, serial = serial, warmup = request });
+                request.pending++;
+            }
+            int recorded = recordEvent != null ? _drawData.RecordPrepared(recordEvent) :
+                _drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.WarmPipelineEventId);
+            PrewarmRecorded += recorded;
+        }
+
+        private void FinishPrewarmBlock(in Block block, string failure)
+        {
+            if (block.warmup == null) return;
+            block.warmup.pending--;
+            if (failure != null) block.warmup.failure = failure;
+            else { block.warmup.completed++; PrewarmCompleted++; }
         }
 
         public void AddBody(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer)
@@ -568,7 +783,14 @@ namespace Zantetsu.Rendering.Urp
             }
 
             BodiesTaken++;
-            passes.bodies.Add(new Issue { batch = batch, buffers = buffers, material = material, startCommand = startCommand, commandCount = commandCount, view = view });
+            var issue = new Issue { batch = batch, buffers = buffers, material = material, startCommand = startCommand, commandCount = commandCount, view = view };
+            passes.bodies.Add(issue);
+            if (Plugin.Vulkan) passes.motionBodies.Add(issue);
+            if (VpNativeDirectClipProbe.Enabled && SeparateClipDraws && passes.directProbeFrame != passes.frame)
+            {
+                passes.directProbeFrame = passes.frame;
+                (_directClipProbe ??= new VpNativeDirectClipProbe()).Append(this, camera, material);
+            }
         }
 
         public void AddCasters(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int startCommand, int commandCount, int view, int layer)
@@ -584,6 +806,26 @@ namespace Zantetsu.Rendering.Urp
             DeclareCasterBounds(camera, batch, buffers, material, layer);
         }
 
+        public void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer)
+        {
+            if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip draw camera was not enqueued");
+            var issue = new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip };
+            passes.clipBodies.Add(issue); passes.clipMotion.Add(issue);
+        }
+        public void AddClipCasters(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
+            Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer)
+        {
+            if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
+            CameraPasses passes = PassesOf(camera, false);
+            if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip caster camera was not enqueued");
+            passes.clipCasters.Add(new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip });
+            // The ordinary AddCasters declaration already includes every adopted instance's bounds, including
+            // those excluded from the ordinary GPU lists. Do not duplicate that zero-instance Unity declaration.
+        }
+
         /// <summary>
         /// Tells Unity's culling, for this camera's frame, where the display's casters are. URP renders its main light
         /// shadow map -- and computes the cascades, and sets the receiver constants -- only when the camera's culling
@@ -594,10 +836,10 @@ namespace Zantetsu.Rendering.Urp
         /// so it draws nothing in any pass and nothing is drawn twice; it costs Unity one zero-instance indirect draw
         /// per cascade in its shadow pass, whatever the command count. Once per camera per frame.
         /// </summary>
-        private void DeclareCasterBounds(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int layer)
+        private void DeclareCasterBounds(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int layer, bool warming = false)
         {
             int frame = Time.frameCount;
-            if (_declaredFrame == frame && ReferenceEquals(_declaredCamera, camera))
+            if (!warming && _declaredFrame == frame && ReferenceEquals(_declaredCamera, camera))
             {
                 return;
             }
@@ -612,12 +854,18 @@ namespace Zantetsu.Rendering.Urp
                     _zeroArguments.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs() });
                 }
 
+                batch.NativeDrawBuffers(0, out _, out GraphicsBuffer visible, out _, out _, out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
+                _declareProperties.SetBuffer("_VpVertices", buffers.VertexBuffer);
+                _declareProperties.SetBuffer("_VpInstanceObjectToWorld", instances);
+                _declareProperties.SetBuffer("_VpInstanceClip", clips);
+                _declareProperties.SetBuffer("_VpCullCommands", cullCommands);
+                _declareProperties.SetBuffer("_VpVisible", visible);
                 var parameters = new RenderParams(material)
                 {
                     camera = camera,
                     layer = layer,
                     matProps = _declareProperties,
-                    worldBounds = batch.WorldBounds,
+                    worldBounds = warming ? new Bounds(camera.transform.position, Vector3.one * 10000f) : batch.WorldBounds,
                     shadowCastingMode = ShadowCastingMode.ShadowsOnly,
                     receiveShadows = false,
                 };
@@ -633,6 +881,7 @@ namespace Zantetsu.Rendering.Urp
             text.Append("native draw route: enqueued ").Append(Enqueued).Append(", recorded ").Append(Recorded)
                 .Append(", bodies taken ").Append(BodiesTaken).Append(", issued ").Append(BodiesIssued)
                 .Append(" (last variant ").Append(LastBodyVariant ?? "none").Append(")")
+                .Append(", motion taken ").Append(MotionTaken).Append(", issued ").Append(MotionIssued)
                 .Append(", caster runs taken ").Append(CastersTaken).Append(", caster issues ").Append(CastersIssued)
                 .Append(" (last splits ").Append(LastSplitCount).Append("), caster runs not drawn ").Append(CasterRunsNotDrawn)
                 .Append(LastCasterSkipReason != null ? " (last: " + LastCasterSkipReason + ")" : "")
@@ -643,10 +892,16 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", shadow map format refusals ").Append(ShadowMapFormatRefusals)
                 .Append(", runs of frames never executed: bodies ").Append(BodiesDropped).Append(", casters ").Append(CasterRunsDropped)
                 .Append(", caster bounds declared ").Append(CasterBoundsDeclared)
+                .Append(", caster bias ").Append(CasterDepthBiasSigned).Append("/").Append(CasterSlopeScaledDepthBiasSigned)
+                .Append(", warm events ").Append(PrewarmRecorded).Append(" completed ").Append(PrewarmCompleted)
+                .Append(", warm compute dispatches: constants ").Append(PrewarmConstantDispatches).Append(" cull ").Append(PrewarmCullDispatches)
                 .Append(", native pointers asked ").Append(_pointers.Acquisitions).Append(" / kept ").Append(_pointers.Hits)
                 .Append(", issues after dispose ").Append(IssuesAfterDispose).Append(", buffers retired through the route ").Append(BuffersRetired)
                 .Append(", events never run ").Append(EventsNeverRan).Append(", results lost to reuse ").Append(ResultsLost).Append("; ").Append(VpNativeDrawRelease.Describe())
-                .Append(", last frame issues ").Append(LastFrameIssues);
+                .Append(", last frame issues ").Append(LastFrameIssues)
+                .Append(", direct clip draws ").Append(DirectClipDrawsIssued)
+                .Append(", GPU constant dispatches ").Append(GpuConstantDispatches)
+                .Append(", shared constant blocks ").Append(SharedGpuConstantBlocks);
             VpNativeDrawData ring = _drawData ?? _ringAfterDispose;
             if (ring != null && !ring.IsDisposed)
             {
@@ -697,6 +952,8 @@ namespace Zantetsu.Rendering.Urp
                 return;
             }
 
+            _directClipProbe?.Dispose();
+            _directClipProbe = null;
             _disposed = true;
             var owed = new List<IDisposable>();
             foreach (PipelineEntry entry in _pipelines.Values)
@@ -710,6 +967,8 @@ namespace Zantetsu.Rendering.Urp
             {
                 owed.Add(passes.body.TakeGpuConstants());
                 owed.Add(passes.casters.TakeGpuConstants());
+                owed.Add(passes.motion.TakeGpuConstants());
+                owed.AddRange(passes.motion.TakeMotionSelections());
             }
 
             _cameras.Clear();
@@ -808,6 +1067,8 @@ namespace Zantetsu.Rendering.Urp
 
             var passes = new CameraPasses { camera = camera };
             passes.body = new BodyPass(this, passes);
+            if (passes.body.PreparesColour) passes.colourDraw = new ColourDrawPass(this, passes);
+            passes.motion = new BodyPass(this, passes, true);
             passes.casters = new CasterPass(this, passes);
             _cameras.Add(passes);
             return passes;
@@ -838,6 +1099,7 @@ namespace Zantetsu.Rendering.Urp
                 if (VpNativeDrawData.SerialOf(block.data) != block.serial)
                 {
                     ResultsLost++;
+                    FinishPrewarmBlock(block, "native prewarm result generation was lost");
                     _blocks.RemoveAt(i);
                     continue;
                 }
@@ -848,12 +1110,19 @@ namespace Zantetsu.Rendering.Urp
                     if (ring != null && ring.StateOf(block.serial) == VpNativeDrawData.BlockState.Free)
                     {
                         EventsNeverRan++;
+                        FinishPrewarmBlock(block, "native prewarm event was never executed");
                         _blocks.RemoveAt(i);
                     }
 
                     continue;
                 }
 
+                if (block.warmup != null)
+                {
+                    FinishPrewarmBlock(block, result.Value == Plugin.Result.Recorded ? null : "native prewarm refused: " + result.Value);
+                    _blocks.RemoveAt(i);
+                    continue;
+                }
                 ResultsByKind[Mathf.Clamp((int)result.Value, 0, ResultsByKind.Length - 1)]++;
                 if (result.Value != Plugin.Result.Recorded)
                 {
@@ -915,7 +1184,7 @@ namespace Zantetsu.Rendering.Urp
                 return entry;
             }
 
-            var asset = Resources.Load<TextAsset>(VpNativeShaderBinary.ResourceFolder + "/" + variant);
+            var asset = Resources.Load<TextAsset>((Plugin.Vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder) + "/" + variant);
             if (asset == null)
             {
                 failure = "the shader binary '" + variant + "' is not in the build";
@@ -968,7 +1237,7 @@ namespace Zantetsu.Rendering.Urp
 
                     // The blocks whose values are the frame's: Unity's globals, URP's shadow receiver constants, and
                     // the stereo blocks (UnityStereoViewBuffer, UnityStereoEyeIndices) of a Single Pass Instanced draw.
-                    if (buffer.Name == "$Globals" || buffer.Name == "LightShadows" || buffer.Name.StartsWith("UnityStereo", StringComparison.Ordinal))
+                    if (buffer.Name == "$Globals" || buffer.Name.StartsWith("VGlobals", StringComparison.Ordinal) || buffer.Name.StartsWith("PGlobals", StringComparison.Ordinal) || buffer.Name == "LightShadows" || buffer.Name.StartsWith("UnityStereo", StringComparison.Ordinal))
                     {
                         var offsets = new uint[SlotCount];
                         for (int i = 0; i < offsets.Length; i++) offsets[i] = Unused;
@@ -980,7 +1249,8 @@ namespace Zantetsu.Rendering.Urp
 
                         var table = new GraphicsBuffer(GraphicsBuffer.Target.Structured, SlotCount, sizeof(uint)) { name = "VP Native Offsets " + buffer.Name };
                         table.SetData(offsets);
-                        entry.gpuBlocks.Add(new GpuBlock { binding = binding, size = buffer.Size, offsets = table });
+                        entry.gpuBlocks.Add(new GpuBlock { binding = binding, size = buffer.Size, offsets = table,
+                            layoutKey = buffer.Size + ":" + string.Join(",", offsets) });
                     }
                     else
                     {
@@ -1090,7 +1360,8 @@ namespace Zantetsu.Rendering.Urp
 
         private bool IssueOne(
             CommandBuffer commands, PipelineEntry entry, Material material, in Bound bound, int startCommand, int commandCount,
-            Rect viewport, in GlobalsInputs inputs, GraphicsBuffer gpuConstants, ref int gpuConstantsUsed, int frame)
+            Rect viewport, in GlobalsInputs inputs, GraphicsBuffer gpuConstants, ref int gpuConstantsUsed, int frame,
+            List<ClipIssue> direct = null, int directStart = 0, int directCount = 0, int constantContext = 0)
         {
             if (entry.gpuBlocks.Count > _gpuOffsets.Length)
             {
@@ -1104,10 +1375,11 @@ namespace Zantetsu.Rendering.Urp
             using (PointersMarker.Auto())
             {
                 pointers = default;
-                pointers.arguments = _pointers.Buffer(bound.arguments, bound.argumentsGeneration);
-                pointers.visible = _pointers.Buffer(bound.visible, bound.visibleGeneration);
-                pointers.instances = _pointers.Buffer(bound.instances, bound.instancesGeneration);
-                pointers.clips = _pointers.Buffer(bound.clips, bound.clipsGeneration);
+                // The indirect command reader needs this even when the vertex shader does not bind it.
+                if (directCount == 0) pointers.arguments = _pointers.Buffer(bound.arguments, bound.argumentsGeneration);
+                if (entry.vertexVisible >= 0) pointers.visible = _pointers.Buffer(bound.visible, bound.visibleGeneration);
+                if (entry.vertexInstances >= 0) pointers.instances = _pointers.Buffer(bound.instances, bound.instancesGeneration);
+                if (entry.vertexClips >= 0) pointers.clips = _pointers.Buffer(bound.clips, bound.clipsGeneration);
                 pointers.indexBuffer = _pointers.Buffer(bound.indexBuffer, bound.indexGeneration);
                 pointers.vertexBuffer = _pointers.Buffer(bound.vertexBuffer, bound.vertexGeneration);
                 pointers.gpuConstants = _pointers.Buffer(gpuConstants);   // the route's own: written by the GPU alone
@@ -1182,10 +1454,13 @@ namespace Zantetsu.Rendering.Urp
             int[] gpuOffsets = _gpuOffsets;
             using (GpuConstantsMarker.Auto())
             {
-                ComputeShader copy = _copy;
-                int kernel = _copyKernel;
                 for (int b = 0; b < entry.gpuBlocks.Count; b++)
                 {
+                    var sharedKey = (entry.gpuBlocks[b].layoutKey, constantContext);
+                    if (Plugin.Vulkan && Plugin.VulkanShareGpuConstants && _copiedGpuBlocks.TryGetValue(sharedKey, out int sharedOffset))
+                    {
+                        gpuOffsets[b] = sharedOffset; SharedGpuConstantBlocks++; continue;
+                    }
                     GpuBlock block = entry.gpuBlocks[b];
                     int padded = (block.size + ConstantAlignment - 1) / ConstantAlignment * ConstantAlignment;
                     if (gpuConstantsUsed + padded > GpuConstantBytesPerPass)
@@ -1197,26 +1472,9 @@ namespace Zantetsu.Rendering.Urp
 
                     gpuOffsets[b] = gpuConstantsUsed;
                     gpuConstantsUsed += padded;
-                    commands.SetComputeBufferParam(copy, kernel, OffsetsId, block.offsets);
-                    commands.SetComputeBufferParam(copy, kernel, ConstantsId, gpuConstants);
-                    commands.SetComputeIntParam(copy, DestinationId, gpuOffsets[b]);
-                    commands.SetComputeMatrixParam(copy, MatrixVpId, inputs.matrixVP);
-                    commands.SetComputeMatrixParam(copy, MatrixVId, inputs.matrixV);
-                    commands.SetComputeMatrixParam(copy, ProjectionId, inputs.projection);
-                    commands.SetComputeIntParam(copy, InstanceMultiplierId, inputs.instanceMultiplier);
-                    commands.SetComputeVectorParam(copy, ShadowBiasId, inputs.shadowBias);
-                    commands.SetComputeVectorParam(copy, LightDirectionId, inputs.lightDirection);
-                    commands.SetComputeFloatParam(copy, ShadowSliceSelectionId, inputs.sliceSelection);
-                    if (inputs.stereo)
-                    {
-                        commands.SetComputeMatrixArrayParam(copy, StereoMatrixVpId, _stereoVP);
-                        commands.SetComputeMatrixArrayParam(copy, StereoMatrixVId, _stereoV);
-                        commands.SetComputeMatrixArrayParam(copy, StereoMatrixPId, _stereoP);
-                        commands.SetComputeMatrixArrayParam(copy, StereoCameraProjectionId, _stereoCameraProjection);
-                        commands.SetComputeVectorArrayParam(copy, StereoCameraPosId, _stereoPos);
-                    }
-
-                    commands.DispatchCompute(copy, kernel, 1, 1, 1);
+                    RecordConstantCopy(commands, block, gpuConstants, gpuOffsets[b], inputs);
+                    GpuConstantDispatches++;
+                    if (Plugin.Vulkan && Plugin.VulkanShareGpuConstants) _copiedGpuBlocks[sharedKey] = gpuOffsets[b];
                 }
             }
 
@@ -1225,7 +1483,8 @@ namespace Zantetsu.Rendering.Urp
             {
                 for (int b = 0; b < entry.cpuBlocks.Count; b++)
                 {
-                    FillCpuBlock(entry.cpuBlocks[b], material, frame);
+                    if (entry.cpuBlocks[b].name == "VpNativeDirect") FillDirectConstants(entry.cpuBlocks[b].block, direct, directStart, directCount);
+                    else FillCpuBlock(entry.cpuBlocks[b], material, frame);
                 }
             }
 
@@ -1233,7 +1492,12 @@ namespace Zantetsu.Rendering.Urp
             using (EventDataMarker.Auto())
             {
                 VpNativeDrawData drawData = _drawData;
-                if (!drawData.TryBegin(entry.pipeline.Id, pointers.arguments, startCommand, commandCount, pointers.indexBuffer, (long)bound.indexBuffer.count * bound.indexBuffer.stride, bound.indexBuffer.stride))
+                bool began = directCount > 0
+                    ? drawData.TryBeginDirect(entry.pipeline.Id, pointers.indexBuffer, (long)bound.indexBuffer.count * bound.indexBuffer.stride,
+                        bound.indexBuffer.stride, new ReadOnlySpan<Plugin.DirectCommand>(_directCommands, 0, directCount))
+                    : drawData.TryBegin(entry.pipeline.Id, pointers.arguments, startCommand, commandCount, pointers.indexBuffer,
+                        (long)bound.indexBuffer.count * bound.indexBuffer.stride, bound.indexBuffer.stride);
+                if (!began)
                 {
                     RingFull++;
                     LastFailure = "every event data block is still with the plugin";
@@ -1241,11 +1505,11 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 drawData.AddViewport(viewport);
-                drawData.SetBuffer(entry.vertexArguments, pointers.arguments, bound.arguments.count, bound.arguments.stride, true);
+                if (entry.vertexArguments >= 0) drawData.SetBuffer(entry.vertexArguments, pointers.arguments, bound.arguments.count, bound.arguments.stride, true);
                 drawData.SetBuffer(entry.vertexVertices, pointers.vertexBuffer, bound.vertexBuffer.count, bound.vertexBuffer.stride, false);
-                drawData.SetBuffer(entry.vertexInstances, pointers.instances, bound.instances.count, bound.instances.stride, false);
-                drawData.SetBuffer(entry.vertexClips, pointers.clips, bound.clips.count, bound.clips.stride, false);
-                drawData.SetBuffer(entry.vertexVisible, pointers.visible, bound.visible.count, bound.visible.stride, false);
+                if (entry.vertexInstances >= 0) drawData.SetBuffer(entry.vertexInstances, pointers.instances, bound.instances.count, bound.instances.stride, false);
+                if (entry.vertexClips >= 0) drawData.SetBuffer(entry.vertexClips, pointers.clips, bound.clips.count, bound.clips.stride, false);
+                if (entry.vertexVisible >= 0) drawData.SetBuffer(entry.vertexVisible, pointers.visible, bound.visible.count, bound.visible.stride, false);
                 if (entry.vertexCullCommands >= 0)
                 {
                     drawData.SetBuffer(entry.vertexCullCommands, pointers.cullCommands, bound.cullCommands.count, bound.cullCommands.stride, false);
@@ -1302,9 +1566,59 @@ namespace Zantetsu.Rendering.Urp
         /// Records the plugin events of every issue prepared in this Execute, in order, after all their constant
         /// dispatches (the ring's Prepared blocks become Recorded). Called once at the end of a pass's Execute.
         /// </summary>
-        private void IssuePendingEvents(CommandBuffer commands)
+        private void IssuePendingEvents(CommandBuffer commands, int firstBlock = -1, bool group = false)
         {
-            _drawData?.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.DrawEventId);
+            if (!group) { _drawData?.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.DrawEventId); return; }
+            PrepareGroupEvents(commands, firstBlock);
+            foreach (IntPtr block in _groupPointers)
+                commands.IssuePluginEventAndData(Plugin.RenderEventFunction, Plugin.GroupPreparedEventId, block);
+        }
+        private void PrepareGroupEvents(CommandBuffer commands, int firstBlock)
+        {
+            _drawData.GroupPrepared(_groupPointers);
+            _blocks.RemoveRange(firstBlock, _blocks.Count - firstBlock);
+            foreach (IntPtr block in _groupPointers)
+                _blocks.Add(new Block { data = block, frame = Time.frameCount, serial = VpNativeDrawData.SerialOf(block) });
+            _drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.GroupPrepareEventId);
+        }
+        private void FillDirectConstants(VpNativeConstantBlock block, List<ClipIssue> records, int start, int count)
+        {
+            if (records == null || count < 1 || count > 32 || block.Bytes.Length != 32 * 208)
+                throw new InvalidOperationException("direct Clip constant layout must be 32 records of 208 bytes");
+            Array.Clear(block.Bytes, 0, block.Bytes.Length);
+            for (int record = 0; record < count; record++)
+            {
+                ClipIssue issue = records[start + record];
+                block.SetDirectClipRecord(record, issue.objectToWorld, issue.clip);
+            }
+        }
+        private int IssueClipDraws(CommandBuffer commands, List<ClipIssue> records, string variant, VpNativeRenderState state,
+            RenderTexture shadowMap, Rect viewport, GlobalsInputs inputs, GraphicsBuffer gpuConstants, ref int used, int frame, int context = 0)
+        {
+            int issued = 0, start = 0;
+            while (start < records.Count)
+            {
+                ClipIssue first = records[start];
+                int count = 1;
+                while (count < 32 && start + count < records.Count && ReferenceEquals(records[start + count].material, first.material)
+                    && ReferenceEquals(records[start + count].buffers, first.buffers)) count++;
+                var directState = state;
+                if (variant == CasterVariant) directState.cullMode = CasterPass.CullOf(first.material);
+                PipelineEntry entry = PipelineFor(first.material, variant.Replace("-plugin", "-direct"), directState, out string failure);
+                if (entry == null) { PipelineFailures++; LastFailure = failure; start += count; continue; }
+                for (int i = 0; i < count; i++)
+                {
+                    VpGeometryRange range = records[start + i].range;
+                    _directCommands[i] = new Plugin.DirectCommand { indexCount = (uint)range.indexCount, instanceCount = 1,
+                        firstIndex = (uint)range.indexStart, vertexOffset = 0, firstInstance = (uint)i };
+                }
+                var bound = new Bound { indexBuffer = first.buffers.IndexBuffer, vertexBuffer = first.buffers.VertexBuffer, shadowMap = shadowMap,
+                    indexGeneration = first.buffers.IndexGeneration, vertexGeneration = first.buffers.VertexGeneration };
+                if (IssueOne(commands, entry, first.material, bound, 0, count, viewport, inputs, gpuConstants, ref used, frame,
+                    records, start, count, context)) { issued += count; DirectClipDrawsIssued += count; }
+                start += count;
+            }
+            return issued;
         }
 
         // At the start of a pass's Execute: a Prepared block left by an Execute that ended early was never recorded,
@@ -1328,7 +1642,7 @@ namespace Zantetsu.Rendering.Urp
         {
             if (buffer == null)
             {
-                buffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, GpuConstantBytesPerPass / 4, 4) { name = purpose + (camera != null ? camera.name : "") };
+                buffer = new GraphicsBuffer(Plugin.Vulkan ? GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.Constant : GraphicsBuffer.Target.Raw, GpuConstantBytesPerPass / 4, 4) { name = purpose + (camera != null ? camera.name : "") };
             }
 
             return buffer;
@@ -1339,6 +1653,7 @@ namespace Zantetsu.Rendering.Urp
         private sealed class BodyPassData
         {
             public BodyPass pass;
+            public bool preparedProjectionFlipped;
             public TextureHandle colour;
             public TextureHandle depth;
             public TextureHandle shadowMap;
@@ -1357,20 +1672,41 @@ namespace Zantetsu.Rendering.Urp
         {
             private readonly VpNativeDrawRoute _route;
             private readonly CameraPasses _passes;
+            private readonly bool _motion;
+            public bool PreparesColour { get; }
+            private RTHandle _motionColour, _motionDepth;
+            private List<Issue> Bodies => _motion ? _passes.motionBodies : _passes.bodies;
+            private List<ClipIssue> Clips => _motion ? _passes.clipMotion : _passes.clipBodies;
+            private bool NeedsPrewarm => _passes.prewarm != null && _passes.prewarm.failure == null &&
+                (_motion ? !_passes.prewarm.motionSubmitted : !_passes.prewarm.colourPrepared);
             private GraphicsBuffer _gpuConstants;
             private int _gpuConstantsUsed;
+            private readonly Dictionary<VpIndexedIndirectDrawBatch, VpIndexedIndirectDrawBatch.CullOutput> _motionSelections = new();
+            private readonly HashSet<VpIndexedIndirectDrawBatch> _motionSelected = new();
+            private readonly VpCullConditions _motionConditions = new();
 
-            public BodyPass(VpNativeDrawRoute route, CameraPasses passes)
+            public IDisposable[] TakeMotionSelections()
+            {
+                var values = new IDisposable[_motionSelections.Count]; int i = 0;
+                foreach (var value in _motionSelections.Values) values[i++] = value;
+                _motionSelections.Clear(); return values;
+            }
+
+            public BodyPass(VpNativeDrawRoute route, CameraPasses passes, bool motion = false)
             {
                 _route = route;
                 _passes = passes;
-                renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
-                profilingSampler = new ProfilingSampler("VP Native Draw");
+                _motion = motion;
+                PreparesColour = !motion && Plugin.Vulkan && Plugin.VulkanColourPreparation;
+                renderPassEvent = motion ? RenderPassEvent.AfterRenderingPrePasses : PreparesColour ? RenderPassEvent.BeforeRenderingOpaques : RenderPassEvent.AfterRenderingOpaques;
+                profilingSampler = new ProfilingSampler(motion ? "VP Native AppSW" : PreparesColour ? "VP Native Colour Prepare" : "VP Native Draw");
             }
 
             /// <summary>Hands the GPU constant buffer over (to be released once no event reads it) and forgets it.</summary>
             public GraphicsBuffer TakeGpuConstants()
             {
+                _motionColour?.Release(); _motionColour = null;
+                _motionDepth?.Release(); _motionDepth = null;
                 GraphicsBuffer buffer = _gpuConstants;
                 _gpuConstants = null;
                 return buffer;
@@ -1386,10 +1722,12 @@ namespace Zantetsu.Rendering.Urp
                     return;
                 }
 
-                _route.Recorded++;
+                if (_motion && (cameraData.xr == null || !cameraData.xr.enabled || !cameraData.xr.hasMotionVectorPass)) { Bodies.Clear(); return; }
+                if (_motion) _route.MotionTaken += Bodies.Count;
+                else _route.Recorded++;
                 _route.CollectResults(_passes.frame);
-                _route.LastFrameIssues = 0;
-                if (_passes.bodies.Count == 0)
+                if (!_motion) _route.LastFrameIssues = 0;
+                if (Bodies.Count == 0 && Clips.Count == 0 && !NeedsPrewarm)
                 {
                     return;
                 }
@@ -1403,7 +1741,7 @@ namespace Zantetsu.Rendering.Urp
                 {
                     _route.XrFramesNotDrawn++;
                     _route.LastFailure = "an XR pass of " + cameraData.xr.viewCount + " views that is not single pass is not drawn by the native route";
-                    _passes.bodies.Clear();
+                    Bodies.Clear();
                     return;
                 }
 
@@ -1413,20 +1751,40 @@ namespace Zantetsu.Rendering.Urp
                 if (!colour.IsValid() || !depth.IsValid())
                 {
                     _route.LastFailure = "no active colour or depth target";
-                    _route.BodiesDropped += _passes.bodies.Count;
-                    _passes.bodies.Clear();
+                    _route.BodiesDropped += Bodies.Count;
+                    Bodies.Clear();
                     return;
                 }
 
                 string variant = _route.BodyVariantOverride ?? VariantName(BodyVariantFor(frameData.Get<UniversalLightData>(), frameData.Get<UniversalShadowData>()), stereo);
-                _route.LastBodyVariant = variant;
-                TextureHandle shadowMap = resourceData.mainShadowsTexture;
-                TextureDesc colourDesc = renderGraph.GetTextureDesc(colour);
-                TextureDesc depthDesc = renderGraph.GetTextureDesc(depth);
-                RenderTextureDescriptor target = cameraData.cameraTargetDescriptor;
+                if (_motion) variant = "motion-plugin-stereo";
+                if (Plugin.Vulkan && (_motion ? Plugin.VulkanNoClipMotionShaders : Plugin.VulkanNoClipColourShaders)) variant += "-noclip";
+                if (!_motion) _route.LastBodyVariant = variant;
+                TextureHandle shadowMap = _motion ? TextureHandle.nullHandle : resourceData.mainShadowsTexture;
+                if (_motion)
+                {
+                    var id = cameraData.xr.motionVectorRenderTarget;
+                    var desc = cameraData.xr.motionVectorRenderTargetDesc;
+                    if (_motionColour == null) _motionColour = RTHandles.Alloc(id);
+                    else if (_motionColour.nameID != id) RTHandleStaticHelpers.SetRTHandleUserManagedWrapper(ref _motionColour, id);
+                    if (_motionDepth == null) _motionDepth = RTHandles.Alloc(id);
+                    else if (_motionDepth.nameID != id) RTHandleStaticHelpers.SetRTHandleUserManagedWrapper(ref _motionDepth, id);
+                    var info = new RenderTargetInfo { width = desc.width, height = desc.height, volumeDepth = desc.volumeDepth, msaaSamples = desc.msaaSamples, format = desc.graphicsFormat };
+                    colour = renderGraph.ImportTexture(_motionColour, info);
+                    info.format = desc.depthStencilFormat;
+                    depth = renderGraph.ImportTexture(_motionDepth, info);
+                }
+                RenderTargetInfo colourDesc = renderGraph.GetRenderTargetInfo(colour);
+                RenderTargetInfo depthDesc = renderGraph.GetRenderTargetInfo(depth);
+                RenderTextureDescriptor target = _motion ? cameraData.xr.motionVectorRenderTargetDesc : cameraData.cameraTargetDescriptor;
                 using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out BodyPassData data, profilingSampler))
                 {
                     data.pass = this;
+                    // Match UniversalCameraData's target convention without resolving/reading the attachments
+                    // before their first draw. Such a read forces RenderGraph to open an empty clear pass.
+                    data.preparedProjectionFlipped = !SystemInfo.graphicsUVStartsAtTop ||
+                        cameraData.isSceneViewCamera || cameraData.isPreviewCamera || cameraData.targetTexture != null ||
+                        !resourceData.isActiveTargetBackBuffer;
                     data.colour = colour;
                     data.depth = depth;
                     data.shadowMap = shadowMap;
@@ -1434,13 +1792,16 @@ namespace Zantetsu.Rendering.Urp
                     data.variant = variant;
                     data.colourFormat = colourDesc.format != GraphicsFormat.None ? colourDesc.format : target.graphicsFormat;
                     data.depthFormat = depthDesc.format != GraphicsFormat.None ? depthDesc.format : target.depthStencilFormat;
-                    data.sampleCount = colourDesc.msaaSamples != MSAASamples.None ? (int)colourDesc.msaaSamples : Mathf.Max(1, target.msaaSamples);
+                    data.sampleCount = colourDesc.msaaSamples > 0 ? colourDesc.msaaSamples : Mathf.Max(1, target.msaaSamples);
                     data.width = colourDesc.width > 0 ? colourDesc.width : target.width;
                     data.height = colourDesc.height > 0 ? colourDesc.height : target.height;
                     data.stereo = stereo;
-                    data.viewport = xr ? cameraData.xr.GetViewport(0) : new Rect(0f, 0f, data.width, data.height);
-                    builder.UseTexture(colour, AccessFlags.ReadWrite);
-                    builder.UseTexture(depth, AccessFlags.ReadWrite);
+                    data.viewport = xr && !_motion ? cameraData.xr.GetViewport(0) : new Rect(0f, 0f, data.width, data.height);
+                    if (!PreparesColour)
+                    {
+                        builder.UseTexture(colour, AccessFlags.ReadWrite);
+                        builder.UseTexture(depth, AccessFlags.ReadWrite);
+                    }
                     if (shadowMap.IsValid())
                     {
                         builder.UseTexture(shadowMap, AccessFlags.Read);
@@ -1456,23 +1817,23 @@ namespace Zantetsu.Rendering.Urp
             {
                 if (_route._disposed)
                 {
-                    _route.IssuesAfterDispose += _passes.bodies.Count;
-                    _passes.bodies.Clear();
+                    _route.IssuesAfterDispose += Bodies.Count;
+                    Bodies.Clear();
                     return;
                 }
 
                 _route.DropUnrecorded();
                 CommandBuffer commands = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
-                RTHandle colourHandle = data.colour;
-                RTHandle depthHandle = data.depth;
-                if (data.stereo)
+                RTHandle colourHandle = PreparesColour ? null : data.colour;
+                RTHandle depthHandle = PreparesColour ? null : data.depth;
+                if (!PreparesColour && data.stereo)
                 {
                     // Every slice of the eye texture: the vertex stage picks the eye's slice (SV_RenderTargetArrayIndex).
                     commands.SetRenderTarget(colourHandle, depthHandle, 0, CubemapFace.Unknown, -1);
                 }
                 else
                 {
-                    commands.SetRenderTarget(colourHandle, depthHandle);
+                    if (!PreparesColour) commands.SetRenderTarget(colourHandle, depthHandle);
                 }
 
                 GlobalsInputs inputs;
@@ -1481,12 +1842,12 @@ namespace Zantetsu.Rendering.Urp
                 GraphicsBuffer gpuConstants;
                 using (BodyPrepareMarker.Auto())
                 {
-                    bool flipped = data.cameraData.IsRenderTargetProjectionMatrixFlipped(colourHandle, depthHandle);
+                    bool flipped = _motion ? false : PreparesColour ? data.preparedProjectionFlipped : data.cameraData.IsRenderTargetProjectionMatrixFlipped(colourHandle, depthHandle);
                     inputs = new GlobalsInputs
                     {
                         matrixV = data.cameraData.GetViewMatrix(0),
                         projection = GL.GetGPUProjectionMatrix(data.cameraData.GetProjectionMatrix(0), flipped),
-                        instanceMultiplier = data.stereo ? 2 : 1,
+                        instanceMultiplier = data.stereo && !Plugin.Vulkan ? 2 : 1,
                         stereo = data.stereo,
                     };
                     inputs.matrixVP = inputs.projection * inputs.matrixV;
@@ -1525,13 +1886,50 @@ namespace Zantetsu.Rendering.Urp
 
                     gpuConstants = EnsureGpuConstants(ref _gpuConstants, "VP Native Body Constants ", _passes.camera);
                     _gpuConstantsUsed = 0;
+                    _route._copiedGpuBlocks.Clear();
                 }
 
-                Rect viewport = data.viewport;
+                if (NeedsPrewarm)
                 {
-                    for (int i = 0; i < _passes.bodies.Count; i++)
+                    PrewarmRequest request = _passes.prewarm;
+                    if (PreparesColour)
                     {
-                        Issue issue = _passes.bodies[i];
+                        _route.PrepareBodyPrewarm(request, data.variant, state, request.colourEntries);
+                        _route.PrewarmCompute(commands, request, request.colourEntries, gpuConstants, inputs);
+                        request.colourPrepared = true;
+                    }
+                    else
+                    {
+                        var entries = new List<PipelineEntry>(request.bodies.Count * 2);
+                        _route.PrepareBodyPrewarm(request, data.variant, state, entries);
+                        _route.PrewarmCompute(commands, request, entries, gpuConstants, inputs);
+                        _route.RecordPrewarm(commands, request, entries, _passes.frame, true);
+                        if (_motion) request.motionSubmitted = true;
+                        else { request.colourPrepared = true; request.colourSubmitted = true; }
+                    }
+                }
+
+                int firstBlock = _route._blocks.Count;
+                Rect viewport = data.viewport;
+                float motionFar = _motion ? VpAppSwDistanceExperiment.DistanceFor(_passes.camera) : 0f;
+                _motionSelected.Clear();
+                if (motionFar > 0f)
+                {
+                    _motionConditions.KeepEverything();
+                    int eyes = data.stereo ? 2 : 1;
+                    for (int eye = 0; eye < eyes; eye++)
+                    {
+                        _motionConditions.SetEye(eye, data.cameraData.GetViewMatrix(eye), data.cameraData.GetProjectionMatrix(eye));
+                        // Replace only each eye's far culling plane. The rendering projections stay at colour far.
+                        Vector4 row = data.cameraData.GetViewMatrix(eye).GetRow(2);
+                        _motionConditions.eyePlanes[eye * VpCullConditions.EyePlaneCount + 5] = new Vector4(row.x, row.y, row.z, row.w + motionFar);
+                    }
+                    _motionConditions.eyeCount = eyes;
+                }
+                {
+                    for (int i = 0; i < Bodies.Count; i++)
+                    {
+                        Issue issue = Bodies[i];
                         PipelineEntry entry = _route.PipelineFor(issue.material, data.variant, state, out string failure);
                         if (entry == null)
                         {
@@ -1547,10 +1945,13 @@ namespace Zantetsu.Rendering.Urp
                         // (ProvisionalCutDriver.CollectSnapshot): the multiplier says the entries are doubled and the
                         // single-view variant drops the second copy of each instance (2026-10-09: until then such a
                         // camera's bodies were not issued, and its pictures of a walk were without them).
-                        if (data.stereo && !issue.batch.SinglePassInstanced)
+                        // Vulkan multiview reads one instance per object and never uses doubled entries.
+                        if (Plugin.Vulkan ? issue.batch.SinglePassInstanced : data.stereo && !issue.batch.SinglePassInstanced)
                         {
                             _route.PipelineFailures++;
-                            _route.LastFailure = "a Single Pass Instanced frame, but the batch's arguments are not doubled for it";
+                            _route.LastFailure = Plugin.Vulkan
+                                ? "a Vulkan multiview frame, but the batch's arguments are doubled for Single Pass Instanced"
+                                : "a Single Pass Instanced frame, but the batch's arguments are not doubled for it";
                             continue;
                         }
 
@@ -1559,6 +1960,14 @@ namespace Zantetsu.Rendering.Urp
                         issue.batch.NativeDrawBuffers(
                             issue.view, out GraphicsBuffer forwardArguments, out GraphicsBuffer forwardVisible, out _, out _,
                             out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
+                        if (motionFar > 0f)
+                        {
+                            if (!_motionSelections.TryGetValue(issue.batch, out var selection))
+                                _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
+                            if (_motionSelected.Add(issue.batch))
+                                issue.batch.IssueCull(commands, selection, _motionConditions, _route.SeparateClipDraws && Clips.Count > 0);
+                            forwardArguments = selection.ForwardArguments; forwardVisible = selection.ForwardVisible;
+                        }
                         var bound = new Bound
                         {
                             arguments = forwardArguments, visible = forwardVisible, instances = instances, clips = clips, cullCommands = cullCommands,
@@ -1567,8 +1976,8 @@ namespace Zantetsu.Rendering.Urp
                         bound.TakeGenerations(issue.batch, issue.buffers);
                         if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, viewport, inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
                         {
-                            _route.BodiesIssued++;
-                            if (!data.stereo && issue.batch.SinglePassInstanced) _route.SingleViewBodiesFromDoubled++;
+                            if (_motion) _route.MotionIssued++; else _route.BodiesIssued++;
+                            if (!_motion && !data.stereo && issue.batch.SinglePassInstanced) _route.SingleViewBodiesFromDoubled++;
                             // No string is made here: the name is the binding's, read by the diagnosis that asks.
                             _route.LastBodyGpuBlocks.Clear();
                             for (int b = 0; b < entry.gpuBlocks.Count; b++)
@@ -1579,8 +1988,70 @@ namespace Zantetsu.Rendering.Urp
                     }
                 }
 
-                _passes.bodies.Clear();
-                _route.IssuePendingEvents(commands);
+                bool grouped = Clips.Count > 0;
+                if (grouped) _route.IssueClipDraws(commands, Clips, data.variant.Replace("-noclip", ""), state, shadowMap, viewport,
+                    inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame);
+                Clips.Clear();
+                Bodies.Clear();
+                if (PreparesColour)
+                {
+                    if (grouped) _route.PrepareGroupEvents(commands, firstBlock);
+                    for (int i = firstBlock; i < _route._blocks.Count; i++) _passes.colourBlocks.Add(_route._blocks[i]);
+                    // Mark Recorded now so the ring and camera sentinel protect both callbacks' shared block.
+                    if (!grouped) _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
+                }
+                else _route.IssuePendingEvents(commands, firstBlock, grouped);
+            }
+        }
+
+        // Colour preparation ran before opaques. This pass only records prepared native draws into the
+        // existing attachments; no compute dispatch, AccessBuffer or texture transition occurs here.
+        private sealed class ColourDrawPass : ScriptableRenderPass
+        {
+            private readonly VpNativeDrawRoute _route;
+            private readonly CameraPasses _passes;
+            private sealed class Data { public ColourDrawPass pass; }
+            public ColourDrawPass(VpNativeDrawRoute route, CameraPasses passes)
+            {
+                _route = route; _passes = passes;
+                renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+                profilingSampler = new ProfilingSampler("VP Native Colour Draw");
+            }
+            public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
+            {
+                var camera = frameData.Get<UniversalCameraData>();
+                if (!ReferenceEquals(camera.camera, _passes.camera)) return;
+                var resources = frameData.Get<UniversalResourceData>();
+                if (!resources.activeColorTexture.IsValid() || !resources.activeDepthTexture.IsValid()) return;
+                using (var builder = graph.AddRasterRenderPass<Data>(passName, out var data, profilingSampler))
+                {
+                    data.pass = this;
+                    builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
+                    builder.SetRenderAttachmentDepth(resources.activeDepthTexture, AccessFlags.ReadWrite);
+                    if (resources.mainShadowsTexture.IsValid()) builder.UseTexture(resources.mainShadowsTexture, AccessFlags.Read);
+                    builder.AllowGlobalStateModification(true);
+                    builder.AllowPassCulling(false);
+                    builder.SetRenderFunc(static (Data value, RasterGraphContext context) => value.pass.Execute(context));
+                }
+            }
+            private void Execute(RasterGraphContext context)
+            {
+                if (_route._disposed) return;
+                PrewarmRequest request = _passes.prewarm;
+                if (request != null && request.failure == null && request.colourPrepared && !request.colourSubmitted)
+                {
+                    _route.RecordPrewarm(null, request, request.colourEntries, _passes.frame, false,
+                        block => context.cmd.IssuePluginEventAndData(Plugin.RenderEventFunction, Plugin.WarmPipelineEventId, block));
+                    request.colourSubmitted = true;
+                    request.colourEntries.Clear();
+                }
+                foreach (var block in _passes.colourBlocks)
+                {
+                    if (block.frame != _passes.frame) continue;
+                    context.cmd.IssuePluginEventAndData(Plugin.RenderEventFunction,
+                        VpNativeDrawData.ModeOf(block.data) == Plugin.DrawMode.Group ? Plugin.GroupPreparedEventId : Plugin.PreparedDrawEventId, block.data);
+                }
+                _passes.colourBlocks.Clear();
             }
         }
 
@@ -1629,7 +2100,8 @@ namespace Zantetsu.Rendering.Urp
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
             {
                 UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
-                if (!ReferenceEquals(cameraData.camera, _passes.camera) || _passes.casterRuns.Count == 0)
+                bool warm = _passes.prewarm != null && _passes.prewarm.failure == null && !_passes.prewarm.shadowSubmitted;
+                if (!ReferenceEquals(cameraData.camera, _passes.camera) || (_passes.casterRuns.Count == 0 && _passes.clipCasters.Count == 0 && !warm))
                 {
                     return;
                 }
@@ -1639,6 +2111,7 @@ namespace Zantetsu.Rendering.Urp
                 {
                     _route.CasterRunsNotDrawn += _passes.casterRuns.Count;
                     _route.LastCasterSkipReason = skip;
+                    if (warm) _passes.prewarm.failure = "native prewarm shadow: " + skip;
                     _passes.casterRuns.Clear();
                     return;
                 }
@@ -1762,7 +2235,35 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 GraphicsBuffer gpuConstants = EnsureGpuConstants(ref _gpuConstants, "VP Native Caster Constants ", _passes.camera);
+                PrewarmRequest request = _passes.prewarm;
+                if (request != null && request.failure == null && !request.shadowSubmitted)
+                {
+                    var entries = new List<PipelineEntry>(4);
+                    foreach (Material material in new[] { request.shadow, request.provisionalShadow })
+                    {
+                        if (material == null) continue;
+                        var warmState = new VpNativeRenderState { colourFormat = GraphicsFormat.None, depthFormat = shadowMap.depthStencilFormat,
+                            sampleCount = 1, cullMode = CullOf(material), frontCounterClockwise = _route.FrontCounterClockwise ?? flipped,
+                            depthFunc = SystemInfo.usesReversedZBuffer ? Plugin.Compare.GreaterEqual : Plugin.Compare.LessEqual,
+                            depthWrite = true, colourWrite = false, depthBias = _route.CasterDepthBiasSigned,
+                            slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned };
+                        PipelineEntry ordinary = _route.PrewarmPipeline(request, material,
+                            Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant, warmState);
+                        PipelineEntry clip = _route.PrewarmPipeline(request, material, "caster-direct", warmState);
+                        if (ordinary != null && !entries.Contains(ordinary)) entries.Add(ordinary);
+                        if (clip != null && !entries.Contains(clip)) entries.Add(clip);
+                    }
+                    var warmInputs = new GlobalsInputs { matrixV = _views[0], projection = GL.GetGPUProjectionMatrix(_projections[0], true),
+                        instanceMultiplier = 1, shadowBias = _biases[0], lightDirection = data.lightDirection };
+                    warmInputs.matrixVP = warmInputs.projection * warmInputs.matrixV;
+                    _route.PrewarmCompute(commands, request, entries, gpuConstants, warmInputs);
+                    _route.RecordPrewarm(commands, request, entries, _passes.frame, true);
+                    request.shadowSubmitted = true;
+                }
+
                 _gpuConstantsUsed = 0;
+                _route._copiedGpuBlocks.Clear();
+                int firstBlock = _route._blocks.Count;
                 float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;
                 {
                     for (int i = 0; i < _passes.casterRuns.Count; i++)
@@ -1781,7 +2282,7 @@ namespace Zantetsu.Rendering.Urp
                             depthBias = _route.CasterDepthBiasSigned,
                             slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned,
                         };
-                        PipelineEntry entry = _route.PipelineFor(issue.material, CasterVariant, state, out string failure);
+                        PipelineEntry entry = _route.PipelineFor(issue.material, Plugin.Vulkan && Plugin.VulkanNoClipShadowShaders ? CasterVariant + "-noclip" : CasterVariant, state, out string failure);
                         if (entry == null)
                         {
                             _route.PipelineFailures++;
@@ -1811,7 +2312,7 @@ namespace Zantetsu.Rendering.Urp
                                 sliceSelection = sliceSelection,
                             };
                             inputs.matrixVP = inputs.projection * inputs.matrixV;
-                            if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
+                            if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, constantContext: split))
                             {
                                 _route.CastersIssued++;
                                 if (i == 0 && split == 0) _route.LastCasterGpuBlocks.Clear();
@@ -1824,11 +2325,31 @@ namespace Zantetsu.Rendering.Urp
                     }
                 }
 
+                bool grouped = _passes.clipCasters.Count > 0;
+                if (grouped)
+                {
+                    // Clip casters retain their two-sided rasterizer setting. Share each split's prepared frame blocks.
+                    for (int split = 0; split < data.splitCount; split++)
+                    {
+                        var inputs = new GlobalsInputs { matrixV = _views[split], projection = GL.GetGPUProjectionMatrix(_projections[split], true),
+                            instanceMultiplier = 1, shadowBias = _biases[split], lightDirection = data.lightDirection };
+                        inputs.matrixVP = inputs.projection * inputs.matrixV;
+                        // IssueClipDraws selects the rasterizer cull mode for each material packet.
+                        var state = new VpNativeRenderState { colourFormat = GraphicsFormat.None, depthFormat = shadowMap.depthStencilFormat,
+                            sampleCount = 1, cullMode = CullOf(_passes.clipCasters[0].material), frontCounterClockwise = _route.FrontCounterClockwise ?? flipped,
+                            depthFunc = SystemInfo.usesReversedZBuffer ? Plugin.Compare.GreaterEqual : Plugin.Compare.LessEqual,
+                            depthWrite = true, colourWrite = false, depthBias = _route.CasterDepthBiasSigned,
+                            slopeScaledDepthBias = _route.CasterSlopeScaledDepthBiasSigned };
+                        _route.CastersIssued += _route.IssueClipDraws(commands, _passes.clipCasters, CasterVariant, state, null,
+                            _viewports[split], inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame, split);
+                    }
+                }
+                _passes.clipCasters.Clear();
                 _passes.casterRuns.Clear();
-                _route.IssuePendingEvents(commands);
+                _route.IssuePendingEvents(commands, firstBlock, grouped);
             }
 
-            private static Plugin.CullMode CullOf(Material material)
+            public static Plugin.CullMode CullOf(Material material)
             {
                 if (!material.HasProperty(CullId))
                 {

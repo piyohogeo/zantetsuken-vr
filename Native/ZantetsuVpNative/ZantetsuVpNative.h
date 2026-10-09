@@ -160,6 +160,40 @@ typedef struct ZvnDraw
     volatile uint32_t consumed;  // 0 until the plugin has handled this draw
 } ZvnDraw;
 
+// The Vulkan-only draw extension is opt-in through ZvnDraw.version = 2. Pipeline/resource contracts remain
+// version 1, and the original 240-byte ZvnDraw layout and completion fields are unchanged. This extension
+// follows ZvnDraw immediately. Every offset is relative to its own ZvnDraw allocation; a group's child offsets
+// are relative to the group root, while each inline child's resources/constants/commands remain child-relative.
+#define ZVN_VULKAN_DRAW_VERSION 2
+#define ZVN_MAX_DIRECT_COMMANDS 32
+#define ZVN_MAX_GROUP_DRAWS 32
+
+enum ZvnDrawMode
+{
+    ZvnDrawMode_Indirect = 0,
+    ZvnDrawMode_Direct = 1,
+    ZvnDrawMode_Group = 2,
+};
+
+typedef struct ZvnDrawExtension
+{
+    uint32_t mode;             // ZvnDrawMode
+    uint32_t commandsOffset;   // direct: ZvnDirectCommand[]; group: uint32_t child offsets[]
+    uint32_t commandsCount;    // direct command count, or group child count; unused for indirect
+    uint32_t reserved;         // must be zero
+} ZvnDrawExtension;
+
+// Vulkan's five indexed arguments, supplied by the CPU. firstInstance selects the Direct shader's UBO entry.
+// Quest multiview uses one physical instance per logical instance; no stereo instance multiplication here.
+typedef struct ZvnDirectCommand
+{
+    uint32_t indexCount;
+    uint32_t instanceCount;
+    uint32_t firstIndex;
+    int32_t vertexOffset;
+    uint32_t firstInstance;
+} ZvnDirectCommand;
+
 enum ZvnResult
 {
     ZvnResult_Recorded = 0,

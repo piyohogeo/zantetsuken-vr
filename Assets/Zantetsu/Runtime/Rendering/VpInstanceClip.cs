@@ -165,9 +165,10 @@ namespace Zantetsu.Rendering
             _plane6 = plane6;
             _plane7 = plane7;
             _planeCount = planeCount;
+            _padding = Vector3.zero;
         }
 
-        // The GPU layout, in this order: eight signed planes and then the count of valid ones, 132 bytes.
+        // The GPU layout, in this order: eight signed planes, their count and padding, 144 bytes (shared CPU/GPU layout).
         // VpIndexedIndirectDrawBatch.InstanceClipStride and the VpInstanceClip struct of the shaders match it.
         private readonly Vector4 _plane0;
         private readonly Vector4 _plane1;
@@ -178,6 +179,7 @@ namespace Zantetsu.Rendering
         private readonly Vector4 _plane6;
         private readonly Vector4 _plane7;
         private readonly float _planeCount;
+        private readonly Vector3 _padding;
 
         /// <summary>How many of the <see cref="PlaneCapacity"/> planes are valid: 0 to 8.</summary>
         public int PlaneCount => (int)_planeCount;

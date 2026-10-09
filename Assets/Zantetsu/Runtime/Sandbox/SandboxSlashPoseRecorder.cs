@@ -20,9 +20,11 @@ namespace Zantetsu.Sandbox
     /// monotonic.
     ///
     /// A replay takes the katana's input over. It turns the katana's live
-    /// input off -- which starts its slash state over -- and feeds one recorded
-    /// sample per Update into the same TryRecordSample the controller normally
-    /// feeds, laying the recorded time offsets onto the clock as it stood when
+    /// input off -- which starts its slash state over -- and feeds recorded
+    /// samples into the same TryRecordSample the controller normally feeds.
+    /// By default this is one sample per Update; realtime replay instead feeds
+    /// every sample due on this Update, preserving a 90 Hz recording at 45 Hz.
+    /// Both lay the recorded time offsets onto the clock as it stood when
     /// replay began. Once the whole recording has gone through, input stays
     /// with the replay so its result can be watched: each Update then feeds one
     /// untracked sample on the continued replay clock, which makes up no pose
@@ -100,6 +102,24 @@ namespace Zantetsu.Sandbox
             get => showControls;
             set => showControls = value;
         }
+
+        /// <summary>
+        /// Feed all recorded samples due on the wall clock in each Update.
+        /// Set before starting a replay. False preserves the PC diagnostic's
+        /// one recorded sample per Update, regardless of its rendering rate.
+        /// This changes scheduling only: recorded timestamps and poses stay
+        /// unchanged, with their original offsets from the recording origin.
+        /// </summary>
+        public bool ReplayInRealtime { get; set; }
+
+        /// <summary>
+        /// Realtime replay's input has completed the katana update and hit
+        /// evaluation. Raised synchronously before another due sample can
+        /// replace the detector's latest evaluation. Diagnostics subscribe to
+        /// capture every evaluation in the frame, including result ticks.
+        /// Ordinary live input and the default PC replay do not raise it.
+        /// </summary>
+        internal event System.Action<BladePoseSample> RealtimeSampleEvaluated;
 
         // Samples as they came, except that TimestampSeconds holds the offset
         // from the first recorded sample. Allocated once.
@@ -180,6 +200,9 @@ namespace Zantetsu.Sandbox
         internal int RecordedSampleCount => sampleCount;
 
         internal int ReplayIndex => replayIndex;
+
+        /// <summary>The latest sample or result tick's absolute replay time.</summary>
+        internal double ReplayLastTimestamp => lastReplayTime;
 
         internal bool HasPin => hasPin;
 
@@ -324,6 +347,82 @@ namespace Zantetsu.Sandbox
                 recorded.GripRotation,
                 recorded.TrackingState);
             return true;
+        }
+
+        /// <summary>
+        /// Take the next sample only when its replay timestamp is due. A
+        /// future or invalid clock does not consume a row, including a clock
+        /// a fraction of a second before the replay origin. Comparing absolute
+        /// timestamps avoids subtracting that origin a second time at a due
+        /// boundary. The first recorded sample is due at the replay origin.
+        /// </summary>
+        internal bool TryTakeDueReplaySample(long frameId, double nowSeconds, out BladePoseSample sample,
+            out Vector3 viewForward)
+        {
+            sample = default;
+            viewForward = Vector3.zero;
+            if (!replaying || !double.IsFinite(nowSeconds) || nowSeconds < replayClockStart)
+            {
+                return false;
+            }
+
+            if (replayIndex < sampleCount && replayClockStart + samples[replayIndex].TimestampSeconds > nowSeconds)
+            {
+                return false;
+            }
+
+            return TryTakeNextReplaySample(frameId, out sample, out viewForward);
+        }
+
+        /// <summary>
+        /// The replay part of one Update, shared with tests of rendering-rate
+        /// changes. Returns the number of recorded rows fed, excluding the
+        /// untracked tick after the recording. No poses are interpolated or
+        /// skipped. While rows remain, no synthetic tracking loss is inserted
+        /// between them: a sparse recording retains its stroke until its next
+        /// recorded input. After its last row, waves advance to the current
+        /// wall clock and continue there until Stop hands input back.
+        /// </summary>
+        internal int AdvanceReplay(long frameId, double nowSeconds, double deltaSeconds)
+        {
+            if (!ReplayInRealtime)
+            {
+                // Keep the established PC path, including the Update that
+                // ends replay before a following Update starts result ticks.
+                if (replaying)
+                {
+                    if (!TryTakeNextReplaySample(frameId, out BladePoseSample legacySample, out Vector3 legacyView)) return 0;
+                    if (katana != null) katana.TryRecordSample(legacySample, legacyView);
+                    return 1;
+                }
+
+                if (TryTakeReplayResultTick(frameId, deltaSeconds, out BladePoseSample tick))
+                    katana.TryRecordSample(tick, Vector3.zero);
+                return 0;
+            }
+
+            if (!double.IsFinite(nowSeconds) || nowSeconds < replayClockStart) return 0;
+            int fed = 0;
+            while (TryTakeDueReplaySample(frameId, nowSeconds, out BladePoseSample next, out Vector3 view))
+            {
+                FeedRealtimeSample(next, view);
+                fed++;
+            }
+
+            // A zero/backwards delta must not feed a duplicate timestamp or
+            // rewind the core. Result time follows the wall clock, not the
+            // render delta added to the final recorded row's timestamp.
+            if (nowSeconds > lastReplayTime &&
+                TryTakeReplayResultTick(frameId, nowSeconds - lastReplayTime, out BladePoseSample resultTick))
+                FeedRealtimeSample(resultTick, Vector3.zero);
+            return fed;
+        }
+
+        private void FeedRealtimeSample(in BladePoseSample sample, Vector3 viewForward)
+        {
+            if (katana == null) return;
+            katana.TryRecordSample(sample, viewForward);
+            RealtimeSampleEvaluated?.Invoke(sample);
         }
 
         /// <summary>
@@ -577,24 +676,7 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            // One sample per Update and no catching up: the recorded offsets
-            // keep the order and spacing, not wall-clock timing.
-            if (replaying)
-            {
-                if (TryTakeNextReplaySample(Time.frameCount, out BladePoseSample replayed, out Vector3 recordedView)
-                    && katana != null)
-                {
-                    katana.TryRecordSample(replayed, recordedView);
-                }
-
-                return;
-            }
-
-            // A shown replay result implies an assigned katana.
-            if (TryTakeReplayResultTick(Time.frameCount, Time.unscaledDeltaTime, out BladePoseSample tick))
-            {
-                katana.TryRecordSample(tick, Vector3.zero);
-            }
+            AdvanceReplay(Time.frameCount, Time.unscaledTimeAsDouble, Time.unscaledDeltaTime);
         }
 
         // After every Update, so a latch made this frame -- live or replayed --

@@ -1,0 +1,10 @@
+<linker>
+  <assembly fullname="Unity.RenderPipelines.Universal.Runtime">
+    <type fullname="UnityEngine.Rendering.Universal.UniversalRenderer" preserve="nothing">
+      <field name="m_XRDepthMotionPass" />
+    </type>
+    <type fullname="UnityEngine.Rendering.Universal.XRDepthMotionPass" preserve="nothing">
+      <method name="Render" />
+    </type>
+  </assembly>
+</linker>

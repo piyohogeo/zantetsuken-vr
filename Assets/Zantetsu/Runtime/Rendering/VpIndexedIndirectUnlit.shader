@@ -19,6 +19,9 @@
 // VP_NATIVE_MULTIDRAW is the variant the Direct3D 12 plugin draws (DESIGN 4.5.8), where one ExecuteIndirect issues a run
 // of commands: the command's number arrives as a per-command root constant and the arguments are read by it
 // (VpNativeMultiDraw.hlsl). No material enables it; the Editor compiles it for the plugin alone.
+// VP_NO_CLIP is the ordinary-object variant: Clip records, calculations and SV_ClipDistance outputs are absent.
+// VP_NATIVE_DIRECT is the rare provisional Clip path: CPU direct commands select transform/Clip records from a small
+// uniform buffer. It reads neither the indirect arguments nor the GPU selection/instance storage buffers.
 Shader "Zantetsu/VP Indexed Indirect Unlit"
 {
     Properties
@@ -51,6 +54,8 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma shader_feature_local VP_NATIVE_MULTIDRAW
+            #pragma multi_compile_local_vertex _ VP_NO_CLIP
+            #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
@@ -58,10 +63,12 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include_with_pragmas "VpSurfaceLightingVariants.hlsl"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+        #if !defined(VP_NATIVE_DIRECT)
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
         #if defined(VP_NATIVE_MULTIDRAW)
             #include "VpNativeMultiDraw.hlsl"
+        #endif
         #endif
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "VpCutSurfaceShading.hlsl"
@@ -71,21 +78,29 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #include "VpPaletteAtlas.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
+        #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+        #endif
 
             // Which parts of up to eight cut planes each logical instance keeps, and how far it is moved apart
             // (DESIGN 5.1, 5.2). Matches Zantetsu.Rendering.VpInstanceClip: 144 bytes, the eight signed planes and
             // then the count of valid ones. The shadow caster reads the same record, so a fragment
             // is clipped identically in every pass of the draw.
+        #if !defined(VP_NO_CLIP)
             struct VpInstanceClip
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
                 float planeCount; // how many of the eight planes are valid
+                float pad0, pad1, pad2; // 144-byte record; scalar padding avoids float3 alignment differences
             };
 
+        #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+        #endif
+        #endif
+            #include "VpNativeDirectClip.hlsl"
 
-        #if defined(VP_GPU_CULLED)
+        #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             // The instances the compute pass kept for this view's body: each command's in the slots of its own
             // instance run, the kept ones first. The arguments it wrote count and start those slots.
             StructuredBuffer<uint> _VpVisible;
@@ -96,6 +111,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // positive constant, which is what DESIGN 5.2 asks of the unused components at every vertex, so a record
             // of count zero clips nothing at all. The same eight components serve every count: there is no
             // pixel-shader clip() path and no SV_CullDistance.
+        #if !defined(VP_NO_CLIP)
             float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
             {
                 return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
@@ -115,6 +131,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                     VpHalfSpace(clipState.planes[6], positionWS, 6, count),
                     VpHalfSpace(clipState.planes[7], positionWS, 7, count));
             }
+        #endif
 
             // Physical instances per logical instance in the forward arguments, set by the batch: 2 for Single Pass
             // Instanced stereo, otherwise 1.
@@ -142,9 +159,6 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -159,8 +173,10 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 // DESIGN 5.2 evaluates the selected cut planes with SV_ClipDistance and has no pixel-shader clip()
                 // path. All eight components are used, four here and four in SV_ClipDistance1, one per plane of the
                 // record; the components past its count are a positive finite value at every vertex.
+            #if !defined(VP_NO_CLIP)
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
 
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
@@ -177,10 +193,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // them by the command number its root constant carries.
             void InitializeVpIndirectDraw(Attributes input)
             {
-            #if defined(VP_NATIVE_MULTIDRAW)
+            #if defined(VP_NATIVE_DIRECT)
+                // CPU direct draws select a small uniform record with SV_InstanceID; no indirect arguments.
+            #elif defined(VP_NATIVE_MULTIDRAW)
                 VpNativeInitIndirectDrawArgs();
-            #elif defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
+
             #else
                 InitIndirectDrawArgs(0);
             #endif
@@ -191,7 +208,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #if defined(UNITY_STEREO_INSTANCING_ENABLED)
                 return false;
             #else
-                return _VpInstanceMultiplier == 2u && (GetIndirectInstanceID_Base(input.instanceID) & 1u) != 0u;
+                return _VpInstanceMultiplier == 2u && (VpPhysicalInstanceID(input.instanceID) & 1u) != 0u;
             #endif
             }
 
@@ -206,28 +223,40 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                     // The position alone rejects this copy; the clip distances stay positive so that every vertex
                     // this shader emits carries the positive finite unused components DESIGN 5.2 asks for.
                     output.positionCS = VP_REJECTED_POSITION_CS;
+                #if !defined(VP_NO_CLIP)
                     output.clipDistance0 = 1.0;
                     output.clipDistance1 = 1.0;
+                #endif
                     return output;
                 }
 
                 VpRenderVertex vertex = _VpVertices[input.vertexID];
-                uint physicalInstance = GetIndirectInstanceID_Base(input.instanceID);
+                uint physicalInstance = VpPhysicalInstanceID(input.instanceID);
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
-            #if defined(VP_GPU_CULLED)
+            #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
                 logicalInstance = _VpVisible[logicalInstance];
             #endif
+            #if defined(VP_NATIVE_DIRECT)
+                float4x4 objectToWorld = _VpDirectClipRecords[logicalInstance].objectToWorld;
+            #else
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
+            #endif
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 
                 // DESIGN 5.1: every plane is tested on the world position as the transform leaves it. The renderer
                 // adds no displacement of its own, so where a side is drawn is where what it follows puts it; what
+            #if !defined(VP_NO_CLIP)
+            #if defined(VP_NATIVE_DIRECT)
+                VpInstanceClip clipState = VpDirectClipState(logicalInstance);
+            #else
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
+            #endif
                 float4 clipDistance0;
                 float4 clipDistance1;
                 VpClipDistances(clipState, positionWS, clipDistance0, clipDistance1);
                 output.clipDistance0 = clipDistance0;
                 output.clipDistance1 = clipDistance1;
+            #endif
 
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, VpDecodeNormal(vertex));
@@ -263,6 +292,182 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 // The shading itself is VpShadeSurface (VpCutSurfaceShading.hlsl), which the stencil cap pass calls
                 // too, so a temporary cut face and a real one are shaded by the same code with the same light.
                 return half4(VpShadeSurface(base, input.normalWS, input.positionWS), 1.0);
+            }
+            ENDHLSL
+        }
+
+        // Static AppSW re-rasterization, adapted from vp-appsw-probe VpRaster (2026-10-07).
+        Pass
+        {
+            Name "VpXRMotionVectors"
+            Tags { "LightMode" = "XRMotionVectors" }
+
+            ColorMask RGBA
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+
+            // Stencil write for obj motion pixels (as URP's own XRMotionVectors passes)
+            Stencil
+            {
+                WriteMask 1
+                Ref 1
+                Comp Always
+                Pass Replace
+            }
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma multi_compile_local_vertex _ VP_GPU_CULLED
+            #pragma shader_feature_local VP_NATIVE_MULTIDRAW
+            #pragma multi_compile_local_vertex _ VP_NO_CLIP
+            #pragma shader_feature_local VP_NATIVE_DIRECT
+            #pragma vertex VertexMotion
+            #pragma fragment FragmentMotion
+            #pragma multi_compile_instancing
+            #define APPLICATION_SPACE_WARP_MOTION 1
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MotionVectorsCommon.hlsl"
+        #if !defined(VP_NATIVE_DIRECT)
+            #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
+            #include "UnityIndirect.cginc"
+        #if defined(VP_NATIVE_MULTIDRAW)
+            #include "VpNativeMultiDraw.hlsl"
+        #endif
+        #endif
+            #include "VpCompactVertex.hlsl"
+
+            StructuredBuffer<VpRenderVertex> _VpVertices;
+        #if !defined(VP_NATIVE_DIRECT)
+            StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+        #endif
+
+        #if !defined(VP_NO_CLIP)
+            struct VpInstanceClip
+            {
+                float4 planes[8];
+                float planeCount;
+                float pad0, pad1, pad2;
+            };
+
+        #if !defined(VP_NATIVE_DIRECT)
+            StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+        #endif
+        #endif
+            #include "VpNativeDirectClip.hlsl"
+
+        #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
+            StructuredBuffer<uint> _VpVisible;
+        #endif
+
+            uint _VpInstanceMultiplier;
+
+
+        #if !defined(VP_NO_CLIP)
+            float VpHalfSpaceM(float4 signedPlane, float3 positionWS, uint index, uint count)
+            {
+                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
+            }
+        #endif
+
+            #define VP_REJECTED_POSITION_CS float4(2.0, 2.0, 2.0, 1.0)
+
+            struct AttributesM
+            {
+                uint vertexID : SV_VertexID;
+            #if UNITY_ANY_INSTANCING_ENABLED
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            #else
+                uint instanceID : SV_InstanceID;
+            #endif
+            };
+
+            struct VaryingsM
+            {
+                float4 positionCS : SV_POSITION;
+            #if !defined(VP_NO_CLIP)
+                float4 clipDistance0 : SV_ClipDistance0;
+                float4 clipDistance1 : SV_ClipDistance1;
+            #endif
+                float4 positionCSNoJitter : TEXCOORD0;
+                float4 previousPositionCSNoJitter : TEXCOORD1;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            VaryingsM VertexMotion(AttributesM input)
+            {
+            #if defined(VP_NATIVE_DIRECT)
+                // CPU direct draws select a small uniform record with SV_InstanceID; no indirect arguments.
+            #elif defined(VP_NATIVE_MULTIDRAW)
+                VpNativeInitIndirectDrawArgs();
+            #else
+                InitIndirectDrawArgs(0);
+            #endif
+                VaryingsM output = (VaryingsM)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                bool secondCopy = false;
+            #if !defined(UNITY_STEREO_INSTANCING_ENABLED)
+                secondCopy = _VpInstanceMultiplier == 2u && (VpPhysicalInstanceID(input.instanceID) & 1u) != 0u;
+            #endif
+                if (secondCopy)
+                {
+                    output.positionCS = VP_REJECTED_POSITION_CS;
+                #if !defined(VP_NO_CLIP)
+                    output.clipDistance0 = 1.0;
+                    output.clipDistance1 = 1.0;
+                #endif
+                    output.positionCSNoJitter = output.positionCS;
+                    output.previousPositionCSNoJitter = output.positionCS;
+                    return output;
+                }
+
+                VpRenderVertex vertex = _VpVertices[input.vertexID];
+                uint physicalInstance = VpPhysicalInstanceID(input.instanceID);
+                uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
+            #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
+                logicalInstance = _VpVisible[logicalInstance];
+            #endif
+            #if defined(VP_NATIVE_DIRECT)
+                float4x4 objectToWorld = _VpDirectClipRecords[logicalInstance].objectToWorld;
+            #else
+                float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
+            #endif
+                float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+
+            #if !defined(VP_NO_CLIP)
+            #if defined(VP_NATIVE_DIRECT)
+                VpInstanceClip clipState = VpDirectClipState(logicalInstance);
+            #else
+                VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
+            #endif
+                uint count = (uint)clipState.planeCount;
+                output.clipDistance0 = float4(
+                    VpHalfSpaceM(clipState.planes[0], positionWS, 0, count),
+                    VpHalfSpaceM(clipState.planes[1], positionWS, 1, count),
+                    VpHalfSpaceM(clipState.planes[2], positionWS, 2, count),
+                    VpHalfSpaceM(clipState.planes[3], positionWS, 3, count));
+                output.clipDistance1 = float4(
+                    VpHalfSpaceM(clipState.planes[4], positionWS, 4, count),
+                    VpHalfSpaceM(clipState.planes[5], positionWS, 5, count),
+                    VpHalfSpaceM(clipState.planes[6], positionWS, 6, count),
+                    VpHalfSpaceM(clipState.planes[7], positionWS, 7, count));
+            #endif
+
+                // As URP's ObjectMotionVectors.hlsl under APPLICATION_SPACE_WARP_MOTION, with the instance transform
+                // already applied: current and previous clip positions of the same world point (camera-only motion).
+                output.positionCSNoJitter = mul(_NonJitteredViewProjMatrix, float4(positionWS, 1.0));
+                output.positionCS = output.positionCSNoJitter;
+                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, float4(positionWS, 1.0));
+                return output;
+            }
+
+            float4 FragmentMotion(VaryingsM input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return float4(CalcAswNdcMotionVectorFromCsPositions(input.positionCSNoJitter, input.previousPositionCSNoJitter), 1);
             }
             ENDHLSL
         }

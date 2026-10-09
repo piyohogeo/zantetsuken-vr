@@ -86,6 +86,10 @@ namespace Zantetsu.Sandbox
 
             /// <summary>After the measurement: the cut scene's stages, pictured (<see cref="SandboxDrawCompareCutScene"/>).</summary>
             public bool cutScene;
+            // Quest demo options; defaults keep the existing PC comparison and cleanup behavior.
+            public bool headTracked, retainSceneAfterMeasurement;
+            /// <summary>Placed objects in the existing instance order; 0 keeps the complete scene.</summary>
+            public int sceneObjectLimit;
             public double[] captureTimes = Array.Empty<double>();
             public SceneDrawComparePath path;
         }
@@ -372,6 +376,72 @@ namespace Zantetsu.Sandbox
             return runner;
         }
 
+        /// <summary>Starts the existing comparison with prepared settings, including the normal scene hold and completion behavior.</summary>
+        public static Runner StartPrepared(Settings settings, bool quitWhenDone)
+        {
+            Log("scene: " + QuietScene());
+            CutWorldRoot world = UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>();
+            var cuttables = UnityEngine.Object.FindObjectsByType<PlayableCityCuttable>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var instances = new List<KeyValuePair<string, Renderer[]>>(cuttables.Length);
+            var roots = new List<Transform>(cuttables.Length);
+            foreach (var c in cuttables)
+            {
+                instances.Add(new KeyValuePair<string, Renderer[]>(c.name, c.instanceRenderers));
+                if (c.target != null) roots.Add(c.target);
+            }
+            instances.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            Runner runner = Begin(settings, world, instances, Camera.main, null);
+            runner.targetRoots = roots;
+            runner.endWorld = !settings.retainSceneAfterMeasurement;
+            if (quitWhenDone) runner.quit = Application.Quit;
+            return runner;
+        }
+
+        // A limit takes whole placed objects, including all their renderers. The unused objects are not in the
+        // inventory and are not drawn by Unity either (including their shadows). A renderer listed again outside
+        // the prefix remains visible if a kept object also owns it.
+        internal static IReadOnlyList<KeyValuePair<string, Renderer[]>> SelectSceneObjectPrefix(
+            IReadOnlyList<KeyValuePair<string, Renderer[]>> all, int limit, out List<Renderer> hidden)
+        {
+            if (all == null) throw new ArgumentNullException(nameof(all));
+            hidden = null;
+            if (limit <= 0 || limit >= all.Count) return all;
+
+            var selected = new KeyValuePair<string, Renderer[]>[limit];
+            var seen = new HashSet<Renderer>();
+            for (int i = 0; i < limit; i++)
+            {
+                selected[i] = all[i];
+                foreach (Renderer renderer in all[i].Value ?? Array.Empty<Renderer>())
+                {
+                    if (renderer != null) seen.Add(renderer);
+                }
+            }
+
+            hidden = new List<Renderer>();
+            for (int i = limit; i < all.Count; i++)
+            {
+                foreach (Renderer renderer in all[i].Value ?? Array.Empty<Renderer>())
+                {
+                    if (renderer == null || !seen.Add(renderer) || !renderer.enabled) continue;
+                    hidden.Add(renderer);
+                    renderer.enabled = false;
+                }
+            }
+
+            return selected;
+        }
+
+        internal static void RestoreSceneObjectPrefix(List<Renderer> hidden)
+        {
+            if (hidden == null) return;
+            foreach (Renderer renderer in hidden)
+            {
+                if (renderer != null) renderer.enabled = true;
+            }
+            hidden.Clear();
+        }
+
         // The markers of every row: times in nanoseconds, the Render category's in counts.
         private static readonly (ProfilerCategory category, string name)[] FixedMarkers =
         {
@@ -498,6 +568,8 @@ namespace Zantetsu.Sandbox
             internal Camera eye;
             internal Transform rig;
             internal bool endWorld;
+            private bool _headPosePlaced;
+            private List<Renderer> _sceneObjectLimitHidden;
             internal Action<int> quit;
 
             /// <summary>For tests: geometry the run starts with (a Player reads its file instead).</summary>
@@ -569,6 +641,7 @@ namespace Zantetsu.Sandbox
             private Zantetsu.Rendering.VpNativeDrawPlugin.LockStats _lastLock;
             private bool _lockBaselineTaken;
 
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
             [System.Runtime.InteropServices.DllImport("kernel32.dll")]
             private static extern uint GetCurrentThreadId();
 
@@ -588,6 +661,20 @@ namespace Zantetsu.Sandbox
                 QueryPerformanceFrequency(out long frequency);
                 return frequency;
             }
+
+#elif UNITY_ANDROID
+            [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "gettid")]
+            private static extern uint GetCurrentThreadId();
+            [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "sched_getcpu")]
+            private static extern uint GetCurrentProcessorNumber();
+            private static bool QueryPerformanceCounter(out long value) { value = System.Diagnostics.Stopwatch.GetTimestamp(); return true; }
+            private static long QpcFrequency() => System.Diagnostics.Stopwatch.Frequency;
+#else
+            private static uint GetCurrentThreadId() => (uint)System.Threading.Thread.CurrentThread.ManagedThreadId;
+            private static uint GetCurrentProcessorNumber() => uint.MaxValue;
+            private static bool QueryPerformanceCounter(out long value) { value = System.Diagnostics.Stopwatch.GetTimestamp(); return true; }
+            private static long QpcFrequency() => System.Diagnostics.Stopwatch.Frequency;
+#endif
 
             private long[][] _values;
             private bool _ownsDirectory;
@@ -655,7 +742,7 @@ namespace Zantetsu.Sandbox
                 int prepBeganFrame = Time.frameCount;
                 Note("mode: " + (settings.mode != Mode.Unity
                     ? ModeName(settings.mode) + " (the cut world's display draws the targets; "
-                      + (world.Display.NativeArguments ? "VP3C-NATIVE, GPU selection drawn by the Direct3D 12 plugin"
+                      + (world.Display.NativeArguments ? "VP3C-NATIVE, GPU selection drawn by the native plugin"
                           : world.Display.CullsOnGpu ? "VP3C, GPU selection"
                           : "VP3, no GPU selection" + (world.GpuCullFallback != null ? ": FALLBACK " + world.GpuCullFallback : "")) + ")"
                     : "unity (the targets' own MeshRenderers)"));
@@ -664,6 +751,7 @@ namespace Zantetsu.Sandbox
                     Note("cut scene: asked (" + SandboxDrawCompareCutScene.Argument + "): after the measurement two props are cut and pictured; what the cuts make is drawn by the world's route "
                         + world.BodyRoute + " (" + world.BodyRouteReason + "); the geometry hold " + (SandboxDrawCompareCutScene.HoldInstalled ? "is the world's geometry pool" : "was NOT installed"));
                 }
+                Note("camera: " + (settings.headTracked ? "head tracked; path sets initial position and run duration only" : "recorded path"));
                 Note("launch: " + SandboxLaunchRecord.Describe());
                 bool profilerAlready = Profiler.enabled && Profiler.enableBinaryLog;
                 if (profilerAlready) Note("the Profiler was ALREADY recording when the preparation began (" + Profiler.logFile + "): the preparation is in that recording");
@@ -723,7 +811,10 @@ namespace Zantetsu.Sandbox
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 try
                 {
-                    Inventory = SceneDrawInventory.Collect(instances, world.MaterialBindings, geometry);
+                    IReadOnlyList<KeyValuePair<string, Renderer[]>> selected = SelectSceneObjectPrefix(instances, settings.sceneObjectLimit, out _sceneObjectLimitHidden);
+                    Note("scene object limit: " + settings.sceneObjectLimit + " (0 unlimited); selected " + selected.Count + " of " + instances.Count
+                        + " placed objects in existing order; hidden renderers " + (_sceneObjectLimitHidden?.Count ?? 0));
+                    Inventory = SceneDrawInventory.Collect(selected, world.MaterialBindings, geometry);
                 }
                 catch (Exception e)
                 {
@@ -863,9 +954,9 @@ namespace Zantetsu.Sandbox
                     + "; the plugin's mutex timing " + (lockAtStart.timingOn ? "ON" : "off")
                     + (_detail ? " -- the state query, the mutex and the keeper's parts are timed and counted every frame: this run carries that cost"
                                : " -- frames.csv's lock, keeper and last-acquisition columns stay 0 (processors -1)"));
-                Note("threads (Windows ids, for a trace): main " + GetCurrentThreadId() + ", rendering (the plugin's draw events so far) "
+                Note("threads (native OS ids): main " + GetCurrentThreadId() + ", rendering (the plugin's draw events so far) "
                     + (_detail ? lockAtStart.renderThreadId.ToString(Inv) : "not observed (the detailed observation is off)")
-                    + "; QPC frequency " + QpcFrequency() + " (QueryPerformanceFrequency; the rows' stamps are QueryPerformanceCounter's) / " + System.Diagnostics.Stopwatch.Frequency + " (Stopwatch, the durations') / "
+                    + "; QPC frequency " + QpcFrequency() + " (Windows: QPC; Android: Stopwatch ticks) / " + System.Diagnostics.Stopwatch.Frequency + " (Stopwatch, the durations') / "
                     + lockAtStart.qpcFrequency + " (plugin); each row's qpc, thread id and processor number are in frames.csv"
                     + " (the processor number is the one the thread was on at the instant of the row's stamp, not the frame's)");
                 Note("frame timing: FrameTimingManager enabled=" + FrameTimingManager.IsFeatureEnabled() + " (its values reach a row a few frames late)"
@@ -911,6 +1002,7 @@ namespace Zantetsu.Sandbox
                     Vector3 seen = eye.transform.position;
                     float seenYaw = eye.transform.eulerAngles.y;
                     ApplyPose(pose);
+                    if (settings.headTracked) { pose.eye = eye.transform.position; pose.yaw = eye.transform.eulerAngles.y; }
                     Record(t, pose, !last, seen, seenYaw);
                     if (movingShotSegment >= 0 && t >= settings.path.BeginOf(movingShotSegment) + 0.5 * settings.path.SecondsOf(movingShotSegment))
                     {
@@ -1034,10 +1126,11 @@ namespace Zantetsu.Sandbox
                     Log("world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
                 }
 
-                if (VpDisplay != null)
+                if (VpDisplay != null && !settings.retainSceneAfterMeasurement)
                 {
                     VpDisplay.Dispose();
                 }
+                if (settings.retainSceneAfterMeasurement) Log("scene retained: " + ModeName(settings.mode) + "; head tracking active after measurement; renderers and world kept");
 
                 Finish(!wrote ? 23 : notes.Count == 0 ? 0 : 21, wrote, notes.Count == 0, notes.Count == 0 ? null : string.Join("; ", notes));
             }
@@ -1052,6 +1145,7 @@ namespace Zantetsu.Sandbox
                 ConditionsNote = note;
                 Code = code;
                 DisposeRecorders();
+                if (!completed || !settings.retainSceneAfterMeasurement) RestoreSceneObjectPrefix(_sceneObjectLimitHidden);
                 if (!completed)
                 {
                     try
@@ -1069,9 +1163,16 @@ namespace Zantetsu.Sandbox
                 quit?.Invoke(code);
             }
 
+            private void OnDestroy() => RestoreSceneObjectPrefix(_sceneObjectLimitHidden);
+
             // The rig placed so that the camera's eye is the pose's, whatever the head's own pose under the rig is.
             private void ApplyPose(in SceneDrawComparePath.Pose pose)
             {
+                if (settings.headTracked)
+                {
+                    if (_headPosePlaced) return;
+                    _headPosePlaced = true;
+                }
                 Transform camera = eye.transform;
                 if (rig == camera)
                 {
@@ -1865,9 +1966,15 @@ namespace Zantetsu.Sandbox
                 foreach (string note in notes) text.Append("note: ").Append(note).Append('\n');
                 text.Append("checks: not run (this run measures; it judges nothing of the product)\n");
                 text.Append("mode: ").Append(ModeName(settings.mode)).Append('\n');
+                text.Append("camera: ").Append(settings.headTracked ? "head tracked (not a matched path comparison)" : "recorded path").Append('\n');
                 text.Append("launch: ").Append(SandboxLaunchRecord.Describe()).Append('\n');
                 text.Append("path: ").Append(settings.path.Describe()).Append('\n');
-                if (Inventory != null) text.Append("targets: ").Append(Inventory.Describe()).Append('\n');
+                if (Inventory != null)
+                {
+                    text.Append("scene object limit: ").Append(settings.sceneObjectLimit).Append(" (0 unlimited); selected ").Append(Inventory.Instances)
+                        .Append(" of ").Append(instances.Count).Append(" placed objects in existing order\n");
+                    text.Append("targets: ").Append(Inventory.Describe()).Append('\n');
+                }
                 if (completed)
                 {
                     text.Append("measurement frames: ").Append(MeasureStartFrame).Append("..").Append(MeasureEndFrame).Append("; rows ").Append(_rows).Append(" of a room of ").Append(_room)
@@ -1879,7 +1986,7 @@ namespace Zantetsu.Sandbox
                     text.Append("physics: ").Append(physics).Append('\n');
                     text.Append("GPU time: ").Append(GpuTimeNote()).Append('\n');
                     if (CaptureRecord != null) text.Append("captures: ").Append(CaptureRecord).Append('\n');
-                    text.Append("eye against the path: largest distance ").Append(LargestEyeDistance.ToString("F4", Inv)).Append(" m, largest heading difference ")
+                    text.Append(settings.headTracked ? "head pose changes between rows: largest distance " : "eye against the path: largest distance ").Append(LargestEyeDistance.ToString("F4", Inv)).Append(" m, largest heading difference ")
                         .Append(LargestEyeHeadingDifference.ToString("F3", Inv)).Append(" degrees (the camera as it stood through each row's frame, read at the next frame's start)\n");
                 }
 

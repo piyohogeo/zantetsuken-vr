@@ -22,6 +22,9 @@
 // VP_NATIVE_MULTIDRAW is the variant the Direct3D 12 plugin draws (DESIGN 4.5.8), where one ExecuteIndirect issues a run
 // of commands: the command's number arrives as a per-command root constant, and the arguments and the command's bounds
 // are read by it (VpNativeMultiDraw.hlsl). No material enables it; the Editor compiles it for the plugin alone.
+// VP_NO_CLIP is the ordinary-object variant: Clip records, calculations and SV_ClipDistance outputs are absent.
+// VP_NATIVE_DIRECT is the rare provisional Clip path: CPU direct commands select transform/Clip records from a small
+// uniform buffer. It reads neither the indirect arguments nor the GPU selection/instance storage buffers.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
     Properties
@@ -53,16 +56,20 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
             #pragma multi_compile_local_vertex _ VP_GPU_CULLED
             #pragma shader_feature_local VP_NATIVE_MULTIDRAW
+            #pragma multi_compile_local_vertex _ VP_NO_CLIP
+            #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex ShadowVertex
             #pragma fragment ShadowFragment
             #pragma multi_compile_instancing
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+        #if !defined(VP_NATIVE_DIRECT)
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
         #if defined(VP_NATIVE_MULTIDRAW)
             #include "VpNativeMultiDraw.hlsl"
+        #endif
         #endif
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
@@ -70,24 +77,32 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             #include "VpCompactVertex.hlsl"
 
             StructuredBuffer<VpRenderVertex> _VpVertices;
+        #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
+        #endif
 
             // The same per-instance clip record the forward pass reads (DESIGN 5.1, 5.2), so the shadow of a
             // provisionally clipped fragment is the shadow of what the colour pass actually draws: the same eight
             // planes and the same count.
+        #if !defined(VP_NO_CLIP)
             struct VpInstanceClip
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
                 float planeCount; // how many of the eight planes are valid
+                float pad0, pad1, pad2; // 144-byte record; scalar padding avoids float3 alignment differences
             };
 
+        #if !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+        #endif
+        #endif
+            #include "VpNativeDirectClip.hlsl"
 
-        #if defined(VP_GPU_CULLED)
+        #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             // The instances the compute pass kept as casters for this view, as the forward pass reads its own list.
             StructuredBuffer<uint> _VpVisible;
 
-            // Matches Zantetsu.Rendering.VpCullCommand: 40 bytes. The bounds of a command's range in the geometry's
+            // Matches Zantetsu.Rendering.VpCullCommand: 48 bytes. The bounds of a command's range in the geometry's
             // own frame, read by the command's number.
             struct VpCullCommand
             {
@@ -96,7 +111,9 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 uint startInstance;
                 uint instanceCount;
                 float3 centre;
+                float pad0;
                 float3 extents;
+                float pad1;
             };
 
             StructuredBuffer<VpCullCommand> _VpCullCommands;
@@ -129,6 +146,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
             // As in the forward pass: one clip distance per plane, the region kept is their intersection, and past
             // the valid count the component is a positive constant so an unused plane clips nothing at any vertex.
+        #if !defined(VP_NO_CLIP)
             float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
             {
                 return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
@@ -148,6 +166,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                     VpHalfSpace(clipState.planes[6], positionWS, 6, count),
                     VpHalfSpace(clipState.planes[7], positionWS, 7, count));
             }
+        #endif
 
             // Set by URP's shadow caster setup for the light being rendered.
             float3 _LightDirection;
@@ -156,9 +175,6 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             struct Attributes
             {
                 uint vertexID : SV_VertexID;
-            #if defined(SHADER_API_VULKAN)
-                uint drawID : SV_DrawID;
-            #endif
             #if UNITY_ANY_INSTANCING_ENABLED
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             #else
@@ -171,15 +187,19 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 float4 positionCS : SV_POSITION;
 
                 // One component per plane, the components past the record's count positive and finite (DESIGN 5.2).
+            #if !defined(VP_NO_CLIP)
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
             };
 
             // The number of the command this draw's instances belong to: Unity's per-draw constant, or the plugin's
             // per-command root constant.
             uint VpCommandId()
             {
-            #if defined(VP_NATIVE_MULTIDRAW)
+            #if defined(VP_NATIVE_DIRECT)
+                return 0u; // Direct draws do not read command bounds or an argument buffer.
+            #elif defined(VP_NATIVE_MULTIDRAW)
                 return VpNativeCommandId();
             #else
                 return GetCommandID(0);
@@ -188,10 +208,11 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
             ShadowVaryings ShadowVertex(Attributes input)
             {
-            #if defined(VP_NATIVE_MULTIDRAW)
+            #if defined(VP_NATIVE_DIRECT)
+                // CPU direct draws select a small uniform record with SV_InstanceID; no indirect arguments.
+            #elif defined(VP_NATIVE_MULTIDRAW)
                 VpNativeInitIndirectDrawArgs();
-            #elif defined(SHADER_API_VULKAN)
-                InitIndirectDrawArgs(input.drawID);
+
             #else
                 InitIndirectDrawArgs(0);
             #endif
@@ -199,12 +220,16 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 UNITY_SETUP_INSTANCE_ID(input);
 
                 VpRenderVertex vertex = _VpVertices[input.vertexID];
-                uint logicalInstance = GetIndirectInstanceID_Base(input.instanceID);
-            #if defined(VP_GPU_CULLED)
+                uint logicalInstance = VpPhysicalInstanceID(input.instanceID);
+            #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
                 logicalInstance = _VpVisible[logicalInstance];
             #endif
+            #if defined(VP_NATIVE_DIRECT)
+                float4x4 objectToWorld = _VpDirectClipRecords[logicalInstance].objectToWorld;
+            #else
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
-            #if defined(VP_GPU_CULLED) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
+            #endif
+            #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT) && !_CASTING_PUNCTUAL_LIGHT_SHADOW
                 // A directional slice projects a box (w is 1 everywhere), which is the only projection the test is
                 // written for; anything else draws every kept caster.
                 if (_VpShadowSliceSelection > 0.5 && UNITY_MATRIX_P[3][3] == 1.0
@@ -212,8 +237,10 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 {
                     // The position alone rejects the instance; the clip distances stay positive (DESIGN 5.2).
                     output.positionCS = float4(2.0, 2.0, 2.0, 1.0);
+                #if !defined(VP_NO_CLIP)
                     output.clipDistance0 = 1.0;
                     output.clipDistance1 = 1.0;
+                #endif
                     return output;
                 }
             #endif
@@ -221,12 +248,18 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
                 // As in the forward pass: every plane is tested on the world position the transform leaves, so
                 // the caster's silhouette matches what the forward pass keeps and draws.
+            #if !defined(VP_NO_CLIP)
+            #if defined(VP_NATIVE_DIRECT)
+                VpInstanceClip clipState = VpDirectClipState(logicalInstance);
+            #else
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
+            #endif
                 float4 clipDistance0;
                 float4 clipDistance1;
                 VpClipDistances(clipState, positionWS, clipDistance0, clipDistance1);
                 output.clipDistance0 = clipDistance0;
                 output.clipDistance1 = clipDistance1;
+            #endif
 
                 float3 normalWS = normalize(mul((float3x3)objectToWorld, VpDecodeNormal(vertex)));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW

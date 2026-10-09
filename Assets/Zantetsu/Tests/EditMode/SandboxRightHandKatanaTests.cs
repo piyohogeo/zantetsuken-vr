@@ -3302,6 +3302,194 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Recorder_DefaultReplayStillFeedsOneRowPerUpdateRegardlessOfWallClock()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            RecordReplayableSweep(recorder);
+            Assert.That(recorder.ReplayInRealtime, Is.False);
+            int realtimeNotifications = 0;
+            recorder.RealtimeSampleEvaluated += _ => realtimeNotifications++;
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+
+            Assert.That(recorder.AdvanceReplay(100, 500.0, 0.022), Is.EqualTo(1));
+            Assert.That(recorder.AdvanceReplay(101, 500.022, 0.022), Is.EqualTo(1));
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(2));
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(50.0 + SampleInterval).Within(1e-9));
+            Assert.That(recorder.IsReplaying, Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(2));
+            Assert.That(realtimeNotifications, Is.EqualTo(0), "the PC diagnostic retains its original observation phase");
+        }
+
+        [Test]
+        public void Recorder_RealtimeFeedsEvery90HzRowDueAtEach45HzUpdateWithoutResampling()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.ReplayInRealtime = true;
+            recorder.BeginRecording();
+            const double Origin = 7.0;
+            for (int i = 0; i < 5; i++)
+                Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(i, Origin + i / 90.0,
+                    new Vector3(0f, 1.4f, 0.3f) + EdgeStep * i, UprightGrip(follower),
+                    BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            recorder.Stop();
+            Assert.That(recorder.TryBeginReplay(100.0), Is.True);
+
+            Assert.That(recorder.AdvanceReplay(40, 100.0, 1.0 / 45.0), Is.EqualTo(1), "the first row is due immediately");
+            Assert.That(recorder.AdvanceReplay(41, 100.0 + 1.0 / 45.0, 1.0 / 45.0), Is.EqualTo(2));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(3), "both rows reached the katana in this frame");
+            double end = 100.0 + ((Origin + 4.0 / 90.0) - Origin);
+            Assert.That(recorder.AdvanceReplay(42, end, 1.0 / 45.0), Is.EqualTo(2));
+            Assert.That(recorder.RecordedSampleCount, Is.EqualTo(5));
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(5));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(5), "an equal-time completion must not insert an untracked row");
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(end));
+            Assert.That(recorder.IsReplaying, Is.False);
+            Assert.That(recorder.IsShowingReplayResult, Is.True);
+        }
+
+        [Test]
+        public void Recorder_DueSamplesKeepNegativeRecordingOriginTrackingLossAndRecordedView()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(null);
+            recorder.BeginRecording();
+            const double Origin = -17.5;
+            double lastRecorded = Origin + 0.011;
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(1, Origin, Vector3.one,
+                Quaternion.identity, BladeTrackingState.Position | BladeTrackingState.Rotation), Vector3.forward), Is.True);
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(2, lastRecorded, Vector3.up,
+                Quaternion.identity, BladeTrackingState.None), Vector3.left), Is.True);
+            recorder.Stop();
+            Assert.That(recorder.TryBeginReplay(100.0), Is.True);
+
+            Assert.That(recorder.TryTakeDueReplaySample(7, 100.0 - 1e-12, out _, out _), Is.False,
+                "even a tiny negative elapsed time must not consume the first row");
+            Assert.That(recorder.TryTakeDueReplaySample(7, double.NaN, out _, out _), Is.False);
+            Assert.That(recorder.TryTakeDueReplaySample(7, double.PositiveInfinity, out _, out _), Is.False);
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(0));
+            Assert.That(recorder.TryTakeDueReplaySample(8, 100.0, out BladePoseSample first, out Vector3 firstView), Is.True);
+            Assert.That(first.TimestampSeconds, Is.EqualTo(100.0));
+            Assert.That(first.FrameId, Is.EqualTo(8));
+            AssertVector(first.GripPosition, Vector3.one);
+            AssertVector(firstView, Vector3.forward);
+
+            double due = 100.0 + (lastRecorded - Origin);
+            Assert.That(recorder.TryTakeDueReplaySample(9, due - 1e-12, out _, out _), Is.False);
+            Assert.That(recorder.TryTakeDueReplaySample(9, due, out BladePoseSample lost, out Vector3 lostView), Is.True,
+                "the absolute due timestamp avoids a second subtraction at the boundary");
+            Assert.That(lost.TimestampSeconds, Is.EqualTo(due));
+            Assert.That(lost.TrackingState, Is.EqualTo(BladeTrackingState.None));
+            AssertVector(lost.GripPosition, Vector3.up);
+            AssertVector(lostView, Vector3.left);
+            Assert.That(recorder.TryTakeDueReplaySample(9, due, out _, out _), Is.False);
+            Assert.That(recorder.IsReplaying, Is.False);
+        }
+
+        [Test]
+        public void Recorder_RealtimeDoesNotInventTrackingLossBetweenRowsButFeedsRecordedLoss()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.ReplayInRealtime = true;
+            recorder.BeginRecording();
+            BladeTrackingState tracked = BladeTrackingState.Position | BladeTrackingState.Rotation;
+            for (int i = 0; i < 5; i++)
+                Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(i, 10.0 + i * 0.1,
+                    Vector3.up + EdgeStep * i, UprightGrip(follower), i == 2 ? BladeTrackingState.None : tracked)), Is.True);
+            recorder.Stop();
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+
+            Assert.That(recorder.AdvanceReplay(1, 50.0, 0.022), Is.EqualTo(1));
+            Assert.That(recorder.AdvanceReplay(2, 50.05, 0.022), Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1), "no synthetic untracked tick resets the pending stroke");
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(50.0));
+            Assert.That(recorder.AdvanceReplay(3, 50.21, 0.022), Is.EqualTo(2));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0), "the recorded tracking loss reached the core");
+            Assert.That(recorder.AdvanceReplay(4, 50.31, 0.022), Is.EqualTo(1));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1), "tracking resumes with the following recorded pose");
+            Assert.That(recorder.IsReplaying, Is.True);
+        }
+
+        [Test]
+        public void Recorder_RealtimeCompletionAdvancesWavesToWallClockAndNeverRewinds()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.ReplayInRealtime = true;
+            RecordReplayableSweep(recorder);
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+
+            Assert.That(recorder.AdvanceReplay(100, 50.08, 0.001), Is.EqualTo(7));
+            Assert.That(recorder.IsShowingReplayResult, Is.True);
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(50.08), "catch-up ends at the current wall clock");
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 axis, out _, out _,
+                out _, out _, out Vector3 before, out _), Is.True);
+            Assert.That(recorder.AdvanceReplay(101, 50.18, 0.001), Is.EqualTo(0));
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(50.18), "render delta does not stretch the wave lifetime");
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 after, out _), Is.True);
+            Assert.That(Vector3.Dot(after - before, axis), Is.GreaterThan(0f));
+
+            Assert.That(recorder.AdvanceReplay(102, 50.18 - 1e-12, 0.001), Is.EqualTo(0));
+            Assert.That(recorder.AdvanceReplay(103, double.NaN, 0.001), Is.EqualTo(0));
+            Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(50.18));
+            Assert.That(recorder.AdvanceReplay(104, 53.0, 0.001), Is.EqualTo(0));
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "the wave expired at elapsed wall time");
+            Assert.That(follower.LiveInputEnabled, Is.False, "result input is held until explicitly stopped");
+            recorder.Stop();
+            Assert.That(follower.LiveInputEnabled, Is.True);
+        }
+
+        [Test]
+        public void Recorder_RealtimeNotifiesEachCompletedCoreEvaluationBeforeTheNextRowOrTick()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.ReplayInRealtime = true;
+            RecordReplayableSweep(recorder);
+            var times = new List<double>();
+            var tracking = new List<BladeTrackingState>();
+            var poseCounts = new List<int>();
+            recorder.RealtimeSampleEvaluated += sample =>
+            {
+                times.Add(sample.TimestampSeconds);
+                tracking.Add(sample.TrackingState);
+                poseCounts.Add(follower.RecordedPoseCount);
+                Assert.That(recorder.ReplayLastTimestamp, Is.EqualTo(sample.TimestampSeconds));
+            };
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            Assert.That(recorder.AdvanceReplay(100, 50.08, 0.001), Is.EqualTo(7));
+
+            Assert.That(times.Count, Is.EqualTo(8), "seven rows and the completion tick are individually observable");
+            for (int i = 0; i < 7; i++)
+            {
+                Assert.That(times[i], Is.EqualTo(50.0 + i * SampleInterval).Within(1e-9));
+                Assert.That(tracking[i], Is.EqualTo(BladeTrackingState.Position | BladeTrackingState.Rotation));
+                Assert.That(poseCounts[i], Is.EqualTo(i + 1), "the callback sees this row's core state before it is replaced");
+            }
+            Assert.That(times[7], Is.EqualTo(50.08));
+            Assert.That(tracking[7], Is.EqualTo(BladeTrackingState.None));
+            Assert.That(poseCounts[7], Is.EqualTo(0), "the result tick has completed its tracking-loss evaluation");
+            Assert.That(recorder.AdvanceReplay(101, 50.09, 0.001), Is.EqualTo(0));
+            Assert.That(times.Count, Is.EqualTo(9), "continued wave evaluations are observable too");
+            Assert.That(times[8], Is.EqualTo(50.09));
+        }
+
+        [Test]
+        public void Recorder_RealtimeLongFrameConsumesTheBoundedRecordingWithoutDroppingRows()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(null);
+            recorder.ReplayInRealtime = true;
+            recorder.BeginRecording();
+            for (int i = 0; i < SandboxSlashPoseRecorder.Capacity; i++)
+                Assert.That(recorder.TryAppendRecordedSample(TrackedAt(i, 20.0 + i / 90.0, Vector3.up)), Is.True);
+            Assert.That(recorder.IsRecording, Is.False);
+            Assert.That(recorder.TryBeginReplay(100.0), Is.True);
+            Assert.That(recorder.AdvanceReplay(20, 200.0, 100.0), Is.EqualTo(SandboxSlashPoseRecorder.Capacity));
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(SandboxSlashPoseRecorder.Capacity));
+            Assert.That(recorder.RecordedSampleCount, Is.EqualTo(SandboxSlashPoseRecorder.Capacity));
+            Assert.That(recorder.IsReplaying, Is.False);
+            Assert.That(recorder.AdvanceReplay(21, 200.1, 0.1), Is.EqualTo(0));
+        }
+
+        [Test]
         public void TurningLiveInputOff_StartsTheSlashStateOverOnlyWhenItChanges()
         {
             SweepUntilLatch();

@@ -913,6 +913,8 @@ namespace Zantetsu.Rendering
                         Material capMaterial = materials.Cap(c);
                         capMaterial.SetColor(BaseColorId, AsShaderColour(color.capColour));
                         _capProperties.SetBuffer(CapVerticesId, _capVertexBuffer);
+                        // Vulkan requires even a branch-disabled StructuredBuffer to be bound. Static demo has no shaded cap normals.
+                        _capProperties.SetBuffer("_VpCapNormals", _capVertexBuffer);
                         var capParams = new RenderParams(capMaterial)
                         {
                             camera = camera,

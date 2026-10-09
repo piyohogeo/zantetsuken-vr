@@ -14,14 +14,16 @@ namespace Zantetsu.Rendering
     public struct VpCullCommand
     {
         /// <summary>The size of one record on the GPU, in bytes.</summary>
-        public const int Stride = 40;
+        public const int Stride = 48;
 
         public uint indexCount;
         public uint startIndex;
         public uint startInstance;
         public uint instanceCount;
         public Vector3 centre;
+        public float pad0;
         public Vector3 extents;
+        public float pad1;
     }
 
     /// <summary>

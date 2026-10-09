@@ -122,8 +122,9 @@ namespace Zantetsu.Sandbox
         public readonly bool checksRun;
         public readonly int checksHeld, checksFailed, checksNotRun;
         public readonly int code;
+        public readonly bool sceneRetained;
 
-        public PropSlashRunResult(bool completed, string notCompleted, bool checksRun, int checksHeld, int checksFailed, int checksNotRun, int code)
+        public PropSlashRunResult(bool completed, string notCompleted, bool checksRun, int checksHeld, int checksFailed, int checksNotRun, int code, bool sceneRetained = false)
         {
             this.completed = completed;
             this.notCompleted = notCompleted;
@@ -132,9 +133,13 @@ namespace Zantetsu.Sandbox
             this.checksFailed = checksFailed;
             this.checksNotRun = checksNotRun;
             this.code = code;
+            this.sceneRetained = sceneRetained;
         }
 
-        public string RunLine => "run: " + (completed ? "completed (the script, the cuts' completion and the ordinary ending)" : "NOT completed (" + notCompleted + ")");
+        public string RunLine => "run: " + (completed
+            ? sceneRetained ? "completed (the script and the cuts' completion; scene retained, world release not exercised)"
+                : "completed (the script, the cuts' completion and the ordinary ending)"
+            : "NOT completed (" + notCompleted + ")");
 
         public string ChecksLine =>
             "checks: " + (!checksRun ? "not run (left out of this run: neither passed nor failed" + (checksNotRun > 0 ? "; " + checksNotRun + " expectations reached and not judged" : "") + ")"
@@ -418,9 +423,9 @@ namespace Zantetsu.Sandbox
                 if (!fixedCode.HasValue && !_cwRegistrationCutShort && !_scriptCompleted) why.Add("the script and the cuts' completion did not finish before the deadline");
                 foreach (string stage in _cwDeadlinesReached) why.Add("deadline reached: " + stage);
                 foreach (string failure in _runFailures) why.Add(failure);
-                if (ending != null && !fixedCode.HasValue && !ending.WorldReleased) why.Add("the world was not released by the ordinary ending");
+                if (ending != null && !fixedCode.HasValue && !retainSceneAfterMeasurement && !ending.WorldReleased) why.Add("the world was not released by the ordinary ending");
                 if (closingFailures > 0) why.Add(closingFailures + " closing step(s) failed");
-                return new PropSlashRunResult(why.Count == 0, why.Count == 0 ? null : string.Join("; ", why), runParts.checks, _checksHeld, _checkFailures, _checksNotRun, code);
+                return new PropSlashRunResult(why.Count == 0, why.Count == 0 ? null : string.Join("; ", why), runParts.checks, _checksHeld, _checkFailures, _checksNotRun, code, retainSceneAfterMeasurement);
             }
 
             /// <summary>The run's result, beside its other files and in the log: the run and the checks apart.</summary>

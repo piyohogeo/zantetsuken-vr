@@ -165,5 +165,74 @@ Shader "Zantetsu/VP Mesh Surface"
             }
             ENDHLSL
         }
+
+        // Populate the AppSW low-resolution depth and motion targets through URP's XRDepthMotionPass.
+        // Its default uses Unity's standard object motion. Quest NPC materials select camera-only motion.
+        Pass
+        {
+            Name "XRMotionVectors"
+            Tags { "LightMode" = "XRMotionVectors" }
+            Cull Back
+            ZWrite On
+            ZTest LEqual
+            ColorMask RGBA
+            Stencil { WriteMask 1 Ref 1 Comp Always Pass Replace }
+            HLSLPROGRAM
+            #define APPLICATION_SPACE_WARP_MOTION 1
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                float _VpUsePaletteAtlas;
+            CBUFFER_END
+            // The Quest NPC material opts into camera-only motion. The POSITION stream is Unity's current
+            // skinned pose; no old vertex stream or previous object transform is read by this variant.
+            #pragma target 3.5
+            #pragma vertex vert
+            #pragma fragment frag
+            #pragma multi_compile_instancing
+            #pragma multi_compile_local _ VP_CAMERA_ONLY_ASW
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DOTS.hlsl"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+        #if defined(VP_CAMERA_ONLY_ASW)
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MotionVectorsCommon.hlsl"
+
+            struct CameraMotionAttributes
+            {
+                float3 positionOS : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct CameraMotionVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float4 currentPositionCS : TEXCOORD0;
+                float4 previousPositionCS : TEXCOORD1;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            CameraMotionVaryings vert(CameraMotionAttributes input)
+            {
+                CameraMotionVaryings output = (CameraMotionVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                float3 positionWS = TransformObjectToWorld(input.positionOS);
+                output.currentPositionCS = mul(_NonJitteredViewProjMatrix, float4(positionWS, 1.0));
+                output.previousPositionCS = mul(_PrevViewProjMatrix, float4(positionWS, 1.0));
+                output.positionCS = output.currentPositionCS;
+                return output;
+            }
+
+            float4 frag(CameraMotionVaryings input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return float4(CalcAswNdcMotionVectorFromCsPositions(input.currentPositionCS, input.previousPositionCS), 1);
+            }
+        #else
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ObjectMotionVectors.hlsl"
+        #endif
+            ENDHLSL
+        }
     }
 }

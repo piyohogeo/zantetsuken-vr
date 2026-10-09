@@ -45,10 +45,10 @@ namespace Zantetsu.Rendering
 
         /// <summary>
         /// One clip record: <see cref="VpInstanceClip"/>, its eight planes and then the valid
-        /// count -- eight float4s and one float, 132 bytes. Fixed whatever the count is: no instance takes a smaller
+        /// count -- eight float4s, one float and three padding floats, 144 bytes. Fixed whatever the count is: no instance takes a smaller
         /// or a larger record.
         /// </summary>
-        public const int InstanceClipStride = 132;
+        public const int InstanceClipStride = 144;
 
         private static readonly int VerticesId = Shader.PropertyToID("_VpVertices");
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");
@@ -58,6 +58,7 @@ namespace Zantetsu.Rendering
         private static readonly int CullCommandsId = Shader.PropertyToID("_VpCullCommands");
         private static readonly int ShadowSliceSelectionId = Shader.PropertyToID("_VpShadowSliceSelection");
         private static readonly int CommandCountId = Shader.PropertyToID("_VpCommandCount");
+        private static readonly int CullExcludeClippedId = Shader.PropertyToID("_VpCullExcludeClipped");
         private static readonly int ArgumentStrideId = Shader.PropertyToID("_VpArgumentStride");
         private static readonly int ArgumentOffsetId = Shader.PropertyToID("_VpArgumentOffset");
         private static readonly int ForwardMultiplierId = Shader.PropertyToID("_VpForwardMultiplier");
@@ -347,6 +348,47 @@ namespace Zantetsu.Rendering
 
         /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
         public bool NativeArguments => _cull != null && _cull.NativeArguments;
+
+        /// <summary>A caller-owned selection for an additional pass; release only after its draws finish.</summary>
+        public sealed class CullOutput : IDisposable
+        {
+            internal readonly VpIndexedIndirectDrawBatch owner;
+            public GraphicsBuffer ForwardArguments { get; private set; }
+            public GraphicsBuffer ForwardVisible { get; private set; }
+            internal GraphicsBuffer ShadowArguments, ShadowVisible;
+            internal CullOutput(VpIndexedIndirectDrawBatch batch)
+            {
+                owner = batch;
+                try
+                {
+                    ForwardArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW distance arguments" };
+                    ForwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW distance visible" };
+                    ShadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW unused caster arguments" };
+                    ShadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW unused caster visible" };
+                }
+                catch { Dispose(); throw; }
+            }
+            public void Dispose()
+            {
+                ForwardArguments?.Dispose(); ForwardArguments = null;
+                ForwardVisible?.Dispose(); ForwardVisible = null;
+                ShadowArguments?.Dispose(); ShadowArguments = null;
+                ShadowVisible?.Dispose(); ShadowVisible = null;
+            }
+        }
+
+        public CullOutput CreateCullOutput() { ThrowIfDisposed(); ThrowIfNotCulled(); return new CullOutput(this); }
+
+        public void IssueCull(CommandBuffer commands, CullOutput output, VpCullConditions conditions, bool excludeClipped)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            if (output == null || !ReferenceEquals(output.owner, this) || output.ForwardArguments == null)
+                throw new ArgumentException("A live selection belonging to this batch is required.");
+            if (commands == null || conditions == null) throw new ArgumentNullException();
+            if (CommandCount == 0) return;
+            DispatchCull(commands, new CullView { forwardArguments = output.ForwardArguments, forwardVisible = output.ForwardVisible,
+                shadowArguments = output.ShadowArguments, shadowVisible = output.ShadowVisible }, conditions, excludeClipped);
+        }
 
         /// <summary>
         /// The CPU-write generations of the buffers the plugin's draws bind (DESIGN 4.5.8): raised at every SetData
@@ -1383,11 +1425,19 @@ namespace Zantetsu.Rendering
         /// and <see cref="RenderShadows(Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera, int)"/>
         /// are drawn, and it is the caller that puts it there. Nothing is read back and nothing waits.
         /// <para>
+        /// When <paramref name="excludeClipped"/> is true, instances with a valid clip plane are omitted from both
+        /// lists: a separate direct draw owns them. False preserves the Unity and Direct3D 12 selection. With no clip
+        /// instance in the scene the caller leaves it false, and the compute reads no clip record.
         /// Every uploaded command's arguments are written, whatever was kept. With no command uploaded there is nothing
         /// to draw and nothing is issued. The conditions are copied as they are now.
         /// </para>
+        /// <para>
+        /// Startup may opt into <paramref name="warmEmpty"/> to dispatch one group when CommandCount is zero.
+        /// The existing, nonempty buffers remain bound, and CullCommands returns before reading or writing them.
+        /// This prepares the compute pipeline without uploading commands or changing draw arguments.
+        /// </para>
         /// </summary>
-        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions)
+        public void IssueCull(CommandBuffer commands, int view, VpCullConditions conditions, bool excludeClipped = false, bool warmEmpty = false)
         {
             ThrowIfDisposed();
             ThrowIfNotCulled();
@@ -1402,14 +1452,20 @@ namespace Zantetsu.Rendering
             }
 
             CullView target = View(view);
-            if (CommandCount == 0)
+            if (CommandCount == 0 && !warmEmpty)
             {
                 return;
             }
 
+            DispatchCull(commands, target, conditions, excludeClipped);
+        }
+
+        private void DispatchCull(CommandBuffer commands, CullView target, VpCullConditions conditions, bool excludeClipped)
+        {
             ComputeShader shader = _cull.Shader;
             int kernel = _cull.Kernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
+            commands.SetComputeIntParam(shader, CullExcludeClippedId, excludeClipped ? 1 : 0);
             commands.SetComputeIntParam(shader, ArgumentStrideId, _cull.ArgumentStride);
             commands.SetComputeIntParam(shader, ArgumentOffsetId, _cull.ArgumentOffset);
             commands.SetComputeIntParam(shader, ForwardMultiplierId, SinglePassInstanced ? 2 : 1);
@@ -1420,11 +1476,14 @@ namespace Zantetsu.Rendering
             commands.SetComputeVectorArrayParam(shader, ShadowPlanesId, conditions.shadowPlanes);
             commands.SetComputeBufferParam(shader, kernel, CullCommandsId, _cullCommandBuffer);
             commands.SetComputeBufferParam(shader, kernel, InstanceObjectToWorldId, _instanceBuffer);
+            // Even when the switch is off the resource must be bound for the compute kernel. The dynamic branch
+            // reads no clip record unless clipped instances are being drawn through the separate CPU list.
+            commands.SetComputeBufferParam(shader, kernel, InstanceClipId, _instanceClipBuffer);
             commands.SetComputeBufferParam(shader, kernel, ForwardVisibleId, target.forwardVisible);
             commands.SetComputeBufferParam(shader, kernel, ForwardArgumentsId, target.forwardArguments);
             commands.SetComputeBufferParam(shader, kernel, ShadowVisibleId, target.shadowVisible);
             commands.SetComputeBufferParam(shader, kernel, ShadowArgumentsId, target.shadowArguments);
-            commands.DispatchCompute(shader, kernel, (CommandCount + 63) / 64, 1, 1);
+            commands.DispatchCompute(shader, kernel, Math.Max(1, (CommandCount + 63) / 64), 1, 1);
             CullDispatches++;
         }
 

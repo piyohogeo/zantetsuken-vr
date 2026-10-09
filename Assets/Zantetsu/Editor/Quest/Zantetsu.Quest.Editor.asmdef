@@ -1,0 +1,21 @@
+{
+    "name": "Zantetsu.Quest.Editor",
+    "references": [
+        "Zantetsu.Quest",
+        "Zantetsu.Sandbox",
+        "Zantetsu.Sandbox.Editor",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.Rendering",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Editor",
+        "Unity.XR.OpenXR",
+        "Unity.XR.OpenXR.Editor",
+        "Unity.XR.OpenXR.Features.MetaQuestSupport",
+        "Unity.XR.Management",
+        "Unity.XR.Management.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ]
+}
