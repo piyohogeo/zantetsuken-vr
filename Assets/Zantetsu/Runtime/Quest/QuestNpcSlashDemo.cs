@@ -39,6 +39,7 @@ namespace Zantetsu.Quest
             public bool prewarm = true;
             public string inputFile;
             public string cityWalkScriptFile;
+            public int fragmentGroupsMax = -1; // DESIGN 7.10: 0 or more switches the fragment group collection on above that many live cut fragments; -1 leaves the world's profile as it is.
             public float cityWalkBudgetSeconds = 565f;
             public int inputStart = 2227;
             public int inputRows = 512;
@@ -271,6 +272,23 @@ namespace Zantetsu.Quest
                 RecordPhase("warm-disabled");
                 File.WriteAllText(Path.Combine(_directory, "prewarm.txt"), "prewarm disabled by config\n");
             }
+            // The fragment group collection (DESIGN 7.10), asked for by the configuration: on for every cut world of the scene, before any cut.
+            string groups = "fragment group collection=the world's profile (fragmentGroupsMax " + _config.fragmentGroupsMax + ")";
+            if (_config.fragmentGroupsMax >= 0)
+            {
+                int switched = 0, worlds = 0;
+                foreach (CutWorldRoot cutWorld in UnityEngine.Object.FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
+                {
+                    worlds++;
+                    if (cutWorld.EnableFragmentGroups(_config.fragmentGroupsMax, "the Quest configuration's fragmentGroupsMax")) switched++;
+                }
+
+                groups = "fragment group collection=on above " + _config.fragmentGroupsMax + " live cut fragments in " + switched + " of " + worlds + " cut worlds";
+                if (switched == 0) { Fail("fragmentGroupsMax was asked but no cut world took it"); yield break; }
+            }
+
+            Debug.Log(LogPrefix + groups);
+            File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { groups });
             _run = SandboxPropSlashPlayerCheck.StartPrepared(arguments, _config.keepOpen, true, _config.startDelaySeconds,
                 _cityWalk ? PrepareCityReplay : null);
             if (_cityWalk)
