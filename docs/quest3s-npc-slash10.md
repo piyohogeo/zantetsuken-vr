@@ -274,4 +274,4 @@ NPCのconfigと `Run-NpcSlashDemo.ps1` の既定値を `tracking-origin` へ変�
 
 ## AppSWの距離制限実験
 
-[AppSWの物体距離制限（追加制限なし／60m／30m）の比較](quest3s-appsw-far-distance.md)を参照。カラーfar100m、PS変更なしの物体単位カリングで比較した。
+[AppSWの物体距離制限（追加制限なし／60m／30m）の比較](quest3s-appsw-far-distance.md)を参照。カラーfar100m、PS変更なしの物体単位カリングで比較した。実機で30mも画質変化なしと確認し、NPCデモのAppSW距離制限は30mを既定として採用した。

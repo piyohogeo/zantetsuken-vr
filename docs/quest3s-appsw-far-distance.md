@@ -13,7 +13,7 @@
 - Unity側はXRの元のカリング面に距離面を追加して再カリングし、AppSW renderer listを作成する間だけその結果を使う。その後、元の結果を戻す。
 - VP側は既存GPUカリングで距離面を追加した別のvisible/indirect出力を作る。カラー・shadow用の選択バッファを上書きしない。
 - Unity側のURP内部フックは17.3.0に限定した実験用の互換処理。PackageCacheは変更しない。`link.xml`でIL2CPPの反射対象を保存する。
-- 起動オプション`AppSwFarMeters=-1`が従来の通常経路。実験は明示的に有効にしたときだけ動く。
+- 30mを採用後、NPCデモのruntime configとlauncherは30mを既定にする。起動オプション`AppSwFarMeters=-1`で従来の距離制限なしの経路へ切り替えられる。AppSW OFFでは距離カリングを無効にする。
 
 ## 計測
 
@@ -62,6 +62,19 @@ unique vertex数や実際のVS invocation数とは異なり、Vulkan multiview�
 この視点・頭の左右移動では30mも画質の変化が報告されず、UnityのAppSW描画負荷を減らす候補になる。
 全体GPU再生時間にはNPC形状差があり、追加CPUカリングの個別コストも未計測なので、採用時の判断はその点を含める。
 比較後は`AppSwFarMeters=-1`, `AppSwFixedView=off`で通常設定へ戻した。実機ログで45fps・AppSW `Type=App`・`Stale=0`を確認（`Logs/appsw-far/live-restored.txt`）。
+
+## 30mの採用
+
+2026-10-09、ユーザーが30mを採用。10体NPCデモ（Unity Meshの街＋VP3C-native）に適用する。
+`Run-NpcSlashDemo.ps1`の引数省略時とruntime configの既定を30mへ更新した。
+通常のヘッドトラッキング、カラーfar100m、物体単位のboundsカリングを維持する。
+実験時の視点固定は`off`のまま。`AppSwFarMeters=0`／`-1`は比較・切り戻し用として残す。
+launcherの`-AppSwOff`と`-Mode vp3c`では追加距離カリングを無効にする。
+
+採用版APK: `Build/quest-npc-appsw30-dev.apk`。
+SHA256: `2E3EE98EBD2B9D840AF7515CE70582BECA72F695565C6F06664573F651181607`。
+Androidビルドは成功・errors=0（`Logs/appsw-far/build-adopted-30.log`）。
+実機へインストールし、launcherの距離引数省略で30m・カラーfar100m・固定視点offを確認した。run `20261009T031121Z-npc10-vp3c-native-de76e8`は`measurement done code=0`, `sceneRetained=True`で完了。完了後はFPS45–46/90・AppSW `Type=App`・`Stale=0`を確認（`Logs/appsw-far/live-adopted-30.txt`）。実機は30mで動作中。
 
 ## 再実行
 
