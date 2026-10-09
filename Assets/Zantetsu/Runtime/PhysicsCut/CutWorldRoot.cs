@@ -233,6 +233,12 @@ namespace Zantetsu.PhysicsCut
 
             _failuresLogged = true;
             UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Driver.FailureSummary() + (Cook != null ? "; " + Cook.HullSummary() : ""), this);
+
+            // The collection of empty owners, when it ever took a turn in this world: its counts and its times, once.
+            if (EmptyOwners != null && EmptyOwners.Turns > 0)
+            {
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + EmptyOwners.Describe(), this);
+            }
         }
 
         private void OnDestroy()
@@ -646,6 +652,7 @@ namespace Zantetsu.PhysicsCut
             MakeColliderTemplate();
             Cook.PrepareHullProbe();   // the hull check's collider made and read once here, at load, not by the first cut
             Lifetime = new CutFragmentLifetime(this, profile.PieceLifetime);
+            MakeEmptyOwners(profile);
             MakeRest(profile);
             MakeFusion(profile);
             MakeHulls(profile);
@@ -927,6 +934,7 @@ namespace Zantetsu.PhysicsCut
                 _colliderTemplateHolder = null;
             }
 
+            ReleaseEmptyOwners();
             ReleaseHulls();
             ReleaseFusion();
             ReleaseRest();
@@ -1000,6 +1008,33 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// What this frame has had that optional Main work does not start beside -- the compaction of the display's
+        /// instance regions (D-202) and the collection of empty owners (DESIGN 7.9.3) ask the same: heavy work noted
+        /// in this frame (<see cref="CutWorldFrameNotes"/>, named in <paramref name="work"/>), a garbage collection
+        /// completed in it, a cut in flight or held. The frame's remaining budget is each asker's own to compare, with
+        /// its own expected cost. Reads only and allocates nothing.
+        /// </summary>
+        internal CutFrameHold FrameEventsHold(out string work)
+        {
+            if (CutWorldFrameNotes.TryGetThisFrame(out work))
+            {
+                return CutFrameHold.HeavyWork;
+            }
+
+            if (CutPhysicsStep.GcCollectionsThisFrame > 0)
+            {
+                return CutFrameHold.GarbageCollection;
+            }
+
+            if (Driver != null && (Driver.Transactions.Count > 0 || Driver.HeldCharacterCutCount > 0))
+            {
+                return CutFrameHold.CutInFlight;
+            }
+
+            return CutFrameHold.None;
+        }
+
+        /// <summary>
         /// Whether this frame may bear a compaction the display finds necessary (D-202): not when heavy work was noted
         /// in this frame (<see cref="CutWorldFrameNotes"/>), a garbage collection completed in it, a cut is in flight
         /// or held, or what is left of the frame's Main budget is less than the reserve and twice the expected cost.
@@ -1007,19 +1042,14 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private string CompactionGate(double expectedSeconds)
         {
-            if (CutWorldFrameNotes.TryGetThisFrame(out string work))
+            switch (FrameEventsHold(out string work))
             {
-                return "heavy work this frame: " + work;
-            }
-
-            if (CutPhysicsStep.GcCollectionsThisFrame > 0)
-            {
-                return "a garbage collection completed this frame";
-            }
-
-            if (Driver != null && (Driver.Transactions.Count > 0 || Driver.HeldCharacterCutCount > 0))
-            {
-                return "a cut is in flight";
+                case CutFrameHold.HeavyWork:
+                    return "heavy work this frame: " + work;
+                case CutFrameHold.GarbageCollection:
+                    return "a garbage collection completed this frame";
+                case CutFrameHold.CutInFlight:
+                    return "a cut is in flight";
             }
 
             double remaining = CutPhysicsStep.FrameRemainingMainSeconds;

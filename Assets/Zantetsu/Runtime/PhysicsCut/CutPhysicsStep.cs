@@ -61,6 +61,7 @@ namespace Zantetsu.PhysicsCut
         private static readonly ProfilerMarker s_collect = new ProfilerMarker("Zantetsu.CutPhysicsStep.Collect");
         private static readonly List<ProvisionalCutDriver> s_collectors = new List<ProvisionalCutDriver>(2);
         private static readonly List<Action> s_afterStep = new List<Action>(2);
+        private static readonly List<Action> s_afterCollect = new List<Action>(2);
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
         private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
@@ -197,6 +198,28 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
+        /// Takes part after every frame's collections: <paramref name="afterCollect"/> is called once a frame, after
+        /// the decision to simulate, the step if it was taken and every driver's collection -- so after everything
+        /// this frame published, grew or compacted, and before the frame is rendered. It is for optional work that
+        /// starts only in a frame that has had none of those (DESIGN 7.9.3's delayed collection); nothing it does is
+        /// in this frame's snapshot.
+        /// </summary>
+        internal static void JoinAfterCollect(Action afterCollect)
+        {
+            Loop.EnsureInstalled();
+            if (!s_afterCollect.Contains(afterCollect))
+            {
+                s_afterCollect.Add(afterCollect);
+            }
+        }
+
+        /// <summary>Takes part after the collections no more.</summary>
+        internal static void LeaveAfterCollect(Action afterCollect)
+        {
+            s_afterCollect.Remove(afterCollect);
+        }
+
+        /// <summary>
         /// A play session starts from nothing, whether or not the domain was reloaded: the frequency chosen for this
         /// session, the budget, no time owed, no step taken, no pause, no collector left from a previous session. This
         /// runs before any scene is loaded and so before any simulation.
@@ -212,6 +235,7 @@ namespace Zantetsu.PhysicsCut
             s_pauseListener = null;
             s_collectors.Clear();
             s_afterStep.Clear();
+            s_afterCollect.Clear();
             LastSimulateSeconds = 0.0;
             LastCollectSeconds = 0.0;
             s_costs.Clear();
@@ -451,6 +475,15 @@ namespace Zantetsu.PhysicsCut
             }
 
             LastCollectSeconds = (double)(Stopwatch.GetTimestamp() - collectBegin) / Stopwatch.Frequency;
+
+            // What starts only after everything this frame collected (JoinAfterCollect). Backwards and bounds-checked, as above.
+            for (int i = s_afterCollect.Count - 1; i >= 0; i--)
+            {
+                if (i < s_afterCollect.Count)
+                {
+                    s_afterCollect[i]();
+                }
+            }
         }
 
         private static void EnsurePauseListener()
