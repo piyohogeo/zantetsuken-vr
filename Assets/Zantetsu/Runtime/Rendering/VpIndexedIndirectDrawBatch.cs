@@ -349,6 +349,47 @@ namespace Zantetsu.Rendering
         /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
         public bool NativeArguments => _cull != null && _cull.NativeArguments;
 
+        /// <summary>A caller-owned selection for an additional pass; release only after its draws finish.</summary>
+        public sealed class CullOutput : IDisposable
+        {
+            internal readonly VpIndexedIndirectDrawBatch owner;
+            public GraphicsBuffer ForwardArguments { get; private set; }
+            public GraphicsBuffer ForwardVisible { get; private set; }
+            internal GraphicsBuffer ShadowArguments, ShadowVisible;
+            internal CullOutput(VpIndexedIndirectDrawBatch batch)
+            {
+                owner = batch;
+                try
+                {
+                    ForwardArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW distance arguments" };
+                    ForwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW distance visible" };
+                    ShadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW unused caster arguments" };
+                    ShadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW unused caster visible" };
+                }
+                catch { Dispose(); throw; }
+            }
+            public void Dispose()
+            {
+                ForwardArguments?.Dispose(); ForwardArguments = null;
+                ForwardVisible?.Dispose(); ForwardVisible = null;
+                ShadowArguments?.Dispose(); ShadowArguments = null;
+                ShadowVisible?.Dispose(); ShadowVisible = null;
+            }
+        }
+
+        public CullOutput CreateCullOutput() { ThrowIfDisposed(); ThrowIfNotCulled(); return new CullOutput(this); }
+
+        public void IssueCull(CommandBuffer commands, CullOutput output, VpCullConditions conditions, bool excludeClipped)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            if (output == null || !ReferenceEquals(output.owner, this) || output.ForwardArguments == null)
+                throw new ArgumentException("A live selection belonging to this batch is required.");
+            if (commands == null || conditions == null) throw new ArgumentNullException();
+            if (CommandCount == 0) return;
+            DispatchCull(commands, new CullView { forwardArguments = output.ForwardArguments, forwardVisible = output.ForwardVisible,
+                shadowArguments = output.ShadowArguments, shadowVisible = output.ShadowVisible }, conditions, excludeClipped);
+        }
+
         /// <summary>
         /// The CPU-write generations of the buffers the plugin's draws bind (DESIGN 4.5.8): raised at every SetData
         /// into the instance transforms, the clips, the commands, and any view's lists or arguments. The plugin's
@@ -1416,6 +1457,11 @@ namespace Zantetsu.Rendering
                 return;
             }
 
+            DispatchCull(commands, target, conditions, excludeClipped);
+        }
+
+        private void DispatchCull(CommandBuffer commands, CullView target, VpCullConditions conditions, bool excludeClipped)
+        {
             ComputeShader shader = _cull.Shader;
             int kernel = _cull.Kernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);

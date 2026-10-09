@@ -610,8 +610,9 @@ namespace Zantetsu.Rendering.Urp
         // holder that answers for it.
         private void DeferCameraBuffers(CameraPasses passes)
         {
-            VpNativeDrawRelease.Defer("VP native draw route camera", IssuedEventsWait(),
-                new IDisposable[] { passes.body.TakeGpuConstants(), passes.casters.TakeGpuConstants(), passes.motion.TakeGpuConstants() });
+            var resources = new List<IDisposable> { passes.body.TakeGpuConstants(), passes.casters.TakeGpuConstants(), passes.motion.TakeGpuConstants() };
+            resources.AddRange(passes.motion.TakeMotionSelections());
+            VpNativeDrawRelease.Defer("VP native draw route camera", IssuedEventsWait(), resources.ToArray());
         }
 
         public long PrewarmRecorded { get; private set; }
@@ -959,6 +960,7 @@ namespace Zantetsu.Rendering.Urp
                 owed.Add(passes.body.TakeGpuConstants());
                 owed.Add(passes.casters.TakeGpuConstants());
                 owed.Add(passes.motion.TakeGpuConstants());
+                owed.AddRange(passes.motion.TakeMotionSelections());
             }
 
             _cameras.Clear();
@@ -1671,6 +1673,16 @@ namespace Zantetsu.Rendering.Urp
                 (_motion ? !_passes.prewarm.motionSubmitted : !_passes.prewarm.colourPrepared);
             private GraphicsBuffer _gpuConstants;
             private int _gpuConstantsUsed;
+            private readonly Dictionary<VpIndexedIndirectDrawBatch, VpIndexedIndirectDrawBatch.CullOutput> _motionSelections = new();
+            private readonly HashSet<VpIndexedIndirectDrawBatch> _motionSelected = new();
+            private readonly VpCullConditions _motionConditions = new();
+
+            public IDisposable[] TakeMotionSelections()
+            {
+                var values = new IDisposable[_motionSelections.Count]; int i = 0;
+                foreach (var value in _motionSelections.Values) values[i++] = value;
+                _motionSelections.Clear(); return values;
+            }
 
             public BodyPass(VpNativeDrawRoute route, CameraPasses passes, bool motion = false)
             {
@@ -1891,6 +1903,21 @@ namespace Zantetsu.Rendering.Urp
 
                 int firstBlock = _route._blocks.Count;
                 Rect viewport = data.viewport;
+                float motionFar = _motion ? VpAppSwDistanceExperiment.DistanceFor(_passes.camera) : 0f;
+                _motionSelected.Clear();
+                if (motionFar > 0f)
+                {
+                    _motionConditions.KeepEverything();
+                    int eyes = data.stereo ? 2 : 1;
+                    for (int eye = 0; eye < eyes; eye++)
+                    {
+                        _motionConditions.SetEye(eye, data.cameraData.GetViewMatrix(eye), data.cameraData.GetProjectionMatrix(eye));
+                        // Replace only each eye's far culling plane. The rendering projections stay at colour far.
+                        Vector4 row = data.cameraData.GetViewMatrix(eye).GetRow(2);
+                        _motionConditions.eyePlanes[eye * VpCullConditions.EyePlaneCount + 5] = new Vector4(row.x, row.y, row.z, row.w + motionFar);
+                    }
+                    _motionConditions.eyeCount = eyes;
+                }
                 {
                     for (int i = 0; i < Bodies.Count; i++)
                     {
@@ -1917,6 +1944,14 @@ namespace Zantetsu.Rendering.Urp
                         issue.batch.NativeDrawBuffers(
                             issue.view, out GraphicsBuffer forwardArguments, out GraphicsBuffer forwardVisible, out _, out _,
                             out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
+                        if (motionFar > 0f)
+                        {
+                            if (!_motionSelections.TryGetValue(issue.batch, out var selection))
+                                _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
+                            if (_motionSelected.Add(issue.batch))
+                                issue.batch.IssueCull(commands, selection, _motionConditions, _route.SeparateClipDraws && Clips.Count > 0);
+                            forwardArguments = selection.ForwardArguments; forwardVisible = selection.ForwardVisible;
+                        }
                         var bound = new Bound
                         {
                             arguments = forwardArguments, visible = forwardVisible, instances = instances, clips = clips, cullCommands = cullCommands,

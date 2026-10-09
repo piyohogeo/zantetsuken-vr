@@ -271,3 +271,7 @@ NPCのconfigと `Run-NpcSlashDemo.ps1` の既定値を `tracking-origin` へ変�
 - [VP3C-native Vulkan](quest3s-vp3c-native-vulkan.md)
 - [通常物体／Clip direct経路の分離](quest3s-vulkan-clip-route-split.md)
 - [Vulkanカラー準備分離](quest3s-vulkan-colour-pass-preparation.md)
+
+## AppSWの距離制限実験
+
+[AppSWの物体距離制限（追加制限なし／60m／30m）の比較](quest3s-appsw-far-distance.md)を参照。カラーfar100m、PS変更なしの物体単位カリングで比較した。

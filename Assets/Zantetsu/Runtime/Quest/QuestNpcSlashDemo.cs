@@ -30,6 +30,9 @@ namespace Zantetsu.Quest
             public string mode = "vp3c-native";
             public bool appSw = true;
             public string appSpacePoseMode = "tracking-origin"; // Camera pose is retained only for the controlled comparison.
+            public bool appSwDistanceExperiment = false;
+            public float appSwFarMeters = 0f;
+            public string appSwFixedView = "off";
             public bool profiler = true;
             public bool prewarm = true;
             public string inputFile;
@@ -51,6 +54,7 @@ namespace Zantetsu.Quest
         private Quaternion _lastHeadRotation, _lastAppSpaceRotation;
         private bool _appSpacePoseSampled;
         private float _headAngleMax, _appSpaceAngleMax;
+        private QuestAppSwDistanceSetup _distanceSetup;
         private CutWorldRoot _world;
         private CutWorldCameraDrawing _drawing;
         private SandboxPropSlashPlayerCheck.PreparedRun _run;
@@ -128,6 +132,11 @@ namespace Zantetsu.Quest
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline) || pipeline.name != "Quest_RPAsset")
             { Fail("Quest_RPAsset is required"); yield break; }
             ApplyNativeOptions(_config);
+            if (_config.appSwDistanceExperiment)
+            {
+                if (!_config.appSw || _config.mode != "vp3c-native") { Fail("distance experiment requires AppSW and vp3c-native"); yield break; }
+                _distanceSetup = new QuestAppSwDistanceSetup(_camera, _config.appSwFarMeters, _config.appSwFixedView, Application.persistentDataPath);
+            }
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = -1; // The 90 Hz OpenXR display and AppSW select the application cadence.
             Application.runInBackground = true;
@@ -148,6 +157,7 @@ namespace Zantetsu.Quest
                 "checks=on; metrics=on; light run, no picture capture; scene retained=" + _config.keepOpen,
                 "profile scope=ten NPCs ready, check preparation and start delay pre-roll, replay, cut completion; replay CSV scope unchanged",
             });
+            if (_distanceSetup != null) File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { _distanceSetup.Describe });
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), NpcSkinQualityLines());
             RenderPipelineManager.beginCameraRendering += BeforeCamera;
             SandboxPropSlashPlayerCheck.ReplayBegun += OnReplayBegun;
@@ -188,6 +198,7 @@ namespace Zantetsu.Quest
             bool allReady = world != null && world.IsReady;
             foreach (var npc in npcs) allReady &= npc.IsTarget;
             if (!allReady) { Fail("ten NPCs did not prepare within 120 s"); yield break; }
+            if (_distanceSetup != null) File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { _distanceSetup.Describe });
 
             string[] arguments =
             {
@@ -426,6 +437,10 @@ namespace Zantetsu.Quest
         {
             if (_doneRecorded || _run == null || !_run.Done) return;
             _doneRecorded = true;
+            // Moving the tracked-camera parent also moves recorded blade poses into world space.
+            // Keep it intact during the cut replay; freeze only the retained scene for numeric captures.
+            _distanceSetup?.BeginPoseLock();
+            if (_distanceSetup != null) File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { _distanceSetup.Describe });
             if (_drawing != null) File.WriteAllText(Path.Combine(_directory, "native-route.txt"), _drawing.DescribeNativeRoute(out _) ?? "no native route");
             if (_config.prewarm && _config.mode == "vp3c-native" && _drawing != null && _drawing.NativeRoute != null)
                 File.WriteAllText(Path.Combine(_directory, "prewarm-after-replay.txt"), _drawing.NativeRoute.DescribePrewarm(_camera));
@@ -460,6 +475,7 @@ namespace Zantetsu.Quest
                 + " maxHeadDeltaDeg=" + _headAngleMax.ToString("F4", Inv) + " maxSentDeltaDeg=" + _appSpaceAngleMax.ToString("F4", Inv)
                 + " near=" + _camera.nearClipPlane + " far=" + _camera.farClipPlane);
             _headAngleMax = _appSpaceAngleMax = 0f;
+            if (_distanceSetup != null) Debug.Log("QUEST APPSW DISTANCE: " + _distanceSetup.Describe);
             _displays.Clear();
             SubsystemManager.GetSubsystems(_displays);
             foreach (var xr in _displays)
@@ -479,6 +495,7 @@ namespace Zantetsu.Quest
         private void BeforeCamera(ScriptableRenderContext context, Camera camera)
         {
             if (!_spaceWarpApplied || !_config.appSw || camera != _camera) return;
+            _distanceSetup?.BeforeCamera(context);
             // The camera local pose includes physical HMD tracking. The parent maps tracking space into the scene.
             // XR_FB_space_warp appSpaceDeltaPose describes application locomotion, which is constant in this demo.
             Transform appSpace = _config.appSpacePoseMode == "tracking-origin" ? _appSpaceOrigin : camera.transform;
@@ -495,6 +512,7 @@ namespace Zantetsu.Quest
         private void OnDestroy()
         {
             RetireUnityPrewarmSafely();
+            _distanceSetup?.Dispose();
             RenderPipelineManager.beginCameraRendering -= BeforeCamera;
             SandboxPropSlashPlayerCheck.ReplayBegun -= OnReplayBegun;
             SandboxPropSlashPlayerCheck.ReplayPrepared -= OnReplayPrepared;
