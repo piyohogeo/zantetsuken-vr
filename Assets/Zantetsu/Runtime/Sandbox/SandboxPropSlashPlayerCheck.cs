@@ -228,6 +228,8 @@ namespace Zantetsu.Sandbox
             public string Phase { get; internal set; } = "Preparing";
             public string Directory { get; internal set; }
             public bool SceneRetained { get; internal set; }
+            /// <summary>An optional prepared-scene startup hook reports a failure here before replay begins.</summary>
+            public string PreparationFailure { get; set; }
         }
 
         private static string[] s_preparedArguments;
@@ -245,7 +247,7 @@ namespace Zantetsu.Sandbox
         /// Starts the existing check with explicit arguments. The PC launch keeps its process arguments and ordinary
         /// reclaim/quit. A retained run measures once and leaves the world, poses and replay result running afterwards.
         /// </summary>
-        public static PreparedRun StartPrepared(string[] arguments, bool keepOpen = false, bool replayInRealtime = false, float startDelaySeconds = 0f)
+        public static PreparedRun StartPrepared(string[] arguments, bool keepOpen = false, bool replayInRealtime = false, float startDelaySeconds = 0f, Func<IEnumerator> beforeReplay = null)
         {
             if (arguments == null) throw new ArgumentNullException(nameof(arguments));
             if (s_started) throw new InvalidOperationException("a Prop Slash run has already started");
@@ -254,13 +256,13 @@ namespace Zantetsu.Sandbox
             if (string.IsNullOrEmpty(Value(Argument))) throw new ArgumentException(Argument + " requires an output directory", nameof(arguments));
             if (keepOpen && int.TryParse(Value(IterationsArgument), out int iterations) && iterations > 1)
                 throw new ArgumentException("a retained scene is measured once", nameof(arguments));
-            return BeginRun(keepOpen, replayInRealtime, startDelaySeconds);
+            return BeginRun(keepOpen, replayInRealtime, startDelaySeconds, beforeReplay);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void StartIfAsked() => BeginRun(false, false, 0f);
 
-        private static PreparedRun BeginRun(bool keepOpen, bool replayInRealtime, float startDelaySeconds)
+        private static PreparedRun BeginRun(bool keepOpen, bool replayInRealtime, float startDelaySeconds, Func<IEnumerator> beforeReplay = null)
         {
             if (s_started) return null;
             string directory = Value(Argument);
@@ -286,6 +288,7 @@ namespace Zantetsu.Sandbox
             runner.keepOpen = keepOpen;
             runner.replayInRealtime = replayInRealtime;
             runner.startDelaySeconds = startDelaySeconds;
+            runner.beforeReplay = beforeReplay;
             if (replayInRealtime)
             {
                 foreach (SandboxRightHandKatana katana in UnityEngine.Object.FindObjectsByType<SandboxRightHandKatana>(FindObjectsSortMode.None))
@@ -308,6 +311,7 @@ namespace Zantetsu.Sandbox
             internal bool keepOpen, replayInRealtime;
             internal float startDelaySeconds;
             internal PreparedRun prepared;
+            internal Func<IEnumerator> beforeReplay;
 
             private IEnumerator Start()
             {
@@ -330,6 +334,8 @@ namespace Zantetsu.Sandbox
                     walk.retainSceneAfterMeasurement = keepOpen;
                     walk.replayInRealtime = replayInRealtime;
                     walk.startDelaySeconds = startDelaySeconds;
+                    walk.beforeReplay = beforeReplay;
+                    walk.prepared = prepared;
                     walk.runParts = s_parts;
                     walk.directory = iterations > 1 ? Path.Combine(directory, "iter-" + i.ToString("D2", CultureInfo.InvariantCulture)) : directory;
                     walk.iteration = i;
@@ -491,6 +497,8 @@ namespace Zantetsu.Sandbox
             internal int iteration;
             internal int frameRate;
             internal bool retainSceneAfterMeasurement, replayInRealtime;
+            internal Func<IEnumerator> beforeReplay;
+            internal PreparedRun prepared;
             internal float startDelaySeconds;
             private bool _observationPreparedBeforeCountdown;
             internal string CurrentPhase => Done ? "Done" : !_timelineBegun ? (_observationPreparedBeforeCountdown ? "Countdown" : "Preparing") : _phase;
@@ -942,6 +950,18 @@ namespace Zantetsu.Sandbox
                 {
                     PrepareRealtimeNpcObservation();
                     ReplayPrepared?.Invoke();
+                }
+                // A prepared Android scenario can warm the actual registered geometry and rendering paths here.
+                // The crowd and every city cuttable are ready; the script and its recorded clock have not begun.
+                if (beforeReplay != null)
+                {
+                    yield return beforeReplay();
+                    if (prepared?.PreparationFailure != null)
+                    {
+                        Log("FAILED: prepared-scene startup: " + prepared.PreparationFailure);
+                        Finish(13);
+                        yield break;
+                    }
                 }
                 if (startDelaySeconds > 0f)
                 {
