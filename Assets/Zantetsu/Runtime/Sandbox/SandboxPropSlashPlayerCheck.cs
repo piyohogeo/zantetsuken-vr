@@ -422,11 +422,15 @@ namespace Zantetsu.Sandbox
 
         // Kept in memory while a light run is being measured, and written after it.
         private static List<string> s_heldLog;
+        private static int s_heldLogReleased;
+        private static Exception s_heldLogReleaseFailure;
 
         /// <summary>Holds the log in memory from here until <see cref="ReleaseLog"/> (a light run's measurement; a test of the ending).</summary>
         internal static void HoldLog()
         {
             s_heldLog = new List<string>(512);
+            s_heldLogReleased = 0;
+            s_heldLogReleaseFailure = null;
         }
 
         internal static void Log(string line)
@@ -444,14 +448,19 @@ namespace Zantetsu.Sandbox
         internal static void ReleaseLog()
         {
             List<string> held = s_heldLog;
+            Exception deferredFailure = s_heldLogReleaseFailure;
             s_heldLog = null;
-            if (held != null)
+            try
             {
-                foreach (string line in held)
-                {
-                    Debug.Log(Prefix + line);
-                }
+                if (held != null)
+                    while (s_heldLogReleased < held.Count)
+                    {
+                        Debug.Log(Prefix + held[s_heldLogReleased]);
+                        s_heldLogReleased++;
+                    }
+                if (deferredFailure != null) throw new InvalidOperationException("Budgeted held log release failed", deferredFailure);
             }
+            finally { s_heldLogReleased = 0; s_heldLogReleaseFailure = null; }
         }
 
         // After the driver's late update (-100), so what it reads is what this frame will draw: nothing of a cut's
@@ -552,7 +561,7 @@ namespace Zantetsu.Sandbox
             private string _phase = "replay";
             private int _picturesAsked;
 
-            private sealed class FrameRow
+            private sealed partial class FrameRow
             {
                 public int frame;
                 public string phase;
@@ -1132,7 +1141,8 @@ namespace Zantetsu.Sandbox
                 }
 
                 RequestPicture("8-cuts-complete");
-                WriteTimeline(false);
+                if (SaveReportsAcrossFrames) yield return SaveTimelineAcrossFrames(false);
+                else WriteTimeline(false);
 
                 // The observation period, apart from the cuts' completion: the ordinary Steps go on for a fixed physics
                 // time, nothing is simulated, synchronised or placed by the check, and every piece is followed. A light
@@ -1238,6 +1248,14 @@ namespace Zantetsu.Sandbox
                 _failures += ending.Failures;
                 Log("expectations not judged here: not applicable " + _notApplicable + ", not exercised " + _notExercised + " (neither counted as passed); failed " + _failures);
                 yield return null;
+                if (SaveReportsAcrossFrames)
+                {
+                    // Stop observation at the same completion boundary before waiting on the diagnostic writer.
+                    _timing = false;
+                    _timelineBegun = false;
+                    yield return SaveTimelineAcrossFrames(true);
+                    yield return ReleaseLogAcrossFrames();
+                }
                 Finish(ending, null);
             }
 
@@ -1652,21 +1670,32 @@ namespace Zantetsu.Sandbox
             // boundary of the run, never within the replay.
             private void WriteTimeline(bool final)
             {
-                if (_timelineRecorders == null)
+                // A quitting callback may arrive while the retained Quest run is saving. Never write over its live file.
+                _timelineWrite?.Wait();
+                if (final && _finalTimelinePrepared)
                 {
+                    if (_finalTimelineFailure != null) throw new IOException("Final timeline save failed", _finalTimelineFailure);
                     return;
                 }
+                if (_timelineRecorders == null) return;
+                File.WriteAllText(Path.Combine(directory, final ? "frames.csv" : "frames-at-cuts-complete.csv"),
+                    FormatTimeline(_timeline, _timelineMarkers.Select(marker => marker.name).ToArray(), NumericTimelineDiagnosis));
+                if (final) CloseTimelineRecorders();
+            }
 
-                var text = new StringBuilder(_timeline.Count * 160);
+            // Only managed value snapshots are read here; all Unity sampling and recorder ownership stay on the main thread.
+            private static string FormatTimeline(IReadOnlyList<FrameRow> rows, string[] markerNames, bool numericDiagnosis)
+            {
+                var text = new StringBuilder(rows.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
                 text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes");
-                foreach ((ProfilerCategory _, string name) in _timelineMarkers)
+                foreach (string name in markerNames)
                 {
                     text.Append(',').Append(name);
                 }
 
                 text.Append('\n');
-                foreach (FrameRow r in _timeline)
+                foreach (FrameRow r in rows)
                 {
                     text.Append(r.frame).Append(',').Append(r.phase).Append(',').Append(r.real.ToString("R", Inv)).Append(',')
                         .Append(r.delta.ToString("R", Inv)).Append(',').Append(r.fed).Append(',').Append(r.recorded.ToString("R", Inv)).Append(',')
@@ -1708,9 +1737,9 @@ namespace Zantetsu.Sandbox
                     {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                         // The numeric input-contract diagnosis's own counts (DESIGN 5.6); empty where it is off (D-211).
-                        string vPlacementOnly = s_numericDiagnosis ? v.placementOnly.ToString(Inv) : "", vPlacementRegistrations = s_numericDiagnosis ? v.placementRegistrations.ToString(Inv) : "";
-                        string vContractMs = s_numericDiagnosis ? (v.contractSeconds * 1000).ToString("R", Inv) : "", vPlacementInputMs = s_numericDiagnosis ? (v.placementInputSeconds * 1000).ToString("R", Inv) : "";
-                        string vPlacementContractMs = s_numericDiagnosis ? (v.placementContractSeconds * 1000).ToString("R", Inv) : "";
+                        string vPlacementOnly = numericDiagnosis ? v.placementOnly.ToString(Inv) : "", vPlacementRegistrations = numericDiagnosis ? v.placementRegistrations.ToString(Inv) : "";
+                        string vContractMs = numericDiagnosis ? (v.contractSeconds * 1000).ToString("R", Inv) : "", vPlacementInputMs = numericDiagnosis ? (v.placementInputSeconds * 1000).ToString("R", Inv) : "";
+                        string vPlacementContractMs = numericDiagnosis ? (v.placementContractSeconds * 1000).ToString("R", Inv) : "";
 #else
                         // The numeric input-contract diagnosis is not compiled here: its columns keep their places, empty.
                         const string vPlacementOnly = "", vPlacementRegistrations = "", vContractMs = "", vPlacementInputMs = "", vPlacementContractMs = "";
@@ -1738,7 +1767,7 @@ namespace Zantetsu.Sandbox
                     {
                         if (p == null) { text.Append(",,,,,,,,,,,"); continue; }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        string checksColumn = s_numericDiagnosis ? p.placementChecks.ToString(Inv) : "";   // empty where the diagnosis is off (D-211)
+                        string checksColumn = numericDiagnosis ? p.placementChecks.ToString(Inv) : "";   // empty where the diagnosis is off (D-211)
 #else
                         const string checksColumn = "";   // the diagnosis's count: not compiled here, its column left empty
 #endif
@@ -1752,7 +1781,7 @@ namespace Zantetsu.Sandbox
                     {
                         if (p == null) { text.Append(",,,"); continue; }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        string checkMs = s_numericDiagnosis ? (p.checkSeconds * 1000).ToString("R", Inv) : "";   // empty where the diagnosis is off (D-211)
+                        string checkMs = numericDiagnosis ? (p.checkSeconds * 1000).ToString("R", Inv) : "";   // empty where the diagnosis is off (D-211)
 #else
                         const string checkMs = "";   // the diagnosis's block: not compiled here, its column left empty
 #endif
@@ -1822,7 +1851,7 @@ namespace Zantetsu.Sandbox
                     text.Append(',').Append(double.IsNaN(r.stepCollectMs) ? "" : r.stepCollectMs.ToString("R", Inv))
                         .Append(',').Append(r.notes < 0 ? "" : r.notes.ToString(Inv)).Append(',').Append(r.gcCount < 0 ? "" : r.gcCount.ToString(Inv))
                         .Append(',').Append(r.roomCommittedBytes < 0 ? "" : r.roomCommittedBytes.ToString(Inv));
-                    for (int i = 0; i < _timelineMarkers.Length; i++)
+                    for (int i = 0; i < markerNames.Length; i++)
                     {
                         text.Append(',').Append(r.markers != null ? r.markers[i] : -1);
                     }
@@ -1830,12 +1859,11 @@ namespace Zantetsu.Sandbox
                     text.Append('\n');
                 }
 
-                File.WriteAllText(Path.Combine(directory, final ? "frames.csv" : "frames-at-cuts-complete.csv"), text.ToString());
-                if (!final)
-                {
-                    return;
-                }
+                return text.ToString();
+            }
 
+            private void CloseTimelineRecorders(bool saved = true)
+            {
                 var valid = new StringBuilder();
                 for (int i = 0; i < _timelineMarkers.Length; i++)
                 {
@@ -1844,7 +1872,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 _timelineRecorders = null;
-                Log("timeline: " + _timeline.Count + " frames written to frames.csv; recorders " + valid);
+                Log("timeline: " + _timeline.Count + (saved ? " frames written to frames.csv; recorders " : " frames; save failed; recorders released ") + valid);
             }
 
             // A run left behind by a check that ended early goes back with it.
