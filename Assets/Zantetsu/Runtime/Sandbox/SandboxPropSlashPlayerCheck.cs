@@ -99,6 +99,28 @@ namespace Zantetsu.Sandbox
         /// <summary>Measurement: raised on the frame the replay and the target's Pose Table start, for scene-side walkers.</summary>
         public static event Action ReplayBegun;
 
+        /// <summary>Real-time NPC checks and timeline storage are ready; the start delay begins after this notification.</summary>
+        public static event Action ReplayPrepared;
+
+        /// <summary>The actual katana/wave MeshRenderers, including inactive slots, for startup pipeline preparation.</summary>
+        public static MeshRenderer[] ReplayVisualRenderers()
+        {
+            var renderers = new HashSet<MeshRenderer>();
+            foreach (var katana in UnityEngine.Object.FindObjectsByType<SandboxRightHandKatana>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                Add(katana.Katana);
+                if (katana.WaveVisualsForReadout != null)
+                    foreach (Transform wave in katana.WaveVisualsForReadout) Add(wave);
+            }
+            return renderers.ToArray();
+
+            void Add(Transform root)
+            {
+                if (root == null) return;
+                foreach (var renderer in root.GetComponentsInChildren<MeshRenderer>(true)) renderers.Add(renderer);
+            }
+        }
+
         /// <summary>Image evidence: raised where the check logs a hit, with its lineage ("npc", "box", ...) and frame.</summary>
         public static event Action<string, int> HitLogged;
 
@@ -198,19 +220,60 @@ namespace Zantetsu.Sandbox
         private static readonly bool s_numericDiagnosis = VpNumericDiagnosis.Enabled;
 #endif
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void StartIfAsked()
+        /// <summary>The state of a run started from a prepared scene, without process command-line arguments.</summary>
+        public sealed class PreparedRun
         {
+            public bool Done { get; internal set; }
+            public int Code { get; internal set; } = -1;
+            public string Phase { get; internal set; } = "Preparing";
+            public string Directory { get; internal set; }
+            public bool SceneRetained { get; internal set; }
+        }
+
+        private static string[] s_preparedArguments;
+        private static bool s_started;
+        private static string[] RunArguments => s_preparedArguments ?? Environment.GetCommandLineArgs();
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetPreparedLaunch()
+        {
+            s_preparedArguments = null;
+            s_started = false;
+        }
+
+        /// <summary>
+        /// Starts the existing check with explicit arguments. The PC launch keeps its process arguments and ordinary
+        /// reclaim/quit. A retained run measures once and leaves the world, poses and replay result running afterwards.
+        /// </summary>
+        public static PreparedRun StartPrepared(string[] arguments, bool keepOpen = false, bool replayInRealtime = false, float startDelaySeconds = 0f)
+        {
+            if (arguments == null) throw new ArgumentNullException(nameof(arguments));
+            if (s_started) throw new InvalidOperationException("a Prop Slash run has already started");
+            if (!float.IsFinite(startDelaySeconds) || startDelaySeconds < 0f) throw new ArgumentOutOfRangeException(nameof(startDelaySeconds));
+            s_preparedArguments = (string[])arguments.Clone();
+            if (string.IsNullOrEmpty(Value(Argument))) throw new ArgumentException(Argument + " requires an output directory", nameof(arguments));
+            if (keepOpen && int.TryParse(Value(IterationsArgument), out int iterations) && iterations > 1)
+                throw new ArgumentException("a retained scene is measured once", nameof(arguments));
+            return BeginRun(keepOpen, replayInRealtime, startDelaySeconds);
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void StartIfAsked() => BeginRun(false, false, 0f);
+
+        private static PreparedRun BeginRun(bool keepOpen, bool replayInRealtime, float startDelaySeconds)
+        {
+            if (s_started) return null;
             string directory = Value(Argument);
             if (string.IsNullOrEmpty(directory))
             {
-                return;
+                return null;
             }
 
+            s_started = true;
             // A check Player keeps running when its window is not in focus (the project setting stays as it is).
             Application.runInBackground = true;
             // The parts of the run (scenario, metrics, checks, detailed diagnostics), decided here once for the process.
-            s_parts = PartsFor(Environment.GetCommandLineArgs());
+            s_parts = PartsFor(RunArguments);
             Log("parts of the run: " + s_parts.Describe());
             // The city walk: no placed cuttable registers before the check's registration stage (after scene load, before any
             // Start or Update of the scene).
@@ -218,9 +281,23 @@ namespace Zantetsu.Sandbox
             var host = new GameObject("Prop slash player check");
             UnityEngine.Object.DontDestroyOnLoad(host);
             Runner runner = host.AddComponent<Runner>();
+            var prepared = new PreparedRun { Directory = directory };
+            runner.prepared = prepared;
+            runner.keepOpen = keepOpen;
+            runner.replayInRealtime = replayInRealtime;
+            runner.startDelaySeconds = startDelaySeconds;
+            if (replayInRealtime)
+            {
+                foreach (SandboxRightHandKatana katana in UnityEngine.Object.FindObjectsByType<SandboxRightHandKatana>(FindObjectsSortMode.None))
+                {
+                    katana.enabled = true;
+                    katana.LiveInputEnabled = false;
+                }
+            }
             runner.directory = directory;
             runner.iterations = int.TryParse(Value(IterationsArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
                 out int n) && n > 1 ? n : 1;
+            return prepared;
         }
 
         // Runs the check once, or the given number of times in this process, each time on the scene loaded anew.
@@ -228,6 +305,9 @@ namespace Zantetsu.Sandbox
         {
             internal string directory;
             internal int iterations;
+            internal bool keepOpen, replayInRealtime;
+            internal float startDelaySeconds;
+            internal PreparedRun prepared;
 
             private IEnumerator Start()
             {
@@ -247,6 +327,9 @@ namespace Zantetsu.Sandbox
                     PhysicsCut.PreparedCharacterWithdrawal.CompareWholeRoot = mode == "A";
                     Walk walk = gameObject.AddComponent<Walk>();
                     walk.withdrawalMode = mode;
+                    walk.retainSceneAfterMeasurement = keepOpen;
+                    walk.replayInRealtime = replayInRealtime;
+                    walk.startDelaySeconds = startDelaySeconds;
                     walk.runParts = s_parts;
                     walk.directory = iterations > 1 ? Path.Combine(directory, "iter-" + i.ToString("D2", CultureInfo.InvariantCulture)) : directory;
                     walk.iteration = i;
@@ -286,6 +369,7 @@ namespace Zantetsu.Sandbox
                         out int rate) ? rate : 90;
                     while (!walk.Done)
                     {
+                        prepared.Phase = walk.CurrentPhase;
                         yield return null;
                     }
 
@@ -300,14 +384,18 @@ namespace Zantetsu.Sandbox
                 }
 
                 Log("all iterations finished with code " + worst);
+                prepared.Code = worst;
+                prepared.SceneRetained = keepOpen;
+                prepared.Phase = keepOpen ? "Retained" : "Done";
+                prepared.Done = true;
                 yield return null;
-                Application.Quit(worst);
+                if (!keepOpen) Application.Quit(worst);
             }
         }
 
         private static string Value(string name)
         {
-            string[] arguments = Environment.GetCommandLineArgs();
+            string[] arguments = RunArguments;
             for (int i = 0; i < arguments.Length - 1; i++)
             {
                 if (string.Equals(arguments[i], name, StringComparison.OrdinalIgnoreCase))
@@ -321,7 +409,7 @@ namespace Zantetsu.Sandbox
 
         private static bool Has(string name)
         {
-            foreach (string argument in Environment.GetCommandLineArgs())
+            foreach (string argument in RunArguments)
             {
                 if (string.Equals(argument, name, StringComparison.OrdinalIgnoreCase))
                 {
@@ -393,6 +481,10 @@ namespace Zantetsu.Sandbox
             internal string withdrawalMode;
             internal int iteration;
             internal int frameRate;
+            internal bool retainSceneAfterMeasurement, replayInRealtime;
+            internal float startDelaySeconds;
+            private bool _observationPreparedBeforeCountdown;
+            internal string CurrentPhase => Done ? "Done" : !_timelineBegun ? (_observationPreparedBeforeCountdown ? "Countdown" : "Preparing") : _phase;
 
             internal bool Done { get; private set; }
 
@@ -562,6 +654,9 @@ namespace Zantetsu.Sandbox
             private readonly List<SlashHitConfirmed> _seenHits = new List<SlashHitConfirmed>();
             // The input time of the last hit list read, and the frames that still showed an evaluation already read.
             private double _lastHitListAt = double.NaN;
+            private readonly List<(SlashHitConfirmed hit, int update)> _realtimeHits = new List<(SlashHitConfirmed, int)>(64);
+            private double _lastRealtimeHitListAt = double.NaN;
+            private int _realtimeEvaluationFrame = -1, _realtimeSweeps;
             private readonly List<(int frame, double at, int count, int fed)> _hitListRereads = new List<(int, double, int, int)>();
             private TraceLaneSet _traceLanes;
             private TracePagedHistory _traceHistory;
@@ -657,6 +752,8 @@ namespace Zantetsu.Sandbox
                     yield break;
                 }
 
+                _recorder.ReplayInRealtime = replayInRealtime;
+                if (replayInRealtime) _recorder.RealtimeSampleEvaluated += CaptureRealtimeEvaluation;
                 // The fixed preparation: the frame rate asked for, the colours, the check's own view. No waiting.
                 QualitySettings.vSyncCount = 0;
                 Application.targetFrameRate = frameRate;
@@ -829,6 +926,22 @@ namespace Zantetsu.Sandbox
                     _rowOf.Add(start + _loaded);
                 }
 
+                if (replayInRealtime) _katana.LiveInputEnabled = false;
+                // The Quest NPC replay stays idle while allocation, logger setup and the initial mesh/grid checks run.
+                // PC and the other scenarios retain their existing preparation and observation order.
+                if (replayInRealtime && multiNpc && !MobPlanMode && !building && !cityWalk)
+                {
+                    PrepareRealtimeNpcObservation();
+                    ReplayPrepared?.Invoke();
+                }
+                if (startDelaySeconds > 0f)
+                {
+                    Log("prepared replay delay: " + startDelaySeconds.ToString("R", Inv) + " s; head tracking remains live");
+                    double beginBy = Time.unscaledTimeAsDouble + startDelaySeconds;
+                    while (Time.unscaledTimeAsDouble < beginBy) yield return null;
+                }
+                Log("replay clock: " + (replayInRealtime ? "recorded timestamps, all samples due at each frame's real time" : "one recorded sample per frame"));
+
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 CookingAuditBegin();   // PhysX cooking errors from here on, from any thread
                 if (light)
@@ -924,7 +1037,11 @@ namespace Zantetsu.Sandbox
                 }
 
                 _timelineBegun = true;
-                if (runParts.metrics) StartTimeline();
+                if (runParts.metrics)
+                {
+                    if (!_observationPreparedBeforeCountdown) StartTimeline();
+                    else _timing = true;   // Preparation made no rows; the CSV still starts with the real replay.
+                }
                 else Log("metrics: off for this run (" + MetricsArgument + " off): no frame timeline, no frames.csv");
                 _clockStart = Time.unscaledTimeAsDouble;
                 _replaying = MobPlanMode || _recorder.TryBeginReplay(_clockStart);
@@ -937,7 +1054,16 @@ namespace Zantetsu.Sandbox
 
                 if (multiNpc)
                 {
-                    MultiBegin();
+                    if (!_observationPreparedBeforeCountdown) MultiBegin();
+                    else
+                    {
+                        // MultiBegin already opened the records and judged preparation; preserve its exact replay clock reset.
+                        foreach (SandboxNpcCharacter c in _npcs)
+                        {
+                            PoseTablePlayer pose = c.CharacterRoot != null ? c.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
+                            if (pose != null && pose != _npcPose) pose.Restart();
+                        }
+                    }
                 }
 
                 if (building)
@@ -946,13 +1072,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 ReplayBegun?.Invoke();
-                if (runParts.Watching)
-                {
-                    // The hit frames' markers, read by the checks' summary: not started where nothing watches the hits.
-                    _poseEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate");
-                    _poseApplyNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply");
-                    _hitEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate");
-                }
+                if (runParts.Watching && !_observationPreparedBeforeCountdown) StartHitRecorders();
 
                 Log("start: frame=" + Time.frameCount + " rows " + start + ".." + (start + _loaded - 1) + " replayed=" + _rowTimes.Count
                     + " refusedByRecorder=[" + string.Join(",", _refusedRows) + "]"
@@ -979,7 +1099,7 @@ namespace Zantetsu.Sandbox
 
                     bool fedThrough = !_recorder.IsReplaying && _recorder.ReplayIndex >= _rowTimes.Count;
                     // Every accepted cut's geometry committed: the end of the cuts, not a physical rest of the pieces.
-                    if (fedThrough && _katana.WaveCount == 0 && CutsSettled() && _accepted.Count > 0)
+                    if (fedThrough && _katana.WaveCount == 0 && (!replayInRealtime || _realtimeHits.Count == 0) && CutsSettled() && _accepted.Count > 0)
                     {
                         cutsComplete = true;
                         break;
@@ -1099,13 +1219,23 @@ namespace Zantetsu.Sandbox
                     _phase = "ending";
                 }));
                 var ending = new CheckEnding(Log);
-                StageBegin("ending (the summary, then the world's reclaim)", 15f);
-                yield return ending.Run(_world, parts, 15f);   // the ordinary ending, carried by the ordinary frames
-                StageEnd(!ending.WorldReleased, "world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
+                if (retainSceneAfterMeasurement)
+                {
+                    StageBegin("summary (scene retained)", 15f);
+                    foreach (CheckEnding.Part part in parts) ending.Guarded(part.what, part.run);
+                    StageEnd(ending.Failures > 0, "scene retained, ending failures " + ending.Failures);
+                    Log("scene retained: world, character poses and replay result kept; world release not exercised");
+                }
+                else
+                {
+                    StageBegin("ending (the summary, then the world's reclaim)", 15f);
+                    yield return ending.Run(_world, parts, 15f);   // the ordinary ending, carried by the ordinary frames
+                    StageEnd(!ending.WorldReleased, "world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
+                    Log("after the world's release: native rooms alive " + VpNumericRoomCensus.LiveNativeRooms + ", whole-write arrays alive " + VpWholeWrite.LiveArrays
+                        + "; the whole writes of the session took " + VpWholeWrite.ArraysTaken + " temporary arrays, " + VpWholeWrite.BytesTaken + " B in all, the largest "
+                        + VpWholeWrite.LargestBytes + " B (temporary: not part of the room's bytes)");
+                }
                 _failures += ending.Failures;
-                Log("after the world's release: native rooms alive " + VpNumericRoomCensus.LiveNativeRooms + ", whole-write arrays alive " + VpWholeWrite.LiveArrays
-                    + "; the whole writes of the session took " + VpWholeWrite.ArraysTaken + " temporary arrays, " + VpWholeWrite.BytesTaken + " B in all, the largest "
-                    + VpWholeWrite.LargestBytes + " B (temporary: not part of the room's bytes)");
                 Log("expectations not judged here: not applicable " + _notApplicable + ", not exercised " + _notExercised + " (neither counted as passed); failed " + _failures);
                 yield return null;
                 Finish(ending, null);
@@ -1121,6 +1251,7 @@ namespace Zantetsu.Sandbox
                 try
                 {
                     Application.quitting -= MultiQuitting;
+                    if (_recorder != null) _recorder.RealtimeSampleEvaluated -= CaptureRealtimeEvaluation;
                     _timing = false;
                     _timelineBegun = false;
                     var steps = new List<CheckEnding.Part>
@@ -1175,10 +1306,39 @@ namespace Zantetsu.Sandbox
                 }
             }
 
-            // The fixed markers, and any the run names after MarkersArgument (separated by ';', each "Category:Name" or
-            // a name in Internal), so that what a
-            // measurement looks at is chosen without building again.
-            private void StartTimeline()
+            // Prepare the initial NPC geometry checks and frame storage before the real-time countdown.
+            private void PrepareRealtimeNpcObservation()
+            {
+                if (runParts.metrics) StartTimeline(false);
+                if (runParts.Watching) StartHitRecorders();
+                _npcPose?.Restart();
+                MultiBegin();
+                if (runParts.Watching)
+                {
+                    // Validate each model's initial source offset, before any input or cut. The replay restarts the
+                    // same clocks again after the countdown; this check never advances the recorder or adds CSV rows.
+                    bool initialPosesApplied = true;
+                    foreach (SandboxNpcCharacter npc in _npcs)
+                    {
+                        PoseTablePlayer pose = npc.CharacterRoot != null ? npc.CharacterRoot.GetComponent<PoseTablePlayer>() : null;
+                        initialPosesApplied &= pose != null && pose.ApplyNow(null, 0);
+                    }
+                    Expect(initialPosesApplied, "every NPC's restarted source pose applied before startup geometry checks");
+                    Log("multi initial geometry checks: before countdown, restarted source phases; actual replay restarts every pose again");
+                    using (s_checkCuts.Auto()) MultiCheckStart();
+                }
+                _observationPreparedBeforeCountdown = true;
+            }
+
+            private void StartHitRecorders()
+            {
+                _poseEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Evaluate");
+                _poseApplyNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.PoseTable.Apply");
+                _hitEvaluateNs = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.SlashHit.Evaluate");
+            }
+
+            // The fixed and requested markers, prepared once; recording may wait until the real replay begins.
+            private void StartTimeline(bool startRecording = true)
             {
                 var markers = new List<(ProfilerCategory, string)>(TimelineMarkers);
                 foreach (string entry in (extraMarkers ?? string.Empty).Split(';'))
@@ -1269,7 +1429,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 PrepareTimelineRoom();
-                _timing = true;
+                _timing = startRecording;
             }
 
             /// <summary>The display's room as it stands: how it was prepared, the most it has drawn from, its bytes by kind and its GPU buffers.</summary>
@@ -1301,7 +1461,7 @@ namespace Zantetsu.Sandbox
             // little in every frame.
             private void PrepareTimelineRoom()
             {
-                float rate = _xrDisplay != null && _xrDisplay.TryGetDisplayRefreshRate(out float hz) && hz > 0f ? hz : Mathf.Max(1, frameRate);
+                float rate = _xrDisplay != null && _xrDisplay.TryGetDisplayRefreshRate(out float hz) && hz > 0f ? hz : Mathf.Max(replayInRealtime ? 90 : 1, frameRate);
                 double seconds = TimelineSecondsFor(_mpEnd, MobPlanMode, light, endHoldSeconds);
                 int rows = TimelineRowsFor(_mpEnd, MobPlanMode, light, endHoldSeconds, rate);
                 long heapBefore = GC.GetTotalMemory(false), began = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1398,12 +1558,13 @@ namespace Zantetsu.Sandbox
                 taken.real = Time.unscaledTimeAsDouble - _clockStart;
                 taken.delta = Time.unscaledDeltaTime;
                 taken.fed = fed;
-                taken.recorded = fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN;
+                taken.recorded = replayInRealtime && fed > 0 ? _recorder.ReplayLastTimestamp - _clockStart
+                    : fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN;
                 taken.stepId = clock != null ? clock.StepId : -1;
                 taken.unsimulated = clock != null ? clock.UnsimulatedSeconds : double.NaN;
-                taken.sweeps = core != null ? core.SweepCount : -1;
+                taken.sweeps = replayInRealtime ? (_realtimeEvaluationFrame == frame ? _realtimeSweeps : 0) : core != null ? core.SweepCount : -1;
                 taken.waves = _katana != null ? _katana.WaveCount : -1;
-                taken.hits = _replaying && HitListIsNew() ? _detector.HitCount : 0;
+                taken.hits = _replaying && HitListIsNew() ? (replayInRealtime ? _realtimeHits.Count : _detector.HitCount) : 0;
                 taken.pictures = _picturesAsked;
                 taken.gcCount = GC.CollectionCount(0);
                 _timeline.Add(taken);
@@ -1689,6 +1850,7 @@ namespace Zantetsu.Sandbox
             // A run left behind by a check that ended early goes back with it.
             private void OnDestroy()
             {
+                if (_recorder != null) _recorder.RealtimeSampleEvaluated -= CaptureRealtimeEvaluation;
                 if (_timelineRecorders != null)
                 {
                     foreach (ProfilerRecorder recorder in _timelineRecorders) recorder.Dispose();
@@ -1743,6 +1905,7 @@ namespace Zantetsu.Sandbox
 
             private void LateUpdateObserved()
             {
+                if (Done) return;   // A retained scene keeps its world and replay result, with the measurement stopped.
                 // What each part does in a frame (2026-10-07). The scenario: the view's turn, the geometry hold, the hits
                 // read into the cuts the end waits for, those cuts followed, the script's own frame. The metrics: the
                 // timeline's row. The checks and the detailed diagnostics: everything else here -- not run, with what
@@ -1843,10 +2006,12 @@ namespace Zantetsu.Sandbox
                 // end waits for. What is judged and written of a hit is the checks' and the detailed diagnostics'.
                 if (HitListIsNew())
                 {
-                    _lastHitListAt = _detector.HitAt(0).At;
-                    for (int i = 0; i < _detector.HitCount; i++)
+                    if (!replayInRealtime) _lastHitListAt = _detector.HitAt(0).At;
+                    int hitCount = replayInRealtime ? _realtimeHits.Count : _detector.HitCount;
+                    for (int i = 0; i < hitCount; i++)
                     {
-                        SlashHitConfirmed hit = _detector.HitAt(i);
+                        SlashHitConfirmed hit = replayInRealtime ? _realtimeHits[i].hit : _detector.HitAt(i);
+                        int hitUpdate = replayInRealtime ? _realtimeHits[i].update : update;
                         _scenarioHits++;
                         if (_firstHitFrame < 0)
                         {
@@ -1864,7 +2029,7 @@ namespace Zantetsu.Sandbox
                             using (s_checkHits.Auto())
                             {
                                 _seenHits.Add(hit);
-                                LogHit(hit, frame, update, made);   // adds the cut where it always was added
+                                LogHit(hit, frame, hitUpdate, made);   // adds the cut where it always was added
                             }
                         }
                         else
@@ -1876,8 +2041,9 @@ namespace Zantetsu.Sandbox
                             }
                         }
                     }
+                    if (replayInRealtime) _realtimeHits.Clear();
                 }
-                else if (watching && _detector.HitCount > 0)
+                else if (!replayInRealtime && watching && _detector.HitCount > 0)
                 {
                     _hitListRereads.Add((frame, _detector.HitAt(0).At, _detector.HitCount, _recorder.ReplayIndex));
                     Log("hit list not new: frame=" + frame + " the detector still holds the " + _detector.HitCount
@@ -1937,6 +2103,24 @@ namespace Zantetsu.Sandbox
                 }
             }
 
+            // A real-time frame can feed several recorded samples and a completion tick. Evaluate replaces its
+            // previous hit list each time, so copy every evaluation before the next input and process it in the same
+            // LateUpdate that the PC check uses. Each hit retains the input row that actually produced it.
+            private void CaptureRealtimeEvaluation(BladePoseSample sample)
+            {
+                if (Done || !_replaying || _detector == null) return;
+                if (_realtimeEvaluationFrame != Time.frameCount)
+                {
+                    _realtimeEvaluationFrame = Time.frameCount;
+                    _realtimeSweeps = 0;
+                }
+                _realtimeSweeps += _katana.Core.SweepCount;
+                if (_detector.HitCount == 0 || _detector.HitAt(0).At == _lastRealtimeHitListAt) return;
+                _lastRealtimeHitListAt = _detector.HitAt(0).At;
+                int update = _recorder.ReplayIndex - 1;
+                for (int i = 0; i < _detector.HitCount; i++) _realtimeHits.Add((_detector.HitAt(i), update));
+            }
+
             // Whether the detector's hits are a list not read before. The detector keeps the last Evaluate's hits until it
             // evaluates again, and it evaluates only when the recorder gives the core a sample: a replayed row, or a tick
             // once the replay has been fed through. A frame with neither (the frame after the last row, before the ticks
@@ -1948,7 +2132,8 @@ namespace Zantetsu.Sandbox
             // evaluation are read whatever they repeat.
             private bool HitListIsNew()
             {
-                return _detector != null && _detector.HitCount > 0 && _detector.HitAt(0).At != _lastHitListAt;
+                return replayInRealtime ? _realtimeHits.Count > 0
+                    : _detector != null && _detector.HitCount > 0 && _detector.HitAt(0).At != _lastHitListAt;
             }
 
             private void LogHit(in SlashHitConfirmed hit, int frame, int update, Accepted cutOfHit)

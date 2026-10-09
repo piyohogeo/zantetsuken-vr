@@ -43,11 +43,7 @@ namespace Zantetsu.EditorTools.Quest
             try
             {
                 var report = new List<string>();
-                EnsureFolder(Root); EnsureFolder(PrivateRoot); EnsureFolder("Assets/XR");
-                ConfigurePlayer();
-                ConfigureUrp();
-                ConfigureXr(report);
-                ConfigureShaders();
+                ConfigureCommon(report);
                 ConfigureScene(report);
                 AssetDatabase.SaveAssets();
                 Debug.Log("QUEST CONFIGURE: " + string.Join("; ", report));
@@ -58,6 +54,13 @@ namespace Zantetsu.EditorTools.Quest
                 if (Application.isBatchMode) EditorApplication.Exit(1);
                 throw;
             }
+        }
+
+        // Shared Android / XR settings used by the static and NPC comparison scenes.
+        public static void ConfigureCommon(List<string> report)
+        {
+            EnsureFolder(Root); EnsureFolder(PrivateRoot); EnsureFolder("Assets/XR");
+            ConfigurePlayer(); ConfigureUrp(); ConfigureXr(report); ConfigureShaders();
         }
 
         private static void ConfigurePlayer()
@@ -196,6 +199,12 @@ namespace Zantetsu.EditorTools.Quest
 
         public static void BuildApk()
         {
+            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, ApplicationIdentifier);
+            BuildApkForScene(ScenePath);
+        }
+
+        public static void BuildApkForScene(string scenePath)
+        {
             try
             {
                 const string nativePath = "Assets/Zantetsu/Runtime/Rendering/Plugins/Android/arm64-v8a/libZantetsuVpVulkan.so";
@@ -214,7 +223,7 @@ namespace Zantetsu.EditorTools.Quest
                 string output = index >= 0 ? args[index + 1] : Path.Combine(Directory.GetCurrentDirectory(), "Build", "quest-static.apk");
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output)));
                 EditorUserBuildSettings.buildAppBundle = false;
-                var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions { scenes = new[] { ScenePath }, target = BuildTarget.Android,
+                var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions { scenes = new[] { scenePath }, target = BuildTarget.Android,
                     locationPathName = output, options = Array.IndexOf(args, "-zantetsuQuestDev") >= 0 ? BuildOptions.Development : BuildOptions.None });
                 Debug.Log("QUEST BUILD: " + report.summary.result + " size=" + report.summary.totalSize + " errors=" + report.summary.totalErrors + " output=" + output);
                 if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0) throw new InvalidOperationException("Android build failed or reported errors; inspect quest-build.log");

@@ -105,6 +105,13 @@ namespace Zantetsu.Rendering
             Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer);
     }
 
+    /// <summary>Optional startup preparation, naming the exact material instances the display will draw.</summary>
+    public interface IVpNativeDrawWarmupHost
+    {
+        void CopyNativePrewarmMaterials(List<Material> bodies, out Material shadow, out Material provisionalShadow);
+        void NativePrewarmBuffers(out VpIndexedIndirectDrawBatch batch, out VpGpuIndexedGeometryBuffers buffers);
+    }
+
     /// <summary>Per-draw constant values the plugin's draws are given as Unity would give them.</summary>
     public static class VpNativeConstants
     {
@@ -955,6 +962,16 @@ namespace Zantetsu.Rendering
         public bool TryBegin(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride)
             => BeginCore(pipelineId, arguments, firstCommand, commandCount, indexBuffer, indexBufferBytes, indexStride, false);
 
+        /// <summary>A resource-free reservation for the Vulkan warm event, never an ordinary draw.</summary>
+        public bool TryBeginWarmup(int pipelineId, bool restartRenderPass = false)
+        {
+            if (!BeginCore(pipelineId, IntPtr.Zero, 0, 0, IntPtr.Zero, 0, 4, false, true)) return false;
+            ((Plugin.Draw*)_current)->argumentOffset = restartRenderPass ? 1u : 0u;
+            // Common Finish metadata only; the warm event never changes a GPU viewport.
+            AddViewport(new Rect(0f, 0f, 1f, 1f));
+            return true;
+        }
+
         public bool TryBeginDirect(int pipelineId, IntPtr indexBuffer, long indexBufferBytes, int indexStride,
             ReadOnlySpan<Plugin.DirectCommand> draws)
         {
@@ -972,10 +989,10 @@ namespace Zantetsu.Rendering
             return true;
         }
 
-        private bool BeginCore(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride, bool direct)
+        private bool BeginCore(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride, bool direct, bool warmup = false)
         {
             ThrowIfDisposed();
-            if (pipelineId < 0 || (!direct && arguments == IntPtr.Zero) || indexBuffer == IntPtr.Zero)
+            if (pipelineId < 0 || (!warmup && ((!direct && arguments == IntPtr.Zero) || indexBuffer == IntPtr.Zero)))
             {
                 throw new ArgumentException("the issue needs a pipeline number, an argument buffer and an index buffer");
             }
@@ -1293,6 +1310,13 @@ namespace Zantetsu.Rendering
         /// Null commands record nowhere (a test's stand-in) but move the state the same. Returns how many.
         /// </summary>
         public int RecordPrepared(CommandBuffer commands, IntPtr renderEventFunction, int eventId)
+            => RecordPreparedCore(commands, renderEventFunction, eventId, null);
+
+        /// <summary>Records through a restricted render-graph command buffer while preserving the same ownership.</summary>
+        public int RecordPrepared(Action<IntPtr> recordEvent)
+            => RecordPreparedCore(null, IntPtr.Zero, 0, recordEvent);
+
+        private int RecordPreparedCore(CommandBuffer commands, IntPtr renderEventFunction, int eventId, Action<IntPtr> recordEvent)
         {
             ThrowIfDisposed();
             int n = _prepared.Count;
@@ -1303,6 +1327,7 @@ namespace Zantetsu.Rendering
                 {
                     commands.IssuePluginEventAndData(renderEventFunction, eventId, _blocks[index]);
                 }
+                else recordEvent?.Invoke(_blocks[index]);
 
                 _state[index] = BlockState.Recorded;
                 VpNativeDrawRelease.Note(this, "recorded", index, ((Plugin.Draw*)_blocks[index])->serial);

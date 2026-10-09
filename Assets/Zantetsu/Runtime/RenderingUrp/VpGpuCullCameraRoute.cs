@@ -244,6 +244,7 @@ namespace Zantetsu.Rendering.Urp
                 _route = route;
                 this.camera = camera;
                 renderPassEvent = RenderPassEvent.BeforeRendering;
+                profilingSampler = new ProfilingSampler("VP GPU Cull");
             }
 
             public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)

@@ -37,6 +37,41 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
+        public unsafe void WarmupData_UsesTheVersionOneResourceFreeHeader_AndWaitsForItsOwnConsumption()
+        {
+            var ring = Track(new VpNativeDrawData(2, 4, 2, 256));
+            Assert.That(ring.TryBeginWarmup(1), Is.True);
+            IntPtr block = ring.Finish(out uint serial);
+            var header = (Plugin.Draw*)block;
+            Assert.That(header->version, Is.EqualTo(Plugin.ContractVersion));
+            Assert.That(header->pipeline, Is.EqualTo(1u));
+            Assert.That((IntPtr)header->argumentBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That((IntPtr)header->indexBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That(header->argumentOffset, Is.Zero);
+            Assert.That(header->commandCount, Is.Zero);
+            Assert.That(header->resourceCount, Is.Zero);
+            Assert.That(header->constantsCount, Is.Zero);
+            Assert.That(ring.StateOf(serial), Is.EqualTo(VpNativeDrawData.BlockState.Prepared));
+            var recorded = new List<IntPtr>();
+            Assert.That(ring.RecordPrepared(recorded.Add), Is.EqualTo(1));
+            Assert.That(recorded, Is.EqualTo(new[] { block }));
+            ring.SetConsumedSentinel(5);
+            Assert.That(ring.InFlight, Is.EqualTo(1), "a recorded warm event still owns its header");
+            Assert.That(VpNativeDrawData.ResultOf(block), Is.Null);
+            header->result = (uint)Plugin.Result.Recorded;
+            header->consumed = 1;
+            Assert.That(VpNativeDrawData.ResultOf(block), Is.EqualTo(Plugin.Result.Recorded));
+            Assert.That(ring.InFlight, Is.Zero);
+
+            Assert.That(ring.TryBeginWarmup(2, true), Is.True);
+            block = ring.Finish(out _);
+            Assert.That(((Plugin.Draw*)block)->argumentOffset, Is.EqualTo(1u), "caster and motion request the real pass restart path");
+            Assert.That(ring.DropPrepared(), Is.EqualTo(1));
+            Assert.Throws<ArgumentException>(() => ring.TryBegin(1, IntPtr.Zero, 0, 0, IntPtr.Zero, 0, 4),
+                "resource-free headers are accepted only through the optional warm event API");
+        }
+
+        [Test]
         public unsafe void DirectClipGroup_CopiesPayloadsAndTracksOnlyItsCompletion_UntilConsumedOrDiscarded()
         {
             var ring = Track(new VpNativeDrawData(4, 4, 2, 20000));

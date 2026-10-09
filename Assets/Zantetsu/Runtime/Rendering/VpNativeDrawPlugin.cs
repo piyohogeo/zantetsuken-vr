@@ -287,6 +287,8 @@ namespace Zantetsu.Rendering
         private static extern int ZvnGroupPrepareEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnGroupPreparedEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnWarmPipelineEventId();
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -397,6 +399,9 @@ namespace Zantetsu.Rendering
                         s_preparedDrawEventId = ZvnPreparedDrawEventId();
                         s_groupPrepareEventId = ZvnGroupPrepareEventId();
                         s_groupPreparedEventId = ZvnGroupPreparedEventId();
+                        // Optional export: libraries without warmup retain the existing contract-1 draw path.
+                        try { s_warmPipelineEventId = ZvnWarmPipelineEventId(); }
+                        catch (EntryPointNotFoundException) { s_warmPipelineEventId = 0; }
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -455,7 +460,8 @@ namespace Zantetsu.Rendering
         public static int SentinelEventId => s_sentinelEventId;
 
         private static int s_sentinelEventId;
-        private static int s_prepareEventId, s_preparedDrawEventId, s_groupPrepareEventId, s_groupPreparedEventId;
+        private static int s_prepareEventId, s_preparedDrawEventId, s_groupPrepareEventId, s_groupPreparedEventId, s_warmPipelineEventId;
+        public static int WarmPipelineEventId => s_warmPipelineEventId;
         public static int GroupPrepareEventId => s_groupPrepareEventId;
         public static int GroupPreparedEventId => s_groupPreparedEventId;
         public static int PrepareEventId => s_prepareEventId;
