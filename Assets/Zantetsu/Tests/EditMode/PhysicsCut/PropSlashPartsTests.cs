@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using UnityEngine;
 using Zantetsu.Sandbox;
 
 namespace Zantetsu.PhysicsCut.Tests
@@ -237,6 +238,43 @@ namespace Zantetsu.PhysicsCut.Tests
             TestContext.Out.WriteLine(failed.RunLine + " | " + failed.ChecksLine);
             Assert.That(failed.RunLine, Does.StartWith("run: completed"), "the run went through");
             Assert.That(failed.ChecksLine, Is.EqualTo("checks: FAILED (1 failed, 1120 held)"), "and a check failed: two different things");
+        }
+
+        /// <summary>
+        /// A step script that stopped is the run's own failure, whatever parts run: the reason is given for the run's
+        /// result, and with the checks left out the run is NOT completed with code 14. A script that ran every step,
+        /// and a run with no script, give no reason.
+        /// </summary>
+        [Test]
+        public void AStepScriptThatStopped_MakesTheRunNotCompleted_AlsoWithTheChecksLeftOut()
+        {
+            Assert.That(PropSlashRunResult.WhyTheScriptStopped(null), Is.Null, "no script");
+
+            // Nothing moves the player: the first waypoint is not reached by its deadline, and two steps are left.
+            CityWalkSteps stopped = CityWalkSteps.Parse(new[] { "visit,a", "goto,0,5,1", "goto,0,6,1", "goto,0,7,1" }, Vector2.zero);
+            Assert.That(PropSlashRunResult.WhyTheScriptStopped(stopped), Is.Null, "not begun: not stopped");
+            for (double now = 0; !stopped.Done && now < 10; now += 0.1)
+            {
+                stopped.Advance(now, Vector2.zero, 0f, true, 1.49f, 120f, 0.1f, out (float forward, float turn)? _);
+            }
+
+            Assert.That(stopped.Halted, Is.True, "the layout: halted at its first step");
+            string why = PropSlashRunResult.WhyTheScriptStopped(stopped);
+            TestContext.Out.WriteLine(why);
+            Assert.That(why, Does.StartWith("the step script halted: step 0").And.Contain("not reached within 1 s").And.EndWith("; the 2 steps after it not run"));
+            var result = new PropSlashRunResult(false, why, false, 0, 0, 7, PropSlashRunResult.CodeOf(false, 0, false, false));
+            Assert.That(result.RunLine, Does.StartWith("run: NOT completed (the step script halted: step 0"));
+            Assert.That(result.code, Is.EqualTo(14), "not code 0, although no check ran");
+
+            // Every step run: no reason.
+            CityWalkSteps walked = CityWalkSteps.Parse(new[] { "visit,a", "goto,0,0.1,5" }, Vector2.zero);
+            for (double now = 0; !walked.Done && now < 10; now += 0.1)
+            {
+                walked.Advance(now, new Vector2(0f, 0.1f), 0f, true, 1.49f, 120f, 0.1f, out (float forward, float turn)? _);
+            }
+
+            Assert.That(walked.Done && !walked.Halted, Is.True, "the layout: every step run");
+            Assert.That(PropSlashRunResult.WhyTheScriptStopped(walked), Is.Null);
         }
     }
 }
