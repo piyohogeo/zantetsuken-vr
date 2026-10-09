@@ -35,6 +35,7 @@ namespace Zantetsu.Quest
         }
         private Config _config;
         private Camera _camera;
+        private Transform _appSpaceOrigin;
         private SandboxDrawComparePlayerCheck.Runner _runner;
         private bool _spaceWarpApplied;
         private float _nextStatus;
@@ -64,6 +65,8 @@ namespace Zantetsu.Quest
         {
             _camera = Camera.main;
             if (_camera == null) throw new InvalidOperationException("Quest static demo requires MainCamera");
+            _appSpaceOrigin = _camera.transform.parent;
+            if (_appSpaceOrigin == null) throw new InvalidOperationException("Quest static demo requires the tracked camera parent");
             if (GraphicsSettings.currentRenderPipeline == null || GraphicsSettings.currentRenderPipeline.name != "Quest_RPAsset")
                 throw new InvalidOperationException("Quest static demo requires Quest_RPAsset; scenario pipeline was not configured");
             string configPath = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
@@ -136,8 +139,9 @@ namespace Zantetsu.Quest
         private void BeforeCamera(ScriptableRenderContext context, Camera camera)
         {
             if (!_spaceWarpApplied || !_config.appSw || camera != _camera) return;
-            SpaceWarpFeature.SetAppSpacePosition(camera.transform.position);
-            SpaceWarpFeature.SetAppSpaceRotation(camera.transform.rotation);
+            // The parent includes scripted rig locomotion and excludes the tracked HMD local pose.
+            SpaceWarpFeature.SetAppSpacePosition(_appSpaceOrigin.position);
+            SpaceWarpFeature.SetAppSpaceRotation(_appSpaceOrigin.rotation);
         }
         private void OnDestroy() => RenderPipelineManager.beginCameraRendering -= BeforeCamera;
     }

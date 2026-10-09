@@ -229,6 +229,42 @@ CSVのFrameTiming Main平均7.418869／最大24.499743 msは待機を含み、pr
 
 初期版の Build GUID は `7f44e43e0f524b32a11bf2c35d18e505`、graphics暖機版は `7c29a403cd89425fa6df46d1edd39700`。`Build/quest-npc-slash-dev.apk` は後のビルドで上書きされるため、その現在の hash を過去 runへ割り当てない。再現保存には source差分、generated/baked assets、APK、Build GUID、SHA256、run config、profile を同時に残す必要がある。
 
+## 遠方信号機の二重像とAppSpace修正（2026-10-09）
+
+頭を動かすとfar clip付近の信号機が数pxの二重像になるという報告を調査した。アプリ停止中は頭を動かしてもぶれないというユーザー観察も得た。実機cameraはnear=0.01 m／far=100 m、colour=1680×1760×2／MSAA4、MV/depth=420×440×2／MSAA1だった。
+
+### GPU入力の確認
+
+RenderDocで一つの実frame1118を取得した。capture APIを二度呼んだが同一frame・同一ファイルを返したため、独立した二つのcaptureとは数えない。
+
+- stock `XRDepthMotionPass`（EID1028）が背景MVを描いた後、native motion passはcolour/depthをLoadした。後続native描画による背景MVの消去は見られなかった。
+- 背景pixel (160,50) のfloat MVは `[0.0652466,-0.0119171,0,0]`、(315,220) は `[0.107727,0.0281677,0,0]`。native motion後（EID1153）も同じ値だった。alpha=0でも背景RGBのMVは描かれている。
+- captured native current/previous VPで計算した背景XYのMVは、取得float値と約0.04 colour pixel以内で一致した。nativeに渡されたprevious/current VPのbyte列がUnity側GPU定数bufferにも連続して存在すること、native `_SpaceWarpNDCModifier=1.0` を確認した。
+- これは背景の二点とGPU定数の確認である。問題の信号機の正確なpixelやcompositor合成出力を直接計測したものではない。capture自体が描画周期へ影響するため、このframeから通常時の頭の角速度やframe遅延を推定しない。
+
+距離によるMV差の目安は `f×Δx×(1/z_object−1/z_background)`。仮にf=700 px、横移動2 cm、物体100 m／背景無限遠でも0.14 px程度となる。一方、回転30°/sに11.11 msの姿勢差がある場合は中央付近で約4.1 pxになり得る。これは大きさの例であり、実機で11.11 msの遅延を測ったという意味ではない。
+
+[GPU captureと解析出力](../Logs/appsw-signal-audit/)、[colour画像](../Logs/appsw-signal-audit/colour.png)。`motion.exr` はexport APIがPNGを書いたものであり、float解析には使っていない。float値はpixel APIから取得した。
+
+### 原因と同じAPKによるA/B
+
+従来はTrackedPoseDriverで更新されたMainCameraのworld position／rotationを `SetAppSpacePosition/Rotation` へ渡していた。[XR_FB_space_warp仕様](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/extensions/fb/fb_space_warp.adoc)のappSpaceDeltaPoseはアプリが適用した空間変換を表す。インストール済みUnity OpenXRのAndroid arm64 binaryでは、`MetaSetAppSpacePosition/Rotation` が与えられたposeを保持し、`OculusSpaceWarp::ExtendView` が前回との差分をspace-warp layerへ書く経路を確認した。この経路で物理HMD poseを差し引く処理は見られなかった。
+
+比較APKは [quest-npc-appspace-diagnostic-dev.apk](../Build/quest-npc-appspace-diagnostic-dev.apk)、Build GUID `f32e1527d2574432be362169e8ad3532`、SHA256 `6BBEE3188235C452BDECE966E1FE9EC6849099EA1CE2E508907F57BF84A94E81`。同じAPKでAppSpace poseの選択だけを変えた。
+
+| AppSpace入力 | 姿勢ログの例（5秒区間の最大frame差分） | ユーザー観察 |
+| --- | --- | --- |
+| cameraの親 `Camera Offset`（tracking-origin） | camera 2.5589°、AppSpaceへ送る姿勢0° | 二重像が消えた |
+| 従来のMainCamera（camera）へ戻す | camera 3.5990°、AppSpaceへ送る姿勢3.5990° | 二重像が再発した |
+
+両方の安定区間でVrApi `FPS=45–46/90`、`ASW=90–91,Type=App`、`Stale=0` を確認した。暖機・起動区間にはStaleがある。頭の動きをAppSpaceのアプリ移動へ含める入力が、今回の二重像の原因と判断した。通常HMD trackingとcamera-only MVは維持し、AppSpaceにはcameraの親のworld poseを渡す。親はtracking spaceをシーンへ配置する変換なので、rigの人工移動があればその移動は含む。
+
+[tracking-originログ](../Logs/appsw-signal-audit/tracking-origin-logcat.txt)、[従来cameraログ](../Logs/appsw-signal-audit/camera-legacy-logcat.txt)、[実機platform](../Logs/appsw-signal-audit/tracking-origin-platform.txt)、[比較config](../Logs/appsw-signal-audit/tracking-origin-config.json)。
+
+NPCのconfigと `Run-NpcSlashDemo.ps1` の既定値を `tracking-origin` へ変更した。`-AppSpacePoseMode camera` は再現比較用として残す。同じ入力をしていた `QuestStaticDemo` もcameraの親へ変更した。static runnerはrigを移動するため、path移動も親のworld poseに含まれる。静的デモの今回の変更はAndroid compileまでの確認であり、静的シーンでの新たな実機A/Bは未実施。
+
+最終 [quest-npc-appspace-fixed-dev.apk](../Build/quest-npc-appspace-fixed-dev.apk) をbuild・installし、launcherの既定tracking-originで起動した。Build GUID `2b55c78615c64066bbbea191cb891f32`、SHA256 `7A26F711CE6C82BE661CA15C1E8828A42F939BAEF5A7C327181DA5524E746EEF`。Android build errors=0、run `20261009T015722Z-npc10-vp3c-native-abf873` はcode0・sceneRetained=Trueで完了した。終了後の安定区間でもFPS45–46/90、ASW90–91 TypeApp、Stale0を確認した。[最終platform](../Logs/appsw-signal-audit/fixed-platform.txt)、[完了結果](../Logs/appsw-signal-audit/fixed-demo-result.txt)、[最終ログ](../Logs/appsw-signal-audit/fixed-logcat.txt)。
+
 ## 関連記録
 
 - [Quest静的 AppSW デモ](quest3s-static-appsw.md)
