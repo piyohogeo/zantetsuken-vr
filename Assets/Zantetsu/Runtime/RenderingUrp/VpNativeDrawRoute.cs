@@ -341,6 +341,8 @@ namespace Zantetsu.Rendering.Urp
             public int frame;
             public uint serial;
             public PrewarmRequest warmup;
+            public bool zero;   // a zero event (ZeroPass): its refusal halts the compaction
+            public bool barrier;   // the compute barrier event before a compaction: its refusal halts the compaction too
         }
 
         // What the GPU-assembled stage constants are given beside the frame's globals. For a Single Pass Instanced
@@ -361,6 +363,16 @@ namespace Zantetsu.Rendering.Urp
             public uint argumentsGeneration, visibleGeneration, instancesGeneration, clipsGeneration, cullCommandsGeneration, indexGeneration, vertexGeneration;
             public RenderTexture shadowMap;
 
+            // The command compaction (DESIGN 4.5.10): set, the arguments are the compacted entries of the run and the
+            // GPU counted them into slot countSlot of counts; the run's length is the most the draw may take
+            // (vkCmdDrawIndexedIndirectCount). The frame's zero pass zeroed the slots before any compaction. zeroCounts,
+            // with snapshot, names the 4-byte slot the plugin copies the count into in this draw's preparation.
+            public GraphicsBuffer counts, zeroCounts;
+            public bool snapshot;          // zeroCounts names a 4-byte slot (countSnapshotSlot) the plugin copies this draw's count into: the set's draw counts, or the diagnosis's ring
+            public bool drawFromCopy;      // the draw reads its count from that slot (VpCommandCompaction.DrawFromCopy)
+            public int countSnapshotSlot;
+            public int countSlot;
+
             // The owners' CPU-write generations of the buffers: taken with the buffers, so that a pointer kept across
             // a write is asked again (see VpNativePointerCache.Buffer).
             public void TakeGenerations(VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers)
@@ -378,6 +390,7 @@ namespace Zantetsu.Rendering.Urp
         private sealed class CameraPasses
         {
             public Camera camera;
+            public ZeroPass zero;
             public BodyPass body;
             public CasterPass casters;
             public BodyPass motion;
@@ -476,6 +489,163 @@ namespace Zantetsu.Rendering.Urp
         public long SingleViewBodiesFromDoubled { get; private set; }
         public string LastFailure { get; private set; }
         public int LastFrameIssues { get; private set; }
+
+        /// <summary>Experiment (2026-10-10): issues drawn by the GPU's count of compacted commands, and runs that drew fixed for want of a count slot.</summary>
+        public long IndirectCountIssues { get; private set; }
+        public long IndirectCountSlotsShort { get; private set; }
+        public long IndirectCountCompactions { get; private set; }
+
+        /// <summary>Whether this frame's issues compact (<see cref="VpNativeDrawPlugin.VulkanIndirectCount"/> on a Vulkan device whose build has the kernel).</summary>
+        private bool CompactsCommands
+        {
+            get
+            {
+                // Chosen once for what is asked (and again only if what is asked changes before the first frame, as a
+                // launch's configuration may): VpCommandCompaction.TrySelect, with its reason in the log.
+                bool asked = Plugin.VulkanIndirectCount;
+                if (!_compactionChoiceMade || asked != _compactionChoiceAsked)
+                {
+                    _compactionChoiceMade = true;
+                    _compactionChoiceAsked = asked;
+                    _compactionChosen = VpCommandCompaction.TrySelect(out string reason);
+                    CommandCompactionChoice = reason;
+                    if (Plugin.Vulkan)
+                    {
+                        VpCommandCompaction.LastChoice = reason;
+                        // The device and its driver version beside the choice: the count's copy answers this driver's behaviour (DESIGN 4.5.10).
+                        Debug.Log("VP COMMAND COMPACTION: " + reason + " [device " + SystemInfo.graphicsDeviceName + "; " + SystemInfo.graphicsDeviceVersion + "]");
+                    }
+                }
+
+                return _compactionChosen && CompactionHalted == null;
+            }
+        }
+
+        private bool _compactionChoiceMade, _compactionChoiceAsked, _compactionChosen;
+
+        /// <summary>What this route chose between the compaction and the fixed draw, and why (DESIGN 4.5.10); null until its first frame.</summary>
+        public string CommandCompactionChoice { get; private set; }
+
+        /// <summary>Experiment: zero events recorded (one a column of a set a frame), runs drawn fixed because their column's zeroing was not reserved, and zero events the plugin refused.</summary>
+        public long IndirectCountZeroEvents { get; private set; }
+        public long IndirectCountZeroMissed { get; private set; }
+        public long IndirectCountZeroRefused { get; private set; }
+        public long IndirectCountBarriers { get; private set; }
+
+        /// <summary>
+        /// Why the compaction is off for the rest of this route's life, or null: a zero event the plugin refused means a
+        /// frame's count slots may not have been zeroed before that frame's compaction, so from then on every run draws
+        /// fixed (the frame itself is past; its draws were refused by the same cause when the device was the cause).
+        /// </summary>
+        public string CompactionHalted { get; private set; }
+
+        // One compaction of a pass: each draw unit (run) of the pass takes the next count slot of this frame's set. The
+        // set's slots were zeroed by the plugin after the last draw that read them (the previous use of the set, four
+        // frames ago), in the preparation of the frame after that draw. Returns false when the slots are spent (the run
+        // then draws fixed, counted).
+        private int _countSlotsUsed;
+
+        private void BeginCompactions()
+        {
+            // 0 but for the diagnosis that moves a pass's first run to a later slot (VpCommandCompaction.FirstSlot).
+            _countSlotsUsed = VpCommandCompaction.FirstSlot;
+            _barrierPending = true;
+        }
+
+        // The plugin's compute barrier (BarrierEvent) between the dispatches that wrote the entries a compaction reads
+        // and the compaction itself. Unity put no barrier between two compute dispatches on one buffer on Quest 3S
+        // (2026-10-10: APK 2's reset against the atomics; the city walk's motion selection, dispatched in the pass right
+        // before its compaction, against icW4 without it), so the order is the plugin's: once per pass before its
+        // first compaction, and again after any selection the pass dispatched. Without the barrier the run draws fixed.
+        private bool _barrierPending;
+
+        /// <summary>A selection was dispatched in this pass: the next compaction records the compute barrier first.</summary>
+        private void NoteSelectionIssued() => _barrierPending = true;
+
+        private bool IssueComputeBarrier(CommandBuffer commands, int frame)
+        {
+            // The barrier's block is recorded alone: a block of this pass still prepared and unrecorded would be recorded
+            // under the barrier's event; none is expected here (each issue records its own at once).
+            if (_drawData.InFlightIn(VpNativeDrawData.BlockState.Prepared) != 0)
+            {
+                LastFailure = "a prepared block of another issue stands before the compute barrier";
+                return false;
+            }
+
+            if (!_drawData.TryBeginBarrier())
+            {
+                RingFull++;
+                LastFailure = "every event data block is still with the plugin (compute barrier event)";
+                return false;
+            }
+
+            IntPtr block = _drawData.Finish(out uint serial);
+            _blocks.Add(new Block { data = block, frame = frame, serial = serial, barrier = true });
+            _drawData.RecordPrepared(b => commands.IssuePluginEventAndData(Plugin.RenderEventFunction, Plugin.BarrierEventId, b));
+            IndirectCountBarriers++;
+            VpCommandCompaction.Barriers++;
+            _barrierPending = false;
+            return true;
+        }
+
+        // column: 0 the body, 1 the casters, 2 the motion -- each its own entries and count slots of the set, so that
+        // two passes compacting the same source (the motion pass with no selection of its own compacts the body's
+        // entries) never add to one slot (icB7, 2026-10-10: the body's count was 1.5x and half its entries doubled).
+        private bool CompactRun(CommandBuffer commands, VpIndexedIndirectDrawBatch batch, VpIndexedIndirectDrawBatch.Compaction compaction,
+            GraphicsBuffer source, int column, int startCommand, int commandCount, int frame, ref Bound bound)
+        {
+            // Only a column whose count slots this frame's zero pass reserved for zeroing is compacted: otherwise the run
+            // draws fixed (counted), and a set with an old count left in it is never added to.
+            if (!compaction.ZeroReserved(column, frame))
+            {
+                IndirectCountZeroMissed++;
+                VpCommandCompaction.ZeroMissed++;
+                return false;
+            }
+
+            if (_countSlotsUsed >= VpCommandCompaction.Slots)
+            {
+                IndirectCountSlotsShort++;
+                VpCommandCompaction.SlotsShort++;
+                return false;
+            }
+
+            if (_barrierPending && !IssueComputeBarrier(commands, frame))
+            {
+                VpCommandCompaction.BarrierMissed++;
+                return false;
+            }
+
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            int slot = _countSlotsUsed++;
+            batch.IssueCompaction(commands, compaction, source, column, startCommand, commandCount, slot, frame);
+            IndirectCountCompactions++;
+            if (VpCommandCompaction.VerificationEnabled) batch.IssueVerification(commands, compaction, source, column, startCommand, commandCount, slot);
+            bound.arguments = compaction.Entries(column);
+            bound.argumentsGeneration = 0;
+            bound.counts = compaction.Counts(column);
+            bound.zeroCounts = null;   // the frame's zero pass (ZeroPass) zeroed this set's slots before any compaction
+            if (VpCommandCompaction.DrawFromCopy)
+            {
+                // The draw reads a transfer copy of its count, made by the plugin in the draw's preparation: the run's
+                // own slot of the set's draw counts (the set's lifetime is the count's).
+                bound.zeroCounts = compaction.DrawCounts(column);
+                bound.snapshot = true;
+                bound.drawFromCopy = true;
+                bound.countSnapshotSlot = slot;
+            }
+            else if (VpCommandCompaction.SnapshotEnabled)
+            {
+                // Diagnosis: the plugin copies this draw's count into the ring, where the draw reads it.
+                bound.zeroCounts = VpCommandCompaction.SnapshotBuffer;
+                bound.snapshot = true;
+                bound.countSnapshotSlot = VpCommandCompaction.TakeSnapshotSlot(column, frame, startCommand, commandCount);
+            }
+            bound.countSlot = slot;
+            VpCommandCompaction.NoteRecordTime(frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+            return true;
+        }
         public string LastBodyVariant { get; private set; }
 
         /// <summary>The results the plugin answered for the blocks issued, by result, once read back.</summary>
@@ -709,6 +879,7 @@ namespace Zantetsu.Rendering.Urp
             }
 
             display.NativeDrawSink = this;
+            if (CompactsCommands) renderer.EnqueuePass(passes.zero);
             renderer.EnqueuePass(passes.casters);
             renderer.EnqueuePass(passes.body);
             if (passes.colourDraw != null) renderer.EnqueuePass(passes.colourDraw);
@@ -1023,6 +1194,11 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", issues after dispose ").Append(IssuesAfterDispose).Append(", buffers retired through the route ").Append(BuffersRetired)
                 .Append(", events never run ").Append(EventsNeverRan).Append(", results lost to reuse ").Append(ResultsLost).Append("; ").Append(VpNativeDrawRelease.Describe())
                 .Append(", last frame issues ").Append(LastFrameIssues)
+                .Append(", indirect-count issues ").Append(IndirectCountIssues).Append(" (compactions ").Append(IndirectCountCompactions)
+                .Append(", zero events ").Append(IndirectCountZeroEvents).Append(", runs fixed for want of a slot ").Append(IndirectCountSlotsShort)
+                .Append(", runs fixed for want of a zero reservation ").Append(IndirectCountZeroMissed).Append(", zero events refused ").Append(IndirectCountZeroRefused)
+                .Append(", compute barriers ").Append(IndirectCountBarriers)
+                .Append(CompactionHalted != null ? "; compaction halted: " + CompactionHalted : "").Append(")")
                 .Append(", direct clip draws ").Append(DirectClipDrawsIssued)
                 .Append(", direct clip records: colour taken ").Append(DirectClipBodiesTaken).Append(" / kept ").Append(DirectClipBodiesKept)
                 .Append(", motion taken ").Append(DirectClipMotionTaken).Append(" / kept ").Append(DirectClipMotionKept)
@@ -1200,6 +1376,7 @@ namespace Zantetsu.Rendering.Urp
             }
 
             var passes = new CameraPasses { camera = camera };
+            passes.zero = new ZeroPass(this, passes);
             passes.body = new BodyPass(this, passes);
             if (passes.body.PreparesColour) passes.colourDraw = new ColourDrawPass(this, passes);
             passes.motion = new BodyPass(this, passes, true);
@@ -1262,6 +1439,20 @@ namespace Zantetsu.Rendering.Urp
                 {
                     Refused++;
                     LastFailure = "the plugin refused an issue: " + result.Value;
+                    if (block.zero || block.barrier)
+                    {
+                        // The count slots of that frame's set may not have been zeroed before its compaction, or a
+                        // compaction may have read entries before the selection wrote them: no further compaction from
+                        // here; every run draws fixed. Said once, kept.
+                        IndirectCountZeroRefused++;
+                        VpCommandCompaction.ZeroRefused++;
+                        if (CompactionHalted == null)
+                        {
+                            CompactionHalted = (block.zero ? "a zero event" : "a compute barrier event") + " was refused (" + result.Value + ") in frame " + block.frame + ": the compaction is off, the runs draw fixed";
+                            VpCommandCompaction.Halted = CompactionHalted;
+                            Debug.LogWarning("VP COMMAND COMPACTION: halted: " + CompactionHalted);
+                        }
+                    }
                 }
 
                 _blocks.RemoveAt(i);
@@ -1457,7 +1648,7 @@ namespace Zantetsu.Rendering.Urp
         // Unity is asked is apart from what is written.
         private struct BoundPointers
         {
-            public IntPtr arguments, visible, instances, clips, cullCommands, indexBuffer, vertexBuffer, specCube, paletteSurface, paletteCaps, baseMap, shadowMap, gpuConstants;
+            public IntPtr arguments, visible, instances, clips, cullCommands, indexBuffer, vertexBuffer, specCube, paletteSurface, paletteCaps, baseMap, shadowMap, gpuConstants, counts, zeroCounts;
             public Texture specCubeTexture, paletteSurfaceTexture, paletteCapsTexture, baseMapTexture;
             // A texture that is a render texture is bound through its colour render buffer handle (resolved by Unity
             // when the event runs), not a texture pointer that a re-creation would leave stale.
@@ -1511,6 +1702,8 @@ namespace Zantetsu.Rendering.Urp
                 pointers = default;
                 // The indirect command reader needs this even when the vertex shader does not bind it.
                 if (directCount == 0) pointers.arguments = _pointers.Buffer(bound.arguments, bound.argumentsGeneration);
+                if (bound.counts != null) pointers.counts = _pointers.Buffer(bound.counts);   // GPU-written alone: one generation
+                if (bound.zeroCounts != null) pointers.zeroCounts = _pointers.Buffer(bound.zeroCounts);
                 if (entry.vertexVisible >= 0) pointers.visible = _pointers.Buffer(bound.visible, bound.visibleGeneration);
                 if (entry.vertexInstances >= 0) pointers.instances = _pointers.Buffer(bound.instances, bound.instancesGeneration);
                 if (entry.vertexClips >= 0) pointers.clips = _pointers.Buffer(bound.clips, bound.clipsGeneration);
@@ -1629,8 +1822,13 @@ namespace Zantetsu.Rendering.Urp
                 bool began = directCount > 0
                     ? drawData.TryBeginDirect(entry.pipeline.Id, pointers.indexBuffer, (long)bound.indexBuffer.count * bound.indexBuffer.stride,
                         bound.indexBuffer.stride, new ReadOnlySpan<Plugin.DirectCommand>(_directCommands, 0, directCount))
+                    : bound.counts != null
+                    ? drawData.TryBeginIndirectCount(entry.pipeline.Id, pointers.arguments, startCommand, commandCount, pointers.counts, (uint)(bound.countSlot * sizeof(uint)),
+                        bound.snapshot ? pointers.zeroCounts : IntPtr.Zero, bound.snapshot ? (uint)(bound.countSnapshotSlot * sizeof(uint)) : 0u, 0u,
+                        pointers.indexBuffer, (long)bound.indexBuffer.count * bound.indexBuffer.stride, bound.indexBuffer.stride, bound.drawFromCopy)
                     : drawData.TryBegin(entry.pipeline.Id, pointers.arguments, startCommand, commandCount, pointers.indexBuffer,
                         (long)bound.indexBuffer.count * bound.indexBuffer.stride, bound.indexBuffer.stride);
+                if (began && bound.counts != null) { IndirectCountIssues++; VpCommandCompaction.Issues++; }
                 if (!began)
                 {
                     RingFull++;
@@ -1710,7 +1908,8 @@ namespace Zantetsu.Rendering.Urp
         private void PrepareGroupEvents(CommandBuffer commands, int firstBlock)
         {
             _drawData.GroupPrepared(_groupPointers);
-            _blocks.RemoveRange(firstBlock, _blocks.Count - firstBlock);
+            // The draws' entries give way to their groups'; a compute barrier event's entry (its own event, recorded already) stays.
+            for (int i = _blocks.Count - 1; i >= firstBlock; i--) if (!_blocks[i].barrier) _blocks.RemoveAt(i);
             foreach (IntPtr block in _groupPointers)
                 _blocks.Add(new Block { data = block, frame = Time.frameCount, serial = VpNativeDrawData.SerialOf(block) });
             _drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.GroupPrepareEventId);
@@ -1854,6 +2053,11 @@ namespace Zantetsu.Rendering.Urp
             private GraphicsBuffer _gpuConstants;
             private int _gpuConstantsUsed;
             private readonly Dictionary<VpIndexedIndirectDrawBatch, VpIndexedIndirectDrawBatch.CullOutput> _motionSelections = new();
+            /// <summary>The motion selections this pass keeps (one a batch), for the zero pass to find their compaction sets.</summary>
+            internal void ForEachMotionSelection(Action<VpIndexedIndirectDrawBatch, VpIndexedIndirectDrawBatch.CullOutput> act)
+            {
+                foreach (var pair in _motionSelections) act(pair.Key, pair.Value);
+            }
             private readonly HashSet<VpIndexedIndirectDrawBatch> _motionSelected = new();
             private readonly VpCullConditions _motionConditions = new();
 
@@ -2084,6 +2288,8 @@ namespace Zantetsu.Rendering.Urp
                 int firstBlock = _route._blocks.Count;
                 Rect viewport = data.viewport;
                 float motionFar = _motion ? VpAppSwDistanceExperiment.DistanceFor(_passes.camera) : 0f;
+                bool compacts = _route.CompactsCommands;
+                if (compacts) _route.BeginCompactions();
                 _motionSelected.Clear();
                 if (motionFar > 0f)
                 {
@@ -2195,7 +2401,11 @@ namespace Zantetsu.Rendering.Urp
                             if (!_motionSelections.TryGetValue(issue.batch, out var selection))
                                 _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
                             if (_motionSelected.Add(issue.batch))
+                            {
                                 issue.batch.IssueCull(commands, selection, _motionConditions, _route.SeparateClipDraws && Clips.Count > 0);
+                                // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
+                                _route.NoteSelectionIssued();
+                            }
                             forwardArguments = selection.ForwardArguments; forwardVisible = selection.ForwardVisible;
                         }
                         var bound = new Bound
@@ -2204,6 +2414,13 @@ namespace Zantetsu.Rendering.Urp
                             indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer, shadowMap = shadowMap,
                         };
                         bound.TakeGenerations(issue.batch, issue.buffers);
+                        if (compacts)
+                        {
+                            // Experiment: this run's body entries compacted (the motion's from its own selection), drawn by count.
+                            VpIndexedIndirectDrawBatch.Compaction compaction = motionFar > 0f
+                                ? issue.batch.CompactionOf(_motionSelections[issue.batch], _passes.frame) : issue.batch.CompactionOf(issue.view, _passes.frame);
+                            _route.CompactRun(commands, issue.batch, compaction, forwardArguments, _motion ? 2 : 0, issue.startCommand, issue.commandCount, _passes.frame, ref bound);
+                        }
                         if (_route.IssueOne(commands, entry, issue.material, bound, issue.startCommand, issue.commandCount, viewport, inputs, gpuConstants, ref _gpuConstantsUsed, _passes.frame))
                         {
                             if (_motion) _route.MotionIssued++; else _route.BodiesIssued++;
@@ -2245,7 +2462,10 @@ namespace Zantetsu.Rendering.Urp
                 if (PreparesColour)
                 {
                     if (grouped) _route.PrepareGroupEvents(commands, firstBlock);
-                    for (int i = firstBlock; i < _route._blocks.Count; i++) _passes.colourBlocks.Add(_route._blocks[i]);
+                    // The pass's draws, for the colour pass to record as prepared draws -- not a compute barrier event's
+                    // block, which had its own event here already (icS2, 2026-10-10: issued again as a draw, it was
+                    // refused as unprepared and the refusal halted the compaction).
+                    for (int i = firstBlock; i < _route._blocks.Count; i++) if (!_route._blocks[i].barrier) _passes.colourBlocks.Add(_route._blocks[i]);
                     // Mark Recorded now so the ring and camera sentinel protect both callbacks' shared block.
                     if (!grouped) _route._drawData.RecordPrepared(commands, Plugin.RenderEventFunction, Plugin.PrepareEventId);
                 }
@@ -2255,6 +2475,105 @@ namespace Zantetsu.Rendering.Urp
 
         // Colour preparation ran before opaques. This pass only records prepared native draws into the
         // existing attachments; no compute dispatch, AccessBuffer or texture transition occurs here.
+        /// <summary>
+        /// Experiment (2026-10-10): the first pass of the route in a frame that compacts. For every compaction set the
+        /// frame will use (the view's of each run registered, and the motion selections'), one plugin zero event a
+        /// column: the count slots are zeroed before any compaction of the frame, in the GPU's order (the plugin's own
+        /// barriers), and never depend on a draw having happened -- a frame with no draw, a camera held, a refused
+        /// event or a set coming back after frames of rest leave no count behind (TL review, 2026-10-10). The pass
+        /// records no compute of its own after its events.
+        /// </summary>
+        private sealed class ZeroPass : ScriptableRenderPass
+        {
+            private readonly VpNativeDrawRoute _route;
+            private readonly CameraPasses _passes;
+            private readonly List<VpIndexedIndirectDrawBatch.Compaction> _sets = new List<VpIndexedIndirectDrawBatch.Compaction>(4);
+            private readonly List<int> _setCommands = new List<int>(4);   // the commands in use of each set's batch (the diagnosis's fill)
+            private sealed class Data { public ZeroPass pass; }
+
+            public ZeroPass(VpNativeDrawRoute route, CameraPasses passes)
+            {
+                _route = route; _passes = passes;
+                renderPassEvent = RenderPassEvent.BeforeRendering;
+                profilingSampler = new ProfilingSampler("VP Native Zero Counts");
+            }
+
+            public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
+            {
+                var camera = frameData.Get<UniversalCameraData>();
+                if (!ReferenceEquals(camera.camera, _passes.camera)) return;
+                using (var builder = graph.AddUnsafePass<Data>(passName, out var data, profilingSampler))
+                {
+                    data.pass = this;
+                    builder.AllowPassCulling(false);
+                    builder.SetRenderFunc(static (Data value, UnsafeGraphContext context) => value.pass.Execute(CommandBufferHelpers.GetNativeCommandBuffer(context.cmd)));
+                }
+            }
+
+            private void AddSet(VpIndexedIndirectDrawBatch.Compaction set, int commands)
+            {
+                if (set != null && !_sets.Contains(set)) { _sets.Add(set); _setCommands.Add(commands); }
+            }
+
+            private void Execute(CommandBuffer commands)
+            {
+                if (_route._disposed || !_route.CompactsCommands) return;
+                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (VpCommandCompaction.SnapshotEnabled) VpCommandCompaction.PumpSnapshots(_passes.frame);
+                _route.DropUnrecorded();
+                _sets.Clear(); _setCommands.Clear();
+                foreach (Issue issue in _passes.bodies) if (!issue.clipList) AddSet(issue.batch.CompactionOf(issue.view, _passes.frame), issue.batch.CommandCount);
+                foreach (Issue issue in _passes.casterRuns) if (!issue.clipList) AddSet(issue.batch.CompactionOf(issue.view, _passes.frame), issue.batch.CommandCount);
+                foreach (Issue issue in _passes.motionBodies) if (!issue.clipList) AddSet(issue.batch.CompactionOf(issue.view, _passes.frame), issue.batch.CommandCount);
+                _passes.motion.ForEachMotionSelection((batch, output) => AddSet(batch.CompactionOf(output, _passes.frame), batch.CommandCount));
+                int recorded = 0, fills = 0;
+                for (int s = 0; s < _sets.Count; s++)
+                {
+                    VpIndexedIndirectDrawBatch.Compaction set = _sets[s];
+                    for (int column = 0; column < 3; column++)
+                    {
+                        // Diagnosis (VpCommandCompaction.PoisonEntries): the used range of the column's compacted
+                        // entries filled with zeroes by the same event, before the frame's compactions. A fill that
+                        // cannot be reserved is only not made (the diagnosis is the weaker for that frame, counted).
+                        if (VpCommandCompaction.PoisonEntries && _setCommands[s] > 0)
+                        {
+                            GraphicsBuffer entries = set.Entries(column);
+                            if (_route._drawData.TryBeginZero(_route._pointers.Buffer(entries), 0, (uint)(_setCommands[s] * entries.stride)))
+                            {
+                                IntPtr fill = _route._drawData.Finish(out uint fillSerial);
+                                _route._blocks.Add(new Block { data = fill, frame = _passes.frame, serial = fillSerial, zero = true });
+                                recorded++; fills++;
+                            }
+                            else _route.RingFull++;
+                        }
+
+                        GraphicsBuffer counts = set.Counts(column);
+                        if (!_route._drawData.TryBeginZero(_route._pointers.Buffer(counts), 0, (uint)(VpCommandCompaction.Slots * sizeof(uint))))
+                        {
+                            _route.RingFull++;
+                            _route.LastFailure = "every event data block is still with the plugin (zero event)";
+                            continue;
+                        }
+
+                        IntPtr block = _route._drawData.Finish(out uint serial);
+                        _route._blocks.Add(new Block { data = block, frame = _passes.frame, serial = serial, zero = true });
+                        set.MarkZeroReserved(column, _passes.frame);
+                        recorded++;
+                    }
+                }
+
+                if (recorded > 0)
+                {
+                    _route._drawData.RecordPrepared(block => commands.IssuePluginEventAndData(Plugin.RenderEventFunction, Plugin.ZeroEventId, block));
+                    _route.IndirectCountZeroEvents += recorded - fills;
+                    VpCommandCompaction.ZeroEvents += recorded - fills;
+                    VpCommandCompaction.EntryFills += fills;
+                }
+
+                VpCommandCompaction.NoteRecordTime(_passes.frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+            }
+        }
+
         private sealed class ColourDrawPass : ScriptableRenderPass
         {
             private readonly VpNativeDrawRoute _route;
@@ -2514,6 +2833,8 @@ namespace Zantetsu.Rendering.Urp
                 _route._copiedGpuBlocks.Clear();
                 int firstBlock = _route._blocks.Count;
                 float sliceSelection = VpGpuCullSetup.ShadowSliceSelection ? 1f : 0f;
+                bool compacts = _route.CompactsCommands;
+                if (compacts) _route.BeginCompactions();
                 {
                     for (int i = 0; i < _passes.casterRuns.Count; i++)
                     {
@@ -2567,6 +2888,9 @@ namespace Zantetsu.Rendering.Urp
                                 indexBuffer = issue.buffers.IndexBuffer, vertexBuffer = issue.buffers.VertexBuffer,
                             };
                             bound.TakeGenerations(issue.batch, issue.buffers);
+                            // Experiment: the run's caster entries compacted once, drawn by count into every split.
+                            if (compacts && !VpCommandCompaction.CastersFixed) _route.CompactRun(commands, issue.batch, issue.batch.CompactionOf(issue.view, _passes.frame),
+                                shadowArguments, 1, issue.startCommand, issue.commandCount, _passes.frame, ref bound);
                         }
                         for (int split = 0; split < data.splitCount; split++)
                         {

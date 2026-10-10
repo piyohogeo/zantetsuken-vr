@@ -1101,6 +1101,34 @@ namespace Zantetsu.Rendering
         public bool TryBegin(int pipelineId, IntPtr arguments, int firstCommand, int commandCount, IntPtr indexBuffer, long indexBufferBytes, int indexStride)
             => BeginCore(pipelineId, arguments, firstCommand, commandCount, indexBuffer, indexBufferBytes, indexStride, false);
 
+        /// <summary>
+        /// Experiment (2026-10-10): a resource-free reservation for the plugin's zero event -- <paramref name="bytes"/>
+        /// at <paramref name="offset"/> of <paramref name="buffer"/> zeroed before the frame's compactions.
+        /// </summary>
+        public bool TryBeginZero(IntPtr buffer, uint offset, uint bytes)
+        {
+            if (buffer == IntPtr.Zero || bytes == 0 || bytes % 4 != 0 || offset % 4 != 0) throw new ArgumentException("a zero event needs a buffer and a range of whole words");
+            if (!BeginCore(0, IntPtr.Zero, 0, 0, IntPtr.Zero, 0, 4, false, true)) return false;
+            var header = (Plugin.Draw*)_current;
+            header->argumentBuffer = (void*)buffer;
+            header->argumentOffset = offset;
+            header->commandCount = bytes;
+            AddViewport(new Rect(0f, 0f, 1f, 1f));   // Finish's metadata only; the event sets no viewport
+            return true;
+        }
+
+        /// <summary>
+        /// A resource-free reservation for the plugin's compute barrier event (2026-10-10): recorded after the dispatches
+        /// that wrote a selection's entries and before the compaction that reads them, so that their order is the
+        /// plugin's barrier and not Unity's to keep (two compute dispatches on one buffer were not ordered on Quest 3S).
+        /// </summary>
+        public bool TryBeginBarrier()
+        {
+            if (!BeginCore(0, IntPtr.Zero, 0, 0, IntPtr.Zero, 0, 4, false, true)) return false;
+            AddViewport(new Rect(0f, 0f, 1f, 1f));   // Finish's metadata only; the event sets no viewport
+            return true;
+        }
+
         /// <summary>A resource-free reservation for the Vulkan warm event, never an ordinary draw.</summary>
         public bool TryBeginWarmup(int pipelineId, bool restartRenderPass = false)
         {
@@ -1125,6 +1153,36 @@ namespace Zantetsu.Rendering
             fixed (Plugin.DirectCommand* source = draws)
                 Buffer.MemoryCopy(source, _current + DataOffset, _blockBytes - DataOffset, bytes);
             _dataUsed = bytes;
+            return true;
+        }
+
+        /// <summary>
+        /// Experiment (2026-10-10): an indirect issue whose draw count the GPU wrote -- the compacted run
+        /// [<paramref name="firstCommand"/>, +<paramref name="maxCommandCount"/>) of <paramref name="arguments"/>, drawn
+        /// <c>min(count, maxCommandCount)</c> times by vkCmdDrawIndexedIndirectCount, the count read at
+        /// <paramref name="countOffset"/> of <paramref name="countBuffer"/>. The version-2 header with the
+        /// <see cref="Plugin.DrawMode.IndirectCount"/> extension and its one record; everything else as an ordinary issue.
+        /// </summary>
+        public bool TryBeginIndirectCount(int pipelineId, IntPtr arguments, int firstCommand, int maxCommandCount, IntPtr countBuffer, uint countOffset,
+            IntPtr zeroBuffer, uint zeroOffset, uint zeroBytes, IntPtr indexBuffer, long indexBufferBytes, int indexStride, bool drawFromCopy = false)
+        {
+            if (countBuffer == IntPtr.Zero) throw new ArgumentException("the issue needs the buffer the GPU counted into");
+            // drawFromCopy: zeroBuffer/zeroOffset name the 4-byte slot the plugin copies the count into and the draw reads (no range to fill).
+            if (drawFromCopy && (zeroBuffer == IntPtr.Zero || zeroBytes != 0 || zeroOffset % 4 != 0)) throw new ArgumentException("a draw from the count's copy names the copy's slot, and no range to zero");
+            if (maxCommandCount <= 0) throw new ArgumentOutOfRangeException(nameof(maxCommandCount));
+            if (!BeginCore(pipelineId, arguments, firstCommand, maxCommandCount, indexBuffer, indexBufferBytes, indexStride, false)) return false;
+            var header = (Plugin.Draw*)_current;
+            header->version = Plugin.ExtendedDrawVersion;
+            var extension = (Plugin.DrawExtension*)(_current + sizeof(Plugin.Draw));
+            *extension = new Plugin.DrawExtension { mode = (uint)Plugin.DrawMode.IndirectCount, commandsOffset = (uint)DataOffset, commandsCount = 1 };
+            if (DataOffset + sizeof(Plugin.IndirectCountRecord) > _blockBytes) throw new InvalidOperationException("the count record exceeds the ring block");
+            *(Plugin.IndirectCountRecord*)(_current + DataOffset) = new Plugin.IndirectCountRecord
+            {
+                countBuffer = (void*)countBuffer, countOffset = countOffset,
+                zeroBuffer = (void*)zeroBuffer, zeroOffset = zeroBuffer != IntPtr.Zero ? zeroOffset : 0, zeroBytes = zeroBuffer != IntPtr.Zero ? zeroBytes : 0,
+                reserved = drawFromCopy ? Plugin.CountDrawFromCopy : 0u,
+            };
+            _dataUsed = sizeof(Plugin.IndirectCountRecord);
             return true;
         }
 

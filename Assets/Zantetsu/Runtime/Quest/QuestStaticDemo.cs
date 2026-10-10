@@ -29,6 +29,11 @@ namespace Zantetsu.Quest
             public bool nativeNoClipMotion = true;
             public bool nativeNoClipShadows = true;
             public bool nativeShareGpuConstants = true;
+            public bool nativeIndirectCount = true;    // DESIGN 4.5.10 (D-217): the command compaction is asked for by default; false keeps the fixed draw
+            public bool nativeIndirectCountSelfTest = false; // diagnosis: the wave kernel's self-test with a readback, before the run; a failure keeps the fixed draw
+            public bool nativeIndirectCountVerify = false;   // the experiment's GPU check of every compaction, read back for the log (a check run, not a measurement)
+            public bool nativeIndirectCountDrill = false;    // the experiment's rest-and-resume drill: the camera, the shadows and the motion pass stopped for a few frames in turn (a check run)
+            public int nativeIndirectCountFirstSlot = 0;     // diagnosis (2026-10-10): the count slot a pass's first run takes; 1 draws the scene's one run from countBufferOffset 4 (a check run)
             public bool profiler = false;
             public bool quitWhenDone = false;
             public bool headTracked = true;
@@ -82,6 +87,27 @@ namespace Zantetsu.Quest
             Zantetsu.Rendering.VpNativeDrawPlugin.VulkanShareGpuConstants = _config.nativeShareGpuConstants;
             Debug.Log("QUEST STATIC: noClipColour=" + _config.nativeNoClipColour + " noClipMotion=" + _config.nativeNoClipMotion
                 + " noClipShadows=" + _config.nativeNoClipShadows + " shareGpuConstants=" + _config.nativeShareGpuConstants);
+            Zantetsu.Rendering.VpNativeDrawPlugin.VulkanIndirectCount = _config.nativeIndirectCount;
+            Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled = _config.nativeIndirectCount && _config.nativeIndirectCountVerify;
+            Zantetsu.Rendering.VpCommandCompaction.FirstSlot = _config.nativeIndirectCount ? _config.nativeIndirectCountFirstSlot : 0;
+            Debug.Log("QUEST STATIC: indirectCount=" + _config.nativeIndirectCount + " verify=" + Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled
+                + " firstSlot=" + Zantetsu.Rendering.VpCommandCompaction.FirstSlot);
+            if (_config.nativeIndirectCount && _config.nativeIndirectCountSelfTest)
+            {
+                // Diagnosis only (a readback): does the wave kernel run on this device as written? It decides no draw.
+                bool compacts = Zantetsu.Rendering.VpCommandCompaction.SelfTest(out string selfTest);
+                Debug.Log("QUEST STATIC: " + selfTest);
+                bool ready = Zantetsu.Rendering.VpNativeDrawPlugin.TryLoad(out string pluginFailure) && Zantetsu.Rendering.VpNativeDrawPlugin.IndirectCountReady
+                    && Zantetsu.Rendering.VpNativeDrawPlugin.ZeroEventId != 0;
+                if (!compacts || !ready)
+                {
+                    // Not chosen without its checks: the fixed draw instead, and the run says so (its result is the fixed draw's).
+                    Zantetsu.Rendering.VpNativeDrawPlugin.VulkanIndirectCount = false;
+                    Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled = false;
+                    Debug.LogError("QUEST STATIC: indirectCount asked but NOT taken: self-test " + (compacts ? "passed" : "FAILED") + ", plugin count draw ready " + ready
+                        + (pluginFailure != null ? " (" + pluginFailure + ")" : "") + "; the fixed draw is used");
+                }
+            }
             string pathText = !string.IsNullOrEmpty(_config.pathFile) ? File.ReadAllText(_config.pathFile)
                 : Resources.Load<TextAsset>("Quest3sStaticDemoPath").text;
             if (!SceneDrawComparePath.TryParse(pathText, out var path, out string failure)) throw new InvalidOperationException(failure);
@@ -122,6 +148,7 @@ namespace Zantetsu.Quest
         {
             if (_config == null) return;
             if (!_spaceWarpApplied) _spaceWarpApplied = SpaceWarpFeature.SetSpaceWarp(_config.appSw);
+            if (_config.nativeIndirectCountDrill) StepDrill();
             if (Time.unscaledTime < _nextStatus) return;
             _nextStatus = Time.unscaledTime + 5f;
             _displays.Clear();
@@ -131,6 +158,9 @@ namespace Zantetsu.Quest
                 xr.TryGetDisplayRefreshRate(out float refresh);
                 xr.TryGetAppGPUTimeLastFrame(out float gpu);
                 QuestDisplayRefreshRateFeature.TryReadReported(out float physicalRefresh);
+                if (_config.mode == "vp3c-native") Debug.Log("QUEST STATIC COMPACTION: " + Zantetsu.Rendering.VpCommandCompaction.DescribeRun());
+                if (Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST STATIC: " + Zantetsu.Rendering.VpCommandCompaction.ReadVerification());
+                if (_config.nativeIndirectCountDrill) Debug.Log("QUEST STATIC: " + DescribeDrill());
                 if (_config.mode == "vp3c-native" && Zantetsu.Rendering.VpNativeDrawPlugin.TryLoad(out _)) Debug.Log("QUEST NATIVE: " + Zantetsu.Rendering.VpNativeDrawPlugin.ReadCounters() + "; " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeState());
                 Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
@@ -143,6 +173,99 @@ namespace Zantetsu.Quest
             SpaceWarpFeature.SetAppSpacePosition(_appSpaceOrigin.position);
             SpaceWarpFeature.SetAppSpaceRotation(_appSpaceOrigin.rotation);
         }
-        private void OnDestroy() => RenderPipelineManager.beginCameraRendering -= BeforeCamera;
+        // ---- the rest-and-resume drill of the indirect-count experiment (2026-10-10) --------------------------------
+        // In the existing scene and path: every 13 drawn frames one thing is stopped for 1, 2, 3, 4, 5, 6, 7, 9 or 13
+        // frames and started again -- the camera (no pass of the route runs), then the main light's shadows (no caster
+        // pass), then AppSW (no motion pass) -- so that a compaction set of the four comes back after every length of
+        // rest, with and without a zeroing in between. What it proves is read from the GPU check's tallies and the
+        // route's counters; the picture blinks on purpose.
+        private static readonly int[] k_drillLengths = { 1, 2, 3, 4, 5, 6, 7, 9, 13 };
+        private static readonly string[] k_drillKinds = { "camera", "shadows", "motion" };
+        private readonly int[] _drillPauses = new int[3];
+        private readonly int[] _drillPausedFrames = new int[3];
+        private int _drillStep, _drillFramesLeft, _drillKind, _drillLength;
+        private bool _drillPaused;
+        private Light _drillSun;
+        private LightShadows _drillSunShadows;
+
+        private void StepDrill()
+        {
+            bool drawing = _runner != null && (_runner.Phase == SandboxDrawComparePlayerCheck.Phase.WarmingUp || _runner.Phase == SandboxDrawComparePlayerCheck.Phase.Measuring);
+            if (!drawing)
+            {
+                if (_drillPaused) EndDrillPause();
+                return;
+            }
+
+            if (_drillFramesLeft > 0)
+            {
+                _drillFramesLeft--;
+                return;
+            }
+
+            if (_drillPaused)
+            {
+                EndDrillPause();
+                _drillFramesLeft = 12;
+                return;
+            }
+
+            _drillKind = (_drillStep / k_drillLengths.Length) % 3;
+            _drillLength = k_drillLengths[_drillStep % k_drillLengths.Length];
+            _drillStep++;
+            switch (_drillKind)
+            {
+                case 0:
+                    _camera.enabled = false;
+                    break;
+                case 1:
+                    if (_drillSun == null)
+                    {
+                        _drillSun = RenderSettings.sun;
+                        if (_drillSun == null)
+                            foreach (Light light in FindObjectsByType<Light>(FindObjectsSortMode.None))
+                                if (light.type == LightType.Directional && light.shadows != LightShadows.None) { _drillSun = light; break; }
+                        if (_drillSun != null) _drillSunShadows = _drillSun.shadows;
+                    }
+
+                    if (_drillSun != null) _drillSun.shadows = LightShadows.None;
+                    break;
+                default:
+                    SpaceWarpFeature.SetSpaceWarp(false);
+                    break;
+            }
+
+            _drillPaused = true;
+            _drillFramesLeft = _drillLength - 1;
+        }
+
+        private void EndDrillPause()
+        {
+            switch (_drillKind)
+            {
+                case 0: _camera.enabled = true; break;
+                case 1: if (_drillSun != null) _drillSun.shadows = _drillSunShadows; break;
+                default: SpaceWarpFeature.SetSpaceWarp(_config.appSw); break;
+            }
+
+            _drillPauses[_drillKind]++;
+            _drillPausedFrames[_drillKind] += _drillLength;
+            _drillPaused = false;
+        }
+
+        private string DescribeDrill()
+        {
+            return "drill: pauses done camera " + _drillPauses[0] + " (" + _drillPausedFrames[0] + " frames), shadows " + _drillPauses[1] + " (" + _drillPausedFrames[1]
+                + " frames, light " + (_drillSun != null ? _drillSun.name : "not found yet") + "), motion " + _drillPauses[2] + " (" + _drillPausedFrames[2]
+                + " frames); lengths 1,2,3,4,5,6,7,9,13 frames in turn, 13 frames drawn between; frame " + Time.frameCount;
+        }
+
+        private void OnDestroy()
+        {
+            if (_config != null && _config.nativeIndirectCountDrill) Debug.Log("QUEST STATIC: at the end, " + DescribeDrill());
+            if (_config != null && _config.mode == "vp3c-native") Debug.Log("QUEST STATIC COMPACTION: at the end, " + Zantetsu.Rendering.VpCommandCompaction.DescribeRun());
+            RenderPipelineManager.beginCameraRendering -= BeforeCamera;
+            if (Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST STATIC: at the end, " + Zantetsu.Rendering.VpCommandCompaction.ReadVerification());
+        }
     }
 }

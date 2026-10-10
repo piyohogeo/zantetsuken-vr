@@ -173,7 +173,30 @@ enum ZvnDrawMode
     ZvnDrawMode_Indirect = 0,
     ZvnDrawMode_Direct = 1,
     ZvnDrawMode_Group = 2,
+    ZvnDrawMode_IndirectCount = 3,   // experiment (2026-10-10): vkCmdDrawIndexedIndirectCount; commandsOffset -> one ZvnIndirectCount
 };
+
+// The one record of an IndirectCount draw: the buffer the GPU counted the compacted commands into (a Unity
+// GraphicsBuffer's native pointer, as the argument buffer is given) and the byte offset of the count. The draw's
+// commandCount is the most the count may be (the run's length); the count itself is never read by the CPU.
+// zeroBuffer (null for none): a range the plugin fills with zeroes in this draw's preparation, outside the render
+// pass, with its own barriers -- the count slots the previous frame's draw read, so that their next compaction's
+// atomics start from zero whatever Unity orders between its own dispatches.
+typedef struct ZvnIndirectCount
+{
+    void* countBuffer;
+    uint32_t countOffset;
+    uint32_t zeroBytes;        // 0 with no zeroBuffer; a multiple of 4
+    void* zeroBuffer;
+    uint32_t zeroOffset;       // a multiple of 4
+    uint32_t reserved;         // 0, or ZVN_COUNT_DRAW_FROM_COPY
+} ZvnIndirectCount;
+// reserved = 1: zeroBuffer/zeroOffset name a 4-byte slot (zeroBytes 0) the plugin COPIES the count into in this draw's
+// preparation (a transfer, between its own barriers), and the draw reads its count from that slot, not from
+// countBuffer. On Quest 3S a count draw recorded right after the compute that wrote its count read the count's reset
+// value in some frames (2026-10-10: the cut objects' shadows gone for a frame), whatever barrier stood between; the
+// copy's source read and the copy's destination as the indirect count were both seen to hold.
+#define ZVN_COUNT_DRAW_FROM_COPY 1u
 
 typedef struct ZvnDrawExtension
 {

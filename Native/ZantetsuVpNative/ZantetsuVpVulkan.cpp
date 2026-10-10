@@ -21,6 +21,7 @@ static_assert(sizeof(ZvnBinding)==84 && sizeof(ZvnPipelineDesc)==168, "pipeline 
 static_assert(sizeof(ZvnResource)==48 && sizeof(ZvnConstants)==32, "binding ABI differs from C#");
 static_assert(sizeof(ZvnDraw)==240 && sizeof(ZvnCounters)==80, "event ABI differs from C#");
 static_assert(sizeof(ZvnDrawExtension)==16 && sizeof(ZvnDirectCommand)==20, "Vulkan draw extension ABI differs from C#");
+static_assert(sizeof(ZvnIndirectCount)==32, "indirect count record ABI differs from C#");
 
 namespace {
 IUnityGraphics* graphics = nullptr;
@@ -34,9 +35,41 @@ uint32_t regionCount = 8, regionBytes = 262144, regionDescriptors = 4096;
 bool available = false, featuresObserved = false, enabledMulti = false, enabledFirst = false, hold = false;
 PFN_vkGetInstanceProcAddr originalGipa = nullptr;
 PFN_vkCreateDevice originalCreateDevice = nullptr;
-int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6, WarmPipelineEvent = 7;
+int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6, WarmPipelineEvent = 7, ZeroEvent = 8, BarrierEvent = 9;
 std::vector<ZvnDraw*> held;
 VkPhysicalDeviceProperties properties{};
+// Experiment (2026-10-10): the draw by the GPU's count of compacted commands (vkCmdDrawIndexedIndirectCount).
+// Support is what the physical device lists; enablement is what Unity's device creation carried -- the extension
+// among its names, or drawIndirectCount in a Vulkan 1.2 features chain -- or else the one extension this intercept
+// adds when the device supports it. The two are kept apart and both are in the state text and the log.
+bool indirectCountSupported=false, indirectCountEnabledByUnity=false, indirectCountEnabled=false, indirectCountAddedHere=false, indirectCountReady=false;
+std::string deviceNote;
+PFN_vkCmdDrawIndexedIndirectCountKHR drawIndexedIndirectCount=nullptr;
+uint64_t countDrawsRecorded=0, countSlotsZeroed=0, countDrawsRefusedUnzeroed=0;
+// The compaction's sets rotate by frame in a ring of four (VpIndexedIndirectDrawBatch.CompactionRing): frame F writes
+// set F mod 4, last written by frame F-4. Zeroing that set's counts (and compacting into its entries) is safe only when
+// the GPU has finished frame F-4 -- Unity's safeFrameNumber says so -- else the zero event is refused and the managed
+// side draws fixed from then on (2026-10-10, TL: "four frames" is a condition to check, not to assume). The most frames
+// seen in flight (submitted, not yet known finished, the current one excluded) is kept for the state text.
+constexpr uint64_t ZvnCompactionRing=4;
+bool RingReuseUnsafe(uint64_t currentFrame,uint64_t safeFrame){return currentFrame>safeFrame+ZvnCompactionRing;}
+uint64_t framesInFlightMax=0, zeroRefusedInFlight=0;
+uint64_t computeBarriers=0, countSnapshots=0, countCopies=0;
+// The count buffer ranges whose zeroing was recorded, by Unity frame number: a count draw is prepared only when its
+// slot lies in a range zeroed in the same frame (TL review, 2026-10-10: a zero event refused -- no recording state,
+// say -- while the draw's own event records would otherwise draw from a count that was never zeroed). Nothing here is
+// dereferenced; the managed pointer is the key the draw gives again.
+struct ZeroedRange { uint64_t frame; const void* buffer; uint32_t offset, bytes; };
+std::vector<ZeroedRange> zeroedRanges;
+void NoteZeroed(uint64_t frame,const void* buffer,uint32_t offset,uint32_t bytes) {
+    for(auto it=zeroedRanges.begin();it!=zeroedRanges.end();) { if(it->frame+8<frame)it=zeroedRanges.erase(it);else ++it; }
+    zeroedRanges.push_back({frame,buffer,offset,bytes});
+}
+bool CountSlotZeroed(uint64_t frame,const void* buffer,uint32_t offset) {
+    for(const auto& r:zeroedRanges) if(r.frame==frame && r.buffer==buffer && offset>=r.offset && uint64_t(offset)+4<=uint64_t(r.offset)+r.bytes)return true;
+    return false;
+}
+std::vector<const char*> extendedExtensionNames;
 
 void Fail(const char* text) { error = text; __android_log_print(ANDROID_LOG_ERROR, "ZantetsuVpVulkan", "%s", text); }
 bool Ok(VkResult result, const char* action) {
@@ -69,10 +102,57 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkD
         if (input->pEnabledFeatures) info.pEnabledFeatures = &core;
         else { features2 = *reinterpret_cast<const VkPhysicalDeviceFeatures2*>(chain);features2.features = core;info.pNext = &features2; }
     }
+    // Experiment: VK_KHR_draw_indirect_count -- listed by the physical device? carried by Unity's creation? else added.
+    uint32_t extensionCount=0; std::vector<VkExtensionProperties> extensions;
+    if (vkEnumerateDeviceExtensionProperties(physical,nullptr,&extensionCount,nullptr)==VK_SUCCESS && extensionCount) {
+        extensions.resize(extensionCount);
+        if (vkEnumerateDeviceExtensionProperties(physical,nullptr,&extensionCount,extensions.data())!=VK_SUCCESS) extensions.clear();
+    }
+    indirectCountSupported=false;
+    for (const auto& e : extensions) if (!std::strcmp(e.extensionName,VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)) indirectCountSupported=true;
+    indirectCountEnabledByUnity=false;
+    for (uint32_t i=0;i<input->enabledExtensionCount;i++)
+        if (input->ppEnabledExtensionNames[i] && !std::strcmp(input->ppEnabledExtensionNames[i],VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)) indirectCountEnabledByUnity=true;
+    bool vulkan12InChain=false, vulkan12DrawIndirectCount=false, vulkan11InChain=false, shaderDrawParameters=false;
+    std::string chainTypes;
+    for (auto* item = chain; item; item = item->pNext) {
+        chainTypes += std::to_string(int(item->sType)); chainTypes += ' ';
+        if (item->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+            vulkan12InChain=true; vulkan12DrawIndirectCount=reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(item)->drawIndirectCount;
+        } else if (item->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES) {
+            vulkan11InChain=true; shaderDrawParameters=reinterpret_cast<const VkPhysicalDeviceVulkan11Features*>(item)->shaderDrawParameters;
+        } else if (item->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES) {
+            shaderDrawParameters=reinterpret_cast<const VkPhysicalDeviceShaderDrawParametersFeatures*>(item)->shaderDrawParameters;
+        }
+    }
+    indirectCountEnabled = indirectCountEnabledByUnity || vulkan12DrawIndirectCount;
+    indirectCountAddedHere=false;
+    if (indirectCountSupported && !indirectCountEnabled) {
+        extendedExtensionNames.assign(input->ppEnabledExtensionNames, input->ppEnabledExtensionNames + input->enabledExtensionCount);
+        extendedExtensionNames.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+        info.enabledExtensionCount=uint32_t(extendedExtensionNames.size()); info.ppEnabledExtensionNames=extendedExtensionNames.data();
+        indirectCountAddedHere=true;
+    }
     VkResult result = originalCreateDevice(physical, &info, allocator, device);
+    if (result != VK_SUCCESS && indirectCountAddedHere) {
+        // The addition alone must never cost Unity its device: create it as Unity asked and go without the count draw.
+        info.enabledExtensionCount=input->enabledExtensionCount; info.ppEnabledExtensionNames=input->ppEnabledExtensionNames;
+        indirectCountAddedHere=false;
+        result = originalCreateDevice(physical, &info, allocator, device);
+    }
     if (result == VK_SUCCESS) {
         featuresObserved = true; enabledMulti = core.multiDrawIndirect; enabledFirst = core.drawIndirectFirstInstance;
+        indirectCountEnabled = indirectCountEnabledByUnity || vulkan12DrawIndirectCount || indirectCountAddedHere;
+        VkPhysicalDeviceProperties physicalProperties{}; vkGetPhysicalDeviceProperties(physical,&physicalProperties);
+        char text[512];
+        std::snprintf(text,sizeof text,"indirectCount: supported=%d enabledByUnity(ext)=%d vk12chain=%d vk12.drawIndirectCount=%d addedHere=%d enabled=%d; "
+            "shaderDrawParameters(chain)=%d vk11chain=%d; device extensions asked=%u, chain sTypes=[%s], physical apiVersion=%u.%u.%u",
+            indirectCountSupported,indirectCountEnabledByUnity,vulkan12InChain,vulkan12DrawIndirectCount,indirectCountAddedHere,indirectCountEnabled,
+            shaderDrawParameters,vulkan11InChain,input->enabledExtensionCount,chainTypes.c_str(),
+            VK_API_VERSION_MAJOR(physicalProperties.apiVersion),VK_API_VERSION_MINOR(physicalProperties.apiVersion),VK_API_VERSION_PATCH(physicalProperties.apiVersion));
+        deviceNote=text;
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","device multiDrawIndirect=%d firstInstance=%d",enabledMulti,enabledFirst);
+        __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","%s",text);
     }
     return result;
 }
@@ -139,6 +219,7 @@ struct PreparedDraw {
     UnityVulkanBuffer arguments{}, indices{};
     std::vector<VkDescriptorSet> sets;
     std::vector<ZvnDirectCommand> directCommands;
+    UnityVulkanBuffer count{}; uint32_t countOffset=0;   // the IndirectCount draw's count, accessed with the arguments
 };
 std::map<std::pair<ZvnDraw*,uint32_t>,PreparedDraw> preparedDraws;
 struct PreparedGroup {
@@ -362,14 +443,30 @@ const ZvnDrawExtension* Extension(const ZvnDraw* draw) {
 bool Direct(const ZvnDraw* draw) {
     return draw->version==ZVN_VULKAN_DRAW_VERSION && Extension(draw)->mode==ZvnDrawMode_Direct;
 }
+bool IndirectCountMode(const ZvnDraw* draw) {
+    return draw->version==ZVN_VULKAN_DRAW_VERSION && Extension(draw)->mode==ZvnDrawMode_IndirectCount;
+}
+const ZvnIndirectCount* IndirectCount(const ZvnDraw* draw) {
+    return reinterpret_cast<const ZvnIndirectCount*>(reinterpret_cast<const char*>(draw)+Extension(draw)->commandsOffset);
+}
 ZvnResult ValidateDraw(const ZvnDraw* draw) {
     if(draw->version!=ZVN_CONTRACT_VERSION && draw->version!=ZVN_VULKAN_DRAW_VERSION)return ZvnResult_BadVersion;
     if(draw->totalBytes<sizeof(ZvnDraw))return ZvnResult_BadResource;
     if(draw->version==ZVN_VULKAN_DRAW_VERSION) {
         if(draw->totalBytes<sizeof(ZvnDraw)+sizeof(ZvnDrawExtension))return ZvnResult_BadResource;
         const auto* extension=Extension(draw);
-        if(extension->reserved || extension->mode>ZvnDrawMode_Direct)return ZvnResult_BadResource;
-        if(extension->mode==ZvnDrawMode_Direct) {
+        if(extension->reserved || extension->mode==ZvnDrawMode_Group || extension->mode>ZvnDrawMode_IndirectCount)return ZvnResult_BadResource;
+        if(extension->mode==ZvnDrawMode_IndirectCount) {
+            // The one count record, in the block past the headers; the run itself is checked as an indirect draw's below.
+            if(extension->commandsCount!=1 || extension->commandsOffset<sizeof(ZvnDraw)+sizeof(ZvnDrawExtension) || extension->commandsOffset%8 ||
+               !Range(extension->commandsOffset,1,sizeof(ZvnIndirectCount),draw->totalBytes))return ZvnResult_BadResource;
+            const auto* record=IndirectCount(draw);
+            if(!record->countBuffer || record->reserved>ZVN_COUNT_DRAW_FROM_COPY || record->countOffset%4)return ZvnResult_BadResource;
+            if(record->reserved==ZVN_COUNT_DRAW_FROM_COPY && (!record->zeroBuffer || record->zeroBytes))return ZvnResult_BadResource;
+            // zeroBuffer with zeroBytes 0: a diagnosis's snapshot slot (the count copied there, 4 bytes); with bytes: a fill (unused now).
+            if(record->zeroBuffer ? (record->zeroBytes%4 || record->zeroOffset%4) : (record->zeroBytes || record->zeroOffset))return ZvnResult_BadResource;
+            if(!indirectCountReady)return ZvnResult_NotAvailable;
+        } else if(extension->mode==ZvnDrawMode_Direct) {
             if(!extension->commandsCount || extension->commandsCount>ZVN_MAX_DIRECT_COMMANDS ||
                extension->commandsOffset<sizeof(ZvnDraw)+sizeof(ZvnDrawExtension) || extension->commandsOffset%4 ||
                !Range(extension->commandsOffset,extension->commandsCount,sizeof(ZvnDirectCommand),draw->totalBytes))return ZvnResult_BadResource;
@@ -438,6 +535,66 @@ bool Prepare(ZvnDraw* draw,Pipeline& pipeline,PreparedDraw& prepared) {
        !Buffer(draw->indexBuffer,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_INDEX_READ_BIT,indices) ||
        draw->indexBufferBytes>indices.sizeInBytes){Fail("invalid indirect or index buffer");prepared.result=ZvnResult_BadResource;return false;}
     timing.Stage("AccessArgumentsIndex");
+    if(IndirectCountMode(draw)) {
+        // The count the GPU wrote: accessed as the arguments are, for the same indirect read, before the pass.
+        const auto* record=IndirectCount(draw);
+        // Only a slot whose zeroing this plugin recorded in this very frame: a zero event refused or never run leaves
+        // the count draw refused too (the managed side draws fixed from the next frame on).
+        UnityVulkanRecordingState zeroCheck{};
+        if(!unity->CommandRecordingState(&zeroCheck,kUnityVulkanGraphicsQueueAccess_DontCare) || !CountSlotZeroed(zeroCheck.currentFrameNumber,record->countBuffer,record->countOffset)) {
+            countDrawsRefusedUnzeroed++;Fail("count slot not zeroed in this frame");prepared.result=ZvnResult_BadResource;return false;
+        }
+        // fromCopy: the draw reads a transfer copy of the count (see ZVN_COUNT_DRAW_FROM_COPY); the compute-written
+        // buffer is then read by the copy alone.
+        const bool fromCopy=record->reserved==ZVN_COUNT_DRAW_FROM_COPY;
+        bool countCopied=false;
+        if(!Buffer(record->countBuffer,fromCopy?VK_PIPELINE_STAGE_TRANSFER_BIT:VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+               fromCopy?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_INDIRECT_COMMAND_READ_BIT,prepared.count) ||
+           uint64_t(record->countOffset)+4>prepared.count.sizeInBytes){Fail("invalid indirect count buffer");prepared.result=ZvnResult_BadResource;return false;}
+        prepared.countOffset=record->countOffset;
+        UnityVulkanBuffer zero{};
+        if(record->zeroBuffer && (!Buffer(record->zeroBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,zero) ||
+           uint64_t(record->zeroOffset)+std::max<uint32_t>(record->zeroBytes,4)>zero.sizeInBytes)){Fail("invalid count buffer to zero or snapshot");prepared.result=ZvnResult_BadResource;return false;}
+        // Beside Unity's own barriers (AccessBuffer above): the compaction's compute writes of this very command
+        // buffer must be visible to the indirect reader and to the vertex stage that reads the entries. One memory
+        // barrier, no wait, no submission of its own. Then the previous frame's count slots are zeroed here, outside
+        // the render pass: after every reader of theirs (an execution barrier) and before any compute that adds to them.
+        UnityVulkanRecordingState recording{};
+        if(unity->CommandRecordingState(&recording,kUnityVulkanGraphicsQueueAccess_DontCare) && recording.commandBuffer) {
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(recording.commandBuffer,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+            if(record->zeroBuffer && record->zeroBytes==0) {
+                // Diagnosis (2026-10-10): the count as this draw will read it -- after the same barrier -- copied to the
+                // managed snapshot slot, which the managed side reads back for the record. Nothing of a draw depends on it.
+                VkBufferCopy copy{prepared.countOffset,record->zeroOffset,4};
+                vkCmdCopyBuffer(recording.commandBuffer,prepared.count.buffer,zero.buffer,1,&copy);
+                if(fromCopy) {
+                    // The copy's write made visible to the indirect reader: the plugin's own barrier beside Unity's below.
+                    VkMemoryBarrier copied{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                    copied.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;copied.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+                    vkCmdPipelineBarrier(recording.commandBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&copied,0,nullptr,0,nullptr);
+                    countCopied=true;
+                } else countSnapshots++;
+            } else if(record->zeroBuffer) {
+                VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                before.srcAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;before.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+                vkCmdPipelineBarrier(recording.commandBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&before,0,nullptr,0,nullptr);
+                vkCmdFillBuffer(recording.commandBuffer,zero.buffer,record->zeroOffset,record->zeroBytes,0u);
+                VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                after.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;after.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+                vkCmdPipelineBarrier(recording.commandBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&after,0,nullptr,0,nullptr);
+                countSlotsZeroed++;
+            }
+        }
+        if(fromCopy) {
+            // The draw's count is the copy: no copy recorded (no command buffer), no draw.
+            if(!countCopied || !Buffer(record->zeroBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,VK_ACCESS_INDIRECT_COMMAND_READ_BIT,prepared.count)) {
+                Fail("the count's copy was not recorded");prepared.result=ZvnResult_NoCommandList;return false;
+            }
+            prepared.countOffset=record->zeroOffset;countCopies++;
+        }
+    }
     if(direct) {
         const auto* extension=Extension(draw);
         const auto* commands=reinterpret_cast<const ZvnDirectCommand*>(reinterpret_cast<const char*>(draw)+extension->commandsOffset);
@@ -559,6 +716,12 @@ bool Record(ZvnDraw* draw,Pipeline& pipeline,const PreparedDraw& prepared,bool c
                 vkCmdDrawIndexed(state.commandBuffer,command.indexCount,command.instanceCount,command.firstIndex,command.vertexOffset,command.firstInstance);
                 counters.drawsRecorded++;counters.commandsRecorded++;
             }
+        } else if(IndirectCountMode(draw)) {
+            // Experiment: the compacted run drawn as many times as the GPU counted, at most the run's length (and the
+            // device's limit). How many commands that covered is the GPU's knowledge alone: not tallied here.
+            drawIndexedIndirectCount(state.commandBuffer,arguments.buffer,uint64_t(draw->argumentOffset)+4,
+                prepared.count.buffer,prepared.countOffset,std::min(limit,draw->commandCount),24);
+            counters.drawsRecorded++;countDrawsRecorded++;
         } else for(uint32_t start=0;start<draw->commandCount;) {
             uint32_t count=std::min(limit,draw->commandCount-start);
             vkCmdDrawIndexedIndirect(state.commandBuffer,arguments.buffer,uint64_t(draw->argumentOffset)+uint64_t(start)*24+4,count,24);
@@ -637,10 +800,63 @@ void WarmPipeline(ZvnDraw* draw) {
     if(variant)pipeline.lastFrame=state.currentFrameNumber;
     Consume(draw,variant?ZvnResult_Recorded:ZvnResult_NoPipeline);
 }
+// Experiment (2026-10-10): zeroes a range of a count buffer -- this frame's count slots, before the frame's compaction
+// dispatches, in a pass of its own (never after a draw, which a frame may not have). Resource-free version-1 header:
+// argumentBuffer the buffer, argumentOffset the byte offset, commandCount the bytes. Outside the render pass, a
+// transfer fill between two barriers of its own: after every earlier reader or writer of the slots, before any
+// compute that adds to them or any indirect reader. No wait, no submission.
+void ZeroCounts(ZvnDraw* draw) {
+    if(draw->version!=ZVN_CONTRACT_VERSION){Consume(draw,ZvnResult_BadVersion);return;}
+    if(draw->totalBytes<sizeof(ZvnDraw) || draw->resourceCount || draw->constantsCount || !draw->argumentBuffer || draw->indexBuffer ||
+       !draw->commandCount || draw->commandCount%4 || draw->argumentOffset%4){Consume(draw,ZvnResult_BadResource);return;}
+    if(!available){Consume(draw,ZvnResult_NotAvailable);return;}
+    if(!unity || !instance.device){Consume(draw,ZvnResult_NoCommandList);return;}
+    unity->EnsureOutsideRenderPass();
+    UnityVulkanBuffer zero{};
+    if(!Buffer(draw->argumentBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,zero) ||
+       uint64_t(draw->argumentOffset)+draw->commandCount>zero.sizeInBytes){Fail("invalid count buffer to zero");Refuse(draw,ZvnResult_BadResource);return;}
+    UnityVulkanRecordingState state{};
+    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) || !state.commandBuffer){Refuse(draw,ZvnResult_NoCommandList);return;}
+    uint64_t inFlight=state.currentFrameNumber>state.safeFrameNumber?state.currentFrameNumber-state.safeFrameNumber-1:0;
+    if(inFlight>framesInFlightMax)framesInFlightMax=inFlight;
+    if(RingReuseUnsafe(state.currentFrameNumber,state.safeFrameNumber)){zeroRefusedInFlight++;Fail("compaction set still in flight (frame - 4 past the safe frame): zero event refused");Refuse(draw,ZvnResult_BadResource);return;}
+    VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    before.srcAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;before.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(state.commandBuffer,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&before,0,nullptr,0,nullptr);
+    vkCmdFillBuffer(state.commandBuffer,zero.buffer,draw->argumentOffset,draw->commandCount,0u);
+    VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    after.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;after.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    vkCmdPipelineBarrier(state.commandBuffer,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,1,&after,0,nullptr,0,nullptr);
+    currentFrame=state.currentFrameNumber;countSlotsZeroed++;
+    NoteZeroed(state.currentFrameNumber,draw->argumentBuffer,draw->argumentOffset,draw->commandCount);
+    Consume(draw,ZvnResult_Recorded);
+}
+// The compute barrier event (2026-10-10): a resource-free header (as the warm event's, no pipeline) recorded between the
+// compute dispatches that wrote a selection's entries and the compaction dispatch that reads them. Unity put no barrier
+// between two compute dispatches on one buffer on Quest 3S (APK 2's reset against the atomics; the city walk's motion
+// selection against its compaction, icW1/icW3 against icW4), so the order is made here: one global memory barrier,
+// compute writes made visible to compute, indirect and vertex reads. Outside the render pass; no wait, no submission.
+void ComputeBarrier(ZvnDraw* draw) {
+    if(draw->version!=ZVN_CONTRACT_VERSION){Consume(draw,ZvnResult_BadVersion);return;}
+    if(draw->totalBytes<sizeof(ZvnDraw) || draw->resourceCount || draw->constantsCount || draw->commandCount ||
+       draw->argumentBuffer || draw->indexBuffer || draw->argumentOffset){Consume(draw,ZvnResult_BadResource);return;}
+    if(!available){Consume(draw,ZvnResult_NotAvailable);return;}
+    if(!unity || !instance.device){Consume(draw,ZvnResult_NoCommandList);return;}
+    unity->EnsureOutsideRenderPass();
+    UnityVulkanRecordingState state{};
+    if(!unity->CommandRecordingState(&state,kUnityVulkanGraphicsQueueAccess_DontCare) || !state.commandBuffer){Refuse(draw,ZvnResult_NoCommandList);return;}
+    VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    vkCmdPipelineBarrier(state.commandBuffer,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    computeBarriers++;
+    Consume(draw,ZvnResult_Recorded);
+}
 void UNITY_INTERFACE_API Event(int id,void* data) {
     std::lock_guard<std::mutex> lock(gate);auto* draw=static_cast<ZvnDraw*>(data);if(!draw)return;
     if(id==SentinelEvent){counters.sentinelsRun++;Consume(draw,ZvnResult_Recorded);return;}
     if(id==WarmPipelineEvent){WarmPipeline(draw);return;}
+    if(id==ZeroEvent){ZeroCounts(draw);return;}
+    if(id==BarrierEvent){ComputeBarrier(draw);return;}
     if(id==GroupPrepareEvent || id==GroupPreparedEvent){GroupEvent(id,draw);return;}
     if(id!=DrawEvent && id!=PrepareEvent && id!=PreparedDrawEvent)return;
     const auto key=std::make_pair(draw,draw->serial);
@@ -668,6 +884,24 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         instance=unity->Instance();if(!instance.device || !instance.physicalDevice)return;vkGetPhysicalDeviceProperties(instance.physicalDevice,&properties);
         available=instance.device && featuresObserved && enabledMulti && enabledFirst;
         if(!available)Fail("Vulkan plugin must preload before device creation; multiDrawIndirect and firstInstance must be enabled");
+        // Experiment: the count draw's entry point, through the loader Unity gave; and the subgroup properties, for the record.
+        drawIndexedIndirectCount=nullptr;
+        auto getDeviceProcAddr=instance.getInstanceProcAddr?reinterpret_cast<PFN_vkGetDeviceProcAddr>(instance.getInstanceProcAddr(instance.instance,"vkGetDeviceProcAddr")):nullptr;
+        if(getDeviceProcAddr && indirectCountEnabled) {
+            drawIndexedIndirectCount=reinterpret_cast<PFN_vkCmdDrawIndexedIndirectCountKHR>(getDeviceProcAddr(instance.device,"vkCmdDrawIndexedIndirectCountKHR"));
+            if(!drawIndexedIndirectCount)drawIndexedIndirectCount=reinterpret_cast<PFN_vkCmdDrawIndexedIndirectCountKHR>(getDeviceProcAddr(instance.device,"vkCmdDrawIndexedIndirectCount"));
+        }
+        indirectCountReady=available && indirectCountEnabled && drawIndexedIndirectCount!=nullptr;
+        VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        auto getProperties2=instance.getInstanceProcAddr?reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(instance.getInstanceProcAddr(instance.instance,"vkGetPhysicalDeviceProperties2")):nullptr;
+        if(getProperties2){VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};properties2.pNext=&subgroup;getProperties2(instance.physicalDevice,&properties2);}
+        {
+            char text[256];
+            std::snprintf(text,sizeof text,"; countDrawReady=%d entryPoint=%d subgroup(size=%u ops=0x%x stages=0x%x %s)",indirectCountReady,drawIndexedIndirectCount!=nullptr,
+                subgroup.subgroupSize,unsigned(subgroup.supportedOperations),unsigned(subgroup.supportedStages),getProperties2?"queried":"properties2 unavailable");
+            deviceNote+=text;
+            __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","%s",text);
+        }
         UnityVulkanPluginEventConfig config{kUnityVulkanRenderPass_EnsureInside,kUnityVulkanGraphicsQueueAccess_DontCare,
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
         unity->ConfigureEvent(PreparedDrawEvent,&config);
@@ -675,6 +909,8 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         UnityVulkanPluginEventConfig warmConfig{kUnityVulkanRenderPass_DontCare,kUnityVulkanGraphicsQueueAccess_DontCare,
             kUnityVulkanEventConfigFlag_EnsurePreviousFrameSubmission|kUnityVulkanEventConfigFlag_ModifiesCommandBuffersState};
         unity->ConfigureEvent(WarmPipelineEvent,&warmConfig);
+        unity->ConfigureEvent(ZeroEvent,&warmConfig);
+        unity->ConfigureEvent(BarrierEvent,&warmConfig);
         // The combined path prepares resources before it enters a pass. Entering in the precondition
         // would create an empty pass which Prepare immediately ends again.
         config.renderPassPrecondition=kUnityVulkanRenderPass_DontCare;
@@ -700,8 +936,8 @@ void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     graphics=interfaces->Get<IUnityGraphics>();unity=interfaces->Get<IUnityGraphicsVulkanV2>();
     if(!graphics || !unity){Fail("Unity Vulkan V2 interface missing");return;}
     unity->AddInterceptInitialization(Intercept,nullptr,0);
-    DrawEvent = graphics->ReserveEventIDRange(7);
-    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;GroupPrepareEvent = DrawEvent + 4;GroupPreparedEvent = DrawEvent + 5;WarmPipelineEvent = DrawEvent + 6;
+    DrawEvent = graphics->ReserveEventIDRange(9);
+    SentinelEvent = DrawEvent + 1;PrepareEvent = DrawEvent + 2;PreparedDrawEvent = DrawEvent + 3;GroupPrepareEvent = DrawEvent + 4;GroupPreparedEvent = DrawEvent + 5;WarmPipelineEvent = DrawEvent + 6;ZeroEvent = DrawEvent + 7;BarrierEvent = DrawEvent + 8;
     graphics->RegisterDeviceEventCallback(Device);
     if(graphics->GetRenderer()==kUnityGfxRendererVulkan)Device(kUnityGfxDeviceEventInitialize);
 }
@@ -713,7 +949,10 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnContractVersion(){return ZVN_C
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIsAvailable(){std::lock_guard<std::mutex> lock(gate);return available;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDescribeState(char* out,int bytes) {
     std::lock_guard<std::mutex> lock(gate);
-    return Text(std::string("Vulkan indexed multi-draw; available=")+(available?"true":"false")+"; maxDrawIndirectCount="+std::to_string(properties.limits.maxDrawIndirectCount)+"; "+error,out,bytes);
+    return Text(std::string("Vulkan indexed multi-draw; available=")+(available?"true":"false")+"; maxDrawIndirectCount="+std::to_string(properties.limits.maxDrawIndirectCount)
+        +"; "+deviceNote+"; countDrawsRecorded="+std::to_string(countDrawsRecorded)+" countSlotsZeroed="+std::to_string(countSlotsZeroed)
+        +" countDrawsRefusedUnzeroed="+std::to_string(countDrawsRefusedUnzeroed)+" framesInFlightMax="+std::to_string(framesInFlightMax)
+        +" zeroRefusedInFlight="+std::to_string(zeroRefusedInFlight)+" computeBarriers="+std::to_string(computeBarriers)+" countSnapshots="+std::to_string(countSnapshots)+" countCopies="+std::to_string(countCopies)+"; "+error,out,bytes);
 }
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnLastError(char* out,int bytes){std::lock_guard<std::mutex> lock(gate);return Text(error,out,bytes);}
 void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnConfigureRings(uint32_t count,uint32_t bytes,uint32_t descriptors) {
@@ -739,6 +978,10 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDescribePipeline(int id,char* 
 }
 UnityRenderingEventAndData UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnGetRenderEventAndDataFunc(){return Event;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnWarmPipelineEventId(){return WarmPipelineEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnZeroEventId(){return ZeroEvent;}
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnBarrierEventId(){return BarrierEvent;}
+// Whether a count draw can be recorded on this device: available, the extension enabled, the entry point found.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIndirectCountReady(){std::lock_guard<std::mutex> lock(gate);return indirectCountReady?1:0;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDrawEventId(){return DrawEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnSentinelEventId(){return SentinelEvent;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnPrepareEventId(){return PrepareEvent;}

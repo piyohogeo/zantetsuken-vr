@@ -78,6 +78,37 @@ int main(int argc, char** argv) {
     direct.draw.constantsOffset=241;direct.draw.constantsCount=1;
     assert(ValidateDraw(&direct.draw)==ZvnResult_BadResource);direct.draw.constantsCount=0;direct.draw.constantsOffset=0;
 
+    // Experiment (2026-10-10): the IndirectCount draw is version 2 with one record; refused without the device's
+    // enabled entry point, or with a malformed record; never mistaken for a direct draw.
+    static_assert(sizeof(ZvnIndirectCount)==32,"indirect count ABI");
+    struct CountBlock { ZvnDraw draw; ZvnDrawExtension extension; ZvnIndirectCount record; } counted{};
+    static_assert(offsetof(CountBlock,record)==256,"count layout");
+    counted.draw.version=ZVN_VULKAN_DRAW_VERSION;counted.draw.pipeline=100;counted.draw.totalBytes=sizeof counted;counted.draw.viewportCount=1;counted.draw.indexFormat=42;
+    counted.draw.argumentBuffer=&counted;counted.draw.commandCount=1602;counted.draw.argumentOffset=24*7;counted.draw.indexBuffer=&counted;counted.draw.indexBufferBytes=24;
+    counted.extension={ZvnDrawMode_IndirectCount,uint32_t(offsetof(CountBlock,record)),1,0};
+    counted.record={&counted,12,1024,&counted,0,0};
+    indirectCountReady=false;assert(ValidateDraw(&counted.draw)==ZvnResult_NotAvailable);
+    indirectCountReady=true;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded && !Direct(&counted.draw) && IndirectCountMode(&counted.draw));
+    counted.record.zeroBytes=0;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded);   // a snapshot slot (2026-10-10)
+    counted.record.zeroBytes=1022;
+    assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.record.zeroBytes=1024;
+    counted.record.zeroBuffer=nullptr;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.record.zeroBytes=0;
+    assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded);counted.record.zeroBuffer=&counted;counted.record.zeroBytes=1024;
+    counted.record.countBuffer=nullptr;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.record.countBuffer=&counted;
+    counted.record.countOffset=6;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.record.countOffset=12;
+    // The draw from a copy of its count (2026-10-10): a slot named (zeroBuffer, zeroBytes 0), nothing else.
+    counted.record.reserved=ZVN_COUNT_DRAW_FROM_COPY;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);   // a fill range is not a slot
+    counted.record.zeroBytes=0;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded);
+    counted.record.zeroBuffer=nullptr;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.record.zeroBuffer=&counted;
+    counted.record.reserved=2;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);
+    counted.record.reserved=0;counted.record.zeroBytes=1024;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded);
+    counted.extension.commandsCount=2;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.extension.commandsCount=1;
+    counted.extension.commandsOffset=252;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.extension.commandsOffset=256;
+    counted.draw.totalBytes=sizeof counted-1;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.draw.totalBytes=sizeof counted;
+    counted.draw.commandCount=0;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.draw.commandCount=1602;
+    counted.draw.argumentOffset=25;assert(ValidateDraw(&counted.draw)==ZvnResult_BadResource);counted.draw.argumentOffset=24*7;
+    indirectCountReady=false;
+
     alignas(8) char packet[1024]{};
     auto* root=reinterpret_cast<ZvnDraw*>(packet);
     root->version=ZVN_VULKAN_DRAW_VERSION;root->totalBytes=sizeof packet;root->serial=100;
@@ -139,6 +170,37 @@ int main(int argc, char** argv) {
     warm.consumed=0;warm.serial++;available=false;Event(WarmPipelineEvent,&warm);
     assert(warm.consumed==1 && warm.result==ZvnResult_NotAvailable);available=true;
     assert(counters.drawsRecorded==actualDraws && counters.drawsRefused==refused && preparedDraws.empty() && preparedGroups.empty());
+    // The zero event (2026-10-10): a resource-free header naming a buffer range; refused malformed, NoCommandList
+    // without a Unity device, never a draw.
+    ZvnDraw zero{};zero.version=ZVN_CONTRACT_VERSION;zero.totalBytes=sizeof zero;zero.serial=300;zero.argumentBuffer=&zero;zero.commandCount=1024;
+    Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_NoCommandList);
+    zero.consumed=0;zero.serial++;zero.commandCount=0;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadResource);zero.commandCount=1024;
+    zero.consumed=0;zero.serial++;zero.commandCount=1022;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadResource);zero.commandCount=1024;
+    zero.consumed=0;zero.serial++;zero.argumentOffset=2;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadResource);zero.argumentOffset=0;
+    zero.consumed=0;zero.serial++;zero.argumentBuffer=nullptr;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadResource);zero.argumentBuffer=&zero;
+    zero.consumed=0;zero.serial++;zero.resourceCount=1;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadResource);zero.resourceCount=0;
+    zero.consumed=0;zero.serial++;zero.version=0;Event(ZeroEvent,&zero);assert(zero.consumed==1 && zero.result==ZvnResult_BadVersion);zero.version=ZVN_CONTRACT_VERSION;
+    // The compute barrier event (2026-10-10): a resource-free header; NoCommandList without a Unity device, refused
+    // malformed, never a draw and never a barrier that was not recorded.
+    ZvnDraw bar{};bar.version=ZVN_CONTRACT_VERSION;bar.totalBytes=sizeof bar;bar.serial=400;
+    Event(BarrierEvent,&bar);assert(bar.consumed==1 && bar.result==ZvnResult_NoCommandList);
+    bar.consumed=0;bar.serial++;bar.commandCount=1;Event(BarrierEvent,&bar);assert(bar.consumed==1 && bar.result==ZvnResult_BadResource);bar.commandCount=0;
+    bar.consumed=0;bar.serial++;bar.argumentBuffer=&bar;Event(BarrierEvent,&bar);assert(bar.consumed==1 && bar.result==ZvnResult_BadResource);bar.argumentBuffer=nullptr;
+    bar.consumed=0;bar.serial++;bar.argumentOffset=1;Event(BarrierEvent,&bar);assert(bar.consumed==1 && bar.result==ZvnResult_BadResource);bar.argumentOffset=0;
+    bar.consumed=0;bar.serial++;bar.version=0;Event(BarrierEvent,&bar);assert(bar.consumed==1 && bar.result==ZvnResult_BadVersion);bar.version=ZVN_CONTRACT_VERSION;
+    assert(computeBarriers==0);
+    assert(counters.drawsRecorded==actualDraws && preparedDraws.empty());
+    // A count draw's slot must lie in a range this plugin zeroed in the same frame; a zero event that was refused
+    // (the ones above) noted nothing, so nothing is zeroed.
+    assert(zeroedRanges.empty() && !CountSlotZeroed(5,&zero,0));
+    NoteZeroed(5,&zero,0,1024);
+    assert(CountSlotZeroed(5,&zero,0) && CountSlotZeroed(5,&zero,1020) && !CountSlotZeroed(5,&zero,1024) && !CountSlotZeroed(6,&zero,0) && !CountSlotZeroed(5,&warm,0));
+    NoteZeroed(20,&zero,0,16);   // far later: the old note is retired, the new one is this frame's
+    assert(!CountSlotZeroed(5,&zero,0) && CountSlotZeroed(20,&zero,12) && !CountSlotZeroed(20,&zero,16) && zeroedRanges.size()==1);
+    zeroedRanges.clear();
+    // The ring's reuse rule (2026-10-10): frame F writes set F mod 4, whose previous writer F-4 must be at or before
+    // Unity's safe frame; the first frames (nothing finished yet) are within the ring.
+    assert(!RingReuseUnsafe(10,6) && !RingReuseUnsafe(10,7) && RingReuseUnsafe(10,5) && RingReuseUnsafe(100,0) && !RingReuseUnsafe(4,0) && !RingReuseUnsafe(0,0));
     warm.consumed=0;warm.serial++;hold=true;Event(WarmPipelineEvent,&warm);
     assert(warm.consumed==0 && held.size()==1);hold=false;
     __atomic_store_n(&held.back()->consumed,1,__ATOMIC_RELEASE);held.clear();
