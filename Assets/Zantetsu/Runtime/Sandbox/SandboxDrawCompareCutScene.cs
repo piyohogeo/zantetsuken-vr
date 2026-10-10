@@ -79,7 +79,8 @@ namespace Zantetsu.Sandbox
         private static long s_slash = 950000;
 
         // The geometry pool's hold in a Player, as SandboxPropSlashPlayerCheck's: finished work is kept from the
-        // collection while holding, then handed on first, as it came back. Installed only when the argument is given.
+        // collection while holding, then handed on first, as it came back. Installed only when the argument is given
+        // (this scene's or the split scene's, which holds a cut's geometry back as this one does).
         private sealed class HeldPool : IWorkExecutor, IDisposable
         {
             private readonly IWorkExecutor _inner;
@@ -142,7 +143,8 @@ namespace Zantetsu.Sandbox
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void InstallHold()
         {
-            if (Application.isEditor || Array.IndexOf(Environment.GetCommandLineArgs(), Argument) < 0 || CutWorldRoot.nextWorldExecutors != null)
+            string[] arguments = Environment.GetCommandLineArgs();
+            if (Application.isEditor || (Array.IndexOf(arguments, Argument) < 0 && Array.IndexOf(arguments, SandboxDrawCompareSplitScene.Argument) < 0) || CutWorldRoot.nextWorldExecutors != null)
             {
                 return;
             }
@@ -399,7 +401,7 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>What the ledger and the display hold, and where each piece was put: the same for two runs of the same stage.</summary>
-        private static string Describe(CutWorldRoot world, string stage, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses)
+        internal static string Describe(CutWorldRoot world, string stage, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses)
         {
             var text = new StringBuilder(stage);
             LogicalCutLedger ledger = world.Ledger;
@@ -433,7 +435,7 @@ namespace Zantetsu.Sandbox
             return text.ToString();
         }
 
-        private static LogicalCutOperationState State(CutWorldRoot world, CutOperationId id)
+        internal static LogicalCutOperationState State(CutWorldRoot world, CutOperationId id)
         {
             return world.Ledger.TryGetOperation(id, out LogicalCutOperation operation) ? operation.state : LogicalCutOperationState.Admitted;
         }
@@ -493,7 +495,7 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        private static IEnumerator UntilComplete(Io io, CutOperationId[] operations, string what, List<string> failures)
+        internal static IEnumerator UntilComplete(Io io, CutOperationId[] operations, string what, List<string> failures)
         {
             for (int frame = 0; frame < 900; frame++)
             {
@@ -512,7 +514,7 @@ namespace Zantetsu.Sandbox
         }
 
         // A piece made kinematic and put at a pose of the world; its pose is kept for the pieces cut from it.
-        private static void Place(Io io, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses, LogicalFragmentId fragment, Vector3 position, Quaternion rotation)
+        internal static void Place(Io io, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses, LogicalFragmentId fragment, Vector3 position, Quaternion rotation)
         {
             poses[fragment] = (position, rotation);
             if (!io.world.Owners.TryGet(fragment, out PhysicsFragmentOwner owner) || owner.Root == null)
@@ -555,7 +557,7 @@ namespace Zantetsu.Sandbox
         }
 
         // The piece turned about a point of the world and moved, from where it was last put.
-        private static void PlaceAbout(Io io, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses, LogicalFragmentId fragment, Vector3 pivot, Quaternion turn, Vector3 move)
+        internal static void PlaceAbout(Io io, Dictionary<LogicalFragmentId, (Vector3 position, Quaternion rotation)> poses, LogicalFragmentId fragment, Vector3 pivot, Quaternion turn, Vector3 move)
         {
             (Vector3 position, Quaternion rotation) from = poses[fragment];
             Place(io, poses, fragment, pivot + turn * (from.position - pivot) + move, turn * from.rotation);
