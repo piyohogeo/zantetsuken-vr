@@ -8,6 +8,7 @@ param(
     [ValidateRange(30, 1800)][int]$BudgetSeconds = 565,
     [string]$ScriptFile,
     [ValidateRange(-1, 65536)][int]$FragmentGroupsMax = -1,
+    [switch]$SpatialSplit,         # DESIGN 7.9.2: the spatial split on for the run (the world's profile leaves it off)
     [ValidateRange(0, 120)][float]$StartDelaySeconds = 5,
     [switch]$AppSwOff,
     [ValidateSet('camera', 'tracking-origin')][string]$AppSpacePoseMode = 'tracking-origin',
@@ -51,6 +52,7 @@ $config = @{ mode = $Mode; appSw = !$AppSwOff; profiler = !$NoProfiler; keepOpen
     appSwDistanceExperiment = ($AppSwFarMeters -ge 0 -and !$AppSwOff -and $Mode -eq 'vp3c-native'); appSwFarMeters = [Math]::Max(0, $AppSwFarMeters); appSwFixedView = $AppSwFixedView; fragmentGroupsMax = $FragmentGroupsMax }
 if ($IndirectCount -and $FixedCommands) { throw '-IndirectCount and -FixedCommands exclude each other' }
 $config.nativeIndirectCount = !$FixedCommands
+$config.spatialSplit = [bool]$SpatialSplit
 $config.nativeIndirectCountVerify = [bool]$IndirectCountVerify
 $config.nativeIndirectCountSnapshot = [bool]$IndirectCountSnapshot
 $config.nativeIndirectCountCastersFixed = [bool]$CastersFixed
@@ -65,5 +67,5 @@ try {
     Invoke-Adb push $configFile "$deviceFiles/quest3s-config.json"
 } finally { Remove-Item -LiteralPath $configFile -ErrorAction SilentlyContinue }
 Invoke-Adb shell "am start -a android.intent.action.MAIN -n $package/com.unity3d.player.UnityPlayerGameActivity -e unity '-platform-android-unitymain-affinity 0x3c'"
-Write-Output "Quest City Walk: mode=$Mode, AppSW=$(!$AppSwOff), profiler=$(!$NoProfiler), prewarm=$(!$NoPrewarm), AppSpace=$AppSpacePoseMode, AppSWfar=$AppSwFarMeters, fixedView=$AppSwFixedView, fragmentGroupsMax=$FragmentGroupsMax, checks=$(!$ChecksOff), detail=$(!$DetailOff), commandCompaction=$(!$FixedCommands)."
+Write-Output "Quest City Walk: mode=$Mode, AppSW=$(!$AppSwOff), profiler=$(!$NoProfiler), prewarm=$(!$NoPrewarm), AppSpace=$AppSpacePoseMode, AppSWfar=$AppSwFarMeters, fixedView=$AppSwFixedView, fragmentGroupsMax=$FragmentGroupsMax, spatialSplit=$([bool]$SpatialSplit), checks=$(!$ChecksOff), detail=$(!$DetailOff), commandCompaction=$(!$FixedCommands)."
 Write-Output "Pull profiles and results from $deviceFiles/runs. Check QUEST CITY WALK, QUEST THREAD, PROP SLASH and VrApi."

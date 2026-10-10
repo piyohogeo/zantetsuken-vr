@@ -40,6 +40,7 @@ namespace Zantetsu.Quest
             public string inputFile;
             public string cityWalkScriptFile;
             public int fragmentGroupsMax = -1; // DESIGN 7.10: 0 or more switches the fragment group collection on above that many live cut fragments; -1 leaves the world's profile as it is.
+            public bool spatialSplit = false; // DESIGN 7.9.2: true switches the spatial split on for the scene's cut worlds; false leaves the world's profile as it is.
             public float cityWalkBudgetSeconds = 565f;
             public int inputStart = 2227;
             public int inputRows = 512;
@@ -308,6 +309,23 @@ namespace Zantetsu.Quest
 
             Debug.Log(LogPrefix + groups);
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { groups });
+            // The spatial split (DESIGN 7.9.2), asked for by the configuration: on for every cut world of the scene, before any cut.
+            string split = "spatial split=the world's profile (spatialSplit false)";
+            if (_config.spatialSplit)
+            {
+                int switched = 0, worlds = 0;
+                foreach (CutWorldRoot cutWorld in UnityEngine.Object.FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
+                {
+                    worlds++;
+                    if (cutWorld.EnableSpatialSplit("the Quest configuration's spatialSplit")) switched++;
+                }
+
+                split = "spatial split=on in " + switched + " of " + worlds + " cut worlds";
+                if (switched == 0) { Fail("spatialSplit was asked but no cut world took it"); yield break; }
+            }
+
+            Debug.Log(LogPrefix + split);
+            File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { split });
             _run = SandboxPropSlashPlayerCheck.StartPrepared(arguments, _config.keepOpen, true, _config.startDelaySeconds,
                 _cityWalk ? PrepareCityReplay : null);
             if (_cityWalk)
