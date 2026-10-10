@@ -5285,10 +5285,12 @@ namespace Zantetsu.MeshCut
         // ----- the draw slots (DESIGN 5.6) -------------------------------------------------------------------------------
         //
         // Every registration that is drawn holds a run of command slots and an instance region (SlotState). Both are
-        // taken at the end of everything taken so far -- the two counts below, which only grow -- and are never taken
-        // again by another registration: what is drawn no more leaves its command slots holding commands of no
-        // instance, and its instance records unnamed, for as long as the display lives. Nothing is searched, split
-        // or joined, and nothing is moved. What a collection takes it takes one after another, so what it adds is one
+        // taken at the end of everything taken so far -- the two counts below, which an ordinary collection only
+        // raises -- and are not taken by another registration: what is drawn no more leaves its command slots holding
+        // commands of no instance, and its instance records unnamed, until a compaction (below: D-202 the records,
+        // D-216 the command slots) lays the live ones out again from the first and brings the two counts down.
+        // Between compactions nothing is searched, split or joined, and nothing is moved. What a collection takes
+        // it takes one after another, so what it adds is one
         // run of each buffer. A collection that is not adopted puts the two counts back: what it took was never
         // published. A collection goes through the command slots in [0, end) and may name the instance records in
         // [0, end); the room grows to where they end, within the limits.
@@ -5368,8 +5370,16 @@ namespace Zantetsu.MeshCut
         // record of each registration -- the longest unwritten first, the most recently written last -- each region
         // exactly what it draws, and the tail comes down to what is live: what is written, and so sent, stands
         // together. The records are written from the snapshot into the side being built, as any other write of a
-        // collection; nothing is moved in place. The command slots are not compacted: a command stays in its slot and
-        // names its region's new start.
+        // collection; nothing is moved in place.
+        //
+        // **The command slots (D-216).** The same collection brings the command slots down as well: the live
+        // registrations' runs stand one after another from the first slot, in the order they already stand in --
+        // nothing is sorted, so the commands of one material that stood together still do, and runs that slots
+        // drawn no more had parted may join -- and the end comes down to the commands that draw. What is drawn no
+        // more left commands of no instance, which every selection and every issued draw still went through: with
+        // the slots brought down they are outside what is processed. A slot past the new end holds what it held
+        // and is written whole by whoever takes it next. The tables by the snapshot's numbering name the slots, so
+        // both sides' are made again.
         //
         // **What the history is.** A registration's last-written frame advances when a collection is adopted whose
         // ordinary processing wrote an instance record of it, whatever the record held before: a render fragment the
@@ -5401,8 +5411,13 @@ namespace Zantetsu.MeshCut
         // The baseline the next candidate is judged against: the adopted collections at the last compaction (or the
         // last candidate with nothing to move), the registrations' ordinary writes adopted since, the holes then.
         private long _adoptedPasses, _compactionBaselinePass;
-        private int _compactionBaselineHoles;
+        private int _compactionBaselineHoles, _compactionBaselineCommandHoles;
         private long _writesSinceCompaction;
+
+        // This collection's compaction puts a run of command slots elsewhere: the tables that name them are made again.
+        private bool _commandsMovedThisPass;
+        private long[] _commandOrderKeys = new long[64];
+        private Shown[] _commandOrderEntries = new Shown[64];
         private bool _candidateOpen;
 
         // The registrations this collection's ordinary processing wrote (not yet adopted), and the order's work arrays.
@@ -5442,6 +5457,16 @@ namespace Zantetsu.MeshCut
         public long Compactions { get; private set; }
         public long CompactionRecordsLaidOut { get; private set; }
         public long CompactionRegistrationsMoved { get; private set; }
+
+        /// <summary>
+        /// Observation (D-216): the command slots compactions gave back (the end before less the end after, summed),
+        /// the registrations whose run of slots was put elsewhere, and the last compaction's ends, before and after.
+        /// </summary>
+        public long CompactionCommandSlotsGivenBack { get; private set; }
+        public long CompactionCommandRunsMoved { get; private set; }
+        public int LastCompactionCommandEndBefore { get; private set; }
+        public int LastCompactionCommandEnd { get; private set; }
+        private int _compactionCommandRunsMovedThisPass;
 
         /// <summary>Observation: candidates whose order moved no region (nothing written or sent, the baseline reset).</summary>
         public long CompactionsWithoutChange { get; private set; }
@@ -5533,11 +5558,14 @@ namespace Zantetsu.MeshCut
                    + " records, last written in frames " + LastCompactionOldestFrame + ".." + LastCompactionNewestFrame + ", "
                    + (LastCompactionSeconds * 1000.0).ToString("F3", inv) + " ms of which the order " + (LastCompactionOrderSeconds * 1000.0).ToString("F3", inv)
                    + ", the build " + (LastCompactionWriteSeconds * 1000.0).ToString("F3", inv) + ", the upload " + (LastCompactionUploadSeconds * 1000.0).ToString("F3", inv)
-                   + " ms; expected now " + (ExpectedCompactionSeconds * 1000.0).ToString("F3", inv) + " ms), candidates with nothing to move " + CompactionsWithoutChange
+                   + " ms; expected now " + (ExpectedCompactionSeconds * 1000.0).ToString("F3", inv) + " ms; command slots given back " + CompactionCommandSlotsGivenBack
+                   + ", runs put elsewhere " + CompactionCommandRunsMoved + ", the last from " + LastCompactionCommandEndBefore + " to " + LastCompactionCommandEnd
+                   + "), candidates with nothing to move " + CompactionsWithoutChange
                    + ", candidate collections not run " + CompactionsSkipped + (reasons.Length > 0 ? " [" + reasons + "]" : "")
                    + "; history: registrations' ordinary writes adopted " + HistoryRegistrationWrites
                    + "; since the baseline: such writes " + _writesSinceCompaction + ", adopted collections " + (_adoptedPasses - _compactionBaselinePass) + " (interval "
-                   + _compactionMinimumInterval + "); holes now " + (_instanceTail - _liveInstances) + " of " + _instanceTail + " records taken";
+                   + _compactionMinimumInterval + "); holes now " + (_instanceTail - _liveInstances) + " of " + _instanceTail + " records taken, "
+                   + (_commandTail - _plannedCommands) + " of " + _commandTail + " command slots taken";
         }
 
         // This collection's ordinary processing writes an instance record of the registration: history when the
@@ -5575,9 +5603,11 @@ namespace Zantetsu.MeshCut
         // collection is not adopted), and the tail brought down. False when the collection is to be refused for a test.
         private bool ConsiderCompaction()
         {
+            // A hole is a record, or a command slot, that was taken and draws nothing (D-202, D-216).
             int holes = _instanceTail - _liveInstances;
-            if (_liveInstances == 0 || _adoptedPasses - _compactionBaselinePass < _compactionMinimumInterval
-                || (_writesSinceCompaction == 0 && holes <= _compactionBaselineHoles))
+            int commandHoles = _commandTail - _plannedCommands;
+            if ((_liveInstances == 0 && commandHoles == 0) || _adoptedPasses - _compactionBaselinePass < _compactionMinimumInterval
+                || (_writesSinceCompaction == 0 && holes <= _compactionBaselineHoles && commandHoles <= _compactionBaselineCommandHoles))
             {
                 return true;
             }
@@ -5604,6 +5634,11 @@ namespace Zantetsu.MeshCut
             {
                 reason = "GPU room is needed in this collection";
             }
+            else if (_retiring.Count > 0 || _unshownWithSlots.Count > 0)
+            {
+                // Their slots are let go by a structural collection: until then they are drawn from where they stand.
+                reason = "a registration drawn no more still holds its slots";
+            }
 
             if (reason == null && CompactionGate != null)
             {
@@ -5612,24 +5647,20 @@ namespace Zantetsu.MeshCut
 
             if (reason != null)
             {
-                // Skipped: the history and the baseline stand, and it is a candidate again in the next collection.
-                CompactionsSkipped++;
-                LastCompactionSkipReason = reason;
-                _compactionSkipReasons.TryGetValue(reason, out int times);
-                _compactionSkipReasons[reason] = times + 1;
-                _countsNow.draw.compactionsSkipped++;
-                return true;
+                return SkipCompaction(reason);
             }
 
             // The order: the live registrations by the frame the ordinary processing last wrote a record of them, the
             // oldest first; among those of one frame, as they stand now, so that nothing moves for no reason.
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             int n = 0;
+            bool heldAndNotDrawn = false;
             for (int g = 0; g < _shown.Count; g++)
             {
                 Shown entry = _shown[g];
                 if (!entry.slots.held || entry.dropping || entry.renderFragments == 0)
                 {
+                    heldAndNotDrawn |= entry.slots.held;
                     continue;
                 }
 
@@ -5637,16 +5668,32 @@ namespace Zantetsu.MeshCut
                 {
                     Array.Resize(ref _orderKeys, n * 2);
                     Array.Resize(ref _orderEntries, n * 2);
+                    Array.Resize(ref _commandOrderKeys, n * 2);
+                    Array.Resize(ref _commandOrderEntries, n * 2);
                 }
 
                 _orderKeys[n] = ((long)entry.lastWrittenFrame << 32) | (uint)entry.slots.instanceStart;
                 _orderEntries[n] = entry;
+                _commandOrderKeys[n] = entry.slots.commandStart;
+                _commandOrderEntries[n] = entry;
                 n++;
+            }
+
+            if (heldAndNotDrawn)
+            {
+                // It is not laid out, and what is laid out would take its place: left to the collection that lets it go.
+                Array.Clear(_orderEntries, 0, n);
+                Array.Clear(_commandOrderEntries, 0, n);
+                return SkipCompaction("a registration holds slots it does not draw");
             }
 
             Array.Sort(_orderKeys, _orderEntries, 0, n);
 
-            // Would any region move? Each is exactly what it draws, from where the order has come to.
+            // The command slots keep the order they stand in (D-216): only what lies between the live runs goes.
+            Array.Sort(_commandOrderKeys, _commandOrderEntries, 0, n);
+
+            // Would any region move? Each is exactly what it draws, from where the order has come to. Would any run
+            // of command slots? Each stands where the runs before it end.
             int tail = 0, moved = 0;
             for (int i = 0; i < n; i++)
             {
@@ -5659,16 +5706,32 @@ namespace Zantetsu.MeshCut
                 tail += entry.commands.Length * entry.renderFragments;
             }
 
-            if (moved == 0)
+            int commandTail = 0, commandRunsMoved = 0;
+            for (int i = 0; i < n; i++)
+            {
+                Shown entry = _commandOrderEntries[i];
+                if (entry.slots.commandStart != commandTail)
+                {
+                    commandRunsMoved++;
+                }
+
+                commandTail += entry.commands.Length;
+            }
+
+            // Slots past the last live run are holes too: the end comes down over them with no run moved.
+            bool commandsChange = commandRunsMoved > 0 || commandTail != _commandTail;
+            if (moved == 0 && !commandsChange)
             {
                 // Nothing to move: no copy and no transfer, and this state is not examined again until there is
                 // something new -- an ordinary write adopted or a hole -- and the interval has passed again.
                 CompactionsWithoutChange++;
                 _compactionBaselinePass = _adoptedPasses + 1;   // counted from this collection, as after a compaction
                 _compactionBaselineHoles = holes;
+                _compactionBaselineCommandHoles = commandHoles;
                 _writesSinceCompaction = 0;
                 _candidateOpen = false;
                 Array.Clear(_orderEntries, 0, n);
+                Array.Clear(_commandOrderEntries, 0, n);
                 return true;
             }
 
@@ -5685,15 +5748,40 @@ namespace Zantetsu.MeshCut
                 tail += entry.commands.Length * entry.renderFragments;
             }
 
+            commandTail = 0;
+            for (int i = 0; i < n; i++)
+            {
+                Shown entry = _commandOrderEntries[i];   // touched a moment ago: what it held is kept, to be put back
+                entry.slots.commandStart = commandTail;
+                commandTail += entry.commands.Length;
+            }
+
+            _commandsMovedThisPass = commandsChange;
+            _compactionCommandRunsMovedThisPass = commandRunsMoved;
+            LastCompactionCommandEndBefore = _commandTail;
+            LastCompactionCommandEnd = commandTail;
+            _commandTail = commandTail;
             _instanceTail = tail;
             LastCompactionRecords = tail;
             LastCompactionRegistrations = n;
-            LastCompactionOldestFrame = (int)(_orderKeys[0] >> 32);
-            LastCompactionNewestFrame = (int)(_orderKeys[n - 1] >> 32);
+            LastCompactionOldestFrame = n > 0 ? (int)(_orderKeys[0] >> 32) : 0;
+            LastCompactionNewestFrame = n > 0 ? (int)(_orderKeys[n - 1] >> 32) : 0;
             CompactionRegistrationsMoved += moved;
             LastCompactionOrderSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             Array.Clear(_orderEntries, 0, n);
+            Array.Clear(_commandOrderEntries, 0, n);
             return !FailAfterCompactionPlanForTest;
+        }
+
+        // A candidate that is not run: the history and the baseline stand, and it is a candidate again in the next collection.
+        private bool SkipCompaction(string reason)
+        {
+            CompactionsSkipped++;
+            LastCompactionSkipReason = reason;
+            _compactionSkipReasons.TryGetValue(reason, out int times);
+            _compactionSkipReasons[reason] = times + 1;
+            _countsNow.draw.compactionsSkipped++;
+            return true;
         }
 
         private bool AnyCameraStencilSmallerThanRoom()
@@ -5787,6 +5875,7 @@ namespace Zantetsu.MeshCut
             _commandTailBefore = _commandTail;
             _instanceTailBefore = _instanceTail;
             _compactThisPass = false;
+            _commandsMovedThisPass = false;
             _writtenThisPass.Clear();
             _roomGrowthsAtPassStart = RoomGrowths;
             _snapshotRegrowthsAtPassStart = SnapshotRegrowths;
@@ -5898,8 +5987,8 @@ namespace Zantetsu.MeshCut
                         shortOf = "draw commands";
                         needed = (long)_commandTail + commands;
                         failure = "no room at the end for " + commands + " command slots: " + _commandTail + " of "
-                                  + _limits.commands + " were taken since the display was made (" + _plannedCommands
-                                  + " of them draw; a slot is not taken again)";
+                                  + _limits.commands + " are taken (" + _plannedCommands
+                                  + " of them draw; the others are given back only by a compaction)";
                         return false;
                     }
 
@@ -5917,8 +6006,8 @@ namespace Zantetsu.MeshCut
                         shortOf = "draw instances";
                         needed = (long)_instanceTail + records;
                         failure = "no room at the end for " + records + " instance records: " + _instanceTail + " of "
-                                  + _limits.instances + " were taken since the display was made (" + _plannedInstances
-                                  + " of them are drawn; a record is not taken again)";
+                                  + _limits.instances + " are taken (" + _plannedInstances
+                                  + " of them are drawn; the others are given back only by a compaction)";
                         return false;
                     }
 
@@ -5963,6 +6052,7 @@ namespace Zantetsu.MeshCut
 
             _slotTouched.Clear();
             _compactThisPass = false;
+            _commandsMovedThisPass = false;
             _writtenThisPass.Clear();   // not adopted: no history of it, and the baseline stands
             _commandTail = _commandTailBefore;
             _instanceTail = _instanceTailBefore;
@@ -6045,8 +6135,18 @@ namespace Zantetsu.MeshCut
                 // out by the history it had before, so it stays pending; the compaction's own rewrite is not among it.
                 _compactionBaselinePass = _adoptedPasses;
                 _compactionBaselineHoles = 0;
+                _compactionBaselineCommandHoles = 0;
                 _writesSinceCompaction = written;
                 _candidateOpen = false;
+                CompactionCommandSlotsGivenBack += LastCompactionCommandEndBefore - LastCompactionCommandEnd;
+                CompactionCommandRunsMoved += _compactionCommandRunsMovedThisPass;
+                if (_commandsMovedThisPass)
+                {
+                    // The side just replaced -- the one the next collection builds in -- has its tables by the
+                    // snapshot's numbering naming the slots as they were: made again there (D-216).
+                    InvalidateCandidateSide();
+                    _commandsMovedThisPass = false;
+                }
             }
 
             _slotTouched.Clear();
@@ -6854,7 +6954,8 @@ namespace Zantetsu.MeshCut
             bool tablesKept = stampLedger >= 0
                               && _candidateSideLedger == stampLedger && _candidateSideInputs == _inputRevision
                               && _sideLedger == stampLedger && _sideInputs == _inputRevision
-                              && !_building.AllRenderFragmentsPlacedAnew;
+                              && !_building.AllRenderFragmentsPlacedAnew
+                              && !_commandsMovedThisPass;   // they name the command slots, which a compaction put elsewhere (D-216)
             if (tablesKept)
             {
                 WritePlacedAnewTables();

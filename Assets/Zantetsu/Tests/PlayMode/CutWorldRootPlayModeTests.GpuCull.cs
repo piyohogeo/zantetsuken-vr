@@ -787,8 +787,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 // The compaction of the instance regions (D-202), on the product's path: the world's gate decides the
                 // frame, the display whether it is a candidate -- the interval, held off until here, lowered to one
                 // adopted collection; the retirement and the cut's regions left holes. The live records are laid out
-                // again from the first in the order they were last written in, the tail comes down to them, every
-                // command stays in its slot, and both routes draw the same five views as before.
+                // again from the first in the order they were last written in, the tail comes down to them, the
+                // command slots come down to the commands that draw (D-216) -- the retired piece's are no longer
+                // gone through -- and both routes draw the same five views as before.
                 int instanceEndBefore = root.Display.DrawInstanceEnd, commandEndBefore = root.Display.DrawCommandEnd;
                 Assert.That(root.Display.Compactions, Is.Zero, "the layout: none before this stage");
                 Assert.That(instanceEndBefore, Is.GreaterThan(root.Display.DrawInstanceCount), "the layout: holes among the instance records");
@@ -799,7 +800,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(root.Display.Compactions, Is.EqualTo(1), "one compaction, on the product's path: " + root.Display.LastCompactionSkipReason);
                 Assert.That(root.Display.DrawInstanceEnd, Is.EqualTo(root.Display.DrawInstanceCount), "the tail is the live records");
                 Assert.That(root.Display.DrawInstanceEnd, Is.LessThan(instanceEndBefore), "and below where it was");
-                Assert.That(root.Display.DrawCommandEnd, Is.EqualTo(commandEndBefore), "the command slots are not compacted");
+                Assert.That(commandEndBefore, Is.GreaterThan(root.Display.CommandCount), "the layout: command slots of what is drawn no more were below the end");
+                Assert.That(root.Display.DrawCommandEnd, Is.EqualTo(root.Display.CommandCount), "the command slots came down to the commands that draw (D-216)");
+                Assert.That(root.Display.CompactionCommandSlotsGivenBack, Is.EqualTo(commandEndBefore - root.Display.DrawCommandEnd), "the slots given back are counted");
                 Assert.That(root.Display.LastCompactionOldestFrame, Is.LessThanOrEqualTo(root.Display.LastCompactionNewestFrame), "ordered by the frame each was last written in");
                 yield return null;
                 yield return null;

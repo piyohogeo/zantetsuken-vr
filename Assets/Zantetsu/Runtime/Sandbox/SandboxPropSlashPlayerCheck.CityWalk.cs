@@ -736,6 +736,9 @@ namespace Zantetsu.Sandbox
                     + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Time.realtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
                 Log("city walk placed search (the run): " + CityWalkPlacedSearch());
                 Log("city walk display collection (the run): " + CityWalkDisplayCollection());
+                // The fragment group collection's own record (DESIGN 7.10): the world writes it at its end, which a run
+                // that keeps its scene (a device run) never reaches.
+                if (_world.Groups != null && _world.Groups.Turns > 0) Log("city walk fragment groups (the run): " + _world.Groups.Describe());
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Log("city walk skinning (the run): " + CityWalkSkinning());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");

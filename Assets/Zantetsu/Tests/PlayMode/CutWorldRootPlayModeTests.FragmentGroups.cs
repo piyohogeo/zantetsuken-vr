@@ -539,8 +539,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(States(renderers, colliders), Is.EqualTo("off,off|off,off"), "and the instance has left again");
                 Assert.That(pieces.Any(p => root.Ledger.IsCurrentTarget(p) || root.Owners.TryGet(p, out _)), Is.False, "nothing of the first cut came back");
                 TestContext.Out.WriteLine("display command slots: taken " + commandEndFirst + " after the first cut, " + root.Display.DrawCommandEnd + " after the second (drawing " + root.Display.CommandCount
-                    + ") of " + root.Display.CommandCapacity + " -- the first cut's slots are not taken again");
-                Assert.That(root.Display.DrawCommandEnd, Is.GreaterThan(commandEndFirst), "the record: a re-cut takes new command slots at the end");
+                    + ") of " + root.Display.CommandCapacity + "; compactions " + root.Display.Compactions + ", command slots given back " + root.Display.CompactionCommandSlotsGivenBack);
+                // A re-cut takes its slots at the end; what the first cut left is given back by a compaction, in a frame
+                // the world allows (D-216) -- whether one has run by now is not this case's.
+                Assert.That(root.Display.DrawCommandEnd, Is.GreaterThanOrEqualTo(root.Display.CommandCount), "the slots gone through hold the commands that draw");
 
                 // The one never hit, throughout.
                 Assert.That(States(otherRenderers, otherColliders), Is.EqualTo(asPlaced));
