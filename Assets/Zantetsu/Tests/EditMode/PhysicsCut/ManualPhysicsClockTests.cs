@@ -58,6 +58,42 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(0.5 / 45.0).Within(Tick), "exactly one step was consumed");
         }
 
+        /// <summary>
+        /// **What the decision will find of the owing can be asked before it, and asking changes nothing.** Work that
+        /// runs before this frame's decision reads whether a whole step will be owed once the time up to now has been
+        /// accumulated; the interval is not moved, nothing is added, and a paused clock owes no step.
+        /// </summary>
+        [Test]
+        public void WhetherAStepWillBeOwed_IsReadAhead_WithoutChangingAnything()
+        {
+            var clock = new ManualPhysicsClock(45, TicksPerSecond);
+            Assert.That(clock.WouldOweAStepAt(Seconds(5.0)), Is.False, "before the first interval nothing is counted");
+            clock.Accumulate(Seconds(100.0));
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 0.5 / 45.0)), Is.False, "half a step is not a step");
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 1.25 / 45.0)), Is.True, "more than a step since the last decision");
+            Assert.That(clock.UnsimulatedSeconds, Is.Zero, "asking added nothing");
+
+            // What is already owed counts with what has passed since.
+            clock.Accumulate(Seconds(100.0 + 0.75 / 45.0));
+            Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(0.75 / 45.0).Within(Tick));
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 0.75 / 45.0)), Is.False);
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 1.1 / 45.0)), Is.True, "three quarters owed and a third more since");
+            Assert.That(clock.WouldOweAStepAt(Seconds(90.0)), Is.False, "a time before the last decision adds nothing");
+            Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(0.75 / 45.0).Within(Tick), "and the owing is as it was");
+
+            // The decision itself then finds exactly that.
+            clock.Accumulate(Seconds(100.0 + 1.1 / 45.0));
+            Assert.That(clock.ShouldStep(0.0, 1.0), Is.True);
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 1.1 / 45.0)), Is.True);
+            clock.Stepped();
+            Assert.That(clock.WouldOweAStepAt(Seconds(100.0 + 1.1 / 45.0)), Is.False, "the step consumed it");
+
+            clock.Accumulate(Seconds(100.0 + 2.5 / 45.0));
+            clock.SetPaused(true);
+            Assert.That(clock.UnsimulatedSeconds, Is.GreaterThan(clock.StepSeconds), "the layout: a step is owed");
+            Assert.That(clock.WouldOweAStepAt(Seconds(200.0)), Is.False, "paused: no step is taken, whatever is owed");
+        }
+
         [Test]
         public void LessThanAStepOwed_IsANop_AndTheTimeStays()
         {

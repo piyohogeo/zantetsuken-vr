@@ -371,6 +371,44 @@ namespace Zantetsu.MeshCut
             _withoutGeometry.Remove(fragment);
         }
 
+        /// <summary>
+        /// The geometry side of a replacement no cut made (DESIGN 7.9.2, <see cref="LogicalCutLedger.ReplaceBySplit"/>):
+        /// what <paramref name="source"/> was cut from is now the two fragments', each with its own share of the
+        /// source's triangles in a new index range over the same vertices, in the source's own frame. No operation,
+        /// no node and no commit is made here; the source's entry goes, as a committed cut's source's does.
+        /// <para>
+        /// False, with nothing changed, unless the ledger already says the two fragments replaced the source that
+        /// way, the source has a committed geometry and a frame here, and both shares are given. The caller switches
+        /// the ledger first and the display right after, in one main-thread stretch.
+        /// </para>
+        /// </summary>
+        public bool TrySplitGeometry(
+            LogicalFragmentId source,
+            LogicalFragmentId positive, VpStoredGeometry positiveGeometry,
+            LogicalFragmentId negative, VpStoredGeometry negativeGeometry)
+        {
+            if (!_ledger.TryGetSplitChildren(source, out LogicalFragmentId first, out LogicalFragmentId second)
+                || first != positive || second != negative
+                || !_geometryOf.ContainsKey(source)
+                || !_frameOf.TryGetValue(source, out Matrix4x4 frame))
+            {
+                return false;
+            }
+
+            _geometryOf.Remove(source);
+            _frameOf.Remove(source);
+            _withoutGeometry.Remove(source);
+            _geometryOf[positive] = positiveGeometry;
+            _frameOf[positive] = frame;
+            _geometryOf[negative] = negativeGeometry;
+            _frameOf[negative] = frame;
+            GeometrySplits++;
+            return true;
+        }
+
+        /// <summary>How many fragments' geometries <see cref="TrySplitGeometry"/> has handed on. Not a count of commits.</summary>
+        public int GeometrySplits { get; private set; }
+
         /// <summary>How many fragments this DAG keeps a geometry, a frame or an empty side for. For tests and records.</summary>
         public int TrackedFragmentCount => Math.Max(_frameOf.Count, _geometryOf.Count + _withoutGeometry.Count);
 
@@ -855,13 +893,14 @@ namespace Zantetsu.MeshCut
                     return true;
 
                 case LogicalFragmentState.Replaced:
-                    if (!_ledger.TryGetReplacingOperation(fragment, out CutOperationId replacing)
-                        || !_ledger.TryGetOperation(replacing, out LogicalCutOperation record))
+                    // By a cut's two children or by the two fragments of a split no cut made (DESIGN 7.9.2): either
+                    // way the two that stand for it now are what may still read the geometry.
+                    if (!_ledger.TryGetReplacement(fragment, out LogicalFragmentId first, out LogicalFragmentId second))
                     {
                         return false;
                     }
 
-                    return BranchHasAReader(record.positive) || BranchHasAReader(record.negative);
+                    return BranchHasAReader(first) || BranchHasAReader(second);
 
                 default:
                     return false;

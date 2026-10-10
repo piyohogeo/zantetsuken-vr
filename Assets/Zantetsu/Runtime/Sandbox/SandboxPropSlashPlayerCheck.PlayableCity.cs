@@ -33,6 +33,21 @@ namespace Zantetsu.Sandbox
 
         private static readonly char[] s_csvSpecial = { ',', '"', '\r', '\n' };
 
+        /// <summary>
+        /// Whether the retirement of <paramref name="fragment"/>'s owner, being notified now, is the one a split of
+        /// that owner without a hit makes (DESIGN 7.9.2): the split names the fragment it is replacing for exactly as
+        /// long as its owner retires, the ledger already has the two fragments in its place, and each of them has its
+        /// own body. A fragment that goes with nothing in its place -- a cut's source, a collected piece, a retired
+        /// one -- is not one of these. Asked from the registry's OwnerRetiring notification; reads only.
+        /// </summary>
+        internal static bool ObservesASplitInTwo(CutWorldRoot world, LogicalFragmentId fragment)
+        {
+            return world != null && world.SpatialSplit != null && world.SpatialSplit.ReplacingFragment == fragment
+                && world.Ledger.TryGetSplitChildren(fragment, out LogicalFragmentId first, out LogicalFragmentId second)
+                && world.Owners.TryGet(first, out PhysicsFragmentOwner firstOwner) && firstOwner.Body != null
+                && world.Owners.TryGet(second, out PhysicsFragmentOwner secondOwner) && secondOwner.Body != null;
+        }
+
         /// <summary>The display's GPU copy in words: capacities, strides, bytes, the first buffers' time, growth, the release queue, the range used.</summary>
         internal static string DescribeGpuCopy(VpLogicalCutDisplay d) =>
             "vertex buffer " + d.GpuVertexCapacity + " x " + d.GpuVertexStride + " B = " + d.GpuVertexBytes + " B, index buffer " + d.GpuIndexCapacity + " x " + d.GpuIndexStride + " B = " + d.GpuIndexBytes
@@ -118,6 +133,7 @@ namespace Zantetsu.Sandbox
                 public bool anchored, kinematicAlways = true;
                 public bool collectedEmpty;
                 public bool collectedGroup;   // retired with its whole group by the fragment group collection (observed at the owner's retirement)
+                public bool splitInTwo;       // replaced by two fragments when its owner was split without a hit (DESIGN 7.9.2; observed at the owner's retirement)
                 public Vector3 firstCentre;
                 public float maxDisplacement, maxSpeed;
                 public int firstFrame, lastFrame;
@@ -250,6 +266,14 @@ namespace Zantetsu.Sandbox
                     && _pcPieces.TryGetValue(fragment, out PlayablePiece grouped))
                 {
                     grouped.collectedGroup = true;
+                }
+
+                // And for a piece whose owner is split in two without a hit (DESIGN 7.9.2): observed here, while the split
+                // names the fragment it is replacing, and only when the ledger already has the two fragments in its place
+                // and each of them has its owner -- a piece that went with nothing in its place is not one of these.
+                if (ObservesASplitInTwo(_world, fragment) && _pcPieces.TryGetValue(fragment, out PlayablePiece split))
+                {
+                    split.splitInTwo = true;
                 }
             }
 
@@ -464,7 +488,8 @@ namespace Zantetsu.Sandbox
                     List<KeyValuePair<LogicalFragmentId, PlayablePiece>> pieces = _pcPieces.Where(p => p.Value.kind == kind).ToList();
                     List<PlayablePiece> anchored = pieces.Where(p => p.Value.anchored).Select(p => p.Value).ToList();
                     List<PlayablePiece> free = pieces.Where(p => !p.Value.anchored).Select(p => p.Value).ToList();
-                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key) && !p.Value.collectedEmpty && !p.Value.collectedGroup);
+                    int gone = pieces.Count(p => !live.Contains(p.Key) && !cutSources.Contains(p.Key) && !p.Value.collectedEmpty && !p.Value.collectedGroup && !p.Value.splitInTwo);
+                    int splitInTwo = pieces.Count(p => !live.Contains(p.Key) && p.Value.splitInTwo);
                     int collectedEmpty = pieces.Count(p => !live.Contains(p.Key) && p.Value.collectedEmpty);
                     int collectedGroup = pieces.Count(p => !live.Contains(p.Key) && p.Value.collectedGroup);
                     Log("playable city " + kind + " pieces: seen " + pieces.Count + ", anchored " + anchored.Count + " (all kinematic "
@@ -472,10 +497,11 @@ namespace Zantetsu.Sandbox
                         + " m), free " + free.Count + " (dynamic " + free.Count(p => !p.kinematicAlways) + ", max displacement "
                         + (free.Count > 0 ? free.Max(p => p.maxDisplacement) : 0f).ToString("F2", Inv) + " m, max speed "
                         + (free.Count > 0 ? free.Max(p => p.maxSpeed) : 0f).ToString("F2", Inv) + " m/s), live at the end " + pieces.Count(p => live.Contains(p.Key))
-                        + ", collected settled-empty " + collectedEmpty + ", collected with their group " + collectedGroup + ", gone without a cut or collection " + gone);
+                        + ", collected settled-empty " + collectedEmpty + ", collected with their group " + collectedGroup + ", replaced by two when their owner was split "
+                        + splitInTwo + ", gone without a cut, a collection or a split " + gone);
                     Expect(anchored.All(p => p.kinematicAlways && p.maxDisplacement < 0.001f), "[scenario] every anchored " + kind + " piece stayed kinematic where it was made");
                     Expect(free.Count == 0 || free.All(p => !p.kinematicAlways), "[scenario] every free " + kind + " piece is dynamic");
-                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut, a settled-empty collection or its group's collection (" + gone + ")");
+                    Expect(gone == 0, "[scenario] no " + kind + " piece went other than by its own cut, a settled-empty collection, its group's collection or a split of its owner (" + gone + ")");
                 }
 
                 // Each window's plan cycles (TL, 2026-09-30: a window open to the run's end had no cycle after it, and its gap was

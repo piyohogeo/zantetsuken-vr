@@ -140,6 +140,27 @@ namespace Zantetsu.PhysicsCut
             return !_paused && UnsimulatedSeconds >= StepSeconds && expectedSimulateSeconds <= remainingMainSeconds;
         }
 
+        /// <summary>
+        /// Whether a whole step would be owed once the time up to <paramref name="nowTicks"/> had been accumulated:
+        /// what this frame's decision will find of the owing, asked before it. It changes nothing -- the interval is
+        /// not moved and nothing is added -- and says nothing of the cost or the budget, which the decision compares.
+        /// </summary>
+        public bool WouldOweAStepAt(long nowTicks)
+        {
+            if (_paused)
+            {
+                return false;
+            }
+
+            double owed = UnsimulatedSeconds;
+            if (_started && nowTicks > _last)
+            {
+                owed += (double)(nowTicks - _last) / _ticksPerSecond;
+            }
+
+            return owed >= StepSeconds;
+        }
+
         /// <summary>One step has really been simulated: it is consumed, and the physics time and the step id move.</summary>
         public void Stepped()
         {

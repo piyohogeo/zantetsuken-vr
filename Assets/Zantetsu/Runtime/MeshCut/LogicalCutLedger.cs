@@ -100,6 +100,18 @@ namespace Zantetsu.MeshCut
             public CutOperationId origin;
             public float originSide;
 
+            // A replacement no cut made (DESIGN 7.9.2, 7.9.4): the two fragments that replaced this one by a split of
+            // its owner without a hit, and -- on each of those two -- the fragment it replaced. Written once, by
+            // ReplaceBySplit, in the call that issues the two ids. A fragment replaced this way has no replacedBy,
+            // because no operation replaced it; a reader that goes down from a Replaced fragment asks
+            // TryGetReplacement, which answers for either kind. The two fragments carry the origin of the one they
+            // replaced: they stand where it stood under the cut that made it, on the same side. That is the history
+            // of the *boundaries* (which cuts shaped a fragment). The history of the *object* (which fragment a
+            // fragment came from) has one step more -- the fragment replaced -- and is read through TryGetParent.
+            public LogicalFragmentId splitPositive;
+            public LogicalFragmentId splitNegative;
+            public LogicalFragmentId splitSource;
+
             // Where this fragment stands in its family's list of live cut fragments, plus one; 0 while it is not in it
             // (a root, or a fragment no longer live).
             public int liveSlot;
@@ -801,6 +813,203 @@ namespace Zantetsu.MeshCut
             NoLongerLive(ref record);
             _fragments[index] = record;
             Changed(fragment);
+            return true;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="source"/> may be replaced by <see cref="ReplaceBySplit"/> now: it is live, no cut
+        /// of it is active, and a cut made it. A registered fragment no cut made is passed over in this first
+        /// version -- it is in no list of live cut fragments, so two fragments made from it would have no group to
+        /// belong to (DESIGN 7.10). Reading it changes nothing.
+        /// </summary>
+        public bool MayReplaceBySplit(LogicalFragmentId source)
+        {
+            if (!TryIndex(source, out int index))
+            {
+                return false;
+            }
+
+            Fragment record = _fragments[index];
+            return record.state == LogicalFragmentState.Live && !record.activeOperation.IsSet && record.origin.IsSet;
+        }
+
+        /// <summary>
+        /// The replacement of one live fragment by two ordinary fragments **without a cut** (DESIGN 7.9.2, 7.9.4):
+        /// the owner of <paramref name="source"/> was split into two owners by a plane that crosses nothing of it, so
+        /// there is no hit, no cut plane, no operation, no pending cut and no boundary here, and the shared budget of
+        /// incomplete operations is not touched.
+        /// <para>
+        /// The two fragments are issued in the source's family, as live cut fragments of it -- they are counted,
+        /// ended and returned with their group as the source was -- and each carries **the origin of the source**:
+        /// the operation that made the source and the side of it the source was. A reader of the **boundaries** --
+        /// which cuts shaped a fragment -- walks up by origins from one of them exactly as it did from the source,
+        /// and the operation that made the source still names the source as its child and is not written.
+        /// </para>
+        /// <para>
+        /// The **object's** ancestry is another relation and has one step more: the two came from the source. A
+        /// reader that asks whether a fragment, or anything it came from, is a particular fragment -- what a Slash
+        /// has consumed, what a registration draws -- walks up by <see cref="TryGetParent"/>, which gives the source
+        /// for these two and the cut's source for a cut's child. Walking by origins alone would step over the source.
+        /// </para>
+        /// <para>
+        /// The source becomes <see cref="LogicalFragmentState.Replaced"/> with no replacing operation;
+        /// <see cref="TryGetReplacement"/> gives the two fragments. The anchor sets handed in become the two
+        /// fragments' own (copied), the source lets its own go, and the family's revision and
+        /// <see cref="Revision"/> rise, so a result prepared for the source arrives as not applicable and every
+        /// reader that keeps what it read of the family reads again.
+        /// </para>
+        /// <para>
+        /// False, with nothing changed, when <see cref="MayReplaceBySplit"/> is false. The caller has prepared
+        /// everything else of the two sides before it asks, and switches the owners, the geometry and the display in
+        /// the same main-thread stretch.
+        /// </para>
+        /// </summary>
+        public bool ReplaceBySplit(
+            LogicalFragmentId source,
+            IReadOnlyList<float3> positiveAnchors,
+            IReadOnlyList<float3> negativeAnchors,
+            out LogicalFragmentId positive,
+            out LogicalFragmentId negative)
+        {
+            positive = default;
+            negative = default;
+            if (!MayReplaceBySplit(source))
+            {
+                return false;
+            }
+
+            // Everything that can throw, before anything changes: the two anchor copies and the room for two ids.
+            List<float3> positiveOwned = CopyAnchors(positiveAnchors);
+            List<float3> negativeOwned = CopyAnchors(negativeAnchors);
+            ReserveFragments(2);
+
+            int sourceIndex = source.value - 1;
+            Fragment record = _fragments[sourceIndex];
+            positive = NewFragment(positiveOwned, record.origin, record.originSide);
+            negative = NewFragment(negativeOwned, record.origin, record.originSide);
+
+            Fragment made = _fragments[positive.value - 1];
+            made.splitSource = source;
+            _fragments[positive.value - 1] = made;
+            made = _fragments[negative.value - 1];
+            made.splitSource = source;
+            _fragments[negative.value - 1] = made;
+
+            record = _fragments[sourceIndex];
+            record.state = LogicalFragmentState.Replaced;
+            record.splitPositive = positive;
+            record.splitNegative = negative;
+            record.anchors = null;
+            NoLongerLive(ref record);
+            _fragments[sourceIndex] = record;
+            Changed(source);
+            SplitReplacements++;
+            return true;
+        }
+
+        /// <summary>How many fragments <see cref="ReplaceBySplit"/> has replaced here. Not a count of cuts.</summary>
+        public long SplitReplacements { get; private set; }
+
+        /// <summary>
+        /// The two fragments that replaced <paramref name="fragment"/>, whichever way it was replaced: the positive
+        /// and negative child of the published cut that replaced it, or the two fragments of a split no cut made
+        /// (<see cref="ReplaceBySplit"/>). For a reader that finds a fragment
+        /// <see cref="LogicalFragmentState.Replaced"/> and has to reach what stands for it now. False for a fragment
+        /// that is live or retired, for a cut whose children are not both set, and for one this ledger does not
+        /// hold. Reading it changes nothing.
+        /// </summary>
+        public bool TryGetReplacement(LogicalFragmentId fragment, out LogicalFragmentId first, out LogicalFragmentId second)
+        {
+            first = default;
+            second = default;
+            if (!TryIndex(fragment, out int index))
+            {
+                return false;
+            }
+
+            Fragment record = _fragments[index];
+            if (record.splitPositive.IsSet)
+            {
+                first = record.splitPositive;
+                second = record.splitNegative;
+                return true;
+            }
+
+            if (!record.replacedBy.IsSet || !TryIndex(record.replacedBy, out int operationIndex))
+            {
+                return false;
+            }
+
+            Operation operation = _operations[operationIndex];
+            first = operation.positive;
+            second = operation.negative;
+            return first.IsSet && second.IsSet;
+        }
+
+        /// <summary>
+        /// The two fragments a split no cut made put in <paramref name="fragment"/>'s place
+        /// (<see cref="ReplaceBySplit"/>). False for a fragment replaced by a cut, and for one not replaced.
+        /// </summary>
+        public bool TryGetSplitChildren(LogicalFragmentId fragment, out LogicalFragmentId positive, out LogicalFragmentId negative)
+        {
+            if (!TryIndex(fragment, out int index) || !_fragments[index].splitPositive.IsSet)
+            {
+                positive = default;
+                negative = default;
+                return false;
+            }
+
+            positive = _fragments[index].splitPositive;
+            negative = _fragments[index].splitNegative;
+            return true;
+        }
+
+        /// <summary>
+        /// The fragment <paramref name="fragment"/> came from, as an object: the one it replaced, for a fragment a
+        /// split no cut made issued (<see cref="ReplaceBySplit"/>); otherwise the source of the cut that made it.
+        /// False for a registered fragment nothing made, and for one this ledger does not hold. **This is the
+        /// ancestry of the object, not of its boundaries**: from a split's fragment it gives the fragment replaced,
+        /// which a walk by <see cref="TryGetOrigin"/> and the operation's source steps over. Every step of it leads
+        /// to a fragment issued earlier, so a walk by it ends. Reading it changes nothing.
+        /// </summary>
+        public bool TryGetParent(LogicalFragmentId fragment, out LogicalFragmentId parent)
+        {
+            parent = default;
+            if (!TryIndex(fragment, out int index))
+            {
+                return false;
+            }
+
+            Fragment record = _fragments[index];
+            if (record.splitSource.IsSet)
+            {
+                parent = record.splitSource;
+                return true;
+            }
+
+            if (!record.origin.IsSet || !TryIndex(record.origin, out int operationIndex))
+            {
+                return false;
+            }
+
+            parent = _operations[operationIndex].source;
+            return parent.IsSet;
+        }
+
+        /// <summary>
+        /// The fragment <paramref name="fragment"/> replaced, for one a split no cut made issued
+        /// (<see cref="ReplaceBySplit"/>). False for every other fragment: a child of a cut names its cut by
+        /// <see cref="TryGetOrigin"/>, and that is unchanged.
+        /// </summary>
+        public bool TryGetSplitSource(LogicalFragmentId fragment, out LogicalFragmentId source)
+        {
+            if (!TryIndex(fragment, out int index) || !_fragments[index].splitSource.IsSet)
+            {
+                source = default;
+                return false;
+            }
+
+            source = _fragments[index].splitSource;
             return true;
         }
 

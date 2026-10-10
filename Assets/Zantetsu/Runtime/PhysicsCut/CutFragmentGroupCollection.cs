@@ -866,12 +866,13 @@ namespace Zantetsu.PhysicsCut
                     return true;
                 }
 
-                if (!ledger.TryGetOrigin(at, out CutOperationId origin, out _) || !ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                // Up the object's ancestry: the fragment the display still draws may be one a split replaced.
+                if (!ledger.TryGetParent(at, out LogicalFragmentId parent))
                 {
                     return false;
                 }
 
-                at = cut.source;
+                at = parent;
             }
 
             return false;
