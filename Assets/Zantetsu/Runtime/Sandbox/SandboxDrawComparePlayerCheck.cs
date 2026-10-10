@@ -86,6 +86,12 @@ namespace Zantetsu.Sandbox
 
             /// <summary>After the measurement: the cut scene's stages, pictured (<see cref="SandboxDrawCompareCutScene"/>).</summary>
             public bool cutScene;
+
+            /// <summary>After the measurement: the split scene's stages, pictured (<see cref="SandboxDrawCompareSplitScene"/>).</summary>
+            public bool splitScene;
+
+            /// <summary>The split scene with another body, whose cut is held while the split is let through.</summary>
+            public bool splitSceneAnother;
             // Quest demo options; defaults keep the existing PC comparison and cleanup behavior.
             public bool headTracked, retainSceneAfterMeasurement;
             /// <summary>Placed objects in the existing instance order; 0 keeps the complete scene.</summary>
@@ -143,13 +149,42 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
+            // The split scene (after the measurement), by the same rules: its body is drawn by the world's route, which
+            // the launch names itself, and the split is the world's own, switched on by its own argument.
+            made.splitScene = Has(arguments, SandboxDrawCompareSplitScene.Argument);
+            made.splitSceneAnother = Has(arguments, SandboxDrawCompareSplitScene.AnotherArgument);
+            if (made.splitSceneAnother && !made.splitScene)
+            {
+                failure = SandboxDrawCompareSplitScene.AnotherArgument + " is a way of the split scene: it goes with " + SandboxDrawCompareSplitScene.Argument;
+                return false;
+            }
+
+            if (made.splitScene && made.mode != Mode.Unity)
+            {
+                failure = SandboxDrawCompareSplitScene.Argument + " pictures a body of its own in a city drawn by Unity: mode unity only";
+                return false;
+            }
+
+            if (made.splitScene && routeRequest == Zantetsu.Rendering.VpBodyRouteRequest.Default)
+            {
+                failure = SandboxDrawCompareSplitScene.Argument + " names its route: the Player must be launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument
+                    + " or " + Zantetsu.Rendering.VpNativeDrawSetup.UnityApiArgument;
+                return false;
+            }
+
+            if (made.splitScene && !Has(arguments, CutWorldRoot.SpatialSplitArgument))
+            {
+                failure = SandboxDrawCompareSplitScene.Argument + " pictures the world's spatial split: the Player must be launched with " + CutWorldRoot.SpatialSplitArgument;
+                return false;
+            }
+
             if (made.mode == Mode.Vp3cNative && !nativeLaunched)
             {
                 failure = "mode vp3c-native needs the Player launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument;
                 return false;
             }
 
-            if (made.mode != Mode.Vp3cNative && nativeLaunched && !made.cutScene)
+            if (made.mode != Mode.Vp3cNative && nativeLaunched && !made.cutScene && !made.splitScene)
             {
                 failure = "the Player was launched with " + Zantetsu.Rendering.VpNativeDrawSetup.Argument + ", which only mode vp3c-native compares";
                 return false;
@@ -751,6 +786,13 @@ namespace Zantetsu.Sandbox
                     Note("cut scene: asked (" + SandboxDrawCompareCutScene.Argument + "): after the measurement two props are cut and pictured; what the cuts make is drawn by the world's route "
                         + world.BodyRoute + " (" + world.BodyRouteReason + "); the geometry hold " + (SandboxDrawCompareCutScene.HoldInstalled ? "is the world's geometry pool" : "was NOT installed"));
                 }
+                if (settings.splitScene)
+                {
+                    Note("split scene: asked (" + SandboxDrawCompareSplitScene.Argument + (settings.splitSceneAnother ? " " + SandboxDrawCompareSplitScene.AnotherArgument + ", with another body whose cut is held" : "")
+                        + "): after the measurement a body made for it is cut, split and pictured; what is drawn of it is drawn by the world's route "
+                        + world.BodyRoute + " (" + world.BodyRouteReason + "); the world's spatial split is " + (world.SpatialSplit != null && world.SpatialSplit.Settings.enabled ? "on" : "OFF")
+                        + "; the geometry hold " + (SandboxDrawCompareCutScene.HoldInstalled ? "is the world's geometry pool" : "was NOT installed"));
+                }
                 Note("camera: " + (settings.headTracked ? "head tracked; path sets initial position and run duration only" : "recorded path"));
                 Note("launch: " + SandboxLaunchRecord.Describe());
                 bool profilerAlready = Profiler.enabled && Profiler.enableBinaryLog;
@@ -1060,6 +1102,11 @@ namespace Zantetsu.Sandbox
                     yield return CutScene(cutNotes);
                 }
 
+                if (settings.splitScene)
+                {
+                    yield return SplitScene(cutNotes);
+                }
+
                 // The drill ends the world itself (its third step is the display's end): after everything read above.
                 var drillNotes = new List<string>();
                 if (settings.lifetimeDrill)
@@ -1079,7 +1126,7 @@ namespace Zantetsu.Sandbox
                 if (settings.mode == Mode.Vp3c && !world.Display.CullsOnGpu) notes.Add("the display drew as VP3, not VP3C");
                 if (settings.mode == Mode.Vp3c && world.Display.NativeArguments) notes.Add("the display drew through the plugin, not by Unity's calls");
                 if (settings.mode == Mode.Vp3cNative && !world.Display.NativeArguments) notes.Add("the display did NOT draw through the plugin");
-                if (settings.mode == Mode.Vp3cNative || (settings.cutScene && world.Display.NativeArguments))
+                if (settings.mode == Mode.Vp3cNative || ((settings.cutScene || settings.splitScene) && world.Display.NativeArguments))
                 {
                     foreach (CutWorldCameraDrawing drawing in UnityEngine.Object.FindObjectsByType<CutWorldCameraDrawing>(FindObjectsSortMode.None))
                     {
@@ -1124,6 +1171,11 @@ namespace Zantetsu.Sandbox
                     var ending = new CheckEnding(Log);
                     yield return ending.Run(world, new List<CheckEnding.Part>(), 15f);
                     Log("world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
+                    // The split scene's body: its shape was the world's to read until here.
+                    if (ending.WorldReleased) _splitBody?.Dispose();
+                    if (ending.WorldReleased) _splitOther?.Dispose();
+                    _splitBody = null;
+                    _splitOther = null;
                 }
 
                 if (VpDisplay != null && !settings.retainSceneAfterMeasurement)
@@ -1669,16 +1721,124 @@ namespace Zantetsu.Sandbox
 
             private int _cutShotFailures;
             private string _cutShotLastFailure;
+            private SandboxDrawCompareSplitScene.Made _splitBody, _splitOther;
+
+            // The split scene (SandboxDrawCompareSplitScene): a body made for it stands where the path's first pose
+            // looks, is cut by a synthetic sweep through the scene's own detector, and its pieces are split by the
+            // world's own spatial split, each stage pictured from two views as the cut scene's are
+            // (split-<stage>-view<n>*.png) and its state written (split-scene-states.txt). What fails is a note of the
+            // run: its code is then not 0.
+            private IEnumerator SplitScene(List<string> notes)
+            {
+                Log("split scene begins at frame " + Time.frameCount + " (pictures of the states round a split; not a performance sample)");
+                var header = new List<string>();
+                var states = new List<string>();
+                var failures = new List<string>();
+                Zantetsu.Rendering.VpBodyRouteRequest asked = Zantetsu.Rendering.VpNativeDrawSetup.ReadRequest(Environment.GetCommandLineArgs());
+                bool native = world.Display.NativeArguments;
+                header.Add("route: asked " + asked + "; the world's " + world.BodyRoute + " (" + world.BodyRouteReason + ")");
+                if (native != (asked == Zantetsu.Rendering.VpBodyRouteRequest.Native)) failures.Add("the world's route " + world.BodyRoute + " is not the one asked (" + asked + ")");
+                SandboxSlashPropHit hit = UnityEngine.Object.FindAnyObjectByType<SandboxSlashPropHit>();
+                SlashHitDetector detector = hit != null ? hit.Detector : null;
+                if (detector == null) failures.Add("the scene has no hit detector");
+                if (!SandboxDrawCompareCutScene.HoldInstalled) failures.Add("the world was not given the geometry hold");
+                if (world.SpatialSplit == null || !world.SpatialSplit.Settings.enabled) failures.Add("the world's spatial split is off");
+                SceneDrawComparePath.Pose start = settings.path.At(0);
+                (Vector3 from, float yaw)[] views = null;
+                if (failures.Count == 0)
+                {
+                    if (!SandboxDrawCompareSplitScene.TryStand(start.eye, start.yaw, settings.splitSceneAnother, out Vector3 position, out Quaternion rotation, out views, out string stood))
+                    {
+                        failures.Add("no place for the body: " + stood);
+                    }
+                    else if (!SandboxDrawCompareSplitScene.TryMake(world, position, rotation, out _splitBody, out string refusal))
+                    {
+                        failures.Add(refusal);
+                    }
+                    else if (settings.splitSceneAnother
+                        && !SandboxDrawCompareSplitScene.TryMake(world, position + (rotation * SandboxDrawCompareSplitScene.AnotherAt), rotation, out _splitOther, out string otherRefusal, false))
+                    {
+                        failures.Add("the other body: " + otherRefusal);
+                    }
+
+                    Log("split scene: the body " + stood);
+                    header.Add("body: " + stood);
+                }
+
+                if (failures.Count == 0)
+                {
+                    string line = "body: " + _splitBody.described;
+                    header.Add(line);
+                    Log("split scene: " + line);
+                    if (_splitOther != null)
+                    {
+                        line = "other body: " + _splitOther.described;
+                        header.Add(line);
+                        Log("split scene: " + line);
+                    }
+
+                    string[] stageNames = _splitOther != null ? SandboxDrawCompareSplitScene.StageNamesWithAnother : SandboxDrawCompareSplitScene.StageNames;
+                    for (int v = 0; v < views.Length; v++)
+                    {
+                        line = "view " + v + ": eye (" + views[v].from.x.ToString("F3", Inv) + ", " + views[v].from.y.ToString("F3", Inv) + ", " + views[v].from.z.ToString("F3", Inv) + ") yaw " + views[v].yaw.ToString("F2", Inv);
+                        header.Add(line);
+                        Log("split scene: " + line);
+                    }
+
+                    for (int i = 0; i < 3; i++) yield return null;
+                    int shotsBefore = Zantetsu.Rendering.Urp.VpEyeShot.Written, shotFailuresBefore = _cutShotFailures;
+                    var io = new SandboxDrawCompareCutScene.Io
+                    {
+                        world = world,
+                        detector = detector,
+                        hold = SandboxDrawCompareCutScene.SetHold,
+                        held = () => SandboxDrawCompareCutScene.HeldNow,
+                        pictures = name => CutScenePictures(name, views, "split-"),
+                        log = Log,
+                    };
+                    yield return SandboxDrawCompareSplitScene.Stages(io, _splitBody, states, failures, _splitOther);
+                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) yield return null;
+                    Log("split scene: eye shots written " + (Zantetsu.Rendering.Urp.VpEyeShot.Written - shotsBefore) + ", pending " + Zantetsu.Rendering.Urp.VpEyeShot.Pending
+                        + (Zantetsu.Rendering.Urp.VpEyeShot.LastFailure != null ? ", last failure: " + Zantetsu.Rendering.Urp.VpEyeShot.LastFailure : ""));
+                    if (Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0) failures.Add(Zantetsu.Rendering.Urp.VpEyeShot.Pending + " eye shots were not written");
+                    if (_cutShotFailures > shotFailuresBefore) failures.Add((_cutShotFailures - shotFailuresBefore) + " pictures were not asked: " + _cutShotLastFailure);
+                    if (states.Count != stageNames.Length) failures.Add("stages pictured " + states.Count + " of " + stageNames.Length);
+                    if (world.Display.IsHalted || world.TerminationRequested) failures.Add("the world stopped (display halted " + world.Display.IsHalted + ", termination asked " + world.TerminationRequested + ")");
+                }
+
+                try
+                {
+                    var text = new StringBuilder();
+                    foreach (string line in header) text.Append(line).Append('\n');
+                    foreach (string line in states) text.Append("stage ").Append(line).Append('\n');
+                    text.Append("failures: ").Append(failures.Count).Append('\n');
+                    foreach (string line in failures) text.Append("failure: ").Append(line).Append('\n');
+                    File.WriteAllText(Path.Combine(settings.directory, "split-scene-states.txt"), text.ToString());
+                }
+                catch (Exception e)
+                {
+                    failures.Add("the states could not be written: " + e.Message);
+                }
+
+                foreach (string failure in failures)
+                {
+                    Log("split scene FAILED: " + failure);
+                    notes.Add("split scene: " + failure);
+                }
+
+                Log("split scene ended at frame " + Time.frameCount + ": stages pictured " + states.Count + " of "
+                    + (settings.splitSceneAnother ? SandboxDrawCompareSplitScene.StageNamesWithAnother : SandboxDrawCompareSplitScene.StageNames).Length + ", failures " + failures.Count);
+            }
 
             // One stage from each view: the rig placed, four frames for the view to be the drawn one, then the screen,
             // both eyes and the main light's shadow map of one frame (cut-<stage>-view<n>*.png).
-            private IEnumerator CutScenePictures(string stage, (Vector3 from, float yaw)[] views)
+            private IEnumerator CutScenePictures(string stage, (Vector3 from, float yaw)[] views, string prefix = "cut-")
             {
                 for (int v = 0; v < views.Length; v++)
                 {
                     ApplyPose(new SceneDrawComparePath.Pose { eye = views[v].from, yaw = views[v].yaw });
                     for (int i = 0; i < 4; i++) yield return null;
-                    string stem = Path.Combine(settings.directory, "cut-" + stage + "-view" + v);
+                    string stem = Path.Combine(settings.directory, prefix + stage + "-view" + v);
                     ScreenCapture.CaptureScreenshot(stem + "-screen.png");
                     if (!Zantetsu.Rendering.Urp.VpEyeShot.TryRequest(eye, stem, out string eyeFailure))
                     {
