@@ -120,6 +120,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(root.Owners.Count, Is.EqualTo(owners - 3));
             Assert.That(groups.IsKnown(far), Is.False, "nothing comes back for it: forgotten");
 
+            // The retirement's own frame's collection reflected it (TL, 2026-10-10): the turn runs before that frame's
+            // collection, so by the next Update nothing of the group is drawn or held, and the next turn reads that
+            // collection as the one that followed the retirement.
+            Assert.That(root.Display.HoldsAnythingOf(far), Is.False, "the display holds nothing of the far group already: the retirement's own frame's collection let it go");
+            Assert.That(farPieces.Any(p => IsDrawn(root, p)), Is.False, "none of its pieces is drawn any more");
+            yield return null;
+            Assert.That(groups.CollectionsAfterRetirement, Is.EqualTo(1), "that collection was read as the one that followed the retirement");
+            Assert.That(groups.HeldFor(CutGroupHold.StructureChanged), Is.GreaterThanOrEqualTo(1), "and the turn after the retirement was held for the structure it changed");
+
             // The group in view, and the uncut body, as they were.
             Assert.That(root.Ledger.IsCurrentTarget(seenSides[0]) && root.Ledger.IsCurrentTarget(seenSides[1]), Is.True);
             Assert.That(root.Owners.TryGet(seenSides[0], out _) && root.Owners.TryGet(seenSides[1], out _), Is.True);

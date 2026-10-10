@@ -293,9 +293,18 @@ namespace Zantetsu.PhysicsCut
                     Geometry?.ReclaimVertexRoom();
                 }
 
-                // The pieces' own lifetime, one at a time -- unless the groups' is on, which ends an NPC's pieces together
-                // (DESIGN 7.10): the two do not both act on the same pieces.
-                if (Groups == null || !Groups.Settings.enabled)
+                // The groups' lifetime (DESIGN 7.10) takes its turn here, before this frame's collection, so that the
+                // collection of the very frame the gate chose reflects a retirement -- not an ungated next frame's
+                // (TL, 2026-10-10). Off, and with nothing on its way back, the pieces' own lifetime steps instead, one
+                // piece at a time: the two do not both act on the same pieces.
+                if (Groups != null && (Groups.Settings.enabled || Groups.ComingBack != 0))
+                {
+                    using (s_groupsMarker.Auto())
+                    {
+                        Groups.Step();
+                    }
+                }
+                else
                 {
                     using (s_lifetimeMarker.Auto())
                     {

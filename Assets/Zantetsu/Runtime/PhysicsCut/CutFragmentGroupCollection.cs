@@ -218,9 +218,12 @@ namespace Zantetsu.PhysicsCut
     /// in a later frame that has room, through the uncut entrance: its next hit gives it a new fragment.
     /// </para>
     /// <para>
-    /// **When.** One turn a frame after the collections, after the empty owners' turn, by the gates that turn uses and
-    /// never in a frame that turn retired in. What a retirement is expected to cost is this group's: the measured cost
-    /// a piece times its pieces, and a group's own.
+    /// **When.** One turn a frame BEFORE the frame's collection (in the world's LateUpdate, where the per-piece
+    /// lifetime steps when this one is off), by the gates the empty owners' turn uses: a retirement is reflected by the
+    /// collection of the very frame the gate chose -- the structural collection it causes is part of what that frame
+    /// is asked to bear, not an ungated next frame's (TL, 2026-10-10). An empty owner retired after a collection
+    /// changes the ledger, which holds the next turn here. What a retirement is expected to cost is this group's: the
+    /// measured cost a piece times its pieces, a group's own, and the structural collection that follows.
     /// </para>
     /// </summary>
     public sealed class CutFragmentGroupCollection
@@ -247,6 +250,7 @@ namespace Zantetsu.PhysicsCut
         private readonly Plane[] _eyePlanes = new Plane[2 * VpInstanceCulling.EyePlaneCount];
         private readonly SimulateCostHistory _perFragment = new SimulateCostHistory();
         private readonly SimulateCostHistory _examinePerFragment = new SimulateCostHistory();
+        private readonly SimulateCostHistory _collectAfter = new SimulateCostHistory();   // the structural collection a retirement causes, in the same frame
         private readonly List<LogicalFragmentId> _drawnFragments = new List<LogicalFragmentId>(32);
         private readonly List<Bounds> _drawnBounds = new List<Bounds>(32);
         private readonly int[] _holds = new int[(int)CutGroupHold.Count];
@@ -306,8 +310,9 @@ namespace Zantetsu.PhysicsCut
         public double MaxRearmSeconds { get; private set; }
 
         /// <summary>
-        /// The frame's collection that followed a retirement (the display's structural update for it), as
-        /// <see cref="CutPhysicsStep.LastCollectSeconds"/> gave it: how many were read, their sum and the longest.
+        /// The collection that reflected a retirement -- the same frame's, after this turn (the display's structural
+        /// update for it), as <see cref="CutPhysicsStep.LastCollectSeconds"/> gave it when the next turn read it: how
+        /// many were read, their sum and the longest.
         /// </summary>
         public int CollectionsAfterRetirement { get; private set; }
         public double CollectAfterSeconds { get; private set; }
@@ -357,14 +362,24 @@ namespace Zantetsu.PhysicsCut
 
         public bool IsKnown(LogicalFragmentId root) => _byRoot.ContainsKey(root);
 
-        /// <summary>What retiring a group of <paramref name="fragments"/> pieces is expected to cost, in seconds: a piece's measured cost times the pieces, and a group's own.</summary>
+        /// <summary>The seed of what the structural collection after a retirement is expected to cost, in seconds, before any was measured (a Quest 3S walk's median was 0.9 ms).</summary>
+        public const double SeedCollectAfterSeconds = 0.001;
+
+        /// <summary>
+        /// What retiring a group of <paramref name="fragments"/> pieces is expected to cost this frame, in seconds: a
+        /// piece's measured cost times the pieces, a group's own, and the structural collection of this frame that the
+        /// retirement causes (the median of the last five measured, the seed before any).
+        /// </summary>
         public double ExpectedSeconds(int fragments)
         {
             // A piece's cost is the measured time of a retirement over its pieces (what the group shares is in it), the
             // median of the last five; the group's own part stays the seed, as a margin for a group of few pieces.
             double perFragment = _perFragment.Count == 0 ? Settings.seedSecondsPerFragment : _perFragment.ExpectedSeconds;
-            return (perFragment * fragments) + Settings.seedSecondsPerGroup;
+            return (perFragment * fragments) + Settings.seedSecondsPerGroup + ExpectedCollectAfterSeconds;
         }
+
+        /// <summary>What the structural collection that follows a retirement is expected to cost, in seconds.</summary>
+        public double ExpectedCollectAfterSeconds => _collectAfter.Count == 0 ? SeedCollectAfterSeconds : _collectAfter.ExpectedSeconds;
 
         /// <summary>One frame's turn: see the class notes.</summary>
         public void Step()
@@ -555,7 +570,7 @@ namespace Zantetsu.PhysicsCut
             LastRetireSeconds = spent;
             LastRetiredFrame = Time.frameCount;
             LastRetiredFragments = retired;
-            _collectAfterFrame = Time.frameCount + 1;
+            _collectAfterFrame = Time.frameCount + 1;   // this frame's collection follows this turn; its time is read by the next turn
             GroupsRetired++;
             FragmentsRetired += retired;
             if (retired > 0)
@@ -620,7 +635,8 @@ namespace Zantetsu.PhysicsCut
 
             text.Append("; time: choosing ").Append((SelectSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest stretch ")
                 .Append((MaxSelectSeconds * 1000.0).ToString("F3", inv)).Append(", expected a group of one ")
-                .Append((ExpectedExamineSeconds(1) * 1000.0).ToString("F3", inv)).Append("), retirements ").Append((RetireSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest ")
+                .Append((ExpectedExamineSeconds(1) * 1000.0).ToString("F3", inv)).Append(", expected collection after ")
+                .Append((ExpectedCollectAfterSeconds * 1000.0).ToString("F3", inv)).Append("), retirements ").Append((RetireSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest ")
                 .Append((MaxRetireSeconds * 1000.0).ToString("F3", inv)).Append("), returns ").Append((ReturnSeconds * 1000.0).ToString("F3", inv))
                 .Append(" ms (longest ").Append((MaxReturnSeconds * 1000.0).ToString("F3", inv)).Append("), re-arming ")
                 .Append((RearmSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest ").Append((MaxRearmSeconds * 1000.0).ToString("F3", inv))
@@ -665,6 +681,8 @@ namespace Zantetsu.PhysicsCut
                 return CutGroupHold.DisplayRoomGrown;
             }
 
+            // (Before the frame's collection, this frame's compaction has not run; a retirement here makes this frame's
+            // collection structural, which does not compact. Kept for a turn taken after a collection, as a test may.)
             if (_world.Display != null && _world.Display.LastCompactionFrame == Time.frameCount)
             {
                 return CutGroupHold.CompactionRan;
@@ -875,7 +893,8 @@ namespace Zantetsu.PhysicsCut
             return VpInstanceCulling.MayIntersectAnyEye(world, _eyePlanes, eyes) ? CutGroupPass.Seen : CutGroupPass.Candidate;
         }
 
-        // The collection of the frame after a retirement reflected it: its time is read here, once.
+        // The collection that reflected a retirement (the retirement's own frame, after its turn): its time is read
+        // here by the next turn, once, and goes into what the next retirement is expected to cost.
         private void FollowRetirement()
         {
             if (_collectAfterFrame == Time.frameCount)
@@ -884,6 +903,7 @@ namespace Zantetsu.PhysicsCut
                 CollectionsAfterRetirement++;
                 CollectAfterSeconds += seconds;
                 MaxCollectAfterSeconds = Math.Max(MaxCollectAfterSeconds, seconds);
+                _collectAfter.Add(seconds);
                 _collectAfterFrame = int.MinValue;
             }
         }
