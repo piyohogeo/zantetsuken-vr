@@ -738,7 +738,11 @@ namespace Zantetsu.Sandbox
                 Log("city walk display collection (the run): " + CityWalkDisplayCollection());
                 // The fragment group collection's own record (DESIGN 7.10): the world writes it at its end, which a run
                 // that keeps its scene (a device run) never reaches.
-                if (_world.Groups != null && _world.Groups.Turns > 0) Log("city walk fragment groups (the run): " + _world.Groups.Describe());
+                if (_world.Groups != null && _world.Groups.Turns > 0)
+                {
+                    Log("city walk fragment groups (the run): " + _world.Groups.Describe());
+                    _world.Groups.LogEvents();   // each collection, return and re-arming with its frame and its own time
+                }
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Log("city walk skinning (the run): " + CityWalkSkinning());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");

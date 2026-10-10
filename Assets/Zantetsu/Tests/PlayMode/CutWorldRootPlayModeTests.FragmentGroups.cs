@@ -520,6 +520,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(candidate.State, Is.EqualTo(PlacedCuttableCandidate.CandidateState.Candidate));
                 Assert.That(candidate.Source.IsSet, Is.False, "no fragment until its next hit");
                 Assert.That(candidate.IsHitTarget && detector.HasPlaced(candidate), Is.True, "a candidate of the detector again");
+                Assert.That(new[] { candidate.Rearms, candidate.RearmsFromKeptMeshes, candidate.RearmBakes }, Is.EqualTo(new[] { 1, 1, 0 }), "its input was made from the meshes kept baked at its first preparation: no cook (DESIGN 7.10)");
                 Assert.That(groups.IsKnown(first), Is.False);
                 Assert.That(root.Ledger.LiveCutFragmentCount, Is.Zero);
                 groups.Settings = GroupsOff();

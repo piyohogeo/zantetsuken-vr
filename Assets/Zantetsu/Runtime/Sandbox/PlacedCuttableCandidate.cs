@@ -52,6 +52,10 @@ namespace Zantetsu.Sandbox
         /// <summary>How many times its pieces were collected and it was made a cut target again.</summary>
         public int Rearms { get; private set; }
 
+        /// <summary>Of those, how many made the prop's input from the meshes kept baked, and how many had to bake again (the kept ones did not match: not expected).</summary>
+        public int RearmsFromKeptMeshes { get; private set; }
+        public int RearmBakes { get; private set; }
+
         /// <summary>Set by whoever gave it to a detector: called when it is a cut target again, to be given to the detector again.</summary>
         internal Action<PlacedCuttableCandidate> Rearmed;
 
@@ -233,13 +237,27 @@ namespace Zantetsu.Sandbox
 
             if (!_data.isBuilding)
             {
-                // A prop's convexes are prepared and cooked again: the ones it had went to its cut's owner.
+                // A prop's convexes are prepared again (the input it had went to its cut's owner): the bank built from the
+                // input once more, and the input made from the meshes kept baked at its first preparation -- the same
+                // hulls give the same bank, so they match; baked again only if they do not (counted, not expected).
                 var natives = new List<IDisposable>();
                 try
                 {
                     ConvexBrepBank bank = PlacedCuttableRegistration.BuildBank(_data.hulls, natives, out List<ConvexBrepRange> ranges);
                     _physics?.Dispose();
-                    _physics = new VpPreparedPhysicsInput(bank, ranges);
+                    _physics = null;
+                    if (_baked == null || _baked.IsDisposed || !_baked.Matches(bank, ranges))
+                    {
+                        _baked?.Dispose();
+                        _baked = new VpBakedConvexMeshes(bank, ranges);
+                        RearmBakes++;
+                    }
+                    else
+                    {
+                        RearmsFromKeptMeshes++;
+                    }
+
+                    _physics = new VpPreparedPhysicsInput(bank, ranges, _baked);
                 }
                 finally
                 {
@@ -271,6 +289,7 @@ namespace Zantetsu.Sandbox
         private readonly float3[] _anchors;
         private VpCharacterHitShape _hitShape;
         private VpPreparedPhysicsInput _physics;   // a prop's: its convexes, posed for a cut attempt
+        private VpBakedConvexMeshes _baked;        // a prop's convex meshes, baked once here and kept: a re-arming makes its input from them (DESIGN 7.10)
         private float4x4[] _identity;
         private bool _withdrawn, _disposed;
 
@@ -363,7 +382,10 @@ namespace Zantetsu.Sandbox
                 _hitShape = new VpCharacterHitShape(bank, ranges);   // a copy
                 if (!data.isBuilding)
                 {
-                    _physics = new VpPreparedPhysicsInput(bank, ranges);   // a copy, its convex meshes cooked once here
+                    // Its convex meshes are cooked once, here, and kept baked: the input (a copy of the bank) is made from
+                    // them now, and again when the prop is a cut target again after its pieces were collected (DESIGN 7.10).
+                    _baked = new VpBakedConvexMeshes(bank, ranges);
+                    _physics = new VpPreparedPhysicsInput(bank, ranges, _baked);
                     _identity = Enumerable.Repeat(float4x4.identity, ranges.Count).ToArray();
                 }
             }
@@ -371,6 +393,7 @@ namespace Zantetsu.Sandbox
             {
                 _hitShape?.Dispose();
                 _physics?.Dispose();
+                _baked?.Dispose();
                 throw;
             }
             finally
@@ -793,6 +816,8 @@ namespace Zantetsu.Sandbox
             _hitShape = null;
             _physics?.Dispose();   // nothing after its shape was taken by an owner
             _physics = null;
+            _baked?.Dispose();     // the meshes go once every piece made from them has let go too
+            _baked = null;
         }
     }
 }
