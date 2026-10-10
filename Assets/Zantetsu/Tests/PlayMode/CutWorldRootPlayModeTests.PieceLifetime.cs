@@ -17,6 +17,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// </summary>
     public partial class CutWorldRootPlayModeTests
     {
+        // The per-piece lifetime is what these cases run; the world does not step it while the groups' collection is on
+        // (DESIGN 7.10), which it is by default (TL, 2026-10-10): switched off for the world under test.
+        private static void GroupsOffForThePieceLifetime(CutWorldRoot root)
+        {
+            CutFragmentGroupSettings g = root.Groups.Settings;
+            root.Groups.Settings = new CutFragmentGroupSettings(false, g.maxLiveCutFragments, g.minDistance, g.examinePerFrame, g.reserveSeconds, g.seedSecondsPerFragment, g.seedSecondsPerGroup);
+        }
+
         private static CutFragmentLifetimeSettings Lifetime(bool enabled, int threshold, float distance, int retirePerFrame = 4)
         {
             return new CutFragmentLifetimeSettings(enabled, threshold, distance, 16, retirePerFrame, 0.004, 1.0);
@@ -81,6 +89,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 null);
             root.Driver.RemainingMainSeconds = () => 1.0;
             CutFragmentLifetime lifetime = root.Lifetime;
+            GroupsOffForThePieceLifetime(root);   // the groups' collection is on by default and the world then steps the per-piece one no more
             lifetime.ViewCamera = LifetimeCamera(new Vector3(0f, 0f, 50f));
             lifetime.RemainingMainSeconds = () => 1.0;
             LogicalFragmentId body = AddBody(root, Vector3.zero);
@@ -133,6 +142,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutWorldRoot root = NewWorld(out Shader _);
             root.Driver.RemainingMainSeconds = () => 1.0;
             CutFragmentLifetime lifetime = root.Lifetime;
+            GroupsOffForThePieceLifetime(root);   // the groups' collection is on by default and the world then steps the per-piece one no more
             LogicalFragmentId body = AddBody(root, Vector3.zero);
             lifetime.MarkLineage(body);
             yield return null;
@@ -196,6 +206,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 null);
             root.Driver.RemainingMainSeconds = () => 1.0;
             CutFragmentLifetime lifetime = root.Lifetime;
+            GroupsOffForThePieceLifetime(root);   // the groups' collection is on by default and the world then steps the per-piece one no more
             LogicalFragmentId body = AddBody(root, Vector3.zero);
             lifetime.MarkLineage(body);
             yield return null;
@@ -267,6 +278,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutWorldRoot root = NewWorld(out Shader _);
             root.Driver.RemainingMainSeconds = () => 1.0;
             CutFragmentLifetime lifetime = root.Lifetime;
+            GroupsOffForThePieceLifetime(root);   // the groups' collection is on by default and the world then steps the per-piece one no more
             lifetime.Settings = Lifetime(false, 2, 20f);
             lifetime.RemainingMainSeconds = () => 1.0;
             lifetime.ViewCamera = LifetimeCamera(new Vector3(0f, 0f, -8f));
@@ -313,6 +325,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutWorldRoot root = NewWorld(out Shader _);
             root.Driver.RemainingMainSeconds = () => 1.0;
             CutFragmentLifetime lifetime = root.Lifetime;
+            GroupsOffForThePieceLifetime(root);   // the groups' collection is on by default and the world then steps the per-piece one no more
             lifetime.Settings = Lifetime(false, 0, 20f);
             lifetime.RemainingMainSeconds = () => 1.0;
             lifetime.ViewCamera = LifetimeCamera(new Vector3(0f, 0f, -8f));
