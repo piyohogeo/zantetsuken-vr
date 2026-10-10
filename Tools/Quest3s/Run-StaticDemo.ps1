@@ -17,6 +17,12 @@ param(
     [switch]$LegacyClipMotion,
     [switch]$LegacyClipShadows,
     [switch]$NoConstantSharing,
+    [switch]$IndirectCount,          # accepted and needs no saying: the command compaction is the default (DESIGN 4.5.10, D-217)
+    [switch]$FixedCommands,          # the way back: the fixed-count multi-draw
+    [switch]$IndirectCountSelfTest,  # diagnosis: the wave kernel's self-test with a readback
+    [switch]$IndirectCountVerify,
+    [switch]$IndirectCountDrill,
+    [int]$IndirectCountFirstSlot = 0, # diagnosis (2026-10-10): the count slot a pass's first run takes (1 = the scene's one run from countBufferOffset 4)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe'
 )
@@ -40,6 +46,13 @@ $config.nativeNoClipColour = !$LegacyClipColour
 $config.nativeNoClipMotion = !$LegacyClipMotion
 $config.nativeNoClipShadows = !$LegacyClipShadows
 $config.nativeShareGpuConstants = !$NoConstantSharing
+# DESIGN 4.5.10 (D-217): the GPU compaction of the visible commands + vkCmdDrawIndexedIndirectCount by default; -FixedCommands keeps the fixed draw.
+if ($IndirectCount -and $FixedCommands) { throw '-IndirectCount and -FixedCommands exclude each other' }
+$config.nativeIndirectCount = !$FixedCommands
+$config.nativeIndirectCountSelfTest = [bool]$IndirectCountSelfTest
+$config.nativeIndirectCountVerify = [bool]$IndirectCountVerify
+$config.nativeIndirectCountDrill = [bool]$IndirectCountDrill
+$config.nativeIndirectCountFirstSlot = $IndirectCountFirstSlot
 $configFile = Join-Path ([IO.Path]::GetTempPath()) ('quest-static-' + [guid]::NewGuid().ToString('N') + '.json')
 try {
     [IO.File]::WriteAllText($configFile, ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))

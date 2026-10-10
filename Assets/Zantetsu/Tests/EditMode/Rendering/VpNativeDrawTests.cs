@@ -72,6 +72,89 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
+        public unsafe void BarrierData_UsesTheResourceFreeHeader_WithoutAPipeline_AndIsRecordedAsItsOwnEvent()
+        {
+            // 2026-10-10: the compute barrier event between a selection's dispatches and the compaction that reads them.
+            var ring = Track(new VpNativeDrawData(2, 4, 2, 256));
+            Assert.That(ring.TryBeginBarrier(), Is.True);
+            IntPtr block = ring.Finish(out uint serial);
+            var header = (Plugin.Draw*)block;
+            Assert.That(header->version, Is.EqualTo(Plugin.ContractVersion));
+            Assert.That(header->pipeline, Is.Zero);
+            Assert.That((IntPtr)header->argumentBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That((IntPtr)header->indexBuffer, Is.EqualTo(IntPtr.Zero));
+            Assert.That(header->argumentOffset, Is.Zero);
+            Assert.That(header->commandCount, Is.Zero);
+            Assert.That(header->resourceCount, Is.Zero);
+            Assert.That(header->constantsCount, Is.Zero);
+            Assert.That(ring.InFlightIn(VpNativeDrawData.BlockState.Prepared), Is.EqualTo(1));
+            var recorded = new List<IntPtr>();
+            Assert.That(ring.RecordPrepared(recorded.Add), Is.EqualTo(1));
+            Assert.That(recorded, Is.EqualTo(new[] { block }));
+            Assert.That(ring.InFlightIn(VpNativeDrawData.BlockState.Prepared), Is.Zero);
+            Assert.That(ring.StateOf(serial), Is.EqualTo(VpNativeDrawData.BlockState.Recorded));
+            header->result = (uint)Plugin.Result.Recorded;
+            header->consumed = 1;
+            Assert.That(VpNativeDrawData.ResultOf(block), Is.EqualTo(Plugin.Result.Recorded));
+
+            // Off a Vulkan device the plugin has no such event, and the selection says so before anything else of it.
+            Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
+            Assert.That(Plugin.BarrierEventId, Is.Zero);
+        }
+
+        [Test]
+        public unsafe void IndirectCountData_UsesTheVersionTwoExtension_WithTheRunAsTheMostAndTheCountRecord()
+        {
+            var ring = Track(new VpNativeDrawData(2, 4, 2, 256));
+            Assert.That(ring.TryBeginIndirectCount(3, new IntPtr(300), 40, 1602, new IntPtr(400), 12, new IntPtr(500), 0, 1024, new IntPtr(123), 4000, 4), Is.True);
+            ring.AddViewport(new Rect(0, 0, 32, 32));
+            IntPtr block = ring.Finish(out _);
+            var header = (Plugin.Draw*)block;
+            Assert.That(header->version, Is.EqualTo(Plugin.ExtendedDrawVersion));
+            Assert.That(VpNativeDrawData.ModeOf(block), Is.EqualTo(Plugin.DrawMode.IndirectCount));
+            Assert.That((IntPtr)header->argumentBuffer, Is.EqualTo(new IntPtr(300)));
+            Assert.That(header->argumentOffset, Is.EqualTo(40u * Plugin.ArgumentStride), "the compacted run begins where the fixed run does");
+            Assert.That(header->commandCount, Is.EqualTo(1602u), "the run's length is the most the GPU's count may be");
+            var ext = (Plugin.DrawExtension*)((byte*)block + sizeof(Plugin.Draw));
+            Assert.That(ext->commandsCount, Is.EqualTo(1u));
+            Assert.That(ext->reserved, Is.Zero);
+            Assert.That(ext->commandsOffset % 8, Is.Zero);
+            Assert.That(ext->commandsOffset + sizeof(Plugin.IndirectCountRecord), Is.LessThanOrEqualTo(header->totalBytes));
+            var record = (Plugin.IndirectCountRecord*)((byte*)block + ext->commandsOffset);
+            Assert.That((IntPtr)record->countBuffer, Is.EqualTo(new IntPtr(400)));
+            Assert.That(record->countOffset, Is.EqualTo(12u));
+            Assert.That((IntPtr)record->zeroBuffer, Is.EqualTo(new IntPtr(500)));
+            Assert.That(record->zeroOffset, Is.Zero);
+            Assert.That(record->zeroBytes, Is.EqualTo(1024u));
+            Assert.That(record->reserved, Is.Zero);
+            Assert.That(sizeof(Plugin.IndirectCountRecord), Is.EqualTo(32), "the C ABI's ZvnIndirectCount");
+            Assert.That(ring.DropPrepared(), Is.EqualTo(1));
+            Assert.That(ring.TryBeginIndirectCount(3, new IntPtr(300), 40, 1602, new IntPtr(400), 12, IntPtr.Zero, 8, 1024, new IntPtr(123), 4000, 4), Is.True, "no buffer to zero");
+            ring.AddViewport(new Rect(0, 0, 32, 32));
+            block = ring.Finish(out _);
+            record = (Plugin.IndirectCountRecord*)((byte*)block + ((Plugin.DrawExtension*)((byte*)block + sizeof(Plugin.Draw)))->commandsOffset);
+            Assert.That(record->zeroBytes, Is.Zero, "no range without a buffer");
+            Assert.That(record->zeroOffset, Is.Zero);
+            Assert.Throws<ArgumentException>(() => ring.TryBeginIndirectCount(3, new IntPtr(300), 0, 1, IntPtr.Zero, 0, IntPtr.Zero, 0, 0, new IntPtr(123), 4000, 4));
+
+            // The draw from a copy of its count (2026-10-10): the record names the copy's slot and nothing to zero.
+            Assert.That(ring.DropPrepared(), Is.EqualTo(1));
+            Assert.That(VpCommandCompaction.DrawFromCopy, Is.True, "the way of a route that compacts");
+            Assert.That(ring.TryBeginIndirectCount(3, new IntPtr(300), 40, 1602, new IntPtr(400), 12, new IntPtr(600), 12, 0, new IntPtr(123), 4000, 4, true), Is.True);
+            ring.AddViewport(new Rect(0, 0, 32, 32));
+            block = ring.Finish(out _);
+            record = (Plugin.IndirectCountRecord*)((byte*)block + ((Plugin.DrawExtension*)((byte*)block + sizeof(Plugin.Draw)))->commandsOffset);
+            Assert.That(record->reserved, Is.EqualTo(Plugin.CountDrawFromCopy));
+            Assert.That((IntPtr)record->countBuffer, Is.EqualTo(new IntPtr(400)), "the compute's count: the copy's source");
+            Assert.That((IntPtr)record->zeroBuffer, Is.EqualTo(new IntPtr(600)), "the copy's slot: what the draw reads");
+            Assert.That(record->zeroOffset, Is.EqualTo(12u));
+            Assert.That(record->zeroBytes, Is.Zero);
+            Assert.That(ring.DropPrepared(), Is.EqualTo(1));
+            Assert.Throws<ArgumentException>(() => ring.TryBeginIndirectCount(3, new IntPtr(300), 40, 1602, new IntPtr(400), 12, IntPtr.Zero, 0, 0, new IntPtr(123), 4000, 4, true), "no slot for the copy");
+            Assert.Throws<ArgumentException>(() => ring.TryBeginIndirectCount(3, new IntPtr(300), 40, 1602, new IntPtr(400), 12, new IntPtr(600), 0, 1024, new IntPtr(123), 4000, 4, true), "a range to zero is not a slot");
+        }
+
+        [Test]
         public unsafe void DirectClipGroup_CopiesPayloadsAndTracksOnlyItsCompletion_UntilConsumedOrDiscarded()
         {
             var ring = Track(new VpNativeDrawData(4, 4, 2, 20000));
@@ -292,6 +375,144 @@ namespace Zantetsu.Rendering.Tests
             data.AddViewport(new Rect(0f, 0f, 1f, 1f));
             Assert.That(data.Finish(out uint third), Is.EqualTo(first));
             Assert.That(third, Is.EqualTo(3u));
+        }
+
+        [Test]
+        public void CommandCompaction_FirstSlotIsZero_AndADiagnosisMayMoveIt_WithinTheSlots()
+        {
+            // Diagnosis of 2026-10-10: the static scene's one run drawn from count slot 1 (countBufferOffset 4), the
+            // condition of the city walk's second run; 0 is the product's, and the run's line says when it is not.
+            int was = VpCommandCompaction.FirstSlot;
+            try
+            {
+                Assert.That(was, Is.EqualTo(0));
+                Assert.That(VpCommandCompaction.DescribeRun(), Does.Not.Contain("FIRST SLOT"));
+                VpCommandCompaction.FirstSlot = 1;
+                Assert.That(VpCommandCompaction.FirstSlot, Is.EqualTo(1));
+                Assert.That(VpCommandCompaction.DescribeRun(), Does.Contain("FIRST SLOT 1"));
+                Assert.Throws<System.ArgumentOutOfRangeException>(() => VpCommandCompaction.FirstSlot = VpCommandCompaction.Slots);
+                Assert.Throws<System.ArgumentOutOfRangeException>(() => VpCommandCompaction.FirstSlot = -1);
+                Assert.That(VpCommandCompaction.FirstSlot, Is.EqualTo(1));
+            }
+            finally
+            {
+                VpCommandCompaction.FirstSlot = was;
+            }
+        }
+
+        [Test]
+        public void CommandCompaction_IsAskedForByDefault_AndTheFixedArgumentIsTheWayBack()
+        {
+            // DESIGN 4.5.10 (D-217): asked for unless the launch says the fixed draw; asking is not taking.
+            Assert.That(Plugin.ReadIndirectCountRequest(null), Is.True);
+            Assert.That(Plugin.ReadIndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }), Is.True);
+            Assert.That(Plugin.ReadIndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }), Is.True, "accepted, and the default anyway");
+            Assert.That(Plugin.ReadIndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }), Is.False);
+            Assert.That(Plugin.ReadIndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }), Is.False, "the fixed draw wins");
+            Assert.That(Plugin.CompactCommandsArgument, Is.EqualTo("-zantetsuVpCompactCommands"));
+            Assert.That(Plugin.FixedCommandsArgument, Is.EqualTo("-zantetsuVpFixedCommands"));
+
+            // Off a Vulkan device nothing compacts, whatever is asked, and the reason says so.
+            Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
+            bool asked = Plugin.VulkanIndirectCount;
+            try
+            {
+                Plugin.VulkanIndirectCount = true;
+                Assert.That(VpCommandCompaction.TrySelect(out string reason), Is.False);
+                Assert.That(reason, Does.StartWith("fixed:").And.Contain("not a Vulkan device"));
+                Plugin.VulkanIndirectCount = false;
+                Assert.That(VpCommandCompaction.TrySelect(out reason), Is.False);
+                Assert.That(reason, Does.StartWith("fixed:"), "and with the fixed draw asked for");
+            }
+            finally
+            {
+                Plugin.VulkanIndirectCount = asked;
+            }
+        }
+
+        [Test]
+        public void Compaction_SetsAreGivenUpThroughTheOwnersHandOver_AndASelectionsOwnEndWithIt()
+        {
+            // The compaction's GPU buffers live and end as the selection's own do: the batch's are handed to the
+            // owner's give-up (the keeper that waits on issued events), never disposed under an event; a caller-owned
+            // selection disposes its sets with itself. And what a set holds at the product's capacity is said.
+            Assert.That(VpIndexedIndirectDrawBatch.Compaction.BytesFor(65536, 24), Is.EqualTo(3L * ((65536L * 24) + (2 * 256 * 4))), "entries, counts and the counts' copies");
+            Assert.That(VpIndexedIndirectDrawBatch.CompactionRing, Is.EqualTo(4));
+            Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
+            var batch = new VpIndexedIndirectDrawBatch(4, 8, null, setup);
+            var expected = new HashSet<GraphicsBuffer>();
+            var given = new List<GraphicsBuffer>();
+            try
+            {
+                for (int frame = 0; frame < 6; frame++)
+                {
+                    VpIndexedIndirectDrawBatch.Compaction set = batch.CompactionOf(0, frame);
+                    for (int column = 0; column < 3; column++)
+                    {
+                        Assert.That(set.Entries(column), Is.Not.Null);
+                        expected.Add(set.Entries(column));
+                        expected.Add(set.Counts(column));
+                        Assert.That(set.DrawCounts(column), Is.Not.Null.And.Not.SameAs(set.Counts(column)), "the draws read a copy, not what the compute wrote");
+                        expected.Add(set.DrawCounts(column));
+                    }
+                }
+
+                Assert.That(expected.Count, Is.EqualTo(4 * 9), "four sets of three columns of entries, counts and the counts' copies, however many frames ask");
+
+                VpIndexedIndirectDrawBatch.CullOutput output = batch.CreateCullOutput();
+                VpIndexedIndirectDrawBatch.Compaction own = batch.CompactionOf(output, 0);
+                GraphicsBuffer ownEntries = own.Entries(2), ownCounts = own.Counts(2);
+                Assert.That(expected.Contains(ownEntries), Is.False, "a selection's own sets are not a view's");
+                output.Dispose();
+                Assert.That(ownEntries.IsValid(), Is.False, "the selection's sets end with it");
+                Assert.That(ownCounts.IsValid(), Is.False);
+
+                batch.Dispose(given.Add);
+                foreach (GraphicsBuffer buffer in expected)
+                {
+                    Assert.That(given.Contains(buffer), Is.True, "every compaction buffer is handed over");
+                    Assert.That(buffer.IsValid(), Is.True, "and none is disposed by the batch itself");
+                }
+            }
+            finally
+            {
+                batch.Dispose();
+                foreach (GraphicsBuffer buffer in given) buffer.Dispose();
+            }
+        }
+
+        [Test]
+        public void Compaction_RefusesARun_WhoseColumnWasNotReservedForZeroingThisFrame()
+        {
+            // The experiment's gate (TL review, 2026-10-10): a frame whose zero event could not be taken for a column
+            // never compacts into that column -- the batch refuses before any dispatch, whatever the device.
+            Assert.That(VpGpuCullSetup.TryCreate(1, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
+            var cube = new Bounds(Vector3.zero, Vector3.one);
+            var commands = new[] { new VpIndirectCommand(new VpGeometryRange(0, 36, 100, 24), cube, 2), new VpIndirectCommand(new VpGeometryRange(36, 12, 200, 8), cube, 1) };
+            var transforms = new[] { Matrix4x4.identity, Matrix4x4.identity, Matrix4x4.identity };
+            using (var batch = new VpIndexedIndirectDrawBatch(4, 8, null, setup))
+            using (var buffer = new CommandBuffer())
+            {
+                batch.WriteWholeOnce();
+                Assert.That(batch.TryUpload(commands, transforms, false), Is.True, "upload");
+                batch.NativeDrawBuffers(0, out GraphicsBuffer forwardArguments, out _, out _, out _, out _, out _, out _);
+                VpIndexedIndirectDrawBatch.Compaction set = batch.CompactionOf(0, 10);
+                Assert.That(ReferenceEquals(set, batch.CompactionOf(0, 14)), Is.True, "one set every four frames");
+                Assert.That(ReferenceEquals(set, batch.CompactionOf(0, 11)), Is.False, "the next frame's set is another");
+                Assert.That(set.ZeroReserved(0, 10), Is.False);
+                var refused = Assert.Throws<InvalidOperationException>(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
+                Assert.That(refused.Message, Does.Contain("not reserved for zeroing"));
+                set.MarkZeroReserved(1, 10);
+                Assert.That(set.ZeroReserved(0, 10), Is.False, "another column's reservation does not count");
+                Assert.Throws<InvalidOperationException>(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
+                set.MarkZeroReserved(0, 10);
+                Assert.That(set.ZeroReserved(0, 10), Is.True);
+                Assert.That(set.ZeroReserved(0, 11), Is.False, "a reservation is one frame's");
+                // Past the gate: on a device without the Vulkan wave kernel the compaction itself is what refuses now.
+                var passed = Assert.Throws<InvalidOperationException>(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
+                Assert.That(passed.Message, Does.Not.Contain("not reserved for zeroing"));
+                Assert.That(passed.Message, Does.Contain(VpCommandCompaction.ShaderResource));
+            }
         }
 
         [Test]

@@ -106,12 +106,18 @@ namespace Zantetsu.Rendering
             public GraphicsBuffer shadowVisible;
             public GraphicsBuffer shadowArguments;
 
+            // Experiment (2026-10-10): the compacted entries and count slots of each column (VpCommandCompaction), made
+            // only when a route asks for them, one set a frame of a ring (CompactionRing): a frame's compaction never
+            // writes the set a frame still on the GPU may be drawing from. GPU-written alone.
+            public Compaction[] compactions;
+
             public void Dispose()
             {
                 forwardVisible?.Dispose();
                 forwardArguments?.Dispose();
                 shadowVisible?.Dispose();
                 shadowArguments?.Dispose();
+                if (compactions != null) foreach (Compaction c in compactions) c?.Dispose();
             }
         }
 
@@ -348,6 +354,148 @@ namespace Zantetsu.Rendering
 
         /// <summary>Whether this batch's selection writes the plugin's argument entries (see <see cref="NativeDrawBuffers"/>).</summary>
         public bool NativeArguments => _cull != null && _cull.NativeArguments;
+
+        // ---- the compaction experiment (2026-10-10, Quest 3S / Vulkan) --------------------------------------------
+        // The compacted entries and the count slots of one column of one selection (a view's, or a caller-owned
+        // output's): GPU-written alone, by VpCommandCompaction, between the selection and the draws. The fixed
+        // entries stay as the selection wrote them; a route that does not ask for this never makes it.
+
+        /// <summary>The compacted entries and count slots of a selection's two columns. Made on first use; never written by the CPU.</summary>
+        public sealed class Compaction : IDisposable
+        {
+            public GraphicsBuffer ForwardEntries { get; private set; }
+            public GraphicsBuffer ForwardCounts { get; private set; }
+            public GraphicsBuffer ShadowEntries { get; private set; }
+            public GraphicsBuffer ShadowCounts { get; private set; }
+            // The motion pass's own column: with no selection of its own (no AppSW distance) it compacts the view's
+            // body entries too, and compacting them into the body's buffers again doubled the count (icB7, 2026-10-10).
+            public GraphicsBuffer MotionEntries { get; private set; }
+            public GraphicsBuffer MotionCounts { get; private set; }
+
+            /// <summary>Column 0 the body, 1 the casters, 2 the motion.</summary>
+            public GraphicsBuffer Entries(int column) => column == 1 ? ShadowEntries : column == 2 ? MotionEntries : ForwardEntries;
+            public GraphicsBuffer Counts(int column) => column == 1 ? ShadowCounts : column == 2 ? MotionCounts : ForwardCounts;
+
+            // What the draws read their counts from (VpCommandCompaction.DrawFromCopy): a slot a run, into which the
+            // plugin copies the run's count by a transfer just before the draw. The compute never writes these.
+            public GraphicsBuffer ForwardDrawCounts { get; private set; }
+            public GraphicsBuffer ShadowDrawCounts { get; private set; }
+            public GraphicsBuffer MotionDrawCounts { get; private set; }
+
+            /// <summary>Column 0 the body, 1 the casters, 2 the motion: the copies of the counts, read by the draws.</summary>
+            public GraphicsBuffer DrawCounts(int column) => column == 1 ? ShadowDrawCounts : column == 2 ? MotionDrawCounts : ForwardDrawCounts;
+
+            // The frame for which each column's count slots were reserved for zeroing (the plugin's zero event taken
+            // and finished): a compaction of a column is refused for any other frame, so that a set whose zeroing
+            // could not be reserved (the event ring full) is never added to (TL review, 2026-10-10).
+            private readonly int[] _zeroReservedFrame = { int.MinValue, int.MinValue, int.MinValue };
+
+            /// <summary>The zero event of <paramref name="column"/>'s count slots is taken for <paramref name="frame"/>.</summary>
+            public void MarkZeroReserved(int column, int frame) => _zeroReservedFrame[column] = frame;
+
+            /// <summary>Whether <paramref name="column"/>'s count slots are reserved for zeroing in <paramref name="frame"/>.</summary>
+            public bool ZeroReserved(int column, int frame) => column >= 0 && column < 3 && _zeroReservedFrame[column] == frame;
+
+            /// <summary>The GPU bytes of one set: three columns of entries, of count slots and of the counts' copies. No CPU copy is kept.</summary>
+            public static long BytesFor(int commandCapacity, int stride)
+            {
+                return 3L * (((long)commandCapacity * stride) + (2L * VpCommandCompaction.Slots * sizeof(uint)));
+            }
+
+            internal Compaction(int commandCapacity, int stride, string name)
+            {
+                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    ForwardEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Forward Entries " + name };
+                    ForwardCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Forward Counts " + name };
+                    ShadowEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Shadow Entries " + name };
+                    ShadowCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Shadow Counts " + name };
+                    MotionEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Motion Entries " + name };
+                    MotionCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Motion Counts " + name };
+                    // Zero before any use; afterwards the plugin zeroes a set's slots after each draw that read them.
+                    ForwardCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    ShadowCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    MotionCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    ForwardDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Forward Draw Counts " + name };
+                    ShadowDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Shadow Draw Counts " + name };
+                    MotionDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Motion Draw Counts " + name };
+                    ForwardDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    ShadowDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    MotionDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    VpCommandCompaction.NoteSetMade(BytesFor(commandCapacity, stride),
+                        (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
+                }
+                catch { Dispose(); throw; }
+            }
+
+            public void Dispose() => GiveUp(null);
+
+            internal void GiveUp(Action<GraphicsBuffer> giveUp)
+            {
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ForwardEntries); ForwardEntries = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ForwardCounts); ForwardCounts = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ShadowEntries); ShadowEntries = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ShadowCounts); ShadowCounts = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, MotionEntries); MotionEntries = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, MotionCounts); MotionCounts = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ForwardDrawCounts); ForwardDrawCounts = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, ShadowDrawCounts); ShadowDrawCounts = null;
+                VpIndexedIndirectDrawBatch.GiveUp(giveUp, MotionDrawCounts); MotionDrawCounts = null;
+            }
+        }
+
+        /// <summary>
+        /// Sets of compaction buffers a selection keeps, one a frame in turn: frame F writes set F mod this, so the
+        /// set a frame still on the GPU draws from is never the one being written (a torn entry -- half of one
+        /// command, half of another -- was seen on Quest 3S with one set, 2026-10-10: the compacted positions change
+        /// from frame to frame with the waves' order, unlike the selection's own entries).
+        /// </summary>
+        public const int CompactionRing = 4;
+
+        /// <summary>The compaction buffers of view <paramref name="view"/> for <paramref name="frame"/>, made on first asking. For a batch the plugin draws.</summary>
+        public Compaction CompactionOf(int view, int frame)
+        {
+            View(view);
+            if (!_cull.NativeArguments) throw new InvalidOperationException("this batch writes Unity's argument entries; the plugin cannot draw from them");
+            ref Compaction[] ring = ref _cullViews[view].compactions;
+            ring ??= new Compaction[CompactionRing];
+            int slot = (frame % CompactionRing + CompactionRing) % CompactionRing;
+            return ring[slot] ??= new Compaction(CommandCapacity, _cull.ArgumentStride, "view " + view + " set " + slot);
+        }
+
+        /// <summary>The compaction buffers of a caller-owned selection (<see cref="CreateCullOutput"/>) for <paramref name="frame"/>, made on first asking.</summary>
+        public Compaction CompactionOf(CullOutput output, int frame)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            if (output == null || !ReferenceEquals(output.owner, this) || output.ForwardArguments == null)
+                throw new ArgumentException("A live selection belonging to this batch is required.");
+            output.compactions ??= new Compaction[CompactionRing];
+            int slot = (frame % CompactionRing + CompactionRing) % CompactionRing;
+            return output.compactions[slot] ??= new Compaction(CommandCapacity, _cull.ArgumentStride, "output set " + slot);
+        }
+
+        /// <summary>The experiment's check of the run just compacted (VpCommandCompaction.Verify), recorded after <see cref="IssueCompaction"/>.</summary>
+        public void IssueVerification(CommandBuffer commands, Compaction compaction, GraphicsBuffer source, int column, int firstCommand, int commandCount, int slot)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            VpCommandCompaction.Verify(commands, source, compaction.Entries(column), compaction.Counts(column), firstCommand, commandCount, slot, column);
+        }
+
+        /// <summary>
+        /// Compacts the run [<paramref name="firstCommand"/>, +<paramref name="commandCount"/>) of the selection's entries
+        /// of one column (<paramref name="source"/>: the fixed argument buffer the draw would read) into the compaction's
+        /// entries of that column, counted in <paramref name="slot"/>. After the selection's dispatch, before the draw.
+        /// </summary>
+        public void IssueCompaction(CommandBuffer commands, Compaction compaction, GraphicsBuffer source, int column, int firstCommand, int commandCount, int slot, int frame)
+        {
+            ThrowIfDisposed(); ThrowIfNotCulled();
+            if (firstCommand < 0 || commandCount <= 0 || firstCommand > CommandCount - commandCount)
+                throw new ArgumentOutOfRangeException(nameof(commandCount), commandCount, "The run must be within the uploaded commands.");
+            if (!compaction.ZeroReserved(column, frame))
+                throw new InvalidOperationException("the column's count slots are not reserved for zeroing in this frame: the run is not compacted (it draws fixed)");
+            VpCommandCompaction.Compact(commands, source, compaction.Entries(column), compaction.Counts(column), firstCommand, commandCount, slot);
+        }
 
         // ---- the clip list (DESIGN 4.5.9) ----------------------------------------------------------------------
         // The clipped instances of a batch that selects on the GPU are drawn apart from the selection, so that the
@@ -909,6 +1057,7 @@ namespace Zantetsu.Rendering
             public GraphicsBuffer ForwardArguments { get; private set; }
             public GraphicsBuffer ForwardVisible { get; private set; }
             internal GraphicsBuffer ShadowArguments, ShadowVisible;
+            internal Compaction[] compactions;   // experiment (2026-10-10): made by CompactionOf(output, frame) when a route asks
             internal CullOutput(VpIndexedIndirectDrawBatch batch)
             {
                 owner = batch;
@@ -927,6 +1076,8 @@ namespace Zantetsu.Rendering
                 ForwardVisible?.Dispose(); ForwardVisible = null;
                 ShadowArguments?.Dispose(); ShadowArguments = null;
                 ShadowVisible?.Dispose(); ShadowVisible = null;
+                if (compactions != null) foreach (Compaction c in compactions) c?.Dispose();
+                compactions = null;
             }
         }
 
@@ -2268,6 +2419,7 @@ namespace Zantetsu.Rendering
                     GiveUp(giveUp, _cullViews[v].forwardArguments);
                     GiveUp(giveUp, _cullViews[v].shadowVisible);
                     GiveUp(giveUp, _cullViews[v].shadowArguments);
+                    if (_cullViews[v].compactions != null) foreach (Compaction c in _cullViews[v].compactions) c?.GiveUp(giveUp);
                 }
             }
         }

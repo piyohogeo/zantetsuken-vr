@@ -50,6 +50,14 @@ namespace Zantetsu.Quest
             public bool nativeNoClipMotion = true;
             public bool nativeNoClipShadows = true;
             public bool nativeShareGpuConstants = true;
+            public bool nativeIndirectCount = true;        // DESIGN 4.5.10 (D-217): the command compaction is asked for by default; false keeps the fixed draw
+            public bool nativeIndirectCountVerify = false; // diagnosis: the GPU check of every compaction, read back for the log (not in a measurement)
+            public bool nativeIndirectCountSnapshot = false; // diagnosis (2026-10-10): the count of every count draw copied and read back, tallied a column (a check run)
+            public bool nativeIndirectCountCastersFixed = false; // diagnosis: the caster column drawn fixed while bodies and motion compact
+            public bool nativeIndirectCountDirect = false;  // comparison: the count draws read the compute-written counts directly (the earlier way, with the one-frame shadow loss)
+            public bool nativeIndirectCountPoison = false;  // diagnosis: the compacted entries filled with zeroes each frame, so that a stale read of them shows (a check run)
+            public bool propChecks = true;                 // D-212: the city walk's checks part; false leaves it out (the standard performance configuration)
+            public bool propDetail = true;                 // D-212: the city walk's detailed diagnostics part; false leaves it out
         }
 
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -102,6 +110,12 @@ namespace Zantetsu.Quest
             VpNativeDrawPlugin.VulkanNoClipMotionShaders = config.nativeNoClipMotion;
             VpNativeDrawPlugin.VulkanNoClipShadowShaders = config.nativeNoClipShadows;
             VpNativeDrawPlugin.VulkanShareGpuConstants = config.nativeShareGpuConstants;
+            VpNativeDrawPlugin.VulkanIndirectCount = config.nativeIndirectCount;
+            VpCommandCompaction.VerificationEnabled = config.nativeIndirectCount && config.nativeIndirectCountVerify;
+            VpCommandCompaction.SnapshotEnabled = config.nativeIndirectCount && config.nativeIndirectCountSnapshot;
+            VpCommandCompaction.CastersFixed = config.nativeIndirectCount && config.nativeIndirectCountCastersFixed;
+            VpCommandCompaction.DrawFromCopy = !config.nativeIndirectCountDirect;
+            VpCommandCompaction.PoisonEntries = config.nativeIndirectCount && config.nativeIndirectCountPoison;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -248,8 +262,13 @@ namespace Zantetsu.Quest
                     SandboxPropSlashPlayerCheck.CityWalkBudgetArgument, _config.cityWalkBudgetSeconds.ToString(Inv) });
             }
             else scenarioArguments.Add(SandboxPropSlashPlayerCheck.MultiNpcArgument);
+            // D-212: the parts a city walk leaves out, from the launch's configuration (a Player on the device has no command line of its own).
+            if (_cityWalk && !_config.propChecks) scenarioArguments.AddRange(new[] { SandboxPropSlashPlayerCheck.ChecksArgument, "off" });
+            if (_cityWalk && !_config.propDetail) scenarioArguments.AddRange(new[] { SandboxPropSlashPlayerCheck.DetailArgument, "off" });
             arguments = scenarioArguments.ToArray();
             File.WriteAllLines(Path.Combine(_directory, "run-arguments.txt"), arguments);
+            // Diagnosis: every count snapshot of the run, for a reading of one-frame falls (once the scene is retained the file goes on: pull it again).
+            if (VpCommandCompaction.SnapshotEnabled) VpCommandCompaction.SnapshotFile = Path.Combine(_directory, "count-snapshots.csv");
 #if DEBUG
             _loggerBeginAdmission = DevelopmentLogger.Instance.write_log("QuestNpcSlashDemo", "npc_run_begin", _directory).ToString();
 #endif
@@ -553,6 +572,9 @@ namespace Zantetsu.Quest
                 if (_drawing != null && _config.mode == "vp3c-native") Debug.Log("QUEST NPC ROUTE: " + _drawing.DescribeNativeRoute(out _));
                 if (_config.mode == "vp3c-native" && VpNativeDrawPlugin.TryLoad(out _))
                     Debug.Log("QUEST NPC NATIVE: " + VpNativeDrawPlugin.ReadCounters() + "; " + VpNativeDrawPlugin.DescribeState());
+                if (_config.mode == "vp3c-native") Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.DescribeRun());
+                if (VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.ReadVerification());
+                if (VpCommandCompaction.SnapshotEnabled || VpCommandCompaction.CastersFixed) Debug.Log("QUEST NPC SNAPSHOTS: castersFixed=" + VpCommandCompaction.CastersFixed + "; " + VpCommandCompaction.DescribeSnapshots());
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
                     + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);

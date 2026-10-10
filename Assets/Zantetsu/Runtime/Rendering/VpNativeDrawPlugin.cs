@@ -201,12 +201,35 @@ namespace Zantetsu.Rendering
         }
 
         public const uint ExtendedDrawVersion = 2;
-        public enum DrawMode : uint { Indirect = 0, Direct = 1, Group = 2 }
+        public enum DrawMode : uint { Indirect = 0, Direct = 1, Group = 2, IndirectCount = 3 }
         [StructLayout(LayoutKind.Sequential)]
         public struct DrawExtension
         {
             public uint mode, commandsOffset, commandsCount, reserved;
         }
+        /// <summary>
+        /// Experiment (2026-10-10): the one record of a <see cref="DrawMode.IndirectCount"/> draw -- the buffer the GPU
+        /// counted the compacted commands into, and where; and a buffer range the plugin zeroes in this draw's
+        /// preparation (the counts the previous frame's draw read), null for none. The draw's commandCount is then the
+        /// most the count may be.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IndirectCountRecord
+        {
+            public void* countBuffer;
+            public uint countOffset;
+            public uint zeroBytes;
+            public void* zeroBuffer;
+            public uint zeroOffset;
+            public uint reserved;   // 0, or CountDrawFromCopy
+        }
+
+        /// <summary>
+        /// <see cref="IndirectCountRecord.reserved"/>: the draw reads its count from the 4-byte slot the record names
+        /// (zeroBuffer, zeroOffset; zeroBytes 0), into which the plugin copies it by a transfer in the draw's preparation
+        /// (ZVN_COUNT_DRAW_FROM_COPY). See <see cref="VpCommandCompaction.DrawFromCopy"/>.
+        /// </summary>
+        public const uint CountDrawFromCopy = 1u;
         [StructLayout(LayoutKind.Sequential)]
         public struct DirectCommand
         {
@@ -289,6 +312,12 @@ namespace Zantetsu.Rendering
         private static extern int ZvnGroupPreparedEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnWarmPipelineEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnZeroEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnBarrierEventId();
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnIndirectCountReady();
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -402,6 +431,12 @@ namespace Zantetsu.Rendering
                         // Optional export: libraries without warmup retain the existing contract-1 draw path.
                         try { s_warmPipelineEventId = ZvnWarmPipelineEventId(); }
                         catch (EntryPointNotFoundException) { s_warmPipelineEventId = 0; }
+                        // Experiment (2026-10-10): the count slots' zero event and the count draw's readiness; absent in older libraries.
+                        try { s_zeroEventId = ZvnZeroEventId(); s_indirectCountReady = ZvnIndirectCountReady() != 0; }
+                        catch (EntryPointNotFoundException) { s_zeroEventId = 0; s_indirectCountReady = false; }
+                        // The compute barrier event before a compaction (2026-10-10); absent in older libraries, and then no compaction.
+                        try { s_barrierEventId = ZvnBarrierEventId(); }
+                        catch (EntryPointNotFoundException) { s_barrierEventId = 0; }
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -460,8 +495,19 @@ namespace Zantetsu.Rendering
         public static int SentinelEventId => s_sentinelEventId;
 
         private static int s_sentinelEventId;
-        private static int s_prepareEventId, s_preparedDrawEventId, s_groupPrepareEventId, s_groupPreparedEventId, s_warmPipelineEventId;
+        private static int s_prepareEventId, s_preparedDrawEventId, s_groupPrepareEventId, s_groupPreparedEventId, s_warmPipelineEventId, s_zeroEventId, s_barrierEventId;
+        private static bool s_indirectCountReady;
         public static int WarmPipelineEventId => s_warmPipelineEventId;
+        /// <summary>Experiment (2026-10-10): the event that zeroes a count buffer range before a frame's compaction; 0 when the library has none.</summary>
+        public static int ZeroEventId => s_zeroEventId;
+        /// <summary>
+        /// The event that records the plugin's compute barrier between a selection's dispatches and the compaction that
+        /// reads their entries (2026-10-10: Unity's order of two compute dispatches on one buffer is not a contract on
+        /// Quest 3S); 0 when the library has none, and then nothing compacts.
+        /// </summary>
+        public static int BarrierEventId => s_barrierEventId;
+        /// <summary>Whether the loaded library can record a count draw on this device (the extension enabled and its entry point found); false until loaded.</summary>
+        public static bool IndirectCountReady => s_loaded && s_indirectCountReady;
         public static int GroupPrepareEventId => s_groupPrepareEventId;
         public static int GroupPreparedEventId => s_groupPreparedEventId;
         public static int PrepareEventId => s_prepareEventId;
@@ -475,6 +521,42 @@ namespace Zantetsu.Rendering
         public static bool VulkanNoClipMotionShaders { get; set; } = true;
         public static bool VulkanNoClipShadowShaders { get; set; } = true;
         public static bool VulkanShareGpuConstants { get; set; } = true;
+        /// <summary>
+        /// The Player argument that asks the Vulkan route for the command compaction (DESIGN 4.5.10, D-217). The
+        /// compaction is the default since 2026-10-10, so the argument is accepted and changes nothing.
+        /// </summary>
+        public const string CompactCommandsArgument = "-zantetsuVpCompactCommands";
+
+        /// <summary>
+        /// The Player argument that keeps the Vulkan route's fixed-count multi-draw: the way back from the command
+        /// compaction (DESIGN 4.5.10, D-217). It wins over <see cref="CompactCommandsArgument"/>.
+        /// </summary>
+        public const string FixedCommandsArgument = "-zantetsuVpFixedCommands";
+
+        private static bool? s_indirectCountAsked;
+
+        /// <summary>
+        /// Whether the Vulkan route is asked to compact each draw unit's argument entries on the GPU
+        /// (VpCommandCompaction) and draw them by vkCmdDrawIndexedIndirectCount (DESIGN 4.5.10, D-217): true unless
+        /// the Player was started with <see cref="FixedCommandsArgument"/>, or a launch's configuration set it.
+        /// Asking is not taking: the route takes it only where <see cref="VpCommandCompaction.TrySelect"/> finds every
+        /// condition, and draws fixed otherwise. No other device's route reads it.
+        /// </summary>
+        public static bool VulkanIndirectCount
+        {
+            get
+            {
+                if (!s_indirectCountAsked.HasValue) s_indirectCountAsked = ReadIndirectCountRequest(Environment.GetCommandLineArgs());
+                return s_indirectCountAsked.Value;
+            }
+            set => s_indirectCountAsked = value;
+        }
+
+        /// <summary>What <see cref="VulkanIndirectCount"/> answers for a set of arguments. For tests of the reading itself.</summary>
+        public static bool ReadIndirectCountRequest(string[] arguments)
+        {
+            return arguments == null || Array.IndexOf(arguments, FixedCommandsArgument) < 0;
+        }
 
         /// <summary>
         /// Whether the plugin can run events now: false once the device is gone, after which it touches no block

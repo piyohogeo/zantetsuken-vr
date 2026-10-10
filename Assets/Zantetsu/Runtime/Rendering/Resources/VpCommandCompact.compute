@@ -1,0 +1,145 @@
+// Quest 3S / Vulkan only (DESIGN 4.5.10, D-217): the compaction of the selection's argument entries by wave operations,
+// for a draw by vkCmdDrawIndexedIndirectCount. The selection (VpInstanceCull.compute) still writes every command's
+// 24-byte entry -- the command's number and its five indexed arguments -- in the command's own slot, a command that
+// keeps nothing with an instance count of zero. This pass reads one run of those entries (one draw unit: one material's
+// commands for one column, body or casters) and copies the entries whose instance count is not zero, whole, to the
+// front of the same run in a second buffer, and counts them in the run's slot of a count buffer. The draw then reads
+// the compacted run with the count as its draw count: no entry of zero instances reaches the GPU's command processor.
+//
+// The entry's head still carries the ORIGINAL command number, and its firstInstance is the original slot run, so a
+// vertex stage that reads the visible list by SV_InstanceID (which includes firstInstance on Vulkan; UnityIndirect.cginc)
+// reads the same instances as the fixed draw. Nothing of the compacted position is handed to the shader.
+//
+// Within a wave, the visible entries are ranked by WavePrefixCountBits and the wave takes its range of the run with
+// ONE atomic on the slot (a wave with no visible entry takes none). A group is 64 threads: one wave whether the device
+// runs 64 or 128 lanes a wave (a 256-thread group walking the run with group barriers was tried on 2026-10-10 and did
+// not hold in a frame). The count slot was zeroed by the plugin's zero event in the frame's first pass (a transfer fill
+// with its own barriers; the sets rotate by frame): neither a compute dispatch nor a managed SetBufferData zeroing it
+// was ordered before this dispatch by Unity's barriers on the device (2026-10-10: the count was reset among the waves'
+// atomics, and shadows vanished in some frames). The draw does not read the slot itself: the plugin copies it by a
+// transfer in the draw's preparation and the draw reads the copy (a draw recorded right after this dispatch read the
+// slot's zero in some frames, whatever barrier stood between).
+//
+// VerifyCompaction is the experiment's check, dispatched after the compaction: one thread a source command, it finds
+// the command among the compacted entries and tallies a mismatch when a command with instances is there other than
+// once or with other fields, or a command without instances is there at all. The tallies accumulate over the run and
+// are read back by the CPU once in a while for the record: never for a draw.
+#pragma kernel CompactCommands
+#pragma kernel VerifyCompaction
+#pragma only_renderers vulkan
+#pragma require wavebasic wavevote waveballot
+
+#define VP_COMPACT_STRIDE 24u
+
+// The selection's entries of this view's column (the fixed draw's argument buffer): read only.
+ByteAddressBuffer _VpCompactSource;
+
+// The compacted entries, laid out run by run at the run's own start; and one count per run slot.
+RWByteAddressBuffer _VpCompactTarget;
+RWByteAddressBuffer _VpCompactCounts;
+
+uint _VpCompactFirst;   // the run's first command
+uint _VpCompactCount;   // the run's command count
+uint _VpCompactSlot;    // the run's slot in the count buffer
+
+// The check's view of the compaction's outputs (read only) and its tallies: [0] mismatched commands, [4] commands
+// with instances checked, [8] counts summed, [12] dispatches, [16] counts above the run's length.
+ByteAddressBuffer _VpVerifyCompacted;
+ByteAddressBuffer _VpVerifyCounts;
+RWByteAddressBuffer _VpVerifyStats;
+uint _VpVerifyColumn;   // 0 the body, 1 the casters, 2 the motion: each column its own tallies
+
+[numthreads(64, 1, 1)]
+void CompactCommands(uint3 id : SV_DispatchThreadID)
+{
+    // No early return: every lane of the wave reaches the wave operations below.
+    uint i = id.x;
+    bool inRun = i < _VpCompactCount;
+    uint entry = (_VpCompactFirst + i) * VP_COMPACT_STRIDE;
+    uint instanceCount = inRun ? _VpCompactSource.Load(entry + 8u) : 0u;   // 4 (the number) + 4 (indexCount)
+    bool visible = inRun && instanceCount != 0u;
+
+    uint waveVisible = WaveActiveCountBits(visible);
+    uint rank = WavePrefixCountBits(visible);
+    uint waveBase = 0u;
+    if (WaveIsFirstLane() && waveVisible != 0u)
+    {
+        _VpCompactCounts.InterlockedAdd(_VpCompactSlot * 4u, waveVisible, waveBase);
+    }
+
+    waveBase = WaveReadLaneFirst(waveBase);
+    // Never past the run: a count left in the slot (a zeroing that did not happen) could carry the base beyond the
+    // run and into another material's region; such an entry is dropped (the draw's most is the run's length too).
+    if (visible && waveBase + rank < _VpCompactCount)
+    {
+        uint at = (_VpCompactFirst + waveBase + rank) * VP_COMPACT_STRIDE;
+        _VpCompactTarget.Store4(at, _VpCompactSource.Load4(entry));
+        _VpCompactTarget.Store2(at + 16u, _VpCompactSource.Load2(entry + 16u));
+    }
+}
+
+[numthreads(64, 1, 1)]
+void VerifyCompaction(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _VpCompactCount)
+    {
+        return;   // no wave operation follows
+    }
+
+    uint count = _VpVerifyCounts.Load(_VpCompactSlot * 4u);
+    uint limit = min(count, _VpCompactCount);
+    uint c = _VpCompactFirst + i;
+    uint entry = c * VP_COMPACT_STRIDE;
+    uint4 sourceHead = _VpCompactSource.Load4(entry);
+    uint2 sourceTail = _VpCompactSource.Load2(entry + 16u);
+    bool hasInstances = sourceHead.z != 0u;
+    uint occurrences = 0u;
+    bool fieldsDiffer = false;
+    for (uint k = 0u; k < limit; k++)
+    {
+        uint at = (_VpCompactFirst + k) * VP_COMPACT_STRIDE;
+        if (_VpVerifyCompacted.Load(at) == c)
+        {
+            occurrences++;
+            uint4 head = _VpVerifyCompacted.Load4(at);
+            uint2 tail = _VpVerifyCompacted.Load2(at + 16u);
+            if (any(head != sourceHead) || any(tail != sourceTail))
+            {
+                fieldsDiffer = true;
+            }
+        }
+    }
+
+    // The column's tallies: [0] mismatched, [4] with instances, [8] counts summed, [12] dispatches, [16] counts above
+    // the run, [20] missing (instances, not found), [24] duplicated (found more than once), [28] found without
+    // instances, [32] found with other fields.
+    uint base = _VpVerifyColumn * 48u;
+    bool mismatch = hasInstances ? (occurrences != 1u || fieldsDiffer) : (occurrences != 0u);
+    if (mismatch)
+    {
+        _VpVerifyStats.InterlockedAdd(base + 0u, 1u);
+    }
+
+    if (hasInstances)
+    {
+        _VpVerifyStats.InterlockedAdd(base + 4u, 1u);
+        if (occurrences == 0u) _VpVerifyStats.InterlockedAdd(base + 20u, 1u);
+        if (occurrences > 1u) _VpVerifyStats.InterlockedAdd(base + 24u, 1u);
+        if (fieldsDiffer) _VpVerifyStats.InterlockedAdd(base + 32u, 1u);
+    }
+    else if (occurrences != 0u)
+    {
+        _VpVerifyStats.InterlockedAdd(base + 28u, 1u);
+    }
+
+    if (i == 0u)
+    {
+        _VpVerifyStats.InterlockedAdd(base + 8u, count);
+        _VpVerifyStats.InterlockedAdd(base + 12u, 1u);
+        if (count > _VpCompactCount)
+        {
+            _VpVerifyStats.InterlockedAdd(base + 16u, 1u);
+        }
+    }
+}
