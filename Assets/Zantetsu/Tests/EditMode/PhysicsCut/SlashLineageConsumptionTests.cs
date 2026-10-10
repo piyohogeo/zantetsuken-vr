@@ -44,6 +44,59 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(consumption.ConsumedCount(1), Is.EqualTo(1), "nothing but the direct hit is kept");
         }
 
+        /// <summary>
+        /// **A fragment consumed and then split without a hit leaves both of the two consumed** (DESIGN 7.9.2). A hit
+        /// that cut nothing consumes the fragment and leaves it live; when its owner is then split in two, the two
+        /// fragments carry the origin of the one they replaced -- the cut that made *it* -- so a walk by origins would
+        /// step over the consumed fragment. The walk is of the object's ancestry: both are consumed for that Slash,
+        /// and so is whatever is cut from them or split from them again; another Slash, and the sibling nobody hit,
+        /// are as they were.
+        /// </summary>
+        [Test]
+        public void AFragmentConsumed_ThenSplitWithoutAHit_LeavesBothOfTheTwoConsumed_AndWhatComesFromThem()
+        {
+            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(8));
+            LogicalFragmentId box = ledger.AddFragment();
+            Cut(ledger, box, out LogicalFragmentId upper, out LogicalFragmentId lower);
+            var consumption = new SlashLineageConsumption(ledger, 4);
+
+            // Slash 1 hits the lower child and cuts nothing: consumed, and still live.
+            Assert.That(consumption.TryConsume(1, lower), Is.True, "the hit is passed on once");
+            Assert.That(ledger.IsCurrentTarget(lower), Is.True, "the layout: the hit cut nothing, so the fragment lives on");
+
+            // Its owner is split in two without a hit.
+            Assert.That(ledger.ReplaceBySplit(lower, null, null, out LogicalFragmentId near, out LogicalFragmentId far), Is.True);
+            Assert.That(ledger.TryGetOrigin(near, out CutOperationId origin, out _) && ledger.TryGetOperation(origin, out LogicalCutOperation made)
+                        && made.source == box, Is.True, "the layout: by origins, the two lead straight to the box, past the consumed fragment");
+
+            Assert.That(consumption.IsConsumed(1, near), Is.True, "the one of the two is consumed for the Slash that consumed what it replaced");
+            Assert.That(consumption.IsConsumed(1, far), Is.True, "and so is the other");
+            Assert.That(consumption.TryConsume(1, near), Is.False, "so the same Slash does not hit it again");
+            Assert.That(consumption.TryConsume(1, far), Is.False);
+            Assert.That(consumption.ConsumedCount(1), Is.EqualTo(1), "nothing but the direct hit is kept");
+
+            // What comes from the two: a cut's children, and the fragments of a second split.
+            Cut(ledger, near, out LogicalFragmentId nearUpper, out LogicalFragmentId nearLower);
+            Assert.That(ledger.ReplaceBySplit(far, null, null, out LogicalFragmentId farA, out LogicalFragmentId farB), Is.True);
+            foreach (LogicalFragmentId descendant in new[] { nearUpper, nearLower, farA, farB })
+            {
+                Assert.That(consumption.IsConsumed(1, descendant), Is.True, "a descendant of the consumed fragment: " + descendant);
+                Assert.That(consumption.TryConsume(1, descendant), Is.False);
+            }
+
+            // Another Slash consumed nothing of it, and the sibling nobody hit is not consumed by the first.
+            Assert.That(consumption.IsConsumed(2, near), Is.False);
+            Assert.That(consumption.TryConsume(2, farA), Is.True, "another Slash hits a fragment of the second split");
+            Assert.That(consumption.IsConsumed(2, farB), Is.False, "whose sibling is not its descendant");
+            Assert.That(consumption.IsConsumed(1, upper), Is.False, "the sibling of the consumed fragment was never hit");
+            Assert.That(consumption.TryConsume(1, upper), Is.True);
+
+            // Consumed before the cut that made the split's source: reached through the split's source as well.
+            var earlier = new SlashLineageConsumption(ledger, 4);
+            Assert.That(earlier.TryConsume(7, box), Is.True);
+            Assert.That(earlier.IsConsumed(7, farB) && earlier.IsConsumed(7, nearLower), Is.True, "an ancestor above the split's source");
+        }
+
         [Test]
         public void UnrelatedFragments_AreConsumedOneByOne_EvenInOneObject()
         {

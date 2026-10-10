@@ -245,6 +245,12 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Groups.Describe(), this);
                 Groups.LogEvents();   // each collection, return and re-arming with its frame: kept until now, not written in its frame
             }
+
+            if (SpatialSplit != null && SpatialSplit.Turns > 0)
+            {
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(), this);
+                SpatialSplit.LogEvents();   // each publication with its frame: kept until now, not written in its frame
+            }
         }
 
         private void OnDestroy()
@@ -311,6 +317,10 @@ namespace Zantetsu.PhysicsCut
                         Lifetime?.Step();
                     }
                 }
+
+                // The additional split of an owner one plane separates (DESIGN 7.9.2): after the groups' turn, so that
+                // what they retired in this frame holds it, and before this frame's collection, which reflects it.
+                StepSpatialSplit();
 
                 // The trial rest's turn: before this frame's step, with the steps that happened since its last turn.
                 StepRest();
@@ -673,6 +683,7 @@ namespace Zantetsu.PhysicsCut
             Cook.PrepareHullProbe();   // the hull check's collider made and read once here, at load, not by the first cut
             Lifetime = new CutFragmentLifetime(this, profile.PieceLifetime);
             MakeEmptyOwners(profile);
+            MakeSpatialSplit(profile);
             MakeRest(profile);
             MakeFusion(profile);
             MakeHulls(profile);
@@ -954,6 +965,7 @@ namespace Zantetsu.PhysicsCut
                 _colliderTemplateHolder = null;
             }
 
+            ReleaseSpatialSplit();
             ReleaseEmptyOwners();
             ReleaseHulls();
             ReleaseFusion();

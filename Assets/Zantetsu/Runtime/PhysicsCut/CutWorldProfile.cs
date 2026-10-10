@@ -199,6 +199,23 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float fragmentGroupSeedSecondsPerFragment = 0.00005f;
         [SerializeField] private float fragmentGroupSeedSecondsPerGroup = 0.0002f;
 
+        [Header("Spatial split (DESIGN 7.9.2, Phase 5.6 first version, provisional)")]
+        [Tooltip("Replace a settled owner of two or more convexes by two ordinary objects when one plane crosses neither its triangles nor its convexes (not for buildings; no convex is cut). Off: nothing is looked at and nothing is issued. Off by default.")]
+        [SerializeField] private bool spatialSplitEnabled = false;
+
+        [Tooltip("Fragments looked at per frame at most while no attempt is outstanding (16: the empty owner collection's walk). One attempt at a time over the whole world.")]
+        [SerializeField] private int spatialSplitExaminePerFrame = 16;
+
+        [Tooltip("The expected Main cost of issuing an attempt, and of building and publishing the two objects, in seconds, before any was measured (from no Player measurement). The median of the last five measured replaces each.")]
+        [SerializeField] private float spatialSplitSeedIssueSeconds = 0.0002f;
+        [SerializeField] private float spatialSplitSeedPublishSeconds = 0.0015f;
+
+        [Tooltip("The search's limits: convexes an owner may have, directions taken from two convexes' centres beside the three axes, gaps tested against the triangles, and triangles a geometry may have.")]
+        [SerializeField] private int spatialSplitMaxConvexes = 64;
+        [SerializeField] private int spatialSplitMaxCentreDirections = 8;
+        [SerializeField] private int spatialSplitMaxPlaneTests = 16;
+        [SerializeField] private int spatialSplitMaxTriangles = 131072;
+
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
         [SerializeField] private bool buildingRestEnabled = false;
@@ -420,6 +437,17 @@ namespace Zantetsu.PhysicsCut
                 emptyOwnerCollectionEnabled, emptyOwnerCollectionExaminePerFrame, emptyOwnerCollectionRetirePerFrame,
                 CutWorldRoot.CompactionReserveSeconds, emptyOwnerCollectionSeedExpectedSeconds);
 
+        /// <summary>
+        /// The spatial split's settings (DESIGN 7.9.2), from the provisional values above. The budget a turn leaves to
+        /// the rest of the frame is the compaction's reserve, as the collections' is.
+        /// </summary>
+        public CutSpatialSplitSettings SpatialSplit =>
+            new CutSpatialSplitSettings(
+                spatialSplitEnabled, spatialSplitExaminePerFrame, CutWorldRoot.CompactionReserveSeconds,
+                spatialSplitSeedIssueSeconds, spatialSplitSeedPublishSeconds,
+                new SpatialSplitSearchLimits(
+                    spatialSplitMaxConvexes, spatialSplitMaxCentreDirections, spatialSplitMaxPlaneTests, spatialSplitMaxTriangles));
+
         /// <summary>The trial fusion of held building pieces (2026-09-29): off unless the profile switches it on.</summary>
         public BuildingFusionSettings BuildingFusion => new BuildingFusionSettings(buildingFusionEnabled, buildingFusionPerFrame, buildingFusionDeadlineSeconds, buildingFusionMainBudgetMs * 0.001);
 
@@ -545,6 +573,10 @@ namespace Zantetsu.PhysicsCut
             else if (!EmptyOwnerCollection.IsValid)
             {
                 reason = "the empty owner collection's counts must be positive and its expected cost not negative";
+            }
+            else if (!SpatialSplit.IsValid)
+            {
+                reason = "the spatial split's count must be positive, its expected costs not negative, and its search limits at least two convexes, one plane test and two triangles";
             }
             else if (!BuildingRest.IsValid)
             {

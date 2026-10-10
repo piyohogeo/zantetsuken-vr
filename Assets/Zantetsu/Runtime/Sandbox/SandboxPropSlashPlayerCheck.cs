@@ -2258,12 +2258,13 @@ namespace Zantetsu.Sandbox
                         again |= slash == hit.SlashId && fragment == at;
                     }
 
-                    if (!ledger.TryGetOrigin(at, out CutOperationId up, out _) || !ledger.TryGetOperation(up, out LogicalCutOperation upOp))
+                    // The object's ancestry, as the consumption itself walks it (a split's fragment came from the one it replaced).
+                    if (!ledger.TryGetParent(at, out LogicalFragmentId parent))
                     {
                         break;
                     }
 
-                    at = upOp.source;
+                    at = parent;
                 }
 
                 Expect(!again, "slash " + hit.SlashId + " confirmed fragment " + hit.Fragment.value

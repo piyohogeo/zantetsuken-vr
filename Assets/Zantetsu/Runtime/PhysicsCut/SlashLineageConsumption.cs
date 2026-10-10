@@ -7,8 +7,11 @@ namespace Zantetsu.PhysicsCut
     /// <summary>
     /// What each live Slash has consumed (DESIGN 19.1.9): the fragments it hit directly, and nothing else. A fragment
     /// is consumed for a Slash when it or one of its ancestors is in that Slash's set, which is found by walking the
-    /// ledger's own origin relation -- the operation that made a fragment, and that operation's source -- as many steps
-    /// as the lineage has (DESIGN 7.1.2).
+    /// ledger's own relation of a fragment to the one it came from (<see cref="LogicalCutLedger.TryGetParent"/>) --
+    /// the source of the cut that made it, or the fragment it replaced when a split without a hit issued it (DESIGN
+    /// 7.9.2) -- as many steps as the lineage has (DESIGN 7.1.2). It is the object's ancestry that is walked, not the
+    /// history of its boundaries: the two fragments of a split carry the origin of the one they replaced, and a walk
+    /// by origins would step over that one, which a Slash may have consumed.
     /// <para>
     /// **Nothing else is kept.** No lineage cache, no notice of children being published, no second ledger and no
     /// record on a fragment: a child a Slash's own cut made is found consumed because its origin leads back to what that
@@ -153,7 +156,7 @@ namespace Zantetsu.PhysicsCut
             return SlotOf(0);
         }
 
-        // The fragment itself, then each ancestor through the operation that made it and that operation's source.
+        // The fragment itself, then each fragment it came from: a cut's source, or the one a split replaced.
         private bool Covers(List<LogicalFragmentId> consumed, LogicalFragmentId fragment)
         {
             LogicalFragmentId at = fragment;
@@ -164,13 +167,12 @@ namespace Zantetsu.PhysicsCut
                     return true;
                 }
 
-                if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
-                    || !_ledger.TryGetOperation(origin, out LogicalCutOperation made))
+                if (!_ledger.TryGetParent(at, out LogicalFragmentId parent))
                 {
                     return false;
                 }
 
-                at = made.source;
+                at = parent;
             }
         }
     }

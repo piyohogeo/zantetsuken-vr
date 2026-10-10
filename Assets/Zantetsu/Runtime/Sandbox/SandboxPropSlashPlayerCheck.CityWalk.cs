@@ -743,6 +743,12 @@ namespace Zantetsu.Sandbox
                     Log("city walk fragment groups (the run): " + _world.Groups.Describe());
                     _world.Groups.LogEvents();   // each collection, return and re-arming with its frame and its own time
                 }
+                // The spatial split's own record (DESIGN 7.9.2), for the same reason.
+                if (_world.SpatialSplit != null && _world.SpatialSplit.Turns > 0)
+                {
+                    Log("city walk spatial split (the run): " + _world.SpatialSplit.Describe());
+                    _world.SpatialSplit.LogEvents();   // each publication with its frame, once
+                }
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());
                 Log("city walk skinning (the run): " + CityWalkSkinning());
                 Expect(buildingCuts.Count > 0, "[city walk] a building was cut by the katana's Slash (" + buildingCuts.Count + " buildings)");

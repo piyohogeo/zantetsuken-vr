@@ -97,6 +97,19 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The expected cost of the next simulation: the median of the last five real ones, 0 before any.</summary>
         public static double ExpectedSimulateSeconds => s_costs.ExpectedSeconds;
 
+        /// <summary>
+        /// What this frame's decision is still expected to spend on a simulation, in seconds, for Main work that runs
+        /// **before** it (a late update): the expected cost of a step when the physics is stepped here and a whole step
+        /// will be owed at the decision, 0 when none will be, when this frame's decision has already been made, or
+        /// outside Play. It is the decision's own estimate, read ahead; it forbids nothing and decides nothing, and
+        /// work that leaves it room does not thereby stop the steps.
+        /// </summary>
+        public static double ExpectedStepSecondsLaterThisFrame =>
+            !Application.isPlaying || LastDecidedFrame == Time.frameCount || Physics.simulationMode != SimulationMode.Script
+            || !s_clock.WouldOweAStepAt(Stopwatch.GetTimestamp())
+                ? 0.0
+                : s_costs.ExpectedSeconds;
+
         /// <summary>The expected cost the last decision compared, in seconds. For tests and observation.</summary>
         public static double LastDecisionExpectedSeconds { get; private set; }
 

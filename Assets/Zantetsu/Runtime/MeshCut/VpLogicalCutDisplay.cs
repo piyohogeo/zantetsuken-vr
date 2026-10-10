@@ -3844,6 +3844,240 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        // ---- a body replaced by two without a cut (DESIGN 7.9.2) ------------------------------------------------------
+        // The owner of one shown body was split into two owners by a plane that crosses none of its triangles: the
+        // body's triangles are shared out between two new index ranges over the same vertices, and the two fragments
+        // that replace it in the ledger each take one. It is the produced path of a commit without a cut: no face, so
+        // nothing is added to what a side reflects, no boundary record, no vertex transferred. It comes in two calls,
+        // because everything else of the replacement (the ledger, the owners) is switched between them and cannot be
+        // switched back: the first judges and changes nothing; the second cannot be refused.
+
+        private sealed class SplitPrepared
+        {
+            internal Shown body;
+            internal int frame;
+            internal long inputRevision;
+            internal VpStoredGeometry positive, negative;
+            internal VpIndirectCommand[] positiveCommands, negativeCommands;
+            internal Material[] positiveMaterials, negativeMaterials;
+            internal Bounds positiveBounds, negativeBounds;
+            internal SidePlacements placements;
+        }
+
+        private SplitPrepared _splitPrepared;
+
+        /// <summary>Bodies replaced by two without a cut, the index transfers made for them and the indices those carried.</summary>
+        public long SplitCommits { get; private set; }
+
+        public long SplitIndexTransfers { get; private set; }
+
+        public long SplitIndicesTransferred { get; private set; }
+
+        /// <summary>
+        /// Judges, changing nothing, whether the body shown for <paramref name="source"/> can be replaced by two
+        /// registrations of <paramref name="positive"/> and <paramref name="negative"/> -- two published index ranges
+        /// written one after the other over the body's own vertices -- and keeps the judgement for
+        /// <see cref="CommitSplit"/>, which must follow in the same main-thread stretch.
+        /// <para>
+        /// Refused, with <paramref name="refusal"/> saying why, when the display has stopped, when the source has no
+        /// registration of its own (it is still drawn from a fragment above it, or inside an aggregate), when a side
+        /// cannot be prepared or resolved to materials, when the draw slots or the reference table have no room, and
+        /// when the GPU copy would have to grow to take the two ranges. None of these is reported as a capacity
+        /// failure: this is an optional change and the body simply stays as it is.
+        /// </para>
+        /// </summary>
+        public bool TryPrepareSplit(LogicalFragmentId source, VpStoredGeometry positive, VpStoredGeometry negative, out string refusal)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            ThrowIfPreparing();
+            _splitPrepared = null;
+            if (_halted || !source.IsSet)
+            {
+                refusal = "the display has stopped";
+                return false;
+            }
+
+            Shown body = null;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_shown[i].fragment == source)
+                {
+                    body = _shown[i];
+                    break;
+                }
+            }
+
+            if (body == null)
+            {
+                refusal = "the source has no registration of its own";
+                return false;
+            }
+
+            var prepared = new SplitPrepared { body = body, positive = positive, negative = negative };
+            if (!TrySidePlacements(source, body, out prepared.placements)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                || !TryPrepareSide(positive, body, in prepared.placements, out prepared.positiveCommands, out prepared.positiveMaterials, out prepared.positiveBounds)
+                || !TryPrepareSide(negative, body, in prepared.placements, out prepared.negativeCommands, out prepared.negativeMaterials, out prepared.negativeBounds))
+#else
+                || !TryPrepareSide(positive, out prepared.positiveCommands, out prepared.positiveMaterials, out prepared.positiveBounds)
+                || !TryPrepareSide(negative, out prepared.negativeCommands, out prepared.negativeMaterials, out prepared.negativeBounds))
+#endif
+            {
+                refusal = "a side's placement or preparation";
+                return false;
+            }
+
+            int commands = prepared.positiveCommands.Length + prepared.negativeCommands.Length;
+            if (prepared.positiveCommands.Length == 0 || prepared.negativeCommands.Length == 0)
+            {
+                refusal = "a side with no draw command";
+                return false;
+            }
+
+            long waiting = WaitingForSlots();
+            if (_commandTail + waiting + commands > _limits.commands || _instanceTail + waiting + commands > _limits.instances)
+            {
+                refusal = "draw command or instance room";
+                return false;
+            }
+
+            if (!_table.HasRoomForGeometriesWithDisplayInstances(2))
+            {
+                refusal = "reference table room";
+                return false;
+            }
+
+            // The GPU copy as it is: a split never grows or replaces a buffer (that is a frame's known heavy event,
+            // and an optional change does not cause one).
+            if (!TryIndexEnd(positive.indexRange, out int positiveEnd)
+                || !TryIndexEnd(negative.indexRange, out int negativeEnd)
+                || Math.Max(positiveEnd, negativeEnd) > _buffers.IndexCapacity)
+            {
+                refusal = "GPU index room (the copy would have to grow)";
+                return false;
+            }
+
+            prepared.frame = Time.frameCount;
+            prepared.inputRevision = _inputRevision;
+            _splitPrepared = prepared;
+            refusal = null;
+            return true;
+        }
+
+        /// <summary>
+        /// The switch <see cref="TryPrepareSplit"/> judged, for the two fragments the ledger has just put in the
+        /// source's place: the two index ranges go across in one transfer, each fragment takes its registration where
+        /// the body stands and reflecting exactly what the body reflected, and the body is kept, as a committed cut's
+        /// is, until the next adoption has replaced what is drawn from it -- its index range is let go then, by the
+        /// ordinary retirement. Like a commit, it changes what the *next* collection is built from.
+        /// <para>
+        /// It cannot be refused: the judgement was made before the ledger and the owners were switched. Called
+        /// without that judgement standing -- another frame, or anything of this display changed in between -- it
+        /// throws, and a transfer that fails all the same leaves the display broken, as a commit's would.
+        /// </para>
+        /// </summary>
+        public void CommitSplit(LogicalFragmentId source, LogicalFragmentId positiveFragment, LogicalFragmentId negativeFragment)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            ThrowIfPreparing();
+            SplitPrepared prepared = _splitPrepared;
+            _splitPrepared = null;
+            if (prepared == null || prepared.body.fragment != source || prepared.frame != Time.frameCount
+                || prepared.inputRevision != _inputRevision || !_shown.Contains(prepared.body)
+                || !positiveFragment.IsSet || !negativeFragment.IsSet)
+            {
+                throw new InvalidOperationException("a split is committed only right after its own preparation");
+            }
+
+            InputChanged();
+            int indices;
+            try
+            {
+                if (!VpStoredGeometryTransfer.TryUploadPublishedIndexRun(
+                        _storage, _buffers.IndexBuffer, prepared.positive.indexRange, prepared.negative.indexRange, out indices))
+                {
+                    throw new InvalidOperationException("a split's index run could not be transferred although its room was judged");
+                }
+            }
+            catch
+            {
+                _broken = true;
+                throw;
+            }
+
+            IndexTransfers += indices > 0 ? 1 : 0;
+            SplitIndexTransfers += indices > 0 ? 1 : 0;
+            SplitIndicesTransferred += indices;
+
+            Shown body = prepared.body;
+            TakeBody(positiveFragment, prepared.positive, body, in prepared.placements, prepared.positiveCommands,
+                prepared.positiveMaterials, prepared.positiveBounds, body.reflected);
+            TakeBody(negativeFragment, prepared.negative, body, in prepared.placements, prepared.negativeCommands,
+                prepared.negativeMaterials, prepared.negativeBounds, body.reflected);
+            Retire(body);
+            SplitCommits++;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="fragment"/> has a registration of its own here: it is drawn from its own geometry,
+        /// not from a fragment above it. What <see cref="TryPrepareSplit"/> needs of its source, for a caller that
+        /// chooses before it prepares. Reads only.
+        /// </summary>
+        public bool HasOwnRegistration(LogicalFragmentId fragment)
+        {
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_shown[i].fragment == fragment)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Whether the room <see cref="TryPrepareSplit"/> will ask for is there, before anything is made for a split
+        /// of <paramref name="source"/>: the display running, the source's own registration, draw command and
+        /// instance slots for <paramref name="commands"/> more (the two sides' submeshes at most), two more
+        /// references, and -- when <paramref name="indexEnd"/> is given (above 0) -- the GPU index copy reaching
+        /// that far as it is. Reads only: nothing is reported, grown or kept. A caller asks it before it publishes
+        /// the two index ranges, so that a split the display would refuse for room leaves nothing behind.
+        /// </summary>
+        public bool HasRoomForSplit(LogicalFragmentId source, int indexEnd, int commands, out string refusal)
+        {
+            ThrowIfDisposed();
+            if (_broken || _halted || !HasOwnRegistration(source))
+            {
+                refusal = "the display has stopped, or the source has no registration of its own";
+                return false;
+            }
+
+            long waiting = WaitingForSlots();
+            if (_commandTail + waiting + commands > _limits.commands || _instanceTail + waiting + commands > _limits.instances)
+            {
+                refusal = "draw command or instance room";
+                return false;
+            }
+
+            if (!_table.HasRoomForGeometriesWithDisplayInstances(2))
+            {
+                refusal = "reference table room";
+                return false;
+            }
+
+            if (indexEnd > _buffers.IndexCapacity)
+            {
+                refusal = "GPU index room (the copy would have to grow)";
+                return false;
+            }
+
+            refusal = null;
+            return true;
+        }
+
         /// <summary>
         /// Where one shown registration stands: the placement it is drawn at.
         /// </summary>
@@ -8069,21 +8303,24 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
+                // Up the object's ancestry (a cut's source, or the fragment a split replaced): what the adopted
+                // snapshot still draws may be a fragment a split has replaced since. A split adds a step that no
+                // operation counts.
                 LogicalFragmentId at = operation.source;
-                for (int step = 0; step <= steps; step++)
+                int splits = (int)Math.Min(int.MaxValue / 2, _ledger.SplitReplacements);
+                for (int step = 0; step <= steps + splits; step++)
                 {
                     if (IsAdoptedBranch(at))
                     {
                         return true;
                     }
 
-                    if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
-                        || !_ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                    if (!_ledger.TryGetParent(at, out LogicalFragmentId parent))
                     {
                         break;
                     }
 
-                    at = cut.source;
+                    at = parent;
                 }
             }
 
@@ -8170,17 +8407,16 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// Whether a replaced fragment has a live fragment below it: through the cut that replaced it, either child,
-        /// recursively. Reads the ledger only.
+        /// recursively -- or through the two fragments of a split no cut made (DESIGN 7.9.2). Reads the ledger only.
         /// </summary>
         private bool HasLiveDescendant(LogicalFragmentId fragment)
         {
-            if (!_ledger.TryGetReplacingOperation(fragment, out CutOperationId replacing)
-                || !_ledger.TryGetOperation(replacing, out LogicalCutOperation cut))
+            if (!_ledger.TryGetReplacement(fragment, out LogicalFragmentId first, out LogicalFragmentId second))
             {
                 return false;
             }
 
-            return IsLiveOrHasLiveDescendant(cut.positive) || IsLiveOrHasLiveDescendant(cut.negative);
+            return IsLiveOrHasLiveDescendant(first) || IsLiveOrHasLiveDescendant(second);
         }
 
         private bool IsLiveOrHasLiveDescendant(LogicalFragmentId fragment)
@@ -8248,19 +8484,24 @@ namespace Zantetsu.MeshCut
             return false;
         }
 
-        /// <summary>Whether <paramref name="ancestor"/> is on <paramref name="fragment"/>'s origins, strictly above it.</summary>
+        /// <summary>
+        /// Whether <paramref name="ancestor"/> is something <paramref name="fragment"/> came from, strictly above it:
+        /// the object's ancestry (<see cref="LogicalCutLedger.TryGetParent"/>), which counts a fragment a split
+        /// without a hit replaced as well as a cut's source.
+        /// </summary>
         private bool IsBelow(LogicalFragmentId fragment, LogicalFragmentId ancestor, int steps)
         {
+            // A split adds a step that no operation counts.
+            steps += (int)Math.Min(int.MaxValue / 2, _ledger.SplitReplacements);
             LogicalFragmentId at = fragment;
             for (int step = 0; step <= steps; step++)
             {
-                if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
-                    || !_ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                if (!_ledger.TryGetParent(at, out LogicalFragmentId parent))
                 {
                     return false;
                 }
 
-                at = cut.source;
+                at = parent;
                 if (at == ancestor)
                 {
                     return true;
