@@ -58,14 +58,8 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            // The groups' turn comes after it, in this one call: it does not start in a frame the empty owners retired in.
-            if (Groups != null && (Groups.Settings.enabled || Groups.ComingBack != 0))
-            {
-                using (s_groupsMarker.Auto())
-                {
-                    Groups.Step();
-                }
-            }
+            // (The groups' turn is before the frame's collection, in LateUpdate: a retirement there is reflected by this
+            // very frame's collection. An empty owner retired here changes the ledger, which holds the groups' next turn.)
         }
 
         private static readonly ProfilerMarker s_groupsMarker = new ProfilerMarker("Zantetsu.FragmentGroups.Step");
