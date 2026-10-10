@@ -182,9 +182,9 @@ namespace Zantetsu.PhysicsCut
         [Tooltip("The expected cost of a turn that starts a retirement, in seconds, before any was measured (from no Player measurement). The median of the last five measured replaces it.")]
         [SerializeField] private float emptyOwnerCollectionSeedExpectedSeconds = 0.0003f;
 
-        [Header("Fragment group collection (DESIGN 7.10, Phase 7.1, provisional)")]
-        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are far and unseen, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started.")]
-        [SerializeField] private bool fragmentGroupCollectionEnabled = false;
+        [Header("Fragment group collection (DESIGN 7.10, Phase 7.1)")]
+        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are far and unseen, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started. On by default (TL, 2026-10-10).")]
+        [SerializeField] private bool fragmentGroupCollectionEnabled = true;
 
         [Tooltip("Live cut fragments (every kind, a building's display fragments too; uncut objects not counted) above which groups are looked at. Where a collection starts, not a limit kept. 256: the piece lifetime's threshold as a start.")]
         [SerializeField] private int fragmentGroupMaxLiveCutFragments = 256;
