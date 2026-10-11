@@ -49,6 +49,7 @@ namespace Zantetsu.Sandbox
                 + ", " + ProfilerEnableArgument + "=" + (Has(ProfilerEnableArgument) ? "given" : "not given")
                 + "; graphics=" + SystemInfo.graphicsDeviceType + "; body route asked: " + DescribeBodyRoute(arguments)
                 + "; clipped instances asked: " + (Zantetsu.Rendering.VpGpuCullSetup.ReadSeparateClip(arguments) ? "apart (the default)" : "with the selection (" + Zantetsu.Rendering.VpGpuCullSetup.ClipTogetherArgument + ")")
+                + "; command compaction asked: " + DescribeCommandCompaction(arguments)
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
                 + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);
@@ -65,6 +66,28 @@ namespace Zantetsu.Sandbox
             Zantetsu.Rendering.VpNativeDrawSetup.Selection selection =
                 Zantetsu.Rendering.VpNativeDrawSetup.Select(request, SystemInfo.graphicsDeviceType, Application.isEditor, Application.platform);
             return request + " -> " + (selection.Native ? "VP3C-NATIVE" : "Unity's calls") + " (" + selection.Reason + ")";
+        }
+
+        /// <summary>
+        /// What the launch asks of the command compaction on this device (DESIGN 4.5.10, 4.5.11): the Vulkan route
+        /// and the Direct3D 12 route both compact unless the fixed draw is asked for.
+        /// This is the launch's side; whether a route took it, and why not when it did not, is that route's own
+        /// "VP COMMAND COMPACTION:" line.
+        /// </summary>
+        public static string DescribeCommandCompaction(string[] arguments)
+        {
+            bool vulkan = Zantetsu.Rendering.VpNativeDrawPlugin.Vulkan;
+            bool asked = vulkan
+                ? Zantetsu.Rendering.VpNativeDrawPlugin.ReadIndirectCountRequest(arguments)
+                : Zantetsu.Rendering.VpNativeDrawPlugin.ReadDirect3D12IndirectCountRequest(arguments);
+            bool fixedGiven = Array.IndexOf(arguments, Zantetsu.Rendering.VpNativeDrawPlugin.FixedCommandsArgument) >= 0;
+            bool compactGiven = Array.IndexOf(arguments, Zantetsu.Rendering.VpNativeDrawPlugin.CompactCommandsArgument) >= 0;
+            return (asked ? "yes" : "no") + " ("
+                + (fixedGiven ? Zantetsu.Rendering.VpNativeDrawPlugin.FixedCommandsArgument
+                    : compactGiven ? Zantetsu.Rendering.VpNativeDrawPlugin.CompactCommandsArgument + ", the default anyway"
+                    : vulkan ? "the Vulkan route's default" : "the Direct3D 12 route's default")
+                + (Array.IndexOf(arguments, Zantetsu.Rendering.VpCommandCompaction.VerifyArgument) >= 0 ? "; " + Zantetsu.Rendering.VpCommandCompaction.VerifyArgument + " given: a check run" : "")
+                + ")";
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]

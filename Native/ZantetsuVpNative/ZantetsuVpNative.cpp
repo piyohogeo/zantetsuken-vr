@@ -21,6 +21,13 @@
 //
 // Threads: ZvnCreatePipeline/ZvnReleasePipeline run on the main thread; the event runs on Unity's rendering thread
 // (DontCare queue access). The shared state is behind one mutex.
+//
+// The count draw (DESIGN 4.5.11): an issue of ZvnDraw version 2 with the IndirectCount extension is one
+// ExecuteIndirect whose command count the GPU wrote -- the run's compacted entries as the argument buffer, the run's
+// length as MaxCommandCount, and the count read at the record's offset of the count buffer. The plugin asks the count
+// buffer into the indirect-argument state as it asks the argument buffer, and that is all the order it needs: the
+// compute that wrote the count had it for unordered access, so the transition stands between the two. Nothing is
+// zeroed, copied or read back here. Any other mode of version 2 is the Vulkan plugin's and is refused.
 
 #include <cstdarg>
 #include <cstdint>
@@ -174,6 +181,17 @@ namespace
     uint32_t s_requestedRegions = kDefaultRegions;
     uint32_t s_requestedRegionBytes = kDefaultRegionBytes;
     uint32_t s_requestedRegionDescriptors = kDefaultRegionDescriptors;
+
+    // The device's wave operations (D3D12_FEATURE_D3D12_OPTIONS1), asked when the device is taken: the managed side's
+    // compaction kernel needs them, and its record says how wide a wave is here. The count draws recorded, apart
+    // from the fixed ones, and the most commands those may have drawn (the sum of their MaxCommandCount).
+    bool s_waveOps = false;
+    uint32_t s_waveLaneMin = 0, s_waveLaneMax = 0;
+    uint64_t s_countDraws = 0, s_countDrawMostCommands = 0;
+
+    static_assert(sizeof(ZvnDraw) == 240, "the extension of a version 2 draw follows the 240-byte ZvnDraw");
+    static_assert(sizeof(ZvnDrawExtension) == 16, "ZvnDrawExtension");
+    static_assert(sizeof(ZvnIndirectCount) == 32, "ZvnIndirectCount");
 
     // Test control (2026-10-08): while consumption is held, an event does its work but its block's `consumed` mark is
     // withheld; the marks are given on ZvnReleaseHeld, in the order the events ran. A test on a device whose rendering
@@ -344,6 +362,20 @@ namespace
             sentinel.flags = 0;
             sentinel.ensureActiveRenderTextureIsBound = false;
             s_d3d12->ConfigureEvent(kSentinelEventId, &sentinel);
+
+            D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
+            if (SUCCEEDED(s_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1))))
+            {
+                s_waveOps = options1.WaveOps != FALSE;
+                s_waveLaneMin = options1.WaveLaneCountMin;
+                s_waveLaneMax = options1.WaveLaneCountMax;
+            }
+            else
+            {
+                s_waveOps = false;
+                s_waveLaneMin = s_waveLaneMax = 0;
+            }
+
             s_unavailable.clear();
         }
         else if (eventType == kUnityGfxDeviceEventShutdown)
@@ -355,6 +387,8 @@ namespace
             s_d3d12 = nullptr;
             s_device = nullptr;
             s_renderer = kUnityGfxRendererNull;
+            s_waveOps = false;
+            s_waveLaneMin = s_waveLaneMax = 0;
             s_unavailable = "the graphics device was shut down";
         }
     }
@@ -911,7 +945,29 @@ namespace
             return;
         }
 
-        if (draw->version != ZVN_CONTRACT_VERSION)
+        // Version 2 is a count draw here and nothing else: the extension right after the header, its one record in
+        // the block. The Vulkan plugin's other modes (direct, group) and its zeroing or copying of a count are not
+        // this plugin's, and are refused rather than drawn some other way.
+        const ZvnIndirectCount* counted = nullptr;
+        if (draw->version == ZVN_VULKAN_DRAW_VERSION)
+        {
+            const ZvnDrawExtension* extension = (const ZvnDrawExtension*)(draw + 1);
+            if (draw->totalBytes < sizeof(ZvnDraw) + sizeof(ZvnDrawExtension) || extension->mode != ZvnDrawMode_IndirectCount || extension->reserved != 0
+                || extension->commandsCount != 1 || extension->commandsOffset < sizeof(ZvnDraw) + sizeof(ZvnDrawExtension)
+                || (uint64_t)extension->commandsOffset + sizeof(ZvnIndirectCount) > draw->totalBytes)
+            {
+                Refuse(draw, ZvnResult_BadVersion);
+                return;
+            }
+
+            counted = (const ZvnIndirectCount*)((const uint8_t*)draw + extension->commandsOffset);
+            if (counted->countBuffer == nullptr || (counted->countOffset % 4) != 0 || counted->zeroBuffer != nullptr || counted->zeroBytes != 0 || counted->reserved != 0)
+            {
+                Refuse(draw, ZvnResult_BadResource);
+                return;
+            }
+        }
+        else if (draw->version != ZVN_CONTRACT_VERSION)
         {
             Refuse(draw, ZvnResult_BadVersion);
             return;
@@ -1018,6 +1074,15 @@ namespace
         ID3D12Resource* arguments = (ID3D12Resource*)draw->argumentBuffer;
         s_d3d12->RequestResourceState(arguments, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         s_d3d12->RequestResourceState((ID3D12Resource*)draw->indexBuffer, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+
+        // A count draw: the count the compaction's compute wrote (unordered access) becomes an indirect argument
+        // here. The argument buffer above is then the compacted entries, which no stage reads; the selection's own
+        // entries, which the vertex stage reads by the command's number, are among the bound resources below.
+        ID3D12Resource* counts = counted != nullptr ? (ID3D12Resource*)counted->countBuffer : nullptr;
+        if (counts != nullptr)
+        {
+            s_d3d12->RequestResourceState(counts, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        }
         for (size_t t = 0; t < pipeline.tables.size(); t++)
         {
             for (size_t b = 0; b < pipeline.tables[t].bindings.size(); b++)
@@ -1025,7 +1090,7 @@ namespace
                 uint32_t bindingIndex = pipeline.tables[t].bindings[b];
                 const ZvnResource* resource = FindResource(draw, bindingIndex);
                 ID3D12Resource* native = NativeResource(*resource);
-                if (native == arguments)
+                if (native == arguments || native == counts)
                 {
                     continue; // asked for above, with the indirect-argument state
                 }
@@ -1106,9 +1171,15 @@ namespace
             D3D12_RECT scissor = { viewport.scissorLeft, viewport.scissorTop, viewport.scissorRight, viewport.scissorBottom };
             list->RSSetViewports(1, &port);
             list->RSSetScissorRects(1, &scissor);
-            list->ExecuteIndirect(pipeline.commandSignature, draw->commandCount, arguments, draw->argumentOffset, nullptr, 0);
+            // With a count buffer the GPU draws min(count, commandCount) commands: the run's length is the most.
+            list->ExecuteIndirect(pipeline.commandSignature, draw->commandCount, arguments, draw->argumentOffset, counts, counts != nullptr ? counted->countOffset : 0);
             s_counters.drawsRecorded++;
             s_counters.commandsRecorded += draw->commandCount;
+            if (counts != nullptr)
+            {
+                s_countDraws++;
+                s_countDrawMostCommands += draw->commandCount;
+            }
         }
 
         pipeline.lastUsedFence = frameFence;
@@ -1218,9 +1289,10 @@ extern "C"
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         std::string text;
-        Append(text, "contract %d; loaded by Unity %d; Unity renderer %d; IUnityGraphicsD3D12v8 %d; device %d; pipelines %u; %s",
+        Append(text, "contract %d; loaded by Unity %d; Unity renderer %d; IUnityGraphicsD3D12v8 %d; device %d; pipelines %u; count draws %llu; wave operations %d (lanes %u..%u); %s",
             ZVN_CONTRACT_VERSION, s_loaded ? 1 : 0, (int)s_renderer, s_d3d12 != nullptr ? 1 : 0, s_device != nullptr ? 1 : 0,
-            (unsigned)s_pipelines.size(), s_unavailable.empty() ? "available" : ("NOT available: " + s_unavailable).c_str());
+            (unsigned)s_pipelines.size(), (unsigned long long)s_countDraws, s_waveOps ? 1 : 0, s_waveLaneMin, s_waveLaneMax,
+            s_unavailable.empty() ? "available" : ("NOT available: " + s_unavailable).c_str());
         return CopyOut(text, out, outSize);
     }
 
@@ -1361,6 +1433,28 @@ extern "C"
 
         std::lock_guard<std::mutex> lock(s_mutex);
         *out = s_counters;
+    }
+
+    // 1 when a count draw can be recorded (ZvnDraw version 2, the IndirectCount extension): wherever the plugin can
+    // draw at all -- ExecuteIndirect's count buffer is Direct3D 12's own. The name is the Vulkan plugin's export too.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIndirectCountReady()
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        return AvailableLocked() ? 1 : 0;
+    }
+
+    // For the managed side's choice and its records. Fills up to `count` of: [0] 1 when the device has wave
+    // operations (D3D12_FEATURE_D3D12_OPTIONS1.WaveOps), [1] the least lanes of a wave, [2] the most, [3] count draws
+    // recorded (ExecuteIndirect calls with a count buffer), [4] the most commands those may have drawn (the sum of
+    // their MaxCommandCount). Returns how many were filled.
+    int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIndirectCountInfo(uint64_t* out, int count)
+    {
+        if (out == nullptr || count <= 0) return 0;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        uint64_t values[5] = { s_waveOps ? 1ull : 0ull, s_waveLaneMin, s_waveLaneMax, s_countDraws, s_countDrawMostCommands };
+        int n = count < 5 ? count : 5;
+        for (int i = 0; i < n; i++) out[i] = values[i];
+        return n;
     }
 
     // Test control: hold (1) or give (0) the consumed marks of the events from here on. See s_holdConsumption.

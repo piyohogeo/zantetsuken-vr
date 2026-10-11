@@ -30,6 +30,18 @@ namespace Zantetsu.Rendering.Urp
     /// instance, clip, selection and argument buffers are the batch's own; the shadow map is URP's.
     /// </para>
     /// <para>
+    /// **The command compaction on Direct3D 12 (DESIGN 4.5.11, D-218).** By default, where the device can and the
+    /// launch does not ask for the fixed draw
+    /// (<see cref="VpCommandCompaction.TrySelect"/>; the choice and its reason are logged once a route), an ordinary
+    /// run -- the selection's own commands of one material, for the body or for the casters -- is compacted on the
+    /// GPU after the selection and drawn by ExecuteIndirect with the count the GPU wrote: the compacted entries are
+    /// the argument buffer, the run's length the most, and the vertex stage still reads the selection's own entries
+    /// by the command's number. A frame's steps are, in the GPU's order: the selection; the count slots of the sets
+    /// the frame uses zeroed by a copy (the route's first pass); in each pass its compactions, then its draws. Each
+    /// follows the one before by the resource state it needs, so the route records no event of the plugin between
+    /// them. A clip list's run is not compacted: it is issued as before.
+    /// </para>
+    /// <para>
     /// **What it does not do yet.** An XR pass (both eyes at once) is not drawn, and counted as such. The plugin not
     /// being available, a shader binary not being in the build, or a pipeline the plugin refuses are failures this
     /// route records; it never draws through Unity's calls instead.
@@ -111,6 +123,9 @@ namespace Zantetsu.Rendering.Urp
         private int _ambientFrame = -1;
         private readonly MaterialPropertyBlock _declareProperties = new MaterialPropertyBlock();
         private GraphicsBuffer _zeroArguments;
+
+        // Direct3D 12 compaction: the zeroes every count buffer is zeroed from by a copy (made at the first frame that compacts).
+        private GraphicsBuffer _zeroCounts;
         private int _declaredFrame = -1;
         private Camera _declaredCamera;
         private readonly List<Block> _blocks = new List<Block>(64);
@@ -368,6 +383,12 @@ namespace Zantetsu.Rendering.Urp
             // (vkCmdDrawIndexedIndirectCount). The frame's zero pass zeroed the slots before any compaction. zeroCounts,
             // with snapshot, names the 4-byte slot the plugin copies the count into in this draw's preparation.
             public GraphicsBuffer counts, zeroCounts;
+
+            // Direct3D 12 (DESIGN 4.5.11): the vertex stage reads a command's entry by the command's own number, so
+            // with the arguments compacted it stays bound to the selection's entries, given here; null where the
+            // stage reads the argument buffer itself (every issue that is not compacted, and the Vulkan route's).
+            public GraphicsBuffer shaderArguments;
+            public uint shaderArgumentsGeneration;
             public bool snapshot;          // zeroCounts names a 4-byte slot (countSnapshotSlot) the plugin copies this draw's count into: the set's draw counts, or the diagnosis's ring
             public bool drawFromCopy;      // the draw reads its count from that slot (VpCommandCompaction.DrawFromCopy)
             public int countSnapshotSlot;
@@ -495,14 +516,18 @@ namespace Zantetsu.Rendering.Urp
         public long IndirectCountSlotsShort { get; private set; }
         public long IndirectCountCompactions { get; private set; }
 
-        /// <summary>Whether this frame's issues compact (<see cref="VpNativeDrawPlugin.VulkanIndirectCount"/> on a Vulkan device whose build has the kernel).</summary>
+        /// <summary>
+        /// Whether this frame's issues compact: what the launch asks of this device's route
+        /// (<see cref="VpNativeDrawPlugin.IndirectCountAsked"/>), taken where <see cref="VpCommandCompaction.TrySelect"/>
+        /// finds every condition.
+        /// </summary>
         private bool CompactsCommands
         {
             get
             {
                 // Chosen once for what is asked (and again only if what is asked changes before the first frame, as a
                 // launch's configuration may): VpCommandCompaction.TrySelect, with its reason in the log.
-                bool asked = Plugin.VulkanIndirectCount;
+                bool asked = Plugin.IndirectCountAsked;
                 if (!_compactionChoiceMade || asked != _compactionChoiceAsked)
                 {
                     _compactionChoiceMade = true;
@@ -514,6 +539,15 @@ namespace Zantetsu.Rendering.Urp
                         VpCommandCompaction.LastChoice = reason;
                         // The device and its driver version beside the choice: the count's copy answers this driver's behaviour (DESIGN 4.5.10).
                         Debug.Log("VP COMMAND COMPACTION: " + reason + " [device " + SystemInfo.graphicsDeviceName + "; " + SystemInfo.graphicsDeviceVersion + "]");
+                    }
+                    else if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+                    {
+                        // The Direct3D 12 route says which way it draws whichever it is (DESIGN 4.5.11), and whether
+                        // the launch asked for the GPU check, whose tallies are read back: such a run is no measurement.
+                        VpCommandCompaction.LastChoice = reason;
+                        if (_compactionChosen && Array.IndexOf(Environment.GetCommandLineArgs(), VpCommandCompaction.VerifyArgument) >= 0) VpCommandCompaction.VerificationEnabled = true;
+                        Debug.Log("VP COMMAND COMPACTION: " + reason + (VpCommandCompaction.VerificationEnabled && _compactionChosen ? "; THE GPU CHECK IS ON (its tallies are read back: not a performance sample)" : "")
+                            + " [device " + SystemInfo.graphicsDeviceName + "; " + SystemInfo.graphicsDeviceVersion + "]");
                     }
                 }
 
@@ -531,6 +565,19 @@ namespace Zantetsu.Rendering.Urp
         public long IndirectCountZeroMissed { get; private set; }
         public long IndirectCountZeroRefused { get; private set; }
         public long IndirectCountBarriers { get; private set; }
+
+        /// <summary>Direct3D 12: count buffers zeroed by a copy (one a column a set a frame), and the commands of the runs compacted, summed.</summary>
+        public long IndirectCountCopies { get; private set; }
+        public long IndirectCountRunCommands { get; private set; }
+
+        /// <summary>
+        /// The GPU check's tallies, read back now, when the launch asked for it (<see cref="VpCommandCompaction.VerifyArgument"/>)
+        /// and this route compacted; null otherwise. A synchronous readback: for the end of a check run.
+        /// </summary>
+        public string ReadCompactionCheck()
+        {
+            return VpCommandCompaction.VerificationEnabled && IndirectCountCompactions > 0 ? VpCommandCompaction.ReadVerification() : null;
+        }
 
         /// <summary>
         /// Why the compaction is off for the rest of this route's life, or null: a zero event the plugin refused means a
@@ -600,6 +647,7 @@ namespace Zantetsu.Rendering.Urp
             {
                 IndirectCountZeroMissed++;
                 VpCommandCompaction.ZeroMissed++;
+                NoteRunDrawnFixed("the column's count slots were not zeroed in this frame");
                 return false;
             }
 
@@ -607,7 +655,37 @@ namespace Zantetsu.Rendering.Urp
             {
                 IndirectCountSlotsShort++;
                 VpCommandCompaction.SlotsShort++;
+                NoteRunDrawnFixed("the pass has more runs than a count buffer has slots (" + VpCommandCompaction.Slots + ")");
                 return false;
+            }
+
+            if (VpCommandCompaction.ZeroesByCopy)
+            {
+                // Direct3D 12 (DESIGN 4.5.11). The dispatch reads the selection's entries as a shader resource and
+                // writes the compacted entries and the count for unordered access; the selection wrote the first for
+                // unordered access, the frame's copy left the count a copy destination, and the draw will ask both
+                // outputs as indirect arguments. Each of those is a state transition Direct3D 12 requires between the
+                // commands, so the order is its own: no event of the plugin is recorded here, and none may be -- a
+                // compute dispatch recorded after a plugin event in a pass wrote nothing (play-27, 2026-10-08).
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                int taken = _countSlotsUsed++;
+                using (new ProfilingScope(commands, CompactionSampler))
+                {
+                    batch.IssueCompaction(commands, compaction, source, column, startCommand, commandCount, taken, frame);
+                    if (VpCommandCompaction.VerificationEnabled) batch.IssueVerification(commands, compaction, source, column, startCommand, commandCount, taken);
+                }
+
+                IndirectCountCompactions++;
+                IndirectCountRunCommands += commandCount;
+                bound.shaderArguments = source;
+                bound.shaderArgumentsGeneration = bound.argumentsGeneration;
+                bound.arguments = compaction.Entries(column);
+                bound.argumentsGeneration = 0;   // GPU-written alone
+                bound.counts = compaction.Counts(column);
+                bound.zeroCounts = null;
+                bound.countSlot = taken;
+                VpCommandCompaction.NoteRecordTime(frame, System.Diagnostics.Stopwatch.GetTimestamp() - start);
+                return true;
             }
 
             if (_barrierPending && !IssueComputeBarrier(commands, frame))
@@ -646,6 +724,18 @@ namespace Zantetsu.Rendering.Urp
             VpCommandCompaction.NoteRecordTime(frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
             return true;
         }
+        // Direct3D 12: a run of a route that compacts drawn fixed all the same is said, the first time, with why; it
+        // is counted every time (the route's line has the counts). The Vulkan route counts it, as before.
+        private bool _runDrawnFixedSaid;
+
+        private void NoteRunDrawnFixed(string why)
+        {
+            if (Plugin.Vulkan || _runDrawnFixedSaid) return;
+            _runDrawnFixedSaid = true;
+            Debug.LogWarning("VP COMMAND COMPACTION: a run of a route that compacts was drawn fixed: " + why + " (said once; the route's line counts them)");
+        }
+
+        private static readonly ProfilingSampler CompactionSampler = new ProfilingSampler("VP Command Compaction");
         public string LastBodyVariant { get; private set; }
 
         /// <summary>The results the plugin answered for the blocks issued, by result, once read back.</summary>
@@ -1200,6 +1290,7 @@ namespace Zantetsu.Rendering.Urp
                 .Append(", zero events ").Append(IndirectCountZeroEvents).Append(", runs fixed for want of a slot ").Append(IndirectCountSlotsShort)
                 .Append(", runs fixed for want of a zero reservation ").Append(IndirectCountZeroMissed).Append(", zero events refused ").Append(IndirectCountZeroRefused)
                 .Append(", compute barriers ").Append(IndirectCountBarriers)
+                .Append(", counts zeroed by copy ").Append(IndirectCountCopies).Append(", commands of the compacted runs ").Append(IndirectCountRunCommands)
                 .Append(CompactionHalted != null ? "; compaction halted: " + CompactionHalted : "").Append(")")
                 .Append(", direct clip draws ").Append(DirectClipDrawsIssued)
                 .Append(", direct clip records: colour taken ").Append(DirectClipBodiesTaken).Append(" / kept ").Append(DirectClipBodiesKept)
@@ -1231,6 +1322,13 @@ namespace Zantetsu.Rendering.Urp
             if (_environmentFailure == null && _environmentChecked)
             {
                 text.Append("; plugin: ").Append(Plugin.ReadCounters());
+                if (Plugin.TryReadIndirectCountInfo(out bool waveOperations, out uint lanesLeast, out uint lanesMost, out ulong countDraws, out ulong countDrawMost))
+                {
+                    text.Append(", count draws ").Append(countDraws).Append(" (most commands ").Append(countDrawMost).Append("), wave operations ")
+                        .Append(waveOperations ? "of " + lanesLeast + " to " + lanesMost + " lanes" : "none");
+                }
+
+                if (CommandCompactionChoice != null && !Plugin.Vulkan) text.Append("; command compaction: ").Append(VpCommandCompaction.DescribeRun());
                 foreach (PipelineEntry entry in _pipelines.Values)
                 {
                     text.Append("; pipeline ").Append(entry.pipeline.Describe());
@@ -1286,6 +1384,8 @@ namespace Zantetsu.Rendering.Urp
             _cameras.Clear();
             owed.Add(_zeroArguments);
             _zeroArguments = null;
+            if (_zeroCounts != null) owed.Add(_zeroCounts);
+            _zeroCounts = null;
             _pointers.Clear();
             _blocks.Clear();
             _ringAfterDispose = _drawData;
@@ -1650,7 +1750,7 @@ namespace Zantetsu.Rendering.Urp
         // Unity is asked is apart from what is written.
         private struct BoundPointers
         {
-            public IntPtr arguments, visible, instances, clips, cullCommands, indexBuffer, vertexBuffer, specCube, paletteSurface, paletteCaps, baseMap, shadowMap, gpuConstants, counts, zeroCounts;
+            public IntPtr arguments, shaderArguments, visible, instances, clips, cullCommands, indexBuffer, vertexBuffer, specCube, paletteSurface, paletteCaps, baseMap, shadowMap, gpuConstants, counts, zeroCounts;
             public Texture specCubeTexture, paletteSurfaceTexture, paletteCapsTexture, baseMapTexture;
             // A texture that is a render texture is bound through its colour render buffer handle (resolved by Unity
             // when the event runs), not a texture pointer that a re-creation would leave stale.
@@ -1704,6 +1804,10 @@ namespace Zantetsu.Rendering.Urp
                 pointers = default;
                 // The indirect command reader needs this even when the vertex shader does not bind it.
                 if (directCount == 0) pointers.arguments = _pointers.Buffer(bound.arguments, bound.argumentsGeneration);
+                // The entries the vertex stage reads: the argument buffer itself, but for a compacted run of the
+                // Direct3D 12 route, whose stage reads the selection's own.
+                pointers.shaderArguments = bound.shaderArguments != null && entry.vertexArguments >= 0
+                    ? _pointers.Buffer(bound.shaderArguments, bound.shaderArgumentsGeneration) : pointers.arguments;
                 if (bound.counts != null) pointers.counts = _pointers.Buffer(bound.counts);   // GPU-written alone: one generation
                 if (bound.zeroCounts != null) pointers.zeroCounts = _pointers.Buffer(bound.zeroCounts);
                 if (entry.vertexVisible >= 0) pointers.visible = _pointers.Buffer(bound.visible, bound.visibleGeneration);
@@ -1839,7 +1943,11 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 drawData.AddViewport(viewport);
-                if (entry.vertexArguments >= 0) drawData.SetBuffer(entry.vertexArguments, pointers.arguments, bound.arguments.count, bound.arguments.stride, true);
+                if (entry.vertexArguments >= 0)
+                {
+                    GraphicsBuffer read = bound.shaderArguments ?? bound.arguments;
+                    drawData.SetBuffer(entry.vertexArguments, pointers.shaderArguments, read.count, read.stride, true);
+                }
                 drawData.SetBuffer(entry.vertexVertices, pointers.vertexBuffer, bound.vertexBuffer.count, bound.vertexBuffer.stride, false);
                 if (entry.vertexInstances >= 0) drawData.SetBuffer(entry.vertexInstances, pointers.instances, bound.instances.count, bound.instances.stride, false);
                 if (entry.vertexClips >= 0) drawData.SetBuffer(entry.vertexClips, pointers.clips, bound.clips.count, bound.clips.stride, false);
@@ -2518,9 +2626,55 @@ namespace Zantetsu.Rendering.Urp
                 if (set != null && !_sets.Contains(set)) { _sets.Add(set); _setCommands.Add(commands); }
             }
 
+            // Direct3D 12: a set with the columns of it this frame compacts (bit 0 the body's, bit 1 the casters').
+            private void AddColumn(VpIndexedIndirectDrawBatch.Compaction set, int columnBit)
+            {
+                int at = _sets.IndexOf(set);
+                if (at < 0) { _sets.Add(set); _setCommands.Add(columnBit); }
+                else _setCommands[at] |= columnBit;
+            }
+
+            // Direct3D 12 (DESIGN 4.5.11): the count slots of every column this frame compacts, zeroed by a copy on
+            // the GPU in this pass -- Unity's own command, no event of the plugin -- before the passes that compact.
+            // It does not depend on a draw: a frame with no draw, a camera held, or a set coming back after frames of
+            // rest leaves no count behind, and a column not zeroed here is not compacted in this frame (its runs draw
+            // fixed, counted and said).
+            private void ExecuteCopies(CommandBuffer commands)
+            {
+                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                _sets.Clear(); _setCommands.Clear();
+                foreach (Issue issue in _passes.bodies) if (!issue.clipList) AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 1);
+                if (!VpCommandCompaction.CastersFixed)
+                {
+                    foreach (Issue issue in _passes.casterRuns) if (!issue.clipList) AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 2);
+                }
+
+                int copies = 0;
+                for (int s = 0; s < _sets.Count; s++)
+                {
+                    for (int column = 0; column < 2; column++)
+                    {
+                        if ((_setCommands[s] & (1 << column)) == 0) continue;
+                        _route._zeroCounts ??= VpCommandCompaction.NewZeroSource();
+                        VpCommandCompaction.ZeroCounts(commands, _route._zeroCounts, _sets[s].Counts(column));
+                        _sets[s].MarkZeroReserved(column, _passes.frame);
+                        copies++;
+                    }
+                }
+
+                _route.IndirectCountCopies += copies;
+                VpCommandCompaction.NoteRecordTime(_passes.frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+            }
+
             private void Execute(CommandBuffer commands)
             {
                 if (_route._disposed || !_route.CompactsCommands) return;
+                if (VpCommandCompaction.ZeroesByCopy)
+                {
+                    ExecuteCopies(commands);
+                    return;
+                }
+
                 long began = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (VpCommandCompaction.SnapshotEnabled) VpCommandCompaction.PumpSnapshots(_passes.frame);
                 _route.DropUnrecorded();
