@@ -238,6 +238,76 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
+        /// **A plane that crosses no display member cuts nothing, with members on both sides of it too** (TL, 2026-10-11).
+        /// A building cut by a level plane and settled; then the very same sweep again, as another Slash. Its plane is the
+        /// one the building was cut by: the two children stand on either side of it and neither is crossed. The hit ends
+        /// as no change -- not published, no display operation, no drop begun, no hull update asked: the upper child
+        /// stays where its one drop left it, the hull and the collider are the ones the first cut's update gave, and the
+        /// count a walk's check makes (published hits whose display operations all ended, each with one at least) is every
+        /// published hit. A sweep lower down then cuts as ever: the lower child is crossed, the cut is published with its
+        /// one display operation. (Until this rule the second sweep was published with no display cut and the upper child
+        /// slid a second time: seen in the city walk depW1, hull hit 23.)
+        /// </summary>
+        [UnityTest]
+        public IEnumerator HullKinematic_ThePlaneOfACutAlreadyMade_CrossesNoMember_IsNoChange_AndNothingDropsAgain()
+        {
+            CutWorldRoot root = NewKinematicWorld();
+            BuildingHullFusion h = root.Hulls;
+            HullGroup building = AddHullBuilding(root, Vector3.zero, new[] { new float3(-0.5f, -0.9f, 0f) }, 12.0, out _);
+            var detector = new SlashHitDetector(root, in k_hitSettings);
+            var snapshots = new List<double>();
+            using var snapshot = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "Zantetsu.Display.Collect.2Snapshot");
+            yield return null;
+            Vector3 origin = building.Members[0].root.transform.position;
+            Evaluate(detector, Level(1, 0.2f, -3f, 3f), 1);
+            yield return UntilKinematic(root, 1, () => h.GroupCuts == 1, 30f, "the first cut published", snapshots, snapshot);
+            yield return UntilKinematic(root, 1, () => h.AnimationsCompleted == 1 && h.HullUpdatesAdopted == 1 && h.IsSettled && h.DisplayOperationsOpen == 0, 30f, "the first cut settled", snapshots, snapshot);
+            AssertOneMoved(building, origin, new Vector3(DropHorizontal, 0f, 0f), Vector3.up, "the first cut");
+            Mesh hull = building.Collider.sharedMesh;
+            int generation = building.HullGeneration;
+
+            // The very same sweep, another Slash.
+            Evaluate(detector, Level(2, 0.2f, -3f, 3f), 2);
+            yield return UntilKinematic(root, 1, () => h.Hits.Count == 2 && h.Hits[1].outcome != null, 30f, "the second sweep answered", snapshots, snapshot);
+            yield return Steps(20);   // longer than a drop: one begun by it would be under way or done
+            BuildingHullFusion.HullHit again = h.Hits[1];
+            TestContext.Out.WriteLine("the same sweep again: " + again.outcome + " (display operations " + again.displayOperations.Count + "); hits published " + h.HitsPublished + ", refused " + h.HitsRefused + ", no changes " + h.NoChanges
+                + ", group cuts " + h.GroupCuts + ", drops started " + h.AnimationsStarted + ", hull requests made " + h.HullRequestsMade);
+            Assert.That(again.outcome, Does.StartWith("NoChange: the plane crosses no display member (1 positive, 1 negative)"), "the plane of the cut already made crosses neither child");
+            Assert.That(again.displayOperations.Count, Is.Zero, "no display operation");
+            Assert.That(new[] { h.HitsPublished, h.HitsRefused, h.NoChanges, h.GroupCuts }, Is.EqualTo(new[] { 1, 1, 1, 1 }), "one cut published; the second hit is no cut");
+            Assert.That(new[] { h.AnimationsStarted, h.AnimationsRunning, h.HullRequestsMade, h.HullUpdatesBegun }, Is.EqualTo(new[] { 1, 0, 1, 1 }), "no drop begun and no hull update asked by it");
+            AssertOneMoved(building, origin, new Vector3(DropHorizontal, 0f, 0f), Vector3.up, "after the same sweep again: the upper child where its one drop left it");
+            Assert.That(building.MemberCount, Is.EqualTo(2), "the two children still");
+            Assert.That(building.HullGeneration, Is.EqualTo(generation), "the hull is the first cut's");
+            Assert.That(building.Collider.sharedMesh, Is.SameAs(hull), "and so is the collider");
+            Assert.That(h.IsSettled, Is.True, "settled");
+
+            // What a walk's check counts: every published hit has a display operation and all of them ended.
+            int published = 0, chained = 0;
+            foreach (BuildingHullFusion.HullHit hit in h.Hits)
+            {
+                if (hit.outcome != "Published") continue;
+                published++;
+                bool all = hit.displayOperations.Count > 0;
+                foreach (CutOperationId op in hit.displayOperations) all &= root.Ledger.TryGetOperation(op, out LogicalCutOperation record) && record.state == LogicalCutOperationState.Completed;
+                if (all) chained++;
+            }
+
+            Assert.That(chained, Is.EqualTo(published), "every published hit has its display operations, ended");
+
+            // A sweep lower down cuts as ever: the lower child is crossed.
+            Evaluate(detector, Level(3, -0.3f, -3f, 3f), 3);
+            yield return UntilKinematic(root, 1, () => h.GroupCuts == 2, 30f, "a lower sweep published", snapshots, snapshot);
+            yield return UntilKinematic(root, 1, () => h.IsSettled && h.DisplayOperationsOpen == 0 && h.AnimationsRunning == 0, 30f, "the lower cut settled", snapshots, snapshot);
+            Assert.That(new[] { h.Hits[2].outcome, h.Hits[2].displayOperations.Count.ToString() }, Is.EqualTo(new[] { "Published", "1" }), "the lower sweep crossed the lower child: one display operation");
+            Assert.That(building.MemberCount, Is.EqualTo(3), "three members");
+            KinematicLine(root, "the plane of a cut already made", snapshots);
+            AssertOneEach(root, 1, "at the end");
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
         /// **The drop's side does not depend on the normal's sign; near vertical it is the side away from the anchors.** The
         /// rule on its own: a normal and its opposite pick the same side of space and the same distance (horizontal, tilted,
         /// near vertical with anchors on one side, with members uneven, even); the distance runs from 2 cm (vertical) to 15
