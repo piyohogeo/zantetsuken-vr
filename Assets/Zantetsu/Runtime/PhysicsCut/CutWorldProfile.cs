@@ -199,9 +199,9 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float fragmentGroupSeedSecondsPerFragment = 0.00005f;
         [SerializeField] private float fragmentGroupSeedSecondsPerGroup = 0.0002f;
 
-        [Header("Spatial split (DESIGN 7.9.2, Phase 5.6 first version, provisional)")]
-        [Tooltip("Replace a settled owner by two ordinary objects when one plane separates its parts: a plane that crosses neither its triangles nor its convexes, or -- with the convex cut below -- one that crosses no triangle, the convexes it crosses cut by it (not for buildings; no triangle is cut). Off: nothing is looked at and nothing is issued. Off by default.")]
-        [SerializeField] private bool spatialSplitEnabled = false;
+        [Header("Spatial split (DESIGN 7.9.2, Phase 5.6; on by default since 2026-10-11)")]
+        [Tooltip("Replace a settled owner by two ordinary objects when one plane separates its parts: a plane that crosses neither its triangles nor its convexes, or -- with the convex cut below -- one that crosses no triangle, the convexes it crosses cut by it (not for buildings; no triangle is cut). Off: nothing is looked at and nothing is issued. On by default (the TL's decision of 2026-10-11, after Simulator and Quest 3S city walks); -zantetsuSpatialSplitOff switches it off for a Player run.")]
+        [SerializeField] private bool spatialSplitEnabled = true;
 
         [Tooltip("Fragments looked at per frame at most while no attempt is outstanding (16: the empty owner collection's walk). One attempt at a time over the whole world.")]
         [SerializeField] private int spatialSplitExaminePerFrame = 16;

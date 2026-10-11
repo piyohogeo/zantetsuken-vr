@@ -1293,7 +1293,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         /// <summary>
         /// **Off, short of budget or short of room, nothing is published and nothing is done in its place; a later
-        /// frame publishes.** With the profile's own setting -- off -- no turn is taken. On with the budget closed,
+        /// frame publishes.** The profile's default is on, with the convex cut, at 50 triangles. With a profile
+        /// that switches it off -- this world's -- no turn is taken. On with the budget closed,
         /// nothing is looked at. An attempt issued and collected is not published while the budget is closed, nor
         /// while the storage has no index room for the two ranges -- that one is given back and marks nothing -- and
         /// the object stands as it was through all of it. With the room back and the budget open it is published.
@@ -1301,10 +1302,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         [UnityTest]
         public IEnumerator SpatialSplit_Off_ShortOfBudget_OrShortOfRoom_PublishesNothing_AndALaterFrameDoes()
         {
+            CutSpatialSplitSettings byDefault = default;
             CutWorldRoot root = NewWorld(
                 out Shader _, null, null,
                 profile =>
                 {
+                    // The profile as it comes, read before this world's own is switched off.
+                    byDefault = profile.SpatialSplit;
+                    SetPrivate(profile, "spatialSplitEnabled", false);
+
                     // A storage small enough for the case to take all of its free index room.
                     SetPrivate(profile, "indexReserve", 2048);
                     SetPrivate(profile, "indexInitialCommit", 2048);
@@ -1314,7 +1320,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             var remaining = new double[] { 1.0 };
             CutSpatialSplit split = root.SpatialSplit;
             Assert.That(split, Is.Not.Null);
-            Assert.That(split.Settings.enabled, Is.False, "the profile's own setting is off by default");
+            Assert.That(byDefault.enabled && byDefault.cutConvexes && byDefault.minCutSideTriangles == 50, Is.True,
+                "the profile's default: the split on, its convex cut on, at 50 triangles");
+            Assert.That(split.Settings.enabled, Is.False, "switched off by this world's profile");
             split.RemainingMainSeconds = () => remaining[0];
             split.LaterStepSeconds = () => 0.0;
             root.EmptyOwners.Settings = EmptyOwnersOff();

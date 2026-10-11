@@ -4,9 +4,9 @@ using Unity.Profiling;
 namespace Zantetsu.PhysicsCut
 {
     /// <summary>
-    /// The additional split of one owner into two by a plane that crosses nothing of it (DESIGN 7.9.2, Phase 5.6,
-    /// first version): made with the world, given one turn a frame before the frame's collection, and let go with the
-    /// world. Off unless the profile switches it on.
+    /// The additional split of one owner into two by a plane that separates its parts (DESIGN 7.9.2, Phase 5.6):
+    /// made with the world, given one turn a frame before the frame's collection, and let go with the world. On by
+    /// the profile's default (2026-10-11); a profile or <see cref="SpatialSplitOffArgument"/> switches it off.
     /// </summary>
     public partial class CutWorldRoot
     {
@@ -16,11 +16,16 @@ namespace Zantetsu.PhysicsCut
         public CutSpatialSplit SpatialSplit { get; private set; }
 
         /// <summary>
-        /// The Player argument that switches the spatial split on for a run (DESIGN 7.9.2): for looking at it, and for
-        /// comparing with and without it in one build, while the profile leaves it off. Every other value is the
-        /// profile's.
+        /// The Player argument that switches the spatial split on for a run (DESIGN 7.9.2) where a profile leaves it
+        /// off. Every other value is the profile's. With the profile's default (on) it changes nothing.
         /// </summary>
         public const string SpatialSplitArgument = "-zantetsuSpatialSplit";
+
+        /// <summary>
+        /// The Player argument that switches the spatial split off for a run: the way back from the default, and for
+        /// comparing with and without it in one build. It wins over <see cref="SpatialSplitArgument"/>.
+        /// </summary>
+        public const string SpatialSplitOffArgument = "-zantetsuSpatialSplitOff";
 
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
@@ -77,8 +82,22 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.LogError("SPATIAL SPLIT MINIMUM: " + refusal + ": the profile's " + settings.minCutSideTriangles + " stands", this);
             }
 
+            if (Array.IndexOf(arguments, SpatialSplitOffArgument) >= 0)
+            {
+                UnityEngine.Debug.Log(
+                    "SPATIAL SPLIT: off -- asked for by " + SpatialSplitOffArgument + " (the profile's own setting is " + (settings.enabled ? "on" : "off") + ")", this);
+                settings.enabled = false;
+                return settings;
+            }
+
             if (Array.IndexOf(arguments, SpatialSplitArgument) < 0)
             {
+                if (settings.enabled)
+                {
+                    // On by the profile: said once, as the argument's line says it, so that a run's log tells which.
+                    UnityEngine.Debug.Log("SPATIAL SPLIT: on -- the profile's setting: " + DescribeSplit(in settings), this);
+                }
+
                 return settings;
             }
 
