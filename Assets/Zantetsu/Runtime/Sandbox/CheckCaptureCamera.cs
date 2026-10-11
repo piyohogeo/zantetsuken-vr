@@ -176,7 +176,8 @@ namespace Zantetsu.Sandbox
             + "capture camera " + width + "x" + height + ": listed with the camera drawing " + ListedWithDrawing + ", taken by the display " + TakenByDisplay + (_registeredHere ? " (registered here)" : " (by the drawing)")
             + "; rendered " + Rendered + (sink != null ? "; saving: " + sink.Describe() : "; no sink");
 
-        /// <summary>Unregistered and destroyed at once (never a wait); the switches written beside the pictures; the texture to the sink.</summary>
+        /// <summary>Unregistered and destroyed at once (never a wait); the switches written beside the pictures; the texture to the sink,
+        /// or without one left to Unity to destroy (never released here: see below).</summary>
         public void Dispose()
         {
             if (Camera == null) return;
@@ -205,7 +206,11 @@ namespace Zantetsu.Sandbox
             }
             else if (Target != null)
             {
-                Target.Release();
+                // Not released here. A caller may dispose inside the render loop, in the frame this texture was drawn to
+                // (endCameraRendering): released then, the Direct3D 12 device still held it as its target and the next
+                // camera's SetRenderTargets read what was freed (2026-10-11: the Editor ended with an access violation,
+                // every time by the 175th picture of a case taking them one after another). Destroy alone leaves it to
+                // Unity, after the frame's cameras are drawn.
                 UnityEngine.Object.Destroy(Target);
             }
 
