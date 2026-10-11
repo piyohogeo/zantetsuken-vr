@@ -2,6 +2,8 @@
 
 2026-10-09 JST。worktree `C:/Users/junic/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。
 
+> **2026-10-11 追記（分類の変更。現行の契約は DESIGN.md 4.5.9）。** 以下は当時の実装の記録である。現在は分類が**コマンド単位**になっている：`PlaneCount > 0` のinstanceを1つでも含むstable commandは、全instance（平面数0のものを含む）をdirectへ渡し、通常のmulti-drawには何も残さない。GPU選別はClip storageを読まず、束縛もしない（どのcommandを外すかはcull commandの記録が言う）。この変更後のQuest Vulkanの発行コードは実機でもEditorでも実行していない。
+
 ## 実装した経路
 
 | 対象 | 選択・draw | VSの入力 | Clip |

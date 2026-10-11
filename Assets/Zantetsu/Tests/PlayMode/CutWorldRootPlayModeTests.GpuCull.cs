@@ -705,7 +705,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(CountTwoSidedCommands(root), Is.GreaterThan(0), "the clipped sides cast two-sided");
                 Assert.That(root.Display.CapRecordCount, Is.GreaterThan(0), "and the cut face is a cap the stencil work draws");
                 Assert.That(root.Display.GpuReplacements, Is.GreaterThan(replacementsAtFirst), "the body's GPU buffers were replaced by larger ones");
-                Assert.That(root.Display.ClipDrawCount, Is.EqualTo(4), "the clip list: the two clipped sides, an instance of each of the body's two commands");
+                Assert.That(root.Display.ClipDrawCount, Is.EqualTo(apart ? 4 : 0),
+                    "the clip list of a display that separates: the two clipped sides, an instance of each of the body's two commands; a display that does not separate has no clip route and no list");
+                Assert.That(
+                    new[] { root.Display.ClipRouteCommandCount, root.Display.ClipRoutePlanelessCount }, Is.EqualTo(apart ? new[] { 2, 0 } : new[] { 0, 0 }),
+                    "the body's two commands are of the clip route, whole; no instance of them is without a plane");
                 if (apart)
                 {
                     Assert.That(root.Display.ClipBodyIssues, Is.GreaterThan(0L), "drawn apart as bodies");

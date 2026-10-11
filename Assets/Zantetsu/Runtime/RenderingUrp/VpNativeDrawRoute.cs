@@ -1000,7 +1000,7 @@ namespace Zantetsu.Rendering.Urp
                 var conditions = new VpCullConditions();
                 conditions.KeepEverything();
                 using (new ProfilingScope(commands, CullWarmSampler))
-                    request.batch.IssueCull(commands, 0, conditions, false, true);
+                    request.batch.IssueCull(commands, 0, conditions, true);
                 PrewarmCullDispatches++;
             }
             foreach (PipelineEntry entry in entries)
@@ -1104,7 +1104,9 @@ namespace Zantetsu.Rendering.Urp
         public void AddClipBody(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
             Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1)
         {
-            if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
+            // Every record given is drawn, one of no plane too: its command is of the clip route (DESIGN 4.5.9), so the
+            // selection keeps none of its instances, and the direct variant clips nothing of a record of no plane.
+            if (!SeparateClipDraws || range.indexCount == 0) return;
             CameraPasses passes = PassesOf(camera, false);
             if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip draw camera was not enqueued");
             var issue = new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip, selection = selection, entry = entry };
@@ -1113,7 +1115,7 @@ namespace Zantetsu.Rendering.Urp
         public void AddClipCasters(Camera camera, VpGpuIndexedGeometryBuffers buffers, Material material, VpGeometryRange range,
             Matrix4x4 objectToWorld, VpInstanceClip clip, Bounds worldBounds, int layer, VpClipSelection selection = null, int entry = -1)
         {
-            if (!SeparateClipDraws || !clip.IsClipped || range.indexCount == 0) return;
+            if (!SeparateClipDraws || range.indexCount == 0) return;   // a record of no plane too: see AddClipBody
             CameraPasses passes = PassesOf(camera, false);
             if (passes == null || passes.frame != Time.frameCount) throw new InvalidOperationException("clip caster camera was not enqueued");
             passes.clipCasters.Add(new ClipIssue { buffers = buffers, material = material, range = range, objectToWorld = objectToWorld, clip = clip, selection = selection, entry = entry });
@@ -2402,7 +2404,8 @@ namespace Zantetsu.Rendering.Urp
                                 _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
                             if (_motionSelected.Add(issue.batch))
                             {
-                                issue.batch.IssueCull(commands, selection, _motionConditions, _route.SeparateClipDraws && Clips.Count > 0);
+                                // The commands of the clip route keep nothing here either: the batch's commands say which.
+                                issue.batch.IssueCull(commands, selection, _motionConditions);
                                 // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
                                 _route.NoteSelectionIssued();
                             }

@@ -530,10 +530,13 @@ namespace Zantetsu.MeshCut
         private VpGpuCullSetup _cull;
         private List<Material> _ownedMaterials;
 
-        // Clipped instances drawn apart (DESIGN 4.5.9). Whether this display does so is fixed when it is made: the
+        // The clip route, drawn apart (DESIGN 4.5.9). Whether this display has one is fixed when it is made: the
         // setup asked for it and every material has the variant with no clip. The selection's own draws are then of
         // that variant, and each copy made for them is kept beside the material it was copied from -- the variant
         // that reads no selection and evaluates the clip record -- with which Unity's calls draw the clip list.
+        // The route is taken A COMMAND AT A TIME: a command with any clipped instance is drawn by it whole, its
+        // instances with no plane included (the variant clips nothing of a record of no plane); every other command
+        // is the selection's whole.
         private bool _separateClip;
         private Dictionary<Material, Material> _clipMaterials;
         private VpIndexedIndirectDrawBatch.ClipEntry[] _clipEntries = new VpIndexedIndirectDrawBatch.ClipEntry[4];
@@ -547,8 +550,17 @@ namespace Zantetsu.MeshCut
         /// <summary>Why a display asked to draw clipped instances apart does not, or null.</summary>
         public string ClipSeparationRefusal { get; private set; }
 
-        /// <summary>How many clipped instances the adopted clip list holds.</summary>
+        /// <summary>How many instances the adopted clip list holds: every instance of every command of the clip route.</summary>
         public int ClipDrawCount => _clipDrawRecords.Count;
+
+        /// <summary>How many commands are of the clip route in what is adopted; and how many of the list's instances carry no plane (they are drawn by the route uncut).</summary>
+        public int ClipRouteCommandCount => _clipRouteCommands;
+        public int ClipRoutePlanelessCount => _clipRoutePlaneless;
+
+        /// <summary>Observation: the most of each an adopted list has held since the display was made.</summary>
+        public int MostClipRouteCommands { get; private set; }
+        public int MostClipRouteInstances { get; private set; }
+        public int MostClipRoutePlaneless { get; private set; }
 
         /// <summary>Observation: runs of the clip list issued as bodies, and as casters, since the display was made.</summary>
         public long ClipBodyIssues { get; private set; }
@@ -780,9 +792,12 @@ namespace Zantetsu.MeshCut
         private VpNumericRoom<Matrix4x4> _transforms;
         private VpNumericRoom<VpInstanceClip> _clips;
 
-        // Stable command slots may mix clipped and ordinary instances. Membership follows the structure;
-        // placement-only collections keep these record numbers and Render reads their current values. The
-        // candidate is built before any GPU upload so adoption only swaps already complete lists.
+        // The clip route's list: every instance of every command that is of the route (VpIndirectCommand.clipRoute,
+        // written with the command when its registration is). A command slot may mix clipped instances and ones
+        // with no plane: it is then of the route whole. Membership follows the structure; placement-only
+        // collections keep these record numbers and Render reads their current values. The candidate is built
+        // before any GPU upload so adoption only swaps already complete lists -- and the commands the upload sends
+        // say the same of every command as the list adopted with them.
         internal readonly struct ClipDrawRecord
         {
             public readonly int command, instance;
@@ -790,6 +805,7 @@ namespace Zantetsu.MeshCut
         }
         private List<ClipDrawRecord> _clipDrawRecords = new List<ClipDrawRecord>(4);
         private List<ClipDrawRecord> _candidateClipDrawRecords = new List<ClipDrawRecord>(4);
+        private int _clipRouteCommands, _clipRoutePlaneless, _candidateClipRouteCommands, _candidateClipRoutePlaneless;
         internal int ClipDrawCountForTest => _clipDrawRecords.Count;
         internal long ClipDrawListBuildsForTest { get; private set; }
         internal ClipDrawRecord ClipDrawRecordForTest(int index) => _clipDrawRecords[index];
@@ -935,7 +951,7 @@ namespace Zantetsu.MeshCut
             public VpIndexedIndirectDrawBatch cullBatch;
             public int cullRequestedFrame = int.MinValue;
             public int cullIssuedFrame = int.MinValue;
-            public bool cullExcludeClipped;
+            public bool cullClipList;
 
             // What this camera keeps of the clip list (DESIGN 4.5.9): made when its selection is issued, for the list
             // its draws were registered with (clipVersion); not valid, and so keeping everything, until then.
@@ -4453,11 +4469,12 @@ namespace Zantetsu.MeshCut
                     "this display's batch writes the plugin's argument entries; set NativeDrawSink before drawing");
             }
 
-            // The clipped instances apart (DESIGN 4.5.9): the display's own decision, settled when it was made, for a
+            // The clip route apart (DESIGN 4.5.9): the display's own decision, settled when it was made, for a
             // batch that selects on the GPU, whatever draws it. Unity's calls draw the clip list themselves; a sink
-            // draws the list, or -- the Vulkan route -- each clipped instance directly. A sink that does neither is
-            // refused: this display's ordinary draws evaluate no clip, so the clipped instances cannot be given back
-            // to them (a display for such a route is made with the separation off, materials and selection alike).
+            // draws the list, or -- the Vulkan route -- each of its instances directly. A sink that does neither is
+            // refused: this display's ordinary draws evaluate no clip and its selection keeps nothing of the route's
+            // commands, so they cannot be given back to them (a display for such a route is made with the separation
+            // off, materials and commands alike).
             string clipRefusal = ClipDrawRefusal(nativeSink);
             if (clipRefusal != null)
             {
@@ -4844,7 +4861,7 @@ namespace Zantetsu.MeshCut
             }
         }
 
-        private void NoteCullRequest(CameraStencil slot, bool excludeClipped)
+        private void NoteCullRequest(CameraStencil slot, bool clipList)
         {
             if (slot.cullRequestedFrame != int.MinValue && slot.cullRequestedFrame != CurrentFrame
                 && slot.cullIssuedFrame != slot.cullRequestedFrame)
@@ -4862,7 +4879,7 @@ namespace Zantetsu.MeshCut
 
             slot.cullRequestedFrame = CurrentFrame;
             slot.cullBatch = _batch;
-            slot.cullExcludeClipped = excludeClipped;
+            slot.cullClipList = clipList;
         }
 
         /// <summary>
@@ -4886,10 +4903,11 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            slot.cullBatch.IssueCull(commands, slot.view, conditions, slot.cullExcludeClipped);
+            // Which commands the selection leaves to the clip route is in the batch's commands (clipRoute).
+            slot.cullBatch.IssueCull(commands, slot.view, conditions);
             slot.cullIssuedFrame = CurrentFrame;
             CullSelectionsIssued++;
-            if (slot.cullExcludeClipped)
+            if (slot.cullClipList)
             {
                 SelectClipped(commands, slot, conditions);
             }
@@ -4897,8 +4915,8 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        // The clip list's own selection for one camera (DESIGN 4.5.9): the instances the GPU selection was just told
-        // to leave out are judged here, by the conditions it was issued with and the tests it makes, on each entry's
+        // The clip list's own selection for one camera (DESIGN 4.5.9): the instances of the commands the GPU selection
+        // leaves to the clip route are judged here, by the conditions it was issued with and the tests it makes, on each entry's
         // command bounds as the entry's present transform carries them. Only the list is gone through. A list that is
         // not the one the camera's draws were registered with is not judged: everything of it is then kept.
         private void SelectClipped(UnityEngine.Rendering.CommandBuffer commands, CameraStencil slot, VpCullConditions conditions)
@@ -6879,7 +6897,8 @@ namespace Zantetsu.MeshCut
             if (rebuildClipDraws)
             {
                 CollectClipDrawRecords(_candidateCommands.Valid, _candidateCommandStarts.Valid,
-                    _candidateClips.Valid, commandEnd, _candidateClipDrawRecords);
+                    _candidateClips.Valid, commandEnd, _candidateClipDrawRecords,
+                    out _candidateClipRouteCommands, out _candidateClipRoutePlaneless);
             }
 
             EnterCollectStage(6);
@@ -7316,7 +7335,14 @@ namespace Zantetsu.MeshCut
                 VpIndirectCommand source = entry.commands[c];
                 int slot = slots.commandStart + c;
                 int first = slots.instanceStart + (c * slots.instanceStride);
-                _candidateCommands[slot] = new VpIndirectCommand(source.range, source.localBounds, slots.renderFragments);
+
+                // Two readings of the one fact the structure settled for the registration -- whether any render
+                // fragment of it carries a plane -- kept apart because they answer different questions: the command's
+                // draw route (the clip route, when this display has one: every instance of the command then goes by
+                // it, and the selection keeps none), and which caster the command takes (the two-sided one, DESIGN
+                // 5.4, whatever draws it).
+                _candidateCommands[slot] = new VpIndirectCommand(
+                    source.range, source.localBounds, slots.renderFragments, _separateClip && slots.clipped);
                 _candidateCommandStarts[slot] = first;
                 _candidateCommandMaterials[slot] = entry.commandMaterials[c];
                 _candidateCommandProvisional[slot] = slots.clipped;
@@ -7556,6 +7582,11 @@ namespace Zantetsu.MeshCut
             if (rebuildClipDraws)
             {
                 Swap(ref _clipDrawRecords, ref _candidateClipDrawRecords);
+                _clipRouteCommands = _candidateClipRouteCommands;
+                _clipRoutePlaneless = _candidateClipRoutePlaneless;
+                MostClipRouteCommands = Math.Max(MostClipRouteCommands, _clipRouteCommands);
+                MostClipRouteInstances = Math.Max(MostClipRouteInstances, _clipDrawRecords.Count);
+                MostClipRoutePlaneless = Math.Max(MostClipRoutePlaneless, _clipRoutePlaneless);
                 ClipDrawListBuildsForTest++;
                 _clipListVersion++;
             }
@@ -7601,21 +7632,37 @@ namespace Zantetsu.MeshCut
             _generation++;
         }
 
-        // The same per-instance predicate as the GPU selection, including mixed runs. Free slots have no instances.
+        // The clip route's list from the commands: every instance of every command that says it is of the route --
+        // the very word the selection goes by (VpCullCommand.ClipRouteFlag is made from it), so that what the
+        // selection leaves out and what the list draws are the same instances, each once. An instance with no plane
+        // in such a command is in the list like the others; a free slot, a command of no instance, has none, and a
+        // record no live command names is in no list. The clip records are read only to count the instances with no
+        // plane, and only those of the route's commands. Made when the list is: never by a collection whose
+        // structure stands.
         internal static void CollectClipDrawRecords(
             NativeArray<VpIndirectCommand> commands, NativeArray<int> starts, NativeArray<VpInstanceClip> clips,
-            int commandEnd, List<ClipDrawRecord> into)
+            int commandEnd, List<ClipDrawRecord> into, out int routedCommands, out int planeless)
         {
             into.Clear();
+            routedCommands = 0;
+            planeless = 0;
             for (int c = 0; c < commandEnd; c++)
             {
-                int first = starts[c], count = commands[c].instanceCount;
-                for (int i = 0; i < count; i++)
+                VpIndirectCommand command = commands[c];
+                if (!command.clipRoute || command.instanceCount <= 0)
+                {
+                    continue;
+                }
+
+                routedCommands++;
+                int first = starts[c];
+                for (int i = 0; i < command.instanceCount; i++)
                 {
                     int instance = first + i;
-                    if (clips[instance].PlaneCount > 0)
+                    into.Add(new ClipDrawRecord(c, instance));
+                    if (clips[instance].PlaneCount == 0)
                     {
-                        into.Add(new ClipDrawRecord(c, instance));
+                        planeless++;
                     }
                 }
             }
