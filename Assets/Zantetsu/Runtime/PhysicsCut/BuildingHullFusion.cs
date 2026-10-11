@@ -647,6 +647,19 @@ namespace Zantetsu.PhysicsCut
 
             if (_settings.kinematicDisplay)
             {
+                // The hit's outcome is the display's here, so a plane that crosses no display member cuts nothing --
+                // with members on both sides too: the plane of a cut already made (its two sides stand on either side
+                // of it, sliding in it), or one through a gap between members. It ends as no change: nothing is
+                // published, no side drops and no hull update is asked (TL, 2026-10-11; until then such a hit was
+                // published with no display cut and the moving side dropped once more -- a walk's second Slash along
+                // a plane it had cut a building by slid that building's top a second time).
+                if (crossed == 0)
+                {
+                    NoChanges++;
+                    EndWithoutCut(cut, "NoChange: the plane crosses no display member (" + positives + " positive, " + negatives + " negative)");
+                    return true;
+                }
+
                 cut.stage = CutStage.Display;   // published by the display alone at the next unit; no cook
                 return false;
             }
