@@ -30,9 +30,9 @@ namespace Zantetsu.Rendering.Urp
     /// instance, clip, selection and argument buffers are the batch's own; the shadow map is URP's.
     /// </para>
     /// <para>
-    /// **The command compaction on Direct3D 12 (DESIGN 4.5.11, D-218).** By default, where the device can and the
-    /// launch does not ask for the fixed draw
-    /// (<see cref="VpCommandCompaction.TrySelect"/>; the choice and its reason are logged once a route), an ordinary
+    /// **The command compaction on Direct3D 12 (DESIGN 4.5.11, D-218, D-219).** Where the launch asks for it and
+    /// the device can -- the fixed draw is this route's default
+    /// (<see cref="VpCommandCompaction.TrySelect"/>; the choice and its reason are logged once a route) -- an ordinary
     /// run -- the selection's own commands of one material, for the body or for the casters -- is compacted on the
     /// GPU after the selection and drawn by ExecuteIndirect with the count the GPU wrote: the compacted entries are
     /// the argument buffer, the run's length the most, and the vertex stage still reads the selection's own entries

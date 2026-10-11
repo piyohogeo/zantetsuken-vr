@@ -16,9 +16,9 @@ namespace Zantetsu.Rendering
     /// when left to Unity's ordering of compute dispatches on this device (the record of 2026-10-10). Nothing here is
     /// read back by the CPU for a draw.
     /// <para>
-    /// **Direct3D 12 (DESIGN 4.5.11, D-218).** The same kernel compacts for the Direct3D 12 plugin's ExecuteIndirect
-    /// with a count buffer: that route's default too (<see cref="VpNativeDrawPlugin.Direct3D12IndirectCount"/>), the
-    /// fixed draw where a launch says so. There the order of the steps is Direct3D 12's own, by the resource state each
+    /// **Direct3D 12 (DESIGN 4.5.11, D-218, D-219).** The same kernel compacts for the Direct3D 12 plugin's
+    /// ExecuteIndirect with a count buffer, where a launch asks for it (<see cref="VpNativeDrawPlugin.Direct3D12IndirectCount"/>):
+    /// that route's default is the fixed draw. There the order of the steps is Direct3D 12's own, by the resource state each
     /// needs, and nothing of the plugin stands between them: the count slots are zeroed by a copy in Unity's command
     /// stream (<see cref="ZeroCounts"/>), the compaction follows the selection as a reader of what it wrote, and the
     /// draw reads the count the compute wrote, directly. One set a selection, not a ring of them.
@@ -153,17 +153,18 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// The Direct3D 12 route's choice (DESIGN 4.5.11, D-218), with its reason in words for the log: the
-        /// compaction unless the launch asks for the fixed draw, where the plugin is loaded and can record
-        /// a count draw (a library built before it cannot), the device has wave operations
-        /// (D3D12_FEATURE_D3D12_OPTIONS1, as the plugin read it) and the kernel is in the build and supported. Any
-        /// of them missing is the fixed draw, with which one. Nothing is read back.
+        /// The Direct3D 12 route's choice (DESIGN 4.5.11, D-219), with its reason in words for the log: the fixed
+        /// draw, that route's default, unless the launch asks for the compaction -- and then the compaction where
+        /// the plugin is loaded and can record a count draw (a library built before it cannot), the device has wave
+        /// operations (D3D12_FEATURE_D3D12_OPTIONS1, as the plugin read it) and the kernel is in the build and
+        /// supported. Any of them missing is the fixed draw, with which one. Nothing is read back.
         /// </summary>
         private static bool TrySelectDirect3D12(out string reason)
         {
             if (!VpNativeDrawPlugin.Direct3D12IndirectCount)
             {
-                reason = "fixed: asked for (" + VpNativeDrawPlugin.FixedCommandsArgument + ")";
+                reason = "fixed: the default of the Direct3D 12 route (the compaction is taken where " + VpNativeDrawPlugin.CompactCommandsArgument
+                    + " asks for it and " + VpNativeDrawPlugin.FixedCommandsArgument + " is not given)";
                 return false;
             }
 
@@ -197,7 +198,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            reason = "compaction: the default of the Direct3D 12 route (count draw ready, wave operations of "
+            reason = "compaction: asked for on the Direct3D 12 route (" + VpNativeDrawPlugin.CompactCommandsArgument + "; count draw ready, wave operations of "
                 + (lanesLeast == lanesMost ? lanesLeast.ToString() : lanesLeast + " to " + lanesMost) + " lanes, wave kernel supported; counts zeroed by a copy, one set a selection)";
             return true;
         }

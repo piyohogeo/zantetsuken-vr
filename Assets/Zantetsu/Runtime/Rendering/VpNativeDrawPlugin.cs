@@ -538,16 +538,17 @@ namespace Zantetsu.Rendering
         public static bool VulkanNoClipShadowShaders { get; set; } = true;
         public static bool VulkanShareGpuConstants { get; set; } = true;
         /// <summary>
-        /// The Player argument that asks for the command compaction. The compaction is the default of the Vulkan
-        /// route (DESIGN 4.5.10, D-217; since 2026-10-10) and of the Direct3D 12 route (DESIGN 4.5.11, D-218; since
-        /// 2026-10-11), so the argument is accepted and changes nothing.
+        /// The Player argument that asks for the command compaction. On the Vulkan route the compaction is the
+        /// default (DESIGN 4.5.10, D-217; since 2026-10-10), so the argument is accepted and changes nothing there.
+        /// On the Direct3D 12 route the fixed draw is the default (DESIGN 4.5.11, D-219), and this argument is what
+        /// asks for the compaction.
         /// </summary>
         public const string CompactCommandsArgument = "-zantetsuVpCompactCommands";
 
         /// <summary>
-        /// The Player argument that keeps the fixed-count draw: the way back from the command compaction, on the
-        /// Vulkan route (DESIGN 4.5.10, D-217) and on the Direct3D 12 route (DESIGN 4.5.11, D-218). It wins over
-        /// <see cref="CompactCommandsArgument"/> on both.
+        /// The Player argument that keeps the fixed-count draw: the way back from the command compaction on the
+        /// Vulkan route (DESIGN 4.5.10, D-217), and the Direct3D 12 route's default said aloud (DESIGN 4.5.11,
+        /// D-219). It wins over <see cref="CompactCommandsArgument"/> on both.
         /// </summary>
         public const string FixedCommandsArgument = "-zantetsuVpFixedCommands";
 
@@ -580,8 +581,9 @@ namespace Zantetsu.Rendering
 
         /// <summary>
         /// Whether the Direct3D 12 route is asked to compact each draw unit's argument entries on the GPU and draw
-        /// them by ExecuteIndirect with a count buffer (DESIGN 4.5.11, D-218): true unless the Player was started
-        /// with <see cref="FixedCommandsArgument"/>, or a test set it. Asking is not taking, as for the Vulkan route:
+        /// them by ExecuteIndirect with a count buffer (DESIGN 4.5.11): false -- the fixed draw is that route's
+        /// default (D-219) -- unless the Player was started with <see cref="CompactCommandsArgument"/> and without
+        /// <see cref="FixedCommandsArgument"/>, or a test set it. Asking is not taking, as for the Vulkan route:
         /// the route takes it only where <see cref="VpCommandCompaction.TrySelect"/> finds every condition, and
         /// draws fixed otherwise, saying why.
         /// </summary>
@@ -598,7 +600,7 @@ namespace Zantetsu.Rendering
         /// <summary>What <see cref="Direct3D12IndirectCount"/> answers for a set of arguments. For tests of the reading itself.</summary>
         public static bool ReadDirect3D12IndirectCountRequest(string[] arguments)
         {
-            return arguments == null || Array.IndexOf(arguments, FixedCommandsArgument) < 0;
+            return arguments != null && Array.IndexOf(arguments, CompactCommandsArgument) >= 0 && Array.IndexOf(arguments, FixedCommandsArgument) < 0;
         }
 
         /// <summary>What this device's route is asked: the Vulkan route's request on a Vulkan device, the Direct3D 12 route's elsewhere.</summary>
