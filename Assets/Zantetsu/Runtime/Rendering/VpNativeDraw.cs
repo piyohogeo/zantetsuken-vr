@@ -200,8 +200,10 @@ namespace Zantetsu.Rendering
     }
 
     /// <summary>
-    /// A sink that draws a batch's clip list (DESIGN 4.5.9): the argument entries of the clipped instances, which the
-    /// display leaves out of the selection and gives the batch (<see cref="VpIndexedIndirectDrawBatch.UploadClipEntries"/>).
+    /// A sink that draws a batch's clip list (DESIGN 4.5.9): the argument entries of every instance of the commands
+    /// of the clip route -- the commands with any clipped instance, whole; an instance of no plane among them is
+    /// drawn uncut -- which the selection keeps nothing of and the display gives the batch
+    /// (<see cref="VpIndexedIndirectDrawBatch.UploadClipEntries"/>).
     /// The sink draws them by the variant that reads no selection and evaluates the clip record, and draws the
     /// selection's own commands by the variant with no clip at all. A sink that answers false to
     /// <see cref="DrawsClipLists"/> cannot draw a display that separates its clipped instances: the display refuses it
@@ -225,7 +227,11 @@ namespace Zantetsu.Rendering
         void AddClipCasterRun(Camera camera, VpIndexedIndirectDrawBatch batch, VpGpuIndexedGeometryBuffers buffers, Material material, int firstEntry, int entryCount, int layer, VpClipSelection selection);
     }
 
-    /// <summary>Optional Quest route which removes clipped instances from the ordinary GPU batch.</summary>
+    /// <summary>
+    /// Optional Quest route which draws the clip route's instances directly (DESIGN 4.5.9): every instance of a command
+    /// with any clipped instance is given here, one of no plane too (drawn uncut), and the ordinary GPU batch's
+    /// selection keeps none of that command.
+    /// </summary>
     public interface IVpNativeClipDrawSink
     {
         bool SeparateClipDraws { get; }

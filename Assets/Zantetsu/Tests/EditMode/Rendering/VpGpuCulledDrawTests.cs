@@ -77,12 +77,12 @@ namespace Zantetsu.Rendering.Tests
             return material;
         }
 
-        private static void Cull(VpIndexedIndirectDrawBatch batch, int view, VpCullConditions conditions, bool excludeClipped = false)
+        private static void Cull(VpIndexedIndirectDrawBatch batch, int view, VpCullConditions conditions)
         {
             var commands = new CommandBuffer { name = "VP GPU Cull Test" };
             try
             {
-                batch.IssueCull(commands, view, conditions, excludeClipped);
+                batch.IssueCull(commands, view, conditions);
                 Graphics.ExecuteCommandBuffer(commands);
             }
             finally
@@ -419,49 +419,164 @@ namespace Zantetsu.Rendering.Tests
             }
         }
 
+        /// <summary>
+        /// **A command of the clip route keeps nothing in the selection, whole; every other command is selected
+        /// whole; and the route is the command's own word** (DESIGN 4.5.9). Three commands, the middle one holding
+        /// an instance with a plane and one without: uploaded with no command of the route, every instance is kept
+        /// -- the clip records are nothing to the selection, which is how a batch whose owner does not separate is
+        /// selected. With the middle command of the route, its entry is written with no count for the body and for
+        /// the casters -- its instance with no plane too -- and the commands beside it keep theirs, an instance with
+        /// a plane among them. **The entry it had as an ordinary command does not outlast a view's next dispatch**:
+        /// each view's entries are that view's dispatch's to write, and the one written before the command changed
+        /// route still holds its count until then (a view's selection is issued before that view's draws). Taken off
+        /// the route again -- a commit -- the command is selected whole. The same by the plugin's entries.
+        /// </summary>
         [Test]
-        public void SeparateClipDraws_MixedCommandOmitsOnlyClippedInstances_ForBodyAndCasters_AndOtherViewsKeepThem()
+        public void ClipRoute_ACommandOfTheRoute_KeepsNothingOfItsInstances_TheOthersAreSelectedWhole_AndItsOldEntryIsWrittenOver()
         {
             var box = new Bounds(Vector3.zero, Vector3.one);
-            var commands = new[]
+            var ranges = new[] { new VpGeometryRange(0, 3, 4, 6), new VpGeometryRange(0, 3, 10, 3), new VpGeometryRange(0, 3, 13, 9) };
+            int[] counts = { 3, 2, 2 };
+            VpIndirectCommand[] Commands(bool middleOfTheRoute) => new[]
             {
-                new VpIndirectCommand(new VpGeometryRange(0, 3, 4, 6), box, 5),
-                new VpIndirectCommand(new VpGeometryRange(0, 3, 10, 3), box, 2),
+                new VpIndirectCommand(ranges[0], box, counts[0]),
+                new VpIndirectCommand(ranges[1], box, counts[1], middleOfTheRoute),
+                new VpIndirectCommand(ranges[2], box, counts[2]),
             };
             var transforms = new Matrix4x4[7];
             for (int i = 0; i < transforms.Length; i++) transforms[i] = Matrix4x4.identity;
             VpInstanceClip cut = VpInstanceClip.Keep(new Vector4(1f, 0f, 0f, 0f), 1f);
-            var clips = new[] { VpInstanceClip.None, cut, VpInstanceClip.None, cut, VpInstanceClip.None, cut, cut };
+
+            // Instance 1 (the first command's) and instance 3 (the middle command's) carry a plane; 4 is the middle
+            // command's instance with none.
+            var clips = new[] { VpInstanceClip.None, cut, VpInstanceClip.None, cut, VpInstanceClip.None, VpInstanceClip.None, VpInstanceClip.None };
             var conditions = new VpCullConditions();
             conditions.KeepEverything();
-            using (var batch = new VpIndexedIndirectDrawBatch(2, 7, null, Setup()))
+            using (var batch = new VpIndexedIndirectDrawBatch(3, 7, null, Setup()))
             {
-                Assert.That(batch.TryUpload(commands, transforms, clips, true), Is.True);
-                Cull(batch, 0, conditions, true);
-                var body = Arguments(batch.CullForwardArguments(0), 2);
-                var casters = Arguments(batch.CullShadowArguments(0), 2);
-                Assert.That(body[0].instanceCount, Is.EqualTo(6u), "three ordinary instances, two physical eyes each");
-                Assert.That(casters[0].instanceCount, Is.EqualTo(3u));
-                Assert.That(Visible(batch.CullForwardVisible(0), 3), Is.EqualTo(new uint[] { 0, 2, 4 }));
-                Assert.That(Visible(batch.CullShadowVisible(0), 3), Is.EqualTo(new uint[] { 0, 2, 4 }));
-                Assert.That(body[1].instanceCount, Is.Zero, "an entirely clipped command has no ordinary body");
-                Assert.That(casters[1].instanceCount, Is.Zero, "nor ordinary casters");
-                Assert.That(body[0].startIndex, Is.EqualTo(4u));
-                Assert.That(body[1].startInstance, Is.EqualTo(10u), "command layout and stereo addressing are unchanged");
-
-                Cull(batch, 1, conditions);
-                Assert.That(Arguments(batch.CullForwardArguments(1), 2)[0].instanceCount, Is.EqualTo(10u), "Unity or another camera's selection keeps its clips");
-                Assert.That(Arguments(batch.CullShadowArguments(1), 2)[1].instanceCount, Is.EqualTo(2u));
-                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[0].instanceCount, Is.EqualTo(6u), "the separate view was not overwritten");
-
+                Assert.That(batch.TryUpload(Commands(false), transforms, clips, true), Is.True);
                 Cull(batch, 0, conditions);
-                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[1].instanceCount, Is.EqualTo(4u), "the exclusion switch is explicitly reset on every dispatch");
-                for (int i = 0; i < clips.Length; i++) clips[i] = VpInstanceClip.None;
-                Assert.That(batch.TryUpload(commands, transforms, clips, true), Is.True);
-                Cull(batch, 0, conditions, true);
-                Assert.That(Arguments(batch.CullForwardArguments(0), 2)[0].instanceCount, Is.EqualTo(10u), "clips removed by geometry commit return to ordinary draws");
-                Assert.That(Arguments(batch.CullShadowArguments(0), 2)[1].instanceCount, Is.EqualTo(2u));
+                Cull(batch, 1, conditions);
+                var body = Arguments(batch.CullForwardArguments(0), 3);
+                var casters = Arguments(batch.CullShadowArguments(0), 3);
+                Assert.That(new[] { body[0].instanceCount, body[1].instanceCount, body[2].instanceCount }, Is.EqualTo(new[] { 6u, 4u, 4u }),
+                    "no command of the route: every instance is kept, two physical eyes each, whatever its clip record");
+                Assert.That(new[] { casters[0].instanceCount, casters[1].instanceCount, casters[2].instanceCount }, Is.EqualTo(new[] { 3u, 2u, 2u }));
+
+                Assert.That(batch.TryUpload(Commands(true), transforms, clips, true), Is.True);
+                Cull(batch, 0, conditions);
+                body = Arguments(batch.CullForwardArguments(0), 3);
+                casters = Arguments(batch.CullShadowArguments(0), 3);
+                Assert.That(new[] { body[0].instanceCount, body[1].instanceCount, body[2].instanceCount }, Is.EqualTo(new[] { 6u, 0u, 4u }),
+                    "the command of the route keeps no body -- its instance with no plane neither -- and the others keep every one, the instance with a plane among them");
+                Assert.That(new[] { casters[0].instanceCount, casters[1].instanceCount, casters[2].instanceCount }, Is.EqualTo(new[] { 3u, 0u, 2u }), "nor a caster");
+                Assert.That(Visible(batch.CullForwardVisible(0), 3), Is.EqualTo(new uint[] { 0, 1, 2 }), "the first command's list");
+                Assert.That(Visible(batch.CullShadowVisible(0), 3), Is.EqualTo(new uint[] { 0, 1, 2 }));
+                Assert.That(new[] { body[1].indexCountPerInstance, body[1].startIndex, body[1].startInstance },
+                    Is.EqualTo(new[] { 3u, 10u, 6u }), "the entry is written whole all the same: the command's range and its slots, doubled for the eyes");
+                Assert.That(new[] { body[2].startIndex, body[2].startInstance }, Is.EqualTo(new[] { 13u, 10u }), "the layout of the commands beside it is as it was");
+
+                // The other view has not selected since: its entry of the command is the one written while the
+                // command was an ordinary one, until that view's own dispatch.
+                Assert.That(Arguments(batch.CullForwardArguments(1), 3)[1].instanceCount, Is.EqualTo(4u), "the layout: a view's entries are written by its own dispatch alone");
+                Cull(batch, 1, conditions);
+                Assert.That(Arguments(batch.CullForwardArguments(1), 3)[1].instanceCount, Is.Zero, "the count the command had as an ordinary one is written over by the view's next dispatch");
+                Assert.That(Arguments(batch.CullShadowArguments(1), 3)[1].instanceCount, Is.Zero);
+                Assert.That(Arguments(batch.CullForwardArguments(1), 3)[0].instanceCount, Is.EqualTo(6u));
+
+                // Off the route again (a commit): selected whole.
+                Assert.That(batch.TryUpload(Commands(false), transforms, clips, true), Is.True);
+                Cull(batch, 0, conditions);
+                Assert.That(Arguments(batch.CullForwardArguments(0), 3)[1].instanceCount, Is.EqualTo(4u), "a command taken off the route is the selection's again");
+                Assert.That(Arguments(batch.CullShadowArguments(0), 3)[1].instanceCount, Is.EqualTo(2u));
             }
+
+            // The plugin's entries (24 bytes: the command's number, then the five arguments): the same.
+            Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup native, out string failure), Is.True, failure);
+            using (var batch = new VpIndexedIndirectDrawBatch(3, 7, null, native))
+            {
+                Assert.That(batch.TryUpload(Commands(false), transforms, clips, false), Is.True);
+                Cull(batch, 0, conditions);
+                var words = new uint[3 * 6];
+                batch.CullForwardArguments(0).GetData(words, 0, 0, words.Length);
+                Assert.That(new[] { words[2], words[8], words[14] }, Is.EqualTo(new[] { 3u, 2u, 2u }), "the plugin's entries, no command of the route");
+                Assert.That(batch.TryUpload(Commands(true), transforms, clips, false), Is.True);
+                Cull(batch, 0, conditions);
+                batch.CullForwardArguments(0).GetData(words, 0, 0, words.Length);
+                Assert.That(new[] { words[6], words[7], words[8], words[9], words[11] }, Is.EqualTo(new[] { 1u, 3u, 0u, 10u, 3u }),
+                    "the command of the route: its number, its range, no instance, its slots");
+                Assert.That(new[] { words[2], words[14] }, Is.EqualTo(new[] { 3u, 2u }));
+                batch.CullShadowArguments(0).GetData(words, 0, 0, words.Length);
+                Assert.That(new[] { words[2], words[8], words[14] }, Is.EqualTo(new[] { 3u, 0u, 2u }), "and no caster");
+            }
+        }
+
+        /// <summary>
+        /// **The selection's commands say which are of the clip route, and its source names no clip buffer**
+        /// (DESIGN 4.5.9): the record sent for a command of the route carries the flag where the centre is padded, and
+        /// for any other command zero -- by a whole upload and by a slot upload alike; the compute shader's source
+        /// declares no clip record, no clip buffer and no switch for one.
+        /// </summary>
+        [Test]
+        public void ClipRoute_IsSaidByTheSelectionsCommands_AndTheSelectionsSourceNamesNoClipBuffer()
+        {
+            var box = new Bounds(Vector3.zero, Vector3.one);
+            var commands = new[]
+            {
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 4, 6), box, 1),
+                new VpIndirectCommand(new VpGeometryRange(0, 3, 10, 3), box, 2, true),
+            };
+            var transforms = new[] { Matrix4x4.identity, Matrix4x4.identity, Matrix4x4.identity };
+            using (var batch = new VpIndexedIndirectDrawBatch(2, 3, null, Setup()))
+            {
+                Assert.That(batch.TryUpload(commands, transforms, true), Is.True);
+                var sent = new VpCullCommand[2];
+                batch.CullCommandBuffer.GetData(sent, 0, 0, 2);
+                Assert.That(new[] { sent[0].flags, sent[1].flags }, Is.EqualTo(new[] { 0u, VpCullCommand.ClipRouteFlag }), "a whole upload");
+                Assert.That(new[] { sent[1].instanceCount, sent[1].startInstance }, Is.EqualTo(new[] { 2u, 1u }), "the command's instances are still said: the flag alone takes it out of the selection");
+            }
+
+            var slotCommands = new NativeArray<VpIndirectCommand>(commands, Allocator.Temp);
+            var starts = new NativeArray<int>(new[] { 0, 1 }, Allocator.Temp);
+            var slotTransforms = new NativeArray<Matrix4x4>(transforms, Allocator.Temp);
+            var slotClips = new NativeArray<VpInstanceClip>(3, Allocator.Temp);
+            var ranges = new VpChangedRanges(4, 0);
+            try
+            {
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 3, null, Setup()))
+                {
+                    ranges.Add(0, 2);
+                    Assert.That(batch.TryUploadSlots(slotCommands, starts, 2, slotTransforms, slotClips, 3, false, ranges, 0, 3), Is.True);
+                    var sent = new VpCullCommand[2];
+                    batch.CullCommandBuffer.GetData(sent, 0, 0, 2);
+                    Assert.That(new[] { sent[0].flags, sent[1].flags }, Is.EqualTo(new[] { 0u, VpCullCommand.ClipRouteFlag }), "a slot upload");
+
+                    // The one command sent again, off the route: its record alone changes.
+                    slotCommands[1] = new VpIndirectCommand(commands[1].range, box, 2);
+                    ranges.Clear();
+                    ranges.Add(1, 2);
+                    Assert.That(batch.TryUploadSlots(slotCommands, starts, 2, slotTransforms, slotClips, 3, false, ranges, 0, 0), Is.True);
+                    batch.CullCommandBuffer.GetData(sent, 0, 0, 2);
+                    Assert.That(new[] { sent[0].flags, sent[1].flags }, Is.EqualTo(new[] { 0u, 0u }), "a command sent again says its route again");
+                }
+            }
+            finally
+            {
+                slotClips.Dispose();
+                slotTransforms.Dispose();
+                starts.Dispose();
+                slotCommands.Dispose();
+            }
+
+            string path = UnityEditor.AssetDatabase.GetAssetPath(Resources.Load<ComputeShader>(VpGpuCullSetup.ShaderResource));
+            Assert.That(path, Does.EndWith("VpInstanceCull.compute"));
+            string source = System.IO.File.ReadAllText(path);
+            foreach (string gone in new[] { "_VpInstanceClip", "VpCullInstanceClip", "_VpCullExcludeClipped", "planeCount" })
+            {
+                Assert.That(source, Does.Not.Contain(gone), "the selection's source names no clip record, buffer or switch: " + gone);
+            }
+
+            Assert.That(source, Does.Contain("VP_CULL_CLIP_ROUTE"), "it goes by the command's flag");
         }
 
         [Test]
@@ -768,8 +883,9 @@ namespace Zantetsu.Rendering.Tests
             Culled,
             CulledWithoutSliceSelection,
 
-            // The clipped instances drawn apart (DESIGN 4.5.9): the selection leaves them out and is drawn by the
-            // variant with no clip; the clip list is drawn by the variant that reads no selection.
+            // The clip route drawn apart (DESIGN 4.5.9): a command with any clipped instance is of the route whole --
+            // the selection keeps nothing of it and is drawn by the variant with no clip; the clip list, every
+            // instance of the command, is drawn by the variant that reads no selection.
             CulledClipApart,
         }
 
@@ -843,7 +959,14 @@ namespace Zantetsu.Rendering.Tests
             {
                 Assert.That(pool.TryAppend(mesh, out VpGeometryRange range), Is.True);
                 Assert.That(buffers.TryUpload(pool), Is.True);
-                Assert.That(batch.TryUpload(new[] { new VpIndirectCommand(range, mesh.bounds, cubes.Length) }, cubes, clips, false), Is.True);
+                // As the display does it: the one command is of the clip route when any instance of it carries a plane.
+                bool routed = false;
+                for (int i = 0; apart && clips != null && i < clips.Length; i++)
+                {
+                    routed |= clips[i].PlaneCount > 0;
+                }
+
+                Assert.That(batch.TryUpload(new[] { new VpIndirectCommand(range, mesh.bounds, cubes.Length, routed) }, cubes, clips, false), Is.True);
                 if (culled)
                 {
                     var conditions = new VpCullConditions();
@@ -858,17 +981,17 @@ namespace Zantetsu.Rendering.Tests
                     var entries = new List<VpIndexedIndirectDrawBatch.ClipEntry>();
                     if (apart)
                     {
-                        // As the display does it: the selection's own draws have no clip at all, every instance with
-                        // a plane is left out of the selection and given as an entry of the clip list.
+                        // As the display does it: the selection's own draws have no clip at all, and every instance
+                        // of a command of the clip route -- one with no plane too -- is an entry of the clip list.
                         forward.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
                         shadow.EnableKeyword(VpGpuCullSetup.NoClipKeyword);
-                        for (int i = 0; clips != null && i < clips.Length; i++)
+                        for (int i = 0; routed && i < clips.Length; i++)
                         {
-                            if (clips[i].PlaneCount > 0) entries.Add(new VpIndexedIndirectDrawBatch.ClipEntry(range, i, mesh.bounds));
+                            entries.Add(new VpIndexedIndirectDrawBatch.ClipEntry(range, i, mesh.bounds));
                         }
                     }
 
-                    Cull(batch, 1, conditions, apart && entries.Count > 0);
+                    Cull(batch, 1, conditions);
                     batch.RenderForward(forward, properties, buffers, 0, 0, 1, camera, 1);
                     batch.RenderShadows(shadow, properties, buffers, 0, 0, 1, camera, 1);
                     if (apart && entries.Count > 0)
@@ -935,7 +1058,7 @@ namespace Zantetsu.Rendering.Tests
                             }
 
                             LastHiddenPicture = RenderAndRead(camera, target);
-                            Cull(batch, 1, conditions, true);
+                            Cull(batch, 1, conditions);
                             batch.RenderForward(forward, properties, buffers, 0, 0, 1, camera, 1);
                             batch.RenderShadows(shadow, properties, buffers, 0, 0, 1, camera, 1);
                             LastClipRestoreBytes = batch.RestoreClipEntries(1);
@@ -994,12 +1117,13 @@ namespace Zantetsu.Rendering.Tests
         }
 
         /// <summary>
-        /// **The clipped instances drawn apart are the same picture, and each instance is drawn once** (DESIGN 4.5.9).
+        /// **The clip route drawn apart is the same picture, and each instance is drawn once** (DESIGN 4.5.9).
         /// One command of four slabs -- one with no plane, one with one plane, one with eight, and one clipped far
-        /// outside the view -- by VP Stage 3 and by the separation: the selection keeps the one ordinary slab and no
-        /// clipped one (body and casters), the clip list holds the three clipped ones, and the two pictures, with
-        /// their shadows, are the same. The same with every slab clipped (nothing ordinary) and with none clipped --
-        /// where no clip list is made, nothing is sent and nothing more is drawn.
+        /// outside the view -- by VP Stage 3 and by the separation: the command is of the clip route whole, so the
+        /// selection keeps none of the four (body and casters), the clip list holds all four -- the slab with no
+        /// plane among them, drawn by the list uncut, its body and its shadow -- and the two pictures, with their
+        /// shadows, are the same. The same with every slab clipped and with none clipped -- where the command is the
+        /// selection's whole, no clip list is made, nothing is sent and nothing more is drawn.
         /// </summary>
         [Test]
         public void ClippedInstancesDrawnApart_AreTheSamePicture_EachInstanceOnce_MixedInOneCommand_AllClipped_AndNoneClipped()
@@ -1042,9 +1166,10 @@ namespace Zantetsu.Rendering.Tests
                 Color32[] vp3 = LitGround(cubes, Route.Vp3, clips: mixed);
                 DestroyObjects();
                 Color32[] apart = LitGround(cubes, Route.CulledClipApart, clips: mixed, casters: nearCasters);
-                Assert.That(LastBodyList, Is.EqualTo(new uint[] { 1 }), "the selection keeps the one ordinary instance as a body, and no clipped one");
-                Assert.That(LastCasterList, Is.EqualTo(new uint[] { 1 }), "and as a caster");
-                Assert.That(LastClipEntries, Is.EqualTo(3), "the clip list holds the three clipped ones: with the selection's one, every instance once");
+                Assert.That(new[] { LastBodyKept, LastCastersKept }, Is.EqualTo(new[] { 0, 0 }), "the command is of the clip route: the selection keeps no body and no caster of it, the slab with no plane neither");
+                Assert.That(LastClipEntries, Is.EqualTo(4), "the clip list holds the command's four instances: every instance once, by the list alone");
+                Assert.That(LastClipBodyCounts, Is.EqualTo(new[] { 0, 1, 1, 1 }), "the list's own selection: the slab far outside the view is not drawn; the slab with no plane is, by the list");
+                Assert.That(LastClipCasterCounts, Is.EqualTo(new[] { 0, 1, 1, 1 }), "and casts by the list");
                 Assert.That(LastClipUploads, Is.EqualTo(1L), "sent once");
                 Assert.That(CountGreen(unclipped) - CountGreen(vp3), Is.GreaterThan(150), "the layout: the planes remove a good part of two slabs");
                 Assert.That(CountDiffering(vp3, apart), Is.Zero, "pixels differing between VP Stage 3 and the clipped instances drawn apart");
@@ -1562,7 +1687,7 @@ namespace Zantetsu.Rendering.Tests
                 DestroyObjects();
                 Color32[] together = LitGround(rows, Route.Culled, clips: rowClips, view: along, groundScale: 20f);
                 TestContext.Out.WriteLine("row: instances " + rows.Length + ", clip entries " + entries + ", kept for the body " + bodyKept + "; green " + CountGreen(vp3));
-                Assert.That(entries, Is.EqualTo(36), "two in three are clipped: mixed with ordinary ones in the one command");
+                Assert.That(entries, Is.EqualTo(54), "two in three are clipped, mixed with ones of no plane in the one command: the command is of the clip route whole, and every instance is an entry");
                 Assert.That(bodyKept, Is.LessThan(entries).And.GreaterThan(10), "the two set outside the view are not kept; the rows in view are");
                 Assert.That(CountGreen(vp3), Is.GreaterThan(500), "VP Stage 3 draws the rows");
                 Assert.That(CountDiffering(vp3, apart), Is.Zero, "pixels differing between VP Stage 3 and the separation with its own selection, through every slice");

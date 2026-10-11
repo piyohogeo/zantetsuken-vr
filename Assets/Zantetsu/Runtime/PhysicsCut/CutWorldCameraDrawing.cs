@@ -165,6 +165,9 @@ namespace Zantetsu.PhysicsCut
                       + "; clipped instances " + (display.SeparatesClipDraws ? "apart" : "with the selection")
                       + ": in the list now " + display.ClipDrawCount + ", clip list body issues " + display.ClipBodyIssues
                       + ", clip list caster issues " + display.ClipCasterIssues + ", clip list uploads " + display.ClipListUploads
+                      + "; clip route by command: commands now " + display.ClipRouteCommandCount + ", instances now " + display.ClipDrawCount
+                      + ", of them with no plane " + display.ClipRoutePlanelessCount + "; most commands " + display.MostClipRouteCommands
+                      + ", most instances " + display.MostClipRouteInstances + ", most with no plane " + display.MostClipRoutePlaneless
                       + "; clip selection runs " + display.ClipCullRuns + ", entries " + display.ClipCullEntries
                       + ", kept for the body " + display.ClipCullBodyKept + ", kept as casters " + display.ClipCullCasterKept
                       + ", time " + (display.ClipCullTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + " ms"

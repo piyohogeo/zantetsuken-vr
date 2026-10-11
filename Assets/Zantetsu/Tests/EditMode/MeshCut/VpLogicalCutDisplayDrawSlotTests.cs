@@ -128,34 +128,52 @@ namespace Zantetsu.MeshCut.Tests
             return differing;
         }
 
+        /// <summary>
+        /// **The clip list is every instance of every command of the clip route, and nothing else** (DESIGN 4.5.9):
+        /// a command that says it is of the route gives all its instances -- the ones with no plane too, counted
+        /// apart -- in the commands' order; a command that does not say so gives none, whatever its instances' clip
+        /// records hold; a free slot (a command of no instance) gives none even if it says so; a record no live
+        /// command names is in no list. The same commands off the route: an empty list.
+        /// </summary>
         [Test]
-        public void SeparateClipDraws_CollectsActualClippedInstancesInsideMixedStableCommands_WithoutDrawingFreeSlots()
+        public void ClipRoute_TheListIsEveryInstanceOfTheRoutesCommands_PlanelessOnesToo_AndNoFreeOrRetiredRecord()
         {
             var box = new Bounds(Vector3.zero, Vector3.one);
-            var commands = new NativeArray<VpIndirectCommand>(3, Allocator.Temp);
-            var starts = new NativeArray<int>(3, Allocator.Temp);
+            var commands = new NativeArray<VpIndirectCommand>(4, Allocator.Temp);
+            var starts = new NativeArray<int>(4, Allocator.Temp);
             var clips = new NativeArray<VpInstanceClip>(12, Allocator.Temp);
             try
             {
-                commands[0] = new VpIndirectCommand(new VpGeometryRange(0, 3, 0, 3), box, 3);
-                commands[1] = new VpIndirectCommand(new VpGeometryRange(0, 3, 3, 3), box, 0);
-                commands[2] = new VpIndirectCommand(new VpGeometryRange(0, 3, 6, 3), box, 2);
+                commands[0] = new VpIndirectCommand(new VpGeometryRange(0, 3, 0, 3), box, 3, true);   // mixed: of the route whole
+                commands[1] = new VpIndirectCommand(new VpGeometryRange(0, 3, 3, 3), box, 0, true);   // a free slot
+                commands[2] = new VpIndirectCommand(new VpGeometryRange(0, 3, 6, 3), box, 2);         // not of the route
+                commands[3] = new VpIndirectCommand(new VpGeometryRange(0, 3, 9, 3), box, 1, true);   // every instance clipped
                 starts[0] = 6;
                 starts[1] = 0;
                 starts[2] = 2;
+                starts[3] = 10;
                 VpInstanceClip cut = VpInstanceClip.Keep(new Vector4(0f, 1f, 0f, 0f), 1f);
-                clips[0] = cut; // a retired record, named by no live command
-                clips[7] = cut; // the middle instance in a mixed command
-                clips[3] = cut;
+                clips[0] = cut;  // a retired record, named by no live command
+                clips[7] = cut;  // the middle instance of the mixed command
+                clips[3] = cut;  // an instance of the command that is not of the route: its owner did not route it
+                clips[10] = cut;
                 var records = new List<VpLogicalCutDisplay.ClipDrawRecord>();
-                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 3, records);
-                Assert.That(records.Count, Is.EqualTo(2));
-                Assert.That(new[] { records[0].command, records[0].instance, records[1].command, records[1].instance },
-                    Is.EqualTo(new[] { 0, 7, 2, 3 }), "no command-level classification or packed-prefix assumption");
-                clips[7] = VpInstanceClip.None;
-                clips[3] = VpInstanceClip.None;
-                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 3, records);
-                Assert.That(records, Is.Empty, "old membership is removed; the retired clipped record stays undrawn");
+                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 4, records, out int routed, out int planeless);
+                var got = new List<int>();
+                foreach (VpLogicalCutDisplay.ClipDrawRecord record in records)
+                {
+                    got.Add(record.command);
+                    got.Add(record.instance);
+                }
+
+                Assert.That(got, Is.EqualTo(new[] { 0, 6, 0, 7, 0, 8, 3, 10 }), "every instance of the two commands of the route, in the commands' order");
+                Assert.That(new[] { routed, planeless }, Is.EqualTo(new[] { 2, 2 }), "two commands of the route; two of the mixed one's instances carry no plane");
+
+                commands[0] = new VpIndirectCommand(commands[0].range, box, 3);
+                commands[3] = new VpIndirectCommand(commands[3].range, box, 1);
+                VpLogicalCutDisplay.CollectClipDrawRecords(commands, starts, clips, 4, records, out routed, out planeless);
+                Assert.That(records, Is.Empty, "off the route: no entry, whatever the clip records hold");
+                Assert.That(new[] { routed, planeless }, Is.EqualTo(new[] { 0, 0 }));
             }
             finally
             {
@@ -163,6 +181,123 @@ namespace Zantetsu.MeshCut.Tests
                 starts.Dispose();
                 commands.Dispose();
             }
+        }
+
+        // Two displays that select on the GPU and draw their clip route apart (DESIGN 4.5.9), of that many cuttable
+        // bodies: one keeping what stands, one collecting everything every time, as NewTwin's are.
+        private Twin NewSeparatingTwin(int bodies, int instances = 64)
+        {
+            var twin = new Twin { kept = new Run { cuttable = true }, everything = new Run { cuttable = true } };
+            foreach (Run run in new[] { twin.kept, twin.everything })
+            {
+                var scene = new Scene
+                {
+                    storage = new VpCpuGeometryStorage(8192, 32768, 64, 256, 256, Allocator.Persistent),
+                    ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(64)),
+                    endFrame = () => _frame++,
+                };
+                scene.table = new VpGeometryReferenceTable(scene.storage, 16, Math.Max(128, instances * 2));
+                VpStencilSettings stencil = VpStencilTestSettings.Create(4);
+                Assert.That(VpGpuCullSetup.TryCreate(stencil.cameraCapacity, out VpGpuCullSetup culling, out string failure), Is.True, failure);
+                Shader caster = Shader.Find(CasterShaderName);
+                Assert.That(caster, Is.Not.Null, "the VP shadow caster shader");
+                Material shadow = Track(new Material(caster));
+                Material provisional = Track(new Material(caster));
+                provisional.SetFloat("_Cull", 0f);
+                Assert.That(
+                    VpLogicalCutDisplay.TryCreateCore(
+                        scene.storage, scene.table, scene.ledger, Materials(), shadow, provisional, 16, instances,
+                        VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, stencil,
+                        () => _frame, scene.storage.CommittedVertexCapacity, scene.storage.CommittedIndexCapacity, out scene.display,
+                        default, null, culling),
+                    Is.True, "the display is made: " + VpLogicalCutDisplay.LastCreationFailure);
+                Assert.That(scene.display.SeparatesClipDraws, Is.True, scene.display.ClipSeparationRefusal);
+                run.scene = scene;
+                run.Display.Placement = run.at;
+                _frame++;
+                for (int i = 0; i < bodies; i++) AddBody(run, Stand(i));
+            }
+
+            twin.everything.Display.collectEverythingForTest = true;
+            return twin;
+        }
+
+        // A collection of both, and the clip route of each consistent with what it adopted and sent; the two lists
+        // hold as many, and are the same list until either display compacts (the two do not compact in the same
+        // collection here -- one's is refused for the test -- and a compaction puts the same records in other slots).
+        private void CollectRoute(Twin twin, string what)
+        {
+            _frame++;
+            Assert.That(twin.kept.Display.TryBeginFrame(), Is.True, what + ": collected (kept)");
+            Assert.That(twin.everything.Display.TryBeginFrame(), Is.True, what + ": collected (collecting everything)");
+            AssertClipRouteIsConsistent(twin.kept.Display, what + " (kept)");
+            AssertClipRouteIsConsistent(twin.everything.Display, what + " (collecting everything)");
+            Assert.That(twin.kept.Display.ClipDrawCount, Is.EqualTo(twin.everything.Display.ClipDrawCount), what + ": the two displays' clip lists hold as many");
+            for (int i = 0; i < twin.kept.Display.ClipDrawCount && twin.kept.Display.Compactions + twin.everything.Display.Compactions == 0; i++)
+            {
+                Assert.That(
+                    new[] { twin.kept.Display.ClipDrawRecordForTest(i).command, twin.kept.Display.ClipDrawRecordForTest(i).instance },
+                    Is.EqualTo(new[] { twin.everything.Display.ClipDrawRecordForTest(i).command, twin.everything.Display.ClipDrawRecordForTest(i).instance }),
+                    what + ": clip list entry " + i + " is the same in both");
+            }
+        }
+
+        // The clip route of what a display has adopted, whole (DESIGN 4.5.9): for every command slot below the end,
+        // the record the GPU's selection reads says "of the clip route" exactly when the adopted command does, and
+        // that is exactly when the display separates and some instance of the command carries a plane; the adopted
+        // list is every instance of those commands, in order, and no other record; so every instance drawn is of one
+        // route and one only. The counts the display tells are the list's.
+        private static void AssertClipRouteIsConsistent(VpLogicalCutDisplay display, string what)
+        {
+            VpIndexedIndirectDrawBatch batch = display.BodyBatchForTest;
+            int commandEnd = display.DrawCommandEnd;
+            var sent = new VpCullCommand[Math.Max(1, commandEnd)];
+            if (commandEnd > 0)
+            {
+                batch.CullCommandBuffer.GetData(sent, 0, 0, commandEnd);
+            }
+
+            var expected = new List<int>();
+            int routedCommands = 0, planeless = 0, ordinary = 0;
+            for (int c = 0; c < commandEnd; c++)
+            {
+                Assert.That(display.TryGetCommandSlot(c, out VpIndirectCommand command, out int start, out bool free), Is.True, what + ": command slot " + c);
+                bool anyPlane = false;
+                for (int k = 0; k < command.instanceCount; k++)
+                {
+                    anyPlane |= display.InstanceRecordClipForTest(start + k).PlaneCount > 0;
+                }
+
+                bool routed = display.SeparatesClipDraws && !free && anyPlane;
+                Assert.That(command.clipRoute, Is.EqualTo(routed), what + ": command slot " + c + " is of the clip route exactly when the display separates and an instance of it carries a plane");
+                Assert.That((sent[c].flags & VpCullCommand.ClipRouteFlag) != 0u, Is.EqualTo(routed), what + ": command slot " + c + ": the selection's record on the GPU says the same");
+                Assert.That(sent[c].instanceCount, Is.EqualTo((uint)command.instanceCount), what + ": command slot " + c + ": and holds the command's instances");
+                if (!routed)
+                {
+                    ordinary += command.instanceCount;
+                    continue;
+                }
+
+                routedCommands++;
+                for (int k = 0; k < command.instanceCount; k++)
+                {
+                    expected.Add(c);
+                    expected.Add(start + k);
+                    if (display.InstanceRecordClipForTest(start + k).PlaneCount == 0) planeless++;
+                }
+            }
+
+            var listed = new List<int>();
+            for (int i = 0; i < display.ClipDrawCountForTest; i++)
+            {
+                listed.Add(display.ClipDrawRecordForTest(i).command);
+                listed.Add(display.ClipDrawRecordForTest(i).instance);
+            }
+
+            Assert.That(listed, Is.EqualTo(expected), what + ": the adopted clip list is every instance of the commands of the route, each once, and nothing else");
+            Assert.That(new[] { display.ClipRouteCommandCount, display.ClipDrawCount, display.ClipRoutePlanelessCount },
+                Is.EqualTo(new[] { routedCommands, expected.Count / 2, planeless }), what + ": the counts told are the list's");
+            Assert.That(ordinary + (expected.Count / 2), Is.EqualTo(display.SideCount), what + ": every instance drawn is of one route");
         }
 
         /// <summary>
@@ -177,21 +312,23 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void SeparateClipDraws_ACollectionThatIsNotAdopted_LeavesTheAdoptedClipListAsItWas_AndACompactionRenamesItsRecords()
         {
-            using (Twin twin = NewTwin(3, 64, true))
+            using (Twin twin = NewSeparatingTwin(3))
             {
-                CollectBoth(twin, "whole bodies");
+                CollectRoute(twin, "whole bodies");
                 VpLogicalCutDisplay display = twin.kept.Display;
                 var plane = Normalized(new float4(0.2f, 1f, 0.1f, -0.1f));
                 (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) made = default;
                 Both(twin, run => made = CutAndPlace(run, 1, plane, Stand(1)));
-                CollectBoth(twin, "cut published");
+                CollectRoute(twin, "cut published");
                 int count = display.ClipDrawCount;
                 Assert.That(count, Is.GreaterThan(0), "the clipped sides");
+                AssertClipRouteIsConsistent(display, "cut published");
 
                 // A hole below them, so that a compaction is planned -- where the test's failure is put.
                 Both(twin, run => Assert.That(run.scene.ledger.Retire(run.bodies[0]), Is.True));
-                for (int i = 0; i < 3; i++) CollectBoth(twin, "one retired, " + i);
+                for (int i = 0; i < 3; i++) CollectRoute(twin, "one retired, " + i);
                 Assert.That(display.ClipDrawCount, Is.EqualTo(count), "the retirement of another body leaves the clipped sides");
+                AssertClipRouteIsConsistent(display, "another body retired");
                 var before = new int[count * 2];
                 for (int i = 0; i < count; i++)
                 {
@@ -219,10 +356,11 @@ namespace Zantetsu.MeshCut.Tests
                 }
 
                 Assert.That(after, Is.EqualTo(before), "by the same records");
+                AssertClipRouteIsConsistent(display, "after the refused collection: what the GPU's selection reads, the adopted list and the adopted records are still of one mind");
 
                 // The compaction adopted: the list is built anew, and names clipped records.
                 Assert.That(twin.everything.Display.TryBeginFrame(), Is.True, "the reference collected in that frame");
-                for (int i = 0; i < 4 && display.Compactions == compactions; i++) CollectBoth(twin, "after the refusal, " + i);
+                for (int i = 0; i < 4 && display.Compactions == compactions; i++) CollectRoute(twin, "after the refusal, " + i);
                 Assert.That(display.Compactions, Is.GreaterThan(compactions), "the compaction ran: " + display.LastCompactionSkipReason);
                 Assert.That(display.ClipDrawListBuildsForTest, Is.GreaterThan(builds), "and the clip list was built with it");
                 Assert.That(display.ClipDrawCount, Is.EqualTo(count));
@@ -234,6 +372,7 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.InstanceRecordClipForTest(moved[i * 2 + 1]).PlaneCount, Is.GreaterThan(0), "record " + i + " names a clipped instance after the compaction");
                 }
 
+                AssertClipRouteIsConsistent(display, "after the compaction");
                 TestContext.Out.WriteLine("clip records (command, instance) before the compaction: " + string.Join(" ", before) + "; after: " + string.Join(" ", moved));
                 Assert.That(moved, Is.Not.EqualTo(before), "the layout: the compaction moved the clipped sides' instance records");
             }
@@ -242,30 +381,123 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void SeparateClipDraws_CacheUsesAdoptedSlots_StandsForPlacements_AndEmptiesAfterGeometryCommit()
         {
-            using (Twin twin = NewTwin(3, 64, true))
+            using (Twin twin = NewSeparatingTwin(3))
             {
-                CollectBoth(twin, "whole bodies");
+                CollectRoute(twin, "whole bodies");
                 VpLogicalCutDisplay display = twin.kept.Display;
                 Assert.That(display.ClipDrawCountForTest, Is.Zero);
+                AssertClipRouteIsConsistent(display, "whole bodies: no command is of the clip route");
+                Assert.That(new[] { display.ClipRouteCommandCount, display.ClipRoutePlanelessCount }, Is.EqualTo(new[] { 0, 0 }));
                 var plane = Normalized(new float4(0.2f, 1f, 0.1f, -0.1f));
                 (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) made = default;
                 Both(twin, run => made = CutAndPlace(run, 1, plane, Stand(1)));
-                CollectBoth(twin, "cut published");
+                CollectRoute(twin, "cut published");
                 Assert.That(display.ClipDrawCountForTest, Is.EqualTo(2), "only the two temporary clipped sides");
                 var first = display.ClipDrawRecordForTest(0);
                 var second = display.ClipDrawRecordForTest(1);
                 Assert.That(first.command, Is.EqualTo(second.command), "both clipped sides share the stable CPU command");
+                AssertClipRouteIsConsistent(display, "cut published: the cut body's command is of the clip route, the others' are not");
+                Assert.That(new[] { display.ClipRouteCommandCount, display.ClipRoutePlanelessCount }, Is.EqualTo(new[] { 1, 0 }), "one command, both of its instances clipped");
                 long builds = display.ClipDrawListBuildsForTest;
                 Both(twin, run => run.at.Put(made.positive, Stand(1, 2f)).Put(run.bodies[0], Stand(0, 1f)));
-                CollectBoth(twin, "placements changed");
+                CollectRoute(twin, "placements changed");
                 Assert.That(display.ClipDrawListBuildsForTest, Is.EqualTo(builds), "moving a body does not scan the scene for clips again");
                 Assert.That(display.ClipDrawRecordForTest(0).instance, Is.EqualTo(first.instance));
                 Assert.That(display.InstanceRecordClipForTest(first.instance).PlaneCount, Is.GreaterThan(0));
                 Assert.That(display.ClipDrawRecordForTest(1).instance, Is.EqualTo(second.instance));
+                AssertClipRouteIsConsistent(display, "placements changed: the route stands");
                 _frame++;
                 Both(twin, run => Assert.That(CommitBothSides(run, 1, made.cut, plane, made.positive, made.negative), Is.True));
-                CollectBoth(twin, "geometry committed");
+                CollectRoute(twin, "geometry committed");
                 Assert.That(display.ClipDrawCountForTest, Is.Zero, "settled geometry returns to the ordinary no-clip route");
+                AssertClipRouteIsConsistent(display, "geometry committed: no command is of the clip route again, on the GPU too");
+                Assert.That(new[] { display.ClipRouteCommandCount, display.MostClipRouteCommands, display.MostClipRouteInstances },
+                    Is.EqualTo(new[] { 0, 1, 2 }), "none now; the most there was is kept for the record");
+            }
+        }
+
+        /// <summary>
+        /// **Through a cut and its commit every instance is drawn by one route, once, and the count the cut body's
+        /// command had as an ordinary command is written over** (DESIGN 4.5.9). Three bodies drawn by Unity's calls
+        /// for one camera, the selection issued with conditions that keep everything, and what it wrote read back a
+        /// command at a time. Whole: the three commands keep their one instance each, and there is no clip list.
+        /// The middle body cut: its command is of the clip route -- until the frame's selection is issued its entry
+        /// still holds the count of the frame before (the selection is issued before the draws), and then holds
+        /// none, for the body and for the casters; the other two keep theirs; the clip list holds the cut body's two
+        /// sides and its own selection keeps both: two instances by the selection, two by the list, four in all.
+        /// The cut committed: no command is of the route, the list is empty, no list draw is registered, and the
+        /// selection keeps the four instances.
+        /// </summary>
+        [Test]
+        public void ClipRoute_ThroughACutAndItsCommit_EveryInstanceIsDrawnByOneRouteOnce_AndTheCommandsOldEntryIsWrittenOver()
+        {
+            using (Twin twin = NewSeparatingTwin(3))
+            {
+                CollectRoute(twin, "whole bodies");
+                VpLogicalCutDisplay display = twin.kept.Display;
+                Camera camera = Oblique();
+                Assert.That(display.TryRegisterCamera(camera), Is.True);
+                int view = display.CullViewForTest(camera);
+                var everything = new VpCullConditions();
+                everything.KeepEverything();
+
+                int[] Kept(bool casters)
+                {
+                    VpIndexedIndirectDrawBatch batch = display.BodyBatchForTest;
+                    return EntryCounts(casters ? batch.CullShadowArguments(view) : batch.CullForwardArguments(view), display.DrawCommandEnd);
+                }
+
+                int Sum(int[] counts)
+                {
+                    int sum = 0;
+                    foreach (int count in counts) sum += count;
+                    return sum;
+                }
+
+                void Draw(string what)
+                {
+                    RegisterDraws(display, camera);
+                    using (var commands = new UnityEngine.Rendering.CommandBuffer { name = "VP Clip Route Test" })
+                    {
+                        Assert.That(display.IssueCull(commands, camera, everything), Is.True, what + ": the selection is issued");
+                        Graphics.ExecuteCommandBuffer(commands);
+                    }
+                }
+
+                Draw("whole");
+                int slot = SlotsOf(display, twin.kept.bodies[1], "the body to cut").commandStart;
+                Assert.That(new[] { Sum(Kept(false)), Sum(Kept(true)), Kept(false)[slot], display.ClipDrawCount }, Is.EqualTo(new[] { 3, 3, 1, 0 }),
+                    "whole: every command is the selection's, a body and a caster each; no clip list");
+                Assert.That(new[] { display.ClipBodyIssues, display.ClipCasterIssues, display.ClipListUploads }, Is.EqualTo(new long[3]), "and no draw of one");
+
+                var plane = Normalized(new float4(0.2f, 1f, 0.1f, -0.1f));
+                (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) made = default;
+                Both(twin, run => made = CutAndPlace(run, 1, plane, Stand(1)));
+                CollectRoute(twin, "cut published");
+                Assert.That(SlotsOf(display, twin.kept.bodies[1], "the cut body").commandStart, Is.EqualTo(slot), "the layout: the cut body's command stands in its slot");
+                Assert.That(Kept(false)[slot], Is.EqualTo(1), "the layout: the frame's selection is not issued yet, the entry is the frame before's");
+                Draw("cut published");
+                Assert.That(new[] { Kept(false)[slot], Kept(true)[slot] }, Is.EqualTo(new[] { 0, 0 }),
+                    "the command is of the clip route: the selection writes its entry with no instance, over the count it had as an ordinary command");
+                Assert.That(new[] { Sum(Kept(false)), Sum(Kept(true)) }, Is.EqualTo(new[] { 2, 2 }), "the two other bodies are the selection's");
+                VpClipSelection listed = display.ClipSelectionForTest(camera);
+                Assert.That(new[] { display.ClipDrawCount, listed.Count, listed.BodyKeptCount, listed.CasterKeptCount }, Is.EqualTo(new[] { 2, 2, 2, 2 }),
+                    "the cut body's two sides are the list's, and its own selection keeps both");
+                VpIndexedIndirectDrawBatch drawn = display.BodyBatchForTest;
+                Assert.That(EntryCounts(drawn.ClipForwardArgumentsForTest(view), 2), Is.EqualTo(new[] { 1, 1 }), "each drawn once by the list");
+                Assert.That(EntryCounts(drawn.ClipShadowArgumentsForTest(view), 2), Is.EqualTo(new[] { 1, 1 }));
+                Assert.That(Sum(Kept(false)) + display.ClipDrawCount, Is.EqualTo(display.SideCount), "every instance by one route, once: " + display.SideCount);
+                Assert.That(new[] { display.ClipBodyIssues, display.ClipCasterIssues, display.ClipListUploads }, Is.EqualTo(new long[] { 1, 1, 1 }), "one body run, one caster run, the list sent once");
+
+                _frame++;
+                Both(twin, run => Assert.That(CommitBothSides(run, 1, made.cut, plane, made.positive, made.negative), Is.True));
+                CollectRoute(twin, "geometry committed");
+                long bodyIssues = display.ClipBodyIssues, uploads = display.ClipListUploads;
+                Draw("geometry committed");
+                Assert.That(new[] { display.ClipDrawCount, display.ClipRouteCommandCount }, Is.EqualTo(new[] { 0, 0 }), "no command is of the clip route after the commit");
+                Assert.That(new[] { Sum(Kept(false)), Sum(Kept(true)) }, Is.EqualTo(new[] { display.SideCount, display.SideCount }), "every instance is the selection's again");
+                Assert.That(display.SideCount, Is.EqualTo(4), "the layout: two bodies and the two children");
+                Assert.That(new[] { display.ClipBodyIssues - bodyIssues, display.ClipListUploads - uploads }, Is.EqualTo(new long[2]), "and no list is drawn or sent");
             }
         }
 

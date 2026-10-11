@@ -9,6 +9,10 @@ namespace Zantetsu.Rendering
     /// instances it draws it at, and the bounds of that range in the geometry's own frame. Made on the CPU from a
     /// <see cref="VpIndirectCommand"/> and sent whenever the commands are; the selection makes the indirect arguments
     /// from it, so in a batch that selects on the GPU this record takes the place of the two argument buffers' upload.
+    /// <para>
+    /// <see cref="flags"/> stands where the bounds' centre is padded to four components: a draw's shader that reads
+    /// the record for its bounds declares a float there and does not read it.
+    /// </para>
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct VpCullCommand
@@ -16,12 +20,19 @@ namespace Zantetsu.Rendering
         /// <summary>The size of one record on the GPU, in bytes.</summary>
         public const int Stride = 48;
 
+        /// <summary>
+        /// <see cref="flags"/>: the command is drawn by its owner's clip route (<see cref="VpIndirectCommand.clipRoute"/>,
+        /// DESIGN 4.5.9). The selection goes through none of its instances and writes its arguments with a count of
+        /// zero, for the body and for the casters alike.
+        /// </summary>
+        public const uint ClipRouteFlag = 1u;
+
         public uint indexCount;
         public uint startIndex;
         public uint startInstance;
         public uint instanceCount;
         public Vector3 centre;
-        public float pad0;
+        public uint flags;
         public Vector3 extents;
         public float pad1;
     }

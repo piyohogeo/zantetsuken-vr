@@ -611,7 +611,7 @@ namespace Zantetsu.PhysicsCut
             {
                 UnityEngine.Debug.Log(
                     "VP CLIP DRAWS: " + (Display.SeparatesClipDraws
-                        ? "apart -- the selection's own draws have no clip (" + VpGpuCullSetup.NoClipKeyword + "); clipped instances are left out of the selection and drawn from the clip list"
+                        ? "apart -- the selection's own draws have no clip (" + VpGpuCullSetup.NoClipKeyword + "); clipped instances are left out of the selection and drawn from the clip list, a command at a time: a command with any clipped instance is drawn by the clip route whole, and the selection reads no clip record"
                         : "with the selection -- every instance is drawn with its clip record: "
                           + (Display.ClipSeparationRefusal ?? "asked for by " + VpGpuCullSetup.ClipTogetherArgument + ", or set so by the caller")), this);
             }

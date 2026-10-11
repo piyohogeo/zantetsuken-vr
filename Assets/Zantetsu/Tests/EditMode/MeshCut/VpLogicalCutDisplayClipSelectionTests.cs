@@ -389,7 +389,16 @@ namespace Zantetsu.MeshCut.Tests
                 VpLogicalCutDisplay display = scene.display;
                 Assert.That(display.SeparatesClipDraws, Is.False);
                 Assert.That(display.ClipSeparationRefusal, Does.StartWith(reason), "the reason is kept for the log");
-                Assert.That(display.ClipDrawCount, Is.EqualTo(2), "the layout: two clipped sides");
+                int clippedSides = 0;
+                for (int i = 0; i < display.SideCount; i++)
+                {
+                    if (display.InstanceRecordClipForTest(display.InstanceRecordOfIndexForTest(i)).PlaneCount > 0) clippedSides++;
+                }
+
+                Assert.That(clippedSides, Is.EqualTo(2), "the layout: two clipped sides");
+                Assert.That(new[] { display.ClipDrawCount, display.ClipRouteCommandCount }, Is.EqualTo(new[] { 0, 0 }),
+                    "a display that does not separate has no clip route: no command is of it and there is no list");
+                AssertClipRouteIsConsistent(display, "not separating: the selection's commands on the GPU say nothing of a clip route either");
                 Camera camera = Oblique();
                 Assert.That(display.TryRegisterCamera(camera), Is.True);
                 var plain = new PlainSink();
