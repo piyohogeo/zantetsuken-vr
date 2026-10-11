@@ -140,6 +140,9 @@ namespace Zantetsu.PhysicsCut
             if (_nativeRoute != null)
             {
                 Debug.Log("VP BODY ROUTE (end): " + name + " " + _nativeRoute.Describe() + "; cameras not drawn for want of the plugin's pass " + NativeRefusals, this);
+                // The command compaction's GPU check, where the launch asked for it: its tallies read back here, once.
+                string compactionCheck = _nativeRoute.ReadCompactionCheck();
+                if (compactionCheck != null) Debug.Log("VP COMMAND COMPACTION (check): " + name + " " + compactionCheck, this);
                 _nativeRoute.Dispose();
                 _nativeRoute = null;
             }

@@ -160,10 +160,13 @@ typedef struct ZvnDraw
     volatile uint32_t consumed;  // 0 until the plugin has handled this draw
 } ZvnDraw;
 
-// The Vulkan-only draw extension is opt-in through ZvnDraw.version = 2. Pipeline/resource contracts remain
+// The draw extension is opt-in through ZvnDraw.version = 2. Pipeline/resource contracts remain
 // version 1, and the original 240-byte ZvnDraw layout and completion fields are unchanged. This extension
 // follows ZvnDraw immediately. Every offset is relative to its own ZvnDraw allocation; a group's child offsets
 // are relative to the group root, while each inline child's resources/constants/commands remain child-relative.
+// The Vulkan plugin reads every mode. The Direct3D 12 plugin reads ZvnDrawMode_IndirectCount alone (DESIGN 4.5.11)
+// and refuses the others: its record's zeroBuffer must be null and its reserved 0 there (nothing is zeroed or
+// copied by that plugin), and the draw is ExecuteIndirect with the count buffer at countOffset.
 #define ZVN_VULKAN_DRAW_VERSION 2
 #define ZVN_MAX_DIRECT_COMMANDS 32
 #define ZVN_MAX_GROUP_DRAWS 32

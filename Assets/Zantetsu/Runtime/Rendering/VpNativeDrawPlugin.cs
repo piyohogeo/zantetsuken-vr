@@ -316,8 +316,16 @@ namespace Zantetsu.Rendering
         private static extern int ZvnZeroEventId();
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnBarrierEventId();
+#endif
+
+        // Both libraries: whether a count draw can be recorded on this device (absent in older ones).
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnIndirectCountReady();
+
+#if !(UNITY_ANDROID && !UNITY_EDITOR)
+        // The Direct3D 12 library: the device's wave operations and the count draws recorded (absent in older ones).
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnIndirectCountInfo(ulong* output, int count);
 #endif
 
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
@@ -437,6 +445,10 @@ namespace Zantetsu.Rendering
                         // The compute barrier event before a compaction (2026-10-10); absent in older libraries, and then no compaction.
                         try { s_barrierEventId = ZvnBarrierEventId(); }
                         catch (EntryPointNotFoundException) { s_barrierEventId = 0; }
+#else
+                        // The Direct3D 12 library's count draw (DESIGN 4.5.11); a library built before it has none.
+                        try { s_indirectCountReady = ZvnIndirectCountReady() != 0; }
+                        catch (EntryPointNotFoundException) { s_indirectCountReady = false; }
 #endif
                         s_loaded = s_eventFunction != IntPtr.Zero;
                         if (!s_loaded)
@@ -506,7 +518,11 @@ namespace Zantetsu.Rendering
         /// Quest 3S); 0 when the library has none, and then nothing compacts.
         /// </summary>
         public static int BarrierEventId => s_barrierEventId;
-        /// <summary>Whether the loaded library can record a count draw on this device (the extension enabled and its entry point found); false until loaded.</summary>
+        /// <summary>
+        /// Whether the loaded library can record a count draw on this device; false until loaded. Vulkan: the
+        /// extension enabled and its entry point found. Direct3D 12: wherever the library draws (ExecuteIndirect's
+        /// count buffer), and false for a library built before the count draw.
+        /// </summary>
         public static bool IndirectCountReady => s_loaded && s_indirectCountReady;
         public static int GroupPrepareEventId => s_groupPrepareEventId;
         public static int GroupPreparedEventId => s_groupPreparedEventId;
@@ -522,14 +538,16 @@ namespace Zantetsu.Rendering
         public static bool VulkanNoClipShadowShaders { get; set; } = true;
         public static bool VulkanShareGpuConstants { get; set; } = true;
         /// <summary>
-        /// The Player argument that asks the Vulkan route for the command compaction (DESIGN 4.5.10, D-217). The
-        /// compaction is the default since 2026-10-10, so the argument is accepted and changes nothing.
+        /// The Player argument that asks for the command compaction. The compaction is the default of the Vulkan
+        /// route (DESIGN 4.5.10, D-217; since 2026-10-10) and of the Direct3D 12 route (DESIGN 4.5.11, D-218; since
+        /// 2026-10-11), so the argument is accepted and changes nothing.
         /// </summary>
         public const string CompactCommandsArgument = "-zantetsuVpCompactCommands";
 
         /// <summary>
-        /// The Player argument that keeps the Vulkan route's fixed-count multi-draw: the way back from the command
-        /// compaction (DESIGN 4.5.10, D-217). It wins over <see cref="CompactCommandsArgument"/>.
+        /// The Player argument that keeps the fixed-count draw: the way back from the command compaction, on the
+        /// Vulkan route (DESIGN 4.5.10, D-217) and on the Direct3D 12 route (DESIGN 4.5.11, D-218). It wins over
+        /// <see cref="CompactCommandsArgument"/> on both.
         /// </summary>
         public const string FixedCommandsArgument = "-zantetsuVpFixedCommands";
 
@@ -556,6 +574,67 @@ namespace Zantetsu.Rendering
         public static bool ReadIndirectCountRequest(string[] arguments)
         {
             return arguments == null || Array.IndexOf(arguments, FixedCommandsArgument) < 0;
+        }
+
+        private static bool? s_direct3D12IndirectCountAsked;
+
+        /// <summary>
+        /// Whether the Direct3D 12 route is asked to compact each draw unit's argument entries on the GPU and draw
+        /// them by ExecuteIndirect with a count buffer (DESIGN 4.5.11, D-218): true unless the Player was started
+        /// with <see cref="FixedCommandsArgument"/>, or a test set it. Asking is not taking, as for the Vulkan route:
+        /// the route takes it only where <see cref="VpCommandCompaction.TrySelect"/> finds every condition, and
+        /// draws fixed otherwise, saying why.
+        /// </summary>
+        public static bool Direct3D12IndirectCount
+        {
+            get
+            {
+                if (!s_direct3D12IndirectCountAsked.HasValue) s_direct3D12IndirectCountAsked = ReadDirect3D12IndirectCountRequest(Environment.GetCommandLineArgs());
+                return s_direct3D12IndirectCountAsked.Value;
+            }
+            set => s_direct3D12IndirectCountAsked = value;
+        }
+
+        /// <summary>What <see cref="Direct3D12IndirectCount"/> answers for a set of arguments. For tests of the reading itself.</summary>
+        public static bool ReadDirect3D12IndirectCountRequest(string[] arguments)
+        {
+            return arguments == null || Array.IndexOf(arguments, FixedCommandsArgument) < 0;
+        }
+
+        /// <summary>What this device's route is asked: the Vulkan route's request on a Vulkan device, the Direct3D 12 route's elsewhere.</summary>
+        public static bool IndirectCountAsked => Vulkan ? VulkanIndirectCount : Direct3D12IndirectCount;
+
+        /// <summary>
+        /// The Direct3D 12 library's account of the device's wave operations (D3D12_FEATURE_D3D12_OPTIONS1) and of the
+        /// count draws it recorded: ExecuteIndirect calls with a count buffer, and the most commands those may have
+        /// drawn (the sum of their MaxCommandCount). False where the library is not loaded, is the Vulkan one, or was
+        /// built before the count draw.
+        /// </summary>
+        public static bool TryReadIndirectCountInfo(out bool waveOperations, out uint waveLanesLeast, out uint waveLanesMost, out ulong countDraws, out ulong countDrawMostCommands)
+        {
+            waveOperations = false;
+            waveLanesLeast = waveLanesMost = 0;
+            countDraws = countDrawMostCommands = 0;
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return false;
+#else
+            if (!s_loaded || Vulkan) return false;
+            try
+            {
+                ulong* values = stackalloc ulong[5];
+                if (ZvnIndirectCountInfo(values, 5) != 5) return false;
+                waveOperations = values[0] != 0;
+                waveLanesLeast = (uint)values[1];
+                waveLanesMost = (uint)values[2];
+                countDraws = values[3];
+                countDrawMostCommands = values[4];
+                return true;
+            }
+            catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                return false;
+            }
+#endif
         }
 
         /// <summary>

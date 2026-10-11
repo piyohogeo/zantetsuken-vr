@@ -1,5 +1,7 @@
-// Quest 3S / Vulkan only (DESIGN 4.5.10, D-217): the compaction of the selection's argument entries by wave operations,
-// for a draw by vkCmdDrawIndexedIndirectCount. The selection (VpInstanceCull.compute) still writes every command's
+// The compaction of the selection's argument entries by wave operations: for the Quest 3S Vulkan route's draw by
+// vkCmdDrawIndexedIndirectCount (DESIGN 4.5.10, D-217), which the notes below describe first, and for the Direct3D 12
+// route's draw by ExecuteIndirect with a count buffer (DESIGN 4.5.11, D-218; the last notes). Both by default.
+// The selection (VpInstanceCull.compute) still writes every command's
 // 24-byte entry -- the command's number and its five indexed arguments -- in the command's own slot, a command that
 // keeps nothing with an instance count of zero. This pass reads one run of those entries (one draw unit: one material's
 // commands for one column, body or casters) and copies the entries whose instance count is not zero, whole, to the
@@ -24,9 +26,23 @@
 // the command among the compacted entries and tallies a mismatch when a command with instances is there other than
 // once or with other fields, or a command without instances is there at all. The tallies accumulate over the run and
 // are read back by the CPU once in a while for the record: never for a draw.
+//
+// Direct3D 12 (DESIGN 4.5.11): the same two kernels, compiled by DXC (wave operations are Shader Model 6), for a draw
+// by ExecuteIndirect with a count buffer. What differs is outside this file. The vertex stage there reads the
+// command's entry by the command's number, so it stays bound to the SELECTION's entries and only ExecuteIndirect
+// reads the compacted ones; the number in an entry's head is what the command signature hands the stage, so the
+// compacted position is no more handed to a shader there than here. The count slots are zeroed by a copy in Unity's
+// own command stream, and every step is ordered by the resource state it needs (copy destination, unordered access,
+// shader resource, indirect argument), so there is neither a zero event nor a barrier event nor a copy of the count.
+//
+// Nothing here takes the width of a wave for granted: a group of 64 threads may be one wave (64 or 128 lanes) or
+// several (32 lanes: two; 8: eight), and each wave ranks its own visible entries and takes its own range of the run
+// by its own atomic. The waves' ranges are in the order their atomics ran, so the compacted order of a run is not the
+// commands' order and is not the same from one dispatch to the next.
 #pragma kernel CompactCommands
 #pragma kernel VerifyCompaction
-#pragma only_renderers vulkan
+#pragma only_renderers vulkan d3d11
+#pragma use_dxc d3d11
 #pragma require wavebasic wavevote waveballot
 
 #define VP_COMPACT_STRIDE 24u

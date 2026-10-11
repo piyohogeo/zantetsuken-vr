@@ -16,9 +16,17 @@ namespace Zantetsu.Rendering
     /// when left to Unity's ordering of compute dispatches on this device (the record of 2026-10-10). Nothing here is
     /// read back by the CPU for a draw.
     /// <para>
-    /// The compute shader is compiled for Vulkan alone (its wave operations), so the Editor and the PC Players have no
-    /// kernel: <see cref="TryLoad"/> says so. <see cref="SelfTest"/> and <see cref="Verify"/> are diagnosis -- they
-    /// read back -- and run only where a launch asks for them.
+    /// **Direct3D 12 (DESIGN 4.5.11, D-218).** The same kernel compacts for the Direct3D 12 plugin's ExecuteIndirect
+    /// with a count buffer: that route's default too (<see cref="VpNativeDrawPlugin.Direct3D12IndirectCount"/>), the
+    /// fixed draw where a launch says so. There the order of the steps is Direct3D 12's own, by the resource state each
+    /// needs, and nothing of the plugin stands between them: the count slots are zeroed by a copy in Unity's command
+    /// stream (<see cref="ZeroCounts"/>), the compaction follows the selection as a reader of what it wrote, and the
+    /// draw reads the count the compute wrote, directly. One set a selection, not a ring of them.
+    /// </para>
+    /// <para>
+    /// The compute shader is compiled for Vulkan and for Direct3D 12 (its wave operations; DXC there), so a device
+    /// of another kind has no kernel: <see cref="TryLoad"/> says so. <see cref="SelfTest"/> and <see cref="Verify"/>
+    /// are diagnosis -- they read back -- and run only where a launch asks for them.
     /// </para>
     /// </summary>
     public static class VpCommandCompaction
@@ -71,7 +79,7 @@ namespace Zantetsu.Rendering
                 else
                 {
                     s_compact = s_shader.FindKernel("CompactCommands");
-                    if (!s_shader.IsSupported(s_compact)) s_failure = "the compute shader '" + ShaderResource + "' is not supported on " + SystemInfo.graphicsDeviceType + " (Vulkan wave operations only)";
+                    if (!s_shader.IsSupported(s_compact)) s_failure = "the compute shader '" + ShaderResource + "' is not supported on " + SystemInfo.graphicsDeviceType + " (its wave operations are compiled for Vulkan and Direct3D 12 alone)";
                 }
             }
 
@@ -93,9 +101,14 @@ namespace Zantetsu.Rendering
         /// </summary>
         public static bool TrySelect(out string reason)
         {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+            {
+                return TrySelectDirect3D12(out reason);
+            }
+
             if (!VpNativeDrawPlugin.Vulkan)
             {
-                reason = "fixed: not a Vulkan device (the compaction is the Quest 3S Vulkan route's)";
+                reason = "fixed: neither a Vulkan nor a Direct3D 12 device (" + SystemInfo.graphicsDeviceType + "): no route compacts here";
                 return false;
             }
 
@@ -139,10 +152,63 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        /// <summary>
+        /// The Direct3D 12 route's choice (DESIGN 4.5.11, D-218), with its reason in words for the log: the
+        /// compaction unless the launch asks for the fixed draw, where the plugin is loaded and can record
+        /// a count draw (a library built before it cannot), the device has wave operations
+        /// (D3D12_FEATURE_D3D12_OPTIONS1, as the plugin read it) and the kernel is in the build and supported. Any
+        /// of them missing is the fixed draw, with which one. Nothing is read back.
+        /// </summary>
+        private static bool TrySelectDirect3D12(out string reason)
+        {
+            if (!VpNativeDrawPlugin.Direct3D12IndirectCount)
+            {
+                reason = "fixed: asked for (" + VpNativeDrawPlugin.FixedCommandsArgument + ")";
+                return false;
+            }
+
+            if (!VpNativeDrawPlugin.TryLoad(out string pluginFailure))
+            {
+                reason = "fixed: the plugin is not loaded (" + pluginFailure + ")";
+                return false;
+            }
+
+            if (!VpNativeDrawPlugin.IndirectCountReady)
+            {
+                reason = "fixed: the plugin cannot record a count draw (a library built before it; the plugin's state: " + VpNativeDrawPlugin.DescribeState() + ")";
+                return false;
+            }
+
+            if (!VpNativeDrawPlugin.TryReadIndirectCountInfo(out bool waveOperations, out uint lanesLeast, out uint lanesMost, out _, out _))
+            {
+                reason = "fixed: the plugin does not say whether the device has wave operations";
+                return false;
+            }
+
+            if (!waveOperations)
+            {
+                reason = "fixed: the device has no wave operations (D3D12_FEATURE_D3D12_OPTIONS1.WaveOps is false)";
+                return false;
+            }
+
+            if (!TryLoad(out string kernelFailure))
+            {
+                reason = "fixed: " + kernelFailure;
+                return false;
+            }
+
+            reason = "compaction: the default of the Direct3D 12 route (count draw ready, wave operations of "
+                + (lanesLeast == lanesMost ? lanesLeast.ToString() : lanesLeast + " to " + lanesMost) + " lanes, wave kernel supported; counts zeroed by a copy, one set a selection)";
+            return true;
+        }
+
         /// <summary>How many frames at the start of a run are told apart as "first" in the recording time (the four sets are made in them).</summary>
         public const int FirstFrames = 8;
 
         public static long Issues, ZeroEvents, ZeroMissed, ZeroRefused, SlotsShort, Barriers, BarrierMissed;
+
+        /// <summary>The commands of every run compacted, summed: what the draws would have been given without the compaction (<see cref="Compact"/>).</summary>
+        public static long RunCommands;
         public static string LastChoice, Halted;
         public static int SetsMade;
         public static long SetBytesMade;
@@ -197,9 +263,11 @@ namespace Zantetsu.Rendering
             long firstFrames = Math.Min(s_framesClosed, FirstFrames);
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             return "choice [" + (LastChoice ?? "none made") + "]" + (Halted != null ? " HALTED [" + Halted + "]" : "") + (FirstSlot != 0 ? " FIRST SLOT " + FirstSlot : "")
-                + (DrawFromCopy ? " counts drawn from their copies" : " COUNTS DRAWN DIRECTLY") + (CastersFixed ? " CASTERS FIXED" : "")
+                + (!VpNativeDrawPlugin.Vulkan ? " counts drawn where the compute wrote them (Direct3D 12)" : DrawFromCopy ? " counts drawn from their copies" : " COUNTS DRAWN DIRECTLY")
+                + (CastersFixed ? " CASTERS FIXED" : "")
                 + (PoisonEntries ? " ENTRIES FILLED WITH ZERO EACH FRAME (" + EntryFills + " fills)" : "")
-                + "; issues " + Issues + ", compactions " + Compactions + ", zero events " + ZeroEvents + ", fixed for want of zero " + ZeroMissed
+                + "; issues " + Issues + ", compactions " + Compactions + " (of " + RunCommands + " commands in all)" + ", zero events " + ZeroEvents
+                + (CountCopies != 0 ? ", counts zeroed by copy " + CountCopies : "") + ", fixed for want of zero " + ZeroMissed
                 + ", fixed for want of slot " + SlotsShort + ", zero refused " + ZeroRefused + ", barriers " + Barriers + ", fixed for want of barrier " + BarrierMissed
                 + "; sets made " + SetsMade + " (" + (SetBytesMade / (1024.0 * 1024.0)).ToString("F2", inv) + " MiB, " + (SetMakeSeconds * 1000.0).ToString("F3", inv)
                 + " ms in all, longest " + (SetMakeMaxSeconds * 1000.0).ToString("F3", inv) + " ms)"
@@ -210,6 +278,74 @@ namespace Zantetsu.Rendering
 
         /// <summary>The zeroes a count buffer is made with: its slots are zeroed afterwards by the plugin, after each draw that read them.</summary>
         public static readonly uint[] ZeroSlots = new uint[Slots];
+
+        // ---- Direct3D 12: the count slots zeroed by a copy (DESIGN 4.5.11) ----------------------------------------
+        // The Direct3D 12 route records no zero event of the plugin: a frame's count slots are zeroed by a copy on the
+        // GPU, in Unity's own command stream, from a buffer of zeroes that is written once when it is made and never
+        // again. The copy needs the counts as a copy destination, the compaction that follows needs them for
+        // unordered access and the draw as an indirect argument: three resource states, so the three steps are in
+        // that order on the GPU by what Direct3D 12 itself requires, not by an order left to anyone's barriers. The
+        // CPU writes nothing to a count buffer after it is made, so its native pointer is asked once.
+
+        /// <summary>
+        /// What a selection's compaction sets are on a device's route: how many columns a set has (the body, the
+        /// casters and, on Vulkan, the motion vectors), whether it keeps a copy of each column's counts for the draws
+        /// to read, how many sets a selection keeps in turn, and whether the count slots are zeroed by a copy.
+        /// </summary>
+        public readonly struct SetLayout
+        {
+            public readonly int Columns, Sets;
+            public readonly bool DrawCounts, CountsZeroedByCopy;
+
+            public SetLayout(int columns, int sets, bool drawCounts, bool countsZeroedByCopy)
+            {
+                Columns = columns;
+                Sets = sets;
+                DrawCounts = drawCounts;
+                CountsZeroedByCopy = countsZeroedByCopy;
+            }
+
+            /// <summary>The Quest 3S Vulkan route's (DESIGN 4.5.10): three columns, the counts' copies, a ring of four sets, the plugin's zero event.</summary>
+            public static SetLayout Vulkan => new SetLayout(3, VpIndexedIndirectDrawBatch.CompactionRing, true, false);
+
+            /// <summary>The Direct3D 12 route's (DESIGN 4.5.11): two columns, no copy of the counts, one set, the counts zeroed by a copy.</summary>
+            public static SetLayout Direct3D12 => new SetLayout(2, 1, false, true);
+        }
+
+        /// <summary>The sets of this device's route: the Vulkan route's on a Vulkan device, the Direct3D 12 route's elsewhere (or what a test set).</summary>
+        public static SetLayout Layout => LayoutForTest ?? (VpNativeDrawPlugin.Vulkan ? SetLayout.Vulkan : SetLayout.Direct3D12);
+
+        /// <summary>Null (the product): the device's. A test sets one layout to make that route's sets on this device, and puts null back.</summary>
+        public static SetLayout? LayoutForTest { get; set; }
+
+        /// <summary>Whether this device's route zeroes a frame's count slots by a copy on the GPU (Direct3D 12) and not by the plugin's zero event (Vulkan).</summary>
+        public static bool ZeroesByCopy => Layout.CountsZeroedByCopy;
+
+        /// <summary>A count buffer of <see cref="Slots"/> slots as this device's route needs it: on Direct3D 12 also a copy's destination.</summary>
+        public static GraphicsBuffer NewCounts(string name)
+        {
+            GraphicsBuffer.Target target = ZeroesByCopy ? GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.CopyDestination : GraphicsBuffer.Target.IndirectArguments;
+            return new GraphicsBuffer(target, Slots, sizeof(uint)) { name = name };
+        }
+
+        /// <summary>The buffer of zeroes every count buffer of a route is zeroed from (<see cref="ZeroCounts"/>): written here, once.</summary>
+        public static GraphicsBuffer NewZeroSource()
+        {
+            var zeroes = new GraphicsBuffer(GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.CopySource, Slots, sizeof(uint)) { name = "VP Compact Zero Counts" };
+            zeroes.SetData(ZeroSlots);
+            return zeroes;
+        }
+
+        /// <summary>Zeroes every slot of <paramref name="counts"/> (made by <see cref="NewCounts"/>) by a copy on the GPU from <paramref name="zeroSource"/>.</summary>
+        public static void ZeroCounts(CommandBuffer commands, GraphicsBuffer zeroSource, GraphicsBuffer counts)
+        {
+            if (zeroSource == null || counts == null) throw new ArgumentNullException(counts == null ? nameof(counts) : nameof(zeroSource));
+            commands.CopyBuffer(zeroSource, counts);
+            CountCopies++;
+        }
+
+        /// <summary>How many count buffers were zeroed by a copy (<see cref="ZeroCounts"/>).</summary>
+        public static long CountCopies;
 
         /// <summary>
         /// Zeroes every slot of <paramref name="counts"/> by a transfer write in the command buffer. Only the self-test
@@ -229,6 +365,14 @@ namespace Zantetsu.Rendering
 
         /// <summary>The experiment's check (VerifyCompaction) runs after every compaction and its tallies are kept; off by default.</summary>
         public static bool VerificationEnabled { get; set; }
+
+        /// <summary>
+        /// The Player argument that turns the check on for a Direct3D 12 route that compacts (DESIGN 4.5.11): every
+        /// compaction is followed by the check's dispatch, and the tallies -- among them how many commands had
+        /// instances, which no CPU count knows -- are read back once, at the route's end. A run with it is a check,
+        /// never a performance sample.
+        /// </summary>
+        public const string VerifyArgument = "-zantetsuVpCompactVerify";
 
         // ---- diagnosis (2026-10-10): the count as each draw read it, and the casters drawn fixed ---------------------
         // The TL saw the cut objects' shadows vanish for one frame every tens of seconds with the compaction and not
@@ -405,6 +549,23 @@ namespace Zantetsu.Rendering
             Verifications++;
         }
 
+        /// <summary>Words of the check's tallies: <see cref="VerificationWordsPerColumn"/> a column, three columns.</summary>
+        public const int VerificationWords = StatsPerColumn * Columns;
+        public const int VerificationWordsPerColumn = StatsPerColumn;
+
+        /// <summary>
+        /// The check's raw tallies so far, read back now (a synchronous readback, as <see cref="ReadVerification"/>): a
+        /// column's are [0] mismatched commands, [1] commands with instances, [2] counts summed, [3] dispatches,
+        /// [4] counts above their run, [5] missing, [6] duplicated, [7] present without instances, [8] other fields.
+        /// False before the first check.
+        /// </summary>
+        public static bool TryReadVerification(uint[] into)
+        {
+            if (s_stats == null || into == null || into.Length < VerificationWords) return false;
+            s_stats.GetData(into, 0, 0, VerificationWords);
+            return true;
+        }
+
         /// <summary>The check's tallies so far, read back now (a synchronous readback: for the record of a check run, never in a measurement).</summary>
         public static string ReadVerification()
         {
@@ -444,6 +605,7 @@ namespace Zantetsu.Rendering
             commands.SetComputeBufferParam(s_shader, s_compact, CountsId, counts);
             commands.DispatchCompute(s_shader, s_compact, (commandCount + 63) / 64, 1, 1);
             Compactions++;
+            RunCommands += commandCount;
         }
 
         /// <summary>

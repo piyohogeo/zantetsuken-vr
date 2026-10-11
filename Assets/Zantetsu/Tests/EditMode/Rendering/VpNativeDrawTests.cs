@@ -28,6 +28,7 @@ namespace Zantetsu.Rendering.Tests
             }
 
             _disposables.Clear();
+            VpCommandCompaction.LayoutForTest = null;   // a case that made another route's sets leaves the device's
         }
 
         private T Track<T>(T disposable) where T : IDisposable
@@ -412,21 +413,148 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(Plugin.CompactCommandsArgument, Is.EqualTo("-zantetsuVpCompactCommands"));
             Assert.That(Plugin.FixedCommandsArgument, Is.EqualTo("-zantetsuVpFixedCommands"));
 
-            // Off a Vulkan device nothing compacts, whatever is asked, and the reason says so.
+            // The Direct3D 12 route (DESIGN 4.5.11, D-218): the same -- the compaction unless the fixed draw is asked for.
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null), Is.True);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }), Is.True, "the compaction is that route's default");
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }), Is.True, "accepted, and the default anyway");
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }), Is.False, "the fixed draw wins");
+            Assert.That(VpCommandCompaction.VerifyArgument, Is.EqualTo("-zantetsuVpCompactVerify"));
+
+            // What the Vulkan route is asked changes nothing off a Vulkan device; the choice there is the Direct3D 12
+            // route's on Direct3D 12, and no route's on any other device -- always with its reason.
             Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
-            bool asked = Plugin.VulkanIndirectCount;
+            bool asked = Plugin.VulkanIndirectCount, asked12 = Plugin.Direct3D12IndirectCount;
             try
             {
-                Plugin.VulkanIndirectCount = true;
-                Assert.That(VpCommandCompaction.TrySelect(out string reason), Is.False);
-                Assert.That(reason, Does.StartWith("fixed:").And.Contain("not a Vulkan device"));
-                Plugin.VulkanIndirectCount = false;
-                Assert.That(VpCommandCompaction.TrySelect(out reason), Is.False);
-                Assert.That(reason, Does.StartWith("fixed:"), "and with the fixed draw asked for");
+                Assert.That(Plugin.IndirectCountAsked, Is.EqualTo(asked12), "off Vulkan the request is the Direct3D 12 route's");
+                foreach (bool vulkanAsked in new[] { true, false })
+                {
+                    Plugin.VulkanIndirectCount = vulkanAsked;
+                    Plugin.Direct3D12IndirectCount = false;
+                    Assert.That(VpCommandCompaction.TrySelect(out string reason), Is.False);
+                    TestContext.Out.WriteLine(SystemInfo.graphicsDeviceType + ", not asked: " + reason);
+                    Assert.That(reason, Does.StartWith("fixed:"));
+                    if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+                    {
+                        Assert.That(reason, Does.Contain("asked for").And.Contain(Plugin.FixedCommandsArgument));
+                    }
+                    else
+                    {
+                        Assert.That(reason, Does.Contain("neither a Vulkan nor a Direct3D 12 device"));
+                    }
+                }
+
+                Plugin.Direct3D12IndirectCount = true;
+                bool taken = VpCommandCompaction.TrySelect(out string askedReason);
+                TestContext.Out.WriteLine(SystemInfo.graphicsDeviceType + ", asked: " + askedReason);
+                if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
+                {
+                    // This Editor's device and library: the plugin draws here, has the count draw, and the device has waves.
+                    Assert.That(taken, Is.True, askedReason);
+                    Assert.That(askedReason, Does.StartWith("compaction: the default of the Direct3D 12 route").And.Contain("lanes").And.Contain("one set a selection"));
+                    Assert.That(Plugin.IndirectCountReady, Is.True);
+                    Assert.That(Plugin.TryReadIndirectCountInfo(out bool waves, out uint least, out uint most, out _, out _), Is.True);
+                    Assert.That(waves, Is.True);
+                    Assert.That(least, Is.GreaterThanOrEqualTo(4u).And.LessThanOrEqualTo(most));
+                    Assert.That(most, Is.LessThanOrEqualTo(128u));
+                }
+                else
+                {
+                    Assert.That(taken, Is.False);
+                    Assert.That(askedReason, Does.StartWith("fixed:").And.Contain("neither a Vulkan nor a Direct3D 12 device"));
+                }
             }
             finally
             {
                 Plugin.VulkanIndirectCount = asked;
+                Plugin.Direct3D12IndirectCount = asked12;
+            }
+        }
+
+        [Test]
+        public void TheLaunchRecord_SaysWhatIsAskedOfTheCommandCompaction()
+        {
+            Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
+            string nothing = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe" });
+            string compact = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument });
+            string both = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument });
+            string check = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.CompactCommandsArgument, VpCommandCompaction.VerifyArgument });
+            TestContext.Out.WriteLine(nothing + "\n" + compact + "\n" + both + "\n" + check);
+            string fixedDraw = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument });
+            TestContext.Out.WriteLine(fixedDraw);
+            Assert.That(nothing, Does.StartWith("yes (").And.Contain("the Direct3D 12 route's default"));
+            Assert.That(compact, Does.StartWith("yes (").And.Contain(Plugin.CompactCommandsArgument).And.Contain("the default anyway"));
+            Assert.That(both, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
+            Assert.That(fixedDraw, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
+            Assert.That(check, Does.StartWith("yes (").And.Contain("a check run"));
+            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("; command compaction asked: yes ("));
+        }
+
+        [Test]
+        public void Compaction_OnTheDirect3D12Route_ASetIsTwoColumnsWhoseCountsACopyZeroes_AndASelectionKeepsOne()
+        {
+            // DESIGN 4.5.11: no motion column, no copy of the counts, one set a selection whatever the frame, and count
+            // buffers made as a copy's destination; the set is given up through the owner's hand-over like the rest.
+            Assume.That(Plugin.Vulkan, Is.False, "this case is the Editor's (Direct3D)");
+            Assert.That(VpCommandCompaction.Layout.Columns, Is.EqualTo(2));
+            Assert.That(VpCommandCompaction.Layout.Sets, Is.EqualTo(1));
+            Assert.That(VpCommandCompaction.Layout.DrawCounts, Is.False);
+            Assert.That(VpCommandCompaction.Layout.CountsZeroedByCopy, Is.True);
+            Assert.That(VpCommandCompaction.ZeroesByCopy, Is.True);
+            Assert.That(VpIndexedIndirectDrawBatch.CompactionSets, Is.EqualTo(1));
+            Assert.That(VpIndexedIndirectDrawBatch.Compaction.BytesFor(65536, 24), Is.EqualTo(2L * ((65536L * 24) + (256 * 4))), "two columns of entries and of counts");
+            Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
+            var batch = new VpIndexedIndirectDrawBatch(4, 8, null, setup);
+            var expected = new HashSet<GraphicsBuffer>();
+            var given = new List<GraphicsBuffer>();
+            try
+            {
+                VpIndexedIndirectDrawBatch.Compaction first = batch.CompactionOf(0, 0);
+                for (int frame = 0; frame < 6; frame++)
+                {
+                    VpIndexedIndirectDrawBatch.Compaction set = batch.CompactionOf(0, frame);
+                    Assert.That(ReferenceEquals(set, first), Is.True, "one set a view, every frame");
+                    for (int column = 0; column < 2; column++)
+                    {
+                        Assert.That(set.Entries(column), Is.Not.Null);
+                        Assert.That(set.Counts(column), Is.Not.Null);
+                        Assert.That(set.Counts(column).target & GraphicsBuffer.Target.CopyDestination, Is.EqualTo(GraphicsBuffer.Target.CopyDestination), "the counts are zeroed by a copy");
+                        Assert.That(set.Counts(column).count * set.Counts(column).stride, Is.EqualTo(VpCommandCompaction.Slots * sizeof(uint)));
+                        Assert.That(set.DrawCounts(column), Is.Null, "the draws read what the compute wrote");
+                        expected.Add(set.Entries(column));
+                        expected.Add(set.Counts(column));
+                    }
+
+                    Assert.That(set.Entries(2), Is.Null, "no motion column");
+                    Assert.That(set.Counts(2), Is.Null);
+                }
+
+                Assert.That(ReferenceEquals(batch.CompactionOf(1, 0), first), Is.False, "another view's set is its own");
+                for (int column = 0; column < 2; column++)
+                {
+                    expected.Add(batch.CompactionOf(1, 3).Entries(column));
+                    expected.Add(batch.CompactionOf(1, 3).Counts(column));
+                }
+
+                Assert.That(expected.Count, Is.EqualTo(2 * 4), "two views' sets of two columns of entries and counts");
+                using (GraphicsBuffer zeroes = VpCommandCompaction.NewZeroSource())
+                {
+                    Assert.That(zeroes.target & GraphicsBuffer.Target.CopySource, Is.EqualTo(GraphicsBuffer.Target.CopySource));
+                    Assert.That(zeroes.count * zeroes.stride, Is.EqualTo(first.Counts(0).count * first.Counts(0).stride), "a copy of the whole count buffer");
+                }
+
+                batch.Dispose(given.Add);
+                foreach (GraphicsBuffer buffer in expected)
+                {
+                    Assert.That(given.Contains(buffer), Is.True, "every compaction buffer is handed over");
+                    Assert.That(buffer.IsValid(), Is.True, "and none is disposed by the batch itself");
+                }
+            }
+            finally
+            {
+                batch.Dispose();
+                foreach (GraphicsBuffer buffer in given) buffer.Dispose();
             }
         }
 
@@ -436,8 +564,12 @@ namespace Zantetsu.Rendering.Tests
             // The compaction's GPU buffers live and end as the selection's own do: the batch's are handed to the
             // owner's give-up (the keeper that waits on issued events), never disposed under an event; a caller-owned
             // selection disposes its sets with itself. And what a set holds at the product's capacity is said.
+            // The sets are the Quest 3S Vulkan route's (DESIGN 4.5.10), made here on the Editor's device.
+            VpCommandCompaction.LayoutForTest = VpCommandCompaction.SetLayout.Vulkan;
             Assert.That(VpIndexedIndirectDrawBatch.Compaction.BytesFor(65536, 24), Is.EqualTo(3L * ((65536L * 24) + (2 * 256 * 4))), "entries, counts and the counts' copies");
             Assert.That(VpIndexedIndirectDrawBatch.CompactionRing, Is.EqualTo(4));
+            Assert.That(VpIndexedIndirectDrawBatch.CompactionSets, Is.EqualTo(4));
+            Assert.That(VpCommandCompaction.ZeroesByCopy, Is.False, "the Vulkan route's counts are zeroed by the plugin's event");
             Assert.That(VpGpuCullSetup.TryCreate(2, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
             var batch = new VpIndexedIndirectDrawBatch(4, 8, null, setup);
             var expected = new HashSet<GraphicsBuffer>();
@@ -485,7 +617,9 @@ namespace Zantetsu.Rendering.Tests
         public void Compaction_RefusesARun_WhoseColumnWasNotReservedForZeroingThisFrame()
         {
             // The experiment's gate (TL review, 2026-10-10): a frame whose zero event could not be taken for a column
-            // never compacts into that column -- the batch refuses before any dispatch, whatever the device.
+            // never compacts into that column -- the batch refuses before any dispatch, whatever the device. The sets
+            // are the Vulkan route's ring of four here; the gate is every route's.
+            VpCommandCompaction.LayoutForTest = VpCommandCompaction.SetLayout.Vulkan;
             Assert.That(VpGpuCullSetup.TryCreate(1, true, out VpGpuCullSetup setup, out string failure), Is.True, failure);
             var cube = new Bounds(Vector3.zero, Vector3.one);
             var commands = new[] { new VpIndirectCommand(new VpGeometryRange(0, 36, 100, 24), cube, 2), new VpIndirectCommand(new VpGeometryRange(36, 12, 200, 8), cube, 1) };
@@ -508,10 +642,18 @@ namespace Zantetsu.Rendering.Tests
                 set.MarkZeroReserved(0, 10);
                 Assert.That(set.ZeroReserved(0, 10), Is.True);
                 Assert.That(set.ZeroReserved(0, 11), Is.False, "a reservation is one frame's");
-                // Past the gate: on a device without the Vulkan wave kernel the compaction itself is what refuses now.
-                var passed = Assert.Throws<InvalidOperationException>(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
-                Assert.That(passed.Message, Does.Not.Contain("not reserved for zeroing"));
-                Assert.That(passed.Message, Does.Contain(VpCommandCompaction.ShaderResource));
+                // Past the gate: on a device with the wave kernel (Direct3D 12) the compaction is recorded; on one
+                // without (Direct3D 11) the compaction itself is what refuses now.
+                if (VpCommandCompaction.TryLoad(out string _))
+                {
+                    Assert.DoesNotThrow(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
+                }
+                else
+                {
+                    var passed = Assert.Throws<InvalidOperationException>(() => batch.IssueCompaction(buffer, set, forwardArguments, 0, 0, 2, 0, 10));
+                    Assert.That(passed.Message, Does.Not.Contain("not reserved for zeroing"));
+                    Assert.That(passed.Message, Does.Contain(VpCommandCompaction.ShaderResource));
+                }
             }
         }
 

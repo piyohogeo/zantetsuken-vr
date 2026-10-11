@@ -48,6 +48,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         // The same scenes through the Direct3D 12 plugin's route (DESIGN 4.5.8), taken in this run (null when not).
         private static List<Color32[]> s_gpuCullNativeImages;
+
+        // And through the plugin's route with the command compaction (DESIGN 4.5.11), taken in this run (null when not).
+        private static List<Color32[]> s_gpuCullCompactedImages;
         private static int s_gpuCullImageWidth, s_gpuCullImageHeight;
 
         [UnityTest, Order(1)]
@@ -580,12 +583,19 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             return copies;
         }
 
-        private IEnumerator GpuCullScenes(bool gpu, bool native = false)
+        private IEnumerator GpuCullScenes(bool gpu, bool native = false, bool compacted = false)
         {
             // The route is the one a Player's arguments give (D-198): its ordinary arguments are the GPU selection, and
             // VP Stage 3 is asked for by its own argument. The plugin's route is asked for beside the GPU selection.
+            // That route compacts its commands by default (DESIGN 4.5.11, D-218): a compacted take leaves it so, with
+            // the GPU check on -- its tallies are read back view by view here, which a run of the product never does --
+            // and every other take asks for the fixed draw, as -zantetsuVpFixedCommands does.
             bool requestedBefore = VpGpuCullSetup.Requested;
             VpBodyRouteRequest nativeBefore = VpNativeDrawSetup.Request;
+            bool compactBefore = VpNativeDrawPlugin.Direct3D12IndirectCount, checkBefore = VpCommandCompaction.VerificationEnabled;
+            VpNativeDrawPlugin.Direct3D12IndirectCount = compacted;
+            VpCommandCompaction.VerificationEnabled = compacted;
+            VpNativeDrawPlugin.TryReadIndirectCountInfo(out bool _, out uint _, out uint _, out ulong countDrawsBefore, out ulong _);
             VpNativeDrawSetup.Request = native ? VpBodyRouteRequest.Native : VpBodyRouteRequest.UnityApi;
             bool readBack = gpu && !native;   // the selection's counts are read back from the Unity-API route's arguments only
             VpGpuCullSetup.Read(
@@ -595,7 +605,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             VpGpuCullSetup.Requested = requested;
             try
             {
-                if (native) s_gpuCullNativeImages = null; else s_gpuCullImages.Remove(gpu);
+                if (compacted) s_gpuCullCompactedImages = null; else if (native) s_gpuCullNativeImages = null; else s_gpuCullImages.Remove(gpu);
                 Shader casterShader = Shader.Find("Zantetsu/VP Indexed Indirect Shadow Caster");
                 Assert.That(casterShader, Is.Not.Null, "the display's shadow caster is in this project");
                 Material stable = Track(new Material(casterShader) { name = "stable caster" });
@@ -829,6 +839,35 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Assert.That(drawing.NativeRefusals, Is.Zero, "no camera went undrawn for want of the plugin's pass");
                     Assert.That(drewEverything, Is.True, "every body taken was issued");
                     Assert.That(pluginRoute.DrawsClipLists, Is.True, "the plugin's route draws clip lists");
+                    VpNativeDrawPlugin.TryReadIndirectCountInfo(out bool _, out uint lanesLeast, out uint lanesMost, out ulong countDrawsAfter, out ulong _);
+                    if (compacted)
+                    {
+                        // Every ordinary run was compacted and drawn by the GPU's count -- none fixed for want of a
+                        // slot or of a zeroed column -- and nothing of the plugin was recorded for a zero or a barrier:
+                        // the counts were zeroed by copies.
+                        TestContext.Out.WriteLine("command compaction: " + pluginRoute.CommandCompactionChoice + "; " + VpCommandCompaction.DescribeRun()
+                            + "; the plugin's count draws in this case " + (countDrawsAfter - countDrawsBefore) + "; wave lanes " + lanesLeast + " to " + lanesMost);
+                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("compaction:"), "the route took the compaction it was asked for");
+                        Assert.That(pluginRoute.CompactionHalted, Is.Null);
+                        Assert.That(pluginRoute.IndirectCountCompactions, Is.GreaterThan(10L), "runs were compacted for the frames drawn");
+                        Assert.That(pluginRoute.IndirectCountIssues, Is.EqualTo(pluginRoute.BodiesIssued + pluginRoute.CastersIssued), "every issue of the selection's own commands was a count draw");
+                        Assert.That(countDrawsAfter - countDrawsBefore, Is.EqualTo((ulong)pluginRoute.IndirectCountIssues), "and each was recorded by the plugin as ExecuteIndirect with a count buffer");
+                        Assert.That(pluginRoute.IndirectCountCopies, Is.GreaterThan(10L), "the count slots were zeroed by copies");
+                        Assert.That(
+                            new[] { pluginRoute.IndirectCountSlotsShort, pluginRoute.IndirectCountZeroMissed, pluginRoute.IndirectCountZeroEvents, pluginRoute.IndirectCountBarriers, pluginRoute.IndirectCountZeroRefused },
+                            Is.EqualTo(new long[5]), "no run drawn fixed, and no zero or barrier event of the plugin");
+                        Assert.That(pluginRoute.IndirectCountRunCommands, Is.GreaterThan(pluginRoute.IndirectCountCompactions), "runs of more than one command were among them");
+                        string check = pluginRoute.ReadCompactionCheck();
+                        TestContext.Out.WriteLine(check);
+                        Assert.That(check, Does.Contain("body:").And.Contain("casters:"), "the body's runs and the casters' were checked on the GPU");
+                    }
+                    else
+                    {
+                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("fixed: asked for"), "the fixed draw was asked for");
+                        Assert.That(new[] { pluginRoute.IndirectCountIssues, pluginRoute.IndirectCountCompactions, pluginRoute.IndirectCountCopies }, Is.EqualTo(new long[3]), "nothing compacted, nothing drawn by a count");
+                        Assert.That(countDrawsAfter - countDrawsBefore, Is.Zero, "the plugin recorded no count draw");
+                        Assert.That(pluginRoute.ReadCompactionCheck(), Is.Null);
+                    }
                     long casterEntriesKept = pluginRoute.ClipCasterEntriesKept(0) + pluginRoute.ClipCasterEntriesKept(1) + pluginRoute.ClipCasterEntriesKept(2) + pluginRoute.ClipCasterEntriesKept(3);
                     TestContext.Out.WriteLine("plugin's clip lists: bodies entries taken " + pluginRoute.ClipBodyEntriesTaken + " / kept " + pluginRoute.ClipBodyEntriesKept + ", issues " + pluginRoute.ClipBodyIssues
                         + "; casters entries taken " + pluginRoute.ClipCasterEntriesTaken + " / kept by split " + pluginRoute.ClipCasterEntriesKept(0) + "/" + pluginRoute.ClipCasterEntriesKept(1) + "/"
@@ -887,7 +926,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     Assert.That(root.Display.CullViewBytes, Is.Zero);
                 }
 
-                if (native) s_gpuCullNativeImages = images; else s_gpuCullImages[gpu] = images;
+                if (compacted) s_gpuCullCompactedImages = images; else if (native) s_gpuCullNativeImages = images; else s_gpuCullImages[gpu] = images;
                 stage.camera.enabled = false;
                 yield return null;
                 Object.Destroy(drawing);
@@ -902,15 +941,25 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             {
                 VpGpuCullSetup.Requested = requestedBefore;
                 VpNativeDrawSetup.Request = nativeBefore;
+                VpNativeDrawPlugin.Direct3D12IndirectCount = compactBefore;
+                VpCommandCompaction.VerificationEnabled = checkBefore;
             }
         }
 
         // One stage from the five views. Each view is set, drawn by the frame, and read from the camera's target at the
-        // next update; under the GPU selection what the selection kept for it is read back as well.
+        // next update; under the GPU selection what the selection kept for it is read back as well. Where the command
+        // compaction's GPU check is on (a compacted take), its tallies for the view's frames are read back too.
         private IEnumerator GpuCullTakeStage(CutWorldRoot root, ShadowStage stage, bool gpu, int stageIndex, List<Color32[]> images, List<string> kept)
         {
             for (int view = 0; view < GpuCullViews; view++)
             {
+                uint[] checkAtFirst = null;
+                if (VpCommandCompaction.VerificationEnabled)
+                {
+                    checkAtFirst = new uint[VpCommandCompaction.VerificationWords];
+                    VpCommandCompaction.TryReadVerification(checkAtFirst);   // zeroes before the first check
+                }
+
                 stage.camera.fieldOfView = view == 1 ? 30f : 50f;
                 switch (view)
                 {
@@ -963,6 +1012,38 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 }
 
                 string line = label + ": drawn pixels " + lit + ", darker than the ground " + shadowed;
+                if (checkAtFirst != null)
+                {
+                    // The compaction's check over this view's frames, a column: what was compacted, how many commands
+                    // had instances (the draws' counts), and that none was missing, doubled, changed or beyond its run.
+                    var check = new uint[VpCommandCompaction.VerificationWords];
+                    Assert.That(VpCommandCompaction.TryReadVerification(check), Is.True, label + ": the route compacted and its check ran");
+                    int per = VpCommandCompaction.VerificationWordsPerColumn;
+                    uint bodyDispatches = check[3] - checkAtFirst[3], bodyKept = check[1] - checkAtFirst[1];
+                    uint casterDispatches = check[per + 3] - checkAtFirst[per + 3], casterKept = check[per + 1] - checkAtFirst[per + 1];
+                    uint mismatched = check[0] - checkAtFirst[0] + check[per] - checkAtFirst[per];
+                    uint beyond = check[4] - checkAtFirst[4] + check[per + 4] - checkAtFirst[per + 4];
+                    line += "; compaction: body runs " + bodyDispatches + " kept " + bodyKept + ", caster runs " + casterDispatches + " kept " + casterKept + ", mismatched " + mismatched + ", counts beyond a run " + beyond;
+                    Assert.That(mismatched, Is.Zero, line);
+                    Assert.That(beyond, Is.Zero, line);
+                    Assert.That(bodyDispatches, Is.GreaterThan(0u), label + ": the body's runs were compacted in this view's frames");
+                    if (view == 2)
+                    {
+                        Assert.That(bodyKept, Is.Zero, label + ": nothing is in view, so the body's counts are zero");
+                    }
+                    else if (stageIndex == 1 && root.Display.SeparatesClipDraws)
+                    {
+                        // The cut held back: every instance is of a clip-route command, drawn from the clip list. None
+                        // of those commands has an instance for the selection, so none comes back into a count draw.
+                        Assert.That(new[] { bodyKept, casterKept }, Is.EqualTo(new uint[2]), label + ": every command is of the clip route, and no count draw is given one");
+                    }
+                    else if (view == 0 || view == 3)
+                    {
+                        Assert.That(bodyKept, Is.GreaterThan(0u), label + ": the bodies in view are counted" + (view == 3 ? ", again after the view with none" : ""));
+                        Assert.That(casterKept, Is.GreaterThan(0u), label + ": and their casters");
+                    }
+                }
+
                 TestContext.Out.WriteLine(
                     line + " (ground value " + ground + "; draw bounds " + root.Display.BodyBatchForTest.WorldBounds + "; commands " + root.Display.CommandCount
                     + " in " + root.Display.DrawCommandEnd + " slots, instances " + root.Display.DrawInstanceCount + " in " + root.Display.DrawInstanceEnd + " records)");
