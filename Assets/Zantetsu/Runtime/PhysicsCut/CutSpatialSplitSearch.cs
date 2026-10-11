@@ -44,15 +44,32 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The most triangles a geometry may have to be searched at all.</summary>
         public int maxTriangles;
 
+        /// <summary>The mesh-led search: the most directions taken from the spread of the triangles, beside the others.</summary>
+        public int maxMeshDirections;
+
+        /// <summary>The mesh-led search: into how many steps a direction's extent is divided to find where no triangle lies.</summary>
+        public int meshBins;
+
+        /// <summary>The provisional values of the mesh-led search's two limits, where a caller gives none.</summary>
+        public const int DefaultMeshDirections = 3, DefaultMeshBins = 4096;
+
         public SpatialSplitSearchLimits(int maxConvexes, int maxCentreDirections, int maxPlaneTests, int maxTriangles)
+            : this(maxConvexes, maxCentreDirections, maxPlaneTests, maxTriangles, DefaultMeshDirections, DefaultMeshBins)
+        {
+        }
+
+        public SpatialSplitSearchLimits(int maxConvexes, int maxCentreDirections, int maxPlaneTests, int maxTriangles, int maxMeshDirections, int meshBins)
         {
             this.maxConvexes = maxConvexes;
             this.maxCentreDirections = maxCentreDirections;
             this.maxPlaneTests = maxPlaneTests;
             this.maxTriangles = maxTriangles;
+            this.maxMeshDirections = maxMeshDirections;
+            this.meshBins = meshBins;
         }
 
-        public bool IsValid => maxConvexes >= 2 && maxCentreDirections >= 0 && maxPlaneTests >= 1 && maxTriangles >= 2;
+        public bool IsValid => maxConvexes >= 2 && maxCentreDirections >= 0 && maxPlaneTests >= 1 && maxTriangles >= 2
+            && maxMeshDirections >= 0 && maxMeshDirections <= 3 && meshBins >= 16 && meshBins <= 65536;
     }
 
     /// <summary>What one search did, beside its outcome: for the record, and for a test that reads it.</summary>
@@ -78,6 +95,17 @@ namespace Zantetsu.PhysicsCut
         public int directionsTried, planesTested;
         public long triangleVisits;
         public int positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes;
+
+        /// <summary>
+        /// The mesh-led search (<see cref="CutSpatialSplitSearch.FindMeshPlane"/>): whether the plane is its own, how
+        /// many convexes are not wholly beyond the margin on one side of it (to be cut, or judged by the cut's own
+        /// scan), what it tried, and how many planes that held for the triangles it left for the convexes -- because
+        /// the smaller side had fewer triangles than the minimum a convex cut asks, or because nothing would be
+        /// left of the convexes on one side.
+        /// </summary>
+        public bool meshLed;
+        public int crossingConvexes;
+        public int meshDirectionsTried, meshPlanesTested, refusedForTriangleMinimum, refusedForNoConvexOnASide;
     }
 
     /// <summary>
@@ -114,6 +142,396 @@ namespace Zantetsu.PhysicsCut
         {
             // lo, hi (float), order (int), centres (float3 as 3 floats)
             return checked(convexCount * ((2 * sizeof(float)) + sizeof(int) + (3 * sizeof(float))));
+        }
+
+        /// <summary>Scratch <see cref="FindMeshPlane"/> needs, in bytes: the convexes' intervals and the steps' counts.</summary>
+        public static int MeshScratchBytes(int convexCount, in SpatialSplitSearchLimits limits)
+        {
+            return checked(ScratchBytes(convexCount) + ((Math.Max(16, limits.meshBins) + 2) * sizeof(int)));
+        }
+
+        /// <summary>
+        /// The mesh-led search (DESIGN 7.9.2, the convex-cut extension): a plane, fixed in the owner's frame, that
+        /// leaves every triangle wholly beyond the margin on one side with triangles on both -- whatever the convexes
+        /// do. Directions are the owner's three axes, the unit differences of two convexes' centres (up to the same
+        /// limit as <see cref="FindPlane"/>) and up to <see cref="SpatialSplitSearchLimits.maxMeshDirections"/>
+        /// principal directions of the triangles' centres. Along a direction the triangles' intervals are counted
+        /// into a limited number of steps; a run of steps no triangle reaches is a candidate, narrowed and verified
+        /// against every triangle as a gap of the convexes is. No island of the mesh is listed and no plane is
+        /// looked for beyond these.
+        /// <para>
+        /// A plane that holds for the triangles is taken when either no convex comes within the margin of it and
+        /// both sides have one (nothing is to be cut: the result is as <see cref="FindPlane"/>'s), or a convex does
+        /// and the side with fewer triangles has <paramref name="minCutSideTriangles"/> or more
+        /// (<see cref="SpatialSplitSearchResult.crossingConvexes"/> is then above zero and the caller cuts them).
+        /// Otherwise the next candidate is looked at, within <see cref="SpatialSplitSearchLimits.maxPlaneTests"/>.
+        /// </para>
+        /// <paramref name="scratch"/> is at least <see cref="MeshScratchBytes"/> bytes.
+        /// </summary>
+        public static SpatialSplitSearchOutcome FindMeshPlane(
+            VpRenderVertex* vertices, int vertexViewLength, uint* indices, int indexCount, in float4x4 geometryToOwner,
+            ConvexBrepBank* banks, ConvexBrepRange* convexes, int convexCount, in float4x4 shapeToOwner,
+            float margin, int minCutSideTriangles, in SpatialSplitSearchLimits limits, byte* scratch, ref SpatialSplitSearchResult result)
+        {
+            // What the first search counted stays in the record; the plane and the sides are this search's.
+            SpatialSplitSearchResult first = result;
+            result = default;
+            result.directionsTried = first.directionsTried;
+            result.planesTested = first.planesTested;
+            result.triangleVisits = first.triangleVisits;
+            result.margin = margin;
+            result.meshLed = true;
+            if (vertices == null || indices == null || banks == null || convexes == null || scratch == null
+                || vertexViewLength <= 0 || indexCount <= 0 || indexCount % 3 != 0 || convexCount <= 0
+                || !(margin > 0f) || !math.isfinite(margin) || !limits.IsValid || minCutSideTriangles < 1
+                || !IsFinite(geometryToOwner) || !IsFinite(shapeToOwner))
+            {
+                return result.outcome = SpatialSplitSearchOutcome.InvalidInput;
+            }
+
+            int triangles = indexCount / 3;
+            if (triangles < 2)
+            {
+                return result.outcome = SpatialSplitSearchOutcome.NotFound;
+            }
+
+            if (convexCount > limits.maxConvexes || triangles > limits.maxTriangles)
+            {
+                return result.outcome = SpatialSplitSearchOutcome.OverTheLimits;
+            }
+
+            float* lo = (float*)scratch;
+            float* hi = lo + convexCount;
+            int* order = (int*)(hi + convexCount);
+            float* centres = (float*)(order + convexCount);
+            int bins = Math.Max(16, limits.meshBins);
+            int* steps = (int*)(scratch + ScratchBytes(convexCount));
+
+            // The convexes' centres in the owner's frame, as FindPlane takes them.
+            for (int c = 0; c < convexCount; c++)
+            {
+                ConvexBrepRange range = convexes[c];
+                if (range.vertexCount <= 0)
+                {
+                    return result.outcome = SpatialSplitSearchOutcome.InvalidInput;
+                }
+
+                float3* points = banks[c].vertices + range.vertexBase;
+                float3 low = new float3(float.PositiveInfinity);
+                float3 high = new float3(float.NegativeInfinity);
+                for (int v = 0; v < range.vertexCount; v++)
+                {
+                    float3 p = math.transform(shapeToOwner, points[v]);
+                    if (!math.all(math.isfinite(p)))
+                    {
+                        return result.outcome = SpatialSplitSearchOutcome.NotFinite;
+                    }
+
+                    low = math.min(low, p);
+                    high = math.max(high, p);
+                }
+
+                float3 centre = 0.5f * (low + high);
+                centres[(3 * c) + 0] = centre.x;
+                centres[(3 * c) + 1] = centre.y;
+                centres[(3 * c) + 2] = centre.z;
+            }
+
+            // The triangles' centres in the owner's frame: their mean and their spread, in one pass.
+            double3 sum = default;
+            double3 squares = default;   // xx, yy, zz
+            double3 products = default;  // xy, xz, yz
+            for (int i = 0; i < indexCount; i += 3)
+            {
+                uint i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                if (i0 >= (uint)vertexViewLength || i1 >= (uint)vertexViewLength || i2 >= (uint)vertexViewLength)
+                {
+                    return result.outcome = SpatialSplitSearchOutcome.InvalidInput;
+                }
+
+                float3 p0 = vertices[i0].position, p1 = vertices[i1].position, p2 = vertices[i2].position;
+                if (!math.all(math.isfinite(p0)) || !math.all(math.isfinite(p1)) || !math.all(math.isfinite(p2)))
+                {
+                    return result.outcome = SpatialSplitSearchOutcome.NotFinite;
+                }
+
+                double3 m = math.transform(geometryToOwner, (p0 + p1 + p2) / 3f);
+                sum += m;
+                squares += m * m;
+                products += new double3(m.x * m.y, m.x * m.z, m.y * m.z);
+            }
+
+            result.triangleVisits += triangles;
+            double3 mean = sum / triangles;
+            double3 variance = (squares / triangles) - (mean * mean);
+            double3 covariance = (products / triangles) - new double3(mean.x * mean.y, mean.x * mean.z, mean.y * mean.z);
+
+            const int Axes = 3;
+            int centreLimit = Math.Min(limits.maxCentreDirections, 64);
+            int takenLimit = Axes + centreLimit + 3;
+            float3* taken = stackalloc float3[takenLimit];
+            int takenCount = 0;
+            taken[takenCount++] = new float3(1f, 0f, 0f);
+            taken[takenCount++] = new float3(0f, 1f, 0f);
+            taken[takenCount++] = new float3(0f, 0f, 1f);
+            for (int i = 0; i < convexCount && takenCount < Axes + centreLimit; i++)
+            {
+                float3 a = new float3(centres[3 * i], centres[(3 * i) + 1], centres[(3 * i) + 2]);
+                for (int j = i + 1; j < convexCount && takenCount < Axes + centreLimit; j++)
+                {
+                    float3 d = new float3(centres[3 * j], centres[(3 * j) + 1], centres[(3 * j) + 2]) - a;
+                    float length = math.length(d);
+                    if (length > 4f * margin && !IsNearlyParallelToOne(taken, takenCount, d / length))
+                    {
+                        taken[takenCount++] = d / length;
+                    }
+                }
+            }
+
+            if (limits.maxMeshDirections > 0 && math.all(math.isfinite((float3)variance)) && math.all(math.isfinite((float3)covariance)))
+            {
+                float3x3 principal = PrincipalDirections(variance, covariance);
+                for (int k = 0; k < limits.maxMeshDirections; k++)
+                {
+                    float3 d = principal[k];
+                    if (math.all(math.isfinite(d)) && math.lengthsq(d) > 0.5f && !IsNearlyParallelToOne(taken, takenCount, d))
+                    {
+                        taken[takenCount++] = d;
+                    }
+                }
+            }
+
+            float3x3 geometryLinear = new float3x3(geometryToOwner.c0.xyz, geometryToOwner.c1.xyz, geometryToOwner.c2.xyz);
+            float3x3 shapeLinear = new float3x3(shapeToOwner.c0.xyz, shapeToOwner.c1.xyz, shapeToOwner.c2.xyz);
+            for (int d = 0; d < takenCount; d++)
+            {
+                float3 n = taken[d];
+                result.meshDirectionsTried++;
+                float3 nShape = math.mul(math.transpose(shapeLinear), n);
+                float shapeOffset = math.dot(n, shapeToOwner.c3.xyz);
+                float3 nGeometry = math.mul(math.transpose(geometryLinear), n);
+                float geometryOffset = math.dot(n, geometryToOwner.c3.xyz);
+
+                // The triangles' whole extent along the direction.
+                float lowAll = float.PositiveInfinity;
+                float highAll = float.NegativeInfinity;
+                for (int i = 0; i < indexCount; i++)
+                {
+                    float s = math.dot(nGeometry, vertices[indices[i]].position) + geometryOffset;
+                    if (!math.isfinite(s))
+                    {
+                        return result.outcome = SpatialSplitSearchOutcome.NotFinite;
+                    }
+
+                    lowAll = math.min(lowAll, s);
+                    highAll = math.max(highAll, s);
+                }
+
+                result.triangleVisits += triangles;
+                float extent = highAll - lowAll;
+                if (!(extent > 4f * margin))
+                {
+                    continue;
+                }
+
+                // Steps no narrower than the margin; each triangle counts into every step its interval reaches
+                // (a count up where it begins and down after it ends, summed along the direction).
+                float step = math.max(margin, extent / bins);
+                int used = math.min(bins, (int)math.ceil(extent / step));
+                for (int b = 0; b <= used + 1; b++)
+                {
+                    steps[b] = 0;
+                }
+
+                for (int i = 0; i < indexCount; i += 3)
+                {
+                    float s0 = math.dot(nGeometry, vertices[indices[i]].position) + geometryOffset;
+                    float s1 = math.dot(nGeometry, vertices[indices[i + 1]].position) + geometryOffset;
+                    float s2 = math.dot(nGeometry, vertices[indices[i + 2]].position) + geometryOffset;
+                    int from = math.clamp((int)((math.min(s0, math.min(s1, s2)) - lowAll) / step), 0, used - 1);
+                    int to = math.clamp((int)((math.max(s0, math.max(s1, s2)) - lowAll) / step), 0, used - 1);
+                    steps[from]++;
+                    steps[to + 1]--;
+                }
+
+                result.triangleVisits += triangles;
+
+                // The convexes' intervals along the direction, for what a plane found leaves of them.
+                for (int c = 0; c < convexCount; c++)
+                {
+                    ConvexBrepRange range = convexes[c];
+                    float3* points = banks[c].vertices + range.vertexBase;
+                    float low = float.PositiveInfinity;
+                    float high = float.NegativeInfinity;
+                    for (int v = 0; v < range.vertexCount; v++)
+                    {
+                        float s = math.dot(nShape, points[v]) + shapeOffset;
+                        if (!math.isfinite(s))
+                        {
+                            return result.outcome = SpatialSplitSearchOutcome.NotFinite;
+                        }
+
+                        low = math.min(low, s);
+                        high = math.max(high, s);
+                    }
+
+                    lo[c] = low;
+                    hi[c] = high;
+                }
+
+                int covering = 0;
+                int runBegin = -1;
+                for (int b = 0; b <= used; b++)
+                {
+                    covering += b < used ? steps[b] : 1;   // past the last step: a run ends
+                    if (covering == 0)
+                    {
+                        if (runBegin < 0) runBegin = b;
+                        continue;
+                    }
+
+                    if (runBegin < 0)
+                    {
+                        continue;
+                    }
+
+                    // Steps runBegin .. b-1 hold no triangle. One step more on either side: the gap's own ends lie
+                    // inside the steps beside the run, and the narrowing finds them.
+                    float gapFrom = lowAll + ((runBegin - 1) * step);
+                    float gapTo = lowAll + ((b + 1) * step);
+                    runBegin = -1;
+                    if (result.meshPlanesTested >= limits.maxPlaneTests)
+                    {
+                        return result.outcome = SpatialSplitSearchOutcome.NotFound;
+                    }
+
+                    result.meshPlanesTested++;
+                    SpatialSplitSearchOutcome tested = TestGap(
+                        vertices, vertexViewLength, indices, indexCount, nGeometry, geometryOffset, gapFrom, gapTo, margin,
+                        ref result, out float offset, out float clear);
+                    if (tested == SpatialSplitSearchOutcome.NotFinite || tested == SpatialSplitSearchOutcome.InvalidInput)
+                    {
+                        return result.outcome = tested;
+                    }
+
+                    if (tested != SpatialSplitSearchOutcome.Found)
+                    {
+                        continue;
+                    }
+
+                    int positive = 0;
+                    int negative = 0;
+                    int crossing = 0;
+                    bool reachesPositive = false;
+                    bool reachesNegative = false;
+                    for (int c = 0; c < convexCount; c++)
+                    {
+                        if (lo[c] - offset > margin) positive++;
+                        else if (hi[c] - offset < -margin) negative++;
+                        else crossing++;
+                        reachesPositive |= hi[c] - offset > margin;
+                        reachesNegative |= lo[c] - offset < -margin;
+                    }
+
+                    if (!reachesPositive || !reachesNegative)
+                    {
+                        // Triangles on a side no convex reaches: nothing of the physics would stand for them.
+                        result.refusedForNoConvexOnASide++;
+                        continue;
+                    }
+
+                    if (crossing > 0 && math.min(result.positiveTriangles, result.negativeTriangles) < minCutSideTriangles)
+                    {
+                        result.refusedForTriangleMinimum++;
+                        continue;
+                    }
+
+                    if (crossing == 0 && (positive == 0 || negative == 0))
+                    {
+                        result.refusedForNoConvexOnASide++;
+                        continue;
+                    }
+
+                    result.planeOwner = new float4(n, -offset);
+                    result.planeGeometry = new float4(nGeometry, geometryOffset - offset);
+                    result.planeShape = new float4(nShape, shapeOffset - offset);
+                    result.gap = clear;
+                    result.positiveConvexes = positive;
+                    result.negativeConvexes = negative;
+                    result.crossingConvexes = crossing;
+                    return result.outcome = SpatialSplitSearchOutcome.Found;
+                }
+            }
+
+            result.positiveTriangles = 0;
+            result.negativeTriangles = 0;
+            return result.outcome = SpatialSplitSearchOutcome.NotFound;
+        }
+
+        private static bool IsNearlyParallelToOne(float3* taken, int takenCount, float3 direction)
+        {
+            for (int k = 0; k < takenCount; k++)
+            {
+                if (math.abs(math.dot(taken[k], direction)) > 0.9995f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // The unit eigenvectors of a symmetric 3x3 matrix given by its diagonal and its three products (xy, xz, yz),
+        // widest spread first: a fixed number of Jacobi sweeps, which is enough for a direction to try.
+        private static float3x3 PrincipalDirections(double3 diagonal, double3 off)
+        {
+            double a00 = diagonal.x, a11 = diagonal.y, a22 = diagonal.z, a01 = off.x, a02 = off.y, a12 = off.z;
+            double3 v0 = new double3(1, 0, 0), v1 = new double3(0, 1, 0), v2 = new double3(0, 0, 1);
+            for (int sweep = 0; sweep < 8; sweep++)
+            {
+                Rotate(ref a00, ref a11, ref a01, ref a02, ref a12, ref v0, ref v1);
+                Rotate(ref a00, ref a22, ref a02, ref a01, ref a12, ref v0, ref v2);
+                Rotate(ref a11, ref a22, ref a12, ref a01, ref a02, ref v1, ref v2);
+            }
+
+            // v0, v1, v2 are the columns the rotations were gathered in -- the eigenvectors: taken by their eigenvalues.
+            double3 e0 = v0, e1 = v1, e2 = v2;
+            if (a00 < a11) { Swap(ref a00, ref a11); Swap(ref e0, ref e1); }
+            if (a00 < a22) { Swap(ref a00, ref a22); Swap(ref e0, ref e2); }
+            if (a11 < a22) { Swap(ref a11, ref a22); Swap(ref e1, ref e2); }
+            return new float3x3((float3)math.normalizesafe(e0), (float3)math.normalizesafe(e1), (float3)math.normalizesafe(e2));
+        }
+
+        // One Jacobi rotation in the plane of two axes p and q: app, aqq their diagonal entries, apq the entry to
+        // bring to zero, and the two entries that couple p and q with the third axis r.
+        private static void Rotate(
+            ref double app, ref double aqq, ref double apq, ref double apr, ref double aqr, ref double3 vp, ref double3 vq)
+        {
+            if (math.abs(apq) < 1e-300)
+            {
+                return;
+            }
+
+            double theta = (aqq - app) / (2.0 * apq);
+            double t = (theta >= 0.0 ? 1.0 : -1.0) / (math.abs(theta) + math.sqrt((theta * theta) + 1.0));
+            double c = 1.0 / math.sqrt((t * t) + 1.0);
+            double s = t * c;
+            app -= t * apq;
+            aqq += t * apq;
+            apq = 0.0;
+            double pr = apr, qr = aqr;
+            apr = (c * pr) - (s * qr);
+            aqr = (s * pr) + (c * qr);
+            double3 p = vp, q = vq;
+            vp = (c * p) - (s * q);
+            vq = (s * p) + (c * q);
+        }
+
+        private static void Swap<T>(ref T a, ref T b)
+        {
+            T t = a;
+            a = b;
+            b = t;
         }
 
         /// <summary>

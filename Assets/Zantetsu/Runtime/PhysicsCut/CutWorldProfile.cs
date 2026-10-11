@@ -200,7 +200,7 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float fragmentGroupSeedSecondsPerGroup = 0.0002f;
 
         [Header("Spatial split (DESIGN 7.9.2, Phase 5.6 first version, provisional)")]
-        [Tooltip("Replace a settled owner of two or more convexes by two ordinary objects when one plane crosses neither its triangles nor its convexes (not for buildings; no convex is cut). Off: nothing is looked at and nothing is issued. Off by default.")]
+        [Tooltip("Replace a settled owner by two ordinary objects when one plane separates its parts: a plane that crosses neither its triangles nor its convexes, or -- with the convex cut below -- one that crosses no triangle, the convexes it crosses cut by it (not for buildings; no triangle is cut). Off: nothing is looked at and nothing is issued. Off by default.")]
         [SerializeField] private bool spatialSplitEnabled = false;
 
         [Tooltip("Fragments looked at per frame at most while no attempt is outstanding (16: the empty owner collection's walk). One attempt at a time over the whole world.")]
@@ -215,6 +215,17 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int spatialSplitMaxCentreDirections = 8;
         [SerializeField] private int spatialSplitMaxPlaneTests = 16;
         [SerializeField] private int spatialSplitMaxTriangles = 131072;
+
+        [Tooltip("With the split on: where no plane leaves the convexes whole, look for one that leaves every triangle whole and cut the convexes that cross it (not for buildings). Off: only objects whose convexes one plane separates are split.")]
+        [SerializeField] private bool spatialSplitCutConvexes = true;
+
+        [Tooltip("A split that cuts a convex is made only when the side with fewer triangles of the committed display geometry has this many or more (50, chosen 2026-10-11). Not asked of a split that cuts nothing.")]
+        [SerializeField] private int spatialSplitMinCutSideTriangles = CutSpatialSplitSettings.DefaultMinCutSideTriangles;
+
+        [Tooltip("The expected Main cost, in seconds, of the three Main stages of a split that cuts convexes, before any was measured (from no Player measurement): making the collider meshes, reading one cooked hull, and building and publishing the two objects. The median of the last five measured replaces each.")]
+        [SerializeField] private float spatialSplitSeedCutApplySeconds = (float)CutSpatialSplitSettings.DefaultSeedCutApplySeconds;
+        [SerializeField] private float spatialSplitSeedHullCheckSeconds = (float)CutSpatialSplitSettings.DefaultSeedHullCheckSeconds;
+        [SerializeField] private float spatialSplitSeedCutPublishSeconds = (float)CutSpatialSplitSettings.DefaultSeedCutPublishSeconds;
 
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
@@ -446,7 +457,9 @@ namespace Zantetsu.PhysicsCut
                 spatialSplitEnabled, spatialSplitExaminePerFrame, CutWorldRoot.CompactionReserveSeconds,
                 spatialSplitSeedIssueSeconds, spatialSplitSeedPublishSeconds,
                 new SpatialSplitSearchLimits(
-                    spatialSplitMaxConvexes, spatialSplitMaxCentreDirections, spatialSplitMaxPlaneTests, spatialSplitMaxTriangles));
+                    spatialSplitMaxConvexes, spatialSplitMaxCentreDirections, spatialSplitMaxPlaneTests, spatialSplitMaxTriangles),
+                spatialSplitCutConvexes, spatialSplitMinCutSideTriangles,
+                spatialSplitSeedCutApplySeconds, spatialSplitSeedHullCheckSeconds, spatialSplitSeedCutPublishSeconds);
 
         /// <summary>The trial fusion of held building pieces (2026-09-29): off unless the profile switches it on.</summary>
         public BuildingFusionSettings BuildingFusion => new BuildingFusionSettings(buildingFusionEnabled, buildingFusionPerFrame, buildingFusionDeadlineSeconds, buildingFusionMainBudgetMs * 0.001);
@@ -576,7 +589,7 @@ namespace Zantetsu.PhysicsCut
             }
             else if (!SpatialSplit.IsValid)
             {
-                reason = "the spatial split's count must be positive, its expected costs not negative, and its search limits at least two convexes, one plane test and two triangles";
+                reason = "the spatial split's count must be positive, its expected costs not negative, its search limits at least two convexes, one plane test and two triangles, and the triangle minimum of a convex cut at least one";
             }
             else if (!BuildingRest.IsValid)
             {

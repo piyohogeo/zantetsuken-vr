@@ -41,9 +41,44 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The search's finite limits.</summary>
         public SpatialSplitSearchLimits limits;
 
+        /// <summary>
+        /// The convex-cut branch: where no plane leaves the convexes whole, a plane that leaves every triangle whole
+        /// is looked for and the convexes that cross it are cut. Off: only what one plane separates whole is split.
+        /// </summary>
+        public bool cutConvexes;
+
+        /// <summary>
+        /// A split that cuts a convex is made only when the side with fewer triangles of the committed display
+        /// geometry has this many or more. Not asked of a split that cuts nothing.
+        /// </summary>
+        public int minCutSideTriangles;
+
+        /// <summary>
+        /// What the Main stages of a split that cuts convexes are expected to cost until each was measured: making
+        /// the collider meshes, reading one cooked hull, and building and publishing the two objects.
+        /// </summary>
+        public double seedCutApplySeconds, seedHullCheckSeconds, seedCutPublishSeconds;
+
+        /// <summary>
+        /// The triangle minimum of a split that cuts a convex: 50, the TL's choice of 2026-10-11 after city walks at
+        /// 200, 100 and 50. The expected costs beside it are provisional, from no performance measurement.
+        /// </summary>
+        public const int DefaultMinCutSideTriangles = 50;
+        public const double DefaultSeedCutApplySeconds = 0.0005, DefaultSeedHullCheckSeconds = 0.0002, DefaultSeedCutPublishSeconds = 0.003;
+
+        /// <summary>Without the convex-cut branch: what one plane separates whole, as the first version.</summary>
         public CutSpatialSplitSettings(
             bool enabled, int examinePerFrame, double reserveSeconds, double seedIssueSeconds, double seedPublishSeconds,
             SpatialSplitSearchLimits limits)
+            : this(enabled, examinePerFrame, reserveSeconds, seedIssueSeconds, seedPublishSeconds, limits, false,
+                DefaultMinCutSideTriangles, DefaultSeedCutApplySeconds, DefaultSeedHullCheckSeconds, DefaultSeedCutPublishSeconds)
+        {
+        }
+
+        public CutSpatialSplitSettings(
+            bool enabled, int examinePerFrame, double reserveSeconds, double seedIssueSeconds, double seedPublishSeconds,
+            SpatialSplitSearchLimits limits, bool cutConvexes, int minCutSideTriangles,
+            double seedCutApplySeconds, double seedHullCheckSeconds, double seedCutPublishSeconds)
         {
             this.enabled = enabled;
             this.examinePerFrame = examinePerFrame;
@@ -51,12 +86,30 @@ namespace Zantetsu.PhysicsCut
             this.seedIssueSeconds = seedIssueSeconds;
             this.seedPublishSeconds = seedPublishSeconds;
             this.limits = limits;
+            this.cutConvexes = cutConvexes;
+            this.minCutSideTriangles = minCutSideTriangles;
+            this.seedCutApplySeconds = seedCutApplySeconds;
+            this.seedHullCheckSeconds = seedHullCheckSeconds;
+            this.seedCutPublishSeconds = seedCutPublishSeconds;
         }
 
         public bool IsValid => examinePerFrame >= 1 && reserveSeconds >= 0.0 && !double.IsNaN(reserveSeconds)
             && seedIssueSeconds >= 0.0 && !double.IsNaN(seedIssueSeconds)
             && seedPublishSeconds >= 0.0 && !double.IsNaN(seedPublishSeconds)
+            && minCutSideTriangles >= 1
+            && seedCutApplySeconds >= 0.0 && !double.IsNaN(seedCutApplySeconds)
+            && seedHullCheckSeconds >= 0.0 && !double.IsNaN(seedHullCheckSeconds)
+            && seedCutPublishSeconds >= 0.0 && !double.IsNaN(seedCutPublishSeconds)
             && limits.IsValid;
+
+        /// <summary>Whether two settings look for the same thing: a mark made under one says nothing under another.</summary>
+        internal bool SearchesAs(in CutSpatialSplitSettings other)
+        {
+            return cutConvexes == other.cutConvexes && minCutSideTriangles == other.minCutSideTriangles
+                && limits.maxConvexes == other.limits.maxConvexes && limits.maxCentreDirections == other.limits.maxCentreDirections
+                && limits.maxPlaneTests == other.limits.maxPlaneTests && limits.maxTriangles == other.limits.maxTriangles
+                && limits.maxMeshDirections == other.limits.maxMeshDirections && limits.meshBins == other.limits.meshBins;
+        }
     }
 
     /// <summary>Why a turn of <see cref="CutSpatialSplit"/> issued nothing and published nothing.</summary>
@@ -220,11 +273,32 @@ namespace Zantetsu.PhysicsCut
     /// owner, shape, geometry and anchor count, so anything that changes one of them is another input. A work that did not run, a
     /// result for an input that has since changed and a publication short of room mark nothing.
     /// </para>
+    /// <para>
+    /// **Cutting convexes** (<see cref="CutSpatialSplitSettings.cutConvexes"/>, the extension of 2026-10-11). The
+    /// search that leaves the convexes whole comes first and its result is taken as before. Where it finds nothing,
+    /// the same work looks for a plane by the mesh alone (<see cref="CutSpatialSplitSearch.FindMeshPlane"/>): every
+    /// triangle whole on one side, triangles on both. A convex that crosses it is cut by it -- the cut's own
+    /// classification, clip, reduction and masses, all on the worker -- provided the side with fewer triangles has
+    /// the minimum asked; one convex wrapped round two separate parts of the mesh is a candidate this way. No
+    /// triangle is cut, nothing is drawn for the new faces, and no cut operation exists for it.
+    /// The Main work of that branch is three stages, each begun only by a turn the gate lets through and each with
+    /// its own expected cost: the collider meshes are made from the worker's numbers and the work is offered again,
+    /// to bake them on the background pool (never the cut's urgent job path); the cooked hulls are read, a few a
+    /// turn while the budget holds; then the publication as above, with the parts that were cut built from their
+    /// new meshes. A frame the gate holds -- heavy work noted, a garbage collection, a cut in flight, the ledger
+    /// changed, the display's room grown, the budget short -- does nothing at all for such an attempt: it is not
+    /// looked at again (that look scans the display), not built and not even given back, and the parent stands
+    /// until the switch. Only the world's own ending gives it back at once. A mesh that cannot be made ends the
+    /// attempt once, with what was made before it, and marks the input. A mark is of the settings it was made
+    /// under: other limits, another minimum or the branch switched on are another search.
+    /// </para>
     /// </summary>
     public sealed class CutSpatialSplit
     {
         private static readonly ProfilerMarker s_issue = new ProfilerMarker("Zantetsu.SpatialSplit.Issue");
         private static readonly ProfilerMarker s_publish = new ProfilerMarker("Zantetsu.SpatialSplit.Publish");
+        private static readonly ProfilerMarker s_apply = new ProfilerMarker("Zantetsu.SpatialSplit.CutMeshes");
+        private static readonly ProfilerMarker s_check = new ProfilerMarker("Zantetsu.SpatialSplit.CutHulls");
 
         private readonly CutWorldRoot _world;
         private readonly List<LogicalFragmentId> _round = new List<LogicalFragmentId>();
@@ -233,6 +307,10 @@ namespace Zantetsu.PhysicsCut
         private readonly SimulateCostHistory _collectAfter = new SimulateCostHistory();
         private readonly SimulateCostHistory _examineCosts = new SimulateCostHistory();   // one look at a fragment, a turn's average
         private readonly SimulateCostHistory _roundCosts = new SimulateCostHistory();     // taking a round's list and pruning the marks
+        private readonly SimulateCostHistory _cutApplyCosts = new SimulateCostHistory();     // a cutting split: its meshes made
+        private readonly SimulateCostHistory _hullCheckCosts = new SimulateCostHistory();    // a cutting split: one cooked hull read
+        private readonly SimulateCostHistory _cutPublishCosts = new SimulateCostHistory();   // a cutting split: built and published
+        private readonly SimulateCostHistory _cutCollectAfter = new SimulateCostHistory();   // the collection after such a publication
         private readonly int[] _holds = new int[(int)SpatialSplitHold.Count];
         private readonly int[] _passes = new int[(int)SpatialSplitPass.Count];
         private readonly int[] _ends = new int[(int)SpatialSplitEnd.Count];
@@ -251,6 +329,8 @@ namespace Zantetsu.PhysicsCut
         private int _cursor;
         private Attempt _attempt;
         private int _followCollectOf = int.MinValue;
+        private bool _followIsCut;
+        private int _markEpoch;
 
         // What the turn before saw of the ledger and of the display's room: a difference is something this frame did.
         private long _revisionSeen = -1;
@@ -278,6 +358,12 @@ namespace Zantetsu.PhysicsCut
             get => _settings;
             set
             {
+                if (!value.SearchesAs(in _settings))
+                {
+                    // Another search: what was marked under the old one is not marked under this.
+                    _markEpoch++;
+                }
+
                 _settings = value;
                 _idle = false;
             }
@@ -302,6 +388,12 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether an attempt is outstanding: issued and not yet applied or given back.</summary>
         public bool HasAttempt => _attempt != null;
 
+        /// <summary>Whether the outstanding attempt's work has come back and waits for a turn of the main thread.</summary>
+        public bool AttemptIsCollected => _attempt != null && _attempt.collected;
+
+        /// <summary>Whether the outstanding attempt's work came back with convexes to cut (known once it has come back).</summary>
+        public bool AttemptCutsConvexes => _attempt != null && _attempt.collected && _attempt.cut;
+
         /// <summary>The fragment the outstanding attempt is of, unset without one.</summary>
         public LogicalFragmentId AttemptFragment => _attempt != null ? _attempt.fragment : default;
 
@@ -322,6 +414,44 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Fragments marked as not to be tried again for their current input, now.</summary>
         public int SuppressedNow => _suppressed.Count;
+
+        /// <summary>
+        /// The convex-cut branch: attempts whose search went on to the mesh-led one, those that came back with
+        /// convexes to cut, publications that cut, convexes cut by them, collider meshes made, cooked hulls read and
+        /// refused, and turns the gate held in which such an attempt was left alone (not looked at, not built, not
+        /// given back).
+        /// </summary>
+        public int MeshLedSearches { get; private set; }
+        public int CutAttempts { get; private set; }
+        public int PublishedWithCut { get; private set; }
+        public int ConvexesCut { get; private set; }
+        public int CutMeshesMade { get; private set; }
+        public int HullsChecked { get; private set; }
+        public int HullsRefused { get; private set; }
+        public int CutTurnsLeftAlone { get; private set; }
+
+        /// <summary>Attempts ended because a collider mesh of a cut convex could not be made on the main thread.</summary>
+        public int CutMeshFailures { get; private set; }
+
+        /// <summary>For a test: the making of the mesh of this number fails (-1: none does). The product never sets it.</summary>
+        internal static int FailMeshAtForTest = -1;
+
+        /// <summary>The convex-cut branch's times: the bakes on the worker, and on Main the meshes made, the hulls read, and the publishing turns.</summary>
+        public double BakeSeconds { get; private set; }
+        public double MaxBakeSeconds { get; private set; }
+        public double CutApplySeconds { get; private set; }
+        public double MaxCutApplySeconds { get; private set; }
+        public double HullCheckSeconds { get; private set; }
+        public double MaxHullCheckTurnSeconds { get; private set; }
+        public double CutPublishSeconds { get; private set; }
+        public double MaxCutPublishTurnSeconds { get; private set; }
+
+        /// <summary>What the Main stages of a split that cuts convexes are expected to cost: the seeds, then the medians of the last five measured.</summary>
+        public double ExpectedCutApplySeconds => _cutApplyCosts.Count == 0 ? Settings.seedCutApplySeconds : _cutApplyCosts.ExpectedSeconds;
+        public double ExpectedHullCheckSeconds => _hullCheckCosts.Count == 0 ? Settings.seedHullCheckSeconds : _hullCheckCosts.ExpectedSeconds;
+        public double ExpectedCutPublishSeconds =>
+            (_cutPublishCosts.Count == 0 ? Settings.seedCutPublishSeconds : _cutPublishCosts.ExpectedSeconds)
+            + (_cutCollectAfter.Count == 0 ? SeedCollectAfterSeconds : _cutCollectAfter.ExpectedSeconds);
 
         /// <summary>The worker's time over every attempt collected, and the longest.</summary>
         public double WorkerSeconds { get; private set; }
@@ -405,7 +535,55 @@ namespace Zantetsu.PhysicsCut
 
             if (_attempt != null && !_attempt.collected)
             {
-                // Waiting or running: the object goes on as it is. Nothing is asked of the frame.
+                // Waiting or running: the object goes on as it is. Nothing is asked of the frame. (A bake that found
+                // no place in the queue is offered again, which is a call.)
+                if (_attempt.stage == AttemptStage.Baking && !_attempt.offered)
+                {
+                    OfferBake(_attempt);
+                }
+
+                return;
+            }
+
+            if (_attempt != null && _attempt.cut)
+            {
+                // An attempt that cuts convexes holds meshes and a block of its own, and looking at it again scans
+                // the display's registrations: nothing of it -- not that look, not a stage, not even giving it
+                // back -- is done before the whole gate has let this frame through, with the cost of the stage it
+                // is at. A frame with a spike, a structural change, grown room or a short budget only counts the hold.
+                Turns++;
+                double stageCost = !_attempt.applied ? ExpectedCutApplySeconds
+                    : _attempt.hullsChecked < _attempt.meshCount ? ExpectedHullCheckSeconds
+                    : ExpectedCutPublishSeconds;
+                double stepLater = LaterStep();
+                SpatialSplitHold held = HoldNow(in settings, stageCost, stepLater);
+                LastHold = held;
+                if (held != SpatialSplitHold.None)
+                {
+                    _holds[(int)held]++;
+                    CutTurnsLeftAlone++;
+                    Remember();
+                    return;
+                }
+
+                Remember();
+                if (!ShouldPublish(_attempt, out SpatialSplitEnd over, out bool marked))
+                {
+                    End(over, marked);
+                }
+                else if (!_attempt.applied)
+                {
+                    ApplyCutMeshes();
+                }
+                else if (_attempt.hullsChecked < _attempt.meshCount)
+                {
+                    CheckHulls(in settings, stepLater);
+                }
+                else
+                {
+                    Publish(in settings);
+                }
+
                 return;
             }
 
@@ -450,6 +628,105 @@ namespace Zantetsu.PhysicsCut
             else
             {
                 Choose(in settings, later);
+            }
+        }
+
+        // ---- the convex-cut branch's Main stages ----------------------------------------------------------------------
+
+        // After the numbers: one Unity Mesh a produced convex -- positions alone, as a cut's are -- and the work
+        // offered again, to bake them on the background pool. Nothing is built and nothing is published here.
+        private void ApplyCutMeshes()
+        {
+            long begin = Stopwatch.GetTimestamp();
+            Attempt attempt = _attempt;
+            using (s_apply.Auto())
+            {
+                attempt.cooking = _world.Cook != null ? _world.Cook.Cooking : PhysicsCutCook.DefaultCooking;
+                attempt.MakeMeshes();
+                CutMeshesMade += attempt.meshesMade;
+                if (!attempt.meshesBad)
+                {
+                    attempt.applied = true;
+                    attempt.Reset(AttemptStage.Baking);
+                    OfferBake(attempt);
+                }
+            }
+
+            double spent = Since(begin);
+            CutApplySeconds += spent;
+            MaxCutApplySeconds = Math.Max(MaxCutApplySeconds, spent);
+            if (attempt.meshesBad)
+            {
+                // A mesh could not be made. What was made before it is still the attempt's and goes back with it,
+                // here -- this turn passed the gate -- and once; the input is marked, so that the same meshes are
+                // not made and lost again every round.
+                CutMeshFailures++;
+                LastRefusal = "a collider mesh of a cut convex could not be made: " + attempt.meshFailure;
+                End(SpatialSplitEnd.NotBuildable, true);
+                return;
+            }
+
+            _cutApplyCosts.Add(spent);
+        }
+
+        private void OfferBake(Attempt attempt)
+        {
+            if (_world.Dispatcher.TryEnqueue(WorkPurpose.Maintenance, attempt, out attempt.ticket))
+            {
+                attempt.offered = true;
+            }
+            else
+            {
+                QueueFull++;
+            }
+        }
+
+        // After the bake: what PhysX made of each mesh, read as a cut's check reads its own. One at least a turn;
+        // before each further one what is left of the budget is asked again, and the rest waits for a later turn.
+        private void CheckHulls(in CutSpatialSplitSettings settings, double laterStepSeconds)
+        {
+            long begin = Stopwatch.GetTimestamp();
+            Attempt attempt = _attempt;
+            int read = 0;
+            bool refused = false;
+            using (s_check.Auto())
+            {
+                while (attempt.hullsChecked < attempt.meshCount)
+                {
+                    if (read > 0 && RemainingMainSeconds() < settings.reserveSeconds + laterStepSeconds + (2.0 * ExpectedHullCheckSeconds))
+                    {
+                        break;
+                    }
+
+                    Mesh mesh = attempt.meshes[attempt.hullsChecked];
+                    bool convex = _world.Cook != null && mesh != null
+                        && _world.Cook.ProbeBakedHull(mesh) == UnityEngine.LowLevelPhysics.GeometryType.ConvexMesh;
+                    attempt.hullsChecked++;
+                    read++;
+                    HullsChecked++;
+                    if (!convex)
+                    {
+                        refused = true;
+                        HullsRefused++;
+                        break;
+                    }
+                }
+            }
+
+            double spent = Since(begin);
+            HullCheckSeconds += spent;
+            MaxHullCheckTurnSeconds = Math.Max(MaxHullCheckTurnSeconds, spent);
+            if (read > 0)
+            {
+                _hullCheckCosts.Add(spent / read);
+            }
+
+            if (refused)
+            {
+                // The plane holds and the numbers are whole, but PhysX makes no convex of a part: this input is not
+                // tried again. The parent stands as it was.
+                LastRefusal = "PhysX made no convex of a cut convex's mesh";
+                End(SpatialSplitEnd.NotBuildable, true);
             }
         }
 
@@ -626,7 +903,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             PhysicsOwnerShape shape = owner.Shape;
-            if (shape == null || shape.IsFreed || shape.ConvexCount < 2)
+            // One convex is nothing to put on two sides -- unless it may be cut, wrapped as it can be round two
+            // separate parts of the mesh.
+            if (shape == null || shape.IsFreed || shape.ConvexCount < (settings.cutConvexes ? 1 : 2))
             {
                 return SpatialSplitPass.FewConvexes;
             }
@@ -639,7 +918,7 @@ namespace Zantetsu.PhysicsCut
             // The mark, before the display is asked anything: its answers below are scans of its registrations and
             // of its adopted branches, and a fragment already tried for this very input needs none of them.
             ledger.TryGetAnchorCount(fragment, out int anchors);
-            input = new Input(owner, shape, geometry, anchors);
+            input = new Input(owner, shape, geometry, anchors, _markEpoch);
             if (_suppressed.TryGetValue(fragment, out Input tried) && tried.Equals(input))
             {
                 return SpatialSplitPass.Suppressed;
@@ -772,6 +1051,8 @@ namespace Zantetsu.PhysicsCut
                     anchorEpsilon = profile.AnchorEpsilon,
                     margin = MarginOf(profile),
                     limits = settings.limits,
+                    cutConvexes = settings.cutConvexes,
+                    minCutSideTriangles = settings.minCutSideTriangles,
                     geometryToOwner = input.owner.GeometryLocalToOwner.Value,
                     shapeToOwner = shape.LocalToOwner,
                     indexCount = indexView.Length,
@@ -799,7 +1080,9 @@ namespace Zantetsu.PhysicsCut
                     long banksAt = boundsAt + Align16(4L * s * sizeof(float3));
                     long rangesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
                     long scratchAt = rangesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
-                    long bytes = scratchAt + Align16(CutSpatialSplitSearch.ScratchBytes(convexCount));
+                    long bytes = scratchAt + Align16(Math.Max(
+                        CutSpatialSplitSearch.ScratchBytes(convexCount),
+                        settings.cutConvexes ? CutSpatialSplitSearch.MeshScratchBytes(convexCount, settings.limits) : 0));
                     attempt.block = PhysicsCutBlocks.Take<byte>(checked((int)bytes));
                     byte* block = (byte*)attempt.block.GetUnsafePtr();
                     attempt.output = (uint*)(block + outputAt);
@@ -870,6 +1153,15 @@ namespace Zantetsu.PhysicsCut
                 WorkerSeconds += attempt.workerSeconds;
                 MaxWorkerSeconds = Math.Max(MaxWorkerSeconds, attempt.workerSeconds);
                 LastSearch = attempt.search;
+                if (attempt.search.meshLed) MeshLedSearches++;
+                if (attempt.cut) CutAttempts++;
+            }
+
+            if (attempt.stage == AttemptStage.Baking && !attempt.bakeCounted)
+            {
+                attempt.bakeCounted = true;
+                BakeSeconds += attempt.bakeSeconds;
+                MaxBakeSeconds = Math.Max(MaxBakeSeconds, attempt.bakeSeconds);
             }
 
             if (attempt.cancelled || attempt.failure != null || !attempt.ran)
@@ -914,7 +1206,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            if (!attempt.anchorsDistributed || attempt.kernel.status != ConvexCutOwnerStatus.Ok)
+            if (!attempt.anchorsDistributed || attempt.kernel.status != ConvexCutOwnerStatus.Ok || attempt.meshesBad)
             {
                 end = SpatialSplitEnd.NotBuildable;
                 return false;
@@ -1016,7 +1308,9 @@ namespace Zantetsu.PhysicsCut
                     // 3. The two owners, built and not in the scene: every convex inherited whole, with the masses
                     //    the worker integrated over each side's convexes (the parent's mass shared out between them).
                     long buildBegin = Stopwatch.GetTimestamp();
-                    products = attempt.TakeProducts(_world.Cook != null ? _world.Cook.Cooking : PhysicsCutCook.DefaultCooking);
+                    // (An attempt that cut convexes built its meshes with the cooking it baked them by: that one.)
+                    products = attempt.TakeProducts(
+                        attempt.cut ? attempt.cooking : _world.Cook != null ? _world.Cook.Cooking : PhysicsCutCook.DefaultCooking);
                     PhysicsOwnerPlacement placement = sourceOwner.ReadPlacement();
                     PhysicsOwnerMotion motion = sourceOwner.ReadMotion(placement.position);
                     var build = new PhysicsOwnerBuildInput
@@ -1112,6 +1406,12 @@ namespace Zantetsu.PhysicsCut
                     SwitchSeconds += Since(switchBegin);
 
                     Published++;
+                    if (attempt.cut)
+                    {
+                        PublishedWithCut++;
+                        ConvexesCut += attempt.meshCount / 2;
+                    }
+
                     ActorsAdded += 1;          // two actors where one stood
                     RegistrationsAdded += 1;   // two registrations where one stood (the old one goes at the next adoption)
                     IndicesTransferred += display.SplitIndicesTransferred - transferredBefore;
@@ -1120,6 +1420,7 @@ namespace Zantetsu.PhysicsCut
                     LastPositive = positive;
                     LastNegative = negative;
                     _followCollectOf = Time.frameCount + 1;   // this frame's collection follows this turn; its time is read by the next turn
+                    _followIsCut = attempt.cut;
                     _suppressed.Remove(source);
                 }
                 finally
@@ -1135,8 +1436,9 @@ namespace Zantetsu.PhysicsCut
                     }
 
                     // This call's own hold on the products, let go once however it ended. Switched, the ownership
-                    // moved and letting go gives them back (every part is inherited: nothing of the two shapes
-                    // reads them). Not switched, they were still this call's and go back here.
+                    // moved: where every part is inherited nothing of the two shapes reads them and letting go
+                    // gives them back; where convexes were cut the two shapes hold them for their new parts and
+                    // they go with the last of those. Not switched, they were still this call's and go back here.
                     productsSource?.Release();
                     if (!switched)
                     {
@@ -1148,9 +1450,22 @@ namespace Zantetsu.PhysicsCut
             }
 
             double spent = Since(begin);
-            _publishCosts.Add(spent);
-            MaxPublishTurnSeconds = Math.Max(MaxPublishTurnSeconds, spent);
-            Note(attempt, spent);
+            if (attempt.cut)
+            {
+                CutPublishSeconds += spent;
+                MaxCutPublishTurnSeconds = Math.Max(MaxCutPublishTurnSeconds, spent);
+                _cutPublishCosts.Add(spent);
+            }
+            else
+            {
+                _publishCosts.Add(spent);
+                MaxPublishTurnSeconds = Math.Max(MaxPublishTurnSeconds, spent);
+            }
+
+            if (LastEnd == SpatialSplitEnd.Published && LastPublishedFrame == Time.frameCount)
+            {
+                Note(attempt, spent);
+            }
         }
 
         /// <summary>
@@ -1163,7 +1478,7 @@ namespace Zantetsu.PhysicsCut
         // frame of a publication would be part of what that frame cost.
         private struct SplitEvent
         {
-            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes;
+            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut;
             internal float3 at, normal;
             internal float gap;
             internal double workerSeconds, turnSeconds;
@@ -1192,6 +1507,7 @@ namespace Zantetsu.PhysicsCut
                 indices = attempt.indexCount,
                 positiveTriangles = attempt.search.positiveTriangles, negativeTriangles = attempt.search.negativeTriangles,
                 positiveConvexes = attempt.search.positiveConvexes, negativeConvexes = attempt.search.negativeConvexes,
+                convexesCut = attempt.cut ? attempt.meshCount / 2 : 0,
                 at = _publishedAt, normal = attempt.search.planeOwner.xyz, gap = attempt.search.gap,
                 workerSeconds = attempt.workerSeconds, turnSeconds = turnSeconds,
             });
@@ -1215,7 +1531,8 @@ namespace Zantetsu.PhysicsCut
                     + e.positiveTriangles + " + " + e.negativeTriangles + ", convexes " + e.positiveConvexes + " + " + e.negativeConvexes + ", " + e.indices
                     + " indices transferred; the plane's normal in the owner (" + e.normal.x.ToString("F3", inv) + ", " + e.normal.y.ToString("F3", inv) + ", "
                     + e.normal.z.ToString("F3", inv) + "), the gap " + e.gap.ToString("F4", inv) + " m; worker " + (e.workerSeconds * 1000.0).ToString("F3", inv)
-                    + " ms, the publishing turn " + (e.turnSeconds * 1000.0).ToString("F3", inv) + " ms");
+                    + " ms, the publishing turn " + (e.turnSeconds * 1000.0).ToString("F3", inv) + " ms"
+                    + (e.convexesCut > 0 ? "; convexes cut by the plane " + e.convexesCut : ""));
             }
 
             if (EventsNotKept > 0)
@@ -1301,7 +1618,7 @@ namespace Zantetsu.PhysicsCut
             CollectionsAfterPublication++;
             CollectAfterSeconds += seconds;
             MaxCollectAfterSeconds = Math.Max(MaxCollectAfterSeconds, seconds);
-            _collectAfter.Add(seconds);
+            (_followIsCut ? _cutCollectAfter : _collectAfter).Add(seconds);
         }
 
         /// <summary>
@@ -1415,7 +1732,28 @@ namespace Zantetsu.PhysicsCut
                 .Append((CollectAfterSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest ").Append((MaxCollectAfterSeconds * 1000.0).ToString("F3", inv)).Append(")")
                 .Append("; indices transferred ").Append(IndicesTransferred).Append(" (").Append(IndicesTransferred * sizeof(uint)).Append(" B)")
                 .Append("; actors added ").Append(ActorsAdded).Append(", draw registrations added ").Append(RegistrationsAdded)
-                .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv));
+                .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv))
+                .Append("; ").Append(DescribeConvexCut());
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// The convex-cut branch's tallies, the last part of <see cref="Describe"/>, as a text of its own: a log that
+        /// cuts a long line short (a device's) loses the end of the whole record.
+        /// </summary>
+        public string DescribeConvexCut()
+        {
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            var text = new StringBuilder(512);
+            text.Append("convex cut (").Append(Settings.cutConvexes ? "on, at " + Settings.minCutSideTriangles.ToString(inv) + " triangles or more a side" : "off")
+                .Append("): mesh-led searches ").Append(MeshLedSearches).Append(", attempts with convexes to cut ").Append(CutAttempts)
+                .Append(", published ").Append(PublishedWithCut).Append(" (convexes cut ").Append(ConvexesCut)
+                .Append("), meshes made ").Append(CutMeshesMade).Append(", hulls read ").Append(HullsChecked).Append(" (refused ").Append(HullsRefused)
+                .Append("), turns held with such an attempt left alone ").Append(CutTurnsLeftAlone).Append(", meshes that could not be made ").Append(CutMeshFailures)
+                .Append("; bake worker ms ").Append((BakeSeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxBakeSeconds * 1000.0).ToString("F3", inv))
+                .Append("); Main ms: meshes ").Append((CutApplySeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxCutApplySeconds * 1000.0).ToString("F3", inv))
+                .Append("), hulls ").Append((HullCheckSeconds * 1000.0).ToString("F3", inv)).Append(" (longest turn ").Append((MaxHullCheckTurnSeconds * 1000.0).ToString("F3", inv))
+                .Append("), publishing turns ").Append((CutPublishSeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxCutPublishTurnSeconds * 1000.0).ToString("F3", inv)).Append(")");
             return text.ToString();
         }
 
@@ -1442,13 +1780,17 @@ namespace Zantetsu.PhysicsCut
         /// <summary>What a fragment is made of, as far as a split reads it: an input is the same while all of it is.</summary>
         private readonly struct Input : IEquatable<Input>
         {
-            internal Input(PhysicsFragmentOwner owner, PhysicsOwnerShape shape, VpStoredGeometry geometry, int anchorCount)
+            internal Input(PhysicsFragmentOwner owner, PhysicsOwnerShape shape, VpStoredGeometry geometry, int anchorCount, int epoch)
             {
                 this.owner = owner;
                 this.shape = shape;
                 this.geometry = geometry;
                 this.anchorCount = anchorCount;
+                this.epoch = epoch;
             }
+
+            // Which search the input is an input of: the settings' as they were (a mark, or a result, of another is not this one's).
+            internal readonly int epoch;
 
             internal readonly PhysicsFragmentOwner owner;
             internal readonly PhysicsOwnerShape shape;
@@ -1460,6 +1802,7 @@ namespace Zantetsu.PhysicsCut
             public bool Equals(Input other)
             {
                 return ReferenceEquals(owner, other.owner) && ReferenceEquals(shape, other.shape) && anchorCount == other.anchorCount
+                    && epoch == other.epoch
                     && geometry.submeshStart == other.geometry.submeshStart && geometry.submeshCount == other.geometry.submeshCount
                     && geometry.blockStart == other.geometry.blockStart && geometry.blockCount == other.geometry.blockCount
                     && geometry.vertexStart == other.geometry.vertexStart && geometry.vertexCount == other.geometry.vertexCount
@@ -1467,9 +1810,19 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>Which of its two runs on a worker an attempt is at: the numbers, or the bake of the meshes made from them.</summary>
+        private enum AttemptStage
+        {
+            Numbers = 0,
+            Baking,
+        }
+
         /// <summary>
         /// The one attempt: what it was issued for, what the worker reads and writes, and what it found. It is the
-        /// work itself; <see cref="Begin"/> runs on a background worker and touches nothing of Unity's.
+        /// work itself; <see cref="Begin"/> runs on a background worker and touches nothing of Unity's scene. An
+        /// attempt that cuts convexes is offered a second time, to bake the meshes the main thread made of its
+        /// numbers: one Mesh is in one bake, and neither it nor the shape and blocks the numbers read is given back
+        /// before the work that uses it was collected.
         /// </summary>
         private sealed unsafe class Attempt : IDispatchWork
         {
@@ -1498,6 +1851,21 @@ namespace Zantetsu.PhysicsCut
             internal int vertexLimit;
             internal float supportEpsilon, anchorEpsilon, margin;
             internal SpatialSplitSearchLimits limits;
+            internal bool cutConvexes;
+            internal int minCutSideTriangles;
+
+            // The convex-cut branch. Set by the worker's numbers: whether a convex is cut. Then the main thread's:
+            // the meshes it made of the produced convexes (positive then negative, a cut convex after another), their
+            // ids and boxes, the cooking they are baked by, and how far the reading of the cooked hulls has come.
+            internal AttemptStage stage;
+            internal bool cut, applied, meshesBad, bakeCounted;
+            internal string meshFailure;
+            internal Mesh[] meshes;
+            internal int[] meshIds;
+            internal float3x2[] meshBounds;
+            internal int meshCount, meshesMade, hullsChecked;
+            internal MeshColliderCookingOptions cooking;
+            internal double bakeSeconds;
 
             // Written by the worker.
             internal NativeArray<byte> block;
@@ -1521,6 +1889,12 @@ namespace Zantetsu.PhysicsCut
 
             public void Begin()
             {
+                if (stage == AttemptStage.Baking)
+                {
+                    Bake();
+                    return;
+                }
+
                 long begin = Stopwatch.GetTimestamp();
                 try
                 {
@@ -1528,6 +1902,15 @@ namespace Zantetsu.PhysicsCut
                         vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
                         banks, ranges, convexCount, in shapeToOwner, margin, in limits, scratch, ref search);
                     ran = true;
+                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && cutConvexes)
+                    {
+                        // No plane leaves the convexes whole: one that leaves the triangles whole is looked for.
+                        // An input that is invalid, not finite or over the limits is no reason to look further.
+                        CutSpatialSplitSearch.FindMeshPlane(
+                            vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
+                            banks, ranges, convexCount, in shapeToOwner, margin, minCutSideTriangles, in limits, scratch, ref search);
+                    }
+
                     if (search.outcome != SpatialSplitSearchOutcome.Found)
                     {
                         return;
@@ -1568,21 +1951,41 @@ namespace Zantetsu.PhysicsCut
 
                     int positive = 0;
                     int negative = 0;
+                    int split = 0;
+                    bool mayCut = cutConvexes && search.meshLed && search.crossingConvexes > 0;
                     IReadOnlyList<ConvexSide> sides = classification.Sides;
                     for (int c = 0; c < sides.Count; c++)
                     {
                         if (sides[c] == ConvexSide.Positive) positive++;
                         else if (sides[c] == ConvexSide.Negative) negative++;
-                        else return;
+                        else if (!mayCut) return;
+                        else if (sides[c] == ConvexSide.Split) split++;
+                        else positive++;   // within the cut's own epsilon of the plane: whole, to the positive side, as a cut gives it
                     }
 
-                    if (positive == 0 || negative == 0)
+                    ConvexCutOwnerInput kernelInput = classification.Input;
+                    if (split > 0)
+                    {
+                        // Convexes are cut: something of the physics on each side is what the cut's own scan says, and
+                        // the room for what the clip and the reduction write is the kernel's own worst case for these
+                        // signs -- known only now, so the arena is taken here.
+                        if (!classification.SplitsBothSides)
+                        {
+                            return;
+                        }
+
+                        var capacity = default(ConvexCutOwnerCapacity);
+                        ConvexCutOwnerKernel.QueryCapacity(in kernelInput, ref capacity);
+                        arena.Dispose();
+                        arena = new PhysicsCutArena(in capacity, convexCount);
+                        cut = true;
+                    }
+                    else if (positive == 0 || negative == 0)
                     {
                         return;
                     }
 
                     classified = true;
-                    ConvexCutOwnerInput kernelInput = classification.Input;
                     ConvexCutOwnerOutput kernelOutput = arena.Output;
                     ConvexCutOwnerKernel.Execute(in kernelInput, in kernelOutput, ref kernel);
                 }
@@ -1595,6 +1998,131 @@ namespace Zantetsu.PhysicsCut
                     workerSeconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
                     Volatile.Write(ref _done, 1);
                 }
+            }
+
+            // The second run: PhysX cooks each mesh the main thread made, with the cooking the colliders will ask
+            // for. Plain C# on the pool's worker, as the design has an optional split's bake; no Unity job.
+            private void Bake()
+            {
+                long begin = Stopwatch.GetTimestamp();
+                try
+                {
+                    for (int m = 0; m < meshCount; m++)
+                    {
+                        Physics.BakeMesh(meshIds[m], true, cooking);
+                    }
+                }
+                catch (Exception e)
+                {
+                    failure = e;
+                }
+                finally
+                {
+                    bakeSeconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+                    Volatile.Write(ref _done, 1);
+                }
+            }
+
+            /// <summary>Makes the work one that was not offered yet, for its next run. Main thread, after it was collected.</summary>
+            internal void Reset(AttemptStage next)
+            {
+                stage = next;
+                offered = false;
+                collected = false;
+                cancelled = false;
+                ticket = default;
+                Volatile.Write(ref _done, 0);
+            }
+
+            /// <summary>
+            /// One Mesh a produced convex, as a cut's job writes its own: positions alone, no index, the box measured
+            /// while they are copied. Main thread, after the numbers were collected with convexes cut, and once: a
+            /// failure on the way leaves <see cref="meshesBad"/> set with every mesh made so far still held here --
+            /// the attempt's to give back with the rest (<see cref="Free"/>) -- and nothing is made a second time.
+            /// </summary>
+            internal void MakeMeshes()
+            {
+                if (meshes != null || meshesBad)
+                {
+                    return;
+                }
+
+                ConvexCutOutcome* outcomes = arena.Output.outcomes;
+                int count = 0;
+                for (int c = 0; c < convexCount; c++)
+                {
+                    if (outcomes[c].IsSplit) count += 2;
+                }
+
+                meshes = new Mesh[count];
+                meshIds = new int[count];
+                meshBounds = new float3x2[count];
+                meshCount = count;
+                meshesMade = 0;
+                try
+                {
+                    int m = 0;
+                    for (int c = 0; c < convexCount; c++)
+                    {
+                        if (!outcomes[c].IsSplit) continue;
+                        MakeMesh(m++, outcomes[c].positive);
+                        MakeMesh(m++, outcomes[c].negative);
+                    }
+                }
+                catch (Exception e)
+                {
+                    meshesBad = true;
+                    meshFailure = e.Message;
+                }
+            }
+
+            private void MakeMesh(int m, in ConvexBrepRange range)
+            {
+                int n = range.vertexCount;
+                if (n <= 0)
+                {
+                    throw new InvalidOperationException("the produced convex " + m + " has no vertex");
+                }
+
+                if (m == FailMeshAtForTest)
+                {
+                    throw new InvalidOperationException("refused for a test at mesh " + m);
+                }
+
+                const UnityEngine.Rendering.MeshUpdateFlags Quiet = UnityEngine.Rendering.MeshUpdateFlags.DontRecalculateBounds | UnityEngine.Rendering.MeshUpdateFlags.DontValidateIndices | UnityEngine.Rendering.MeshUpdateFlags.DontNotifyMeshUsers;
+                // Held in the attempt's table before anything is set up on it: whatever fails below, it is given back.
+                var mesh = new Mesh { name = "Zantetsu Spatial Split " + fragment.value + "." + m, hideFlags = HideFlags.HideAndDontSave };
+                meshes[m] = mesh;
+                float3* source = arena.Bank.vertices + range.vertexBase;
+                var positions = new NativeArray<float3>(n, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+                try
+                {
+                    var lower = new float3(float.MaxValue);
+                    var upper = new float3(float.MinValue);
+                    for (int i = 0; i < n; i++)
+                    {
+                        float3 p = source[i];
+                        positions[i] = p;
+                        lower = math.min(lower, p);
+                        upper = math.max(upper, p);
+                    }
+
+                    var box = new Bounds((lower + upper) * 0.5f, upper - lower);
+                    mesh.SetVertexBufferParams(n, new UnityEngine.Rendering.VertexAttributeDescriptor(UnityEngine.Rendering.VertexAttribute.Position, UnityEngine.Rendering.VertexAttributeFormat.Float32, 3));
+                    mesh.SetVertexBufferData(positions, 0, 0, n, 0, Quiet);
+                    mesh.SetIndexBufferParams(0, UnityEngine.Rendering.IndexFormat.UInt16);
+                    mesh.subMeshCount = 1;
+                    mesh.SetSubMesh(0, new UnityEngine.Rendering.SubMeshDescriptor(0, 0, MeshTopology.Triangles) { bounds = box, firstVertex = 0, vertexCount = n }, Quiet);
+                    mesh.bounds = box;
+                    meshBounds[m] = new float3x2(lower, upper);
+                    meshIds[m] = mesh.GetEntityId();
+                }
+                finally
+                {
+                    positions.Dispose();
+                }
+
+                meshesMade++;
             }
 
             public void Collect(WorkCompletion completion)
@@ -1614,8 +2142,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             /// <summary>
-            /// The finished split as a cut's products are made (every convex inherited uncut by the side it lies on):
-            /// the arena, with its outcomes, is the products' from here.
+            /// The finished split as a cut's products are made: a convex inherited uncut by the side it lies on, and
+            /// -- where convexes were cut -- each cut one's two parts with the meshes made and baked for them. The
+            /// arena, with its outcomes, and those meshes are the products' from here.
             /// </summary>
             internal PhysicsCutProducts TakeProducts(MeshColliderCookingOptions cooking)
             {
@@ -1625,25 +2154,52 @@ namespace Zantetsu.PhysicsCut
                 for (int c = 0; c < convexCount; c++)
                 {
                     outcomes[c] = arena.Output.outcomes[c];
-                    if (outcomes[c].InheritsPositive) positive++;
+                    if (outcomes[c].IsSplit)
+                    {
+                        positive++;
+                        negative++;
+                    }
+                    else if (outcomes[c].InheritsPositive) positive++;
                     else negative++;
                 }
 
                 var products = new PhysicsCutProducts(arena, outcomes, in kernel, shapeToOwner, cooking, positive, negative);
                 arena = null;
+                int m = 0;
                 for (int c = 0; c < convexCount; c++)
                 {
-                    products.Add(
-                        outcomes[c].InheritsPositive,
-                        new PhysicsCutPart(c, true, ranges[c], null, new float3x2(new float3(float.NaN), new float3(float.NaN))));
+                    if (!outcomes[c].IsSplit)
+                    {
+                        products.Add(
+                            outcomes[c].InheritsPositive,
+                            new PhysicsCutPart(c, true, ranges[c], null, new float3x2(new float3(float.NaN), new float3(float.NaN))));
+                        continue;
+                    }
+
+                    products.Add(true, new PhysicsCutPart(c, false, outcomes[c].positive, meshes[m], meshBounds[m]));
+                    m++;
+                    products.Add(false, new PhysicsCutPart(c, false, outcomes[c].negative, meshes[m], meshBounds[m]));
+                    m++;
                 }
 
+                meshes = null;   // the products' from here: destroyed with them
                 return products;
             }
 
             /// <summary>Gives back everything the attempt holds, once. Main thread.</summary>
             internal void Free(VpCpuGeometryStorage storage)
             {
+                // Meshes made and not handed to products: the bake that read them was collected, or never began.
+                if (meshes != null)
+                {
+                    for (int m = 0; m < meshes.Length; m++)
+                    {
+                        if (meshes[m] != null) UnityEngine.Object.Destroy(meshes[m]);
+                    }
+
+                    meshes = null;
+                }
+
                 classification?.Dispose();
                 classification = null;
                 if (classificationBlock.IsCreated) classificationBlock.Dispose();

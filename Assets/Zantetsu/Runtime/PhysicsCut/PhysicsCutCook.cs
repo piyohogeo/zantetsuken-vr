@@ -1169,6 +1169,12 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
+        /// <summary>
+        /// What PhysX made of a mesh another owner baked with this cook's options, read as the cut's own check reads
+        /// its meshes (DESIGN 7.9.2: the spatial split's cut convexes). Main thread; the mesh must not be in a bake.
+        /// </summary>
+        internal GeometryType ProbeBakedHull(Mesh mesh) => ProbeHull(mesh);
+
         /// <summary>The geometry PhysX made of the mesh for a convex collider with this cook's options (the baked data is used; a refused mesh is cooked again and refused again).</summary>
         private GeometryType ProbeHull(Mesh mesh)
         {
