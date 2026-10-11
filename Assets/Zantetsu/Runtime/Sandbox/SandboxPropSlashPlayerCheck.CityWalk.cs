@@ -747,6 +747,7 @@ namespace Zantetsu.Sandbox
                 if (_world.SpatialSplit != null && _world.SpatialSplit.Turns > 0)
                 {
                     Log("city walk spatial split (the run): " + _world.SpatialSplit.Describe());
+                    Log("city walk spatial split, its convex cut (the run): " + _world.SpatialSplit.DescribeConvexCut());
                     _world.SpatialSplit.LogEvents();   // each publication with its frame, once
                 }
                 Log("city walk fragment reach (the run): " + CityWalkFragmentReach());

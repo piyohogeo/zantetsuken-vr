@@ -437,5 +437,165 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(Distribute(scene, new float4(1f, 0f, 0f, -1.875f), submeshOffsets: new[] { 0, 48 }, submeshCounts: new[] { 48, 12 }).ok,
                 Is.False, "submeshes that leave indices out");
         }
+
+        // ---- the mesh-led search (the convex-cut extension, 2026-10-11) ----------------------------------------------
+
+        private static SpatialSplitSearchOutcome FindByMesh(
+            Scene scene, out SpatialSplitSearchResult result, int minCutSideTriangles = 1, float margin = Margin, SpatialSplitSearchLimits? limits = null)
+        {
+            VpRenderVertex[] vertices = scene.vertices.ToArray();
+            uint[] indices = scene.Indices;
+            float3[] convexVertices = scene.convexVertices.ToArray();
+            ConvexBrepRange[] ranges = scene.ranges.ToArray();
+            var banks = new ConvexBrepBank[ranges.Length];
+            SpatialSplitSearchLimits l = limits ?? k_limits;
+            var scratch = new byte[CutSpatialSplitSearch.MeshScratchBytes(ranges.Length, in l) + 16];
+            float4x4 identity = float4x4.identity;
+            result = default;
+            fixed (VpRenderVertex* v = vertices)
+            fixed (uint* i = indices)
+            fixed (float3* c = convexVertices)
+            fixed (ConvexBrepRange* r = ranges)
+            fixed (ConvexBrepBank* b = banks)
+            fixed (byte* sc = scratch)
+            {
+                for (int k = 0; k < banks.Length; k++)
+                {
+                    b[k] = new ConvexBrepBank { vertices = c };
+                }
+
+                SpatialSplitSearchOutcome outcome = CutSpatialSplitSearch.FindMeshPlane(
+                    v, vertices.Length, i, indices.Length, in identity, b, r, ranges.Length, in identity, margin, minCutSideTriangles, in l, sc, ref result);
+                Assert.That(result.outcome, Is.EqualTo(outcome), "the outcome returned is the one recorded");
+                return outcome;
+            }
+        }
+
+        /// <summary>A row of <paramref name="count"/> closed boxes along y at one x, from <paramref name="y"/> up: 12 triangles each, apart from one another.</summary>
+        private static void AddColumn(Scene scene, float x, int count, float y = 0f)
+        {
+            for (int k = 0; k < count; k++)
+            {
+                scene.AddGeometry(Scene.Corners(new float3(x, y + (k * 0.25f), 0f), new float3(0.07f)));
+            }
+        }
+
+        /// <summary>
+        /// **One convex wrapped round two separate parts of the mesh is a candidate of the mesh-led search**, and of
+        /// that one only: the convex-led search has nothing to separate. The plane lies in the mesh's gap, every
+        /// triangle whole on one side, and the convex is counted as crossing it -- to be cut.
+        /// </summary>
+        [Test]
+        public void OneConvexRoundTwoPartsOfTheMesh_IsSeparatedByTheMeshLedSearch_WithTheConvexToCut()
+        {
+            var scene = new Scene();
+            scene.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            scene.AddGeometry(Scene.Corners(new float3(3f, -0.5f, 0f), new float3(0.25f)));
+            scene.AddConvex(Scene.Corners(new float3(1.125f, 0f, 0f), new float3(2.125f, 1f, 1f)));
+
+            Assert.That(Find(scene, out _), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "the layout: one convex is on one side of anything");
+            Assert.That(FindByMesh(scene, out SpatialSplitSearchResult found), Is.EqualTo(SpatialSplitSearchOutcome.Found));
+            Assert.That(found.meshLed, Is.True);
+            Assert.That(found.crossingConvexes, Is.EqualTo(1), "the one convex crosses the plane");
+            Assert.That(found.positiveTriangles + found.negativeTriangles, Is.EqualTo(24), "every triangle is on a side");
+            Assert.That(math.min(found.positiveTriangles, found.negativeTriangles), Is.EqualTo(12));
+            Assert.That(math.abs(found.planeOwner.x), Is.EqualTo(1f).Within(1e-5f), "along x, where the gap is");
+            float at = -found.planeOwner.w / found.planeOwner.x;
+            Assert.That(at, Is.GreaterThan(1f + Margin).And.LessThan(2.75f - Margin), "in the gap, the margin kept on both sides");
+            Assert.That(Distribute(scene, found.planeGeometry).ok, Is.True, "and the triangles are shared out by it whole");
+        }
+
+        /// <summary>
+        /// **The triangle minimum is asked of a plane that cuts a convex, of the side with fewer triangles, and
+        /// counts every separate part on that side together.** 17 small closed parts are 204 triangles and pass at
+        /// 200; with one triangle fewer than the minimum the plane is refused and counted as refused for it. A plane
+        /// that cuts no convex is not asked.
+        /// </summary>
+        [Test]
+        public void TheTriangleMinimum_IsAskedOfTheSmallerSideOfAPlaneThatCutsAConvex_AndOfNoOther()
+        {
+            var scene = new Scene();
+            // The second row stands half a step up, so that along y the two rows' boxes overlap: only x separates them.
+            AddColumn(scene, 0f, 20);            // 240 triangles
+            AddColumn(scene, 2f, 17, 0.125f);    // 204 triangles, in seventeen parts
+            scene.AddConvex(Scene.Corners(new float3(1f, 2.5f, 0f), new float3(1.2f, 2.7f, 0.2f)));
+
+            Assert.That(FindByMesh(scene, out SpatialSplitSearchResult atTwoHundred, 200), Is.EqualTo(SpatialSplitSearchOutcome.Found), "204 on the smaller side, 200 asked");
+            Assert.That(math.min(atTwoHundred.positiveTriangles, atTwoHundred.negativeTriangles), Is.EqualTo(204), "the parts of a side are counted together");
+            Assert.That(atTwoHundred.crossingConvexes, Is.EqualTo(1));
+            Assert.That(FindByMesh(scene, out _, 204), Is.EqualTo(SpatialSplitSearchOutcome.Found), "exactly the minimum passes");
+            Assert.That(FindByMesh(scene, out SpatialSplitSearchResult refused, 205), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "one more than the smaller side has");
+            Assert.That(refused.refusedForTriangleMinimum, Is.GreaterThan(0), "refused for the minimum, and counted so");
+
+            // The same mesh with a convex of its own on each side: nothing is cut, and the minimum is not asked.
+            var whole = new Scene();
+            AddColumn(whole, 0f, 20);
+            AddColumn(whole, 2f, 1);     // 12 triangles
+            whole.AddConvex(Scene.Corners(new float3(0f, 2.5f, 0f), new float3(0.2f, 2.7f, 0.2f)));
+            whole.AddConvex(Scene.Corners(new float3(2f, 0f, 0f), new float3(0.2f)));
+            Assert.That(FindByMesh(whole, out SpatialSplitSearchResult simple, 200), Is.EqualTo(SpatialSplitSearchOutcome.Found), "no convex to cut: not asked");
+            Assert.That(simple.crossingConvexes, Is.Zero);
+            Assert.That(simple.positiveConvexes == 1 && simple.negativeConvexes == 1, Is.True);
+        }
+
+        /// <summary>
+        /// **What the mesh-led search does not take**: a mesh in one piece (a bar from one part to the other), parts
+        /// whose gap is within twice the margin, triangles on a side no convex reaches, and a position that is not a
+        /// number -- which is not classified at all.
+        /// </summary>
+        [Test]
+        public void AMeshInOnePiece_AGapWithinTheMargin_ASideNoConvexReaches_AndANonFinitePosition_AreNotTaken()
+        {
+            float3[] wrap = Scene.Corners(new float3(1.125f, 0f, 0f), new float3(2.125f, 1f, 1f));
+
+            var bridged = new Scene();
+            bridged.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            bridged.AddGeometry(Scene.Corners(new float3(3f, -0.5f, 0f), new float3(0.25f)));
+            bridged.AddGeometry(Scene.Corners(new float3(1.875f, -0.5f, 0f), new float3(0.9f, 0.1f, 0.1f)));
+            bridged.AddConvex(wrap);
+            Assert.That(FindByMesh(bridged, out _), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "the bar's triangles fill the gap");
+
+            var near = new Scene();
+            near.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            near.AddGeometry(Scene.Corners(new float3(1.25f + (1.5f * Margin), 0f, 0f), new float3(0.25f)));
+            near.AddConvex(wrap);
+            Assert.That(FindByMesh(near, out _), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "a gap of one and a half margins");
+
+            var apart = new Scene();
+            apart.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            apart.AddGeometry(Scene.Corners(new float3(3f, -0.5f, 0f), new float3(0.25f)));
+            apart.AddConvex(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            Assert.That(FindByMesh(apart, out SpatialSplitSearchResult unreached), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "nothing of the physics would stand for the far part");
+            Assert.That(unreached.refusedForNoConvexOnASide, Is.GreaterThan(0));
+
+            var broken = new Scene();
+            broken.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 1f, 1f)));
+            broken.AddGeometry(Scene.Corners(new float3(3f, -0.5f, 0f), new float3(0.25f)));
+            broken.AddConvex(wrap);
+            VpRenderVertex bad = broken.vertices[9];
+            bad.position = new float3(float.NaN, 0f, 0f);
+            broken.vertices[9] = bad;
+            Assert.That(FindByMesh(broken, out _), Is.EqualTo(SpatialSplitSearchOutcome.NotFinite));
+        }
+
+        /// <summary>
+        /// **Parts no axis separates are found along the mesh's own spread.** Two parts apart along a diagonal, with
+        /// one convex round both: none of the three axes has a gap and there is no second convex to take a direction
+        /// from, so the plane comes from the principal directions of the triangles -- and with none allowed, none is found.
+        /// </summary>
+        [Test]
+        public void PartsNoAxisSeparates_AreSeparatedAlongTheMeshsOwnSpread()
+        {
+            var scene = new Scene();
+            scene.AddGeometry(Scene.Corners(new float3(0f, 0f, 0f), new float3(1f, 0.25f, 0.5f), diamond: true));
+            scene.AddGeometry(Scene.Corners(new float3(1.2f, -1.2f, 0f), new float3(1f, 0.25f, 0.5f), diamond: true));
+            scene.AddConvex(Scene.Corners(new float3(0.6f, -0.6f, 0f), new float3(2.2f, 2.2f, 0.6f)));
+
+            var noMeshDirections = new SpatialSplitSearchLimits(64, 8, 16, 65536, 0, SpatialSplitSearchLimits.DefaultMeshBins);
+            Assert.That(FindByMesh(scene, out _, limits: noMeshDirections), Is.EqualTo(SpatialSplitSearchOutcome.NotFound), "the layout: no axis has a gap");
+            Assert.That(FindByMesh(scene, out SpatialSplitSearchResult found), Is.EqualTo(SpatialSplitSearchOutcome.Found));
+            Assert.That(math.abs(found.planeOwner.x) > 0.3f && math.abs(found.planeOwner.y) > 0.3f, Is.True, "a plane across the diagonal: " + found.planeOwner);
+            Assert.That(Distribute(scene, found.planeGeometry).ok, Is.True);
+        }
     }
 }
