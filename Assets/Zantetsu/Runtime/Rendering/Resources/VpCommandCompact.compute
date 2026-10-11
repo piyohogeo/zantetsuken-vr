@@ -1,6 +1,7 @@
 // The compaction of the selection's argument entries by wave operations: for the Quest 3S Vulkan route's draw by
 // vkCmdDrawIndexedIndirectCount (DESIGN 4.5.10, D-217), which the notes below describe first, and for the Direct3D 12
-// route's draw by ExecuteIndirect with a count buffer (DESIGN 4.5.11, D-218; the last notes). Both by default.
+// route's draw by ExecuteIndirect with a count buffer (DESIGN 4.5.11, D-218; the last notes). The first by default;
+// the second where a launch asks for it (D-219).
 // The selection (VpInstanceCull.compute) still writes every command's
 // 24-byte entry -- the command's number and its five indexed arguments -- in the command's own slot, a command that
 // keeps nothing with an instance count of zero. This pass reads one run of those entries (one draw unit: one material's

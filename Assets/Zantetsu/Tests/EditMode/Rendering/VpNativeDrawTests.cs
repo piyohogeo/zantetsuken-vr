@@ -413,10 +413,11 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(Plugin.CompactCommandsArgument, Is.EqualTo("-zantetsuVpCompactCommands"));
             Assert.That(Plugin.FixedCommandsArgument, Is.EqualTo("-zantetsuVpFixedCommands"));
 
-            // The Direct3D 12 route (DESIGN 4.5.11, D-218): the same -- the compaction unless the fixed draw is asked for.
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null), Is.True);
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }), Is.True, "the compaction is that route's default");
-            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }), Is.True, "accepted, and the default anyway");
+            // The Direct3D 12 route (DESIGN 4.5.11, D-219): the other way round -- the fixed draw unless the compaction
+            // is asked for, and the fixed argument wins there too.
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(null), Is.False);
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", "-zantetsuVp3cNative" }), Is.False, "the fixed draw is that route's default");
+            Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument }), Is.True, "what asks for the compaction there");
             Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.FixedCommandsArgument }), Is.False);
             Assert.That(Plugin.ReadDirect3D12IndirectCountRequest(new[] { "player", Plugin.CompactCommandsArgument, Plugin.FixedCommandsArgument }), Is.False, "the fixed draw wins");
             Assert.That(VpCommandCompaction.VerifyArgument, Is.EqualTo("-zantetsuVpCompactVerify"));
@@ -437,7 +438,7 @@ namespace Zantetsu.Rendering.Tests
                     Assert.That(reason, Does.StartWith("fixed:"));
                     if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12)
                     {
-                        Assert.That(reason, Does.Contain("asked for").And.Contain(Plugin.FixedCommandsArgument));
+                        Assert.That(reason, Does.StartWith("fixed: the default of the Direct3D 12 route").And.Contain(Plugin.CompactCommandsArgument).And.Contain(Plugin.FixedCommandsArgument));
                     }
                     else
                     {
@@ -452,7 +453,7 @@ namespace Zantetsu.Rendering.Tests
                 {
                     // This Editor's device and library: the plugin draws here, has the count draw, and the device has waves.
                     Assert.That(taken, Is.True, askedReason);
-                    Assert.That(askedReason, Does.StartWith("compaction: the default of the Direct3D 12 route").And.Contain("lanes").And.Contain("one set a selection"));
+                    Assert.That(askedReason, Does.StartWith("compaction: asked for on the Direct3D 12 route").And.Contain(Plugin.CompactCommandsArgument).And.Contain("lanes").And.Contain("one set a selection"));
                     Assert.That(Plugin.IndirectCountReady, Is.True);
                     Assert.That(Plugin.TryReadIndirectCountInfo(out bool waves, out uint least, out uint most, out _, out _), Is.True);
                     Assert.That(waves, Is.True);
@@ -483,12 +484,12 @@ namespace Zantetsu.Rendering.Tests
             TestContext.Out.WriteLine(nothing + "\n" + compact + "\n" + both + "\n" + check);
             string fixedDraw = Zantetsu.Sandbox.SandboxLaunchRecord.DescribeCommandCompaction(new[] { "player.exe", Plugin.FixedCommandsArgument });
             TestContext.Out.WriteLine(fixedDraw);
-            Assert.That(nothing, Does.StartWith("yes (").And.Contain("the Direct3D 12 route's default"));
-            Assert.That(compact, Does.StartWith("yes (").And.Contain(Plugin.CompactCommandsArgument).And.Contain("the default anyway"));
+            Assert.That(nothing, Does.StartWith("no (").And.Contain("the Direct3D 12 route's default: the fixed draw"));
+            Assert.That(compact, Does.StartWith("yes (").And.Contain(Plugin.CompactCommandsArgument).And.Not.Contain("the default anyway"));
             Assert.That(both, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
             Assert.That(fixedDraw, Does.StartWith("no (").And.Contain(Plugin.FixedCommandsArgument));
             Assert.That(check, Does.StartWith("yes (").And.Contain("a check run"));
-            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("; command compaction asked: yes ("));
+            Assert.That(Zantetsu.Sandbox.SandboxLaunchRecord.Describe(new[] { "player.exe" }), Does.Contain("; command compaction asked: no ("));
         }
 
         [Test]

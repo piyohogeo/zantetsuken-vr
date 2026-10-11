@@ -587,9 +587,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             // The route is the one a Player's arguments give (D-198): its ordinary arguments are the GPU selection, and
             // VP Stage 3 is asked for by its own argument. The plugin's route is asked for beside the GPU selection.
-            // That route compacts its commands by default (DESIGN 4.5.11, D-218): a compacted take leaves it so, with
-            // the GPU check on -- its tallies are read back view by view here, which a run of the product never does --
-            // and every other take asks for the fixed draw, as -zantetsuVpFixedCommands does.
+            // That route draws fixed by default (DESIGN 4.5.11, D-219): a compacted take asks for the compaction, as
+            // -zantetsuVpCompactCommands does, with the GPU check on -- its tallies are read back view by view here,
+            // which a run of the product never does -- and every other take says the fixed draw itself.
             bool requestedBefore = VpGpuCullSetup.Requested;
             VpBodyRouteRequest nativeBefore = VpNativeDrawSetup.Request;
             bool compactBefore = VpNativeDrawPlugin.Direct3D12IndirectCount, checkBefore = VpCommandCompaction.VerificationEnabled;
@@ -863,7 +863,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                     }
                     else
                     {
-                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("fixed: asked for"), "the fixed draw was asked for");
+                        Assert.That(pluginRoute.CommandCompactionChoice, Does.StartWith("fixed: the default of the Direct3D 12 route"), "the fixed draw, as that route draws by default");
                         Assert.That(new[] { pluginRoute.IndirectCountIssues, pluginRoute.IndirectCountCompactions, pluginRoute.IndirectCountCopies }, Is.EqualTo(new long[3]), "nothing compacted, nothing drawn by a count");
                         Assert.That(countDrawsAfter - countDrawsBefore, Is.Zero, "the plugin recorded no count draw");
                         Assert.That(pluginRoute.ReadCompactionCheck(), Is.Null);
