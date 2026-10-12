@@ -18,19 +18,20 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// DESIGN 7.10's lifetime of cut fragments by the object they came from (<see cref="CutFragmentGroupCollection"/>,
     /// Phase 7.1) through the product's own world: a whole group ended at once and another left, a choice overtaken by
     /// a cut, a placed prop and a building given back their own instance and cut again as uncut ones, what is not
-    /// chosen (near, seen, an original that would come back near, a heavy frame, no budget) and nothing at all while off.
+    /// chosen (seen, an original or a shared thing that would be in view, a heavy frame, no budget, no camera), the
+    /// farther of the groups a turn looked at ended first however near the others lie, and nothing at all while off.
     /// The world is ended by every case. The placed cases are ignored where the licensed inputs are absent.
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
-        private static CutFragmentGroupSettings GroupsOn(int max, float distance = 20f)
+        private static CutFragmentGroupSettings GroupsOn(int max, int examinePerFrame = 8)
         {
-            return new CutFragmentGroupSettings(true, max, distance, 8, CutWorldRoot.CompactionReserveSeconds, 0.00005, 0.0002);
+            return new CutFragmentGroupSettings(true, max, examinePerFrame, CutWorldRoot.CompactionReserveSeconds, 0.00005, 0.0002);
         }
 
         private static CutFragmentGroupSettings GroupsOff()
         {
-            return new CutFragmentGroupSettings(false, 0, 20f, 8, CutWorldRoot.CompactionReserveSeconds, 0.00005, 0.0002);
+            return new CutFragmentGroupSettings(false, 0, 8, CutWorldRoot.CompactionReserveSeconds, 0.00005, 0.0002);
         }
 
         /// <summary>The world's group collection with a budget and a view of the case's own: off until the case switches it on.</summary>
@@ -52,15 +53,59 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             return pieces;
         }
 
+        /// <summary>
+        /// Puts a piece's owner at <paramref name="at"/>, at rest, and says its placement was changed by hand: where a
+        /// case needs a piece to lie, whatever its cut gave it.
+        /// </summary>
+        private static void PutPiece(CutWorldRoot root, LogicalFragmentId piece, Vector3 at)
+        {
+            Assert.That(root.Owners.TryGet(piece, out PhysicsFragmentOwner owner) && owner.Body != null, Is.True, "the layout: a piece with a body of its own: " + piece);
+            owner.Body.linearVelocity = Vector3.zero;
+            owner.Body.angularVelocity = Vector3.zero;
+            owner.Root.transform.position = at;
+            owner.Body.position = at;
+            CutPhysicsStep.NotePlacementInputChanged(piece);
+        }
+
+        /// <summary>
+        /// Frames until <paramref name="done"/>, every turn among them held against the setting's limits -- no more
+        /// groups looked at than the setting says, no more than one ended -- and the watched groups that ended, in the
+        /// order they did.
+        /// </summary>
+        private static IEnumerator TurnsWithinTheLimits(
+            CutWorldRoot root, CutFragmentGroupCollection groups, Func<bool> done, (string name, LogicalFragmentId root)[] watched, List<string> ended, string what)
+        {
+            float deadline = Time.realtimeSinceStartup + DeadlineSeconds;
+            while (!done() && Time.realtimeSinceStartup < deadline)
+            {
+                int perTurn = groups.Settings.examinePerFrame;
+                int walked = groups.WalkedTurns, examined = groups.Examined, retired = groups.GroupsRetired;
+                yield return null;
+                int turns = groups.WalkedTurns - walked;
+                Assert.That(groups.Examined - examined, Is.LessThanOrEqualTo(perTurn * turns), "no more groups looked at in a turn than the setting says (" + perTurn + ")");
+                Assert.That(groups.GroupsRetired - retired, Is.LessThanOrEqualTo(turns), "no more than one group ended in a turn");
+                foreach ((string name, LogicalFragmentId group) in watched)
+                {
+                    if (!ended.Contains(name) && root.Ledger.LiveCutCountOf(group) == 0)
+                    {
+                        ended.Add(name);
+                    }
+                }
+            }
+
+            Assert.That(done(), Is.True, what + ": it had not happened within the deadline");
+        }
+
         /// <summary>What a test gives as an origin: bounds it says, and what was asked of it.</summary>
         private sealed class OriginDouble : ICutGroupOrigin
         {
             public Bounds restore;
+            public Bounds? shared;
             public bool mayEnd = true;
             public int ended, returned, rearmed;
             public CutGroupKind Kind => CutGroupKind.Prop;
             public bool TryGetRestoreBounds(out Bounds world) { world = restore; return true; }
-            public bool TryGetSharedBounds(out Bounds world) { world = default; return false; }
+            public bool TryGetSharedBounds(out Bounds world) { world = shared ?? default; return shared.HasValue; }
             public bool MayEndNow(out string why) { why = mayEnd ? null : "said busy"; return mayEnd; }
             public void EndShared(string why) => ended++;
             public bool TryReturn() { returned++; return true; }
@@ -234,13 +279,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
-        /// **Near, seen, an original that would come back near, a busy origin, a heavy frame and a short budget: not
-        /// ended; off, nothing is looked at.** Groups over the maximum, each failing one condition, stand through the
-        /// turns; the one that fails none is ended, and its origin is asked to end what it shares, to return once the
-        /// display has let the pieces go, and to be a cut target again -- in that order, once each.
+        /// **Seen, an original or a shared thing that would be in view, a busy origin, a heavy frame and a short
+        /// budget: not ended; off, nothing is looked at. What no eye can see is ended however near, the farther
+        /// first.** Groups over the maximum, each failing one condition, stand through the turns. The ones that fail
+        /// none are ended one a turn, the farthest of those the turn looked at first -- a group 12 m behind the view
+        /// (inside the 20 m once asked) after the one 62 m away although the walk met it first, and then two whose
+        /// pieces lie far and whose shared thing, or whose original's place, lies a few metres behind the view: what a
+        /// group shares and where its original would stand are part of how far it is. The first one's origin is asked
+        /// to end what it shares, to return once the display has let the pieces go, and to be a cut target again -- in
+        /// that order, once each.
         /// </summary>
         [UnityTest]
-        public IEnumerator FragmentGroups_NearSeenOrBusy_IsNotEnded_AndTheOriginIsAskedInOrder()
+        public IEnumerator FragmentGroups_SeenOrBusy_IsNotEnded_TheUnseenEndFartherFirstHoweverNear_AndTheOriginIsAskedInOrder()
         {
             CutWorldRoot root = NewWorld(out Shader _);
             root.Driver.RemainingMainSeconds = () => 1.0;
@@ -248,30 +298,43 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
             groups.RemainingMainSeconds = () => remaining[0];
             LogicalFragmentId seen = AddBody(root, new Vector3(0f, 0f, 40f));           // in view, 48 m away
-            LogicalFragmentId near = AddBody(root, new Vector3(0f, 0f, -20f));          // behind the view, 12 m away
+            LogicalFragmentId near = AddBody(root, new Vector3(0f, 0f, -20f));          // behind the view, 12 m away: unseen
             LogicalFragmentId backNear = AddBody(root, new Vector3(8f, 0f, -70f));      // far and unseen, its original said to stand in view
             LogicalFragmentId busy = AddBody(root, new Vector3(16f, 0f, -70f));         // far and unseen, its origin busy
-            LogicalFragmentId free = AddBody(root, new Vector3(-8f, 0f, -70f));         // far and unseen, nothing against it
+            LogicalFragmentId free = AddBody(root, new Vector3(-8f, 0f, -70f));         // far and unseen, nothing against it: 62 m
+            LogicalFragmentId sharedSeen = AddBody(root, new Vector3(24f, 0f, -70f));   // far and unseen, what its pieces share said to stand in view
+            LogicalFragmentId backClose = AddBody(root, new Vector3(-24f, 0f, -70f));   // far and unseen, its original said to stand 1.5 m behind the view
+            LogicalFragmentId sharedClose = AddBody(root, new Vector3(-16f, 0f, -70f)); // far and unseen, what its pieces share said to lie 3.5 m behind the view
             var far = new Bounds(new Vector3(-8f, 0f, -70f), Vector3.one);
             var backNearOrigin = new OriginDouble { restore = new Bounds(new Vector3(4f, 0f, 40f), Vector3.one) };
             var busyOrigin = new OriginDouble { restore = new Bounds(new Vector3(16f, 0f, -70f), Vector3.one), mayEnd = false };
             var freeOrigin = new OriginDouble { restore = far };
+            var sharedSeenOrigin = new OriginDouble { restore = new Bounds(new Vector3(24f, 0f, -70f), Vector3.one), shared = new Bounds(new Vector3(-4f, 0f, 40f), Vector3.one) };
+            var backCloseOrigin = new OriginDouble { restore = new Bounds(new Vector3(0f, 0f, -10f), Vector3.one) };
+            var sharedCloseOrigin = new OriginDouble { restore = new Bounds(new Vector3(-16f, 0f, -70f), Vector3.one), shared = new Bounds(new Vector3(0f, 0f, -12f), Vector3.one) };
+
+            // The walk's order: the near one before the free one, the one whose original is close before the one whose
+            // shared thing is. Neither is the order they end in.
             groups.Register(seen, null);
             groups.Register(near, null);
             groups.Register(backNear, backNearOrigin);
             groups.Register(busy, busyOrigin);
             groups.Register(free, freeOrigin);
+            groups.Register(sharedSeen, sharedSeenOrigin);
+            groups.Register(backClose, backCloseOrigin);
+            groups.Register(sharedClose, sharedCloseOrigin);
             yield return null;
             var sides = new LogicalFragmentId[2];
             var freeSides = new LogicalFragmentId[2];
-            foreach (LogicalFragmentId body in new[] { seen, near, backNear, busy })
+            foreach (LogicalFragmentId body in new[] { seen, near, backNear, busy, sharedSeen, backClose, sharedClose })
             {
                 yield return CutInTwo(root, body, new float4(0f, 1f, 0f, 0f), sides);
             }
 
             yield return CutInTwo(root, free, new float4(0f, 1f, 0f, 0f), freeSides);
             yield return Until(() => root.Driver.Transactions.Count == 0, "every cut's record is over");
-            Assert.That(root.Ledger.LiveCutFragmentCount, Is.EqualTo(10));
+            Assert.That(root.Ledger.LiveCutFragmentCount, Is.EqualTo(16));
+            Assert.That(groups.GroupCount, Is.EqualTo(groups.Settings.examinePerFrame), "the layout: every group is within one turn's looking");
 
             // Off: no turn, nothing looked at.
             for (int i = 0; i < 4; i++) yield return null;
@@ -291,8 +354,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             remaining[0] = CutWorldRoot.CompactionReserveSeconds + (2.0 * groups.ExpectedExamineSeconds(1)) + 1.0e-5;
             Assert.That(remaining[0], Is.LessThan(CutWorldRoot.CompactionReserveSeconds + (2.0 * (groups.ExpectedExamineSeconds(2) + groups.ExpectedSeconds(2)))),
                 "the layout: not enough for a group of two");
-            yield return Until(() => groups.PassedAs(CutGroupPass.BudgetShort) >= 5, "every group was passed over for the budget");
-            Assert.That(groups.PassedAs(CutGroupPass.Seen) + groups.PassedAs(CutGroupPass.Near) + groups.PassedAs(CutGroupPass.SharedBusy), Is.Zero,
+            yield return Until(() => groups.PassedAs(CutGroupPass.BudgetShort) >= 8, "every group was passed over for the budget");
+            Assert.That(groups.PassedAs(CutGroupPass.Seen) + groups.PassedAs(CutGroupPass.SharedBusy) + groups.Candidates, Is.Zero,
                 "none of them was read: the budget is asked before a group's pieces are");
             Assert.That(groups.GroupsRetired, Is.Zero);
             remaining[0] = 0.0;
@@ -306,25 +369,247 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(groups.Examined, Is.EqualTo(examinedBefore));
             yield return null;
 
-            // With the budget open: the free group ends; the others stand, each for its own reason.
+            // With the budget open: the free group ends first, the farthest of the four no eye can see -- although
+            // the walk met the near one before it; the others stand, each for its own reason.
+            var watched = new[]
+            {
+                ("seen", seen), ("near", near), ("backNear", backNear), ("busy", busy), ("free", free),
+                ("sharedSeen", sharedSeen), ("backClose", backClose), ("sharedClose", sharedClose),
+            };
+            var ended = new List<string>();
             remaining[0] = 1.0;
-            yield return Until(() => groups.GroupsRetired == 1, "the free group was collected");
-            Assert.That(IsRetired(root, freeSides[0]) && IsRetired(root, freeSides[1]), Is.True);
+            yield return TurnsWithinTheLimits(root, groups, () => groups.GroupsRetired >= 1, watched, ended, "the free group was collected");
+            Assert.That(groups.GroupsRetired, Is.EqualTo(1));
+            Assert.That(IsRetired(root, freeSides[0]) && IsRetired(root, freeSides[1]), Is.True, "the farthest of those looked at first");
+            Assert.That(groups.LastRetiredDistance, Is.InRange(60f, 63f), "how far it was: " + groups.LastRetiredDistance);
+            Assert.That(root.Ledger.LiveCutCountOf(near), Is.EqualTo(2), "the near one, met first by the walk, was left for it");
+            Assert.That(groups.CandidatesLeft, Is.EqualTo(3), "three that could have been ended were left for the farther one");
             Assert.That(freeOrigin.ended, Is.EqualTo(1), "asked to end what it shares, in the retirement");
             Assert.That(freeOrigin.returned, Is.Zero, "not back in the frame its pieces went: the display still draws them");
-            yield return Until(() => groups.Returned == 1, "its original stands again");
+            yield return TurnsWithinTheLimits(root, groups, () => freeOrigin.returned == 1, watched, ended, "its original stands again");
             Assert.That(root.Display.HoldsAnythingOf(free), Is.False, "only once the display holds nothing of the group");
-            yield return Until(() => groups.Rearmed == 1, "and is a cut target again");
+            yield return TurnsWithinTheLimits(root, groups, () => freeOrigin.rearmed == 1, watched, ended, "and is a cut target again");
             Assert.That(new[] { freeOrigin.ended, freeOrigin.returned, freeOrigin.rearmed }, Is.EqualTo(new[] { 1, 1, 1 }), "once each");
             Assert.That(groups.IsKnown(free), Is.False, "its next cut is a new group");
+
+            // Then the near one, 12 m behind the view; then the two whose pieces are as far as the free one's and
+            // whose shared thing (3.5 m) or original's place (1.5 m) is close: ranked by that, the nearest of all.
+            yield return TurnsWithinTheLimits(root, groups, () => groups.GroupsRetired >= 4 && groups.Rearmed >= 3, watched, ended, "every group no eye can see was collected");
+            Assert.That(ended, Is.EqualTo(new[] { "free", "near", "sharedClose", "backClose" }), "the farther first, by the nearest bounds of each");
+            Assert.That(groups.LastRetiredDistance, Is.InRange(1.4f, 1.6f), "the last one's distance is its original's place's: " + groups.LastRetiredDistance);
+            Assert.That(new[] { sharedCloseOrigin.ended, sharedCloseOrigin.returned, backCloseOrigin.ended, backCloseOrigin.returned }, Is.EqualTo(new[] { 1, 1, 1, 1 }));
             for (int i = 0; i < 12; i++) yield return null;
-            Assert.That(groups.GroupsRetired, Is.EqualTo(1), "the others stand");
-            Assert.That(groups.PassedAs(CutGroupPass.Seen), Is.GreaterThan(0), "one in view, and one whose original would come back in view");
-            Assert.That(groups.PassedAs(CutGroupPass.Near), Is.GreaterThan(0), "one near");
+            Assert.That(groups.GroupsRetired, Is.EqualTo(4), "the others stand");
+            Assert.That(groups.PassedAs(CutGroupPass.Seen), Is.GreaterThan(0), "one in view, one whose original would come back in view, one whose shared thing is in view");
             Assert.That(groups.PassedAs(CutGroupPass.SharedBusy), Is.GreaterThan(0), "one whose origin is busy");
-            Assert.That(root.Ledger.LiveCutCountOf(backNear), Is.EqualTo(2), "one whose original would come back in view");
-            Assert.That(new[] { backNearOrigin.ended, busyOrigin.ended }, Is.EqualTo(new[] { 0, 0 }));
+            Assert.That(new[] { root.Ledger.LiveCutCountOf(seen), root.Ledger.LiveCutCountOf(backNear), root.Ledger.LiveCutCountOf(busy), root.Ledger.LiveCutCountOf(sharedSeen) },
+                Is.EqualTo(new[] { 2, 2, 2, 2 }), "in view; its original would come back in view; busy; what it shares is in view");
+            Assert.That(new[] { backNearOrigin.ended, busyOrigin.ended, sharedSeenOrigin.ended }, Is.EqualTo(new[] { 0, 0, 0 }));
             Assert.That(root.Ledger.LiveCutFragmentCount, Is.EqualTo(8));
+            TestContext.Out.WriteLine(groups.Describe());
+            groups.Settings = GroupsOff();
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **Of the groups one turn looked at, the farther ends first, and a group is as far as its nearest piece.**
+        /// Three groups behind the view, none to be seen: one 15 m away (inside the 20 m once asked), one 32 m away,
+        /// and one 82 m away with one of its two pieces lying 3 m behind the view. The walk meets them in that order.
+        /// With all three inside a turn's looking they end 32 m, 15 m, 3 m: the farther first, the one with a piece at
+        /// 3 m last however far its other piece is, and the one at 15 m ended all the same. Before that, with no camera
+        /// at all, every group is passed over as not judged and nothing ends.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_OfTheUnseenLookedAtInOneTurn_TheFartherEndsFirst_ByItsNearestPiece()
+        {
+            yield return FartherFirstCase(8, true, new[] { "middle", "close", "strayed" }, new[] { 32f, 15f, 3f }, 3);
+        }
+
+        /// <summary>
+        /// **It is the farthest of the groups a turn looked at, not of all groups; the setting's count is kept.** The
+        /// same three groups with two looked at a turn: the first turn sees the one 15 m away and the one with a piece
+        /// at 3 m, and ends the one at 15 m -- the one 32 m away, farther than both, was not looked at. The walk goes
+        /// on: the next turn looks at the one at 32 m and, come round, at the one left, read again, and ends the one
+        /// at 32 m; the one left twice ends last. No turn looks at more than two groups or ends more than one.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_TheFarthestOfThoseATurnLookedAt_NotOfAll_WithinTheCountPerTurn()
+        {
+            yield return FartherFirstCase(2, false, new[] { "close", "middle", "strayed" }, new[] { 15f, 32f, 3f }, 2);
+        }
+
+        private IEnumerator FartherFirstCase(int examinePerFrame, bool withoutACameraFirst, string[] order, float[] distances, int left)
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+
+            // The view looks along +z from z = -8: everything here lies behind it.
+            LogicalFragmentId close = AddBody(root, new Vector3(0f, 0f, -23f));
+            LogicalFragmentId strayed = AddBody(root, new Vector3(0f, 0f, -90f));
+            LogicalFragmentId middle = AddBody(root, new Vector3(0f, 0f, -40f));
+            groups.Register(close, null);
+            groups.Register(strayed, null);
+            groups.Register(middle, null);
+            yield return null;
+            var closeSides = new LogicalFragmentId[2];
+            var strayedSides = new LogicalFragmentId[2];
+            var middleSides = new LogicalFragmentId[2];
+            yield return CutInTwo(root, close, new float4(0f, 1f, 0f, 0f), closeSides);
+            yield return CutInTwo(root, strayed, new float4(0f, 1f, 0f, 0f), strayedSides);
+            yield return CutInTwo(root, middle, new float4(0f, 1f, 0f, 0f), middleSides);
+            yield return Until(() => root.Driver.Transactions.Count == 0, "every cut's record is over");
+            PutPiece(root, closeSides[0], new Vector3(0f, 1.5f, -23f));
+            PutPiece(root, closeSides[1], new Vector3(0f, -1.5f, -23f));
+            PutPiece(root, middleSides[0], new Vector3(0f, 1.5f, -40f));
+            PutPiece(root, middleSides[1], new Vector3(0f, -1.5f, -40f));
+            PutPiece(root, strayedSides[0], new Vector3(0f, 0f, -90f));
+            PutPiece(root, strayedSides[1], new Vector3(0f, 0f, -11f));   // one piece of the far group: 3 m behind the view
+            yield return new WaitForFixedUpdate();
+            yield return null;
+            Assert.That(root.Ledger.LiveCutFragmentCount, Is.EqualTo(6), "the layout: three groups of two");
+
+            if (withoutACameraFirst)
+            {
+                // No camera, and none to fall back on: nothing is judged, nothing is chosen.
+                Camera view = groups.ViewCamera;
+                groups.ViewCamera = null;
+                Assert.That(Camera.main == null, Is.True, "the layout: no main camera to fall back on");
+                groups.Settings = GroupsOn(0, examinePerFrame);
+                yield return Until(() => groups.PassedAs(CutGroupPass.NotJudged) >= 6, "every group was passed over for want of a view, twice");
+                groups.Settings = GroupsOff();
+                Assert.That(groups.Candidates + groups.GroupsRetired, Is.Zero, "without a view nothing is chosen");
+                groups.ViewCamera = view;
+            }
+
+            var watched = new[] { ("close", close), ("strayed", strayed), ("middle", middle) };
+            var ended = new List<string>();
+            var were = new List<float>();
+            int candidatesWere = groups.Candidates;
+            groups.Settings = GroupsOn(0, examinePerFrame);
+            for (int n = 1; n <= 3; n++)
+            {
+                int count = n;
+                yield return TurnsWithinTheLimits(root, groups, () => groups.GroupsRetired >= count, watched, ended, "group " + n + " was collected");
+                Assert.That(groups.GroupsRetired, Is.EqualTo(n), "one at a time");
+                Assert.That(groups.LastRetiredFragments, Is.EqualTo(2), "whole");
+                were.Add(groups.LastRetiredDistance);
+            }
+
+            TestContext.Out.WriteLine("ended " + string.Join(", ", ended) + " at " + string.Join(", ", were.Select(d => d.ToString("F2"))) + " m; " + groups.Describe());
+            Assert.That(ended, Is.EqualTo(order), "the order they ended in");
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(were[i], Is.InRange(distances[i] - 2f, distances[i] + 1f), ended[i] + ": as far as its nearest piece");
+            }
+
+            Assert.That(groups.CandidatesLeft, Is.EqualTo(left), "groups that could have been ended and were left for a farther one");
+            Assert.That(groups.Candidates - candidatesWere, Is.EqualTo(3 + left), "each of them was looked at again before it ended");
+            Assert.That(root.Ledger.LiveCutFragmentCount, Is.Zero);
+            Assert.That(groups.GroupCount, Is.Zero);
+            Assert.That(root.Display.IsHalted, Is.False);
+            Assert.That(root.TerminationRequested, Is.False);
+            groups.Settings = GroupsOff();
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **One piece in view keeps a whole group however far it is; a group left for a farther one is read again as
+        /// it then is.** Three groups: one 62 m behind the view, one 15 m behind it, and one 82 m behind it with one of
+        /// its two pieces 158 m ahead, in view. The first turn ends the one at 62 m and leaves the one at 15 m; the one
+        /// with a piece in view is passed over as seen. A choice of the ended group kept from before is refused, with
+        /// nothing ended twice. The group that was left is then moved: a piece of it into view -- it stands; back out of
+        /// view and cut again -- it ends with its three pieces, as it now is. The far group stands through all of it,
+        /// whole, and ends once its piece is out of view again.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_OnePieceInViewKeepsAGroupHoweverFar_AndAGroupLeftForAFartherOne_IsReadAgainAsItThenIs()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[] { 0.0 };   // nothing is looked at while this is zero: the case opens and closes the turns by it
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+            groups.RemainingMainSeconds = () => remaining[0];
+            LogicalFragmentId left = AddBody(root, new Vector3(0f, 0f, -23f));
+            LogicalFragmentId inView = AddBody(root, new Vector3(0f, 0f, -90f));
+            LogicalFragmentId farther = AddBody(root, new Vector3(0f, 0f, -70f));
+            groups.Register(left, null);
+            groups.Register(inView, null);
+            groups.Register(farther, null);
+            yield return null;
+            var leftSides = new LogicalFragmentId[2];
+            var viewSides = new LogicalFragmentId[2];
+            var fartherSides = new LogicalFragmentId[2];
+            yield return CutInTwo(root, left, new float4(0f, 1f, 0f, 0f), leftSides);
+            yield return CutInTwo(root, inView, new float4(0f, 1f, 0f, 0f), viewSides);
+            yield return CutInTwo(root, farther, new float4(0f, 1f, 0f, 0f), fartherSides);
+            yield return Until(() => root.Driver.Transactions.Count == 0, "every cut's record is over");
+            PutPiece(root, leftSides[0], new Vector3(0f, 1.5f, -23f));
+            PutPiece(root, leftSides[1], new Vector3(0f, -1.5f, -23f));
+            PutPiece(root, fartherSides[0], new Vector3(0f, 1.5f, -70f));
+            PutPiece(root, fartherSides[1], new Vector3(0f, -1.5f, -70f));
+            PutPiece(root, viewSides[0], new Vector3(0f, 0f, -90f));
+            PutPiece(root, viewSides[1], new Vector3(0f, 0f, 150f));   // one piece of the far group: far ahead, in view
+            yield return new WaitForFixedUpdate();
+            yield return null;
+            Assert.That(groups.TryChoose(farther, out CutGroupCandidate kept), Is.True, "the layout: a choice kept from before the walk");
+            Assert.That(float.IsPositiveInfinity(kept.NearestDistance), Is.True, "chosen without a view: no distance");
+
+            // The first turn: the one at 62 m ends, the one at 15 m is left, the one with a piece in view is seen.
+            groups.Settings = GroupsOn(0);
+            remaining[0] = 1.0;
+            yield return Until(() => groups.GroupsRetired >= 1, "the farther group was collected");
+            remaining[0] = 0.0;
+            Assert.That(groups.GroupsRetired, Is.EqualTo(1));
+            Assert.That(new[] { root.Ledger.LiveCutCountOf(farther), root.Ledger.LiveCutCountOf(left), root.Ledger.LiveCutCountOf(inView) }, Is.EqualTo(new[] { 0, 2, 2 }),
+                "the farther one ended; the nearer one was left; the one with a piece in view stands");
+            Assert.That(groups.LastRetiredDistance, Is.InRange(60f, 63f), "how far it was: " + groups.LastRetiredDistance);
+            Assert.That(groups.CandidatesLeft, Is.EqualTo(1), "the nearer one could have been ended and was left for it");
+            Assert.That(groups.PassedAs(CutGroupPass.Seen), Is.EqualTo(1), "the far group with a piece in view: seen");
+
+            // The choice kept from before: its group is ended, and is not ended again.
+            int refused = groups.Refused;
+            Assert.That(groups.TryApply(in kept, out CutGroupPass refusal), Is.False, "a group ended is not ended again");
+            Assert.That(refusal, Is.EqualTo(CutGroupPass.NothingToEnd));
+            Assert.That(new[] { groups.GroupsRetired, groups.FragmentsRetired, groups.Refused - refused }, Is.EqualTo(new[] { 1, 2, 1 }), "nothing ended twice");
+
+            // The group that was left has a piece in view now: read again with the view as it is, it stands.
+            int seen = groups.PassedAs(CutGroupPass.Seen), candidates = groups.Candidates;
+            PutPiece(root, leftSides[0], new Vector3(0f, 1.5f, 30f));
+            remaining[0] = 1.0;
+            yield return Until(() => groups.PassedAs(CutGroupPass.Seen) >= seen + 4, "two turns looked at both groups, each with a piece in view");
+            remaining[0] = 0.0;
+            Assert.That(groups.GroupsRetired, Is.EqualTo(1), "not ended for having been a candidate before");
+            Assert.That(groups.Candidates, Is.EqualTo(candidates), "no candidate while a piece of each is in view");
+            Assert.That(root.Ledger.LiveCutCountOf(left), Is.EqualTo(2));
+
+            // Out of view again and cut once more while nothing is looked at: it ends as it now is, three pieces.
+            PutPiece(root, leftSides[0], new Vector3(0f, 1.5f, -23f));
+            var more = new LogicalFragmentId[2];
+            yield return CutInTwo(root, leftSides[0], new float4(1f, 0f, 0f, 0f), more);
+            yield return Until(() => root.Driver.Transactions.Count == 0, "the second cut's record is over");
+            Assert.That(root.Ledger.LiveCutCountOf(left), Is.EqualTo(3), "the layout: three pieces now");
+            Assert.That(groups.GroupsRetired, Is.EqualTo(1), "the layout: nothing was looked at meanwhile");
+            remaining[0] = 1.0;
+            yield return Until(() => groups.GroupsRetired >= 2, "the group that was left was collected");
+            remaining[0] = 0.0;
+            Assert.That(groups.GroupsRetired, Is.EqualTo(2));
+            Assert.That(groups.LastRetiredFragments, Is.EqualTo(3), "every piece it has now, the new ones with it");
+            Assert.That(root.Ledger.LiveCutCountOf(left), Is.Zero);
+            Assert.That(IsRetired(root, more[0]) && IsRetired(root, more[1]) && IsRetired(root, leftSides[1]), Is.True);
+
+            // The far group, one piece of it in view all the while: whole, untouched.
+            Assert.That(root.Ledger.IsCurrentTarget(viewSides[0]) && root.Ledger.IsCurrentTarget(viewSides[1]), Is.True, "however far, a group with a piece in view stands whole");
+            Assert.That(root.Owners.TryGet(viewSides[0], out _) && root.Owners.TryGet(viewSides[1], out _), Is.True);
+
+            // Its piece out of view again: nothing of it can be seen, and it ends.
+            PutPiece(root, viewSides[1], new Vector3(0f, 3f, -90f));
+            remaining[0] = 1.0;
+            yield return Until(() => groups.GroupsRetired >= 3, "the far group was collected once nothing of it was in view");
+            Assert.That(groups.LastRetiredDistance, Is.InRange(79f, 83f), "how far it was: " + groups.LastRetiredDistance);
+            Assert.That(root.Ledger.LiveCutFragmentCount, Is.Zero);
+            Assert.That(root.Display.IsHalted, Is.False);
+            Assert.That(root.TerminationRequested, Is.False);
             TestContext.Out.WriteLine(groups.Describe());
             groups.Settings = GroupsOff();
             yield return EndWorld(root);
@@ -615,23 +900,23 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 TestContext.Out.WriteLine("building group: " + pieces.Count + " display fragments, members " + group.MemberCount);
 
                 // The view stands 40 m beyond the hull's far face, looking away: the hull and where the building would
-                // come back are far and unseen. One display piece is then 25 m nearer than its hull (as a drop moves a
-                // piece apart from the group's body): it has no shape of its own, and what is drawn of it is what is
-                // judged -- near, so the building is not ended for its hull's sake.
+                // come back are behind it, unseen. One display piece is then put ahead of the view, 80 m and more from
+                // it (as a drop moves a piece apart from the group's body): it has no shape of its own, and what is
+                // drawn of it is what is judged -- in view, so the building is not ended for its hull's sake.
                 Bounds hull = group.Collider.bounds;
                 groups.ViewCamera.transform.position = new Vector3(hull.center.x, hull.center.y, hull.max.z + 40f);
                 Assert.That(root.Owners.TryGet(pieces[0], out PhysicsFragmentOwner pieceOwner) && pieceOwner.IsDisplayOnly, Is.True, "the layout: a display piece without physics of its own");
                 Transform pieceRoot = pieceOwner.Root.transform;
                 Vector3 pieceWas = pieceRoot.position;
-                pieceRoot.position = pieceWas + new Vector3(0f, 0f, 25f);
+                pieceRoot.position = pieceWas + new Vector3(0f, 0f, hull.size.z + 120f);
                 CutPhysicsStep.NotePlacementInputChanged(pieces[0]);
                 groups.Settings = GroupsOn(0);
-                yield return Until(() => groups.PassedAs(CutGroupPass.Near) > 0, "the building was passed over for its near piece");
+                yield return Until(() => groups.PassedAs(CutGroupPass.Seen) > 0, "the building was passed over for its piece in view");
                 for (int f = 0; f < 6; f++) yield return null;
-                Assert.That(groups.GroupsRetired, Is.Zero, "not ended while a piece of it is drawn near");
+                Assert.That(groups.GroupsRetired, Is.Zero, "not ended while a piece of it is drawn in view");
                 Assert.That(root.Hulls.GroupCount, Is.EqualTo(hullGroups + 1));
 
-                // The piece back with its hull: every bounds of the building is far and unseen, and it ends whole.
+                // The piece back with its hull: every bounds of the building is unseen, and it ends whole.
                 pieceRoot.position = pieceWas;
                 CutPhysicsStep.NotePlacementInputChanged(pieces[0]);
                 yield return Until(() => groups.GroupsRetired == 1, "the building's group was collected");
