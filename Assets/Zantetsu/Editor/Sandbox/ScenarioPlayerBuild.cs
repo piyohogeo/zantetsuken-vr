@@ -13,7 +13,7 @@ namespace Zantetsu.EditorTools.Sandbox
     /// is loaded; nothing of a world is made before that choice.
     /// <para>
     /// The city scenes are the licensed ones of this working copy and are not in the repository: this entry names
-    /// them and refuses to build where one is missing. The Players of one scene (each scene's own build entry) go on
+    /// them in commercial mode. With no private data, auto mode builds the noncommercial Bunny scene. The Players of one scene (each scene's own build entry) go on
     /// working as they did: such a Player runs the launch's scenario in its one scene.
     /// </para>
     /// </summary>
@@ -84,8 +84,9 @@ namespace Zantetsu.EditorTools.Sandbox
             {
                 PlayerSettings.enableFrameTimingStats = true;
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build");
-                built = !string.IsNullOrEmpty(directory)
-                    && CutWorldSandboxPlayerBuild.Build(directory, new[] { EnsureBootScene(), CityScenePath, NpcScenePath });
+                var scenes = DemoBuildPolicy.SelectScenes(new[] { CityScenePath, NpcScenePath }, out bool demo);
+                using (DemoBuildPolicy.Scope(demo, scenes))
+                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes);
             }
             catch (Exception e)
             {

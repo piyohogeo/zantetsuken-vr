@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &2040804769315701607
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3273336373603288914}
+  - component: {fileID: 5587068590987592933}
+  m_Layer: 0
+  m_Name: BunnyWorld
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3273336373603288914
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2040804769315701607}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5587068590987592933
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2040804769315701607}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26d658f1f8b67004b805faf23cd09b49, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Zantetsu.PhysicsCut::Zantetsu.PhysicsCut.CutWorldRoot
+  profile: {fileID: 11400000, guid: 6b032f260a1e75c48b6fe00c6f8fc523, type: 2}
+  materials:
+  - sourceIndex: 0
+    material: {fileID: 2100000, guid: 3ddb8fcfc0e4f1c4b92979dcffb8860b, type: 2}
+  - sourceIndex: 1
+    material: {fileID: 2100000, guid: 68b6d309cd051f149987b019528474b0, type: 2}
+  shadowMaterial: {fileID: 2100000, guid: a55899735d09d44479a9246f93303efe, type: 2}
+  provisionalShadowMaterial: {fileID: 2100000, guid: b1362748169283345abb87aa189dd045, type: 2}
+  normalPaletteAtlas: {fileID: 0}
+  debugPaletteAtlas: {fileID: 0}

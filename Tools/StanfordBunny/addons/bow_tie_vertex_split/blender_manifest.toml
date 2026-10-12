@@ -1,0 +1,13 @@
+schema_version = "1.0.0"
+id = "bow_tie_vertex_split"
+version = "1.23.0"
+name = "Bow-Tie Vertex Split"
+tagline = "Split disconnected face fans without closing boundaries"
+maintainer = "Bow-Tie Vertex Split contributors"
+type = "add-on"
+tags = ["Mesh"]
+blender_version_min = "4.5.0"
+license = ["SPDX:MIT"]
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "*.pyc", "tests/"]

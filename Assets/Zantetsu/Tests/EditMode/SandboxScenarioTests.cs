@@ -198,7 +198,7 @@ namespace Zantetsu.Core.Tests
         public void EachScenario_NamesTheScenesItRunsIn()
         {
             Assert.That(SandboxScenario.BootSceneName, Is.EqualTo("ZantetsuBoot"));
-            Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.Play), Is.EqualTo(new[] { "WalkCity", "QuestCityWalk" }));
+            Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.Play), Is.EqualTo(new[] { "StanfordBunnyDemo", "WalkCity", "QuestCityWalk" }));
             Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.CityWalk), Is.EqualTo(new[] { "WalkCity", "QuestCityWalk" }));
             Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.StaticWait), Is.EqualTo(new[] { "WalkCity", "QuestStaticSeed14" }));
             Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.NpcSlash), Is.EqualTo(new[] { "MultiNpcCity", "QuestNpcSlash10" }));

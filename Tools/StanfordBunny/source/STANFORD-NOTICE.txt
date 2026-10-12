@@ -1,0 +1,27 @@
+Stanford Bunny — NONCOMMERCIAL DATA
+
+Source: Stanford University Computer Graphics Laboratory
+https://graphics.stanford.edu/data/3Dscanrep/
+Original archive: https://graphics.stanford.edu/pub/3Dscanrep/bunny.tar.gz
+Original file: reconstruction/bun_zipper.ply
+SHA-256: b1acc63bece78444aa2e15bdcc72371a201279b98c6f5d4b74c993d02f0566fe
+Terms checked 2026-10-12. This is a summary of Stanford's custom terms,
+not an MIT or Creative Commons license. The linked upstream terms govern.
+
+Acknowledge Stanford University Computer Graphics Laboratory as the source.
+Research use and free mirroring/redistribution are allowed. Commercial use
+or inclusion in a product for sale requires Stanford's permission, except
+scholarly journals or books. Free does not by itself mean noncommercial.
+The Bunny can be animated, modified, cut and used in physical simulations.
+
+The repaired meshes, generated convexes, .blend files and Unity export in
+this repository derive from this data and retain these restrictions.
+Distribute this demo for noncommercial purposes only, with this notice.
+Commercial builds must contain none of these assets or derivatives.
+
+Modifications by hogehogeo: ITHappy MeshRepair optimized-cap-v6 closes the five
+bottom loops (213 new triangles) and removes 1,113 unused vertices. Repaired
+surface: 34,834 vertices / 69,664 triangles. V-HACD 4.1: maximum hulls 32,
+maximum hull vertices 32, voxel resolution 1,000,000; actual 32 convexes.
+Unity export: source Y-up; Z reflected and winding reversed; same recenter
+and 4x scale applied to the source display and every world-transformed hull.

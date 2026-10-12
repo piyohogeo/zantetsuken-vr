@@ -173,6 +173,7 @@ namespace Zantetsu.Quest
             // The launch's scenario selects the initial route before any scene's world is made (DESIGN 3.4): play, the city
             // walk and the NPC slash read it here; the static scene keeps its own (QuestStaticDemo). It was the package
             // that selected it while each scenario had a package of its own.
+            if (Application.CanStreamedLevelBeLoaded(BunnyDemo.SceneName)) { VpNativeDrawSetup.Requested = false; return; }
             SelectRouteFor(SandboxScenario.Current, ReadConfigText());
 #endif
         }

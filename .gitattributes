@@ -1,0 +1,3 @@
+# Preserve upstream inputs, source hashes and generated blends byte for byte.
+Tools/StanfordBunny/** -text
+Tools/StanfordBunny/source/bun_zipper.ply binary
