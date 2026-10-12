@@ -8,6 +8,7 @@ using UnityEngine.TestTools;
 using Unity.Mathematics;
 using Zantetsu.MeshCut;
 using Zantetsu.Sandbox;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut.PlayModeTests
 {
@@ -60,7 +61,20 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             device.frame.menuDown = true;
             yield return null;
             Assert.That(menu.IsOpen,Is.True);
-            Assert.That(menu.View.Rows.Count,Is.EqualTo(4));
+            Assert.That(menu.View.Rows.Count,Is.EqualTo(5));
+            Assert.That(VpCutSurfaceColour.DebugEnabled,Is.False);
+            var debugRow = menu.View.Rows[4];
+            device.frame.menuDown = false;
+            device.frame.hasPointer = true;
+            var debugPoint = debugRow.background.rectTransform.TransformPoint(Vector3.zero);
+            device.frame.pointerOrigin = debugPoint - debugRow.background.rectTransform.forward;
+            device.frame.pointerDirection = debugRow.background.rectTransform.forward;
+            yield return null;
+            device.frame.selectDown = true;
+            yield return null;
+            Assert.That(VpCutSurfaceColour.DebugEnabled,Is.True);
+            device.frame.selectDown = false;
+            yield return null;
             yield return Picture("Logs/bunny-menu.png");
             menu.View.Rows[3].write(2);
             Assert.That(demo.SpawnedCount,Is.EqualTo(3),"changing the slider alone does not rebuild");
@@ -80,6 +94,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(replacement,Is.Not.Null);
             Assert.That(replacement.world,Is.Not.SameAs(root));
             Assert.That(replacement.SpawnedCount,Is.EqualTo(2));
+            Assert.That(VpCutSurfaceColour.DebugEnabled,Is.True,"Bunny reset preserves debug colour selection");
             Assert.That(PlayMenu.Instance.IsOpen,Is.False);
             // Repeated reset: no pieces or old bodies survive and menu references bind to the new scene.
             replacement.RequestedCount=1;
@@ -131,6 +146,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 while(!demo.world.Shutdown() && Time.realtimeSinceStartup<deadline) yield return null;
                 Assert.That(demo.world.IsReleased,Is.True);
             }
+            VpCutSurfaceColour.SetDebugEnabled(false);
             if (PlayMenu.Instance != null) Object.Destroy(PlayMenu.Instance.gameObject);
             yield return null;
         }

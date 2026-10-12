@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Zantetsu.Core;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.Sandbox
 {
@@ -490,6 +491,12 @@ namespace Zantetsu.Sandbox
             {
                 label = "Bunny count", minimum = BunnyDemo.MinimumCount, maximum = BunnyDemo.MaximumCount, step = 1f, format = "F0",
                 read = () => bunny.RequestedCount, write = value => bunny.RequestedCount = Mathf.RoundToInt(value),
+            });
+            rows.Add(new PlayMenuView.Row
+            {
+                label = "Cut surface debug", isToggle = true,
+                read = () => VpCutSurfaceColour.DebugEnabled ? 1f : 0f,
+                write = value => VpCutSurfaceColour.SetDebugEnabled(value >= 0.5f),
             });
             return rows;
         }

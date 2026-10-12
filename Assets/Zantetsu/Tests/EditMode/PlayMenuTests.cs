@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Sandbox;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.Core.Tests
 {
@@ -361,7 +362,7 @@ namespace Zantetsu.Core.Tests
                 Tick(menu, menuDown: true);
                 Tick(menu);
                 IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-                Assert.That(rows.Count, Is.EqualTo(3));
+                Assert.That(rows.Count, Is.EqualTo(4));
                 Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label }, Is.EqualTo(new[] { "Volume", "Speed", "Turn" }));
 
                 // Each slider is taken by a press on it and follows the ray until the select is let go.
@@ -411,6 +412,44 @@ namespace Zantetsu.Core.Tests
 
                 PlayerPrefs.Save();
             }
+        }
+
+        [TestCase(SandboxScenarioKind.Play)]
+        [TestCase(SandboxScenarioKind.CityWalk)]
+        public void CutSurfaceDebug_StartsOff_TogglesOncePerPress_AndSurvivesMenuReopening(SandboxScenarioKind scenario)
+        {
+            var colours = VpCutSurfaceColour.Capture();
+            try
+            {
+                VpCutSurfaceColour.ApplyDefaults();
+                PlayMenu menu = NewMenu(scenario);
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                var row = menu.View.Rows[3];
+                Assert.That(row.label, Is.EqualTo("Cut surface debug"));
+                Assert.That(row.isToggle, Is.True);
+                Assert.That(VpCutSurfaceColour.DebugEnabled, Is.False);
+                Assert.That(row.valueText.text, Is.EqualTo("OFF"));
+                Vector3 target = Centre(row.background.rectTransform);
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(VpCutSurfaceColour.DebugEnabled, Is.True);
+                Assert.That(row.valueText.text, Is.EqualTo("ON"));
+                Assert.That(VpCutSurfaceColour.CurrentProvisional, Is.EqualTo(Color.red));
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(VpCutSurfaceColour.DebugEnabled, Is.True, "holding the trigger does not toggle again");
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                Assert.That(row.valueText.text, Is.EqualTo("ON"), "reopening preserves the session selection");
+                Tick(menu, select: true, pointAt: Centre(row.background.rectTransform));
+                Assert.That(VpCutSurfaceColour.DebugEnabled, Is.False);
+                Assert.That(row.valueText.text, Is.EqualTo("OFF"));
+                Assert.That(VpCutSurfaceColour.CurrentProvisional, Is.EqualTo(VpCutSurfaceColour.DefaultColour));
+            }
+            finally { VpCutSurfaceColour.Restore(colours); }
         }
 
         [Test]

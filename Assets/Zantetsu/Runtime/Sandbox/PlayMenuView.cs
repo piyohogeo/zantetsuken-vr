@@ -8,7 +8,7 @@ namespace Zantetsu.Sandbox
 {
     /// <summary>
     /// The settings menu's picture and its pointer (DESIGN 4.6): one World Space Canvas of uGUI made from code -- a
-    /// panel, a resume button and three sliders -- about 1.3 m in front of where the head looked when it was opened,
+    /// panel, a resume button, setting sliders and an ON/OFF button -- about 1.3 m in front of where the head looked when it was opened,
     /// standing in the world from then on so that the head moves freely before it.
     /// <para>
     /// **It is drawn by Unity, in the camera's own render.** Nothing of the VP display or of the native draw route is
@@ -50,7 +50,7 @@ namespace Zantetsu.Sandbox
         private static readonly Color TextColour = new Color(0.94f, 0.95f, 0.96f, 1f);
         private static readonly Color DimTextColour = new Color(0.55f, 0.57f, 0.60f, 1f);
 
-        /// <summary>One slider of the menu: what it shows, its range and step, and who takes its value.</summary>
+        /// <summary>One slider or ON/OFF button of the menu: what it shows, its range and step, and who takes its value.</summary>
         public sealed class Row
         {
             public string label;
@@ -58,6 +58,7 @@ namespace Zantetsu.Sandbox
             public string format = "F1";
             public string unit = "";
             public bool interactable = true;
+            public bool isToggle;
             public Func<float> read;
             public Action<float> write;
 
@@ -112,22 +113,23 @@ namespace Zantetsu.Sandbox
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             _canvas = (RectTransform)_root.transform;
-            _canvas.sizeDelta = new Vector2(Width, resetAction == null ? Height : 820f);
+            float height = Height + Mathf.Max(0, rows.Count - 3) * 96f + (resetAction != null ? 96f : 0f);
+            _canvas.sizeDelta = new Vector2(Width, height);
             _canvas.localScale = Vector3.one * UnitMetres;
 
             Image panel = NewImage("Panel", _canvas, PanelColour);
             Stretch(panel.rectTransform);
 
             Text title = NewText("Title", _canvas, font, "Paused", 44, TextColour, TextAnchor.MiddleCenter);
-            Place(title.rectTransform, 0f, Height * 0.5f - 60f, Width - 80f, 64f);
+            Place(title.rectTransform, 0f, height * 0.5f - 60f, Width - 80f, 64f);
             if (!string.IsNullOrEmpty(note))
             {
                 Text noteText = NewText("Note", _canvas, font, note, 22, DimTextColour, TextAnchor.MiddleCenter);
-                Place(noteText.rectTransform, 0f, Height * 0.5f - 112f, Width - 80f, 32f);
+                Place(noteText.rectTransform, 0f, height * 0.5f - 112f, Width - 80f, 32f);
             }
 
             _resume = NewImage("Resume", _canvas, ControlColour);
-            Place(_resume.rectTransform, 0f, Height * 0.5f - 190f, 420f, 84f);
+            Place(_resume.rectTransform, 0f, height * 0.5f - 190f, 420f, 84f);
             Text resumeText = NewText("Label", _resume.rectTransform, font, "Resume", 36, TextColour, TextAnchor.MiddleCenter);
             Stretch(resumeText.rectTransform);
 
@@ -135,11 +137,11 @@ namespace Zantetsu.Sandbox
             if (resetAction != null)
             {
                 _reset = NewImage("Reset scene", _canvas, ControlColour);
-                Place(_reset.rectTransform, 0f, -355f, 420f, 72f);
+                Place(_reset.rectTransform, 0f, -height * 0.5f + 56f, 420f, 72f);
                 Text resetText = NewText("Label", _reset.rectTransform, font, "Reset scene", 32, TextColour, TextAnchor.MiddleCenter);
                 Stretch(resetText.rectTransform);
             }
-            float y = Height * 0.5f - 300f;
+            float y = height * 0.5f - 300f;
             foreach (Row row in rows)
             {
                 BuildRow(row, font, y);
@@ -167,6 +169,15 @@ namespace Zantetsu.Sandbox
             Color text = row.interactable ? TextColour : DimTextColour;
             row.labelText = NewText(row.label, _canvas, font, row.label, 26, text, TextAnchor.MiddleLeft);
             Place(row.labelText.rectTransform, -200f, y, 280f, 40f);
+
+            if (row.isToggle)
+            {
+                row.background = NewImage("Toggle " + row.label, _canvas, row.interactable ? ControlColour : DisabledColour);
+                Place(row.background.rectTransform, 90f, y, 280f, 44f);
+                row.valueText = NewText("Value", row.background.rectTransform, font, "OFF", 26, text, TextAnchor.MiddleCenter);
+                Stretch(row.valueText.rectTransform);
+                return;
+            }
 
             var sliderObject = new GameObject("Slider " + row.label, typeof(RectTransform), typeof(Slider));
             var sliderRect = (RectTransform)sliderObject.transform;
@@ -251,8 +262,15 @@ namespace Zantetsu.Sandbox
             foreach (Row row in _rows)
             {
                 float value = row.read != null ? row.read() : row.minimum;
-                row.slider.SetValueWithoutNotify(Mathf.Clamp(value, row.minimum, row.maximum));
-                row.valueText.text = value.ToString(row.format, CultureInfo.InvariantCulture) + row.unit;
+                if (row.isToggle)
+                {
+                    row.valueText.text = value >= 0.5f ? "ON" : "OFF";
+                }
+                else
+                {
+                    row.slider.SetValueWithoutNotify(Mathf.Clamp(value, row.minimum, row.maximum));
+                    row.valueText.text = value.ToString(row.format, CultureInfo.InvariantCulture) + row.unit;
+                }
             }
         }
 
@@ -306,7 +324,16 @@ namespace Zantetsu.Sandbox
                 row.background.color = over || _held == row ? HoverColour : ControlColour;
                 if (over && pressed)
                 {
-                    _held = row;
+                    if (row.isToggle)
+                    {
+                        _held = null;
+                        row.write?.Invoke(row.read != null && row.read() >= 0.5f ? 0f : 1f);
+                        Refresh();
+                    }
+                    else
+                    {
+                        _held = row;
+                    }
                 }
             }
 
