@@ -301,6 +301,11 @@ namespace Zantetsu.PhysicsCut
         private static void InstallForSession()
         {
             Loop.EnsureInstalled();
+
+            // The game's manual pause (DESIGN 4.6) pauses the step here, and nothing else of the game does: the pause
+            // of progress itself -- no cut taken, nothing published -- is each entrance's own reading of Zantetsu.Core.GamePause.
+            Zantetsu.Core.GamePause.ManualChanged -= SetPaused;
+            Zantetsu.Core.GamePause.ManualChanged += SetPaused;
         }
 
         private static void BeginFrame()

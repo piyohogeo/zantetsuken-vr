@@ -36,6 +36,8 @@ namespace Zantetsu.Sandbox
             { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback; }
             string output = Arg("-mobPlanProfile", null);
             if (output == null) return;
+            // Only as the launch's one choice (DESIGN 3.4): never beside a scenario or another check.
+            if (!SandboxScenario.MayStartDevelopmentCheck(SandboxScenario.MobPlanProfileArgument)) return;
             var host = new GameObject("MobPlan Player measurement").AddComponent<MobPlanPlayerProfile>();
             host.directory = output;
             host.scenario = Arg("-mobPlanScenario", "moving");

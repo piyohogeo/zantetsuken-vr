@@ -304,7 +304,7 @@ namespace Zantetsu.Sandbox
                 float lift = Mathf.Max(0.6f, Mathf.Max(first.bounds.size.y * 0.8f, 0.25f * Mathf.Max(first.bounds.size.x, first.bounds.size.z) + 0.4f));
                 Place(io, poses, lower, first.position, first.rotation);
                 Place(io, poses, upper, first.position + Vector3.up * lift, first.rotation);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (io.held() == 0) failures.Add("no finished geometry was held at the first cut: the pictures of the held stages are not of provisional caps");
                 if (State(world, a.id) == LogicalCutOperationState.Completed) failures.Add("the first cut was complete while its geometry was to be held");
                 if (world.Display.CapRecordCount == 0) failures.Add("the display holds no cap at the held first cut");
@@ -314,7 +314,7 @@ namespace Zantetsu.Sandbox
                 Vector3 pivotA = first.bounds.center + Vector3.up * lift;
                 PlaceAbout(io, poses, upper, pivotA, Quaternion.AngleAxis(25f, Vector3.forward), Vector3.up * (lift * 0.4f));
                 PlaceAbout(io, poses, lower, first.bounds.center, Quaternion.AngleAxis(15f, Vector3.up), Vector3.zero);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 yield return Picture(io, 2, states, poses);
 
                 // ---- the commit; then the second body, cut with nothing outstanding and committed ------------------------
@@ -362,7 +362,7 @@ namespace Zantetsu.Sandbox
                 poses.Remove(upper);   // cut: its children stand for it
                 Place(io, poses, nearer, from.position, from.rotation);
                 Place(io, poses, further, from.position + Vector3.right * Mathf.Max(0.12f, again.size.x * 0.35f), from.rotation);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (State(world, c.id) == LogicalCutOperationState.Completed) failures.Add("the added cut was complete while its geometry was to be held");
                 yield return Picture(io, 4, states, poses);
 
@@ -381,7 +381,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 poses.Remove(further);
-                for (int i = 0; i < 4; i++) yield return null;
+                for (int i = 0; i < 4; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 yield return Picture(io, 6, states, poses);
             }
             finally
@@ -452,14 +452,14 @@ namespace Zantetsu.Sandbox
             {
                 long slash = ++s_slash;
                 SlashSweep sweep = normal == Vector3.up
-                    ? new SlashSweep(slash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
+                    ? new SlashSweep(slash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
                         new Vector3(c.x - e.x, c.y, c.z - e.z), new Vector3(c.x - e.x, c.y, c.z + e.z), new Vector3(c.x + e.x, c.y, c.z - e.z), new Vector3(c.x + e.x, c.y, c.z + e.z))
-                    : new SlashSweep(slash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
+                    : new SlashSweep(slash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
                         new Vector3(c.x, c.y + e.y, c.z - e.z), new Vector3(c.x, c.y + e.y, c.z + e.z), new Vector3(c.x, c.y - e.y, c.z - e.z), new Vector3(c.x, c.y - e.y, c.z + e.z));
                 io.detector.Evaluate(new[] { sweep }, new[] { slash });
                 io.log("cut scene: synthetic sweep " + slash + " through " + what + " (" + (normal == Vector3.up ? "level at y " + c.y.ToString("F3", Inv) : "upright at x " + c.x.ToString("F3", Inv))
                     + "), attempt " + (attempt + 1) + ": hits " + io.detector.HitCount + ", operations " + before + " -> " + ledger.OperationCount);
-                for (int i = 0; i < 6 && ledger.OperationCount == before; i++) yield return null;
+                for (int i = 0; i < 6 && ledger.OperationCount == before; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
             if (ledger.OperationCount == before)
@@ -479,7 +479,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 if (all) break;
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
             for (int i = before; i < count; i++)
@@ -503,11 +503,11 @@ namespace Zantetsu.Sandbox
                 foreach (CutOperationId id in operations) all &= State(io.world, id) == LogicalCutOperationState.Completed;
                 if (all)
                 {
-                    for (int i = 0; i < 3; i++) yield return null;
+                    for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     yield break;
                 }
 
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
             failures.Add(what + " did not complete within 900 frames of the hold's release");

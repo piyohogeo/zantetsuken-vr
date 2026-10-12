@@ -15,9 +15,15 @@ namespace Zantetsu.Sandbox
         public float turnDegreesPerSecond = 120;
         public float reverseFactor = .5f;
         public bool liveInput = true;
+
+        /// <summary>A stick whose squared deflection is below this moves and turns nothing.</summary>
+        public const float DeadZoneSquared = .0225f;
+
+        /// <summary>Whether this stick is this input's neutral: what <c>Update</c> takes as no command. The play menu gives the live input back only then (DESIGN 4.6).</summary>
+        public static bool IsNeutral(Vector2 stick) => stick.sqrMagnitude < DeadZoneSquared;
         public void Submit(float forward, float turn, float seconds)
         {
-            if (player == null || crowd == null || !crowd.IsReady) return;
+            if (player == null || crowd == null || !crowd.IsReady || GamePause.IsPaused) return; // (no move or turn while the game is paused, DESIGN 4.6)
             Quaternion rotation = Quaternion.Euler(0, Mathf.Clamp(turn, -1, 1) * turnDegreesPerSecond * seconds, 0) * player.transform.rotation;
             float velocity = Mathf.Clamp(forward, -1, 1) * speed * (forward < 0 ? reverseFactor : 1);
             Vector3 move = rotation * Vector3.forward * (velocity * seconds);
@@ -37,7 +43,7 @@ namespace Zantetsu.Sandbox
                     (keyboard.upArrowKey.isPressed || keyboard.wKey.isPressed ? 1 : 0) - (keyboard.downArrowKey.isPressed || keyboard.sKey.isPressed ? 1 : 0));
                 if (keys != Vector2.zero) command = keys;
             }
-            if (command.sqrMagnitude < .0225f) command = Vector2.zero;
+            if (IsNeutral(command)) command = Vector2.zero;
             Submit(command.y, command.x, Time.deltaTime);
         }
     }

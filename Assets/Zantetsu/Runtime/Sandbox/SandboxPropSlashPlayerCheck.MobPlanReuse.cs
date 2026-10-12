@@ -40,8 +40,8 @@ namespace Zantetsu.Sandbox
                 _phase = "reuse-check";
                 const string tag = "[reuse check: synthetic Slash through the ordinary detector] ";
                 Log("reuse check: begins at frame " + Time.frameCount + " (after the script; a synthetic Slash through the ordinary detector, not a natural hit; its frames are phase reuse-check, apart from the script's figures); reused activations so far " + _crowd.ReusedActivations);
-                float by = Time.realtimeSinceStartup + 10f;
-                while (_katana != null && _katana.WaveCount != 0 && Time.realtimeSinceStartup < by) yield return null;
+                float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                while (_katana != null && _katana.WaveCount != 0 && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
 
                 // (1) The individual: on a slot reused by the ordinary refill, live, a hit target.
                 SandboxNpcCharacter slot = null;
@@ -50,7 +50,7 @@ namespace Zantetsu.Sandbox
                 VpPreparedCharacterCut previous = null;
                 string previousName = null;
                 var why = new Dictionary<string, string>();
-                by = Time.realtimeSinceStartup + 15f;
+                by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 15f;
                 while (true)
                 {
                     why.Clear();
@@ -65,8 +65,8 @@ namespace Zantetsu.Sandbox
                         break;
                     }
 
-                    if (slot != null || Time.realtimeSinceStartup >= by || _world.IsEnding) break;
-                    yield return null;
+                    if (slot != null || Zantetsu.Core.GamePause.RealtimeSinceStartup >= by || _world.IsEnding) break;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 foreach (KeyValuePair<string, string> w in why) Log("reuse check: not picked " + w.Key + ": " + w.Value);
@@ -151,12 +151,12 @@ namespace Zantetsu.Sandbox
                 CutOperationId op = default;
                 LogicalCutOperation record = default;
                 bool published = false;
-                float by = Time.realtimeSinceStartup + 20f;
-                while (accepted && Time.realtimeSinceStartup < by)
+                float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 20f;
+                while (accepted && Zantetsu.Core.GamePause.RealtimeSinceStartup < by)
                 {
                     op = me.handle.Operation;
                     if (op.IsSet && _world.Ledger.TryGetOperation(op, out record) && record.state != LogicalCutOperationState.Admitted) { published = true; break; }
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 bool own = op.IsSet && op.value > opsBefore && (!mine.Operation.IsSet || mine.Operation == op) && record.source == root
@@ -173,8 +173,8 @@ namespace Zantetsu.Sandbox
                 Expect(true, tag + "(3) the hit was accepted and the picked individual's own cut published (operation " + op.value + ")");
 
                 // (4) That operation's geometry committed.
-                by = Time.realtimeSinceStartup + 30f;
-                while (_world.Geometry.StageOf(op) != CutGeometryStage.Committed && Time.realtimeSinceStartup < by) yield return null;
+                by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 30f;
+                while (_world.Geometry.StageOf(op) != CutGeometryStage.Committed && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 bool committed = _world.Geometry.StageOf(op) == CutGeometryStage.Committed;
                 _world.Ledger.TryGetOperation(op, out record);
                 Log("reuse check: operation " + op.value + " geometry " + _world.Geometry.StageOf(op) + " (ledger " + record.state + ") at frame " + Time.frameCount + "; " + name + " retired " + _mpRetired.ContainsKey(me.id)

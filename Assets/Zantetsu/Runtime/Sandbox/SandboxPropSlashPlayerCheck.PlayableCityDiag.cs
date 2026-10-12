@@ -111,7 +111,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                _pcFrames.WriteLine(string.Join(",", frame, Time.realtimeSinceStartupAsDouble.ToString("F4", Inv), _pcFragments.Count, awake, asleep, kinematic,
+                _pcFrames.WriteLine(string.Join(",", frame, Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F4", Inv), _pcFragments.Count, awake, asleep, kinematic,
                     _world.Owners.SystemConstraintCount, fastNow, _pcAnomalies));
             }
 

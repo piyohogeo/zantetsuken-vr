@@ -27,11 +27,12 @@ param(
     [switch]$PoisonEntries,        # diagnosis: the compacted entries filled with zeroes each frame, so that a stale read of them shows (not in a measurement)
     [switch]$ChecksOff,            # D-212: the walk's checks part left out (the standard performance configuration: checks off, detail off)
     [switch]$DetailOff,            # D-212: the walk's detailed diagnostics part left out
+    [string]$Package = 'com.junic.zantetsu.questcitywalk',   # the APK that runs it: this scenario's own, or the one of every scenario (com.junic.zantetsu.quest)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\RenderDocForMetaQuest\plugins\android\adb.exe'
 )
 $ErrorActionPreference = 'Stop'
-$package = 'com.junic.zantetsu.questcitywalk'
+$package = $Package
 $deviceFiles = "/sdcard/Android/data/$package/files"
 function Invoke-Adb {
     & $Adb -s $Serial @args
@@ -59,6 +60,8 @@ $config.nativeIndirectCountCastersFixed = [bool]$CastersFixed
 $config.nativeIndirectCountDirect = [bool]$CountsDirect
 $config.nativeIndirectCountPoison = [bool]$PoisonEntries
 $config.propChecks = !$ChecksOff
+# DESIGN 3.4: the launch names its scenario; a Player given none runs play.
+$config.scenario = 'city-walk'
 $config.propDetail = !$DetailOff
 if ($ScriptFile) { Invoke-Adb push ([IO.Path]::GetFullPath($ScriptFile)) "$deviceFiles/CityWalkOverride.txt"; $config.cityWalkScriptFile = "$deviceFiles/CityWalkOverride.txt" }
 $configFile = Join-Path ([IO.Path]::GetTempPath()) ('quest-citywalk-' + [guid]::NewGuid().ToString('N') + '.json')

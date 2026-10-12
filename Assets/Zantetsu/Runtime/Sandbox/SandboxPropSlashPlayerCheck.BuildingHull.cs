@@ -143,10 +143,10 @@ namespace Zantetsu.Sandbox
                     _bhRows = DetailWriter("building-hull.csv");
                     _bhRows.WriteLine("frame,scenario,real,t,groups,kinematic,free,anchoredGroups,stagedGroups,restGround,restPinned,pairsMoving,constraintsLive,dropsRunning,hullUpdatesRunning,hullRequestsWaiting,membersCommitted,membersEmpty,membersPending,ledgerFragments,ledgerOperations,liveHulls,bodies,colliders,members,waves,cuts,unions,fusions,givenUp,notAchieved,stale,heldNow,cutsInProgress,fusionsInFlight,displayOpen,maxFreeSpeed,hullStepMs,hitMs,restMs,frameSumMs,simulateMs,stepped,skipsInARow,mainThreadMs,mainWorkMs,frameIntervalMs");
                     _bhLastStep = h.StepSeconds; _bhLastHit = h.HitSeconds; _bhLastRest = RestSeconds(rest);
-                    _bhLastReal = Time.realtimeSinceStartupAsDouble;
+                    _bhLastReal = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 }
 
-                double real = Time.realtimeSinceStartupAsDouble;
+                double real = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 double intervalMs = (real - _bhLastReal) * 1000.0;
                 _bhLastReal = real;
                 double stepMs = (h.StepSeconds - _bhLastStep) * 1000.0, hitMs = (h.HitSeconds - _bhLastHit) * 1000.0, restMs = (RestSeconds(rest) - _bhLastRest) * 1000.0;
@@ -257,7 +257,7 @@ namespace Zantetsu.Sandbox
                     if (through == null || g.Mass > through.Mass) through = g;
                 }
 
-                double at = Time.realtimeSinceStartupAsDouble;
+                double at = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 if (through == null)
                 {
                     Log("hull re-cut: no idle group at frame " + Time.frameCount + ": not exercised");
@@ -269,7 +269,7 @@ namespace Zantetsu.Sandbox
                 float y = math.transform((float4x4)through.Root.transform.localToWorldMatrix, (tlo + thi) * 0.5f).y;
                 long slash = 900000 + (++_bhSyntheticSlashes);
                 float x0 = lo.x - 1f, x1 = hi.x + 1f, z0 = lo.z - 1f, z1 = hi.z + 1f;
-                var sweep = new SlashSweep(slash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.up, -y), Vector3.right, Vector3.forward,
+                var sweep = new SlashSweep(slash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.up, -y), Vector3.right, Vector3.forward,
                     new Vector3(x0, y, z0), new Vector3(x0, y, z1), new Vector3(x1, y, z0), new Vector3(x1, y, z1));
                 var kindsStanding = new Dictionary<string, int>();
                 foreach (string k in groupKind.Values) { kindsStanding.TryGetValue(k, out int c); kindsStanding[k] = c + 1; }
@@ -293,11 +293,11 @@ namespace Zantetsu.Sandbox
                     Log("hull re-cut: detector hit " + i + " fragment " + hit.Fragment.value + " (" + (real ? kind : "not a hull member") + ") => " + hit.Acceptance);
                 }
 
-                float by = Time.realtimeSinceStartup + 60f;
+                float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 60f;
                 bool answered = false;
-                while (Time.realtimeSinceStartup < by)
+                while (Zantetsu.Core.GamePause.RealtimeSinceStartup < by)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     bool all = true;
                     for (int i = hitsBefore; i < h.Hits.Count; i++) all &= !h.Hits[i].IsPending;
                     if (all && h.CutsInProgress == 0 && h.DisplayOperationsOpen == 0 && CutsSettled()) { answered = true; break; }
@@ -321,7 +321,7 @@ namespace Zantetsu.Sandbox
                     if (all) committed[kind]++;
                 }
 
-                Log("hull re-cut: " + (answered ? "answered and settled" : "NOT settled within 60 s: " + h.DescribeUnsettled()) + " at frame " + Time.frameCount + " real " + Time.realtimeSinceStartupAsDouble.ToString("F3", Inv) + "; hits " + _detector.HitCount + ", requests " + (h.Hits.Count - hitsBefore) + ", cuts " + cutsBefore + " -> " + h.GroupCuts + "; " + h.DescribeCounts());
+                Log("hull re-cut: " + (answered ? "answered and settled" : "NOT settled within 60 s: " + h.DescribeUnsettled()) + " at frame " + Time.frameCount + " real " + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F3", Inv) + "; hits " + _detector.HitCount + ", requests " + (h.Hits.Count - hitsBefore) + ", cuts " + cutsBefore + " -> " + h.GroupCuts + "; " + h.DescribeCounts());
                 foreach (string kind in new[] { "fused hull", "apart after a rejection", "other" })
                 {
                     kindsStanding.TryGetValue(kind, out int n);
@@ -352,8 +352,8 @@ namespace Zantetsu.Sandbox
                 if (_world.Display != null) Log("display GPU copy at the script's end: " + DescribeGpuCopy(_world.Display) + "; commits " + _world.Display.CommitCalls);
                 _phase = "hull-middrop";
                 _bhScenario = "middrop";
-                float by = Time.realtimeSinceStartup + 10f;
-                while (!h.IsSettled && Time.realtimeSinceStartup < by) yield return null;
+                float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                while (!h.IsSettled && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 HullGroup group = null;
                 foreach (HullGroup g in h.Groups) if (g.State == HullGroupState.Idle && g.Root != null && g.Shape != null && (group == null || g.Mass > group.Mass)) group = g;
                 if (!h.IsSettled || group == null)
@@ -375,15 +375,15 @@ namespace Zantetsu.Sandbox
                 float3 c = (lo + hi) * 0.5f;
                 int hitsBefore = h.Hits.Count, cutsBefore = h.GroupCuts, stoppedBefore = h.AnimationsStoppedByReCut;
                 long first = 900000 + (++_bhSyntheticSlashes);
-                var level = new SlashSweep(first, Time.unscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
+                var level = new SlashSweep(first, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
                     new Vector3(lo.x - 1f, c.y, lo.z - 1f), new Vector3(lo.x - 1f, c.y, hi.z + 1f), new Vector3(hi.x + 1f, c.y, lo.z - 1f), new Vector3(hi.x + 1f, c.y, hi.z + 1f));
                 _detector.Evaluate(new[] { level }, new[] { first });
                 int firstHits = _detector.HitCount;
                 Log("hull mid-drop re-cut: Slash " + first + " (level y " + c.y.ToString("F3", Inv) + " through group " + group.Id + ") given at frame " + Time.frameCount + ": detector hits " + firstHits);
 
                 // Its publication, with its drop running.
-                by = Time.realtimeSinceStartup + 10f;
-                while (h.GroupCuts == cutsBefore && Time.realtimeSinceStartup < by) yield return null;
+                by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                while (h.GroupCuts == cutsBefore && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 bool published = h.GroupCuts > cutsBefore;
                 bool running = h.AnimationsRunning > 0;
                 int seenAt = Time.frameCount;
@@ -391,7 +391,7 @@ namespace Zantetsu.Sandbox
                 int secondHits = 0;
                 if (published && running)
                 {
-                    var upright = new SlashSweep(second, Time.unscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
+                    var upright = new SlashSweep(second, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
                         new Vector3(c.x, hi.y + 1f, lo.z - 1f), new Vector3(c.x, hi.y + 1f, hi.z + 1f), new Vector3(c.x, lo.y - 1f, lo.z - 1f), new Vector3(c.x, lo.y - 1f, hi.z + 1f));
                     _detector.Evaluate(new[] { upright }, new[] { second });
                     secondHits = _detector.HitCount;
@@ -399,11 +399,11 @@ namespace Zantetsu.Sandbox
 
                 Log("hull mid-drop re-cut: the first cut " + (published ? "published" : "NOT published within 10 s") + " (seen at frame " + seenAt + ", drops running " + h.AnimationsRunning + ")"
                     + (published && running ? "; Slash " + second + " (upright x " + c.x.ToString("F3", Inv) + ") given at frame " + Time.frameCount + ": detector hits " + secondHits : ": no second Slash given"));
-                by = Time.realtimeSinceStartup + 30f;
+                by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 30f;
                 bool settled = false;
-                while (Time.realtimeSinceStartup < by)
+                while (Zantetsu.Core.GamePause.RealtimeSinceStartup < by)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     bool all = true;
                     for (int i = hitsBefore; i < h.Hits.Count; i++) all &= !h.Hits[i].IsPending;
                     if (all && h.IsSettled) { settled = true; break; }
@@ -453,26 +453,26 @@ namespace Zantetsu.Sandbox
             private IEnumerator HullScenario()
             {
                 BuildingHullFusion h = _world.Hulls;
-                double recoverFrom = Time.realtimeSinceStartupAsDouble;
+                double recoverFrom = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 Log("hull scenario clocks: the last ordinary Slash's wave flew at frame " + _bhLastWaveFrame + " real " + _bhLastWaveReal.ToString("F3", Inv) + "; the recovery wait begins at frame " + Time.frameCount + " real " + recoverFrom.ToString("F3", Inv)
                     + " (" + (recoverFrom - _bhLastWaveReal).ToString("F2", Inv) + " s after the last Slash: the cuts' completion wait, the observation and the hold came first)");
                 Log("hull scenario: the continuous Slashes ended at frame " + Time.frameCount + " (" + HitTally(h, 0) + "; " + h.DescribeCounts() + "; most at once: groups " + h.MaxGroups + ", hulls " + h.MaxLiveHulls + ", bodies " + _bhMaxBodies + "; not achieved so far " + h.HullsNotAchieved + " for " + (h.NotAchievedSeconds + h.NotAchievedSecondsNow).ToString("F2", Inv) + " s; class outcomes: " + h.DescribeAggregationStates() + ")");
                 _bhScenario = "recover";
                 _phase = "hull-recover";
-                double t0 = Time.realtimeSinceStartupAsDouble;
-                float by = Time.realtimeSinceStartup + 10f;
-                while (!(h.IsSettled && h.IsOneHullAchieved) && Time.realtimeSinceStartup < by) yield return null;
+                double t0 = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
+                float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                while (!(h.IsSettled && h.IsOneHullAchieved) && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 bool recovered = h.IsSettled && h.IsOneHullAchieved;
-                double recoverSeconds = Time.realtimeSinceStartupAsDouble - t0;
-                double recoveredAt = Time.realtimeSinceStartupAsDouble;
+                double recoverSeconds = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble - t0;
+                double recoveredAt = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 Log("hull scenario: recovery to one hull " + (recovered ? "in " + recoverSeconds.ToString("F2", Inv) + " s of the recovery wait" : "NOT within the 10 s recovery wait") + " (the wait ended at real " + recoveredAt.ToString("F3", Inv) + ", " + (recoveredAt - _bhLastWaveReal).ToString("F2", Inv) + " s after the last ordinary Slash): " + h.DescribeCounts() + "; " + h.DescribeUnsettled() + "; class outcomes: " + h.DescribeAggregationStates());
                 Expect(recovered, "[hull scenario] after the continuous Slashes the building came back to at most one fixed and one free group, one hull each, within the 10 s recovery wait (" + recoverSeconds.ToString("F2", Inv) + " s of the wait; " + (recoveredAt - _bhLastWaveReal).ToString("F2", Inv) + " s after the last ordinary Slash, not within 10 s of it; " + h.DescribeCounts() + ")");
                 _bhScenario = "hold";
                 _phase = "hull-hold";
                 string countsAtHold = h.DescribeCounts();
                 int cutsAtHold = h.GroupCuts, hitsAtHold = h.Hits.Count;
-                float holdBy = Time.realtimeSinceStartup + 3f;
-                while (Time.realtimeSinceStartup < holdBy) yield return null;
+                float holdBy = Zantetsu.Core.GamePause.RealtimeSinceStartup + 3f;
+                while (Zantetsu.Core.GamePause.RealtimeSinceStartup < holdBy) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 Log("hull scenario: held 3 s: " + h.DescribeCounts() + "; hits meanwhile " + (h.Hits.Count - hitsAtHold) + ", cuts " + (h.GroupCuts - cutsAtHold));
                 Expect(h.DescribeCounts() == countsAtHold && h.GroupCuts == cutsAtHold, "[hull scenario] the counts held for 3 s (" + countsAtHold + " -> " + h.DescribeCounts() + ")");
                 // The re-cut: synthetic Slashes through the current hulls (the fused one, or the groups standing apart), through the ordinary detection path.
@@ -481,12 +481,12 @@ namespace Zantetsu.Sandbox
                 yield return HullRecut(h);
                 _bhScenario = "recover2";
                 _phase = "hull-recover2";
-                t0 = Time.realtimeSinceStartupAsDouble;
-                by = Time.realtimeSinceStartup + 10f;
-                while (!(h.IsSettled && h.IsOneHullAchieved) && Time.realtimeSinceStartup < by) yield return null;
+                t0 = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
+                by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                while (!(h.IsSettled && h.IsOneHullAchieved) && Zantetsu.Core.GamePause.RealtimeSinceStartup < by) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 bool recovered2 = h.IsSettled && h.IsOneHullAchieved;
-                double recover2Seconds = Time.realtimeSinceStartupAsDouble - t0;
-                Log("hull scenario: recovery after the re-cut " + (recovered2 ? "in " + recover2Seconds.ToString("F2", Inv) + " s" : "NOT within 10 s") + " (real " + Time.realtimeSinceStartupAsDouble.ToString("F3", Inv) + "): " + h.DescribeCounts() + "; " + h.DescribeUnsettled() + "; class outcomes: " + h.DescribeAggregationStates());
+                double recover2Seconds = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble - t0;
+                Log("hull scenario: recovery after the re-cut " + (recovered2 ? "in " + recover2Seconds.ToString("F2", Inv) + " s" : "NOT within 10 s") + " (real " + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F3", Inv) + "): " + h.DescribeCounts() + "; " + h.DescribeUnsettled() + "; class outcomes: " + h.DescribeAggregationStates());
                 Expect(recovered2, "[hull scenario] after the re-cut the building came back to one hull within 10 s (" + recover2Seconds.ToString("F2", Inv) + " s; " + h.DescribeCounts() + ")");
                 Log("hull scenario: whole run " + HitTally(h, 0) + "; not achieved " + h.HullsNotAchieved + " (classes standing apart for " + (h.NotAchievedSeconds + h.NotAchievedSecondsNow).ToString("F2", Inv) + " s in all, longest " + h.MaxNotAchievedSeconds.ToString("F2", Inv) + " s, a standing one included; every group cuttable meanwhile); most at once: groups " + h.MaxGroups + ", hulls " + h.MaxLiveHulls + ", bodies " + _bhMaxBodies + ", colliders " + _bhMaxColliders);
                 _bhScenario = "end";

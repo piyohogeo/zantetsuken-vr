@@ -278,11 +278,11 @@ namespace Zantetsu.Sandbox
         /// </summary>
         public IEnumerator Wait(float seconds)
         {
-            float begin = Time.realtimeSinceStartup;
+            float begin = Zantetsu.Core.GamePause.RealtimeSinceStartup;
             float until = begin + seconds;
             while (!Poll())
             {
-                if (Time.realtimeSinceStartup >= until)
+                if (Zantetsu.Core.GamePause.RealtimeSinceStartup >= until)
                 {
                     // What was left, named: a wait that ran out is never an acceptable end.
                     TimedOut = true;
@@ -292,10 +292,10 @@ namespace Zantetsu.Sandbox
                     break;
                 }
 
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
-            WaitedSeconds = Time.realtimeSinceStartup - begin;
+            WaitedSeconds = Zantetsu.Core.GamePause.RealtimeSinceStartup - begin;
         }
 
         /// <summary>Every hit, its operation and its state; the building's records and what it still has running or waiting; the anomalies.</summary>

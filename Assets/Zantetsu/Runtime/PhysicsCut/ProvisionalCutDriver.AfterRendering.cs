@@ -72,6 +72,13 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+            // No turn while the game is paused (DESIGN 4.6), as in the update and the late update.
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                PausedTurns++;
+                return;
+            }
+
             int frame = CurrentFrame;
             if (_afterRenderingFrame == frame)
             {

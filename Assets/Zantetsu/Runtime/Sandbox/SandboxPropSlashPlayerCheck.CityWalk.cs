@@ -79,10 +79,10 @@ namespace Zantetsu.Sandbox
             /// </summary>
             private float StageBegin(string stage, float seconds)
             {
-                float own = Time.realtimeSinceStartup + seconds;
+                float own = Zantetsu.Core.GamePause.RealtimeSinceStartup + seconds;
                 if (!cityWalk) return own;
                 _cwStage = stage;
-                _cwStageFrom = Time.realtimeSinceStartup;
+                _cwStageFrom = Zantetsu.Core.GamePause.RealtimeSinceStartup;
                 _cwStageBy = CityWalkStageDeadline(_cwStageFrom, seconds, true, cityWalkBudget);
                 StageLine("begin " + stage + " at " + _cwStageFrom.ToString("F2", Inv) + " s (process), deadline " + _cwStageBy.ToString("F2", Inv)
                     + " s (" + (own <= cityWalkBudget ? "its own " + seconds.ToString("R", Inv) + " s" : "the run's budget " + cityWalkBudget.ToString("R", Inv) + " s") + ")");
@@ -93,7 +93,7 @@ namespace Zantetsu.Sandbox
             private void StageEnd(bool reachedDeadline, string detail)
             {
                 if (!cityWalk || _cwStage == null) return;
-                float now = Time.realtimeSinceStartup;
+                float now = Zantetsu.Core.GamePause.RealtimeSinceStartup;
                 StageLine("end " + _cwStage + " at " + now.ToString("F2", Inv) + " s after " + (now - _cwStageFrom).ToString("F2", Inv) + " s: "
                     + (reachedDeadline ? "REACHED ITS DEADLINE" : "done") + (string.IsNullOrEmpty(detail) ? "" : " (" + detail + ")"));
                 if (reachedDeadline) _cwDeadlinesReached.Add(_cwStage + (string.IsNullOrEmpty(detail) ? "" : " (" + detail + ")"));
@@ -101,7 +101,7 @@ namespace Zantetsu.Sandbox
             }
 
             /// <summary>Whether the run's budget is still open (always, outside a city walk).</summary>
-            private bool WithinBudget => !cityWalk || Time.realtimeSinceStartup < cityWalkBudget;
+            private bool WithinBudget => !cityWalk || Zantetsu.Core.GamePause.RealtimeSinceStartup < cityWalkBudget;
 
             private void StageLine(string line)
             {
@@ -156,8 +156,8 @@ namespace Zantetsu.Sandbox
                     {
                         capture.SetShot(s, "the " + when + " picture");
                         int rendered = capture.Rendered;
-                        yield return null;
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                         yield return new WaitForEndOfFrame();
                         RenderTexture active = RenderTexture.active;
                         RenderTexture.active = capture.Target;
@@ -192,12 +192,12 @@ namespace Zantetsu.Sandbox
                 yield return CityWalkViews("before");
                 float by = StageBegin("cuttables registration", 120f);
                 bool Open(PlayableCityCuttable c) => c != null && !c.IsCutTarget && c.Failure == null && c.isActiveAndEnabled;
-                float from = Time.realtimeSinceStartup;
+                float from = Zantetsu.Core.GamePause.RealtimeSinceStartup;
                 int frames = 0;
                 PlayableCityCuttable.Held = false;
-                while (all.Any(Open) && Time.realtimeSinceStartup < by)
+                while (all.Any(Open) && Zantetsu.Core.GamePause.RealtimeSinceStartup < by)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     frames++;
                 }
 
@@ -208,7 +208,7 @@ namespace Zantetsu.Sandbox
                     _cwRegistrationCutShort = true;
                 }
 
-                Log("city walk registration: the stage took " + (Time.realtimeSinceStartup - from).ToString("F2", Inv) + " s over " + frames + " frames; registrations ended "
+                Log("city walk registration: the stage took " + (Zantetsu.Core.GamePause.RealtimeSinceStartup - from).ToString("F2", Inv) + " s over " + frames + " frames; registrations ended "
                     + all.Count(c => c.IsCutTarget || c.Failure != null) + " (refused " + all.Count(c => c.Failure != null) + "); deadline " + by.ToString("F2", Inv) + " s (process)");
 
                 if (!_cwRegistrationCutShort) yield return CityWalkViews("after");
@@ -260,7 +260,7 @@ namespace Zantetsu.Sandbox
             private void CityWalkBegin()
             {
                 if (!cityWalk) return;
-                _cwRealAtScriptStart = Time.realtimeSinceStartupAsDouble;
+                _cwRealAtScriptStart = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 if (Has(CityWalkWalkShotsArgument)) StartCoroutine(CityWalkWalkShots(Value(CityWalkWalkShotsArgument)));
                 if (runParts.Watching) StartCoroutine(CityWalkSkinningWatch());   // every NPC slot looked at every frame: not where nothing watches
             }
@@ -375,7 +375,7 @@ namespace Zantetsu.Sandbox
                         }
                     }
 
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
             }
 
@@ -428,7 +428,7 @@ namespace Zantetsu.Sandbox
                 yield return CityWalkRegistrationCutShort(_world, ending, all, Log);
                 StageEnd(!ending.WorldReleased, "world released " + ending.WorldReleased + ", ending failures " + ending.Failures);
                 _failures += ending.Failures;
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 Finish(ending, null);
             }
 
@@ -450,17 +450,17 @@ namespace Zantetsu.Sandbox
                     frames.WriteLine("name,scriptSeconds,firstFrame,lastFrame,firstReal,lastReal");
                     foreach (float t in times)
                     {
-                        while (_replaying && MobPlanNow < t) yield return null;
+                        while (_replaying && MobPlanNow < t) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                         if (!_replaying || _world == null || _world.IsEnding) yield break;
                         string name = "walk-" + t.ToString("F1", Inv);
                         int first = Time.frameCount;
-                        double firstReal = Time.realtimeSinceStartupAsDouble;
+                        double firstReal = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                         var capture = new CheckCaptureCamera(_world, Camera.main, null, 3f, 1f, -10f, 60f, 1280, 720);
                         var pixels = new Texture2D(capture.width, capture.height, TextureFormat.RGB24, false);
                         try
                         {
-                            yield return null;
-                            yield return null;
+                            { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
+                            { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                             yield return new WaitForEndOfFrame();
                             RenderTexture active = RenderTexture.active;
                             RenderTexture.active = capture.Target;
@@ -477,7 +477,7 @@ namespace Zantetsu.Sandbox
                             Object.Destroy(pixels);
                         }
 
-                        frames.WriteLine(name + "," + t.ToString("R", Inv) + "," + first + "," + (Time.frameCount + 1) + "," + firstReal.ToString("F4", Inv) + "," + Time.realtimeSinceStartupAsDouble.ToString("F4", Inv));
+                        frames.WriteLine(name + "," + t.ToString("R", Inv) + "," + first + "," + (Time.frameCount + 1) + "," + firstReal.ToString("F4", Inv) + "," + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F4", Inv));
                     }
                 }
             }
@@ -543,7 +543,7 @@ namespace Zantetsu.Sandbox
                 _cwShotBusy = true;
                 string name = "hit-" + pose.name + "-" + when;
                 int first = Time.frameCount;
-                double firstReal = Time.realtimeSinceStartupAsDouble;
+                double firstReal = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 CheckCaptureCamera capture = null;
                 Texture2D pixels = null;
                 try
@@ -556,8 +556,8 @@ namespace Zantetsu.Sandbox
 
                     capture = new CheckCaptureCamera(_world, Camera.main, null, 0f, 0f, 0f, pose.fieldOfView, 1280, 720, new[] { pose });
                     pixels = new Texture2D(capture.width, capture.height, TextureFormat.RGB24, false);
-                    yield return null;
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     yield return new WaitForEndOfFrame();
                     RenderTexture active = RenderTexture.active;
                     RenderTexture.active = capture.Target;
@@ -571,7 +571,7 @@ namespace Zantetsu.Sandbox
                     Log("city walk hit shot " + name + ": script seconds " + MobPlanNow.ToString("F2", Inv) + ", renders " + capture.Rendered + ", taken by the display " + capture.TakenByDisplay
                         + ", listed with the camera drawing " + capture.ListedWithDrawing + ", slots waiting to be given back " + CheckCaptureCamera.PendingUnregistrations + ", camera " + pose.position.ToString("F2")
                         + " looking at " + pose.lookAt.ToString("F2") + ", frames " + first + ".." + Time.frameCount + (valid ? "" : ": INVALID (the display did not draw for its camera)"));
-                    _cwHitFrames.WriteLine(name + "," + MobPlanNow.ToString("R", Inv) + "," + first + "," + (Time.frameCount + 1) + "," + firstReal.ToString("F4", Inv) + "," + Time.realtimeSinceStartupAsDouble.ToString("F4", Inv) + "," + valid);
+                    _cwHitFrames.WriteLine(name + "," + MobPlanNow.ToString("R", Inv) + "," + first + "," + (Time.frameCount + 1) + "," + firstReal.ToString("F4", Inv) + "," + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F4", Inv) + "," + valid);
                 }
                 finally
                 {
@@ -589,11 +589,11 @@ namespace Zantetsu.Sandbox
             {
                 if (_mpSteps != null && _mpSteps.HoldBeforeSlash != null)
                 {
-                    float by = Time.realtimeSinceStartup + 10f;
-                    while ((_cwShotBusy || _cwAfterTaken.Count < _cwBeforeTaken.Count) && Time.realtimeSinceStartup < by && _world != null && !_world.IsEnding)
+                    float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + 10f;
+                    while ((_cwShotBusy || _cwAfterTaken.Count < _cwBeforeTaken.Count) && Zantetsu.Core.GamePause.RealtimeSinceStartup < by && _world != null && !_world.IsEnding)
                     {
                         CityWalkHitShotsAfter(double.MaxValue);
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
 
                     Log("city walk hit shots: before " + _cwBeforeTaken.Count + ", after " + _cwAfterTaken.Count + ", valid " + _cwHitShotsValid + ", INVALID " + _cwHitShotsInvalid.Count
@@ -631,7 +631,7 @@ namespace Zantetsu.Sandbox
             private IEnumerator CityWalkHeadOrderWatch()
             {
                 float threshold = startOnHeadMove > 0f ? startOnHeadMove : 0.005f;
-                Log("city walk VRS order: clock pair real " + Time.realtimeSinceStartupAsDouble.ToString("F4", Inv) + " s = wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv)
+                Log("city walk VRS order: clock pair real " + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("F4", Inv) + " s = wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv)
                     + "; the XR camera's local pose watched every frame from frame " + Time.frameCount + " (a move past " + threshold.ToString("R", Inv) + " m or 0.5 deg from its first pose)");
                 bool seen = false;
                 Vector3 p0 = Vector3.zero;
@@ -654,12 +654,12 @@ namespace Zantetsu.Sandbox
                                 seen = true;
                                 p0 = h.localPosition;
                                 r0 = h.localRotation;
-                                Log("city walk VRS order: the head's first tracked pose at frame " + Time.frameCount + " real " + Time.realtimeSinceStartup.ToString("F2", Inv) + " s: local " + p0.ToString("F4") + " " + r0.eulerAngles.ToString("F2"));
+                                Log("city walk VRS order: the head's first tracked pose at frame " + Time.frameCount + " real " + Zantetsu.Core.GamePause.RealtimeSinceStartup.ToString("F2", Inv) + " s: local " + p0.ToString("F4") + " " + r0.eulerAngles.ToString("F2"));
                             }
                         }
                         else if (Vector3.Distance(h.localPosition, p0) > threshold || Quaternion.Angle(h.localRotation, r0) > 0.5f)
                         {
-                            _cwHeadMovedAt = Time.realtimeSinceStartup;
+                            _cwHeadMovedAt = Zantetsu.Core.GamePause.RealtimeSinceStartup;
                             _cwHeadMovedFrame = Time.frameCount;
                             _cwHeadMovedStage = _cwStage ?? _phase;
                             StageLine("VRS order: the replayed head first moved at " + _cwHeadMovedAt.ToString("F2", Inv) + " s (process, frame " + _cwHeadMovedFrame + ", wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv)
@@ -668,7 +668,7 @@ namespace Zantetsu.Sandbox
                         }
                     }
 
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
             }
 
@@ -676,7 +676,7 @@ namespace Zantetsu.Sandbox
             private bool CityWalkVrsBeganBeforeReady()
             {
                 bool before = !float.IsNaN(_cwHeadMovedAt);
-                StageLine("VRS order: ready at " + Time.realtimeSinceStartup.ToString("F2", Inv) + " s (process, frame " + Time.frameCount + ", wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv) + "); "
+                StageLine("VRS order: ready at " + Zantetsu.Core.GamePause.RealtimeSinceStartup.ToString("F2", Inv) + " s (process, frame " + Time.frameCount + ", wall " + System.DateTime.Now.ToString("HH:mm:ss.fff", Inv) + "); "
                     + (before ? "the head had moved already at " + _cwHeadMovedAt.ToString("F2", Inv) + " s during " + _cwHeadMovedStage + ": the VRS began before ready, NOT a synchronisation"
                               : "the head has not moved yet: the VRS begins after ready"));
                 return before;
@@ -733,7 +733,7 @@ namespace Zantetsu.Sandbox
                     + " (their pieces cut again " + propChildren.Sum(g => g.Count()) + "), NPCs cut " + npcRoots.Count + " (replacements among them " + replacementsCut + "; their pieces cut again " + npcChildren.Sum(g => g.Count())
                     + "); walked " + _mpTravel.ToString("F1", Inv) + " m (the script's own " + planned.ToString("F1", Inv) + " m"
                     + (_mpSteps != null ? " from the walk's start " + _mpSteps.PlannedFrom.ToString("F2") : "") + " at " + speed.ToString("R", Inv) + " m/s); script seconds " + MobPlanNow.ToString("F1", Inv)
-                    + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Time.realtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
+                    + " (end " + _mpEnd.ToString("R", Inv) + "); slashes of the plan begun " + plannedBegun + " of " + slashesPlanned + (attackChunks > 0 ? " (and " + attackChunks + " attacks on NPCs)" : "") + "; process " + Zantetsu.Core.GamePause.RealtimeSinceStartup.ToString("F1", Inv) + " s of the budget " + cityWalkBudget.ToString("R", Inv) + " s");
                 Log("city walk placed search (the run): " + CityWalkPlacedSearch());
                 Log("city walk display collection (the run): " + CityWalkDisplayCollection());
                 // The fragment group collection's own record (DESIGN 7.10): the world writes it at its end, which a run

@@ -44,7 +44,8 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            if (EmptyOwners == null || !IsReady || _ending || TerminationRequested)
+            // No turn while the game is paused (DESIGN 4.6): what it started stays on its way until the pause ends.
+            if (EmptyOwners == null || !IsReady || _ending || TerminationRequested || Zantetsu.Core.GamePause.IsPaused)
             {
                 return;
             }

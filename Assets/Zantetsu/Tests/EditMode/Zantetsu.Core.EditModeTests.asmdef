@@ -15,6 +15,7 @@
         "Zantetsu.MeshCut.Verification",
         "Zantetsu.MeshCut.ReferenceIntake",
         "Zantetsu.Sandbox",
+        "Zantetsu.Quest",
         "Zantetsu.Rendering",
         "Zantetsu.Rendering.Editor",
         "Unity.XR.Management",

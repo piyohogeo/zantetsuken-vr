@@ -53,7 +53,7 @@ namespace Zantetsu.Sandbox
                 {
                     _bfRows = new StreamWriter(Path.Combine(directory, "building-fusion.csv"));
                     _bfRows.WriteLine("frame,real,t,phase,groups,resting,free,busy,aggregating,held,fusedPieces,groupCuts,finals,rigidbodies,hulls,contactMs,supportMs,simulateMs,stepped,skipsInARow,remainingMs,expectedMs,verifications,droppedOwedMs,snapshotMs,frameIntervalMs,mainThreadMs,mainWorkMs,fusionMs,stepMs,requestMs,classifyMs,publishMs,finalMs,unionMs,massMs,fuseMs,workerMs,overrunMs,deferred,preparations,heldWaitMs,unionMembers,aggregations,heldProcessed,hullMs,cookHullMs,hullChecks,pubMoveMs,pubShadowMs,pubIgnoreMs,ignorePairs,massSampleMs,massApplyMs,shadowPrepMs");
-                    _bfLastReal = Time.realtimeSinceStartupAsDouble;
+                    _bfLastReal = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                     _bfLastContact = rest != null ? rest.ContactSeconds : 0.0;
                     _bfLastSupport = rest != null ? rest.SupportSeconds : 0.0;
                     _bfLastFusion = FusionMainSeconds(f);
@@ -66,7 +66,7 @@ namespace Zantetsu.Sandbox
                 string phase = f.BuildingsAggregating > 0 ? "aggregating" : busy > 0 || frame - _bfLastCutFrame <= CutPhaseFrames ? "cut" : f.GroupCuts > 0 ? "after" : "idle";
                 if (phase != _bfPhase) { _bfPhaseChanges.Add(frame + ":" + phase); _bfPhase = phase; }
 
-                double real = Time.realtimeSinceStartupAsDouble;
+                double real = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 double mainMs = (real - _bfLastReal) * 1000.0;
                 _bfLastReal = real;
                 double contactMs = rest != null ? (rest.ContactSeconds - _bfLastContact) * 1000.0 : 0.0;

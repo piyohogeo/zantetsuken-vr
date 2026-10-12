@@ -153,7 +153,7 @@ namespace Zantetsu.Sandbox
             private void CaptureScheduleFrame()
             {
                 if (_capture == null || !_replaying || _captureNext >= captureSchedule.Count || captureSchedule[_captureNext].when != "t") return;
-                double t = Time.unscaledTimeAsDouble - _clockStart;
+                double t = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
                 if (t < captureSchedule[_captureNext].at) return;
                 if (_world != null && _world.Hulls != null && _world.Hulls.AnimationsRunning > 0) { _captureSwitchesDelayed++; return; }   // never in the middle of a drop
                 _capture.SetShot(captureSchedule[_captureNext].shot, "the script's t " + t.ToString("F3", Inv) + " s (due " + captureSchedule[_captureNext].at.ToString("R", Inv) + " s; frames waited for a drop " + _captureSwitchesDelayed + ")");
@@ -211,6 +211,7 @@ namespace Zantetsu.Sandbox
                 if (sinks.Count == 0) yield break;
                 int from = Time.frameCount;
                 foreach (CheckFrameSink s in sinks) s.BeginFinish("the run's ending");
+                // (The ending's own wait: the sinks finish and are collected whether or not the game is paused.)
                 while (sinks.Any(s => !s.Settled && !s.DeadlineExceeded)) yield return null;
                 _captureDrained = true;
                 foreach (CheckFrameSink s in sinks) Log("capture sink drained over " + (Time.frameCount - from) + " frames: " + s.Describe());

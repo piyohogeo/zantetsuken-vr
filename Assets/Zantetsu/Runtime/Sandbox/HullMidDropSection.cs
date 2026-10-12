@@ -134,11 +134,11 @@ namespace Zantetsu.Sandbox
             string stop = Tick();
             if (stop != null) { End(Broken(stop), stop, log); yield break; }
 
-            float by = Time.realtimeSinceStartup + settleSeconds;
+            float by = Zantetsu.Core.GamePause.RealtimeSinceStartup + settleSeconds;
             while (!h.IsSettled)
             {
-                if (Time.realtimeSinceStartup >= by) { End(Result.TimedOut, "the building trial not settled within " + settleSeconds.ToString("R") + " s: " + h.DescribeUnsettled(), log); yield break; }
-                yield return null;
+                if (Zantetsu.Core.GamePause.RealtimeSinceStartup >= by) { End(Result.TimedOut, "the building trial not settled within " + settleSeconds.ToString("R") + " s: " + h.DescribeUnsettled(), log); yield break; }
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 stop = Tick();
                 if (stop != null) { End(Broken(stop), stop, log); yield break; }
             }
@@ -165,7 +165,7 @@ namespace Zantetsu.Sandbox
 
             // The first: level, through the hull's centre.
             FirstSlash = nextSlashId();
-            var level = new SlashSweep(FirstSlash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
+            var level = new SlashSweep(FirstSlash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
                 new Vector3(lo.x - 1f, c.y, lo.z - 1f), new Vector3(lo.x - 1f, c.y, hi.z + 1f), new Vector3(hi.x + 1f, c.y, lo.z - 1f), new Vector3(hi.x + 1f, c.y, hi.z + 1f));
             MobPlanSlashAftermath firstAfter = Evaluate(world, detector, level, afterEvaluate, characters, failureRecorded, hullHitsBefore, out string firstHits);
             FirstHit = HitOf(h, hullHitsBefore, FirstSlash, building);
@@ -176,7 +176,7 @@ namespace Zantetsu.Sandbox
             // Its publication, then its drop seen part way (TL, 2026-10-01): the drop's applied phase u = t / T with 0 < u < 1, it
             // still running, and a member of it read back away from its start (a real move, not a registration). Until then no
             // second Slash; no progress by the deadline fails.
-            by = Time.realtimeSinceStartup + publishSeconds;
+            by = Zantetsu.Core.GamePause.RealtimeSinceStartup + publishSeconds;
             bool publishedSeen = false;
             while (true)
             {
@@ -202,14 +202,14 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                if (Time.realtimeSinceStartup >= by)
+                if (Zantetsu.Core.GamePause.RealtimeSinceStartup >= by)
                 {
                     End(Result.TimedOut, "the first Slash's cut not seen published and moving part way within " + publishSeconds.ToString("R") + " s (outcome " + (FirstHit.outcome ?? "pending") + ", u " + FirstProgress.ToString("R") + ", moved " + FirstMoved.ToString("R") + " m"
                         + ", drops started " + (h.AnimationsStarted - startedBefore) + "): no second Slash given", log);
                     yield break;
                 }
 
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 stop = Tick();
                 if (stop != null) { End(Broken(stop), stop, log); yield break; }
             }
@@ -218,7 +218,7 @@ namespace Zantetsu.Sandbox
             FirstDropRunningAtSecond = h.AnimationsStarted > startedBefore && h.AnimationsRunning > 0 && h.AnimationsCompleted == completedBefore && h.AnimationsStoppedByReCut == stoppedBefore && FirstProgress > 0.0 && FirstProgress < 1.0 && FirstMoved > 0.0;
             int givenAt = Time.frameCount;
             SecondSlash = nextSlashId();
-            var upright = new SlashSweep(SecondSlash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
+            var upright = new SlashSweep(SecondSlash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.right, -c.x), Vector3.down, Vector3.forward,
                 new Vector3(c.x, hi.y + 1f, lo.z - 1f), new Vector3(c.x, hi.y + 1f, hi.z + 1f), new Vector3(c.x, lo.y - 1f, lo.z - 1f), new Vector3(c.x, lo.y - 1f, hi.z + 1f));
             MobPlanSlashAftermath secondAfter = Evaluate(world, detector, upright, afterEvaluate, characters, failureRecorded, hullHitsBefore, out string secondHits);
             SecondHit = HitOf(h, hullHitsBefore, SecondSlash, building);
@@ -228,7 +228,7 @@ namespace Zantetsu.Sandbox
             Event("the second Slash accepted " + (SecondHit.held ? "held" : "pending"), h, clock, log, "");
 
             // Both to their end, a held one included, and everything else each Slash set going (the ordinary completion wait).
-            by = Time.realtimeSinceStartup + endSeconds;
+            by = Zantetsu.Core.GamePause.RealtimeSinceStartup + endSeconds;
             bool resumedSeen = false, stopSeen = false;
             while (true)
             {
@@ -236,14 +236,14 @@ namespace Zantetsu.Sandbox
                 if (!stopSeen && h.AnimationsStoppedByReCut != stoppedBefore) { stopSeen = true; Event("the first drop seen stopped", h, clock, log, " (at " + h.LastStopFraction.ToString("R") + " of its way)"); }
                 bool first = firstAfter.Poll(), second = secondAfter.Poll();
                 if (first && second && !FirstHit.IsPending && !SecondHit.IsPending && h.IsSettled) break;
-                if (Time.realtimeSinceStartup >= by)
+                if (Zantetsu.Core.GamePause.RealtimeSinceStartup >= by)
                 {
                     End(Result.TimedOut, "not ended within " + endSeconds.ToString("R") + " s: first " + (FirstHit.outcome ?? "pending") + ", second " + (SecondHit.outcome ?? "pending") + "; " + h.DescribeUnsettled()
                         + "; the first Slash's other work: " + firstAfter.Describe() + "; the second's: " + secondAfter.Describe(), log);
                     yield break;
                 }
 
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 stop = Tick();
                 if (stop != null) { End(Broken(stop), stop, log); yield break; }
             }
