@@ -1,6 +1,6 @@
 # Quest 3S: NPC10 Slash デモの移植とプロファイル
 
-2026-10-09 JST。専用 worktree `%USERPROFILE%/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。初回切断・切断前・最終切断後の停止を、ユーザー観察と実機計測で解消確認済み。
+2026-10-09 JST。専用 worktree `C:/Users/%USERNAME%/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。初回切断・切断前・最終切断後の停止を、ユーザー観察と実機計測で解消確認済み。
 
 ## 現在の確認結果
 

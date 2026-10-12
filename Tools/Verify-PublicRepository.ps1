@@ -48,9 +48,10 @@ function Fail-Infrastructure {
 
 function Get-RepositoryRoot {
     # Prefer Git, which also understands worktrees and bare repositories.
-    $gitRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null | Select-Object -First 1)
-    if ($LASTEXITCODE -eq 0 -and $gitRoot) {
-        return [System.IO.Path]::GetFullPath($gitRoot.ToString().Trim())
+    $gitRoots = @(& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
+    $gitRootExit = $LASTEXITCODE
+    if ($gitRootExit -eq 0 -and $gitRoots.Count -gt 0) {
+        return [System.IO.Path]::GetFullPath($gitRoots[0].ToString().Trim())
     }
 
     # Fallback: walk up the directory tree looking for a .git entry

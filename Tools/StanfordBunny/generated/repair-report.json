@@ -5,7 +5,7 @@
   "BlenderVersion": "4.5.13 LTS",
   "AssetFamily": "Stanford",
   "AssetId": "Bunny",
-  "SourceBlendPath": "%USERPROFILE%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\source.blend",
+  "SourceBlendPath": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\source.blend",
   "Recipe": [
     "Split Selected Meshes",
     "Weld Selected Meshes",
@@ -26,7 +26,7 @@
   "PreservationGatePass": true,
   "RecipeHealthGatePass": true,
   "StrictRecipeHealthGatePass": true,
-  "OutputBlendPath": "%USERPROFILE%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\repaired.blend",
+  "OutputBlendPath": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\repaired.blend",
   "ElapsedSeconds": 22.494689999999537,
   "Objects": [
     {
