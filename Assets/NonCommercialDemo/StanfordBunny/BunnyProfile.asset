@@ -106,8 +106,8 @@ MonoBehaviour:
   buildingHullDropExponent: 1
   buildingHullDropBaseMetres: 0.5
   maxIncompleteCuts: 4096
-  separationImpulseByMass: 0
-  separationImpulsePerKg: 0
+  separationImpulseByMass: 1
+  separationImpulsePerKg: 1
   buildingWorldFirstLimitMetres: 1
   buildingWorldEnabled: 1
   buildingWorldFirstAngleDegrees: 30

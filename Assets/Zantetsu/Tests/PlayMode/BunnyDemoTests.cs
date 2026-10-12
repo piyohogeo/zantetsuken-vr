@@ -36,12 +36,22 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             // Exercise the real admission, geometry worker, physics cooking and publication, not a replacement mesh.
             var source = demo.Bodies[0].Fragment;
             var ask = new ProvisionalCutAsk {source=source,plane=new float4(0,1,0,-.3f), renderAnchor=float3.zero};
+            float positiveVelocity = float.NaN, negativeVelocity = float.NaN;
+            System.Action<ProvisionalOwnerPair> captureImpulse = pair =>
+            {
+                positiveVelocity = pair.Positive.LinearVelocity.y;
+                negativeVelocity = pair.Negative.LinearVelocity.y;
+            };
+            root.Owners.ProvisionalAdded += captureImpulse;
             var acceptance = root.Driver.RequestCut(in ask,out var transaction,out var admission);
             Assert.That(transaction,Is.Not.Null,acceptance + ": " + admission);
             float deadline = Time.realtimeSinceStartup+30f;
             while (transaction.Phase != ProvisionalCutPhase.HandedOff && Time.realtimeSinceStartup<deadline) yield return null;
             Assert.That(transaction.Phase,Is.EqualTo(ProvisionalCutPhase.HandedOff),"physics cut finished and handed off: " + transaction.CutOutcome);
             Assert.That(root.Ledger.TryGetReplacement(source,out var positive,out var negative),Is.True,"Actual compound Bunny publishes two pieces");
+            root.Owners.ProvisionalAdded -= captureImpulse;
+            Assert.That(positiveVelocity,Is.EqualTo(1f).Within(.001f),"positive piece receives 1 m/s at publication");
+            Assert.That(negativeVelocity,Is.EqualTo(-1f).Within(.001f),"negative piece receives -1 m/s at publication");
             Assert.That(root.TerminationRequested,Is.False);
             // Open by the same input frame as a left-controller menu press.
             var menu = PlayMenu.Instance;
@@ -79,6 +89,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             while(replacement.Resetting && Time.realtimeSinceStartup<deadline) yield return null;
             yield return null;
             Assert.That(Object.FindFirstObjectByType<BunnyDemo>().SpawnedCount,Is.EqualTo(1));
+            Assert.That(replacement.world.Driver.SeparationStrength,Is.Not.Null,"scene reset preserves mass-based impulse");
+            Assert.That(replacement.world.Driver.SeparationStrength(2),Is.EqualTo(2f));
         }
 
         static IEnumerator Picture(string path)
