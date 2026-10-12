@@ -157,6 +157,9 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(w.ledger.TryGetOperation(first.Operation, out LogicalCutOperation children), Is.True);
                 frame = 1000;
 
+                // Finished work is not collected from here on: a cut that is published is looked at as Published,
+                // however soon its final cut is done. (The updates below would otherwise hand it off when it is.)
+                w.job.HoldEverything = true;
                 Predict(w, build: 0.030, publish: 0.001);
                 w.driver.RemainingMainSeconds = () => 0.005;
                 var ask = new ProvisionalCutAsk { source = children.positive, plane = new float4(1, 0, 0, 0) };
