@@ -1,3 +1,6 @@
 # Preserve upstream inputs, source hashes and generated blends byte for byte.
 Tools/StanfordBunny/** -text
 Tools/StanfordBunny/source/bun_zipper.ply binary
+
+# The katana model's source blend, byte for byte.
+Assets/Zantetsu/Sandbox/Katana/Source~/*.blend binary

@@ -135,6 +135,9 @@ namespace Zantetsu.Sandbox
         [SerializeField] private Vector3 offsetPosition = new Vector3(0f, 0f, 0.02f);
         [SerializeField] private Vector3 offsetEulerAngles = new Vector3(-15f, 0f, 0f);
 
+        // Play's own turn of the katana toward its edge (EdgewardTiltDegrees): not a scene's value, not saved with one.
+        private float edgewardTiltDegrees;
+
         [Header("Blade")]
         [Tooltip("Blade length in metres, from the katana origin toward the tip.")]
         [SerializeField] private float bladeLength = 0.9f;
@@ -284,6 +287,7 @@ namespace Zantetsu.Sandbox
             set
             {
                 katana = value;
+                ShowModel();
                 Hide();
             }
         }
@@ -592,7 +596,34 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>
-        internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles));
+        internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles) * Quaternion.Euler(edgewardTiltDegrees, 0f, 0f));
+
+        /// <summary>
+        /// The katana turned toward its edge from the scene's own grip-to-katana offset, in degrees about the side
+        /// normal (negative: toward the spine). It turns the blade frame -- what is shown and what cuts together --
+        /// and is the player's own setting in play (<see cref="PlaySettings"/>); a scene's saved offset and a scripted
+        /// run are not changed by it (it is 0 unless play sets it). Changing it starts the slash state over.
+        /// </summary>
+        internal float EdgewardTiltDegrees
+        {
+            get => edgewardTiltDegrees;
+            set
+            {
+                if (Mathf.Approximately(edgewardTiltDegrees, value))
+                {
+                    return;
+                }
+
+                edgewardTiltDegrees = value;
+                ResetToKnownState();
+            }
+        }
+
+        /// <summary>
+        /// Shows the katana where the hand holds it while its live input is off: the pose only, nothing of it given to
+        /// the gesture. For the menu in play, so that the blade's angle can be seen while it is set.
+        /// </summary>
+        internal bool ShowPoseWhileInputOff { get; set; }
 
         /// <summary>Blade-local coordinate system of the katana visual root: the core blade's.</summary>
         internal BladeFrame BladeFrame => new SlashBlade(GripToKatanaOffset, bladeLength).Frame;
@@ -750,7 +781,7 @@ namespace Zantetsu.Sandbox
             BeginBladeAxisViewDotMinimum = beginBladeAxisViewDotMinimum,
             BladeLength = bladeLength,
             GripOffsetPosition = offsetPosition,
-            GripOffsetRotation = Quaternion.Euler(offsetEulerAngles),
+            GripOffsetRotation = GripToKatanaOffset.rotation,
             EmissionControlPointRatio = SlashBlade.EmissionControlPointRatio,
             CutSampleRatio = CutSampleRatio,
             WaveSpeed = Core.Flight.Speed,
@@ -1003,8 +1034,19 @@ namespace Zantetsu.Sandbox
         // the waves this component owns.
         private void OnEnable()
         {
+            ShowModel();
             ResetToKnownState();
             Application.onBeforeRender += ApplyGripPoseForRender;
+        }
+
+        // The sword's model in place of the scene's own boxes (SandboxKatanaModel), once for a katana root, in a
+        // running game only: an edited scene keeps its parts as they are saved.
+        private void ShowModel()
+        {
+            if (Application.isPlaying)
+            {
+                SandboxKatanaModel.Apply(katana);
+            }
         }
 
         private void OnDisable()
@@ -1037,6 +1079,12 @@ namespace Zantetsu.Sandbox
             // way to the screen.
             if (!liveInputEnabled)
             {
+                // (The menu in play: the hand's pose is shown, and only shown.)
+                if (ShowPoseWhileInputOff)
+                {
+                    TryApplySample(ReadRightHandGripSample());
+                }
+
                 return;
             }
 

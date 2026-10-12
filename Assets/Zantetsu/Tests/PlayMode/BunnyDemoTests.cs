@@ -61,7 +61,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             device.frame.menuDown = true;
             yield return null;
             Assert.That(menu.IsOpen,Is.True);
-            Assert.That(menu.View.Rows.Count,Is.EqualTo(5));
+            Assert.That(menu.View.Rows.Count,Is.EqualTo(6));
             Assert.That(VpCutSurfaceColour.DebugEnabled,Is.False);
             var debugRow = menu.View.Rows[4];
             device.frame.menuDown = false;
