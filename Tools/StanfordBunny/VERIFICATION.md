@@ -25,3 +25,9 @@ privateを配置した商用Player自体は、このワークツリーにprivate
 
 Unity Test Runnerフィルタ: EditMode `BunnyBuildPolicyTests;SandboxScenarioTests;PlayMenu`、PlayMode `BunnyDemoTests`。
 ログ/XMLと描画画像は `Logs/bunny-*`、内容監査はWindows出力の `zantetsu-content-audit.json` とAPK隣の `.content-audit.json`。
+
+## Linkでの切断インパルス修正
+
+- Bunny固有の固定0.1 N·sから、既存play profileと同じ質量比例のJ = 1 × massへ変更。初回とリセット後の両方に適用。
+- PlayModeの実Bunny切断で、物理公開直後の両断片の初速+1 / -1 m/sを確認。3→2→1のリセット後も質量比例設定が残ることを確認（1/1成功）。
+- Windows Auto Playerを再生成（errors 0）。Quest APKは今回更新していません。

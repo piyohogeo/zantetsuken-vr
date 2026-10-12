@@ -39,6 +39,9 @@ namespace Zantetsu.EditorTools.Sandbox
             var ps = new SerializedObject(profile);
             ps.FindProperty("gpuVertexInitialCapacity").intValue = 1048576;
             ps.FindProperty("gpuIndexInitialCapacity").intValue = 4194304;
+            // Match the public play profile: each free piece starts with 1 m/s of separation velocity.
+            ps.FindProperty("separationImpulseByMass").boolValue = true;
+            ps.FindProperty("separationImpulsePerKg").floatValue = 1f;
             ps.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(profile);
             var goWorld = new GameObject("Bunny cut world");
@@ -65,7 +68,7 @@ namespace Zantetsu.EditorTools.Sandbox
             var hs = new SerializedObject(goWorld.AddComponent<SandboxSlashPropHit>());
             hs.FindProperty("world").objectReferenceValue = world;
             hs.FindProperty("katana").objectReferenceValue = katana;
-            hs.FindProperty("separationImpulse").floatValue = 0.1f;
+            hs.FindProperty("separationImpulse").floatValue = 1.5f;
             hs.ApplyModifiedPropertiesWithoutUndo();
             var demo = new GameObject("Bunny demo controller").AddComponent<BunnyDemo>();
             demo.world = world;

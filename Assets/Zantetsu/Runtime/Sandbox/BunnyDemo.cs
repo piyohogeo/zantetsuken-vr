@@ -57,6 +57,7 @@ namespace Zantetsu.Sandbox
             SandboxScenario.KeepOneLocomotionInput();
             SandboxScenario.QuietDevelopmentTools();
             PlayMenu.Install(SandboxScenarioKind.Play);
+            Debug.Log("BUNNY SEPARATION: " + (world.Driver.SeparationStrength == null ? "caller impulse" : "mass proportional, J(1 kg)=" + world.Driver.SeparationStrength(1) + " N s"));
             Debug.Log("STANFORD BUNNY NONCOMMERCIAL DEMO: " + SpawnedCount + " rabbits; data: Stanford University Computer Graphics Laboratory; https://graphics.stanford.edu/data/3Dscanrep/");
         }
 
@@ -100,7 +101,7 @@ namespace Zantetsu.Sandbox
             world = Instantiate(worldTemplate).GetComponent<CutWorldRoot>();
             world.name = "Bunny cut world";
             world.gameObject.AddComponent<CutWorldCameraDrawing>().Configure(world, _camera);
-            world.gameObject.AddComponent<SandboxSlashPropHit>().Configure(world, katana, .1f);
+            world.gameObject.AddComponent<SandboxSlashPropHit>().Configure(world, katana, 1.5f);
             RequestedCount = s_count;
             Spawn();
             if (katana != null) katana.LiveInputEnabled = true;

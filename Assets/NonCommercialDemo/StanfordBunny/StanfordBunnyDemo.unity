@@ -877,7 +877,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Zantetsu.Sandbox::Zantetsu.Sandbox.SandboxSlashPropHit
   world: {fileID: 339778620}
   katana: {fileID: 954653046}
-  separationImpulse: 0.1
+  separationImpulse: 1.5
 --- !u!114 &339778622
 MonoBehaviour:
   m_ObjectHideFlags: 0
