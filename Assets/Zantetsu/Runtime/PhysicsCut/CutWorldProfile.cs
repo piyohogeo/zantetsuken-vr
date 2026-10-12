@@ -183,16 +183,13 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float emptyOwnerCollectionSeedExpectedSeconds = 0.0003f;
 
         [Header("Fragment group collection (DESIGN 7.10, Phase 7.1)")]
-        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are far and unseen, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started. On by default (TL, 2026-10-10).")]
+        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are outside both eyes' views, at any distance, the farther of those looked at first, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started. On by default (TL, 2026-10-10).")]
         [SerializeField] private bool fragmentGroupCollectionEnabled = true;
 
         [Tooltip("Live cut fragments (every kind, a building's display fragments too; uncut objects not counted) above which groups are looked at. Where a collection starts, not a limit kept. 256: the piece lifetime's threshold as a start.")]
         [SerializeField] private int fragmentGroupMaxLiveCutFragments = 256;
 
-        [Tooltip("Every bounds of a chosen group -- its pieces', what they share, where its original would stand again -- is at least this far from the viewer, in metres, and outside both eyes' views.")]
-        [SerializeField] private float fragmentGroupDistance = 20f;
-
-        [Tooltip("Groups looked at per frame at most (4: each is read whole, piece by piece); one group is retired a frame at most.")]
+        [Tooltip("Groups looked at per frame at most (4: each is read whole, piece by piece); one group is retired a frame at most -- of those a frame looked at and could end, the farthest.")]
         [SerializeField] private int fragmentGroupExaminePerFrame = 4;
 
         [Tooltip("The expected cost of retiring one piece of a group, and of a group besides its pieces, in seconds, before any was measured (from no Player measurement). A piece's becomes the median of the last five measured.")]
@@ -440,7 +437,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public CutFragmentGroupSettings FragmentGroupCollection =>
             new CutFragmentGroupSettings(
-                fragmentGroupCollectionEnabled, fragmentGroupMaxLiveCutFragments, fragmentGroupDistance, fragmentGroupExaminePerFrame,
+                fragmentGroupCollectionEnabled, fragmentGroupMaxLiveCutFragments, fragmentGroupExaminePerFrame,
                 CutWorldRoot.CompactionReserveSeconds, fragmentGroupSeedSecondsPerFragment, fragmentGroupSeedSecondsPerGroup);
 
         public CutEmptyOwnerCollectionSettings EmptyOwnerCollection =>
@@ -581,7 +578,7 @@ namespace Zantetsu.PhysicsCut
             }
             else if (!FragmentGroupCollection.IsValid)
             {
-                reason = "the fragment group collection's maximum and distance must not be negative, its count positive and its expected costs not negative";
+                reason = "the fragment group collection's maximum must not be negative, its count positive and its expected costs not negative";
             }
             else if (!EmptyOwnerCollection.IsValid)
             {

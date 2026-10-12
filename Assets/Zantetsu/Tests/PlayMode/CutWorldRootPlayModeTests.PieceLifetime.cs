@@ -22,7 +22,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         private static void GroupsOffForThePieceLifetime(CutWorldRoot root)
         {
             CutFragmentGroupSettings g = root.Groups.Settings;
-            root.Groups.Settings = new CutFragmentGroupSettings(false, g.maxLiveCutFragments, g.minDistance, g.examinePerFrame, g.reserveSeconds, g.seedSecondsPerFragment, g.seedSecondsPerGroup);
+            root.Groups.Settings = new CutFragmentGroupSettings(false, g.maxLiveCutFragments, g.examinePerFrame, g.reserveSeconds, g.seedSecondsPerFragment, g.seedSecondsPerGroup);
         }
 
         private static CutFragmentLifetimeSettings Lifetime(bool enabled, int threshold, float distance, int retirePerFrame = 4)

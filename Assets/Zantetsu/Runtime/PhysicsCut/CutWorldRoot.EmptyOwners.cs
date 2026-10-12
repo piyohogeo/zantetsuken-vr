@@ -93,10 +93,9 @@ namespace Zantetsu.PhysicsCut
 
             UnityEngine.Debug.Log(
                 "FRAGMENT GROUPS: on -- asked for by " + FragmentGroupsArgument + " " + maximum + ": whole groups are collected above " + maximum
-                + " live cut fragments, " + settings.minDistance.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
-                + " m or more away and outside the eyes' views; the piece lifetime does not run", this);
+                + " live cut fragments, outside both eyes' views at any distance, the farther of those looked at first; the piece lifetime does not run", this);
             return new CutFragmentGroupSettings(
-                true, maximum, settings.minDistance, settings.examinePerFrame, settings.reserveSeconds,
+                true, maximum, settings.examinePerFrame, settings.reserveSeconds,
                 settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
         }
 
@@ -117,12 +116,11 @@ namespace Zantetsu.PhysicsCut
 
             CutFragmentGroupSettings settings = Groups.Settings;
             Groups.Settings = new CutFragmentGroupSettings(
-                true, maximum, settings.minDistance, settings.examinePerFrame, settings.reserveSeconds,
+                true, maximum, settings.examinePerFrame, settings.reserveSeconds,
                 settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
             UnityEngine.Debug.Log(
                 "FRAGMENT GROUPS: on -- asked for by " + askedBy + " " + maximum + ": whole groups are collected above " + maximum
-                + " live cut fragments, " + settings.minDistance.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
-                + " m or more away and outside the eyes' views; the piece lifetime does not run", this);
+                + " live cut fragments, outside both eyes' views at any distance, the farther of those looked at first; the piece lifetime does not run", this);
             return true;
         }
 
