@@ -17,6 +17,7 @@ namespace Zantetsu.Quest
     {
         [Serializable] private sealed class Config
         {
+            public string scenario = "";               // DESIGN 3.4: read by SandboxScenario (play without it); kept here so that the run's record of its configuration carries it
             public string mode = "vp3c";
             public string pathFile;
             public string geometryFile;
@@ -50,20 +51,29 @@ namespace Zantetsu.Quest
         private static void SelectNativeRoute()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            // The static scene's own route, where the launch's scenario is the static one (DESIGN 3.4): the other
+            // scenarios read theirs in QuestNpcSlashDemo. It was read here whatever ran while each had its own package.
+            SandboxScenarioChoice choice = SandboxScenario.Current;
+            if (choice.Failure != null || choice.Kind != SandboxScenarioKind.StaticWait) return;
             string file = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
             if (File.Exists(file)) Zantetsu.Rendering.VpNativeDrawSetup.Requested = JsonUtility.FromJson<Config>(File.ReadAllText(file))?.mode == "vp3c-native";
 #endif
         }
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void Install()
+        /// <summary>
+        /// The Quest's entry for the static scene (DESIGN 3.4), called by <see cref="SandboxScenario"/> once the
+        /// scenario's scene is loaded and before anything of it starts. It no longer starts by itself on the scene's
+        /// name: the name is checked against the scenario, and another scene is a failure, answered in words. Null
+        /// when the demo was made.
+        /// </summary>
+        internal static string StartForScenario()
         {
-#if UNITY_ANDROID && !UNITY_EDITOR
-            if (!UnityEngine.SceneManagement.SceneManager.GetActiveScene().name.StartsWith("QuestStaticSeed14")) return;
+            string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            if (!scene.StartsWith("QuestStaticSeed14")) return "static-wait needs a scene named QuestStaticSeed14...; this is " + scene;
             // Hold all registration and activity before any Start, even while StreamingAssets are being extracted.
             Debug.Log("QUEST STATIC: " + SandboxDrawComparePlayerCheck.QuietScene());
             new GameObject("Quest static comparison").AddComponent<QuestStaticDemo>();
-#endif
+            return null;
         }
 
         private IEnumerator Start()
@@ -149,8 +159,8 @@ namespace Zantetsu.Quest
             if (_config == null) return;
             if (!_spaceWarpApplied) _spaceWarpApplied = SpaceWarpFeature.SetSpaceWarp(_config.appSw);
             if (_config.nativeIndirectCountDrill) StepDrill();
-            if (Time.unscaledTime < _nextStatus) return;
-            _nextStatus = Time.unscaledTime + 5f;
+            if (Zantetsu.Core.GamePause.UnscaledTime < _nextStatus) return;
+            _nextStatus = Zantetsu.Core.GamePause.UnscaledTime + 5f;
             _displays.Clear();
             SubsystemManager.GetSubsystems(_displays);
             foreach (var xr in _displays)
@@ -162,7 +172,7 @@ namespace Zantetsu.Quest
                 if (Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST STATIC: " + Zantetsu.Rendering.VpCommandCompaction.ReadVerification());
                 if (_config.nativeIndirectCountDrill) Debug.Log("QUEST STATIC: " + DescribeDrill());
                 if (_config.mode == "vp3c-native" && Zantetsu.Rendering.VpNativeDrawPlugin.TryLoad(out _)) Debug.Log("QUEST NATIVE: " + Zantetsu.Rendering.VpNativeDrawPlugin.ReadCounters() + "; " + Zantetsu.Rendering.VpNativeDrawPlugin.DescribeState());
-                Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
+                Debug.Log("QUEST STATIC: mode=" + _config.mode + " camera=" + (_config.headTracked ? "head" : "path") + " phase=" + (_runner != null ? _runner.Phase.ToString() : "Loading") + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " msaa=" + ((UniversalRenderPipelineAsset)GraphicsSettings.currentRenderPipeline).msaaSampleCount + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied + " dtMs=" + Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
 

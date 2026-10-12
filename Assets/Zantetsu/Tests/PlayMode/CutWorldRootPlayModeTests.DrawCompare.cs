@@ -396,6 +396,96 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return DrawCompareRun(false);
         }
 
+        /// <summary>
+        /// A run with no section after its measurement, paused in the frame the measurement ends and never resumed: what
+        /// follows is the ending, so the records are written, the result told and the run's end asked for while paused.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator DrawCompare_TheRun_PausedAsItsMeasurementEnds_WritesItsRecordsAndEnds_WithoutAResume()
+        {
+            int rateBefore = Application.targetFrameRate, vSyncBefore = QualitySettings.vSyncCount;
+            float timeScaleBefore = Time.timeScale;
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = 120;
+            string folder = Path.Combine(Application.temporaryCachePath, "draw-compare-ending-" + Guid.NewGuid().ToString("N"));
+            bool pausedAtTheEnd = false;
+            void PauseAsTheMeasurementEnds(string condition, string stackTrace, LogType type)
+            {
+                if (!pausedAtTheEnd && condition.StartsWith(SandboxDrawComparePlayerCheck.Prefix + "measurement ended"))
+                {
+                    pausedAtTheEnd = true;
+                    Zantetsu.Core.GamePause.SetManual(true);
+                }
+            }
+
+            Application.logMessageReceived += PauseAsTheMeasurementEnds;
+            try
+            {
+                Assert.That(SceneDrawComparePath.TryParse("start,0,2,-6,0\nhold,0.2\nturn,25,0.2\n", out SceneDrawComparePath path, out string failure), Is.True, failure);
+                DrawCompareScene scene = NewDrawCompareScene();
+                CutWorldRoot root = scene.root;
+                yield return null;
+                ShadowStage stage = NewShadowStage();
+                yield return null;
+                yield return null;
+                string output = Path.Combine(folder, "vp3c");
+                var settings = new SandboxDrawComparePlayerCheck.Settings
+                {
+                    directory = output, mode = SandboxDrawComparePlayerCheck.Mode.Vp3c, path = path, pathFile = "(the test's)", warmupLaps = 1,
+                };
+                SandboxDrawComparePlayerCheck.Runner runner = SandboxDrawComparePlayerCheck.Begin(settings, root, scene.instances, stage.camera, null);
+                TrackActor(runner.gameObject);
+                int code = -1;
+                runner.quit = c => code = c;
+                float deadline = Time.realtimeSinceStartup + 60f;
+                while (!pausedAtTheEnd && !runner.Done && Time.realtimeSinceStartup < deadline)
+                {
+                    yield return null;
+                }
+
+                Assert.That(pausedAtTheEnd, Is.True, "the measurement ended, and the pause began in that frame");
+                for (int i = 0; i < 120 && !runner.Done; i++)
+                {
+                    yield return null;
+                }
+
+                Assert.That(Zantetsu.Core.GamePause.Manual && Zantetsu.Core.GamePause.IsPaused, Is.True, "nobody ended the pause");
+                Assert.That(runner.Done, Is.True, "the run ended while paused");
+                Assert.That(runner.Completed, Is.True, "as a completed run");
+                Assert.That(code, Is.EqualTo(runner.Code), "and its end was asked for, with its code");
+                Assert.That(File.Exists(Path.Combine(output, "frames.csv")), Is.True, "the frame table was written");
+                string result = File.ReadAllText(Path.Combine(output, "draw-compare-result.txt"));
+                TestContext.Out.WriteLine(result);
+                StringAssert.Contains("run: completed", result);
+
+                Zantetsu.Core.GamePause.ResetForTest();
+                Time.timeScale = timeScaleBefore;
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                Application.logMessageReceived -= PauseAsTheMeasurementEnds;
+                Zantetsu.Core.GamePause.ResetForTest();
+                Time.timeScale = timeScaleBefore;
+                Application.targetFrameRate = rateBefore;
+                QualitySettings.vSyncCount = vSyncBefore;
+                if (Profiler.enabled && Profiler.enableBinaryLog && Profiler.logFile != null && Profiler.logFile.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
+                {
+                    Profiler.enabled = false;
+                    Profiler.enableBinaryLog = false;
+                    Profiler.logFile = "";
+                }
+
+                try
+                {
+                    if (Directory.Exists(folder)) Directory.Delete(folder, true);
+                }
+                catch (IOException)
+                {
+                }
+            }
+        }
+
         private IEnumerator DrawCompareRun(bool vp)
         {
             int rateBefore = Application.targetFrameRate, vSyncBefore = QualitySettings.vSyncCount;

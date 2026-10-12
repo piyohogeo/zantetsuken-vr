@@ -13,7 +13,7 @@ namespace Zantetsu.Sandbox
     //
     // A frame record: eventFrame -- the frame the check ran MultiFrame in, its LateUpdate (order 400), the old CSV's "frame".
     // seconds -- Stopwatch at that moment, from this recording's start. The old columns as they were: real -- the check's
-    // clock, Time.unscaledTimeAsDouble since the replay's start (seconds, the same clock as the op records' times; not the
+    // clock, Zantetsu.Core.GamePause.UnscaledTimeAsDouble since the replay's start (seconds, the same clock as the op records' times; not the
     // Stopwatch, not the replay input clock of a hit's at); waves, uncutNpcs, liveFragments, livePieces, liveConvexes,
     // acceptedOps, pendingOps, incompleteOps, acceptedThisFrame, provisionalThisFrame, finalThisFrame, committedThisFrame --
     // the counts the check read in that frame; unsimulated -- the step clock's unsimulated seconds then (null without a

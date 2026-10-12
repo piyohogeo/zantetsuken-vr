@@ -84,6 +84,13 @@ namespace Zantetsu.Sandbox
         public const string TraceArgument = "-zantetsuPropTrace";
         public const string LightArgument = "-zantetsuPropLight";
         public const string IterationsArgument = "-zantetsuPropIterations";
+
+        /// <summary>
+        /// A check of the ending itself (DESIGN 4.6), off without it: the game is paused once where the run's ending
+        /// begins and is not resumed, and each stage of the ending says whether it was reached with the game still
+        /// paused (<see cref="EndingPauseCheck"/>). For a run of one iteration. A run with it is no performance sample.
+        /// </summary>
+        public const string PauseAtEndingArgument = "-zantetsuPropPauseAtEnding";
         public const string MarkersArgument = "-zantetsuPropMarkers";
         public const string UiArgument = "-zantetsuPropUi";
 
@@ -224,6 +231,10 @@ namespace Zantetsu.Sandbox
         public sealed class PreparedRun
         {
             public bool Done { get; internal set; }
+
+            /// <summary>The runner has taken its last frame: where the scene is not kept, the Player was asked to end here.</summary>
+            public bool Ended { get; internal set; }
+
             public int Code { get; internal set; } = -1;
             public string Phase { get; internal set; } = "Preparing";
             public string Directory { get; internal set; }
@@ -234,13 +245,165 @@ namespace Zantetsu.Sandbox
 
         private static string[] s_preparedArguments;
         private static bool s_started;
+        private static EndingPauseCheck s_endingPause;
+
+        /// <summary>This run's check of the ending (<see cref="PauseAtEndingArgument"/>); null before a run begins. For tests.</summary>
+        internal static EndingPauseCheck EndingPause => s_endingPause;
         private static string[] RunArguments => s_preparedArguments ?? Environment.GetCommandLineArgs();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        private static void ResetPreparedLaunch()
+        internal static void ResetPreparedLaunch()
         {
             s_preparedArguments = null;
             s_started = false;
+            s_endingPause = null;
+        }
+
+        /// <summary>
+        /// The check <see cref="PauseAtEndingArgument"/> asks for. Where the run's ending begins the game is paused,
+        /// once -- by the menu, opened as its button opens it, where there is one -- and the check never resumes it;
+        /// each of the ending's four stages (<see cref="Stage"/>) then says whether it was reached with the game still
+        /// paused, and the lines are written to <see cref="FileName"/> beside the run's records: held only when every
+        /// stage was reached, each with the game still paused -- a stage not reached is said. The stages are the same
+        /// on every platform: where the final save is spread over frames and where it is made in the completion itself.
+        /// It changes nothing of the ending, and does nothing at all in a run that did not ask for it.
+        /// </summary>
+        internal sealed class EndingPauseCheck
+        {
+            public const string FileName = "ending-pause-check.txt";
+
+            private readonly List<string> _lines = new List<string>();
+
+            public EndingPauseCheck(bool asked)
+            {
+                Asked = asked;
+            }
+
+            public bool Asked { get; }
+
+            public bool Begun { get; private set; }
+
+            /// <summary>The stages of an ending, in their order: each is looked for, and one not reached is said.</summary>
+            public enum Stage
+            {
+                /// <summary>The summary, and the world's release where the scene is not retained.</summary>
+                SummaryAndWorld = 0,
+
+                /// <summary>The records' close, the final save and the held log's release.</summary>
+                FinalSaveAndLog = 1,
+
+                /// <summary>The completion told, with the run's code.</summary>
+                Completion = 2,
+
+                /// <summary>The runner's last frame: the Player's end asked for, where the scene is not kept.</summary>
+                End = 3,
+            }
+
+            public const int StageCount = 4;
+
+            private readonly bool[] _reached = new bool[StageCount], _paused = new bool[StageCount];
+
+            /// <summary>The stages of the ending reached after the pause, and how many of them with the game still paused.</summary>
+            public int Stages { get; private set; }
+
+            public int StagesPaused { get; private set; }
+
+            /// <summary>Every stage was reached, each with the game still paused.</summary>
+            public bool Held => Begun && Stages == StageCount && StagesPaused == StageCount;
+
+            public IReadOnlyList<string> Lines => _lines;
+
+            /// <summary>Where the ending begins: the pause, once. The menu given is opened without a press; without one the manual pause is set.</summary>
+            public void Begin(PlayMenu menu)
+            {
+                if (!Asked || Begun)
+                {
+                    return;
+                }
+
+                Begun = true;
+                bool already = Zantetsu.Core.GamePause.Manual;
+                bool byMenu = !already && menu != null && menu.OpenWithoutPress();
+                if (!byMenu)
+                {
+                    Zantetsu.Core.GamePause.SetManual(true);
+                }
+
+                Say("the game paused where the ending begins, frame " + Time.frameCount + " ("
+                    + (already ? "it was paused already" : byMenu ? "the menu opened, without a press" : "no menu: the manual pause set")
+                    + "); the check does not resume it");
+            }
+
+            /// <summary>A stage of the ending reached: said with the pause as it stands then. A stage is counted once.</summary>
+            public void Reached(Stage stage, string what)
+            {
+                if (!Asked || !Begun || _reached[(int)stage])
+                {
+                    return;
+                }
+
+                bool paused = Zantetsu.Core.GamePause.Manual && Zantetsu.Core.GamePause.IsPaused;
+                _reached[(int)stage] = true;
+                _paused[(int)stage] = paused;
+                Stages++;
+                if (paused)
+                {
+                    StagesPaused++;
+                }
+
+                Say(what + ": reached with the game " + (paused ? "still paused" : "NOT PAUSED") + ", frame " + Time.frameCount);
+            }
+
+            /// <summary>The lines and the result, written beside the run's records. Nothing in a run that did not ask.</summary>
+            public void Write(string directory)
+            {
+                if (!Asked)
+                {
+                    return;
+                }
+
+                try
+                {
+                    string result = !Begun ? "result: NOT RUN (the run did not come to its ordinary ending)"
+                        : "result: " + Stages + " of " + StageCount + " stages reached after the pause, " + StagesPaused + " with the game still paused: "
+                            + (Held ? "held" : "NOT HELD" + Missing());
+                    var lines = new List<string>(_lines) { result };
+                    System.IO.Directory.CreateDirectory(directory);
+                    System.IO.File.WriteAllLines(System.IO.Path.Combine(directory, FileName), lines);
+                    Log("ending pause check: " + result + " (" + FileName + ")");
+                }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                }
+            }
+
+            // What keeps the result from "held": the stages not reached, and those reached with the game not paused.
+            private string Missing()
+            {
+                var notReached = new List<string>();
+                var notPaused = new List<string>();
+                for (int i = 0; i < StageCount; i++)
+                {
+                    if (!_reached[i])
+                    {
+                        notReached.Add(((Stage)i).ToString());
+                    }
+                    else if (!_paused[i])
+                    {
+                        notPaused.Add(((Stage)i).ToString());
+                    }
+                }
+
+                return (notReached.Count > 0 ? "; not reached: " + string.Join(", ", notReached) : "")
+                    + (notPaused.Count > 0 ? "; reached with the game not paused: " + string.Join(", ", notPaused) : "");
+            }
+
+            private void Say(string line)
+            {
+                _lines.Add(line);
+                Log("ending pause check: " + line);
+            }
         }
 
         /// <summary>
@@ -259,8 +422,31 @@ namespace Zantetsu.Sandbox
             return BeginRun(keepOpen, replayInRealtime, startDelaySeconds, beforeReplay);
         }
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void StartIfAsked() => BeginRun(false, false, 0f);
+        /// <summary>
+        /// The city-walk and npc-slash scenarios' entry on a PC (DESIGN 3.4), called by <see cref="SandboxScenario"/>
+        /// once the scenario's scene is loaded and before anything of it starts -- the check no longer starts by
+        /// itself on its argument. False when the launch does not carry the argument.
+        /// </summary>
+        internal static bool StartForScenario() => BeginRun(false, false, 0f) != null;
+
+        /// <summary>
+        /// A script's wait bounded in frames (DESIGN 4.6): while <paramref name="waiting"/> holds and the game's frame
+        /// count (<see cref="Zantetsu.Core.GamePause.FrameCount"/>) is below <paramref name="untilGameFrame"/>. A
+        /// paused frame is no frame of the bound, and the wait does not end during a pause whatever becomes of what it
+        /// waits for: the script's next stage begins after the pause.
+        /// <para>
+        /// A script steps it itself -- <c>while (wait.MoveNext()) yield return wait.Current;</c> -- and does not yield it
+        /// whole: a nested enumerator handed to Unity costs a frame even when it has nothing to wait for, and these
+        /// waits take no frame when what they wait for is there already.
+        /// </para>
+        /// </summary>
+        internal static IEnumerator WaitWhileUntilGameFrame(Func<bool> waiting, int untilGameFrame)
+        {
+            while (waiting() && Zantetsu.Core.GamePause.FrameCount < untilGameFrame)
+            {
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
+            }
+        }
 
         private static PreparedRun BeginRun(bool keepOpen, bool replayInRealtime, float startDelaySeconds, Func<IEnumerator> beforeReplay = null)
         {
@@ -300,6 +486,16 @@ namespace Zantetsu.Sandbox
             runner.directory = directory;
             runner.iterations = int.TryParse(Value(IterationsArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
                 out int n) && n > 1 ? n : 1;
+            // The ending's own check, only where the launch asks for it and the run is one iteration (a pause that is
+            // not resumed would hold the next iteration's script).
+            bool pauseAtEnding = Has(PauseAtEndingArgument);
+            s_endingPause = new EndingPauseCheck(pauseAtEnding && runner.iterations == 1);
+            if (pauseAtEnding)
+            {
+                Log("ending pause check: " + (s_endingPause.Asked
+                    ? "asked for (" + PauseAtEndingArgument + "): the game is paused once where the ending begins, and is not resumed; NOT a performance sample"
+                    : "NOT RUN: " + PauseAtEndingArgument + " is for a run of one iteration, and this one has " + runner.iterations));
+            }
             return prepared;
         }
 
@@ -323,7 +519,7 @@ namespace Zantetsu.Sandbox
                     {
                         InstallGeometryHold();
                         SceneManager.LoadScene(scene, LoadSceneMode.Single);
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
 
                     string order = Value(WithdrawalArgument);
@@ -373,6 +569,8 @@ namespace Zantetsu.Sandbox
                     walk.ParseCaptureCamera();   // image runs only (2026-10-01): a capture camera of its own, the XR camera untouched
                     walk.frameRate = int.TryParse(Value(FrameRateArgument), NumberStyles.Integer, CultureInfo.InvariantCulture,
                         out int rate) ? rate : 90;
+                    // (Watching, not a stage of the script: not held by a pause, DESIGN 4.6 -- a walk that ends while
+                    // the game is paused is seen to have ended, and the run is closed and the Player ended without a resume.)
                     while (!walk.Done)
                     {
                         prepared.Phase = walk.CurrentPhase;
@@ -382,19 +580,24 @@ namespace Zantetsu.Sandbox
                     worst = Math.Max(worst, walk.Code);
                     Log("iteration " + i + " of " + iterations + " finished with code " + walk.Code);
                     Destroy(walk);
-                    yield return null;
+                    yield return null;   // (after an ending: not held by a pause)
                     if (walk.Code == 13 || walk.Code == 15)
                     {
                         break;
                     }
                 }
 
+                // A run that was paused -- by the menu or by the application -- is not a performance sample (DESIGN 4.6): said here, on its own line.
+                Log("game pause: " + Zantetsu.Core.GamePause.Describe());
                 Log("all iterations finished with code " + worst);
                 prepared.Code = worst;
                 prepared.SceneRetained = keepOpen;
                 prepared.Phase = keepOpen ? "Retained" : "Done";
                 prepared.Done = true;
-                yield return null;
+                yield return null;   // (the run's end: not held by a pause)
+                s_endingPause?.Reached(EndingPauseCheck.Stage.End, keepOpen ? "the run's last frame (the scene is kept: no end is asked for)" : "the Player's end asked for, code " + worst);
+                s_endingPause?.Write(directory);
+                prepared.Ended = true;
                 if (!keepOpen) Application.Quit(worst);
             }
         }
@@ -638,6 +841,7 @@ namespace Zantetsu.Sandbox
 
             private readonly FrameTiming[] _frameTimings = new FrameTiming[1];
             private int _firstHitFrame = -1;
+            private int _firstHitGameFrame = -1;   // the same frame in the game's count (DESIGN 4.6), which the hold's length is counted in
             private bool _holdReleased;
             private UnityEngine.XR.XRDisplaySubsystem _xrDisplay;
             private readonly List<SandboxNpcCharacter> _npcs = new List<SandboxNpcCharacter>();
@@ -757,7 +961,7 @@ namespace Zantetsu.Sandbox
                 Directory.CreateDirectory(directory);
                 if (cityWalk) StartCoroutine(CityWalkHeadOrderWatch());   // the VRS's order against ready: the head's first move, from here
                 Application.quitting += MultiQuitting;
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
 
                 foreach (CutWorldRoot candidate in FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
                 {
@@ -844,16 +1048,16 @@ namespace Zantetsu.Sandbox
                 {
                     // The characters' loading frames: each cold preparation finishes, then it is a target. Bounded; a
                     // target character that does not become one ends the check.
-                    int until = Time.frameCount + 1200;
+                    // (Counted in the game's frames, DESIGN 4.6: a pause uses none of the bound up.)
+                    int until = Zantetsu.Core.GamePause.FrameCount + 1200;
                     // The city walk: a deadline in time as well (StageBegin), within the run's budget.
                     float npcBy = cityWalk ? StageBegin("npc preparation", 60f) : float.PositiveInfinity;
                     // A dormant prepared slot (the MobPlan crowd's spares) is ready without being a target.
-                    while (_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null) && Time.frameCount < until && Time.realtimeSinceStartup < npcBy)
-                    {
-                        yield return null;
-                    }
+                    IEnumerator npcWait = WaitWhileUntilGameFrame(
+                        () => _npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null) && Zantetsu.Core.GamePause.RealtimeSinceStartup < npcBy, until);
+                    while (npcWait.MoveNext()) yield return npcWait.Current;
 
-                    StageEnd(_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null), "frames " + Time.frameCount + " of the bound " + until);
+                    StageEnd(_npcs.Exists(c => !c.IsTarget && !c.IsPrepared && c.Failure == null), "frames " + Zantetsu.Core.GamePause.FrameCount + " of the bound " + until);
 
                     var prepFrames = new List<int>();
                     var confirmMs = new List<double>();
@@ -902,11 +1106,9 @@ namespace Zantetsu.Sandbox
                         BuildingPlaceViews();
                     }
 
-                    int until = Time.frameCount + 600;
-                    while (_building != null && !_building.IsRegistered && Time.frameCount < until)
-                    {
-                        yield return null;
-                    }
+                    // (Counted in the game's frames, DESIGN 4.6: a pause uses none of the bound up.)
+                    IEnumerator buildingWait = WaitWhileUntilGameFrame(() => _building != null && !_building.IsRegistered, Zantetsu.Core.GamePause.FrameCount + 600);
+                    while (buildingWait.MoveNext()) yield return buildingWait.Current;
 
                     if (!BuildingReady())
                     {
@@ -976,8 +1178,8 @@ namespace Zantetsu.Sandbox
                 if (startDelaySeconds > 0f)
                 {
                     Log("prepared replay delay: " + startDelaySeconds.ToString("R", Inv) + " s; head tracking remains live");
-                    double beginBy = Time.unscaledTimeAsDouble + startDelaySeconds;
-                    while (Time.unscaledTimeAsDouble < beginBy) yield return null;
+                    double beginBy = Zantetsu.Core.GamePause.UnscaledTimeAsDouble + startDelaySeconds;
+                    while (Zantetsu.Core.GamePause.UnscaledTimeAsDouble < beginBy) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
                 Log("replay clock: " + (replayInRealtime ? "recorded timestamps, all samples due at each frame's real time" : "one recorded sample per frame"));
 
@@ -1001,7 +1203,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     int readyFrame = Time.frameCount;
-                    double readyTime = Time.unscaledTimeAsDouble;
+                    double readyTime = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
                     Vector3 readyPosition = head.transform.position;
                     Quaternion readyRotation = head.transform.rotation;
                     Log("head wait: ready frame=" + readyFrame + " time=" + readyTime.ToString("F4", Inv) + " head=" + readyPosition.ToString("F4")
@@ -1020,13 +1222,13 @@ namespace Zantetsu.Sandbox
                     if (cityWalk) Log("city walk: ready at frame " + Time.frameCount + " (preparation and registration done); the VRS synchronisation follows: the script begins on the replayed head's first move");
                     bool vrsBeforeReady = cityWalk && CityWalkVrsBeganBeforeReady();
                     float headBy = StageBegin(cityWalk ? "VRS synchronisation (the head's first move)" : "head wait", (float)headWaitSeconds);
-                    while (Time.unscaledTimeAsDouble < readyTime + headWaitSeconds && (!cityWalk || Time.realtimeSinceStartup < headBy))
+                    while (Zantetsu.Core.GamePause.UnscaledTimeAsDouble < readyTime + headWaitSeconds && (!cityWalk || Zantetsu.Core.GamePause.RealtimeSinceStartup < headBy))
                     {
                         Vector3 at = head.transform.position;
                         if (runParts.detail)
                         {
                             Vector3 e = head.transform.eulerAngles;
-                            wait.Append(Time.frameCount).Append(',').Append(Time.unscaledTimeAsDouble.ToString("R", Inv)).Append(',')
+                            wait.Append(Time.frameCount).Append(',').Append(Zantetsu.Core.GamePause.UnscaledTimeAsDouble.ToString("R", Inv)).Append(',')
                                 .Append(at.x.ToString("R", Inv)).Append(',').Append(at.y.ToString("R", Inv)).Append(',').Append(at.z.ToString("R", Inv)).Append(',')
                                 .Append(e.y.ToString("R", Inv)).Append(',').Append(e.x.ToString("R", Inv)).Append(',')
                                 .Append(clock != null ? clock.UnsimulatedSeconds.ToString("R", Inv) : "").Append(',').Append(clock != null ? clock.StepId : -1).Append('\n');
@@ -1039,7 +1241,7 @@ namespace Zantetsu.Sandbox
                             break;
                         }
 
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
 
                     StageEnd(!moved, moved ? looks + " looks" : "the head did not move");
@@ -1058,8 +1260,8 @@ namespace Zantetsu.Sandbox
                     {
                         Log("[condition] head wait: the head was already moving " + looks + " look(s) after ready: the VRS replay began before the check was ready");
                     }
-                    Log("head wait: " + (moved ? "moved" : "did not move") + " at frame=" + Time.frameCount + " time=" + Time.unscaledTimeAsDouble.ToString("F4", Inv)
-                        + " (" + (Time.unscaledTimeAsDouble - readyTime).ToString("F4", Inv) + " s after ready) head=" + head.transform.position.ToString("F4")
+                    Log("head wait: " + (moved ? "moved" : "did not move") + " at frame=" + Time.frameCount + " time=" + Zantetsu.Core.GamePause.UnscaledTimeAsDouble.ToString("F4", Inv)
+                        + " (" + (Zantetsu.Core.GamePause.UnscaledTimeAsDouble - readyTime).ToString("F4", Inv) + " s after ready) head=" + head.transform.position.ToString("F4")
                         + " unsimulated=" + (clock != null ? clock.UnsimulatedSeconds.ToString("F6", Inv) : "none"));
                     if (!moved)
                     {
@@ -1082,7 +1284,7 @@ namespace Zantetsu.Sandbox
                     else _timing = true;   // Preparation made no rows; the CSV still starts with the real replay.
                 }
                 else Log("metrics: off for this run (" + MetricsArgument + " off): no frame timeline, no frames.csv");
-                _clockStart = Time.unscaledTimeAsDouble;
+                _clockStart = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
                 _replaying = MobPlanMode || _recorder.TryBeginReplay(_clockStart);
                 if (!MobPlanMode) _npcPose?.Restart();
                 if (MobPlanMode)
@@ -1127,9 +1329,9 @@ namespace Zantetsu.Sandbox
                 LogDisplayRoom("when the script begins");
                 float deadline = StageBegin("script and the cuts' completion", MobPlanMode ? (float)_mpEnd + 30f : 120f);
                 bool cutsComplete = false;
-                while (Time.realtimeSinceStartup < deadline)
+                while (Zantetsu.Core.GamePause.RealtimeSinceStartup < deadline)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     if (MobPlanMode)
                     {
                         if (MobPlanFinished()) { cutsComplete = true; break; }
@@ -1151,7 +1353,7 @@ namespace Zantetsu.Sandbox
                 if (cutsComplete)
                 {
                     Log("cuts complete (every accepted cut's geometry committed, the fusion settled, replay fed through, no wave flying): frame=" + Time.frameCount
-                        + " realSinceStart=" + (Time.unscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
+                        + " realSinceStart=" + (Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
                         + " stepId=" + (stepClock != null ? stepClock.StepId : -1));
                 }
                 else
@@ -1159,12 +1361,12 @@ namespace Zantetsu.Sandbox
                     // The wait ended at its deadline (TL, 2026-09-30: it used to say "cuts complete" whatever it met): what
                     // is still waiting, and why. Nothing waiting is read as done later -- an ending that abandons it is
                     // not a completion.
-                    Log("cuts NOT complete at the waiting deadline: frame=" + Time.frameCount + " realSinceStart=" + (Time.unscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
+                    Log("cuts NOT complete at the waiting deadline: frame=" + Time.frameCount + " realSinceStart=" + (Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart).ToString("F4", Inv)
                         + " stepId=" + (stepClock != null ? stepClock.StepId : -1) + "; " + DescribeWaiting());
                     RunExpect(false, "[scenario] the cuts completed before the waiting deadline (" + DescribeWaiting() + ")");
                 }
 
-                StageEnd(!cutsComplete, cutsComplete ? "script seconds " + (Time.unscaledTimeAsDouble - _clockStart).ToString("F1", Inv) : DescribeWaiting());
+                StageEnd(!cutsComplete, cutsComplete ? "script seconds " + (Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart).ToString("F1", Inv) : DescribeWaiting());
                 if (building)
                 {
                     BuildingStepBack();
@@ -1185,9 +1387,9 @@ namespace Zantetsu.Sandbox
                 long observeSteps = stepClock != null ? (long)Math.Round(observeSeconds * stepClock.FrequencyHz) : 0;
                 int observeFrame = Time.frameCount;
                 float observeBy = StageBegin("observation", observeCap);
-                while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Time.realtimeSinceStartup < observeBy)
+                while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Zantetsu.Core.GamePause.RealtimeSinceStartup < observeBy)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 StageEnd(!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps, light ? "a light run observes nothing" : "steps " + ((stepClock != null ? stepClock.StepId : 0) - observeFrom) + " of " + observeSteps);
@@ -1196,16 +1398,16 @@ namespace Zantetsu.Sandbox
                 _askedSteps = observeSteps;
                 Log("observation: frames " + observeFrame + ".." + Time.frameCount + " steps " + observeFrom + ".." + (stepClock != null ? stepClock.StepId : -1)
                     + " (asked " + observeSteps + " steps = " + observeSeconds.ToString("R", Inv) + " s of physics; real cap " + observeCap.ToString("R", Inv) + " s)");
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 _observing = false;
                 if (endHoldSeconds > 0f)
                 {
                     _phase = "hold";
-                    float holdUntil = Time.realtimeSinceStartup + endHoldSeconds;
+                    float holdUntil = Zantetsu.Core.GamePause.RealtimeSinceStartup + endHoldSeconds;
                     Log("hold: " + endHoldSeconds.ToString("R", Inv) + " s before the ending, from frame " + Time.frameCount);
-                    while (Time.realtimeSinceStartup < holdUntil)
+                    while (Zantetsu.Core.GamePause.RealtimeSinceStartup < holdUntil)
                     {
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
                 }
 
@@ -1238,6 +1440,11 @@ namespace Zantetsu.Sandbox
                     yield return CityWalkAfterScript();
                 }
 
+                // **The ending begins here** (DESIGN 4.6). Everything above is the script and its sections, whose frame
+                // waits stand still while the game is paused. Nothing below does: what was captured is saved, the summary
+                // written, the world released, the records closed, the completion told and the Player ended whether or
+                // not the game is paused, and without a resume. The waits below only spread that work over frames.
+                s_endingPause?.Begin(PlayMenu.Instance);   // (a check of the ending, only where the launch asks for it)
                 yield return CaptureDrain();   // image runs: the capture camera given back and its sink finished (bounded by the sink's deadline)
                 RequestPicture("9-end");
                 yield return null;
@@ -1276,8 +1483,10 @@ namespace Zantetsu.Sandbox
                         + VpWholeWrite.LargestBytes + " B (temporary: not part of the room's bytes)");
                 }
                 _failures += ending.Failures;
+                s_endingPause?.Reached(EndingPauseCheck.Stage.SummaryAndWorld, retainSceneAfterMeasurement ? "the summary (the scene is retained: the world is not released)"
+                    : "the summary and the world's release (world released " + ending.WorldReleased + ")");
                 Log("expectations not judged here: not applicable " + _notApplicable + ", not exercised " + _notExercised + " (neither counted as passed); failed " + _failures);
-                yield return null;
+                yield return null;   // (the ending: not held by a pause)
                 if (SaveReportsAcrossFrames)
                 {
                     // Stop observation at the same completion boundary before waiting on the diagnostic writer.
@@ -1311,7 +1520,17 @@ namespace Zantetsu.Sandbox
                         new CheckEnding.Part("timeline", () => WriteTimeline(true)),
                         new CheckEnding.Part("view target", ReleaseTarget),
                     };
-                    ending.Complete(steps, ReleaseLog,
+                    // (The ending pause check's stage of the final save: here on every platform -- after the closing steps
+                    // above, the timeline's save among them, and the held log's release, whether or not the save was
+                    // spread over frames before this.)
+                    ending.Complete(steps,
+                        () =>
+                        {
+                            ReleaseLog();
+                            s_endingPause?.Reached(EndingPauseCheck.Stage.FinalSaveAndLog, "the records' close, the final save and the log's release"
+                                + (SaveReportsAcrossFrames ? " (the save spread over frames before the completion)" : " (made in the completion)")
+                                + ", ending failures so far " + ending.Failures);
+                        },
                         closingFailures =>
                         {
                             _closingFailures = closingFailures;
@@ -1333,6 +1552,7 @@ namespace Zantetsu.Sandbox
                             }
 
                             Done = true;
+                            s_endingPause?.Reached(EndingPauseCheck.Stage.Completion, "the completion told, code " + code);
                         });
                 }
                 finally
@@ -1627,8 +1847,8 @@ namespace Zantetsu.Sandbox
                 FrameRow taken = TakeRow();
                 taken.frame = frame;
                 taken.phase = _phase;
-                taken.real = Time.unscaledTimeAsDouble - _clockStart;
-                taken.delta = Time.unscaledDeltaTime;
+                taken.real = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
+                taken.delta = Zantetsu.Core.GamePause.UnscaledDeltaTime;
                 taken.fed = fed;
                 taken.recorded = replayInRealtime && fed > 0 ? _recorder.ReplayLastTimestamp - _clockStart
                     : fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN;
@@ -1655,7 +1875,7 @@ namespace Zantetsu.Sandbox
             {
                 if (s_heldGeometry == null || _holdReleased || _firstHitFrame < 0
                     || !int.TryParse(Value(HoldGeometryArgument), NumberStyles.Integer, Inv, out int frames)
-                    || Time.frameCount < _firstHitFrame + frames)
+                    || Zantetsu.Core.GamePause.FrameCount < _firstHitGameFrame + frames)
                 {
                     return;
                 }
@@ -2012,7 +2232,7 @@ namespace Zantetsu.Sandbox
                 if (runParts.checks) GameViewFrame();   // every frame: the game's view references still the XR camera's
                 if (viewTurnStart >= 0.0 && _replaying)
                 {
-                    TurnView(Time.unscaledTimeAsDouble - _clockStart);
+                    TurnView(Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart);
                 }
 
                 if (_timing)
@@ -2114,6 +2334,7 @@ namespace Zantetsu.Sandbox
                         if (_firstHitFrame < 0)
                         {
                             _firstHitFrame = frame;
+                            _firstHitGameFrame = Zantetsu.Core.GamePause.FrameCount;
                         }
 
                         Accepted made;
@@ -2384,7 +2605,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 double recorded = _rowTimes[update] - _rowTimes[0];
-                double real = Time.unscaledTimeAsDouble - _clockStart;
+                double real = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 return " update=" + update + " row=" + _rowOf[update] + " recordedOffset=" + recorded.ToString("F4", Inv)
                     + " replayTime=" + (_clockStart + recorded).ToString("F4", Inv) + " realOffset=" + real.ToString("F4", Inv)
@@ -2652,7 +2873,7 @@ namespace Zantetsu.Sandbox
 
             private void Summarise()
             {
-                double real = Time.unscaledTimeAsDouble - _clockStart;
+                double real = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
                 double recorded = _rowTimes.Count > 0 ? _rowTimes[_rowTimes.Count - 1] - _rowTimes[0] : 0.0;
                 Log("summary: fed=" + _recorder.ReplayIndex + "/" + _loaded + " recordedSpan=" + recorded.ToString("F4", Inv)
                     + " realSinceStart=" + real.ToString("F4", Inv) + " hits=" + _hitsLogged + " rootCuts=" + _rootCuts

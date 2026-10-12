@@ -186,7 +186,9 @@ namespace Zantetsu.Sandbox
 
         private void Update()
         {
-            if (Held || Registration != null || Candidate != null || Failure != null || world == null || !world.IsReady || world.IsEnding)
+            // (No registration while the game is paused, DESIGN 4.6: it goes on from where it was.)
+            if (Held || Registration != null || Candidate != null || Failure != null || world == null || !world.IsReady || world.IsEnding
+                || Zantetsu.Core.GamePause.IsPaused)
             {
                 return;
             }

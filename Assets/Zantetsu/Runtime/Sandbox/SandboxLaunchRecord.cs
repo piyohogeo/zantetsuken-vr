@@ -51,6 +51,7 @@ namespace Zantetsu.Sandbox
                 + "; clipped instances asked: " + (Zantetsu.Rendering.VpGpuCullSetup.ReadSeparateClip(arguments) ? "apart (the default)" : "with the selection (" + Zantetsu.Rendering.VpGpuCullSetup.ClipTogetherArgument + ")")
                 + "; command compaction asked: " + DescribeCommandCompaction(arguments)
                 + "; buildGuid=" + Application.buildGUID + ", version=" + Application.version + ", unity=" + Application.unityVersion
+                + "; scenario: " + SandboxScenario.Describe(arguments)
                 + "; Prop Slash parts: " + SandboxPropSlashPlayerCheck.DescribeParts(arguments)
                 + "; command line: " + string.Join(" ", arguments);
         }

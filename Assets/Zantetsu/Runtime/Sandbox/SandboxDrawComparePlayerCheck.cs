@@ -276,12 +276,17 @@ namespace Zantetsu.Sandbox
 
         private static void Log(string line) => Debug.Log(Prefix + line);
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void StartIfAsked()
+        /// <summary>
+        /// The static-wait scenario's entry (DESIGN 3.4), called by <see cref="SandboxScenario"/> once the scenario's
+        /// scene is loaded and before anything of it starts -- it no longer starts by itself on its argument. True
+        /// when the launch's arguments were taken: the comparison started, or it said why not and ended the Player
+        /// with its own code. False when the launch does not ask for it.
+        /// </summary>
+        internal static bool StartForScenario()
         {
             if (Application.isEditor)
             {
-                return;
+                return false;
             }
 
             if (!TryRead(Environment.GetCommandLineArgs(), out Settings settings, out string failure))
@@ -290,9 +295,10 @@ namespace Zantetsu.Sandbox
                 {
                     Log("NOT started: " + failure);
                     Application.Quit(20);
+                    return true;
                 }
 
-                return;
+                return false;
             }
 
             Application.runInBackground = true;
@@ -317,7 +323,7 @@ namespace Zantetsu.Sandbox
             {
                 Log("NOT started: " + failure);
                 Application.Quit(20);
-                return;
+                return true;
             }
 
             CutWorldRoot world = UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>();
@@ -339,6 +345,7 @@ namespace Zantetsu.Sandbox
             runner.targetRoots = roots;
             runner.endWorld = true;
             runner.quit = Application.Quit;
+            return true;
         }
 
         /// <summary>
@@ -760,8 +767,8 @@ namespace Zantetsu.Sandbox
                     setup = "the output folder: " + e.Message;
                 }
 
-                float waitUntil = Time.realtimeSinceStartup + 60f;
-                while (setup == null && (world == null || !world.IsReady) && Time.realtimeSinceStartup < waitUntil) yield return null;
+                float waitUntil = Zantetsu.Core.GamePause.RealtimeSinceStartup + 60f;
+                while (setup == null && (world == null || !world.IsReady) && Zantetsu.Core.GamePause.RealtimeSinceStartup < waitUntil) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (setup == null && (world == null || !world.IsReady)) setup = "no ready cut world";
                 if (setup == null && (eye == null || rig == null)) setup = "no camera to carry along the path";
                 if (setup != null)
@@ -848,7 +855,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 Note("geometry made beforehand: " + (settings.geometryFile ?? "(none)") + ": " + geometry.Count + " meshes, " + geometry.VertexCount + " vertices, " + geometry.IndexCount + " indices, read in " + readMs.ToString("F1", Inv) + " ms");
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
 
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 try
@@ -920,7 +927,7 @@ namespace Zantetsu.Sandbox
 
                         registrationMs += Ms(frameBegan);
                         registrationFrames++;
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
 
                     VpDisplay.ReleaseScaledCopies();
@@ -950,24 +957,24 @@ namespace Zantetsu.Sandbox
                 // The scene's first frames at the start, then the path once (or as many laps as asked), unrecorded.
                 Phase = Phase.WarmingUp;
                 ApplyPose(settings.path.At(0));
-                for (int i = 0; i < 30; i++) yield return null;
+                for (int i = 0; i < 30; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 long warmBegan = System.Diagnostics.Stopwatch.GetTimestamp();
                 for (int lap = 0; lap < settings.warmupLaps; lap++)
                 {
-                    double lapStart = Time.unscaledTimeAsDouble;
+                    double lapStart = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
                     while (true)
                     {
-                        double t = Time.unscaledTimeAsDouble - lapStart;
+                        double t = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - lapStart;
                         if (t >= settings.path.Seconds) break;
                         ApplyPose(settings.path.At(t));
                         WarmupFrames++;
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
                 }
 
                 double warmMs = Ms(warmBegan);
                 ApplyPose(settings.path.At(0));
-                for (int i = 0; i < 30; i++) yield return null;
+                for (int i = 0; i < 30; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
 
                 // The frame table's room and the recorders, then a collection, all before the first measured frame.
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -976,7 +983,7 @@ namespace Zantetsu.Sandbox
                 double roomMs = Ms(t0);
                 long roomBytes = GC.GetTotalMemory(false) - heapBefore;
                 GC.Collect();
-                for (int i = 0; i < 10; i++) yield return null;
+                for (int i = 0; i < 10; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 ApplyPose(settings.path.At(0));
                 Standing atStart = Standing.Of(world);
                 string warmChanges = atStart.ChangesSince(registered);
@@ -1012,7 +1019,7 @@ namespace Zantetsu.Sandbox
                 double prepSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - prepBegan) / (double)System.Diagnostics.Stopwatch.Frequency;
                 Note("preparation: " + prepSeconds.ToString("F2", Inv) + " s, frames " + prepBeganFrame + ".." + Time.frameCount + "; none of it is in the frame table");
                 WritePreparation();
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
 
                 // ----- measurement: the Profiler's recording and the frame table begin in this frame ---------------------
                 ApplyPose(settings.path.At(0));
@@ -1027,7 +1034,7 @@ namespace Zantetsu.Sandbox
 
                 Phase = Phase.Measuring;
                 MeasureStartFrame = Time.frameCount;
-                double start = Time.unscaledTimeAsDouble;
+                double start = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
                 Log("measurement begins at frame " + MeasureStartFrame + (ProfilerStartedHere ? "; the Profiler records from here into " + settings.profilerFile : "; no Profiler recording was asked for"));
                 // A shot run also takes pictures WHILE MOVING, at the middle of each moving or turning segment (the
                 // screen and both eyes; no other pass of the frame): the frames the standing pictures after the
@@ -1037,7 +1044,7 @@ namespace Zantetsu.Sandbox
                 int movingShotsTaken = 0;
                 while (true)
                 {
-                    double t = Time.unscaledTimeAsDouble - start;
+                    double t = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - start;
                     bool last = t >= settings.path.Seconds;
                     SceneDrawComparePath.Pose pose = settings.path.At(t);
                     // The camera as it stood through the frame before, read before the rig is placed for this one.
@@ -1061,7 +1068,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     if (last) break;
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 MeasureEndFrame = Time.frameCount - 1;   // the last frame with a row of its own
@@ -1076,7 +1083,12 @@ namespace Zantetsu.Sandbox
                 Standing atEnd = Standing.Of(world);
                 string measuredChanges = atEnd.ChangesSince(atStart);
                 Log("measurement ended: frames " + MeasureStartFrame + ".." + MeasureEndFrame + ", " + _rows + " rows");
+                // The sections after the measurement (pictures, the cut and split scenes, the drill) are the script's and
+                // stand still while the game is paused. With none of them, what follows is the ending -- the records, the
+                // world's release, the result and the Player's end -- which a pause does not hold (DESIGN 4.6).
+                bool sectionsFollow = settings.shots || settings.captureTimes.Length > 0 || settings.cutScene || settings.splitScene || settings.lifetimeDrill;
                 yield return null;
+                while (sectionsFollow && Zantetsu.Core.GamePause.IsPaused) yield return null;
 
                 // ----- after the measurement: nothing below is in a row -------------------------------------------------
                 if (settings.shots)
@@ -1210,6 +1222,8 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
+                // A run that was paused -- by the menu or by the application -- is not a performance sample (DESIGN 4.6): said here, on its own line.
+                Log("game pause: " + Zantetsu.Core.GamePause.Describe());
                 Log("finished with code " + code + ": run " + (completed ? "completed" : "NOT completed") + "; the comparison's conditions " + (conditionsHeld ? "held" : "NOT held" + (note != null ? " (" + note + ")" : "")));
                 Done = true;
                 quit?.Invoke(code);
@@ -1408,8 +1422,8 @@ namespace Zantetsu.Sandbox
                 _availLastCpu[r] = _drawLastCpu[r] = -1;
                 _segment[r] = pose.segment;
                 _t[r] = t;
-                _real[r] = Time.realtimeSinceStartupAsDouble;
-                _deltaMs[r] = Time.unscaledDeltaTime * 1000.0;
+                _real[r] = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
+                _deltaMs[r] = Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000.0;
                 _gc[r] = GC.CollectionCount(0);
                 _x[r] = pose.eye.x; _y[r] = pose.eye.y; _z[r] = pose.eye.z; _yaw[r] = pose.yaw;
                 _ftCpu[r] = _ftMain[r] = _ftWait[r] = _ftRender[r] = _ftGpu[r] = _xrGpu[r] = _xrCompositor[r] = double.NaN;
@@ -1460,7 +1474,7 @@ namespace Zantetsu.Sandbox
                     for (int f = 0; f < 30; f++)
                     {
                         ApplyPose(pose);
-                        yield return null;
+                        { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     }
 
                     ApplyPose(pose);
@@ -1470,7 +1484,7 @@ namespace Zantetsu.Sandbox
                         UnityEngine.Experimental.Rendering.ExternalGPUProfiler.BeginGPUCapture();
                     }
 
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     if (attached)
                     {
                         UnityEngine.Experimental.Rendering.ExternalGPUProfiler.EndGPUCapture();
@@ -1489,7 +1503,7 @@ namespace Zantetsu.Sandbox
                         + ", one-sided caster issues so far " + d.OneSidedShadowIssues + ", two-sided " + d.TwoSidedShadowIssues;
                     Log(line);
                     text.Append("; ").Append(line);
-                    for (int f = 0; f < 15; f++) yield return null;
+                    for (int f = 0; f < 15; f++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 text.Append("; taken ").Append(CapturesTaken).Append(" (a run under an external GPU profiler is not a performance sample)");
@@ -1537,7 +1551,7 @@ namespace Zantetsu.Sandbox
 
                 // 0. Hold: from here every event runs but keeps its block unconsumed.
                 Zantetsu.Rendering.VpNativeDrawPlugin.HoldConsumptionForTest(true);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 int inFlight = 0;
                 foreach (Zantetsu.Rendering.Urp.VpNativeDrawRoute route in oldRoutes) inFlight += route.BlocksInFlight;
                 int heldAtDispose = Zantetsu.Rendering.VpNativeDrawPlugin.HeldCountForTest();
@@ -1547,7 +1561,7 @@ namespace Zantetsu.Sandbox
                 // 1. The old routes disposed with unconsumed events: entries pending, nothing released.
                 foreach (CutWorldCameraDrawing drawing in drawings) drawing.enabled = false;
                 Zantetsu.Rendering.VpNativeDrawRelease.Note("drill 1: drawing components disabled (routes disposed with unconsumed events)");
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 int pendingAfterDispose = Zantetsu.Rendering.VpNativeDrawRelease.Pending;
                 Log("drill 1: routes disposed; " + Zantetsu.Rendering.VpNativeDrawRelease.Describe());
                 if (pendingAfterDispose <= pendingBefore) notes.Add("lifetime drill: the disposed route's entry is not pending (" + pendingAfterDispose + " <= " + pendingBefore + ")");
@@ -1556,7 +1570,7 @@ namespace Zantetsu.Sandbox
                 // 2. New routes (enabled again) draw the same display; their events are held too.
                 foreach (CutWorldCameraDrawing drawing in drawings) drawing.enabled = true;
                 Zantetsu.Rendering.VpNativeDrawRelease.Note("drill 2: drawing components enabled (new routes)");
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 int newInFlight = 0, newRoutes = 0;
                 foreach (CutWorldCameraDrawing drawing in drawings)
                 {
@@ -1586,7 +1600,7 @@ namespace Zantetsu.Sandbox
                 // on the new routes'), then all. Each Tick is the keeper's own, at the end of the frame's rendering.
                 int given = Zantetsu.Rendering.VpNativeDrawPlugin.ReleaseHeldForTest(heldAtDispose);
                 Zantetsu.Rendering.VpNativeDrawRelease.Note("drill 4a: " + given + " held marks given (the events run before the dispose)");
-                yield return null;
+                yield return null;   // (after the world's end: the releases are collected whether or not the game is paused)
                 Log("drill 4a: " + given + " marks given; " + Zantetsu.Rendering.VpNativeDrawRelease.Describe());
                 if (vertices != null && !vertices.IsValid()) notes.Add("lifetime drill: the display's vertex buffer was disposed while the new routes' events were unconsumed");
                 int givenAll = Zantetsu.Rendering.VpNativeDrawPlugin.ReleaseHeldForTest(-1);
@@ -1653,7 +1667,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     PlayableCityCuttable.Held = false;
-                    for (int i = 0; i < 300 && !((first.IsCutTarget || first.Failure != null) && (second.IsCutTarget || second.Failure != null)); i++) yield return null;
+                    for (int i = 0; i < 300 && !((first.IsCutTarget || first.Failure != null) && (second.IsCutTarget || second.Failure != null)); i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     PlayableCityCuttable.Held = true;
                     if (first.Candidate == null || second.Candidate == null)
                     {
@@ -1687,7 +1701,7 @@ namespace Zantetsu.Sandbox
                         log = Log,
                     };
                     yield return SandboxDrawCompareCutScene.Stages(io, a, b, states, failures);
-                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) yield return null;
+                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     Log("cut scene: eye shots written " + Zantetsu.Rendering.Urp.VpEyeShot.Written + ", pending " + Zantetsu.Rendering.Urp.VpEyeShot.Pending
                         + (Zantetsu.Rendering.Urp.VpEyeShot.LastFailure != null ? ", last failure: " + Zantetsu.Rendering.Urp.VpEyeShot.LastFailure : ""));
                     if (Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0) failures.Add(Zantetsu.Rendering.Urp.VpEyeShot.Pending + " eye shots were not written");
@@ -1785,7 +1799,7 @@ namespace Zantetsu.Sandbox
                         Log("split scene: " + line);
                     }
 
-                    for (int i = 0; i < 3; i++) yield return null;
+                    for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     int shotsBefore = Zantetsu.Rendering.Urp.VpEyeShot.Written, shotFailuresBefore = _cutShotFailures;
                     var io = new SandboxDrawCompareCutScene.Io
                     {
@@ -1797,7 +1811,7 @@ namespace Zantetsu.Sandbox
                         log = Log,
                     };
                     yield return SandboxDrawCompareSplitScene.Stages(io, _splitBody, states, failures, _splitOther);
-                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) yield return null;
+                    for (int i = 0; i < 60 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     Log("split scene: eye shots written " + (Zantetsu.Rendering.Urp.VpEyeShot.Written - shotsBefore) + ", pending " + Zantetsu.Rendering.Urp.VpEyeShot.Pending
                         + (Zantetsu.Rendering.Urp.VpEyeShot.LastFailure != null ? ", last failure: " + Zantetsu.Rendering.Urp.VpEyeShot.LastFailure : ""));
                     if (Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0) failures.Add(Zantetsu.Rendering.Urp.VpEyeShot.Pending + " eye shots were not written");
@@ -1837,7 +1851,7 @@ namespace Zantetsu.Sandbox
                 for (int v = 0; v < views.Length; v++)
                 {
                     ApplyPose(new SceneDrawComparePath.Pose { eye = views[v].from, yaw = views[v].yaw });
-                    for (int i = 0; i < 4; i++) yield return null;
+                    for (int i = 0; i < 4; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     string stem = Path.Combine(settings.directory, prefix + stage + "-view" + v);
                     ScreenCapture.CaptureScreenshot(stem + "-screen.png");
                     if (!Zantetsu.Rendering.Urp.VpEyeShot.TryRequest(eye, stem, out string eyeFailure))
@@ -1852,7 +1866,7 @@ namespace Zantetsu.Sandbox
                         _cutShotLastFailure = "shadow map of " + stage + " view " + v + ": " + mapFailure;
                     }
 
-                    for (int i = 0; i < 3; i++) yield return null;
+                    for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
             }
 
@@ -1869,7 +1883,7 @@ namespace Zantetsu.Sandbox
                 {
                     if (settings.path.KindOf(s) != SceneDrawComparePath.Kind.Hold) continue;
                     ApplyPose(settings.path.At(settings.path.BeginOf(s) + 0.5 * settings.path.SecondsOf(s)));
-                    for (int i = 0; i < 4; i++) yield return null;
+                    for (int i = 0; i < 4; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     string suffix = taken.ToString("D2", Inv) + "-segment-" + s.ToString("D2", Inv);
                     ScreenCapture.CaptureScreenshot(Path.Combine(settings.directory, "shot-" + suffix + ".png"));
 
@@ -1879,7 +1893,7 @@ namespace Zantetsu.Sandbox
                         Log("eye shot not taken: " + eyeFailure);
                     }
 
-                    for (int i = 0; i < 4; i++) yield return null;
+                    for (int i = 0; i < 4; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     ScreenCapture.CaptureScreenshot(Path.Combine(settings.directory, "shot-b-" + suffix + ".png"));
                     if (!Zantetsu.Rendering.Urp.VpEyeShot.TryRequest(eye, Path.Combine(settings.directory, "eyes-b-" + suffix), out string eyeFailureB))
                     {
@@ -1894,7 +1908,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     taken++;
-                    for (int i = 0; i < 3; i++) yield return null;
+                    for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 // Diagnosis of the plugin route's inputs at the last standing pose: the GPU-assembled constant blocks
@@ -1912,7 +1926,7 @@ namespace Zantetsu.Sandbox
                     }
                 }
 
-                for (int i = 0; i < 30 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) yield return null;
+                for (int i = 0; i < 30 && Zantetsu.Rendering.Urp.VpEyeShot.Pending > 0; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 Log("eye shots written " + Zantetsu.Rendering.Urp.VpEyeShot.Written + ", pending " + Zantetsu.Rendering.Urp.VpEyeShot.Pending
                     + (Zantetsu.Rendering.Urp.VpEyeShot.LastFailure != null ? ", last failure: " + Zantetsu.Rendering.Urp.VpEyeShot.LastFailure : ""));
 

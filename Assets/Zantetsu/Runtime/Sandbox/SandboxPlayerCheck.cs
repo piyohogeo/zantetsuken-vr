@@ -42,6 +42,12 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // Only as the launch's one choice (DESIGN 3.4): never beside a scenario or another check.
+            if (!SandboxScenario.MayStartDevelopmentCheck(Argument))
+            {
+                return;
+            }
+
             var host = new GameObject("Sandbox player check");
             UnityEngine.Object.DontDestroyOnLoad(host);
             host.AddComponent<Walk>().directory = directory;

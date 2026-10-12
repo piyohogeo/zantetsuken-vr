@@ -17,7 +17,7 @@ namespace Zantetsu.Sandbox
     // the hit does not carry and is not made up here. seconds -- Stopwatch at that observation, from the recording's start.
     // slashId, of (the lineage's name), child (1 = the fragment has an origin), fragment, acceptance, admission, operation --
     // as the old CSV. at -- SlashHitConfirmed.At: the input time of the wave update whose sweep hit, in seconds on the replay's
-    // input clock (Time.unscaledTimeAsDouble at the replay's start plus each replayed row's recorded offset, then plus each
+    // input clock (Zantetsu.Core.GamePause.UnscaledTimeAsDouble at the replay's start plus each replayed row's recorded offset, then plus each
     // tick's unscaled delta), a clock of its own, not the Stopwatch. side -- SlashHitConfirmed.Side: +1 or -1 for a side of a
     // Provisional pair, 0 for a published owner (no unit). update -- the recorder's replay index minus one when the hit was
     // observed: the index of the last replayed input row (from 0; it stays at the last row while the ticks go on).
@@ -72,7 +72,7 @@ namespace Zantetsu.Sandbox
         /// observed the hit in (the hit's eventFrame; for a held root taken up, the frame it observed the take-up), the
         /// others the frames it observed the Provisional publication, the operation leaving Admitted (finalFrame) and the
         /// geometry Committed, -1 when not observed; the times are the check's clock at those observations
-        /// (Time.unscaledTimeAsDouble since the replay's start, seconds; NaN when not observed, written null); ledgerState and
+        /// (Zantetsu.Core.GamePause.UnscaledTimeAsDouble since the replay's start, seconds; NaN when not observed, written null); ledgerState and
         /// the children are the ledger's at the summary. Of the multi-NPC mode: of, child; of the building mode: the source's
         /// depth, anchors and fixedness, the cut's kind and world normal as recorded at the acceptance. Null where the mode
         /// has none. name, hull and fusion are the check's own (a held root's name ends "-held"; hull / fusion: a Pending

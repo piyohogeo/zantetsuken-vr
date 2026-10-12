@@ -666,6 +666,13 @@ namespace Zantetsu.Sandbox
 
         private void Update()
         {
+            // The game's pause (DESIGN 4.6): no row is recorded and none is replayed; the replay's clock is the game's, which
+            // stands meanwhile, so the rows due go on from where they were.
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                return;
+            }
+
             TryAutoBeginCapture();
 
             if (recording)
@@ -676,7 +683,7 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            AdvanceReplay(Time.frameCount, Time.unscaledTimeAsDouble, Time.unscaledDeltaTime);
+            AdvanceReplay(Time.frameCount, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, Zantetsu.Core.GamePause.UnscaledDeltaTime);
         }
 
         // After every Update, so a latch made this frame -- live or replayed --
@@ -1239,7 +1246,7 @@ namespace Zantetsu.Sandbox
 
             if (GUILayout.Button("Play"))
             {
-                TryBeginReplay(Time.unscaledTimeAsDouble);
+                TryBeginReplay(Zantetsu.Core.GamePause.UnscaledTimeAsDouble);
             }
 
             if (GUILayout.Button("Clear"))

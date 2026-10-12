@@ -383,7 +383,7 @@ namespace Zantetsu.Sandbox
                 bool window = _accepted.Any(a => !a.fusion && a.committedFrame < 0 && KindOf(LineageOf(a.fragment)) is string k && (k == "building" || k == "prop"))
                     || (_world.Fusion != null && !_world.Fusion.IsSettled)
                     || (_world.Hulls != null && !_world.Hulls.IsSettled);
-                double now = Time.realtimeSinceStartupAsDouble;
+                double now = Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble;
                 _pcLastObservedTime = now;
                 if (_crowd.PublishedCycles != _pcLastCycles) _pcCycleTimes.Add(now);
                 if (window && _pcWindowFrom < 0) _pcWindowFrom = now;

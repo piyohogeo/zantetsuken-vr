@@ -86,7 +86,7 @@ namespace Zantetsu.Sandbox
                 yield return _hullMidDrop.Run(_world, _detector, building, () => 900000 + (++_bhSyntheticSlashes), External, BuildingHullFrame,
                     () => { if (_detector.HitCount > 0) _lastHitListAt = _detector.HitAt(0).At; }, Characters,
                     op => _mpFailures.TryGet(op, out _) || _world.Geometry.FailureOf(op) != VpStorageCutStatus.Ok, Log,
-                    () => Time.realtimeSinceStartupAsDouble);   // the building trial's own clock in the Player (no test clock there)
+                    () => Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble);   // the building trial's own clock in the Player (no test clock there)
                 _phase = phaseFound;
                 _bhScenario = scenarioFound;
                 Log("hull mid-drop section: the script goes on from here at frame " + Time.frameCount + (building >= 0 && _world.Hulls != null ? ": building " + building + " n " + _world.Hulls.CountDisplayGeometries(building) + ", stopped " + _world.Hulls.IsCutStopped(building) : ""));
@@ -168,7 +168,7 @@ namespace Zantetsu.Sandbox
                     float3 c = (lo + hi) * 0.5f;
                     int cutsBefore = h.GroupCuts, hitsBefore = h.Hits.Count, displayCutsBefore = h.DisplayCuts;
                     long slash = 900000 + (++_bhSyntheticSlashes);
-                    var level = new SlashSweep(slash, Time.unscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
+                    var level = new SlashSweep(slash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(Vector3.up, -c.y), Vector3.right, Vector3.forward,
                         new Vector3(lo.x - 1f, c.y, lo.z - 1f), new Vector3(lo.x - 1f, c.y, hi.z + 1f), new Vector3(hi.x + 1f, c.y, lo.z - 1f), new Vector3(hi.x + 1f, c.y, hi.z + 1f));
                     _detector.Evaluate(new[] { level }, new[] { slash });
                     int buildingHits = 0;
@@ -179,7 +179,7 @@ namespace Zantetsu.Sandbox
                     }
 
                     if (_detector.HitCount > 0) _lastHitListAt = _detector.HitAt(0).At;
-                    for (int f = 0; f < 10; f++) yield return null;
+                    for (int f = 0; f < 10; f++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     Log("hull limit: synthetic Slash " + slash + " (level y " + c.y.ToString("F3", Inv) + " through building " + g.Building + ") given once to the ordinary detector: detector hits " + _detector.HitCount + ", on the building " + buildingHits
                         + "; group cuts " + cutsBefore + " -> " + h.GroupCuts + ", hit records " + hitsBefore + " -> " + h.Hits.Count + ", display cuts " + displayCutsBefore + " -> " + h.DisplayCuts);
                     Expect(buildingHits == 0 && h.GroupCuts == cutsBefore && h.Hits.Count == hitsBefore && h.DisplayCuts == displayCutsBefore,

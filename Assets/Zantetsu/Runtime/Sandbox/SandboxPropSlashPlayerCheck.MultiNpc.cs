@@ -206,7 +206,7 @@ namespace Zantetsu.Sandbox
             private void MultiFrame(int frame)
             {
                 if (!_multiStartChecked && multiNpc) MultiCheckStart();
-                double now = Time.unscaledTimeAsDouble - _clockStart;
+                double now = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
                 for (int w = 0; w < _katana.WaveCount; w++)
                 {
                     SlashTally t = Tally(_katana.SlashIdAt(w));

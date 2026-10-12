@@ -69,6 +69,31 @@ namespace Zantetsu.Sandbox
             set => liveInputEnabled = value;
         }
 
+        /// <summary>Move speed at full stick, m/s: the play menu's setting (DESIGN 4.6).</summary>
+        public float MoveSpeed
+        {
+            get => moveSpeed;
+            set => moveSpeed = Mathf.Max(0f, value);
+        }
+
+        /// <summary>One snap turn, degrees: the play menu's setting (DESIGN 4.6).</summary>
+        public float SnapTurnDegrees
+        {
+            get => snapTurnDegrees;
+            set => snapTurnDegrees = Mathf.Max(0f, value);
+        }
+
+        /// <summary>
+        /// Whether these sticks are this input's neutral: a move below its own dead zone, and a turn below the
+        /// deflection at which a snap turn is armed again. With them neutral, <see cref="ReadLiveCommand"/> gives an
+        /// empty command and the next turn needs a new deflection. The play menu gives the live input back only then
+        /// (DESIGN 4.6).
+        /// </summary>
+        public bool IsNeutral(Vector2 move, float turnAxis)
+        {
+            return move.magnitude < moveDeadZone && Mathf.Abs(turnAxis) < snapTurnThreshold * 0.5f;
+        }
+
         public void Configure(PlayerLocomotion target, Transform trackedHmd)
         {
             locomotion = target;
@@ -81,7 +106,8 @@ namespace Zantetsu.Sandbox
         /// </summary>
         public LocomotionVerdict? Submit(in SandboxLocomotionCommand command, float deltaSeconds)
         {
-            if (locomotion == null || command.IsEmpty)
+            // The game's pause (DESIGN 4.6) moves and turns nothing, whoever asks: the live input and a script alike.
+            if (locomotion == null || command.IsEmpty || GamePause.IsPaused)
             {
                 return null;
             }

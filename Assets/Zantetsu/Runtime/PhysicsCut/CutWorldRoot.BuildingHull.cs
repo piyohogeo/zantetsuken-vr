@@ -42,7 +42,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             Hulls = new BuildingHullFusion(settings, Ledger, Owners, Cook, Geometry, Storage, Dispatcher, Rest, profile.SupportEpsilon, profile.AnchorEpsilon, profile.VertexLimit,
-                () => CutPhysicsStep.Clock.PhysicsSeconds, () => Time.realtimeSinceStartupAsDouble)
+                () => CutPhysicsStep.Clock.PhysicsSeconds, () => Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble)
             {
                 Cooking = Cook.Cooking,
             };

@@ -174,7 +174,9 @@ namespace Zantetsu.Sandbox
 
         private void UpdateCrowd()
         {
-            if (stopped || world == null || !world.IsReady) return;
+            // The game's pause (DESIGN 4.6): no retirement, refill, new cycle or step along a plan. The plan time stands with
+            // the engine's scaled time, so the plans are where they were when the pause ends.
+            if (stopped || world == null || !world.IsReady || Zantetsu.Core.GamePause.IsPaused) return;
             if (!ready)
             {
                 if (!poolStarted) StartPool();

@@ -39,7 +39,23 @@ namespace Zantetsu.Sandbox
 
     public static partial class SandboxPropSlashPlayerCheck
     {
-        private static IEnumerator ReleaseLogAcrossFrames()
+        /// <summary>
+        /// A report's write waited for across frames. At an ending (<paramref name="ending"/>) the wait is plain: the
+        /// write is collected when it is done whether or not the game is paused (DESIGN 4.6). Within the script (the
+        /// frames saved at "cuts complete") it stands still while paused, as every stage of a script does. Stepped by
+        /// the caller (<c>while (wait.MoveNext()) yield return wait.Current;</c>).
+        /// </summary>
+        internal static IEnumerator WaitForWrite(CheckReportWrite write, bool ending)
+        {
+            while (!write.Done)
+            {
+                yield return null;
+                while (!ending && Zantetsu.Core.GamePause.IsPaused) yield return null;
+            }
+        }
+
+        /// <summary>The held log written out a few lines a frame. Part of an ending: never held by a pause (DESIGN 4.6).</summary>
+        internal static IEnumerator ReleaseLogAcrossFrames()
         {
             var held = s_heldLog;
             if (held == null) yield break;
@@ -98,7 +114,8 @@ namespace Zantetsu.Sandbox
                 if (_timelineRecorders == null) yield break;
                 if (_timelineWrite != null)
                 {
-                    while (!_timelineWrite.Done) yield return null;
+                    IEnumerator earlier = WaitForWrite(_timelineWrite, final);
+                    while (earlier.MoveNext()) yield return earlier.Current;
                     _timelineWrite = null;
                 }
                 CheckReportWrite write = null;
@@ -121,7 +138,8 @@ namespace Zantetsu.Sandbox
                     else Guarded("timeline at cuts complete", () => { throw preparationFailure; });
                     yield break;
                 }
-                while (!write.Done) yield return null;
+                IEnumerator written = WaitForWrite(write, final);
+                while (written.MoveNext()) yield return written.Current;
                 _timelineWrite = null;
                 if (final) PrepareFinalTimelineResult(write.Failure);
                 else Guarded("timeline at cuts complete", write.ThrowIfFailed);

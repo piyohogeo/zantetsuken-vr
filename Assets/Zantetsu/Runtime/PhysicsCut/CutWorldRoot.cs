@@ -290,7 +290,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             // Before the frame's collection: a piece retired here leaves the physics and the drawing in the same frame.
-            if (IsReady && !_ending && !TerminationRequested)
+            // None of it while the game is paused (DESIGN 4.6): the returns, the lifetimes, the additional split and the
+            // trial's turns are progress, and the collection after this draws what stood before the pause.
+            if (IsReady && !_ending && !TerminationRequested && !Zantetsu.Core.GamePause.IsPaused)
             {
                 // Vertex room of lineages that have ended goes back first (DESIGN 4.5.3), whatever the piece lifetime's
                 // settings: it is the common end of every retirement.
@@ -1074,6 +1076,12 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private string CompactionGate(double expectedSeconds)
         {
+            // The collection goes on drawing through a pause of the game (DESIGN 4.6); no compaction starts in it.
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                return "the game is paused";
+            }
+
             switch (FrameEventsHold(out string work))
             {
                 case CutFrameHold.HeavyWork:

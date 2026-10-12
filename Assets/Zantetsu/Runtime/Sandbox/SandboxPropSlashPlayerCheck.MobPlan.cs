@@ -49,6 +49,12 @@ namespace Zantetsu.Sandbox
 
             private void Update()
             {
+                // The game's pause (DESIGN 4.6): the script takes no step and gives no stick.
+                if (Zantetsu.Core.GamePause.IsPaused)
+                {
+                    return;
+                }
+
                 if (drive != null)
                 {
                     using (s_scenarioFrame.Auto())
@@ -140,7 +146,7 @@ namespace Zantetsu.Sandbox
             private readonly List<(string name, int frame, int appliedFrame, double applied, double planned, string clip, string plannedClip)> _mpHitPoses =
                 new List<(string, int, int, double, double, string, string)>();
 
-            private double MobPlanNow => Time.unscaledTimeAsDouble - _clockStart;
+            private double MobPlanNow => Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
 
             // The script, the crowd and the scripted stick; the crowd's events are taken before it is ready, so the first
             // twenty are seen being taken in. Then waits (bounded) for the crowd to be ready.
@@ -225,9 +231,9 @@ namespace Zantetsu.Sandbox
                     + (cityWalk ? " (the city walk: each span given for exactly the time a frame overlaps it)" : "")
                     + (_mpSubscribedLate ? "; WARNING: the crowd was ready before the check subscribed" : ""));
                 float until = StageBegin("crowd ready", 120f);
-                while (!_crowd.IsReady && Time.realtimeSinceStartup < until)
+                while (!_crowd.IsReady && Zantetsu.Core.GamePause.RealtimeSinceStartup < until)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
                 StageEnd(!_crowd.IsReady, "live " + _crowd.LiveCount);
@@ -420,7 +426,7 @@ namespace Zantetsu.Sandbox
                 Transform player = _mpInput.player.transform;
                 var at = new Vector2(player.position.x, player.position.z);
                 bool idle = !_recorder.IsReplaying && _katana.WaveCount == 0;
-                float seconds = Time.unscaledDeltaTime;
+                float seconds = Zantetsu.Core.GamePause.UnscaledDeltaTime;
                 (int start, int rows)? chunk = _mpSteps.Advance(now, at, player.eulerAngles.y, idle, _mpInput.speed, _mpInput.turnDegreesPerSecond, seconds,
                     out (float forward, float turn)? stick, line => { Log("city walk " + line); MobPlanRecord(line); }, _mpSteps.Engage != null ? CityWalkSeen() : null);
                 if (_mpSteps.Engage != null) CityWalkEngagementFrames();
@@ -628,7 +634,7 @@ namespace Zantetsu.Sandbox
                 {
                     using (s_checkDetail.Auto())
                     {
-                        _mpFrames.WriteLine(string.Join(",", frame, t.ToString("F4", Inv), (Time.unscaledDeltaTime * 1000f).ToString("F3", Inv), _crowd.LiveCount,
+                        _mpFrames.WriteLine(string.Join(",", frame, t.ToString("F4", Inv), (Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f).ToString("F3", Inv), _crowd.LiveCount,
                             _crowd.PlannerBusy ? 1 : 0, _crowd.PublishedCycles, _crowd.StaleCycles, _crowd.ReplacementsAdded,
                             player.position.x.ToString("F3", Inv), player.position.z.ToString("F3", Inv), player.eulerAngles.y.ToString("F1", Inv),
                             _katana.WaveCount, _recorder.IsReplaying ? 1 : 0, _mpChunk, _recorder.ReplayIndex, _mpLod != null ? _mpLod.CharacterCount : -1,
@@ -736,7 +742,7 @@ namespace Zantetsu.Sandbox
                     _rowOf.Add(chunk.start + loaded);
                 }
 
-                bool begun = _recorder.TryBeginReplay(Time.unscaledTimeAsDouble);
+                bool begun = _recorder.TryBeginReplay(Zantetsu.Core.GamePause.UnscaledTimeAsDouble);
                 Transform player = _mpInput.player.transform;
                 MobPlanEvent("chunk", _mpChunk, "rows " + chunk.start + "+" + loaded, "begun=" + begun + " refused=[" + string.Join(" ", refused) + "] player="
                     + player.position.ToString("F2").Replace(",", " ") + " yaw=" + player.eulerAngles.y.ToString("F1", Inv) + " live=" + _crowd.LiveCount);

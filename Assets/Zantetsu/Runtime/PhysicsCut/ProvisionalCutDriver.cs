@@ -647,6 +647,13 @@ namespace Zantetsu.PhysicsCut
                 return ProvisionalCutAcceptance.NotAccepted;
             }
 
+            // **Closed while the game is paused** (DESIGN 4.6): no cut is taken and none is published. Nothing has
+            // changed and nothing is ended; what was accepted before the pause stands and goes on after it.
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                return ProvisionalCutAcceptance.NotAccepted;
+            }
+
             if (!IsBound || !ask.source.IsSet
                 || !math.all(math.isfinite(ask.plane)) || math.lengthsq(ask.plane.xyz) <= 0f
                 || !math.all(math.isfinite(ask.renderAnchor)))
@@ -971,6 +978,16 @@ namespace Zantetsu.PhysicsCut
 #if VP_DIAGNOSTIC_SCENE_AB
             using var measured = SceneAbCounters.Measure(0);
 #endif
+            // The game's pause (DESIGN 4.6): this driver takes no turn -- no ask is taken up, no held request resumed,
+            // nothing dispatched, collected, published or committed. The asks stay asked, the cuts in flight stay as
+            // they are, work already with a worker goes on and its result waits at its destination; the display's
+            // collection, which is not a turn of this, goes on. The ending of a world does not pass through here.
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                PausedTurns++;
+                return;
+            }
+
             _taken.Clear();
 
             // Requests held before acceptance come first: they were made before this update's asks.
@@ -1009,8 +1026,17 @@ namespace Zantetsu.PhysicsCut
 #if VP_DIAGNOSTIC_SCENE_AB
             using var measured = SceneAbCounters.Measure(1);
 #endif
+            if (Zantetsu.Core.GamePause.IsPaused)
+            {
+                PausedTurns++;
+                return;
+            }
+
             Advance(CurrentFrame);
         }
+
+        /// <summary>The turns this driver did not take because the game was paused (DESIGN 4.6): its three a frame, counted.</summary>
+        public long PausedTurns { get; private set; }
 
         /// <summary>
         /// Lets the display collect this frame's snapshot -- after this frame's publications and after the frame's

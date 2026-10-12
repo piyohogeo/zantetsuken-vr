@@ -23,11 +23,12 @@ param(
     [switch]$IndirectCountVerify,
     [switch]$IndirectCountDrill,
     [int]$IndirectCountFirstSlot = 0, # diagnosis (2026-10-10): the count slot a pass's first run takes (1 = the scene's one run from countBufferOffset 4)
+    [string]$Package = 'com.zantetsuken.quest.static',   # the APK that runs it: this scenario's own, or the one of every scenario (com.zantetsuken.quest)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe'
 )
 $ErrorActionPreference = 'Stop'
-$package = 'com.zantetsuken.quest.static'
+$package = $Package
 $deviceFiles = "/sdcard/Android/data/$package/files"
 function Invoke-Adb {
     & $Adb -s $Serial @args
@@ -39,6 +40,8 @@ Invoke-Adb shell mkdir -p $deviceFiles
 $config = @{ mode = $Mode; warmupLaps = $WarmupLaps; appSw = !$AppSwOff; profiler = [bool]$Profiler; quitWhenDone = (!$KeepOpen -and $CameraMode -eq 'path'); headTracked = ($CameraMode -eq 'head') }
 if ($PathFile) { Invoke-Adb push $PathFile "$deviceFiles/compare-path.txt"; $config.pathFile = "$deviceFiles/compare-path.txt" }
 if ($GeometryFile) { Invoke-Adb push $GeometryFile "$deviceFiles/override-geometry.vpdc"; $config.geometryFile = "$deviceFiles/override-geometry.vpdc" }
+# DESIGN 3.4: the launch names its scenario; a Player given none runs play.
+$config.scenario = 'static-wait'
 $config.sceneObjectLimit = $SceneObjectLimit
 $config.nativeColourPreparation = !$LegacyNativeColour
 $config.directClipProbe = [bool]$DirectClipProbe

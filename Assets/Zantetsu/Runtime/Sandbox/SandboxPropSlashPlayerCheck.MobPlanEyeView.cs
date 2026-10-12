@@ -36,7 +36,7 @@ namespace Zantetsu.Sandbox
                     _mpEyeRows.WriteLine("frame,t,eyeAtRender,cameraY,floorY,pitch,roll,yaw");
                 }
 
-                _mpEyeStart = Time.unscaledTimeAsDouble;
+                _mpEyeStart = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
                 if (System.Environment.GetCommandLineArgs().Contains("-zantetsuEyeLevel"))
                 {
                     Camera camera = Camera.main;
@@ -94,7 +94,7 @@ namespace Zantetsu.Sandbox
                 float floor = _mpInput.player.transform.position.y;
                 float y = camera.transform.position.y;
                 Vector3 e = camera.transform.eulerAngles;
-                double t = Time.unscaledTimeAsDouble - _mpEyeStart;
+                double t = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _mpEyeStart;
                 _mpEyeAtRender.Add((t, y - floor, Signed(e.x), Signed(e.z)));
                 _mpEyeRows?.WriteLine(string.Join(",", Time.frameCount, t.ToString("F4", Inv), (y - floor).ToString("F4", Inv),
                     y.ToString("F4", Inv), floor.ToString("F4", Inv), Signed(e.x).ToString("F2", Inv), Signed(e.z).ToString("F2", Inv),

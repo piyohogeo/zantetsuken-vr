@@ -61,12 +61,31 @@ namespace Zantetsu.EditorTools.Sandbox
         /// </summary>
         public static bool Build(string directory, string scene = null, string[] diagnosticDefines = null)
         {
-            scene ??= CutWorldSandboxSceneBuilder.ScenePathInProject;
-            if (!File.Exists(scene))
+            return Build(directory, new[] { scene ?? CutWorldSandboxSceneBuilder.ScenePathInProject }, diagnosticDefines);
+        }
+
+        /// <summary>
+        /// The same with several scenes, in the Player's order: the first is the one it starts in. A Player of
+        /// every scenario (DESIGN 3.4) is built with the boot scene first and each scenario's scene after it.
+        /// </summary>
+        public static bool Build(string directory, string[] scenes, string[] diagnosticDefines = null)
+        {
+            if (scenes == null || scenes.Length == 0)
             {
-                Debug.LogError("PLAYER BUILD: the scene " + scene + " is not there. Build it first.");
+                Debug.LogError("PLAYER BUILD: no scene was named.");
                 return false;
             }
+
+            foreach (string each in scenes)
+            {
+                if (!File.Exists(each))
+                {
+                    Debug.LogError("PLAYER BUILD: the scene " + each + " is not there. Build it first.");
+                    return false;
+                }
+            }
+
+            string scene = string.Join(",", scenes);
 
             var target = BuildTarget.StandaloneWindows64;
             var targetGroup = BuildTargetGroup.Standalone;
@@ -104,7 +123,7 @@ namespace Zantetsu.EditorTools.Sandbox
             string executable = Path.Combine(directory, ExecutableName);
             var options = new BuildPlayerOptions
             {
-                scenes = new[] { scene },
+                scenes = scenes,
                 locationPathName = executable,
                 target = target,
                 targetGroup = targetGroup,

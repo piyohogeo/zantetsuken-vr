@@ -317,12 +317,12 @@ namespace Zantetsu.Sandbox
                 SandboxDrawCompareCutScene.PlaceAbout(io, poses, lower, At(new Vector3(0.2f, 0.3f, 0f)), Quaternion.AngleAxis(-30f, right), Vector3.up * 0.2f);
                 SandboxDrawCompareCutScene.Place(io, poses, upper, body.position, body.rotation);
                 SandboxDrawCompareCutScene.PlaceAbout(io, poses, upper, At(new Vector3(0.2f, 0.9f, 0f)), Quaternion.AngleAxis(50f, right), Vector3.up * 1.1f);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (split.Published != 0) failures.Add("a split was published while it was held off: " + split.Published);
                 yield return Picture(io, names[stage++], states, poses, split);
 
                 // ---- the same state again: what two pictures of one state differ by --------------------------------------
-                for (int i = 0; i < 6; i++) yield return null;
+                for (int i = 0; i < 6; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 yield return Picture(io, names[stage++], states, poses, split);
 
                 // ---- with another body: its cut held back, pictured twice before the split is let through --------------------
@@ -346,13 +346,13 @@ namespace Zantetsu.Sandbox
                     SandboxDrawCompareCutScene.PlaceAbout(io, poses, otherLower, OtherAt(new Vector3(0f, 0.3f, 0f)), Quaternion.AngleAxis(-30f, right), Vector3.up * 0.2f);
                     SandboxDrawCompareCutScene.Place(io, poses, otherUpper, other.position, other.rotation);
                     SandboxDrawCompareCutScene.PlaceAbout(io, poses, otherUpper, OtherAt(new Vector3(0f, 0.9f, 0f)), Quaternion.AngleAxis(50f, right), Vector3.up * 1.1f);
-                    for (int i = 0; i < 3; i++) yield return null;
+                    for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     if (io.held() == 0) failures.Add("no finished geometry was held at the other body's cut: its picture is not of provisional caps");
                     if (SandboxDrawCompareCutScene.State(world, b.id) == LogicalCutOperationState.Completed) failures.Add("the other body's cut was complete while its geometry was to be held");
                     if (world.Display.CapRecordCount == 0) failures.Add("the display holds no cap at the other body's held cut");
                     if (split.Published != 0) failures.Add("a split was published while it was held off: " + split.Published);
                     yield return Picture(io, names[stage++], states, poses, split);
-                    for (int i = 0; i < 6; i++) yield return null;
+                    for (int i = 0; i < 6; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     yield return Picture(io, names[stage++], states, poses, split);
                     io.log("split scene: the other body's cut is held (finished geometry held " + io.held() + ", caps " + world.Display.CapRecordCount + ", the driver's cuts in flight "
                         + world.Driver.Transactions.Count + "); the split is let through from here");
@@ -364,7 +364,7 @@ namespace Zantetsu.Sandbox
                 int seen = split.Published;
                 for (int frame = 0; frame < 900 && parts.Count < 2; frame++)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     if (split.Published == seen)
                     {
                         if (frame > 60 && split.IsIdle && !split.HasAttempt) break;
@@ -396,7 +396,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 // The registration a split replaces goes at the display's next adoption: a few frames, then the picture.
-                for (int i = 0; i < 8; i++) yield return null;
+                for (int i = 0; i < 8; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (other != null)
                 {
                     // Both publications came while the other body's geometry was held: its caps are the provisional ones still.
@@ -422,7 +422,7 @@ namespace Zantetsu.Sandbox
                 Further(world, parts[upper].first, parts[upper].second, right, out LogicalFragmentId upperHand, out LogicalFragmentId _);
                 SandboxDrawCompareCutScene.PlaceAbout(io, poses, lowerHand, body.position, Quaternion.identity, right * 0.8f);
                 SandboxDrawCompareCutScene.PlaceAbout(io, poses, upperHand, body.position, Quaternion.identity, right * 0.8f);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 yield return Picture(io, names[stage++], states, poses, split);
 
                 // ---- one of the split's objects cut again, its geometry held back ----------------------------------------------
@@ -451,7 +451,7 @@ namespace Zantetsu.Sandbox
                 SandboxDrawCompareCutScene.Place(io, poses, further, from.position, from.rotation);
                 if (SandboxDrawCompareCutScene.TryWorldBounds(world, nearer, out Bounds nearBox)) SandboxDrawCompareCutScene.PlaceAbout(io, poses, nearer, nearBox.center, Quaternion.AngleAxis(40f, Vector3.up), Vector3.zero);
                 if (SandboxDrawCompareCutScene.TryWorldBounds(world, further, out Bounds farBox)) SandboxDrawCompareCutScene.PlaceAbout(io, poses, further, farBox.center, Quaternion.AngleAxis(-40f, Vector3.up), right * 0.45f);
-                for (int i = 0; i < 3; i++) yield return null;
+                for (int i = 0; i < 3; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 if (io.held() == 0) failures.Add("no finished geometry was held at the added cut: the picture of the held stage is not of provisional caps");
                 if (SandboxDrawCompareCutScene.State(world, c.id) == LogicalCutOperationState.Completed) failures.Add("the added cut was complete while its geometry was to be held");
                 if (world.Display.CapRecordCount == 0) failures.Add("the display holds no cap at the held added cut");
@@ -489,14 +489,14 @@ namespace Zantetsu.Sandbox
             for (int attempt = 0; attempt < 8 && ledger.OperationCount == before; attempt++)
             {
                 long slash = ++s_slash;
-                var sweep = new SlashSweep(slash, Time.unscaledTimeAsDouble, false, new Plane(normal, centre), travel, span,
+                var sweep = new SlashSweep(slash, Zantetsu.Core.GamePause.UnscaledTimeAsDouble, false, new Plane(normal, centre), travel, span,
                     centre - (travel * halfTravel) - (span * halfSpan), centre - (travel * halfTravel) + (span * halfSpan),
                     centre + (travel * halfTravel) - (span * halfSpan), centre + (travel * halfTravel) + (span * halfSpan));
                 io.detector.Evaluate(new[] { sweep }, new[] { slash });
                 io.log("split scene: synthetic sweep " + slash + " through " + what + " (through (" + centre.x.ToString("F3", Inv) + ", " + centre.y.ToString("F3", Inv) + ", " + centre.z.ToString("F3", Inv)
                     + "), normal (" + normal.x.ToString("F3", Inv) + ", " + normal.y.ToString("F3", Inv) + ", " + normal.z.ToString("F3", Inv) + ")), attempt " + (attempt + 1)
                     + ": hits " + io.detector.HitCount + ", operations " + before + " -> " + ledger.OperationCount);
-                for (int i = 0; i < 6 && ledger.OperationCount == before; i++) yield return null;
+                for (int i = 0; i < 6 && ledger.OperationCount == before; i++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
             if (ledger.OperationCount == before)
@@ -516,7 +516,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 if (all) break;
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
 
             for (int i = before; i < count; i++)

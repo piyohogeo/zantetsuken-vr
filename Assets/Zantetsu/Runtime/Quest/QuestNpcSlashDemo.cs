@@ -29,6 +29,7 @@ namespace Zantetsu.Quest
 
         [Serializable] private sealed class Config
         {
+            public string scenario = "";                         // DESIGN 3.4: read by SandboxScenario (play without it); kept here so that the run's record of its configuration carries it
             public string mode = "vp3c-native";
             public bool appSw = true;
             public string appSpacePoseMode = "tracking-origin"; // Camera pose is retained only for the controlled comparison.
@@ -64,7 +65,9 @@ namespace Zantetsu.Quest
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         private Config _config;
         private bool _cityWalk;
-        private string LogPrefix => _cityWalk ? "QUEST CITY WALK: " : "QUEST NPC: ";
+        private bool _play;
+        private static SandboxScenarioKind s_scenario;
+        private string LogPrefix => _play ? "QUEST PLAY: " : _cityWalk ? "QUEST CITY WALK: " : "QUEST NPC: ";
         private Camera _camera;
         private Transform _appSpaceOrigin;
         private Quaternion _lastHeadRotation, _lastAppSpaceRotation;
@@ -85,21 +88,92 @@ namespace Zantetsu.Quest
         private float _nextStatus;
         private readonly List<XRDisplaySubsystem> _displays = new List<XRDisplaySubsystem>();
 
-        private static Config ReadConfig()
+        private static string ReadConfigText()
         {
             string file = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
-            return File.Exists(file) ? JsonUtility.FromJson<Config>(File.ReadAllText(file)) : new Config();
+            return File.Exists(file) ? File.ReadAllText(file) : null;
+        }
+
+        /// <summary>
+        /// The configuration a scenario runs with, from the launch's file (null: no file, every default). A scripted
+        /// scenario takes the file as it is. **Play takes the common settings alone** (DESIGN 3.4): the draw route's
+        /// mode and its documented way back (the fixed draw), AppSW and the application space's pose. Everything of a
+        /// scripted run or an experiment is left at what play needs whatever the file says -- no distance experiment
+        /// (the class's default has it on, for the scripted runs), no profile, no diagnosis of the compaction, no
+        /// comparison switch of the native route -- so that a file left by an earlier experiment, or no file at all,
+        /// starts the same play.
+        /// </summary>
+        private static Config ConfigFor(SandboxScenarioKind kind, string json)
+        {
+            Config launch = string.IsNullOrEmpty(json) ? new Config() : JsonUtility.FromJson<Config>(json) ?? new Config();
+            if (kind != SandboxScenarioKind.Play)
+            {
+                return launch;
+            }
+
+            return new Config
+            {
+                scenario = launch.scenario,
+                mode = launch.mode,
+                appSw = launch.appSw,
+                appSpacePoseMode = launch.appSpacePoseMode,
+                nativeIndirectCount = launch.nativeIndirectCount,
+                appSwDistanceExperiment = false,
+                profiler = false,
+            };
+        }
+
+        /// <summary>
+        /// What is wrong with a scenario's configuration, or null: the checks made before anything of the scene is
+        /// touched. Play is asked only what it uses.
+        /// </summary>
+        private static string Validate(Config config, SandboxScenarioKind kind)
+        {
+            if (config == null || (config.mode != "vp3c" && config.mode != "vp3c-native")) return "mode must be vp3c or vp3c-native";
+            if (config.appSpacePoseMode != "camera" && config.appSpacePoseMode != "tracking-origin") return "appSpacePoseMode must be camera or tracking-origin";
+            if (kind == SandboxScenarioKind.Play) return null;
+            if (config.inputStart < 0 || config.inputRows < 1 || config.inputRows > 4096
+                || !float.IsFinite(config.startDelaySeconds) || config.startDelaySeconds < 0f) return "invalid input range or start delay";
+            if (kind == SandboxScenarioKind.CityWalk && (!float.IsFinite(config.cityWalkBudgetSeconds) || config.cityWalkBudgetSeconds <= 0f))
+                return "invalid city walk budget";
+            if (config.appSw && config.appSwDistanceExperiment && config.mode != "vp3c-native") return "distance experiment requires AppSW and vp3c-native";
+            return null;
+        }
+
+        /// <summary>
+        /// For tests and the record: a launch's configuration text read for a scenario -- its failure (null: none),
+        /// its mode, AppSW and whether the AppSW distance experiment is set up. Reads and decides only.
+        /// </summary>
+        internal static string CheckLaunch(string json, SandboxScenarioKind kind, out string mode, out bool appSw, out bool distanceExperiment)
+        {
+            Config config = ConfigFor(kind, json);
+            mode = config.mode;
+            appSw = config.appSw;
+            distanceExperiment = config.appSw && config.appSwDistanceExperiment;
+            return Validate(config, kind);
+        }
+
+        /// <summary>
+        /// The draw route and the native route's options for a launch, set before any scene's world is made: for play,
+        /// the city walk and the NPC slash (the static scene keeps its own, QuestStaticDemo), from the configuration as
+        /// <see cref="ConfigFor"/> gives it for the scenario.
+        /// </summary>
+        internal static void SelectRouteFor(SandboxScenarioChoice choice, string json)
+        {
+            if (choice.Failure != null || choice.Kind == SandboxScenarioKind.StaticWait) return;
+            Config config = ConfigFor(choice.Kind, json);
+            VpNativeDrawSetup.Requested = config.mode == "vp3c-native";
+            ApplyNativeOptions(config);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void SelectNativeRoute()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            // The package selects the initial route before the scene's world is made; other Quest demos keep theirs.
-            if (Application.identifier != PackageName && Application.identifier != CityWalkPackageName) return;
-            Config config = ReadConfig();
-            VpNativeDrawSetup.Requested = (config ?? new Config()).mode == "vp3c-native";
-            ApplyNativeOptions(config ?? new Config());
+            // The launch's scenario selects the initial route before any scene's world is made (DESIGN 3.4): play, the city
+            // walk and the NPC slash read it here; the static scene keeps its own (QuestStaticDemo). It was the package
+            // that selected it while each scenario had a package of its own.
+            SelectRouteFor(SandboxScenario.Current, ReadConfigText());
 #endif
         }
 
@@ -119,12 +193,38 @@ namespace Zantetsu.Quest
             VpCommandCompaction.PoisonEntries = config.nativeIndirectCount && config.nativeIndirectCountPoison;
         }
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void Install()
+        /// <summary>
+        /// The Quest's entry for play, the city walk and the NPC slash (DESIGN 3.4), called by <see cref="SandboxScenario"/>
+        /// once the scenario's scene is loaded and before anything of it starts. It no longer starts by itself on the
+        /// scene's name: the name is checked against the scenario instead, and a scene that is not the scenario's is a
+        /// failure, answered in words. Null when the demo was made.
+        /// <para>
+        /// **Play** makes the same demo for what a Quest scene needs whatever runs in it -- the configuration's draw
+        /// route options, AppSW with the tracking origin's pose, the display's cadence -- and nothing of a run: the
+        /// crowd, the katana and the walking input are left as the scene has them, no input is replayed, nothing is
+        /// measured, recorded or ended.
+        /// </para>
+        /// </summary>
+        internal static string StartForScenario(SandboxScenarioKind kind)
         {
-#if UNITY_ANDROID && !UNITY_EDITOR
-            bool cityWalk = SceneManager.GetActiveScene().name == CityWalkSceneName;
-            if (SceneManager.GetActiveScene().name != SceneName && !cityWalk) return;
+            string scene = SceneManager.GetActiveScene().name;
+            bool cityWalk = kind == SandboxScenarioKind.CityWalk;
+            bool play = kind == SandboxScenarioKind.Play;
+            if (cityWalk && scene != CityWalkSceneName) return "city-walk needs the scene " + CityWalkSceneName + "; this is " + scene;
+            if (kind == SandboxScenarioKind.NpcSlash && scene != SceneName) return "npc-slash needs the scene " + SceneName + "; this is " + scene;
+            if (play && UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>() == null) return "play needs a scene with a cut world; " + scene + " has none";
+            s_scenario = kind;
+            // The direct skin input requires the same four-weight contract as the authored NPC cut data.
+            foreach (var npc in UnityEngine.Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None))
+                if (npc.CharacterRoot != null)
+                    foreach (var skin in npc.CharacterRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true)) skin.quality = SkinQuality.Bone4;
+            if (play)
+            {
+                // (The recorder's own controls and the diagnostic overlay are quieted for play by SandboxScenario, on the device as on a PC.)
+                new GameObject("Quest play").AddComponent<QuestNpcSlashDemo>();
+                return null;
+            }
+
             if (cityWalk)
             {
                 // Extraction takes several frames. Keep admission and crowd activation for StartPrepared's observers.
@@ -142,22 +242,19 @@ namespace Zantetsu.Quest
             foreach (var recorder in UnityEngine.Object.FindObjectsByType<SandboxSlashPoseRecorder>(FindObjectsSortMode.None)) recorder.ShowControls = false;
             foreach (var overlay in UnityEngine.Object.FindObjectsByType<SandboxSlashDiagnosticsOverlay>(FindObjectsSortMode.None)) overlay.Visible = false;
             new GameObject(cityWalk ? "Quest city walk demo" : "Quest ten NPC Slash demo").AddComponent<QuestNpcSlashDemo>();
-#endif
+            return null;
         }
 
         private IEnumerator Start()
         {
-            _cityWalk = SceneManager.GetActiveScene().name == CityWalkSceneName;
-            _config = ReadConfig();
-            if (_config == null || (_config.mode != "vp3c" && _config.mode != "vp3c-native")) { Fail("mode must be vp3c or vp3c-native"); yield break; }
-            if (_config.inputStart < 0 || _config.inputRows < 1 || _config.inputRows > 4096
-                || !float.IsFinite(_config.startDelaySeconds) || _config.startDelaySeconds < 0f) { Fail("invalid input range or start delay"); yield break; }
-            if (_cityWalk && (!float.IsFinite(_config.cityWalkBudgetSeconds) || _config.cityWalkBudgetSeconds <= 0f))
-            { Fail("invalid city walk budget"); yield break; }
+            _cityWalk = s_scenario == SandboxScenarioKind.CityWalk;
+            _play = s_scenario == SandboxScenarioKind.Play;
+            // Play's configuration is the common settings alone (ConfigFor): no experiment of a scripted run reaches it.
+            _config = ConfigFor(s_scenario, ReadConfigText());
+            string invalid = Validate(_config, s_scenario);
+            if (invalid != null) { Fail(invalid); yield break; }
             _camera = Camera.main;
             if (_camera == null) { Fail("MainCamera is required"); yield break; }
-            if (_config.appSpacePoseMode != "camera" && _config.appSpacePoseMode != "tracking-origin")
-            { Fail("appSpacePoseMode must be camera or tracking-origin"); yield break; }
             _appSpaceOrigin = _camera.transform.parent;
             if (_config.appSpacePoseMode == "tracking-origin" && _appSpaceOrigin == null)
             { Fail("tracking-origin requires the tracked camera parent"); yield break; }
@@ -166,12 +263,24 @@ namespace Zantetsu.Quest
             ApplyNativeOptions(_config);
             if (_config.appSw && _config.appSwDistanceExperiment)
             {
-                if (_config.mode != "vp3c-native") { Fail("distance experiment requires AppSW and vp3c-native"); yield break; }
+                // (Never in play: its configuration has the experiment off. The mode was checked with the rest.)
                 _distanceSetup = new QuestAppSwDistanceSetup(_camera, _config.appSwFarMeters, _config.appSwFixedView, Application.persistentDataPath);
             }
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = -1; // The 90 Hz OpenXR display and AppSW select the application cadence.
             Application.runInBackground = true;
+            if (_play)
+            {
+                // Play (DESIGN 3.4): the scene runs as it is, with a person's own input. No directory, no replay, no
+                // profile, no result and no ending: only what every frame of a Quest scene needs goes on from here
+                // (AppSW's switch in Update, the application space's pose before the camera).
+                RenderPipelineManager.beginCameraRendering += BeforeCamera;
+                _phase = "Play";
+                Debug.Log(LogPrefix + "mode=" + _config.mode + " AppSW=" + _config.appSw + " appSpace=" + _config.appSpacePoseMode
+                    + " scene=" + SceneManager.GetActiveScene().name + "; no script, no measurement, no ending");
+                yield break;
+            }
+
             _directory = Path.Combine(Application.persistentDataPath, "runs", DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ")
                 + (_cityWalk ? "-citywalk-" : "-npc10-") + _config.mode + "-" + Guid.NewGuid().ToString("N").Substring(0, 6));
             Directory.CreateDirectory(_directory);
@@ -228,8 +337,8 @@ namespace Zantetsu.Quest
             _drawing = world != null ? world.GetComponent<CutWorldCameraDrawing>() : null;
             var npcs = UnityEngine.Object.FindObjectsByType<SandboxNpcCharacter>(FindObjectsSortMode.None);
             if (!_cityWalk && npcs.Length != 10) { Fail("expected ten NPCs, found " + npcs.Length); yield break; }
-            double readyBy = Time.unscaledTimeAsDouble + 120.0;
-            while (Time.unscaledTimeAsDouble < readyBy)
+            double readyBy = Zantetsu.Core.GamePause.UnscaledTimeAsDouble + 120.0;
+            while (Zantetsu.Core.GamePause.UnscaledTimeAsDouble < readyBy)
             {
                 bool ready = world != null && world.IsReady;
                 foreach (var npc in _cityWalk ? Array.Empty<SandboxNpcCharacter>() : npcs)
@@ -238,7 +347,7 @@ namespace Zantetsu.Quest
                     ready &= npc.IsTarget;
                 }
                 if (ready) break;
-                yield return null;
+                { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
             }
             bool allReady = world != null && world.IsReady;
             if (!_cityWalk) foreach (var npc in npcs) allReady &= npc.IsTarget;
@@ -330,6 +439,7 @@ namespace Zantetsu.Quest
                 _cityWalk ? PrepareCityReplay : null);
             if (_cityWalk)
                 foreach (var crowd in UnityEngine.Object.FindObjectsByType<MobPlanCrowd>(FindObjectsSortMode.None)) crowd.enabled = true;
+            // (Watching the run end, not a stage of a script: not held by a pause, DESIGN 4.6.)
             while (!_run.Done) yield return null;
             StopProfiler();
             _phase = _run.Phase;
@@ -347,15 +457,15 @@ namespace Zantetsu.Quest
         private IEnumerator PrewarmBeforeReplay()
         {
             RecordPhase("warm-begin");
-            double deadline = Time.unscaledTimeAsDouble + 30.0;
+            double deadline = Zantetsu.Core.GamePause.UnscaledTimeAsDouble + 30.0;
             var report = new List<string> { "native requested=" + (_config.mode == "vp3c-native"), "Unity expected rendered warm frames=3" };
             var nativeRoute = _drawing != null ? _drawing.NativeRoute : null;
             if (_config.mode == "vp3c-native")
             {
                 if (_drawing == null) _warmFailure = "the prepared world has no camera drawing component";
-                while (_warmFailure == null && nativeRoute == null && Time.unscaledTimeAsDouble < deadline)
+                while (_warmFailure == null && nativeRoute == null && Zantetsu.Core.GamePause.UnscaledTimeAsDouble < deadline)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     nativeRoute = _drawing.NativeRoute;
                 }
                 if (_warmFailure == null && nativeRoute == null) _warmFailure = "the native route did not become available within 30 s";
@@ -380,14 +490,14 @@ namespace Zantetsu.Quest
                 {
                     try { _unityPrewarm.Issue(); }
                     catch (Exception e) { _warmFailure = "Unity prewarm issue: " + e.Message; }
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
                 // Allow real camera clears and the last warm frame's GPU work to finish.
-                for (int frame = 0; frame < 4; frame++) yield return null;
+                for (int frame = 0; frame < 4; frame++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 bool readyKnown = TryUnityPrewarmReady(out bool ready);
-                while (readyKnown && !ready && Time.unscaledTimeAsDouble < deadline)
+                while (readyKnown && !ready && Zantetsu.Core.GamePause.UnscaledTimeAsDouble < deadline)
                 {
-                    yield return null;
+                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                     readyKnown = TryUnityPrewarmReady(out ready);
                 }
                 report.Add("Unity rendered warm frames=" + _unityPrewarm.RenderedWarmFrames);
@@ -421,8 +531,8 @@ namespace Zantetsu.Quest
                         else if (failure != null) _warmFailure = failure;
                     }
                     catch (Exception e) { _warmFailure = "native prewarm status: " + e.Message; }
-                    if (_warmFailure == null && !complete && Time.unscaledTimeAsDouble >= deadline) _warmFailure = "native prewarm did not complete within 30 s";
-                    if (_warmFailure == null && !complete) yield return null;
+                    if (_warmFailure == null && !complete && Zantetsu.Core.GamePause.UnscaledTimeAsDouble >= deadline) _warmFailure = "native prewarm did not complete within 30 s";
+                    if (_warmFailure == null && !complete) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
                 report.Add("native complete=" + complete);
                 report.Add(nativeRoute.DescribePrewarm(_camera));
@@ -507,8 +617,8 @@ namespace Zantetsu.Quest
         private void RecordPhase(string phase)
         {
             _phase = phase;
-            string line = "phase=" + phase + "; frame=" + Time.frameCount + "; unscaledSeconds=" + Time.unscaledTimeAsDouble.ToString("R", Inv)
-                + "; realtimeSeconds=" + Time.realtimeSinceStartupAsDouble.ToString("R", Inv) + "; utc=" + DateTime.UtcNow.ToString("O", Inv);
+            string line = "phase=" + phase + "; frame=" + Time.frameCount + "; unscaledSeconds=" + Zantetsu.Core.GamePause.UnscaledTimeAsDouble.ToString("R", Inv)
+                + "; realtimeSeconds=" + Zantetsu.Core.GamePause.RealtimeSinceStartupAsDouble.ToString("R", Inv) + "; utc=" + DateTime.UtcNow.ToString("O", Inv);
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { line });
             Debug.Log((_cityWalk ? "QUEST CITY WALK PHASE: " : "QUEST NPC PHASE: ") + line);
         }
@@ -573,8 +683,8 @@ namespace Zantetsu.Quest
         {
             if (_config == null || _camera == null) return;
             if (!_spaceWarpApplied) _spaceWarpApplied = SpaceWarpFeature.SetSpaceWarp(_config.appSw);
-            if (Time.unscaledTime < _nextStatus) return;
-            _nextStatus = Time.unscaledTime + 5f;
+            if (Zantetsu.Core.GamePause.UnscaledTime < _nextStatus) return;
+            _nextStatus = Zantetsu.Core.GamePause.UnscaledTime + 5f;
             Debug.Log("QUEST APPSPACE: mode=" + _config.appSpacePoseMode + " parent=" + (_appSpaceOrigin != null ? _appSpaceOrigin.name : "none")
                 + " maxHeadDeltaDeg=" + _headAngleMax.ToString("F4", Inv) + " maxSentDeltaDeg=" + _appSpaceAngleMax.ToString("F4", Inv)
                 + " near=" + _camera.nearClipPlane + " far=" + _camera.farClipPlane);
@@ -595,7 +705,7 @@ namespace Zantetsu.Quest
                 if (VpCommandCompaction.SnapshotEnabled || VpCommandCompaction.CastersFixed) Debug.Log("QUEST NPC SNAPSHOTS: castersFixed=" + VpCommandCompaction.CastersFixed + "; " + VpCommandCompaction.DescribeSnapshots());
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
-                    + " dtMs=" + Time.unscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
+                    + " dtMs=" + Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
 

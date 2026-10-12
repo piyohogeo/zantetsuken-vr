@@ -35,6 +35,12 @@ namespace Zantetsu.Sandbox
             {
                 if (string.Equals(arguments[i], Argument, StringComparison.OrdinalIgnoreCase))
                 {
+                    // Only as the launch's one choice (DESIGN 3.4): never beside a scenario or another check.
+                    if (!SandboxScenario.MayStartDevelopmentCheck(Argument))
+                    {
+                        return;
+                    }
+
                     var host = new GameObject("Locomotion player check");
                     UnityEngine.Object.DontDestroyOnLoad(host);
                     host.AddComponent<Walk>().directory = arguments[i + 1];
