@@ -7,7 +7,6 @@
 | 文書目的 | 現在有効な製品仕様・設計契約・人間の意思決定の正本 |
 | 作成日 | 2026-08-21 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
-| 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
 | 検証用HMD | Meta Quest 3SをQuest LinkでPCVR接続 |
 
@@ -19,7 +18,7 @@
 
 推奨アーキテクチャはUnityを基盤とし、OpenXR、ステレオ描画、シーン管理、Rigidbodyなどを利用しながら、切断判定、仮切断レンダラ、メッシュ切断、Convex切断、世代管理を独自サブシステムとして実装する構成である。フルスクラッチのエンジン開発は行わない。
 
-見た目はSynty POLYGON City Packを素材基盤とし、限定パレット、セル陰影、輪郭線、独自の看板・グラフィティでポップなローポリ都市へ統一する。特定作品の直接模倣ではなく、Y2K的な都市感、誇張されたシルエット、色面の強さをデザイン原則として抽出する。
+見た目は限定パレット、セル陰影、輪郭線、独自の看板・グラフィティでポップなローポリ都市へ統一する。特定作品の直接模倣ではなく、Y2K的な都市感、誇張されたシルエット、色面の強さをデザイン原則として抽出する。
 
 ## 2. 体験目標と設計原則
 
@@ -106,9 +105,6 @@ C:\Users\%USERNAME%\src\
   zantetsuken-assets-private\        # 非公開Git LFSリポジトリ
     .git\
     .gitattributes
-    Vendor\Synty\POLYGON_City\v5\Original\
-      POLYGON_City_SourceFiles_v5.zip
-      POLYGON_City_Unity_2022_3_v1_12_4.unitypackage
 ```
 
 新規作成には空の`Universal 3D`テンプレートを使用し、URPを初期設定する。`Universal 3D Sample`は使用しない。Hubでプロジェクト名を`zantetsuken-vr`、保存場所を`C:\Users\%USERNAME%\src`とした場合、最終作成先が上記リポジトリ直下であることを確認する。既存リポジトリがあるため作成を拒否された場合は、一時ディレクトリに生成した`Assets`、`Packages`、`ProjectSettings`だけをリポジトリ直下へ移す。
@@ -1683,8 +1679,6 @@ Kerfは0とし、表示側はどの側にも移動を与えない（固定側の
 
 ### 10.1 ビジュアル方針
 
-- Synty POLYGON City Packを都市、建物、車、看板、小物、人物の基盤として採用する。
-
 - 限定カラーパレット、2〜3段階のセル陰影、距離調整可能な輪郭線を全素材へ適用する。
 
 - 標準テクスチャの印象を弱め、顔、看板、ステッカー、グラフィティを独自化する。
@@ -1734,13 +1728,11 @@ Phase 0.2はObsoleteな旧入力経路とし、新しい利用元・用途・Fix
 
 ### 10.8 公開リポジトリとライセンス境界
 
-公開可能なコードと合成Fixtureは公開できる。Synty／Poly Pro Universeの入力Asset、`.unitypackage`、付属`.meta`、生成された共用Cut Geometry、Physics Proxy、加工済み断面素材は公開しない。非公開Asset・派生物の配置先をgitignoreし、公開履歴への混入をCIで検査する。
-
-Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離した非公開Git LFSリポジトリ`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理する。
+公開可能なコードと合成Fixtureは公開できる。非公開の入力Asset、`.unitypackage`、付属`.meta`、生成された共用Cut Geometry、Physics Proxy、加工済み断面素材は公開しない。非公開Asset・派生物の配置先をgitignoreし、公開履歴への混入をCIで検査する。
 
 非公開リポジトリへのアクセスは各Assetライセンス上の許可を持つ開発チームだけに限定する。購入原本は変更せず保存し、展開したFBX／Texture、非公開Fixture／Asset対応表、加工済み共用Cut Geometry、Physics Proxyなどのライセンス派生物も公開Git履歴へ入れない。公開リポジトリから参照する場合も、公開Submodule、公開Release、公開CI Artifact、共有Cacheを経由してAsset本体を配布しない。
 
-公開CIは公開可能な合成入力で切断ロジックを検証する。Syntyを用いる処理と製品ビルドは、許可されたローカル環境または限定private runnerだけで実行し、公開Artifactと共有Cacheへ生成物を残さない。
+公開CIは公開可能な合成入力で切断ロジックを検証する。非公開Assetを用いる処理と製品ビルドは、許可されたローカル環境または限定private runnerだけで実行し、公開Artifactと共有Cacheへ生成物を残さない。
 
 ## 11. モーション方針
 
@@ -1766,7 +1758,6 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-004 | 仮断面 | clipで分離、Stencilで仮断面、最終的に実断面へ置換 | 確定 |
 | D-005 | 非同期整合 | ジョブ結果を世代番号で無効化・コミット制御 | 確定 |
 | D-006 | 人形 | 切断時に姿勢固定し、静的Mesh／剛体破片へ移行 | 確定 |
-| D-007 | アセット | Synty POLYGON City Packを主素材に採用 | 確定 |
 | D-008 | アート | 共通セルシェーダ、輪郭線、限定パレット、独自看板で統一 | 確定 |
 | D-011 | 対象環境 | 初期製品スコープをPCVRとし、Quest単体対応は当面除外 | 確定 |
 | D-012 | 性能目標 | 実アプリの両眼描画90fpsを基準とし、再投影を常用前提にしない | 確定 |
@@ -1813,7 +1804,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-084 | Owner単位Cut/Cook | 受付済みPhysicsの新規投入は7.2のurgent Unity Job内Burst、MainのMesh適用、Unity JobのPhysics.BakeMesh、Final Commitへ分担する。投機・任意処理と命中後の継続は4.3／4.4に従う | 人間承認済み、2026-09-18。内部工程の別Job化を必須にしない |
 | D-086 | Native採用Gate | Unity Built-in 3D Physicsの`Physics.BakeMesh`を製品経路の正本とし、Native PhysXを製品依存へ含めない。T-076を含む製品統合実測でUnity経路が性能要件を破り、Unity側で解消できず、別途承認したNative統合Prototypeが成立した場合だけ、切断破片のQuery／接触／Scene同期を含む物理経路の部分置換を再検討する。Cook時間の倍率差だけでは置換しない | 確定 |
 | D-088 | 閉Topologyの自己交差契約 | Topological Watertightと自己交差のないGeometrically Valid Solidを区別する。自己交差はD-117の共用Geometryで許容する。個々のPhysics Convexには自己交差を許可しないが、Compoundを構成する別Convex同士のIntersection／Overlapは許容する。Geometrically Valid Solidを共用Geometryの入力条件にしない | 確定 |
-| D-090 | ライセンスAsset保管 | Synty購入原本と派生物は、公開Unity Repoの兄弟に置く非公開Git LFS Repo`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理し、許可されたチーム以外へ共有しない | 確定 |
+| D-090 | ライセンスAsset保管 | 非公開Assetの購入原本と派生物は、公開Unity Repoの兄弟に置く非公開Git LFS Repo`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理し、許可されたチーム以外へ共有しない | 確定 |
 | D-091 | 固定物体の切断 | FixedSupportAnchorをOwnerの独立した点集合とし、7.1の点位置による配分・固定判定を使う。7.6のConvexだけによる受付・No-opを維持する | 人間承認済み、2026-09-17。Convex／Cell対応を撤去し、点配置による固定先の変化・離れた部分の固定・浮遊を許容する |
 | D-092 | ゼロ幅切断 | Kerfは0とする。両側固定でも通常の仮描画・実切断・Cap生成を行う | 確定 |
 | D-093 | 切断痕の許容 | 固定側のCapと実Geometry境界の細い亀裂、輪郭線、線状Z-fighting、軽微なチラツキを許容する。通常Capは片面描画とし、正常な正向き閉Shellの面状Z-fighting・Cap欠落・混入は5.2の明示的例外以外では不具合とする | 確定 |
@@ -1910,7 +1901,6 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-005 | 切断可能範囲 | 解決済み：人間判断により建物は切断対象、道路は非対象（D-165） | 建物対応をロードマップに含め、道路切断は実装範囲に含めない | 2026-09-10 |
 | O-006 | 破片寿命 | 7.9／7.10の各任意Phaseで、Policyの選択・閾値・頻度・予算を実装・実測から調整する | 物理CPU・視覚密度・回収効果。全方式の実装や容量収束・期限を保証しない | 各任意Phaseの実装時。未決を前段Gateにしない |
 | O-007 | Collider仮状態 | 旧Collider維持時間と周辺破片の例外判定。Player Body／Handと刀は物理接触せず、刀は論理Sweepのみ | 違和感と実装複雑度 | T-005後 |
-| O-008 | NPC構成 | Synty人物をそのまま使う範囲と顔・体型改造量 | 独自性と制作工数 | アート検証時 |
 | O-009 | データ保存 | 切断状態をセーブ対象とするか | 再現性・容量・ロード時間 | ゲームループ決定時 |
 | O-010 | ネットワーク | 将来的なマルチプレイ要否 | 切断イベント同期設計 | 企画判断 |
 | O-016 | Unity CLI再評価 | 実験的CLIとUnity PipelineをCIへ採用するか | 保守性、自動導入、外部依存 | CI構築時 |
@@ -1969,9 +1959,9 @@ Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10�
 | T-018 | Pose Table評価 | 19.3の同じ有効入力からCurrent／Future共通のPoseを要求順に依存せず生成する | Phase 4.61で任意時刻評価・追加時刻進行なし、Loop／Clamp・終端・明示Clip切替、入力不一致拒否、D-136のscopeを少数例で確認する。採用Rig／ClipのBake・サンプル間補間品質と現在骨への適用を確認し、費用・容量は21.2に従う。計画統合は4.70、切断成果物Commitは条件付き4.72へ残す |
 | T-019 | Trace相関と完全性 | 21.3／21.4の因果関係と欠落の扱いを満たす | 代表的な処理の公開・完了・破棄を追跡し、不完全な記録を完全な再現根拠にしないことを確認する。保存形式や旧Readerを固定しない |
 | T-020 | Trace負荷 | Trace観測処理がGameplayを待たせず、競合や性能判断を歪めない | 代表負荷でTrace観測有無の費用・メモリ・記録欠落を確認する。21.17の簡易ロガーに非待機・無割当・無影響を要求する試験にはしない |
-| T-026 | 公開Repo分離 | 公開履歴と成果物にSynty入力・派生Assetが混入せず、原本が非公開Git LFS Repoだけに存在する | ignore、CI検査、履歴スキャン、LFS追跡状態、private remoteのアクセス権を確認 |
+| T-026 | 公開Repo分離 | 公開履歴と成果物に非公開の入力・派生Assetが混入せず、原本が非公開Git LFS Repoだけに存在する | ignore、CI検査、履歴スキャン、LFS追跡状態、private remoteのアクセス権を確認 |
 | T-032 | Unity版固定 | PATHやHub既定版に関係なく6000.3.22f1だけで開き、誤版起動を拒否できる | ProjectVersion、明示exe、batchmode、Package Lockと別版併存を検査 |
-| T-033 | Repository衛生 | 公開Repoに生成Cache、ユーザー実名パス、Synty Assetが混入しない | ignore、機密パターン、絶対パス、履歴をCIで検査 |
+| T-033 | Repository衛生 | 公開Repoに生成Cache、ユーザー実名パス、非公開Assetが混入しない | ignore、機密パターン、絶対パス、履歴をCIで検査 |
 | T-034 | Slash UX実機探索 | 完成済みSandboxを使い、利用可能なLatch／Frame／Span／Close構成と暫定Presetを得る | Phase 0.55。Quest Linkで第一候補から試し、人間が試すと決めた候補を必要に応じて追加し、19.1.12の主要値表示・Pose再生・Current／Pinned比較で実装済みVFXを含めて調整する。第一候補のLive／Frozen Guide、Raw／Accepted Span、Invalid保持、Close後勾配と連続斬りの同時生存Wave数を確認する。0.54までの機能確認を本試験の合格とはせず、全候補行列・最終値・ログ互換を要求しない |
 | T-035 | SlashWave Core | 発射時の面・軸・初期形状と評価設定の不変性、AcceptedSpan非減少、有限寿命を維持する | Phase 4.50。VFXはPhase 0.53の19.1.8確認を再利用する。減少・Invalid保持、完了済み区間の非再評価と現在区間の増加領域、採用方式のClose後評価、Expire、複数Wave、UI切替後の生存Wave不変とSpan／Close一時状態の寿命を確認する。小さい固定容量で、容量まで公開→満杯時は新Latchだけ見送り→既存Wave不変→既存WaveのExpireで容量返却→見送ったStrokeは遅延Latchされず、再準備後の新Strokeは返却と同じ更新でも通常Latch、を一連で確認する。ExpireしたWaveはその更新のSegment／Sweepを出力しない |
 | T-036 | Segment Hit | 現在採用Convexとの共通閉Sweepと系譜消費が成立する | Phase 4.51。生成時の退化入力、4端点の閉凸包（通常は平行四辺形／台形）、増加領域Hit、Bounds／VFX非authority、厚み・端点領域なし、無関係Fragment個別Hit、子孫再Hit禁止と受付見送り後の非再試行を確認する。軸が平行または反平行で線分へ退化する代表1件を同じ現在採用Convexへの共通Queryで扱い、軸補正・厚み・端点領域・別Hitアルゴリズムを追加しない |
@@ -2111,7 +2101,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 4.72（条件付き） | Humanoid先行切断統合 | 4.52の現在Pose経路、4.53の投機経路、4.71の未来VP入力を接続 | 有効成果物採用、未完成／Pose不一致時の4.52同期経路、世代失効回収を確認する。4.65不採用なら省略可能 |
 | Phase 5.6 | 追加空間分割（任意） | 7.9の単一平面探索・範囲内部の面配分、新Index領域への振り分けコピー・必要転送・旧領域Free、既存Convex処理・cook・質量・点Anchor、7.2.2の建物Depth・子D6生成と親D6退役、非命中公開、全体1未回収試行と入力別抑止 | 大きなIndex範囲内の離れた部分を2物体へ分け、Vertex共有と読者寿命後の旧Index回収を確認する。成功後は通常再切断でき、不成立・無効時は元物体が通常完成状態で残る。通常切断とGCを依存させず、7.9.5の共有資源競合による遅延を許容する。Phase自体を省略可能。非建物に限る。Convexを切らない分離と、Mesh分離平面によるConvex切断（7.9.2、Triangle数の下限50）を実装し、2026-10-11に既定有効とした。建物分割は未実装 |
 | Phase 5.7 | 表示なし物理物体の遅延回収（任意） | 7.9の確定空判定、物理所有単位の登録終了、既存Actor／Shape／システム所有Constraint／Job資源退役への接続 | 7.9.7のGC選択・接触中退役・共有資源寿命・所有D6の一度だけの退役・後着成果物拒否を確認し、無関係Siblingを維持する。追加分割の実装・有効化・成功へ依存せず、Phase自体を省略可能 |
-| Phase 6 | コンテンツ | Synty City街区、10プロップ、単一並行光源＋ambientでのシェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
+| Phase 6 | コンテンツ | 街区、10プロップ、単一並行光源＋ambientでのシェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 実測後最適化 | 端末別品質、破片LOD、既存Profiler／TraceとT-076による負荷確認、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす。Schedulerを含め具体的な不足が確認された箇所だけ、別設計変更として必要な最適化を行う。初期Cooking Profileより再cookに実測上の価値がある場合、別設計変更として任意導入を検討する |
 | Phase 7.1（任意） | LogicalFragment GCとVB回収 | 7.10の寿命Policy、4.5.3のPublished済みVB回収・再利用、必要な所有・利用管理と7.1.3の共通退役への接続 | 7.10の最小確認を行い、通常切断・Abort・生存Siblingを維持して個別退役と不要VBの実再利用を確認する。方式と内部構造は固定せず、改善量・回収期限・容量収束を保証しない。Phase自体を省略可能 |
 
@@ -2195,7 +2185,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Final質量は7.2に従って受付時の親Rigidbody質量を保存し、採用Convex集合から質量特性を近似する。Provisional一時massを流用せず、正負両子の質量特性を成立させられなければAbortとする。
 
-- Synty／Poly Pro Universe入力と派生した共用Cut Geometry／Physics Proxyが公開Git履歴、公開CI Artifact、公開キャッシュへ含まれない。
+- 非公開の入力Assetと派生した共用Cut Geometry／Physics Proxyが公開Git履歴、公開CI Artifact、公開キャッシュへ含まれない。
 
 - 飛翔斬撃波の到達時刻と候補列挙が再現可能で、静止対象では接触前の先行切断が安定して成功する。
 
@@ -3088,8 +3078,6 @@ Unity Packageの正確な採用版は`Packages/manifest.json`と`Packages/packag
 - [Unity 6.3 Humanoid Animation Import](https://docs.unity3d.com/6000.3/Documentation/Manual/ConfiguringtheAvatar.html)
 
 - [Unity Animation Rigging - Two Bone IK](https://docs.unity3d.com/ja/Packages/com.unity.animation.rigging@1.2/manual/constraints/TwoBoneIKConstraint.html)
-
-- [Synty POLYGON City Pack](https://syntystore.com/products/polygon-city-pack)
 
 - [Adobe Mixamo FAQ](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html)
 
