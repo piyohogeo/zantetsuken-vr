@@ -1,6 +1,6 @@
 # Quest 3S 静的シーン移植・初回実機計測
 
-2026-10-09 JST。作業ブランチ `quest3s-appsw`、worktree `C:/Users/junic/src/zantetsuken-vr-quest3s`。元のPCVR checkoutへの合流はまだ行っていない。
+2026-10-09 JST。作業ブランチ `quest3s-appsw`、worktree `C:/Users/%USERNAME%/src/zantetsuken-vr-quest3s`。元のPCVR checkoutへの合流はまだ行っていない。
 
 ## 現在の状態
 

@@ -1,6 +1,6 @@
 # Quest 3S: Vulkan nativeカラーの準備分離
 
-2026-10-09 JST。専用worktree `C:/Users/junic/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。
+2026-10-09 JST。専用worktree `C:/Users/%USERNAME%/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。
 
 後続の[通常物体／Clip direct描画の分離](quest3s-vulkan-clip-route-split.md)で、通常VSのClip処理を除去した。以下はその前段のカラー準備分離の記録。
 

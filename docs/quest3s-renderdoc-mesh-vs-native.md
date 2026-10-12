@@ -1,6 +1,6 @@
 # Quest 3S: Unity Mesh / VP3C-native RenderDoc比較
 
-2026-10-09 JST。worktree `C:/Users/junic/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。実装は `ac94a020`。
+2026-10-09 JST。worktree `C:/Users/%USERNAME%/src/zantetsuken-vr-quest3s`、branch `quest3s-appsw`。実装は `ac94a020`。
 
 ## 結果
 

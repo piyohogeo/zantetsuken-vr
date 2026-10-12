@@ -1,21 +1,21 @@
 {
   "status": "success",
-  "source_blend": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\repaired.blend",
+  "source_blend": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\repaired.blend",
   "requested": {
     "max_hulls": 32,
     "max_vertices_per_hull": 32,
     "voxel_resolution": 1000000
   },
   "blender_version": "4.5.13 LTS",
-  "addon_source": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\addons\\convex_decomposition.py",
+  "addon_source": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\addons\\convex_decomposition.py",
   "addon_upstream": "https://github.com/olitheolix/blender-convex-decomposition",
   "addon_license": "Apache-2.0",
-  "solver_binary": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\vhacd\\TestVHACD.exe",
+  "solver_binary": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\vhacd\\TestVHACD.exe",
   "adapter": "Execution adapter adds explicit -h 32; upstream add-on source is unchanged.",
   "conflict_check": "No existing ConvDecomp module, preferences, properties, or operators in isolated process.",
   "addon_sha256": "68783144fcbccd7ba18b66073a0335dd5f5e7de16514ef95a25a5af8341a7134",
   "solver_sha256": "89ac11ee763292cb844d1f671a3f31ec0adebb59ee54a847c69c56b9465bd4ec",
-  "registered_addon_file": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\addons\\convex_decomposition.py",
+  "registered_addon_file": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\addons\\convex_decomposition.py",
   "registered_addon_version": [
     0,
     3,
@@ -32,8 +32,8 @@
     "e_fill_mode": "flood"
   },
   "solver_command": [
-    "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\vhacd\\TestVHACD.exe",
-    "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\solver_runs\\devcomp-3f970o7f\\src.obj",
+    "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\vhacd\\TestVHACD.exe",
+    "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\solver_runs\\devcomp-3f970o7f\\src.obj",
     "-r",
     "1000000",
     "-d",
@@ -57,7 +57,7 @@
     "-h",
     "32"
   ],
-  "solver_directory": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\solver_runs\\devcomp-3f970o7f",
+  "solver_directory": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\solver_runs\\devcomp-3f970o7f",
   "solver_exit_code": 0,
   "solver_obj_encoding": "UTF-8",
   "operator_result": [
@@ -616,5 +616,5 @@
   "max_actual_hull_vertices": 32,
   "generation_seconds": 4.675561899999593,
   "validation_pass": true,
-  "output_blend": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\convex.blend"
+  "output_blend": "C:\\Users\\%USERNAME%\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\convex.blend"
 }
