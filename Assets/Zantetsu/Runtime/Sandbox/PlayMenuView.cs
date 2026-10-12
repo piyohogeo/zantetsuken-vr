@@ -71,6 +71,8 @@ namespace Zantetsu.Sandbox
         private GameObject _root;
         private RectTransform _canvas;
         private Image _resume;
+        private Image _reset;
+        private Action _resetAction;
         private RectTransform _cursor;
         private Row _held;
         private bool _selectWasDown = true;
@@ -83,11 +85,12 @@ namespace Zantetsu.Sandbox
 
         /// <summary>The resume button's rectangle, for a test's pointer.</summary>
         public RectTransform ResumeRect => _resume != null ? _resume.rectTransform : null;
+        public RectTransform ResetRect => _reset != null ? _reset.rectTransform : null;
 
         /// <summary>
         /// Makes the canvas, hidden. <paramref name="note"/> is a line under the title (which scenario, what is fixed in it).
         /// </summary>
-        public void Build(IReadOnlyList<Row> rows, string note)
+        public void Build(IReadOnlyList<Row> rows, string note, Action resetAction = null)
         {
             if (_root != null)
             {
@@ -109,7 +112,7 @@ namespace Zantetsu.Sandbox
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             _canvas = (RectTransform)_root.transform;
-            _canvas.sizeDelta = new Vector2(Width, Height);
+            _canvas.sizeDelta = new Vector2(Width, resetAction == null ? Height : 820f);
             _canvas.localScale = Vector3.one * UnitMetres;
 
             Image panel = NewImage("Panel", _canvas, PanelColour);
@@ -128,6 +131,14 @@ namespace Zantetsu.Sandbox
             Text resumeText = NewText("Label", _resume.rectTransform, font, "Resume", 36, TextColour, TextAnchor.MiddleCenter);
             Stretch(resumeText.rectTransform);
 
+            _resetAction = resetAction;
+            if (resetAction != null)
+            {
+                _reset = NewImage("Reset scene", _canvas, ControlColour);
+                Place(_reset.rectTransform, 0f, -355f, 420f, 72f);
+                Text resetText = NewText("Label", _reset.rectTransform, font, "Reset scene", 32, TextColour, TextAnchor.MiddleCenter);
+                Stretch(resetText.rectTransform);
+            }
             float y = Height * 0.5f - 300f;
             foreach (Row row in rows)
             {
@@ -266,6 +277,12 @@ namespace Zantetsu.Sandbox
                 _cursor.anchoredPosition = new Vector2(local.x, local.y);
             }
 
+            if (_reset != null)
+            {
+                bool overReset = hit && Contains(_reset.rectTransform, world);
+                _reset.color = overReset ? HoverColour : ControlColour;
+                if (overReset && pressed) { _resetAction?.Invoke(); return; }
+            }
             bool overResume = hit && Contains(_resume.rectTransform, world);
             _resume.color = overResume ? HoverColour : ControlColour;
             if (overResume && pressed)

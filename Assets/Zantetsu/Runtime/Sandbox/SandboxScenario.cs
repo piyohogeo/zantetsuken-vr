@@ -127,6 +127,7 @@ namespace Zantetsu.Sandbox
         {
             switch (kind)
             {
+                case SandboxScenarioKind.Play: return new[] { "StanfordBunnyDemo", "WalkCity", "QuestCityWalk" };
                 case SandboxScenarioKind.StaticWait: return new[] { "WalkCity", "QuestStaticSeed14" };
                 case SandboxScenarioKind.NpcSlash: return new[] { "MultiNpcCity", "QuestNpcSlash10" };
                 default: return new[] { "WalkCity", "QuestCityWalk" };
@@ -430,7 +431,7 @@ namespace Zantetsu.Sandbox
             string failure;
             if (kind == SandboxScenarioKind.Play)
             {
-                failure = PlatformPlay != null ? PlatformPlay() : null;
+                failure = scene == BunnyDemo.SceneName ? null : PlatformPlay != null ? PlatformPlay() : null;
                 if (failure == null)
                 {
                     Debug.Log(Prefix + "play in " + scene + ": no script, no measurement, no ending; " + KeepOneLocomotionInput()

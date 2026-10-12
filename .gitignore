@@ -51,3 +51,15 @@ Assets/ThirdPartyPrivate/
 
 # Android Gradle native build intermediates
 .utmp/
+
+# Reproducible Bunny preparation intermediates; ship the two reviewed blends/reports only.
+Tools/StanfordBunny/generated/*
+!Tools/StanfordBunny/generated/convex.blend
+!Tools/StanfordBunny/generated/repaired.blend
+!Tools/StanfordBunny/generated/convex_report.json
+!Tools/StanfordBunny/generated/repair-report.json
+Tools/StanfordBunny/**/__pycache__/
+Tools/StanfordBunny/**/*.pyc
+
+# Private build staging must never be committed.
+.bunny-demo-content-staging/

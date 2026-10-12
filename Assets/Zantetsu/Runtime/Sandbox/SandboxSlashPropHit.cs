@@ -28,6 +28,9 @@ namespace Zantetsu.Sandbox
         /// <summary>The detector, once the world has been built.</summary>
         public SlashHitDetector Detector { get; private set; }
 
+        internal void Configure(CutWorldRoot targetWorld, SandboxRightHandKatana targetKatana, float impulse)
+        { world = targetWorld; katana = targetKatana; separationImpulse = impulse; }
+
         private void Start()
         {
             if (world == null || !world.IsReady || katana == null)

@@ -1,0 +1,700 @@
+{
+  "SchemaVersion": 1,
+  "ProfileId": "ithappy-mesh-repair-optimized-cap-v6",
+  "AddonVersion": "1.23.0",
+  "BlenderVersion": "4.5.13 LTS",
+  "AssetFamily": "Stanford",
+  "AssetId": "Bunny",
+  "SourceBlendPath": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\source.blend",
+  "Recipe": [
+    "Split Selected Meshes",
+    "Weld Selected Meshes",
+    "Remove Isolated",
+    "Remove Wires",
+    "Remove Flaps",
+    "Remove Enclosed",
+    "Remove Collapsed",
+    "Join Collinear",
+    "Split 3-Face Sheets",
+    "Optimized Cap (Total Area, Repair Coincident ON, Allow Opposite 4-Face Edges ON, Cap Isolated Single Faces ON)",
+    "Preserving Triangulate (Minimize New 4-Face Edges, Simplify Collapsed Quads)",
+    "Split Balanced 4-Face Sheets"
+  ],
+  "MeshObjectCount": 1,
+  "OriginalClosedVolumeCandidate": false,
+  "RepairedClosedVolumeCandidate": true,
+  "PreservationGatePass": true,
+  "RecipeHealthGatePass": true,
+  "StrictRecipeHealthGatePass": true,
+  "OutputBlendPath": "C:\\Users\\junic\\src\\zantetsuken-vr-bunny-demo\\Tools\\StanfordBunny\\generated\\repaired.blend",
+  "ElapsedSeconds": 22.494689999999537,
+  "Objects": [
+    {
+      "ObjectName": "Stanford_Bunny_Official",
+      "MeshName": "Stanford_Bunny_Official_source",
+      "StageOrder": [
+        "Original",
+        "Split",
+        "Welded",
+        "IsolatedRemoved",
+        "WiresRemoved",
+        "FlapsRemoved",
+        "EnclosedRemoved",
+        "CollapsedRemoved",
+        "CollinearJoined",
+        "ThreeFaceSheetsSplit",
+        "OptimizedCapped",
+        "Triangulated",
+        "SheetsSplit"
+      ],
+      "StageParameters": {
+        "Split": {},
+        "Welded": {},
+        "IsolatedRemoved": {},
+        "WiresRemoved": {},
+        "FlapsRemoved": {},
+        "EnclosedRemoved": {},
+        "CollapsedRemoved": {},
+        "CollinearJoined": {},
+        "ThreeFaceSheetsSplit": {},
+        "OptimizedCapped": {
+          "area": true,
+          "length": false,
+          "shape": false,
+          "fold": false,
+          "repair_coincident": true,
+          "allow_opposite_multi_face_edges": true,
+          "cap_isolated_single_faces": true
+        },
+        "Triangulated": {
+          "minimize_four_face_edges": true,
+          "simplify_collapsed_quads": true
+        },
+        "SheetsSplit": {}
+      },
+      "Measurements": {
+        "Original": {
+          "Vertices": 35947,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1114,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 1113,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 1336,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "Split": {
+          "Vertices": 35947,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1114,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 1113,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 1336,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "Welded": {
+          "Vertices": 35947,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1114,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 1113,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 1336,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "IsolatedRemoved": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "WiresRemoved": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "FlapsRemoved": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "EnclosedRemoved": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "CollapsedRemoved": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "CollinearJoined": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "ThreeFaceSheetsSplit": {
+          "Vertices": 34834,
+          "Edges": 104288,
+          "Polygons": 69451,
+          "Triangles": 69451,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 223,
+          "BoundaryLoopCount": 5,
+          "LargestBoundaryLoopVertices": 80,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.0007700565237386889,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 223,
+            "SelectedEdgeCount": 225,
+            "SelectedFaceCount": 2
+          },
+          "AuxiliaryTopologyGatePass": false,
+          "ClosedVolumeCandidate": false,
+          "StrictClosedVolumeCandidate": false
+        },
+        "OptimizedCapped": {
+          "Vertices": 34834,
+          "Edges": 104496,
+          "Polygons": 69664,
+          "Triangles": 69664,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 0,
+          "BoundaryLoopCount": 0,
+          "LargestBoundaryLoopVertices": 0,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.000754901217164944,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 0,
+            "SelectedEdgeCount": 0,
+            "SelectedFaceCount": 0
+          },
+          "AuxiliaryTopologyGatePass": true,
+          "ClosedVolumeCandidate": true,
+          "StrictClosedVolumeCandidate": true
+        },
+        "Triangulated": {
+          "Vertices": 34834,
+          "Edges": 104496,
+          "Polygons": 69664,
+          "Triangles": 69664,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 0,
+          "BoundaryLoopCount": 0,
+          "LargestBoundaryLoopVertices": 0,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.000754901217164944,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 0,
+            "SelectedEdgeCount": 0,
+            "SelectedFaceCount": 0
+          },
+          "AuxiliaryTopologyGatePass": true,
+          "ClosedVolumeCandidate": true,
+          "StrictClosedVolumeCandidate": true
+        },
+        "SheetsSplit": {
+          "Vertices": 34834,
+          "Edges": 104496,
+          "Polygons": 69664,
+          "Triangles": 69664,
+          "AllFacesTriangles": true,
+          "ConnectedComponents": 1,
+          "BoundsMin": [
+            -0.09468989819288254,
+            0.03298740088939667,
+            -0.061873599886894226
+          ],
+          "BoundsMax": [
+            0.06100910156965256,
+            0.1873210072517395,
+            0.05879969894886017
+          ],
+          "BoundaryEdges": 0,
+          "BoundaryLoopCount": 0,
+          "LargestBoundaryLoopVertices": 0,
+          "WireEdges": 0,
+          "MultipleFaceEdges": 0,
+          "BalancedFourFaceEdges": 0,
+          "UnbalancedMultipleFaceEdges": 0,
+          "NonContiguousEdges": 0,
+          "LooseVertices": 0,
+          "DegenerateFaces": 0,
+          "FinitePositions": true,
+          "SignedVolume": 0.000754901217164944,
+          "BowTieVertexCount": 0,
+          "NonManifoldSelect": {
+            "OperatorResult": [
+              "FINISHED"
+            ],
+            "SelectedVertexCount": 0,
+            "SelectedEdgeCount": 0,
+            "SelectedFaceCount": 0
+          },
+          "AuxiliaryTopologyGatePass": true,
+          "ClosedVolumeCandidate": true,
+          "StrictClosedVolumeCandidate": true
+        }
+      },
+      "Operators": {
+        "Split": [
+          "FINISHED"
+        ],
+        "Welded": [
+          "FINISHED"
+        ],
+        "IsolatedRemoved": [
+          "FINISHED"
+        ],
+        "WiresRemoved": [
+          "FINISHED"
+        ],
+        "FlapsRemoved": [
+          "FINISHED"
+        ],
+        "EnclosedRemoved": [
+          "FINISHED"
+        ],
+        "CollapsedRemoved": [
+          "FINISHED"
+        ],
+        "CollinearJoined": [
+          "FINISHED"
+        ],
+        "ThreeFaceSheetsSplit": [
+          "FINISHED"
+        ],
+        "OptimizedCapped": [
+          "FINISHED"
+        ],
+        "Triangulated": [
+          "FINISHED"
+        ],
+        "SheetsSplit": [
+          "FINISHED"
+        ]
+      },
+      "StageSeconds": {
+        "Split": 0.702799500000765,
+        "Welded": 0.03398469999956433,
+        "IsolatedRemoved": 0.9949536999993143,
+        "WiresRemoved": 0.024398599998676218,
+        "FlapsRemoved": 0.04285660000095959,
+        "EnclosedRemoved": 1.0487962999995943,
+        "CollapsedRemoved": 0.28551920000063546,
+        "CollinearJoined": 0.3780115999998088,
+        "ThreeFaceSheetsSplit": 0.5271302999990439,
+        "OptimizedCapped": 3.0371133999997255,
+        "Triangulated": 0.13332209999862243,
+        "SheetsSplit": 1.4971871999987343
+      },
+      "CapValidation": {
+        "PreCapStage": "ThreeFaceSheetsSplit",
+        "PreCapBoundaryLoopCount": 5,
+        "PreCapLargestLoopVertices": 80,
+        "AddedFaces": 213,
+        "VertexCountDelta": 0,
+        "MergedVertices": false,
+        "CapSeconds": 3.0371133999997255
+      },
+      "Preservation": {
+        "BoundsMaximumAbsoluteErrorM": 0.0,
+        "MaterialSlotsPreserved": true,
+        "ParentPreserved": true,
+        "ArmatureTargetsPreserved": true,
+        "VertexGroupsPreserved": true,
+        "UVLayersPreserved": true,
+        "UnweightedVertexCount": 34834
+      },
+      "PreservationGatePass": true,
+      "ClosedVolumeCandidate": true,
+      "StrictClosedVolumeCandidate": true,
+      "RecipeHealthGatePass": true,
+      "StrictRecipeHealthGatePass": true
+    }
+  ]
+}

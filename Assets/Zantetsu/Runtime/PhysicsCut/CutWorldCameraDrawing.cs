@@ -119,6 +119,12 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The last frame a camera could not be prepared in, or zero. A refusal draws nothing that frame.</summary>
         public int LastRefusedFrame { get; private set; }
 
+        public void Configure(CutWorldRoot targetWorld, params Camera[] targetCameras)
+        {
+            if (_registered) throw new System.InvalidOperationException("Configure drawing before registration.");
+            world = targetWorld; cameras = targetCameras; TryRegister();
+        }
+
         private void OnEnable()
         {
             RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;

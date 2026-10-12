@@ -56,6 +56,8 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>Closes the menu without a press (the menu itself going away): the game's input comes back at once.</summary>
+        internal void RequireRelease() => AwaitingRelease = true;
+
         public void ForceClosed()
         {
             Open = false;
@@ -424,9 +426,10 @@ namespace Zantetsu.Sandbox
             {
                 _view = new PlayMenuView();
                 _settings.Bind();
-                _view.Build(Rows(), Scenario == SandboxScenarioKind.Play
+                var bunny = FindFirstObjectByType<BunnyDemo>();
+                _view.Build(Rows(), bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
                     ? "play"
-                    : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's");
+                    : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null);
             }
 
             Vector3 position = _camera != null ? _camera.transform.position : Vector3.zero;
@@ -434,6 +437,13 @@ namespace Zantetsu.Sandbox
             _view.Show(position, rotation);
             Debug.Log(Prefix + "opened (frame " + Time.frameCount + "); the game is paused; the menu is drawn "
                 + (_view.DrawnInFront ? "in front of everything" : "with uGUI's default material, depth tested (its own shader is not in this build)"));
+        }
+
+        internal void HoldLocomotionUntilRelease()
+        {
+            _state.RequireRelease();
+            TakeGameInput();
+            GiveKatanaBack();
         }
 
         private void Close()
@@ -448,7 +458,7 @@ namespace Zantetsu.Sandbox
         private IReadOnlyList<PlayMenuView.Row> Rows()
         {
             bool movement = _settings.MovementChangeable;
-            return new[]
+            var rows = new List<PlayMenuView.Row>
             {
                 new PlayMenuView.Row
                 {
@@ -475,6 +485,13 @@ namespace Zantetsu.Sandbox
                         read = () => _settings.Turn, write = _settings.SetTurn,
                     },
             };
+            var bunny = FindFirstObjectByType<BunnyDemo>();
+            if (bunny != null) rows.Add(new PlayMenuView.Row
+            {
+                label = "Bunny count", minimum = BunnyDemo.MinimumCount, maximum = BunnyDemo.MaximumCount, step = 1f, format = "F0",
+                read = () => bunny.RequestedCount, write = value => bunny.RequestedCount = Mathf.RoundToInt(value),
+            });
+            return rows;
         }
 
         // What reads the controllers by itself is switched off for the menu's time, and only what was on comes back.
