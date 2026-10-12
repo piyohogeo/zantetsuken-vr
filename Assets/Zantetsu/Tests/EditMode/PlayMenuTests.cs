@@ -362,7 +362,7 @@ namespace Zantetsu.Core.Tests
                 Tick(menu, menuDown: true);
                 Tick(menu);
                 IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-                Assert.That(rows.Count, Is.EqualTo(4));
+                Assert.That(rows.Count, Is.EqualTo(5));
                 Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label }, Is.EqualTo(new[] { "Volume", "Speed", "Turn" }));
 
                 // Each slider is taken by a press on it and follows the ray until the select is let go.
@@ -450,6 +450,115 @@ namespace Zantetsu.Core.Tests
                 Assert.That(VpCutSurfaceColour.CurrentProvisional, Is.EqualTo(VpCutSurfaceColour.DefaultColour));
             }
             finally { VpCutSurfaceColour.Restore(colours); }
+        }
+
+        [Test]
+        public void InPlay_TheBladeAngle_TurnsTheKatanaTowardItsEdge_IsKept_AndTheKatanaIsShownWhileItIsSet()
+        {
+            bool had = PlayerPrefs.HasKey(PlaySettings.BladeAngleKey);
+            float before = had ? PlayerPrefs.GetFloat(PlaySettings.BladeAngleKey) : 0f;
+            PlayerPrefs.DeleteKey(PlaySettings.BladeAngleKey);
+            try
+            {
+                Quaternion sceneOffset = _katana.GripToKatanaOffset.rotation;
+                PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(menu.Settings.BladeAngleChangeable, Is.True);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.EqualTo(PlaySettings.BladeAngleDefault), "nothing saved: play's default");
+                Assert.That(PlaySettings.BladeAngleDefault, Is.EqualTo(30f), "30 degrees toward the edge (D-222)");
+                Assert.That(Quaternion.Angle(_katana.GripToKatanaOffset.rotation, sceneOffset * Quaternion.Euler(30f, 0f, 0f)), Is.LessThan(1e-3f));
+                Assert.That(PlayerPrefs.HasKey(PlaySettings.BladeAngleKey), Is.False, "the default is applied, not saved");
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                Assert.That(_katana.LiveInputEnabled, Is.False, "the menu has the controllers");
+                Assert.That(_katana.ShowPoseWhileInputOff, Is.True, "and in play the katana goes on being shown in the hand");
+
+                IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
+                PlayMenuView.Row row = rows[rows.Count - 1];
+                Assert.That(row.label, Is.EqualTo("Blade angle"));
+                Assert.That(row.interactable, Is.True);
+                Assert.That(row.valueText.text, Is.EqualTo("30.0 °"));
+
+                // The slider's far end is 60 degrees toward the edge; its near end 30 toward the spine. Then a value by the row.
+                RectTransform slider = (RectTransform)row.slider.transform;
+                Tick(menu, select: true, pointAt: Along(slider, 0.999f));
+                Tick(menu);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.EqualTo(PlaySettings.BladeAngleMaximum).Within(1e-3f));
+                Tick(menu, select: true, pointAt: Along(slider, 0.001f));
+                Tick(menu);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.EqualTo(PlaySettings.BladeAngleMinimum).Within(1e-3f));
+                row.write(37.5f);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.EqualTo(37.5f).Within(1e-3f));
+
+                // Toward the edge is a turn about the side normal that takes the blade's axis toward -Y: the offset is the
+                // scene's with that turn after it, so what is shown and what cuts turn together.
+                Quaternion offset = _katana.GripToKatanaOffset.rotation;
+                Assert.That(Quaternion.Angle(offset, sceneOffset * Quaternion.Euler(37.5f, 0f, 0f)), Is.LessThan(1e-3f));
+                Vector3 axisBefore = sceneOffset * Vector3.forward, axisAfter = offset * Vector3.forward, edge = sceneOffset * Vector3.down;
+                Assert.That(Vector3.Angle(axisBefore, axisAfter), Is.EqualTo(37.5f).Within(1e-2f));
+                Assert.That(Vector3.Dot(axisAfter, edge), Is.GreaterThan(0.5f), "the blade's axis went toward the edge's side");
+                Assert.That(Quaternion.Angle(_katana.CaptureConditions.GripOffsetRotation, offset), Is.LessThan(1e-3f), "a capture's conditions say the offset in use");
+
+                // Closed: the katana is the game's again, and the value is kept for the next start of play.
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Assert.That(_katana.LiveInputEnabled, Is.True);
+                Assert.That(_katana.ShowPoseWhileInputOff, Is.False);
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.BladeAngleKey), Is.EqualTo(37.5f).Within(1e-4f));
+                _katana.EdgewardTiltDegrees = 0f;
+                PlayMenu again = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.EqualTo(37.5f).Within(1e-3f), "put back at the next start of play");
+                Assert.That(again.Settings.BladeAngle, Is.EqualTo(37.5f).Within(1e-3f));
+            }
+            finally
+            {
+                PlayerPrefs.DeleteKey(PlaySettings.BladeAngleKey);
+                if (had)
+                {
+                    PlayerPrefs.SetFloat(PlaySettings.BladeAngleKey, before);
+                }
+
+                PlayerPrefs.Save();
+            }
+        }
+
+        [Test]
+        public void InAScriptedScenario_TheBladeAngleIsTheScenes_NothingSavedIsApplied_AndTheKatanaIsNotShownByTheMenu()
+        {
+            bool had = PlayerPrefs.HasKey(PlaySettings.BladeAngleKey);
+            float before = had ? PlayerPrefs.GetFloat(PlaySettings.BladeAngleKey) : 0f;
+            try
+            {
+                PlayerPrefs.SetFloat(PlaySettings.BladeAngleKey, 45f);
+                Quaternion sceneOffset = _katana.GripToKatanaOffset.rotation;
+                PlayMenu menu = NewMenu(SandboxScenarioKind.CityWalk);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.Zero, "a scripted scenario replays its hands with the offset they were recorded for");
+                Assert.That(menu.Settings.BladeAngleChangeable, Is.False);
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
+                PlayMenuView.Row row = rows[rows.Count - 1];
+                Assert.That(row.label, Is.EqualTo("Blade angle"));
+                Assert.That(row.interactable, Is.False);
+                Tick(menu, select: true, pointAt: Along((RectTransform)row.slider.transform, 0.999f));
+                Tick(menu);
+                menu.Settings.SetBladeAngle(30f);
+                Assert.That(_katana.EdgewardTiltDegrees, Is.Zero);
+                Assert.That(Quaternion.Angle(_katana.GripToKatanaOffset.rotation, sceneOffset), Is.LessThan(1e-4f));
+                Assert.That(_katana.ShowPoseWhileInputOff, Is.False, "and the menu does not show the katana of a script");
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.BladeAngleKey), Is.EqualTo(45f), "nothing is saved from a scripted scenario");
+            }
+            finally
+            {
+                PlayerPrefs.DeleteKey(PlaySettings.BladeAngleKey);
+                if (had)
+                {
+                    PlayerPrefs.SetFloat(PlaySettings.BladeAngleKey, before);
+                }
+
+                PlayerPrefs.Save();
+            }
         }
 
         [Test]

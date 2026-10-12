@@ -99,14 +99,25 @@ namespace Zantetsu.Sandbox
         public const string MoveSpeedKey = "zantetsu.play.moveSpeed";
         public const string TurnSpeedKey = "zantetsu.play.turnDegreesPerSecond";
         public const string SnapTurnKey = "zantetsu.play.snapTurnDegrees";
+        public const string BladeAngleKey = "zantetsu.play.bladeAngleDegrees";
 
         public const float MoveSpeedMinimum = 0.5f, MoveSpeedMaximum = 3.0f, MoveSpeedStep = 0.1f;
         public const float TurnSpeedMinimum = 30f, TurnSpeedMaximum = 240f, TurnSpeedStep = 10f;
         public const float SnapTurnMinimum = 15f, SnapTurnMaximum = 90f, SnapTurnStep = 15f;
 
+        /// <summary>The katana's turn toward its edge from the scene's grip offset, in degrees (negative: toward the spine).</summary>
+        public const float BladeAngleMinimum = -30f, BladeAngleMaximum = 60f, BladeAngleStep = 2.5f;
+
+        /// <summary>
+        /// Play's blade angle where the player has saved none (DESIGN 19.1.11, D-222): 30 degrees toward the edge of
+        /// the scenes' provisional grip offset, the angle at which the sword was seen to follow the controller.
+        /// </summary>
+        public const float BladeAngleDefault = 30f;
+
         private readonly bool _persist;
         private MobPlanPlayerInput _city;
         private SandboxLocomotionInput _plain;
+        private readonly List<SandboxRightHandKatana> _katanas = new List<SandboxRightHandKatana>();
 
         public PlaySettings(bool persist)
         {
@@ -121,9 +132,21 @@ namespace Zantetsu.Sandbox
 
         public bool HasLocomotion => _city != null || _plain != null;
 
+        /// <summary>
+        /// Whether the blade's angle is the player's to change: in play, with a katana in the scene. A scripted
+        /// scenario replays recorded hands with the offset they were recorded for.
+        /// </summary>
+        public bool BladeAngleChangeable => _persist && _katanas.Count > 0;
+
         /// <summary>Finds the scene's live locomotion input: the crowd's where there is one, the plain one otherwise.</summary>
         public void Bind()
         {
+            _katanas.Clear();
+            foreach (SandboxRightHandKatana katana in Object.FindObjectsByType<SandboxRightHandKatana>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                _katanas.Add(katana);
+            }
+
             _city = null;
             _plain = null;
             foreach (MobPlanPlayerInput input in Object.FindObjectsByType<MobPlanPlayerInput>(FindObjectsSortMode.None))
@@ -173,7 +196,45 @@ namespace Zantetsu.Sandbox
                 applied++;
             }
 
-            return "saved settings applied: " + applied;
+            // The blade's angle is play's own: the saved one, or play's default where none was saved.
+            string blade = "";
+            if (_katanas.Count > 0)
+            {
+                bool saved = PlayerPrefs.HasKey(BladeAngleKey);
+                SetBladeAngle(saved ? PlayerPrefs.GetFloat(BladeAngleKey) : BladeAngleDefault, false);
+                if (saved) applied++;
+                blade = "; blade angle " + BladeAngle.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + (saved ? " (saved)" : " (play's default)");
+            }
+
+            return "saved settings applied: " + applied + blade;
+        }
+
+        public float BladeAngle => _katanas.Count > 0 && _katanas[0] != null ? _katanas[0].EdgewardTiltDegrees : 0f;
+
+        public void SetBladeAngle(float value) => SetBladeAngle(value, true);
+
+        private void SetBladeAngle(float value, bool save)
+        {
+            if (!_persist)
+            {
+                return;
+            }
+
+            value = Mathf.Clamp(value, BladeAngleMinimum, BladeAngleMaximum);
+            bool any = false;
+            foreach (SandboxRightHandKatana katana in _katanas)
+            {
+                if (katana != null)
+                {
+                    katana.EdgewardTiltDegrees = value;
+                    any = true;
+                }
+            }
+
+            if (any && save)
+            {
+                Save(BladeAngleKey, value);
+            }
         }
 
         public float Volume => AudioListener.volume;
@@ -498,6 +559,14 @@ namespace Zantetsu.Sandbox
                 read = () => VpCutSurfaceColour.DebugEnabled ? 1f : 0f,
                 write = value => VpCutSurfaceColour.SetDebugEnabled(value >= 0.5f),
             });
+
+            // The katana's angle in the hand, last: play's own (a scripted run keeps the offset its hands were recorded for).
+            rows.Add(new PlayMenuView.Row
+            {
+                label = "Blade angle", minimum = PlaySettings.BladeAngleMinimum, maximum = PlaySettings.BladeAngleMaximum,
+                step = PlaySettings.BladeAngleStep, format = "F1", unit = " °", interactable = _settings.BladeAngleChangeable,
+                read = () => _settings.BladeAngle, write = _settings.SetBladeAngle,
+            });
             return rows;
         }
 
@@ -511,6 +580,9 @@ namespace Zantetsu.Sandbox
                 {
                     _katanas.Add(katana);
                     katana.LiveInputEnabled = false;
+
+                    // In play the katana goes on being shown in the hand, so that its angle can be seen while it is set.
+                    katana.ShowPoseWhileInputOff = Scenario == SandboxScenarioKind.Play;
                 }
             }
 
@@ -551,6 +623,7 @@ namespace Zantetsu.Sandbox
             {
                 if (katana != null)
                 {
+                    katana.ShowPoseWhileInputOff = false;
                     katana.LiveInputEnabled = true;
                 }
             }
