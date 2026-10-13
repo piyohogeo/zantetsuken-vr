@@ -126,6 +126,19 @@ namespace Zantetsu.Core.Tests
         // ---- the state alone ----------------------------------------------------------------------------------------
 
         [Test]
+        public void InADevelopmentBuild_TheMenuShowsTheLastSwings_UnderTheSettings()
+        {
+            Assert.That(Debug.isDebugBuild, Is.True, "the layout: the Editor counts as a development build");
+            PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+            Tick(menu);   // a button down from the start is no press: one frame up first
+            Tick(menu, menuDown: true);
+            Assert.That(menu.IsOpen, Is.True);
+            Assert.That(menu.View.DetailText, Is.Not.Null, "the development readout under the settings");
+            Assert.That(menu.View.DetailText.text, Does.StartWith("Last swings").And.Contain("no swing yet"));
+            Assert.That(menu.View.Rows.Count, Is.EqualTo(5), "the rows are the settings alone");
+        }
+
+        [Test]
         public void TheButton_TogglesOnItsPressOnly_HeldDownItDoesNothingMore()
         {
             var state = new PlayMenuState();

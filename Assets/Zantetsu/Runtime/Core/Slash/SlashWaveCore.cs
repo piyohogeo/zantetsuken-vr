@@ -57,6 +57,79 @@ namespace Zantetsu.Core.Slash
         Recorded = 2,
     }
 
+    /// <summary>Why an update ended the stroke under way. Observation only (DESIGN 19.1.12): nothing decides by it.</summary>
+    public enum SlashStrokeReset
+    {
+        None = 0,
+        PoseUnusable = 1,
+        HistoryRefused = 2,
+        SpeedAboveMaximum = 3,
+        ReturnStroke = 4,
+
+        /// <summary>The motion stayed under the gate's minimum speed for <see cref="SlashWaveCore.StrokeQuietSeconds"/>: the swing was over (D-224).</summary>
+        Quiet = 5,
+    }
+
+    /// <summary>What became of a stroke's one latch attempt in an update. Observation only.</summary>
+    public enum SlashLatchAttempt
+    {
+        None = 0,
+        NoFrame = 1,
+        Latched = 2,
+        NoSlot = 3,
+        NotFinite = 4,
+    }
+
+    /// <summary>
+    /// What one update of <see cref="SlashWaveCore"/> decided and saw on the way to a wave, for readouts (DESIGN
+    /// 19.1.12): written after each decision and read by nothing that decides. A swing that gives no wave is read
+    /// from these -- which gate turned its motion away, whether its begin faced the view, how far its emitter chord
+    /// got, what ended it, whether its latch found a frame and a slot.
+    /// </summary>
+    public struct SlashUpdateObservation
+    {
+        /// <summary>The gate had a window (two samples 30-60 ms apart) to judge this update by.</summary>
+        public bool GateEvaluated;
+
+        public BladeEdgeGateReason GateReason;
+
+        public double WindowSeconds;
+
+        /// <summary>What the gate judged: the cut sample point's speed, its displacement over the window, the edge lead score.</summary>
+        public float Speed;
+
+        public float Displacement;
+
+        public float EdgeLeadScore;
+
+        /// <summary>A sample that would begin the stroke was checked against the view: its dot with it, and whether it passed.</summary>
+        public bool BeginViewChecked;
+
+        public bool BeginViewPassed;
+
+        public float BeginViewDot;
+
+        /// <summary>The stroke after the update: its accepted samples, and its emitter chord (the chord it had reached, when it was reset).</summary>
+        public int AcceptedCount;
+
+        public float ChordMetres;
+
+        public SlashStrokeReset Reset;
+
+        /// <summary>The stroke was ready to latch in this update, its chance not yet spent.</summary>
+        public bool LatchReady;
+
+        /// <summary>
+        /// After this update the stroke's one latch chance is spent: it latched now, or had latched before and has not
+        /// ended since -- a motion accepted into it gives no wave until something ends it.
+        /// </summary>
+        public bool LatchSpent;
+
+        public SlashLatchAttempt Latch;
+
+        public long LatchedSlashId;
+    }
+
     /// <summary>The flight of a wave, fixed at its latch (DESIGN 19.1.6): a finite positive speed and lifetime.</summary>
     public readonly struct SlashWaveFlight
     {
@@ -161,6 +234,14 @@ namespace Zantetsu.Core.Slash
         public const double GateMaximumWindowSeconds = 0.060;
         public const float GateMaximumSpeed = 20f;
 
+        /// <summary>
+        /// A stroke ends once the gate has judged its motion under the minimum speed for this long (D-224, 2026-10-13):
+        /// the swing is over, latched or not, and the next motion begins a stroke of its own. Before this a latched
+        /// stroke ended only by a fast spine-first return or a tracking reset, so a swing after a slow return was
+        /// accepted into the spent stroke and gave no wave (the whiffs of the Link play sd1PlayLink: 8 of 8).
+        /// </summary>
+        public const double StrokeQuietSeconds = 0.1;
+
         // Eight samples cover the 30-60 ms window at 90 Hz; eight accepted samples are a stroke's fixed room.
         private const int HistoryCapacity = 8;
         private const int AcceptedSampleCapacity = 8;
@@ -207,6 +288,7 @@ namespace Zantetsu.Core.Slash
         private int _acceptedCount;
         private bool _strokeLatchSpent;
         private Vector3 _strokeBeginView;
+        private double _quietSince = double.NaN;   // when the gate first judged the motion under the minimum speed, in a row
 
         private readonly Wave[] _waves = new Wave[Capacity];
         private int _waveCount;
@@ -222,6 +304,9 @@ namespace Zantetsu.Core.Slash
         private ISlashSpanCandidateEstimator _candidate = GuideRaySpanCandidate.Default;
         private ISlashSpanCloseEstimator _close = new CaptureTimeoutSpanClose(0.25f);
         private SlashWaveFlight _flight = SlashWaveFlight.Adopted;
+
+        // One update's observation (19.1.12): written after each decision below and read by nothing that decides.
+        private SlashUpdateObservation _observing;
 
         public SlashWaveCore(in SlashBlade blade)
         {
@@ -301,6 +386,7 @@ namespace Zantetsu.Core.Slash
         {
             double now = sample.TimestampSeconds;
             _sweepCount = 0;
+            _observing = default;
 
             // 1. Expire first, so a latch later in this update can use the slot. Those left are the waves already
             //    flying; anything published below this update is not among them.
@@ -330,6 +416,16 @@ namespace Zantetsu.Core.Slash
             }
 
             Advance(now, flying, recorded, guideEmitter, guideAxis);
+
+            // What this update left: the stroke's size now, unless a reset already kept the size it had.
+            _observing.AcceptedCount = _acceptedCount;
+            if (_observing.Reset == SlashStrokeReset.None)
+            {
+                _observing.ChordMetres = StrokeChord();
+            }
+
+            _observing.LatchSpent = _strokeLatchSpent;
+            LastUpdate = _observing;
             return outcome;
         }
 
@@ -340,6 +436,28 @@ namespace Zantetsu.Core.Slash
             _acceptedCount = 0;
             _strokeLatchSpent = false;
             _strokeBeginView = Vector3.zero;
+            _quietSince = double.NaN;
+        }
+
+        // The stroke ends inside an update: the observation keeps why, with the chord the stroke had reached.
+        private void EndStroke(SlashStrokeReset why)
+        {
+            _observing.Reset = why;
+            _observing.ChordMetres = StrokeChord();
+            ResetStroke();
+        }
+
+        // The emitter chord of the stroke under way, its begin sample to its newest; 0 under two samples.
+        private float StrokeChord()
+        {
+            if (_acceptedCount < 2)
+            {
+                return 0f;
+            }
+
+            Vector3 chord = _blade.Emitter(_accepted[_acceptedCount - 1]) - _blade.Emitter(_accepted[0]);
+            float length = chord.magnitude;
+            return float.IsFinite(length) ? length : 0f;
         }
 
         /// <summary>Everything back to the start: no stroke, no wave. SlashIds are not reused.</summary>
@@ -354,6 +472,9 @@ namespace Zantetsu.Core.Slash
         // ---- reads ----------------------------------------------------------------------------------------------
 
         public int RecordedPoseCount => _history.Count;
+
+        /// <summary>What the last update decided and saw. Observation only: nothing here decides anything.</summary>
+        public SlashUpdateObservation LastUpdate { get; private set; }
 
         public int AcceptedSampleCount => _acceptedCount;
 
@@ -544,13 +665,13 @@ namespace Zantetsu.Core.Slash
             // A sample that cannot be shown resets the stroke; so does one the history refuses.
             if (!TryEvaluatePose(sample, out evaluated))
             {
-                ResetStroke();
+                EndStroke(SlashStrokeReset.PoseUnusable);
                 return SlashInputOutcome.PoseUnusable;
             }
 
             if (!_history.TryAppend(evaluated))
             {
-                ResetStroke();
+                EndStroke(SlashStrokeReset.HistoryRefused);
                 return SlashInputOutcome.HistoryRefused;
             }
 
@@ -579,17 +700,42 @@ namespace Zantetsu.Core.Slash
                 _gesture.MinimumDisplacement,
                 _gesture.MinimumEdgeLeadScore);
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(motion, gateSettings);
+            _observing.GateEvaluated = true;
+            _observing.GateReason = decision.Reason;
+            _observing.WindowSeconds = motion.DeltaTimeSeconds;
+            _observing.Speed = motion.Speed;
+            _observing.Displacement = motion.CutSampleDisplacement.magnitude;
+            _observing.EdgeLeadScore = motion.EdgeLeadScore;
             if (decision.IsAccepted)
             {
+                _quietSince = double.NaN;
                 AppendAccepted(current, viewForward);
                 return;
             }
 
             if (decision.Reason == BladeEdgeGateReason.SpeedAboveMaximum)
             {
-                ResetStroke();
+                EndStroke(SlashStrokeReset.SpeedAboveMaximum);
                 return;
             }
+
+            // Under the minimum speed: quiet. Quiet for StrokeQuietSeconds ends the stroke under way, latched or not
+            // (D-224): the swing is over, and the next motion begins a stroke of its own rather than joining a spent one.
+            if (decision.Reason == BladeEdgeGateReason.SpeedBelowMinimum)
+            {
+                if (double.IsNaN(_quietSince))
+                {
+                    _quietSince = current.TimestampSeconds;
+                }
+                else if (_acceptedCount > 0 && current.TimestampSeconds - _quietSince >= StrokeQuietSeconds)
+                {
+                    EndStroke(SlashStrokeReset.Quiet);
+                }
+
+                return;
+            }
+
+            _quietSince = double.NaN;
 
             // Past every non-directional check, a score this far onto the spine side is the return half of a stroke
             // under way. With nothing accepted it is just a rejected motion.
@@ -597,7 +743,7 @@ namespace Zantetsu.Core.Slash
                 && decision.Reason == BladeEdgeGateReason.EdgeLeadBelowThreshold
                 && motion.EdgeLeadScore <= _gesture.ReturnStrokeEdgeLeadScore)
             {
-                ResetStroke();
+                EndStroke(SlashStrokeReset.ReturnStroke);
             }
         }
 
@@ -637,7 +783,12 @@ namespace Zantetsu.Core.Slash
 
             float length = Mathf.Sqrt(lengthSquared);
             normalizedView = new Vector3(viewForward.x / length, viewForward.y / length, viewForward.z / length);
-            return Vector3.Dot(pose.BladeAxis, normalizedView) >= _gesture.BeginBladeAxisViewDotMinimum;
+            float dot = Vector3.Dot(pose.BladeAxis, normalizedView);
+            bool passes = dot >= _gesture.BeginBladeAxisViewDotMinimum;
+            _observing.BeginViewChecked = true;
+            _observing.BeginViewDot = dot;
+            _observing.BeginViewPassed = passes;
+            return passes;
         }
 
         // Every condition a wave needs, at one instant: the stroke has not had its chance, it is ready, it has a frame
@@ -649,9 +800,11 @@ namespace Zantetsu.Core.Slash
                 return;
             }
 
+            _observing.LatchReady = true;
             if (!_frame.TryEstimate(AcceptedSamples, _blade, out SlashFrame frame))
             {
                 // Not yet a frame; a later sample of the same stroke may still give one.
+                _observing.Latch = SlashLatchAttempt.NoFrame;
                 return;
             }
 
@@ -687,6 +840,7 @@ namespace Zantetsu.Core.Slash
             // The slot is looked for here, just before publishing, and nowhere else.
             if (_waveCount >= Capacity)
             {
+                _observing.Latch = SlashLatchAttempt.NoSlot;
                 return false;
             }
 
@@ -701,12 +855,14 @@ namespace Zantetsu.Core.Slash
                 || !float.IsFinite(acceptedSpan) || acceptedSpan < 0f
                 || !flight.IsValid)
             {
+                _observing.Latch = SlashLatchAttempt.NotFinite;
                 return false;
             }
 
             double expiresAt = now + flight.LifetimeSeconds;
             if (double.IsNaN(expiresAt) || double.IsInfinity(expiresAt) || !(expiresAt > now))
             {
+                _observing.Latch = SlashLatchAttempt.NotFinite;
                 return false;
             }
 
@@ -714,6 +870,7 @@ namespace Zantetsu.Core.Slash
             Vector3 travel = travelAxis * (flight.Speed * flight.LifetimeSeconds);
             if (!SlashMath.IsFinite(travel) || !SlashMath.IsFinite(beginEmitter + travel) || !SlashMath.IsFinite(initialEnd + travel))
             {
+                _observing.Latch = SlashLatchAttempt.NotFinite;
                 return false;
             }
 
@@ -738,6 +895,8 @@ namespace Zantetsu.Core.Slash
                 LastCandidateAt = double.NaN,
             };
             _waveCount++;
+            _observing.Latch = SlashLatchAttempt.Latched;
+            _observing.LatchedSlashId = _lastSlashId;
 
             // The latch update's one sweep: degenerate, the initial segment twice.
             AddSweep(new SlashSweep(

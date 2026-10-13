@@ -139,6 +139,149 @@ namespace Zantetsu.Core.Tests
             return -1;
         }
 
+        // ---- the observation of an update (19.1.12): written after the decisions, read by nothing that decides -------
+
+        [Test]
+        public void TheObservation_OfALatchingStroke_SaysItLatched_WithTheChordItReached()
+        {
+            var f = new Feed();
+            Assert.That(f.SweepUntilLatch(), Is.True);
+            SlashUpdateObservation o = f.Core.LastUpdate;
+            Assert.That(o.Latch, Is.EqualTo(SlashLatchAttempt.Latched));
+            Assert.That(o.LatchedSlashId, Is.EqualTo(f.LastId()));
+            Assert.That(o.LatchReady, Is.True);
+            Assert.That(o.LatchSpent, Is.True, "the stroke's one chance is used");
+            Assert.That(o.GateEvaluated, Is.True);
+            Assert.That(o.GateReason, Is.EqualTo(BladeEdgeGateReason.None), "its motion was accepted");
+            Assert.That(o.Speed, Is.GreaterThan(3.5f));
+            Assert.That(o.ChordMetres, Is.GreaterThanOrEqualTo(0.35f), "the latch chord was reached");
+            Assert.That(o.AcceptedCount, Is.GreaterThanOrEqualTo(2));
+            Assert.That(o.Reset, Is.EqualTo(SlashStrokeReset.None));
+        }
+
+        [Test]
+        public void TheObservation_OfASlowMotion_NamesTheGateThatTurnedItAway()
+        {
+            var f = new Feed();
+            // 0.02 m per 11 ms along the edge: 1.8 m/s, under the 3.5 m/s floor.
+            for (int i = 0; i < 8; i++) f.Step(new Vector3(0f, -0.02f, 0f));
+            SlashUpdateObservation o = f.Core.LastUpdate;
+            Assert.That(o.GateEvaluated, Is.True);
+            Assert.That(o.GateReason, Is.EqualTo(BladeEdgeGateReason.SpeedBelowMinimum));
+            Assert.That(o.Speed, Is.InRange(1.5f, 2.1f));
+            Assert.That(o.WindowSeconds, Is.InRange(0.030, 0.060));
+            Assert.That(o.AcceptedCount, Is.Zero);
+            Assert.That(o.LatchReady, Is.False);
+            Assert.That(o.Latch, Is.EqualTo(SlashLatchAttempt.None));
+            Assert.That(f.Core.WaveCount, Is.Zero);
+        }
+
+        [Test]
+        public void TheObservation_OfAnUntrackedSample_SaysTheStrokeWasReset_WithTheChordItHad()
+        {
+            var f = new Feed();
+            for (int i = 0; i < 5; i++) f.Step(EdgeStep);
+            Assert.That(f.Core.AcceptedSampleCount, Is.EqualTo(2), "the layout: a stroke under way, short of the chord");
+            f.Frame++;
+            f.Time += Interval;
+            SlashInputOutcome outcome = f.Core.Update(
+                new BladePoseSample(f.Frame, f.Time, f.Position, f.Upright, BladeTrackingState.None), Vector3.zero, null, out _);
+            Assert.That(outcome, Is.EqualTo(SlashInputOutcome.PoseUnusable));
+            SlashUpdateObservation o = f.Core.LastUpdate;
+            Assert.That(o.Reset, Is.EqualTo(SlashStrokeReset.PoseUnusable));
+            Assert.That(o.ChordMetres, Is.EqualTo(0.12f).Within(1e-3f), "the chord the stroke had reached when it was reset");
+            Assert.That(o.AcceptedCount, Is.Zero);
+            Assert.That(o.GateEvaluated, Is.False);
+        }
+
+        [Test]
+        public void TheObservation_OfABeginAwayFromTheView_SaysTheViewCheckFailed_AndNothingWasAccepted()
+        {
+            var f = new Feed();
+            // The view looks straight back; the blade points forward: their dot is -1.
+            for (int i = 0; i < 8; i++)
+            {
+                f.Frame++;
+                f.Time += Interval;
+                f.Position += EdgeStep;
+                f.Core.Update(
+                    new BladePoseSample(f.Frame, f.Time, f.Position, f.Upright, BladeTrackingState.Position | BladeTrackingState.Rotation),
+                    Vector3.back, null, out _);
+            }
+
+            SlashUpdateObservation o = f.Core.LastUpdate;
+            Assert.That(o.GateReason, Is.EqualTo(BladeEdgeGateReason.None), "the gate accepted the motion");
+            Assert.That(o.BeginViewChecked, Is.True);
+            Assert.That(o.BeginViewPassed, Is.False);
+            Assert.That(o.BeginViewDot, Is.LessThan(0.5f));
+            Assert.That(o.AcceptedCount, Is.Zero);
+            Assert.That(f.Core.WaveCount, Is.Zero);
+        }
+
+        [Test]
+        public void TheObservation_OfAStrokeAtFullCapacity_SaysNoSlot()
+        {
+            var f = new Feed();
+            for (int n = 0; n < SlashWaveCore.Capacity; n++)
+            {
+                Assert.That(f.SweepUntilLatch(), Is.True);
+                f.ReArm();
+            }
+
+            bool seen = false;
+            for (int i = 0; i < 12 && !seen; i++)
+            {
+                f.Step(EdgeStep);
+                seen = f.Core.LastUpdate.Latch == SlashLatchAttempt.NoSlot;
+            }
+
+            Assert.That(seen, Is.True, "the refused latch was observed");
+            Assert.That(f.Core.LastUpdate.LatchReady, Is.True);
+            Assert.That(f.Core.LastUpdate.LatchSpent, Is.True, "the stroke's chance went with the refusal (19.1.6)");
+            Assert.That(f.Core.WaveCount, Is.EqualTo(SlashWaveCore.Capacity));
+        }
+
+        /// <summary>
+        /// **Quiet ends the stroke (D-224): a slow return re-arms, and the next sweep gives a wave of its own.** Before
+        /// D-224 a latched stroke ended only by a fast spine-first return or a tracking reset; the gate turns a slow
+        /// return away for its speed before it looks at the edge, so the stroke stood spent and a sweep after it was
+        /// accepted into it with no wave (the Link play sd1PlayLink: 8 whiffs of 8). Now the gate's "under the minimum
+        /// speed" for StrokeQuietSeconds ends the stroke; a dip shorter than that does not, and the wave already flying
+        /// is untouched either way.
+        /// </summary>
+        [Test]
+        public void AfterALatch_ASlowReturn_EndsTheStrokeByQuiet_AndTheNextSweepLatches()
+        {
+            Assert.That(SlashWaveCore.StrokeQuietSeconds, Is.EqualTo(0.1));
+            var f = new Feed();
+            Assert.That(f.SweepUntilLatch(), Is.True, "the first sweep latches");
+            Assert.That(f.Core.WaveCount, Is.EqualTo(1));
+
+            // Brought back slowly, spine first: 0.02 m per 11 ms = 1.8 m/s, under the gate's 3.5 m/s. The first slow
+            // samples still average fast over the window; a few more are quiet, but not yet for StrokeQuietSeconds.
+            for (int i = 0; i < 5; i++) f.Step(new Vector3(0f, 0.02f, 0f));
+            Assert.That(f.Core.AcceptedSampleCount, Is.GreaterThan(0), "a dip shorter than the quiet leaves the stroke");
+            Assert.That(f.Core.LastUpdate.GateReason, Is.EqualTo(BladeEdgeGateReason.SpeedBelowMinimum), "turned away for its speed, before the edge is looked at");
+            Assert.That(f.Core.LastUpdate.Reset, Is.EqualTo(SlashStrokeReset.None));
+
+            bool ended = false;
+            for (int i = 0; i < 12 && !ended; i++)
+            {
+                f.Step(new Vector3(0f, 0.02f, 0f));
+                ended = f.Core.LastUpdate.Reset == SlashStrokeReset.Quiet;
+            }
+
+            Assert.That(ended, Is.True, "quiet for StrokeQuietSeconds ended the stroke");
+            Assert.That(f.Core.AcceptedSampleCount, Is.Zero);
+            Assert.That(f.Core.LastUpdate.LatchSpent, Is.False, "the next stroke has its own chance");
+            Assert.That(f.Core.WaveCount, Is.EqualTo(1), "the wave already flying is untouched");
+
+            // The next sweep, as the first: a stroke of its own, latched.
+            Assert.That(f.SweepUntilLatch(), Is.True, "the sweep after a slow return latches");
+            Assert.That(f.Core.WaveCount, Is.EqualTo(2));
+            Assert.That(f.Core.LastUpdate.Latch, Is.EqualTo(SlashLatchAttempt.Latched));
+        }
+
         [Test]
         public void TheCapacityRules_HoldAsOneSequence()
         {

@@ -78,6 +78,11 @@ namespace Zantetsu.Sandbox
         private Row _held;
         private bool _selectWasDown = true;
         private bool _resumeAsked;
+        private Text _detail;
+        private Func<string> _detailRead;
+
+        /// <summary>The room under the settings for the development readout, when the menu is built with one.</summary>
+        private const float DetailHeight = 160f;
 
         public bool IsBuilt => _root != null;
         public bool Visible => _root != null && _root.activeSelf;
@@ -88,10 +93,13 @@ namespace Zantetsu.Sandbox
         public RectTransform ResumeRect => _resume != null ? _resume.rectTransform : null;
         public RectTransform ResetRect => _reset != null ? _reset.rectTransform : null;
 
+        /// <summary>The development readout's text under the settings, or null where the menu was built without one.</summary>
+        public Text DetailText => _detail;
+
         /// <summary>
         /// Makes the canvas, hidden. <paramref name="note"/> is a line under the title (which scenario, what is fixed in it).
         /// </summary>
-        public void Build(IReadOnlyList<Row> rows, string note, Action resetAction = null)
+        public void Build(IReadOnlyList<Row> rows, string note, Action resetAction = null, Func<string> detail = null)
         {
             if (_root != null)
             {
@@ -113,7 +121,7 @@ namespace Zantetsu.Sandbox
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             _canvas = (RectTransform)_root.transform;
-            float height = Height + Mathf.Max(0, rows.Count - 3) * 96f + (resetAction != null ? 96f : 0f);
+            float height = Height + Mathf.Max(0, rows.Count - 3) * 96f + (resetAction != null ? 96f : 0f) + (detail != null ? DetailHeight : 0f);
             _canvas.sizeDelta = new Vector2(Width, height);
             _canvas.localScale = Vector3.one * UnitMetres;
 
@@ -147,6 +155,15 @@ namespace Zantetsu.Sandbox
                 BuildRow(row, font, y);
                 _rows.Add(row);
                 y -= 96f;
+            }
+
+            if (detail != null)
+            {
+                // A development readout under the settings (the last swings and what the slash made of each), read
+                // again each time the menu is shown: text alone, pressed by nothing.
+                _detailRead = detail;
+                _detail = NewText("Detail", _canvas, font, string.Empty, 20, DimTextColour, TextAnchor.UpperLeft);
+                Place(_detail.rectTransform, 0f, -height * 0.5f + (resetAction != null ? 100f : 20f) + DetailHeight * 0.5f, Width - 80f, DetailHeight - 16f);
             }
 
             Image cursor = NewImage("Pointer", _canvas, new Color(1f, 0.85f, 0.25f, 1f));
@@ -271,6 +288,11 @@ namespace Zantetsu.Sandbox
                     row.slider.SetValueWithoutNotify(Mathf.Clamp(value, row.minimum, row.maximum));
                     row.valueText.text = value.ToString(row.format, CultureInfo.InvariantCulture) + row.unit;
                 }
+            }
+
+            if (_detail != null && _detailRead != null)
+            {
+                _detail.text = _detailRead() ?? string.Empty;
             }
         }
 

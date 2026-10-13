@@ -491,7 +491,8 @@ namespace Zantetsu.Sandbox
                 var bunny = FindFirstObjectByType<BunnyDemo>();
                 _view.Build(Rows(), bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
                     ? "play"
-                    : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null);
+                    : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null,
+                    Debug.isDebugBuild ? SwingsText : (System.Func<string>)null);
             }
 
             Vector3 position = _camera != null ? _camera.transform.position : Vector3.zero;
@@ -568,6 +569,14 @@ namespace Zantetsu.Sandbox
                 read = () => _settings.BladeAngle, write = _settings.SetBladeAngle,
             });
             return rows;
+        }
+
+        // The development readout under the settings (a Development build and the Editor only): the katana's last
+        // swings and what the slash made of each (SlashSwingDiagnosis), read when the menu is shown.
+        internal string SwingsText()
+        {
+            SandboxRightHandKatana katana = _katanas.Count > 0 ? _katanas[0] : FindFirstObjectByType<SandboxRightHandKatana>();
+            return "Last swings (development readout; newest first)\n" + (katana != null ? katana.Swings.Describe(4) : "no katana");
         }
 
         // What reads the controllers by itself is switched off for the menu's time, and only what was on comes back.

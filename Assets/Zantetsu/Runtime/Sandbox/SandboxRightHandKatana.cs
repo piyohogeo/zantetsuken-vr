@@ -113,6 +113,7 @@ namespace Zantetsu.Sandbox
         // The product slash core this component feeds (Phase 4.50): the gesture, the latch and the waves are all its.
         // This component reads the device, shows the katana and the waves, and holds the development tuning.
         private SlashWaveCore core;
+        private SlashSwingDiagnosis swings;
         private float appliedLatchChord = float.NaN;
         private float appliedCaptureTimeout = float.NaN;
 
@@ -661,6 +662,14 @@ namespace Zantetsu.Sandbox
         internal SandboxSlashCapture Capture { get; set; }
 
         /// <summary>
+        /// The development readout of the swings (<see cref="SlashSwingDiagnosis"/>): each swing of the blade and what
+        /// the core made of it, kept for the play menu and written out as each ends. Read-only; it decides nothing.
+        /// </summary>
+        internal SlashSwingDiagnosis Swings => swings ??= new SlashSwingDiagnosis();
+
+        internal const string SwingPrefix = "SLASH SWING: ";
+
+        /// <summary>
         /// Puts the calculation back to a known initial state: no pose history,
         /// no stroke in progress, no live wave and nothing shown. This is what
         /// the enable and disable boundaries already do, offered to the
@@ -813,6 +822,17 @@ namespace Zantetsu.Sandbox
             // The sweeps this update gave, whatever became of the sample: a wave already flying hits whether or not
             // the blade can fire (T-040).
             HitDetector?.Evaluate(slash);
+
+            // The swing readout (development): this update with what the core saw of it; a swing that ended is one
+            // line, in the log and in the development log, so that a swing without a slash can be read on the spot.
+            string swing = Swings.Observe(in input, outcome, slash.LastUpdate, outcome != SlashInputOutcome.PoseUnusable, current.CutSamplePosition);
+            if (swing != null)
+            {
+                Debug.Log(SwingPrefix + swing);
+#if DEBUG
+                Zantetsu.Core.DevelopmentLogger.Instance.write_log("SlashSwing", "swing", swing);
+#endif
+            }
             if (outcome == SlashInputOutcome.PoseUnusable)
             {
                 // A pose that cannot be shown is hidden; a missing katana or blade has nothing to hide.
