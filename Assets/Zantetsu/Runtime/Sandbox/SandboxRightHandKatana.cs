@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.XR;
@@ -823,8 +826,10 @@ namespace Zantetsu.Sandbox
             // the blade can fire (T-040).
             HitDetector?.Evaluate(slash);
 
+#if ZANTETSU_OBSERVE
             // The swing readout (development): this update with what the core saw of it; a swing that ended is one
             // line, in the log and in the development log, so that a swing without a slash can be read on the spot.
+            // Not in a Release Player (DESIGN 21.18): neither the gathering nor the line.
             string swing = Swings.Observe(in input, outcome, slash.LastUpdate, outcome != SlashInputOutcome.PoseUnusable, current.CutSamplePosition);
             if (swing != null)
             {
@@ -833,6 +838,7 @@ namespace Zantetsu.Sandbox
                 Zantetsu.Core.DevelopmentLogger.Instance.write_log("SlashSwing", "swing", swing);
 #endif
             }
+#endif
             if (outcome == SlashInputOutcome.PoseUnusable)
             {
                 // A pose that cannot be shown is hidden; a missing katana or blade has nothing to hide.

@@ -1,4 +1,7 @@
-﻿using System;
+﻿#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
@@ -27,6 +30,16 @@ namespace Zantetsu.Rendering
     /// </summary>
     public sealed class VpGpuIndexedGeometryBuffers : IDisposable
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         public const int IndexStride = sizeof(uint);
 
         private GraphicsBuffer _vertexBuffer;
@@ -68,7 +81,7 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(vertexCapacity), "the first capacities are positive and within the limits");
             }
 
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             _vertexBuffer = NewVertexBuffer(vertexCapacity);
             try
             {
@@ -80,7 +93,9 @@ namespace Zantetsu.Rendering
                 throw;
             }
 
+#if ZANTETSU_OBSERVE
             CreationSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             VertexCapacity = vertexCapacity;
             IndexCapacity = indexCapacity;
             MaxVertexCapacity = maxVertexCapacity;

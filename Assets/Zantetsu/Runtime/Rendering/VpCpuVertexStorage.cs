@@ -69,8 +69,14 @@ namespace Zantetsu.Rendering
         internal bool TryCommitTo(int end, out string failure)
         {
             ThrowIfDisposed();
-            return _memory.TryCommitTo(end, out failure);
+            int before = _memory.CommittedLength;
+            bool committed = _memory.TryCommitTo(end, out failure);
+            if (committed && _memory.CommittedLength > before) CommitGrowths++;
+            return committed;
         }
+
+        /// <summary>How often the committed backing grew (DESIGN 21.18: the storage's own growth count).</summary>
+        public int CommitGrowths { get; private set; }
 
         /// <summary>How far publishing has reached: every published vertex lies below this.</summary>
         public int Count { get; private set; }

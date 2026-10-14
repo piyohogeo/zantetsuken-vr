@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -368,7 +371,7 @@ namespace Zantetsu.MeshCut
                 else if (holds != null && holds.BeginKept(_renderFragmentCount, _stampLedger, _stampInputs)) _holdsNow = holds;
                 else if (holds != null) asksAll = 1;
                 long queriesBefore = _placeInto.queries;
-                long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+                long begin = Began();
                 _renderFragmentsTakenOver = true;
                 VpMultiCutBuildOutcome placed;
                 try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }
@@ -452,13 +455,15 @@ namespace Zantetsu.MeshCut
                     _branchCount = _candidateCount = _renderFragmentCount = 0;
                     _buildingFamily = group.family;
                     VpMultiCutBuildOutcome outcome;
-                    long structureBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                    long structureBegin = Began();
                     LastCollectSeconds = LastGroupSeconds = 0;
                     try { outcome = TryBuildStructure(ledger, group.registrations); }
                     finally
                     {
+#if ZANTETSU_OBSERVE
                         ValidateCounts.structureSeconds += SecondsSince(structureBegin);
                         collectedSeconds += LastCollectSeconds; groupedSeconds += LastGroupSeconds;
+#endif
                         _buildingFamily = default;
                         for (int g = 0; g < _reflected.Length; g++) _reflected[g].Release();
                         _lineage.Close(); _segLedger = null; _currentRegistration = -1;
@@ -484,9 +489,11 @@ namespace Zantetsu.MeshCut
 
                         // The caps' shapes of this registration, with its structure and in its local frame (D-208).
                         VpMultiCutRegistration shapedFor = group.registrations[j];
-                        long shapesBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long shapesBegan = Began();
                         VpMultiCutBuildOutcome shaped = TryBuildLocalCaps(part, shapedFor);
+#if ZANTETSU_OBSERVE
                         _stages.capShapeSeconds += SecondsSince(shapesBegan);
+#endif
                         if (shaped != VpMultiCutBuildOutcome.Built) return Fail(shaped);
                         b0 = b1; c0 = c1; r0 = r1;
                     }
@@ -547,7 +554,7 @@ namespace Zantetsu.MeshCut
                 }
                 else if (holds != null) asksAll = 1;
                 long queriesBefore = _placeInto.queries;
-                long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+                long begin = Began();
                 _renderFragmentsTakenOver = true;
                 VpMultiCutBuildOutcome placed;
                 try { using (s_place.Auto()) placed = TryApplyPlacements(ledger, registrations, placement, previous); }

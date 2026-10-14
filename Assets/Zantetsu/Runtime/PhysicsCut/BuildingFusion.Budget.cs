@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -62,6 +65,9 @@ namespace Zantetsu.PhysicsCut
         private readonly Stopwatch _stepWatch = new Stopwatch();
         private long _partStart;
         private double _partMassAtStart;
+#if ZANTETSU_OBSERVE
+        private readonly double[] _massApplyParts = new double[8];   // one mass apply's breakdown, reused (no allocation an apply)
+#endif
 
         /// <summary>The whole of every <see cref="Step"/> (the Finals' collection, the preparations, the aggregations, the merges, the fusions, the masses), Main.</summary>
         public double StepSeconds { get; private set; }
@@ -133,14 +139,30 @@ namespace Zantetsu.PhysicsCut
 
         private void BeginPart()
         {
+#if ZANTETSU_OBSERVE
             _partStart = Stopwatch.GetTimestamp();
             _partMassAtStart = MassSeconds;
+#endif
         }
 
-        /// <summary>The part's own seconds: what elapsed, less the mass work that ran inside it (counted in <see cref="MassSeconds"/>).</summary>
+        /// <summary>The part's own seconds: what elapsed, less the mass work that ran inside it (counted in <see cref="MassSeconds"/>). 0 in a Release Player (DESIGN 21.18).</summary>
         private double EndPart()
         {
+#if ZANTETSU_OBSERVE
             return (Stopwatch.GetTimestamp() - _partStart) / (double)Stopwatch.Frequency - (MassSeconds - _partMassAtStart);
+#else
+            return 0.0;
+#endif
+        }
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
         }
 
         // ---- the budget ----
@@ -389,7 +411,9 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+#if ZANTETSU_OBSERVE
             MaxHeldWaitSeconds = Math.Max(MaxHeldWaitSeconds, realSeconds() - h.heldAt);
+#endif
             FusedGroup.Member member = group.byFragment.TryGetValue(h.fragment, out FusedGroup.Member m) ? m : group.members[0];
             var ask = new ProvisionalCutAsk { source = member.fragment, positiveSeparationImpulse = h.positiveImpulse, negativeSeparationImpulse = h.negativeImpulse, renderAnchor = h.renderAnchor, slashId = h.slashId, adoptedPlaneId = h.planeId, adoptedPlaneWorld = h.planeWorld };
             ProvisionalCutAcceptance acceptance = BeginPreparation(group, member, h.planeWorld, in ask, h, h.hit, out _);
@@ -512,7 +536,7 @@ namespace Zantetsu.PhysicsCut
 
             public void Begin()
             {
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 threadId = Thread.CurrentThread.ManagedThreadId;
                 Volatile.Write(ref _begun, 1);
                 try
@@ -548,7 +572,9 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                     Volatile.Write(ref _done, 1);
                 }
             }
@@ -634,14 +660,16 @@ namespace Zantetsu.PhysicsCut
                     return false;
                 }
 
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 var prepared = new PreparedShadow();
                 prepared.root = MakeShadow(m.member, p.group.Root.transform, prepared.colliders, true);
                 p.shadows.Add(m.member, prepared);
                 ShadowsPrepared++;
+#if ZANTETSU_OBSERVE
                 double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
                 ShadowPrepareSeconds += seconds;
                 MaxShadowPrepareSeconds = Math.Max(MaxShadowPrepareSeconds, seconds);
+#endif
             }
 
             return true;
@@ -858,7 +886,9 @@ namespace Zantetsu.PhysicsCut
                 p.snapshotIndex++;
                 madeNow++;
                 MembersClassified++;
+#if ZANTETSU_OBSERVE
                 ClassifySeconds += EndPart();
+#endif
             }
 
             p.work = new PreparationWork(p.members, _supportEpsilon, _vertexLimit, workerGate);
@@ -970,7 +1000,9 @@ namespace Zantetsu.PhysicsCut
         {
             DropPreparedShadows(p);   // a published preparation handed its copies to its cuts (none left here)
             if (p.group != null) p.group.Preparing = Math.Max(0, p.group.Preparing - 1);
+#if ZANTETSU_OBSERVE
             MaxPreparationSeconds = Math.Max(MaxPreparationSeconds, realSeconds() - p.madeAt);
+#endif
             foreach (HitRecord hit in p.hits)
             {
                 Note(hit, published ? "published" : "refused", p.id, "preparation " + p.id + " ended: " + outcome);
@@ -1002,8 +1034,10 @@ namespace Zantetsu.PhysicsCut
             if (!p.workCounted)
             {
                 p.workCounted = true;
+#if ZANTETSU_OBSERVE
                 WorkerSeconds += p.work.seconds;
                 MaxWorkerSeconds = Math.Max(MaxWorkerSeconds, p.work.seconds);
+#endif
             }
 
             if (p.work.failure != null)
@@ -1108,7 +1142,9 @@ namespace Zantetsu.PhysicsCut
                 {
                     _classified.Clear();
                     p.work.Release();
+#if ZANTETSU_OBSERVE
                     ClassifySeconds += EndPart();
+#endif
                     EndPreparation(p, false, "EmptySide");
                     return true;
                 }
@@ -1150,7 +1186,9 @@ namespace Zantetsu.PhysicsCut
                     _classified.Clear();
                     p.work.Release();
                     PreparationsRefused++;
+#if ZANTETSU_OBSERVE
                     ClassifySeconds += EndPart();
+#endif
                     Refuse(group, why, refused + " -- the whole cut is refused, nothing changed", out _);
                     EndPreparation(p, false, "NotAccepted: " + refused);
                     return true;
@@ -1161,7 +1199,9 @@ namespace Zantetsu.PhysicsCut
                 GroupCutExclusion exclusion = memberCuts.Count > 0 ? ChooseExclusion(memberCuts) : null;
                 if (memberCuts.Count > 0 && exclusion == null)
                 {
+#if ZANTETSU_OBSERVE
                     ClassifySeconds += EndPart();
+#endif
                     if (!p.waitingForLayers)
                     {
                         p.waitingForLayers = true;
@@ -1190,9 +1230,11 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
 
+#if ZANTETSU_OBSERVE
                 double judged = EndPart();
                 ClassifySeconds += judged;
                 MaxClassifySeconds = Math.Max(MaxClassifySeconds, judged);
+#endif
                 BeginPart();
                 var ask = new ProvisionalCutAsk { source = p.hit, positiveSeparationImpulse = p.positiveImpulse, negativeSeparationImpulse = p.negativeImpulse, renderAnchor = p.renderAnchor, slashId = p.slashId, adoptedPlaneId = p.planeId, adoptedPlaneWorld = p.planeWorld };
                 int members = group.MemberCount;
@@ -1202,9 +1244,11 @@ namespace Zantetsu.PhysicsCut
                     PublishSides(group, planeWorldNow, in ask, memberCuts, positiveFixed, negativeFixed, p, exclusion);
                 }
 
+#if ZANTETSU_OBSERVE
                 double published = EndPart();
                 PublishSeconds += published;
                 if (published > MaxPublishSeconds) { MaxPublishSeconds = published; MaxCutMembers = members; }
+#endif
                 // The crossed members' classifications went to their cuts; the snapshot's holds go back (the cuts took holds of their own).
                 foreach (MemberSnapshot m in p.members) { m.classification = null; m.Release(); }
                 p.work.released = true;
@@ -1291,7 +1335,7 @@ namespace Zantetsu.PhysicsCut
                 return null;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             double rescheduleWait = 0.0;
             // The members, and on a negative side the crossed members standing there by their copies; each member's cut
             // (when it has one among those asked with) found by a lookup, not a scan of the cuts per member.
@@ -1313,10 +1357,12 @@ namespace Zantetsu.PhysicsCut
             double waitedBefore = MassRescheduleWaitSeconds;
             PendingMass pending = PendMass(group);
             rescheduleWait = MassRescheduleWaitSeconds - waitedBefore;
+#if ZANTETSU_OBSERVE
             double scheduled = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             MassSeconds += scheduled;
             MassSampleSeconds += scheduled - rescheduleWait;
             MaxMassSampleSeconds = Math.Max(MaxMassSampleSeconds, scheduled - rescheduleWait);
+#endif
             MassSchedules++;
             MassSamplesGathered += _massSamples.Count;
             return pending;
@@ -1337,7 +1383,7 @@ namespace Zantetsu.PhysicsCut
                 return null;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             _massSamples.Clear();
             foreach (MemberSnapshot m in snapshots)
             {
@@ -1362,10 +1408,12 @@ namespace Zantetsu.PhysicsCut
 
             PendingMass pending = PendMass(side);
             pending.localFrame = true;
+#if ZANTETSU_OBSERVE
             double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             MassSeconds += seconds;
             MassSampleSeconds += seconds;
             MaxMassSampleSeconds = Math.Max(MaxMassSampleSeconds, seconds);
+#endif
             MassSchedules++;
             MassSamplesGathered += _massSamples.Count;
             return pending;
@@ -1376,11 +1424,13 @@ namespace Zantetsu.PhysicsCut
         {
             if (_pendingMass.TryGetValue(group, out PendingMass earlier))
             {
-                long waitBegin = Stopwatch.GetTimestamp();
+                long waitBegin = Began();
                 FreePending(earlier);
+#if ZANTETSU_OBSERVE
                 double waited = (Stopwatch.GetTimestamp() - waitBegin) / (double)Stopwatch.Frequency;
                 MassRescheduleWaitSeconds += waited;
                 MassWaitSeconds += waited;
+#endif
                 MassReschedules++;
                 _pendingMass.Remove(group);
             }
@@ -1415,23 +1465,30 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Stopwatch.GetTimestamp();   // the whole apply's time feeds the reserve's running estimate below: a budget's input, kept
             double waited = 0.0;
-            var parts = new double[8];
             int groups = 0, members = 0, hulls = 0;
+#if ZANTETSU_OBSERVE
+            double[] parts = _massApplyParts;   // the breakdown by part is a readout (DESIGN 21.18), not made in a Release Player
+            Array.Clear(parts, 0, parts.Length);
             long mark = begin;
+#endif
             void Part(int index)
             {
+#if ZANTETSU_OBSERVE
                 long now = Stopwatch.GetTimestamp();
                 parts[index] += (now - mark) / (double)Stopwatch.Frequency;
                 mark = now;
+#endif
             }
 
             foreach (KeyValuePair<FusedGroup, PendingMass> entry in _pendingMass)
             {
                 PendingMass pending = entry.Value;
                 FusedGroup group = entry.Key;
+#if ZANTETSU_OBSERVE
                 mark = Stopwatch.GetTimestamp();
+#endif
                 try
                 {
                     if (!pending.scheduled || group.Body == null || group.Root == null)
@@ -1439,9 +1496,11 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    long waitBegin = Stopwatch.GetTimestamp();
+                    long waitBegin = Began();
                     pending.handle.Complete();
+#if ZANTETSU_OBSERVE
                     waited += (Stopwatch.GetTimestamp() - waitBegin) / (double)Stopwatch.Frequency;
+#endif
                     Part(0);
                     groups++;
                     members += pending.samples.Length;
@@ -1531,7 +1590,9 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     mark = Stopwatch.GetTimestamp();
+#endif
                     FreePending(pending);
                     Part(7);
                 }
@@ -1540,11 +1601,14 @@ namespace Zantetsu.PhysicsCut
             int count = _pendingMass.Count;
             _pendingMass.Clear();
             double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#if ZANTETSU_OBSERVE
             for (int i = 0; i < parts.Length; i++) MassApplyPartSeconds[i] += parts[i];
+#endif
             MassApplyEnds++;
             MassGroupsApplied += groups;
             MassMembersApplied += members;
             MassHullsApplied += hulls;
+#if ZANTETSU_OBSERVE
             if (seconds > MaxMassApplySeconds)
             {
                 var line = new System.Text.StringBuilder();
@@ -1552,13 +1616,16 @@ namespace Zantetsu.PhysicsCut
                 for (int i = 0; i < parts.Length; i++) line.Append(' ').Append(MassApplyPartNames[i]).Append(' ').Append((parts[i] * 1000).ToString("F3"));
                 MaxMassApplyBreakdown = line.ToString();
             }
+#endif
 
+#if ZANTETSU_OBSERVE
             MassSeconds += seconds;
             MassApplySeconds += seconds;
             MaxMassApplySeconds = Math.Max(MaxMassApplySeconds, seconds);
             MassWaitSeconds += waited;
             MaxMassWaitSeconds = Math.Max(MaxMassWaitSeconds, waited);
             if (seconds > MaxMassSeconds) MaxMassSeconds = seconds;
+#endif
             if (count > 0)
             {
                 // The running mean of one group's apply (its wait included), for the reserve the budget holds back before a unit begins.

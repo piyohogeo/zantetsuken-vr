@@ -1,0 +1,208 @@
+using NUnit.Framework;
+using Zantetsu.Core.Statistics;
+
+namespace Zantetsu.Core.Tests
+{
+    /// <summary>
+    /// The connections of the play statistics (DESIGN 21.18), through the collector alone: the agreement begins the epoch
+    /// of the first counted frame by itself (and a re-agreement after a withdrawal does so again); a change of
+    /// conditions begins its epoch at once; the frame times that arrive late are set aside after every boundary until
+    /// the lag has passed; the game's cumulative counters are counted from the agreement on and across a replacement
+    /// of what keeps them.
+    /// </summary>
+    public sealed class PlayStatisticsCollectorTests
+    {
+        private static PlayConditions Conditions(string scene, bool debug = false)
+        {
+            return new PlayConditions { Scene = scene, Mode = "play", DrawRoute = "VP3C-NATIVE", XrRuntime = "test", RefreshRateHz = 72f, RenderScale = 1f, EyeTextureWidth = 1680, EyeTextureHeight = 1760, MsaaSamples = 4, CutSurfaceDebug = debug };
+        }
+
+        private static FrameTimeSample Full() => new FrameTimeSample { HasMain = true, MainMs = 8f, HasRender = true, RenderMs = 3f, HasGpu = true, GpuMs = 6f, HasGpuXr = true, GpuXrMs = 6.5f };
+
+        // Ordinary frames under the same conditions, with a revision that does not change.
+        private static int Play(PlayStatisticsCollector c, int frames, string scene = "WalkCity", long revision = 1, bool paused = false, bool focused = true, bool ready = true)
+        {
+            int counted = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                if (c.Frame(ready, paused, focused, Conditions(scene), 13.9f, Full(), revision)) counted++;
+            }
+
+            return counted;
+        }
+
+        [Test]
+        public void TheAgreement_BeginsTheEpochOfTheFirstCountedFrame_ByItself_AndAReAgreementAfterAWithdrawalDoesSoAgain()
+        {
+            var s = new PlayStatistics();
+            var c = new PlayStatisticsCollector(s);
+            Assert.That(Play(c, 20), Is.Zero, "nothing before the agreement");
+            Assert.That(s.HasPlay, Is.False);
+            Assert.That(s.EpochCount, Is.Zero);
+
+            c.Agree();
+            int counted = Play(c, 20);
+            // The first frame after the agreement is the gate's resume; the second begins the epoch (not counted); the rest count.
+            Assert.That(counted, Is.EqualTo(18));
+            Assert.That(s.EpochCount, Is.EqualTo(1), "the epoch of the frames' own conditions, begun without any other call");
+            Assert.That(s.Current.Conditions, Is.EqualTo(Conditions("WalkCity")));
+            Assert.That(s.Current.Frames, Is.EqualTo(18));
+            Assert.That(s.FramesOutsideEpochs, Is.Zero, "no frame went outside an epoch");
+            Assert.That(s.Current.PlaySeconds, Is.EqualTo(18 * 0.0139).Within(1e-6));
+
+            c.Withdraw();
+            Assert.That(s.HasPlay, Is.False, "cleared");
+            Assert.That(s.EpochCount, Is.Zero);
+            Assert.That(Play(c, 10), Is.Zero, "nothing after the withdrawal");
+            Assert.That(s.HasPlay, Is.False);
+
+            c.Agree();
+            Assert.That(Play(c, 12), Is.EqualTo(10), "a re-agreement under the same conditions counts again");
+            Assert.That(s.EpochCount, Is.EqualTo(1));
+            Assert.That(s.Current.Frames, Is.EqualTo(10), "from nothing: what was counted before the withdrawal is not back");
+        }
+
+        [Test]
+        public void AChangeOfConditions_BeginsItsEpochAtOnce_TheFrameOfTheChangeInNeither()
+        {
+            var s = new PlayStatistics();
+            var c = new PlayStatisticsCollector(s);
+            c.Agree();
+            Play(c, 12, "WalkCity");
+            Assert.That(s.EpochAt(0).Frames, Is.EqualTo(10));
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity", debug: true), 13.9f, Full(), 1), Is.False, "the frame of the change is not counted");
+            Assert.That(s.EpochCount, Is.EqualTo(2), "the new conditions' epoch, begun in that frame");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity", debug: true), 13.9f, Full(), 1), Is.True, "the next frame is the new epoch's (its interval is a frame's own)");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity", debug: true), 13.9f, Full(), 1), Is.True);
+            Assert.That(s.EpochAt(1).Frames, Is.EqualTo(2));
+            Assert.That(s.EpochAt(1).Unattributed, Is.EqualTo(2), "their late times set aside: the lag starts over at the change");
+            Assert.That(s.EpochAt(0).Frames, Is.EqualTo(10), "the old epoch took none of them");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity"), 13.9f, Full(), 1), Is.False, "back to the first conditions: that frame of neither");
+            Assert.That(s.EpochCount, Is.EqualTo(2), "conditions seen before: their epoch again, no new one");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity"), 13.9f, Full(), 1), Is.True);
+            Assert.That(s.EpochAt(0).Frames, Is.EqualTo(11));
+        }
+
+        [Test]
+        public void TheLateTimes_AreSetAsideAfterEveryBoundary_UntilTheLagHasPassed_AndAStructureThatDiffersAcrossAGapIsNoChange()
+        {
+            var s = new PlayStatistics();
+            var c = new PlayStatisticsCollector(s);
+            c.Agree();
+            int lag = PlayStatisticsCollector.AttributionLagFrames;
+            Assert.That(lag, Is.EqualTo(8));
+            Play(c, 2);   // the resume and the epoch's beginning
+            Play(c, lag);
+            PlayEpoch e = s.Current;
+            Assert.That(e.Frames, Is.EqualTo(lag));
+            Assert.That(e.Unattributed, Is.EqualTo(lag), "every frame within the lag: its FrameTimingManager values set aside");
+            Assert.That(e.MainMissing, Is.EqualTo(lag));
+            Assert.That(e.Main.Samples, Is.Zero);
+            Assert.That(e.GpuXrMissing, Is.EqualTo(1), "the XR display's time is the last frame's: one frame set aside");
+            Assert.That(e.GpuXr.Samples, Is.EqualTo(lag - 1));
+            Assert.That(e.Interval.Samples, Is.EqualTo(lag), "the interval is this frame's own: always taken");
+
+            Play(c, 5);
+            Assert.That(e.Frames, Is.EqualTo(lag + 5));
+            Assert.That(e.Unattributed, Is.EqualTo(lag), "past the lag: taken");
+            Assert.That(e.Main.Samples, Is.EqualTo(5));
+            Assert.That(c.UnattributedFrames, Is.EqualTo(lag));
+
+            // A pause: a boundary. The structure's revision differs after it -- not a change of the frame that resumes.
+            Assert.That(Play(c, 3, paused: true), Is.Zero);
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity"), 13.9f, Full(), 2), Is.False, "the first frame back");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity"), 13.9f, Full(), 2), Is.True);
+            Assert.That(e.StructureChangedFrames, Is.Zero, "the revision 1 -> 2 across the gap is not counted as a change");
+            Assert.That(c.Frame(true, false, true, Conditions("WalkCity"), 13.9f, Full(), 3), Is.True);
+            Assert.That(e.StructureChangedFrames, Is.EqualTo(1), "a change between two counted frames is");
+            Assert.That(e.Unattributed, Is.EqualTo(lag + 2), "the lag starts over after the boundary");
+            Play(c, lag);
+            Assert.That(e.Unattributed, Is.EqualTo(2 * lag));
+            Assert.That(e.Main.Samples, Is.EqualTo(5 + 2), "the two frames past the second lag");
+            Assert.That(s.EpochCount, Is.EqualTo(1), "the same conditions all along: one epoch");
+
+            // The focus lost, the world not ready: boundaries too.
+            Assert.That(Play(c, 1, focused: false), Is.Zero);
+            Assert.That(Play(c, 1), Is.Zero);
+            Assert.That(Play(c, 1, ready: false), Is.Zero);
+            Assert.That(Play(c, 2), Is.EqualTo(1));
+            Assert.That(e.Unattributed, Is.EqualTo(2 * lag + 1));
+        }
+
+        [Test]
+        public void TheCounters_StartFromTheAgreement_AndCarryOverAReplacementOfWhatKeepsThem()
+        {
+            var s = new PlayStatistics();
+            var c = new PlayStatisticsCollector(s);
+            // Before the agreement: not read.
+            c.Total(PlayTotalKind.AcceptedCuts, 1, 50);
+            c.Failure(PlayFailureKind.RingFull, 1, 9);
+            Assert.That(s.AcceptedCuts, Is.Zero);
+            Assert.That(s.Failures(PlayFailureKind.RingFull), Is.Zero);
+
+            c.Agree();
+            c.Total(PlayTotalKind.AcceptedCuts, 1, 50);   // the first reading after the agreement: the base
+            Assert.That(s.AcceptedCuts, Is.Zero, "the 50 cuts before the agreement are not counted");
+            c.Total(PlayTotalKind.AcceptedCuts, 1, 53);
+            Assert.That(s.AcceptedCuts, Is.EqualTo(3));
+            c.Total(PlayTotalKind.AcceptedCuts, 2, 2);    // the world replaced: its counter starts over
+            Assert.That(s.AcceptedCuts, Is.EqualTo(5), "the 3 carried, the new world's 2 added");
+            c.Total(PlayTotalKind.AcceptedCuts, 2, 1);    // a counter that fell within its generation: a new source
+            Assert.That(s.AcceptedCuts, Is.EqualTo(6));
+            c.Total(PlayTotalKind.AcceptedCuts, 2, 1);
+            Assert.That(s.AcceptedCuts, Is.EqualTo(6), "the same reading twice adds nothing");
+
+            c.Failure(PlayFailureKind.RingFull, 1, 9);
+            c.Failure(PlayFailureKind.RingFull, 1, 11);
+            c.Failure(PlayFailureKind.RingFull, 2, 0);
+            c.Failure(PlayFailureKind.RingFull, 2, 4);
+            Assert.That(s.Failures(PlayFailureKind.RingFull), Is.EqualTo(6));
+
+            c.Capacity(PlayCapacityKind.CpuVertices, 1, end: 1000, capacity: 4096, growthsTotal: 7, shortfallsTotal: 2);
+            c.Capacity(PlayCapacityKind.CpuVertices, 1, end: 900, capacity: 4096, growthsTotal: 8, shortfallsTotal: 2);
+            PlayCapacity v = s.Capacity(PlayCapacityKind.CpuVertices);
+            Assert.That(v.MaxEnd, Is.EqualTo(1000), "the highest end in use");
+            Assert.That(v.MinHeadroomToCapacity, Is.EqualTo(3096), "the least headroom to the capacity");
+            Assert.That(v.Growths, Is.EqualTo(1), "growths from the agreement: 8 - 7");
+            Assert.That(v.Shortfalls, Is.Zero);
+
+            // A failure kept by several sources (the camera drawings' routes): each tracked apart, the statistic their sum.
+            c.Failure(PlayFailureKind.DrawRefused, source: 2, generation: 1, total: 2);
+            c.Failure(PlayFailureKind.DrawRefused, source: 3, generation: 1, total: 3);
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.Zero, "the first readings are the bases");
+            c.Failure(PlayFailureKind.DrawRefused, source: 2, generation: 1, total: 4);
+            c.Failure(PlayFailureKind.DrawRefused, source: 3, generation: 1, total: 6);
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.EqualTo(5), "2 + 3 since the agreement");
+            c.Failure(PlayFailureKind.DrawRefused, source: 2, generation: 2, total: 0);   // that route remade: its count starts over
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.EqualTo(5), "no failure happened: nothing added, nothing lost");
+            c.Failure(PlayFailureKind.DrawRefused, source: 2, generation: 2, total: 1);
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.EqualTo(6));
+            c.Failure(PlayFailureKind.DrawRefused, source: PlayStatisticsCollector.MaxSources, generation: 1, total: 100);
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.EqualTo(6), "a source past the limit is not counted");
+
+            // Withdrawn and agreed again with several sources: no source read before the withdrawal comes back into the sum
+            // (TL review 3: the first source's new base must not be summed with the second's old value).
+            c.Withdraw();
+            c.Agree();
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.Zero);
+            c.Failure(PlayFailureKind.DrawRefused, source: 2, generation: 2, total: 1);   // the first source read: its base
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.Zero, "the second source, not yet read again, adds nothing of its old count");
+            c.Failure(PlayFailureKind.DrawRefused, source: 3, generation: 1, total: 6);   // the second source read: its base
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.Zero);
+            c.Failure(PlayFailureKind.DrawRefused, source: 3, generation: 1, total: 7);
+            Assert.That(s.Failures(PlayFailureKind.DrawRefused), Is.EqualTo(1), "only what happened after the re-agreement");
+
+            c.Settings(new PlayUiSettings { Known = true, Volume = 0.8f, MoveSpeed = 1.5f, TurnDegrees = 90f, TurnIsContinuous = true, BladeAngleDegrees = 30f });
+            Assert.That(s.Settings.Known, Is.True);
+            Assert.That(s.Settings.BladeAngleDegrees, Is.EqualTo(30f));
+
+            c.Withdraw();
+            Assert.That(s.AcceptedCuts, Is.Zero);
+            Assert.That(s.Settings.Known, Is.False);
+            c.Agree();
+            c.Total(PlayTotalKind.AcceptedCuts, 2, 40);
+            c.Total(PlayTotalKind.AcceptedCuts, 2, 41);
+            Assert.That(s.AcceptedCuts, Is.EqualTo(1), "a re-agreement takes a new base");
+        }
+    }
+}

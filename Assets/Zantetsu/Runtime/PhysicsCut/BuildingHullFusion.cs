@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -510,7 +513,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         internal ProvisionalCutAcceptance TryCut(HullGroup group, float4 planeGroup, float4 planeWorld, long slashId, long planeId, float3 travelWorld = default)
         {
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             try
             {
                 if (!Enabled || group.State == HullGroupState.Gone || group.Root == null) return ProvisionalCutAcceptance.InvalidRequest;
@@ -569,7 +572,9 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
+#if ZANTETSU_OBSERVE
                 HitSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
             }
         }
 
@@ -610,7 +615,7 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            long scanBegin = Stopwatch.GetTimestamp();
+            long scanBegin = Began();
             try
             {
             while (cut.cursor < group.Members.Count)
@@ -633,7 +638,9 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
+#if ZANTETSU_OBSERVE
                 PrepareDisplaySeconds += (Stopwatch.GetTimestamp() - scanBegin) / (double)Stopwatch.Frequency;
+#endif
             }
 
             int positives = 0, negatives = 0, crossed = 0;
@@ -834,7 +841,14 @@ namespace Zantetsu.PhysicsCut
             hit.outcome = outcome;
             hit.answeredAt = _realSeconds();
             if (hit.reservation != null) hit.reservation.open = false;   // collected: the lineage's consumption from here, until the Slash ends
-            if (published) { HitsPublished++; hit.publishedAt = _realSeconds(); double wait = hit.publishedAt - hit.askedAt; MaxAskToPublishSeconds = Math.Max(MaxAskToPublishSeconds, wait); AskToPublishSeconds += wait; }
+            if (published)
+            {
+                HitsPublished++;
+                hit.publishedAt = _realSeconds();
+#if ZANTETSU_OBSERVE
+                double wait = hit.publishedAt - hit.askedAt; MaxAskToPublishSeconds = Math.Max(MaxAskToPublishSeconds, wait); AskToPublishSeconds += wait;
+#endif
+            }
             else HitsRefused++;
         }
 
@@ -858,8 +872,21 @@ namespace Zantetsu.PhysicsCut
 
         private void Unit(string name, long begin)
         {
+#if ZANTETSU_OBSERVE
             double s = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             if (s > _stepUnitSeconds) { _stepUnitSeconds = s; _stepUnit = name; }
+#endif
+        }
+
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
         }
 
         /// <summary>The Steps over the budget: each's length and its largest unit, newest last (at most 64).</summary>
@@ -934,11 +961,15 @@ namespace Zantetsu.PhysicsCut
         public void Step()
         {
             if (!Enabled) return;
+#if ZANTETSU_OBSERVE
             _stepWatch.Restart();
+#endif
             _budgetStart = Stopwatch.GetTimestamp();
             _inStep = true;
+#if ZANTETSU_OBSERVE
             _stepUnit = null;
             _stepUnitSeconds = 0.0;
+#endif
             try
             {
                 StepPairs();
@@ -954,6 +985,7 @@ namespace Zantetsu.PhysicsCut
             finally
             {
                 _inStep = false;
+#if ZANTETSU_OBSERVE
                 _stepWatch.Stop();
                 double s = _stepWatch.Elapsed.TotalSeconds;
                 StepSeconds += s;
@@ -964,6 +996,7 @@ namespace Zantetsu.PhysicsCut
                     OverrunSeconds += s - _settings.mainBudgetSeconds;
                     if (_overrunUnits.Count < 64) _overrunUnits.Add("step " + (s * 1000).ToString("F3") + " ms, largest unit " + (_stepUnit ?? "(none)") + " " + (_stepUnitSeconds * 1000).ToString("F3") + " ms");
                 }
+#endif
             }
         }
 
@@ -975,7 +1008,7 @@ namespace Zantetsu.PhysicsCut
                 if (cut.stage == CutStage.Display)
                 {
                     if (!MayStart()) return;
-                    long displayBegin = Stopwatch.GetTimestamp();
+                    long displayBegin = Began();
                     PublishOutcome shown = PublishDisplayOnly(cut);
                     Unit("display publication", displayBegin);
                     if (shown == PublishOutcome.WaitingForRoom) { cut.roomWaits++; RoomWaits++; continue; }
@@ -986,9 +1019,11 @@ namespace Zantetsu.PhysicsCut
                 if (cut.stage == CutStage.Preparing)
                 {
                     if (!MayStart()) return;
-                    long prepareBegin = Stopwatch.GetTimestamp();
+                    long prepareBegin = Began();
                     bool ended = Prepare(cut);
+#if ZANTETSU_OBSERVE
                     PrepareSeconds += (Stopwatch.GetTimestamp() - prepareBegin) / (double)Stopwatch.Frequency;
+#endif
                     Unit("preparation", prepareBegin);
                     if (ended && cut.request == null) _cuts.RemoveAt(i);
                     continue;
@@ -996,25 +1031,33 @@ namespace Zantetsu.PhysicsCut
 
                 if (cut.stage == CutStage.Cooking)
                 {
-                    long begin = Stopwatch.GetTimestamp();
+                    long begin = Began();
                     if (cut.hit.cookSerial < 0) cut.hit.cookSerial = cut.request.Serial;   // given at the cook's reservation, after the submission
                     while (cut.request.Stage == PhysicsCutStage.Checking)
                     {
-                        if (_cook.holdHullChecksForTest || !MayStart()) { PrepareSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency; return; }
-                        long checkBegin = Stopwatch.GetTimestamp();
+                        if (_cook.holdHullChecksForTest || !MayStart())
+                        {
+#if ZANTETSU_OBSERVE
+                            PrepareSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
+                            return;
+                        }
+                        long checkBegin = Began();
                         _cook.CheckNextHull(cut.request);
                         HullChecks++;
                         Unit("hull check", checkBegin);
                     }
 
+#if ZANTETSU_OBSERVE
                     PrepareSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                     if (!cut.request.IsOver) continue;
                 }
 
                 if (!MayStart()) return;
                 if (cut.request.Products != null)
                 {
-                    long publishBegin = Stopwatch.GetTimestamp();
+                    long publishBegin = Began();
                     PublishOutcome outcome = Publish(cut);
                     Unit("publication", publishBegin);
                     if (outcome == PublishOutcome.WaitingForRoom) { cut.stage = CutStage.WaitingForRoom; cut.roomWaits++; RoomWaits++; continue; }

@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -2167,7 +2170,9 @@ namespace Zantetsu.MeshCut
             VpMultiCutSnapshot building = null;
             VpCapJobClassification capJobs = null;
             bool taken = false;
+#if ZANTETSU_OBSERVE
             long preparationBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             try
             {
                 // The room: reserved for what the limits allow, committed for the first room and written, before play.
@@ -2243,8 +2248,10 @@ namespace Zantetsu.MeshCut
                 display._separateClip = separateClip;
                 display._clipMaterials = clipMaterials;
                 display.ClipSeparationRefusal = clipRefusal;
+#if ZANTETSU_OBSERVE
                 display.RoomReadyAt = System.Diagnostics.Stopwatch.GetTimestamp();
                 display.RoomPreparationMilliseconds = (display.RoomReadyAt - preparationBegin) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+#endif
                 taken = true;
                 return true;
             }
@@ -2308,7 +2315,9 @@ namespace Zantetsu.MeshCut
                 // the first frame this camera is prepared in. Making it, writing it and handing it to the camera's slot
                 // are one protection: a batch that was not handed over -- its staging refused, a buffer that could not
                 // be made or written -- is given back here, and the camera is not registered.
+#if ZANTETSU_OBSERVE
                 long began = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                 VpStencilCapBatch batch = null;
                 bool handedOver = false;
                 try
@@ -2333,11 +2342,13 @@ namespace Zantetsu.MeshCut
                     }
                 }
 
+#if ZANTETSU_OBSERVE
                 LastCameraRoomMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 if (FirstCameraRoomAt == 0)
                 {
                     FirstCameraRoomAt = System.Diagnostics.Stopwatch.GetTimestamp();
                 }
+#endif
 
                 return true;
             }
@@ -2667,7 +2678,9 @@ namespace Zantetsu.MeshCut
         private void CountDraw(in VpDrawDataCounts before)
         {
             VpDrawDataCounts now = DrawTotals();
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
             ref VpDrawDataCounts into = ref _countsNow.draw;
             into.known = true;
             into.commandsWritten += now.commandsWritten - before.commandsWritten;
@@ -2769,7 +2782,9 @@ namespace Zantetsu.MeshCut
 
         private void CountCollection(long builds, long validations, long placements)
         {
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
             _countsNow.collections++;
             _countsNow.structureBuilds += builds;
             _countsNow.structureValidations += validations;
@@ -3572,24 +3587,30 @@ namespace Zantetsu.MeshCut
             in VpStorageCutSide negative,
             int capTriangles)
         {
+#if ZANTETSU_OBSERVE
+            // The commit's record -- its time, by part, and the list of them -- is a readout (DESIGN 21.18): not made in a
+            // Release Player, which keeps the count alone.
             long begin = System.Diagnostics.Stopwatch.GetTimestamp();
             _commitNow = new CommitRecord { frame = Time.frameCount, operation = operation.value, source = source.value, shown = _shown.Count, outcome = "an exception" };
             _commitMark = begin;
             double setsBefore = _reflectedSets.seconds;
+#endif
             try
             {
                 return TryCommitCutCore(source, operation, plane, positiveFragment, in positive, negativeFragment, in negative, capTriangles);
             }
             finally
             {
-                double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
                 CommitCalls++;
+#if ZANTETSU_OBSERVE
+                double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
                 CommitSeconds += seconds;
                 MaxCommitSeconds = Math.Max(MaxCommitSeconds, seconds);
                 _commitNow.total = seconds;
                 _commitNow.sets = _reflectedSets.seconds - setsBefore;
                 _commitNow.register = Math.Max(0.0, _commitNow.register - _commitNow.sets);   // the sets are made inside the taking in
                 if (_commitRecords.Count < CommitRecordLimit) _commitRecords.Add(_commitNow);
+#endif
             }
         }
 
@@ -4337,9 +4358,11 @@ namespace Zantetsu.MeshCut
 
         private void CommitLap(ref double part)
         {
+#if ZANTETSU_OBSERVE
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             part += (now - _commitMark) / (double)System.Diagnostics.Stopwatch.Frequency;
             _commitMark = now;
+#endif
         }
 
         /// <summary>The commits of a cut's sides: how many, their time in all and the longest (the reflected sets' making included).</summary>
@@ -4449,10 +4472,12 @@ namespace Zantetsu.MeshCut
             }
 
             _drawRegisteredThisFrame = true;
+#if ZANTETSU_OBSERVE
             if (FirstRenderAt == 0)
             {
                 FirstRenderAt = System.Diagnostics.Stopwatch.GetTimestamp();
             }
+#endif
             cameraStencil.drawnFrame = CurrentFrame;
 
             // Selecting on the GPU: these draws read what this camera's selection writes, which whoever put this
@@ -4928,7 +4953,9 @@ namespace Zantetsu.MeshCut
                 return;
             }
 
+#if ZANTETSU_OBSERVE
             long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             selection.Begin(count);
             for (int i = 0; i < count; i++)
             {
@@ -4946,7 +4973,9 @@ namespace Zantetsu.MeshCut
                 ClipSelectionBytes += _batch.WriteClipSelection(commands, slot.view, selection);
             }
 
+#if ZANTETSU_OBSERVE
             ClipCullTicks += System.Diagnostics.Stopwatch.GetTimestamp() - begin;
+#endif
         }
 
         /// <summary>What <paramref name="camera"/> keeps of the clip list, for tests: null when it has registered no clip list draw.</summary>
@@ -5494,6 +5523,8 @@ namespace Zantetsu.MeshCut
 
         private void EnterCollectStage(int stage)
         {
+#if ZANTETSU_OBSERVE
+            // The time by stage and the compaction's cost by stage (D-202) are readouts (DESIGN 21.18): not taken in a Release Player.
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             if (_collectStage >= 0)
             {
@@ -5503,11 +5534,12 @@ namespace Zantetsu.MeshCut
 
             _stageBegan = now;
             s_collectStages[stage].Begin();
-            _collectStage = stage;
             if (_compactThisPass)
             {
-                _compactionStageAt[stage] = System.Diagnostics.Stopwatch.GetTimestamp();   // the compaction's cost, by stage (D-202)
+                _compactionStageAt[stage] = System.Diagnostics.Stopwatch.GetTimestamp();
             }
+#endif
+            _collectStage = stage;
         }
 
         // ----- what a collection keeps from the one before (DESIGN 5.6) -----------------------------------------------
@@ -5871,8 +5903,12 @@ namespace Zantetsu.MeshCut
             }
 
             CompactionCandidateCollections++;
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
+#if ZANTETSU_OBSERVE
             _countsNow.draw.compactionCandidates++;
+#endif
             string reason = null;
             if (_candidateSlotsWhole)
             {
@@ -5904,7 +5940,7 @@ namespace Zantetsu.MeshCut
 
             // The order: the live registrations by the frame the ordinary processing last wrote a record of them, the
             // oldest first; among those of one frame, as they stand now, so that nothing moves for no reason.
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();   // the compaction's start: _compactionBegan -> _compactionCosts, the gate's expectation (kept in every build)
             int n = 0;
             bool heldAndNotDrawn = false;
             for (int g = 0; g < _shown.Count; g++)
@@ -6019,7 +6055,9 @@ namespace Zantetsu.MeshCut
             LastCompactionOldestFrame = n > 0 ? (int)(_orderKeys[0] >> 32) : 0;
             LastCompactionNewestFrame = n > 0 ? (int)(_orderKeys[n - 1] >> 32) : 0;
             CompactionRegistrationsMoved += moved;
+#if ZANTETSU_OBSERVE
             LastCompactionOrderSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             Array.Clear(_orderEntries, 0, n);
             Array.Clear(_commandOrderEntries, 0, n);
             return !FailAfterCompactionPlanForTest;
@@ -6032,7 +6070,9 @@ namespace Zantetsu.MeshCut
             LastCompactionSkipReason = reason;
             _compactionSkipReasons.TryGetValue(reason, out int times);
             _compactionSkipReasons[reason] = times + 1;
+#if ZANTETSU_OBSERVE
             _countsNow.draw.compactionsSkipped++;
+#endif
             return true;
         }
 
@@ -6358,8 +6398,12 @@ namespace Zantetsu.MeshCut
             _writesSinceCompaction += written;
             if (written > 0)
             {
+#if ZANTETSU_OBSERVE
                 CountingFrame();
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.historyWrites += written;
+#endif
             }
 
             if (_compactThisPass)
@@ -6368,19 +6412,35 @@ namespace Zantetsu.MeshCut
                 double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - _compactionBegan) / frequency;
                 _compactionCosts[_compactionCostCount % _compactionCosts.Length] = seconds;
                 _compactionCostCount++;
-                LastCompactionSeconds = seconds;
+                LastCompactionSeconds = seconds;   // (the cost the gate's expectation is made of: kept in every build)
+#if ZANTETSU_OBSERVE
                 LastCompactionWriteSeconds = (_compactionStageAt[6] - _compactionStageAt[5]) / frequency;
                 LastCompactionUploadSeconds = (_compactionStageAt[8] - _compactionStageAt[7]) / frequency;
+#endif
                 LastCompactionFrame = adoptedFrame;
                 Compactions++;
                 CompactionRecordsLaidOut += LastCompactionRecords;
+#if ZANTETSU_OBSERVE
                 CountingFrame();
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactions++;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactionRecordsMoved += LastCompactionRecords;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactionMilliseconds += seconds * 1000.0;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactionOrderMilliseconds += LastCompactionOrderSeconds * 1000.0;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactionWriteMilliseconds += LastCompactionWriteSeconds * 1000.0;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.draw.compactionUploadMilliseconds += LastCompactionUploadSeconds * 1000.0;
+#endif
                 _compactThisPass = false;
 
                 // The baseline of the next candidate. What this very collection's ordinary processing wrote was laid
@@ -6485,16 +6545,22 @@ namespace Zantetsu.MeshCut
 
         private bool TryCollectAndUpload()
         {
+#if ZANTETSU_OBSERVE
+            // The frame's counts (FrameCounts, read by the checks): what this collection added to the running totals, as
+            // the difference of copies taken before and after. Observation: none of it in a Release Player (DESIGN 21.18).
             long builds = StructureBuilds, validations = StructureValidations, placements = PlacementPasses;
             VpDrawDataCounts drawBefore = DrawTotals();
             VpSnapshotStageTotals stagesBefore = SumStages();
             VpHeldPlacementTotals holdsBefore = _holds.Totals;
+            _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             _placementReused = false;
             _placementPassSkipped = false;
-            _collectBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             OpenSlotPass();
+#if ZANTETSU_OBSERVE
             SumValidate(_validateBefore);
             SumPlace(_placeStructuralBefore, _placePlacementOnlyBefore);
+#endif
             try
             {
                 return TryCollectAndUploadStages();
@@ -6506,11 +6572,15 @@ namespace Zantetsu.MeshCut
             }
             finally
             {
+#if ZANTETSU_OBSERVE
                 long ended = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                 if (_collectStage >= 0)
                 {
                     s_collectStages[_collectStage].End();
+#if ZANTETSU_OBSERVE
                     _stageSeconds[_collectStage] += (ended - _stageBegan) * s_secondsPerTick;
+#endif
                 }
 
                 _collectStage = -1;
@@ -6529,16 +6599,18 @@ namespace Zantetsu.MeshCut
 
                 _placementReused = false;
                 _placementPassSkipped = false;
-
+#if ZANTETSU_OBSERVE
                 CountCollection(StructureBuilds - builds, StructureValidations - validations, PlacementPasses - placements);
 
                 // The collection's own time, whole (to here: the counting below is not in it) and by stage, and the
-                // snapshot's stages (2026-10-07).
+                // snapshot's stages (2026-10-07). A readout: not in a Release Player (DESIGN 21.18).
                 _countsNow.times.Add((ended - _collectBegan) * s_secondsPerTick, _stageSeconds, _buildCalls, _buildSeconds, _buildHeapDelta);
                 Array.Clear(_stageSeconds, 0, _stageSeconds.Length);
-                _buildCalls = 0;
                 _buildSeconds = 0.0;
                 _buildHeapDelta = 0;
+#endif
+                _buildCalls = 0;
+#if ZANTETSU_OBSERVE
                 VpSnapshotStageTotals stagesAfter = SumStages();
                 stagesAfter.Subtract(stagesBefore);
 
@@ -6563,6 +6635,7 @@ namespace Zantetsu.MeshCut
                 SumPlace(_placeStructuralAfter, _placePlacementOnlyAfter);
                 _countsNow.placeStructural.AddDifference(_placeStructuralAfter, _placeStructuralBefore);
                 _countsNow.placePlacementOnly.AddDifference(_placePlacementOnlyAfter, _placePlacementOnlyBefore);
+#endif
             }
         }
 
@@ -6701,19 +6774,27 @@ namespace Zantetsu.MeshCut
                     _placementPassSkipped = true;
                     PlacementPassesSkipped++;
                     PlacementQueriesOmitted += _building.RenderFragmentCount;
+#if ZANTETSU_OBSERVE
                     CountingFrame();
+#endif
+#if ZANTETSU_OBSERVE
                     _countsNow.statics.passesSkipped++;
+#endif
                 }
             }
 
             if (!_placementReused)
             {
-                long heapBefore = GC.GetTotalMemory(false);
+#if ZANTETSU_OBSERVE
+                long heapBefore = GC.GetTotalMemory(false);   // the builds' time and heap are a readout (DESIGN 21.18)
                 long buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                 VpMultiCutBuildOutcome outcome = _building.TryBuildIncremental(
                     _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision, _holds);
                 _buildCalls++;
+#if ZANTETSU_OBSERVE
                 _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
+#endif
 
                 // A shortage grows the count the snapshot named and builds again. Every growth at least doubles a count
                 // below its limit, or takes it to its limit, and a count at its limit is not grown but told -- so the builds
@@ -6735,14 +6816,20 @@ namespace Zantetsu.MeshCut
                         return FailRoom(ShortageName(shortage), -1, HeldFor(shortage), LimitFor(shortage), failure);
                     }
 
+#if ZANTETSU_OBSERVE
                     buildBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                     outcome = _building.TryBuildIncremental(
                         _structurePool, _snapshot, _ledger, _registrations, Placement, stampLedger, _inputRevision, _holds);
                     _buildCalls++;
+#if ZANTETSU_OBSERVE
                     _buildSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - buildBegan) * s_secondsPerTick;
+#endif
                 }
 
+#if ZANTETSU_OBSERVE
                 _buildHeapDelta += GC.GetTotalMemory(false) - heapBefore;
+#endif
                 CapPolygonBuilds += _building.SectionBuildCount;
 
                 if (outcome != VpMultiCutBuildOutcome.Built)
@@ -6867,20 +6954,30 @@ namespace Zantetsu.MeshCut
             //    collection is structural and goes through every registration as before.
             //    </para>
             bool instancesStand = !structural && _instancesSettled && !collectEverythingForTest;
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
             if (instancesStand)
             {
                 InstanceTakesSkipped++;
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.instanceTakesSkipped++;
+#endif
             }
             else
             {
                 _instancesSettled = false;
+#if ZANTETSU_OBSERVE
                 long takeBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                 bool taken = TryTakeInstances();
                 InstanceTakes++;
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.instanceTakes++;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.instanceTakeSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - takeBegan) * s_secondsPerTick;
+#endif
                 if (!taken)
                 {
                     return FailRoom("display instances", -1, _table.DisplayInstanceCapacity, _table.DisplayInstanceLimit,
@@ -7065,14 +7162,20 @@ namespace Zantetsu.MeshCut
             // structure standing and the instances settled (stage 4), every value it would write is the one standing
             // and nothing is past its need: kept (TL, 2026-10-08). A registration being let go came with a ledger
             // change, so its collection is structural and comes here.
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
             if (instancesStand)
             {
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.releasesSkipped++;
+#endif
             }
             else
             {
+#if ZANTETSU_OBSERVE
                 long releaseBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
                 for (int g = _shown.Count - 1; g >= 0; g--)
                 {
                     Shown entry = _shown[g];
@@ -7106,8 +7209,12 @@ namespace Zantetsu.MeshCut
                     }
                 }
 
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.releases++;
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.releaseSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - releaseBegan) * s_secondsPerTick;
+#endif
             }
 
             // Every registration holds exactly what the adopted structure needs: the next collection of this structure
@@ -7711,6 +7818,13 @@ namespace Zantetsu.MeshCut
 
         public int InstanceCapacity => _instanceCapacity;
 
+        /// <summary>The fixed limits the capacities above grow toward (DESIGN 4.5, 21.18): past them a shortfall is a refusal, not a growth.</summary>
+        public int CommandLimit => _limits.commands;
+        public int InstanceLimit => _limits.instances;
+        public int RenderFragmentLimit => _fragmentLimit;
+        public int GpuVertexLimit => _buffers.MaxVertexCapacity;
+        public int GpuIndexLimit => _buffers.MaxIndexCapacity;
+
         /// <summary>
         /// How many render fragments, and registrations, there is room for at once: what the snapshot, the caps and
         /// every camera's stencil batch are sized from (DESIGN 5.6). Not the draw slots' room.
@@ -7759,8 +7873,12 @@ namespace Zantetsu.MeshCut
                 }
 
                 SnapshotRegrowths++;
+#if ZANTETSU_OBSERVE
                 CountingFrame();
+#endif
+#if ZANTETSU_OBSERVE
                 _countsNow.snapshotRegrowths++;
+#endif
             }
 
             // Shared by the preparations, which never run during a collection.
@@ -7891,10 +8009,13 @@ namespace Zantetsu.MeshCut
             }
 
             RoomGrowths++;
+            CountGrowth(kind);
+#if ZANTETSU_OBSERVE
             CountingFrame();
             _countsNow.roomGrowths++;
             Debug.Log("VpLogicalCutDisplay: " + NameOf(kind) + " grown from " + held + " to " + grown + " (needed " + needed
                       + ", limit " + limit + "); " + DescribeRoom());
+#endif
             return true;
         }
 
@@ -7914,15 +8035,21 @@ namespace Zantetsu.MeshCut
             // 1): the same ledger revision and input revision, the same tally, and room that was enough is enough
             // still (it only grows). Kept while they stand (TL, 2026-10-08); run again for any change of either, as a
             // test that collects everything does.
+#if ZANTETSU_OBSERVE
             CountingFrame();
+#endif
             if (!collectEverythingForTest && _readLedgerRevision >= 0 && _talliedLedger == _readLedgerRevision && _talliedInputs == _readInputRevision)
             {
                 StructureTalliesSkipped++;
+#if ZANTETSU_OBSERVE
                 _countsNow.statics.talliesSkipped++;
+#endif
                 return true;
             }
 
+#if ZANTETSU_OBSERVE
             long tallyBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             long kept = 0;
             long keptCommands = 0;
             for (int g = 0; g < _shown.Count; g++)
@@ -7945,8 +8072,12 @@ namespace Zantetsu.MeshCut
             int grownFragments = GrownFor(kept, fragments, _fragmentLimit);
             int grownBranches = GrownFor(kept, branches, _limits.branches);
             StructureTallies++;
+#if ZANTETSU_OBSERVE
             _countsNow.statics.tallies++;
+#endif
+#if ZANTETSU_OBSERVE
             _countsNow.statics.tallySeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - tallyBegan) * s_secondsPerTick;
+#endif
             if (grownCommands == commands && grownInstances == instances && grownFragments == fragments && grownBranches == branches)
             {
                 _talliedLedger = _readLedgerRevision;
@@ -8002,10 +8133,28 @@ namespace Zantetsu.MeshCut
         private void NoteGrown(RoomKind kind, int held, int grown, long needed)
         {
             RoomGrowths++;
+            CountGrowth(kind);
+#if ZANTETSU_OBSERVE
             CountingFrame();
             _countsNow.roomGrowths++;
             Debug.Log("VpLogicalCutDisplay: " + NameOf(kind) + " grown from " + held + " to " + grown + " (needed " + needed
                       + ", limit " + LimitOf(kind) + "); " + DescribeRoom());
+#endif
+        }
+
+        /// <summary>How often each count grew, apart (DESIGN 21.18: the play statistics give each buffer its own growths, not the display's sum).</summary>
+        public int CommandGrowths { get; private set; }
+        public int InstanceGrowths { get; private set; }
+        public int FragmentGrowths { get; private set; }
+
+        private void CountGrowth(RoomKind kind)
+        {
+            switch (kind)
+            {
+                case RoomKind.Commands: CommandGrowths++; break;
+                case RoomKind.Instances: InstanceGrowths++; break;
+                case RoomKind.Fragments: FragmentGrowths++; break;
+            }
         }
 
         /// <summary>

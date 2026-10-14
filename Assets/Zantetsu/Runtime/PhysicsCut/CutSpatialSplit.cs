@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -295,6 +298,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class CutSpatialSplit
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private static readonly ProfilerMarker s_issue = new ProfilerMarker("Zantetsu.SpatialSplit.Issue");
         private static readonly ProfilerMarker s_publish = new ProfilerMarker("Zantetsu.SpatialSplit.Publish");
         private static readonly ProfilerMarker s_apply = new ProfilerMarker("Zantetsu.SpatialSplit.CutMeshes");
@@ -653,8 +666,10 @@ namespace Zantetsu.PhysicsCut
             }
 
             double spent = Since(begin);
+#if ZANTETSU_OBSERVE
             CutApplySeconds += spent;
             MaxCutApplySeconds = Math.Max(MaxCutApplySeconds, spent);
+#endif
             if (attempt.meshesBad)
             {
                 // A mesh could not be made. What was made before it is still the attempt's and goes back with it,
@@ -714,8 +729,10 @@ namespace Zantetsu.PhysicsCut
             }
 
             double spent = Since(begin);
+#if ZANTETSU_OBSERVE
             HullCheckSeconds += spent;
             MaxHullCheckTurnSeconds = Math.Max(MaxHullCheckTurnSeconds, spent);
+#endif
             if (read > 0)
             {
                 _hullCheckCosts.Add(spent / read);
@@ -788,7 +805,9 @@ namespace Zantetsu.PhysicsCut
                     _cursor = 0;
                     ForgetGoneSuppressions();
                     roundSpent = Since(roundBegin);
+#if ZANTETSU_OBSERVE
                     RoundSeconds += roundSpent;
+#endif
                     _roundCosts.Add(roundSpent);
                     if (_round.Count == 0)
                     {
@@ -849,8 +868,10 @@ namespace Zantetsu.PhysicsCut
 
             // The walk's own time: the turn's, less the issue (measured and learned apart).
             double walkSpent = Math.Max(0.0, Since(begin) - issueSpent);
+#if ZANTETSU_OBSERVE
             WalkSeconds += walkSpent;
             MaxWalkTurnSeconds = Math.Max(MaxWalkTurnSeconds, walkSpent);
+#endif
             if (examined > 0)
             {
                 _examineCosts.Add(Math.Max(0.0, walkSpent - roundSpent) / examined);
@@ -1134,7 +1155,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             double spent = Since(begin);
+#if ZANTETSU_OBSERVE
             IssueSeconds += spent;
+#endif
             _issueCosts.Add(spent);
             return spent;
         }
@@ -1150,8 +1173,10 @@ namespace Zantetsu.PhysicsCut
             {
                 // Once an attempt: this is asked again on every frame the publication is held.
                 attempt.counted = true;
+#if ZANTETSU_OBSERVE
                 WorkerSeconds += attempt.workerSeconds;
                 MaxWorkerSeconds = Math.Max(MaxWorkerSeconds, attempt.workerSeconds);
+#endif
                 LastSearch = attempt.search;
                 if (attempt.search.meshLed) MeshLedSearches++;
                 if (attempt.cut) CutAttempts++;
@@ -1160,8 +1185,10 @@ namespace Zantetsu.PhysicsCut
             if (attempt.stage == AttemptStage.Baking && !attempt.bakeCounted)
             {
                 attempt.bakeCounted = true;
+#if ZANTETSU_OBSERVE
                 BakeSeconds += attempt.bakeSeconds;
                 MaxBakeSeconds = Math.Max(MaxBakeSeconds, attempt.bakeSeconds);
+#endif
             }
 
             if (attempt.cancelled || attempt.failure != null || !attempt.ran)
@@ -1307,7 +1334,7 @@ namespace Zantetsu.PhysicsCut
 
                     // 3. The two owners, built and not in the scene: every convex inherited whole, with the masses
                     //    the worker integrated over each side's convexes (the parent's mass shared out between them).
-                    long buildBegin = Stopwatch.GetTimestamp();
+                    long buildBegin = Began();
                     // (An attempt that cut convexes built its meshes with the cooking it baked them by: that one.)
                     products = attempt.TakeProducts(
                         attempt.cut ? attempt.cooking : _world.Cook != null ? _world.Cook.Cooking : PhysicsCutCook.DefaultCooking);
@@ -1327,7 +1354,9 @@ namespace Zantetsu.PhysicsCut
                     if (!placement.IsFinite || !motion.IsFinite)
                     {
                         // Where the object stands now says nothing of what it is made of: not a failure of the input.
+#if ZANTETSU_OBSERVE
                         BuildSeconds += Since(buildBegin);
+#endif
                         End(SpatialSplitEnd.NotRun, false);
                         return;
                     }
@@ -1335,7 +1364,9 @@ namespace Zantetsu.PhysicsCut
                     if (!PhysicsOwnerBuilder.TryBuild(in build, out candidate, out PhysicsOwnerBuildOutcome built))
                     {
                         LastRefusal = "the two owners could not be built: " + built;
+#if ZANTETSU_OBSERVE
                         BuildSeconds += Since(buildBegin);
+#endif
                         End(SpatialSplitEnd.NotBuildable, true);
                         return;
                     }
@@ -1359,16 +1390,20 @@ namespace Zantetsu.PhysicsCut
                     if (!Establish(candidate))
                     {
                         Withdraw(candidate);
+#if ZANTETSU_OBSERVE
                         BuildSeconds += Since(buildBegin);
+#endif
                         End(SpatialSplitEnd.NotBuildable, true);
                         return;
                     }
 
+#if ZANTETSU_OBSERVE
                     BuildSeconds += Since(buildBegin);
+#endif
 
                     // 4. The switch. Nothing below is refused: the ledger was asked (MayReplaceBySplit, in the
                     //    examination just made), the registry has its room, the display has judged.
-                    long switchBegin = Stopwatch.GetTimestamp();
+                    long switchBegin = Began();
                     if (!ledger.ReplaceBySplit(source, attempt.positiveAnchors, attempt.negativeAnchors,
                             out LogicalFragmentId positive, out LogicalFragmentId negative))
                     {
@@ -1403,7 +1438,9 @@ namespace Zantetsu.PhysicsCut
 
                     long transferredBefore = display.SplitIndicesTransferred;
                     display.CommitSplit(source, positive, negative);
+#if ZANTETSU_OBSERVE
                     SwitchSeconds += Since(switchBegin);
+#endif
 
                     Published++;
                     if (attempt.cut)
@@ -1452,14 +1489,18 @@ namespace Zantetsu.PhysicsCut
             double spent = Since(begin);
             if (attempt.cut)
             {
+#if ZANTETSU_OBSERVE
                 CutPublishSeconds += spent;
                 MaxCutPublishTurnSeconds = Math.Max(MaxCutPublishTurnSeconds, spent);
+#endif
                 _cutPublishCosts.Add(spent);
             }
             else
             {
                 _publishCosts.Add(spent);
+#if ZANTETSU_OBSERVE
                 MaxPublishTurnSeconds = Math.Max(MaxPublishTurnSeconds, spent);
+#endif
             }
 
             if (LastEnd == SpatialSplitEnd.Published && LastPublishedFrame == Time.frameCount)
@@ -1616,8 +1657,10 @@ namespace Zantetsu.PhysicsCut
             _followCollectOf = int.MinValue;
             double seconds = CutPhysicsStep.LastCollectSeconds;
             CollectionsAfterPublication++;
+#if ZANTETSU_OBSERVE
             CollectAfterSeconds += seconds;
             MaxCollectAfterSeconds = Math.Max(MaxCollectAfterSeconds, seconds);
+#endif
             (_followIsCut ? _cutCollectAfter : _collectAfter).Add(seconds);
         }
 
@@ -1895,7 +1938,7 @@ namespace Zantetsu.PhysicsCut
                     return;
                 }
 
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 try
                 {
                     CutSpatialSplitSearch.FindPlane(
@@ -1995,7 +2038,9 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     workerSeconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                     Volatile.Write(ref _done, 1);
                 }
             }
@@ -2004,7 +2049,7 @@ namespace Zantetsu.PhysicsCut
             // for. Plain C# on the pool's worker, as the design has an optional split's bake; no Unity job.
             private void Bake()
             {
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 try
                 {
                     for (int m = 0; m < meshCount; m++)
@@ -2018,7 +2063,9 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     bakeSeconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                     Volatile.Write(ref _done, 1);
                 }
             }

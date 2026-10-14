@@ -63,3 +63,7 @@ Tools/StanfordBunny/**/*.pyc
 
 # Private build staging must never be committed.
 .bunny-demo-content-staging/
+
+# Play statistics: the local send configuration (endpoint, ingest token) is never committed (DESIGN 21.18)
+Assets/Zantetsu/Runtime/Sandbox/Resources/ZantetsuPlayStatisticsConfig.asset
+Assets/Zantetsu/Runtime/Sandbox/Resources/ZantetsuPlayStatisticsConfig.asset.meta

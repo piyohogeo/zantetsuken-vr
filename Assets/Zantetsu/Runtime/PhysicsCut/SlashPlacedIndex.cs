@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using Unity.Mathematics;
 
@@ -33,6 +36,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     internal sealed class SlashPlacedIndex<T> where T : class
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private const int LeafSize = 4;
 
         // The entries, in no order (a taken entry's place is given to the last one).
@@ -260,7 +273,7 @@ namespace Zantetsu.PhysicsCut
 
         private void Build()
         {
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.StaticIndexRebuild);
             if (_built.Length < _count)
             {
@@ -340,8 +353,10 @@ namespace Zantetsu.PhysicsCut
             _cleared = 0;
             _stale = false;
             Builds++;
+#if ZANTETSU_OBSERVE
             LastBuildSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
             BuildSecondsInAll += LastBuildSeconds;
+#endif
         }
 
         // The node over _order[start .. start + count): a leaf, or two children split at the median of the entries'

@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -666,7 +669,9 @@ namespace Zantetsu.Rendering
             // Observation (TL, 2026-10-08; on by DetailTimingArgument only): the whole call as the main thread sees it --
             // the P/Invoke, the plugin's wait for its mutex, its moment under it -- counted and timed (Stopwatch ticks; no
             // allocation). The plugin's own share of the wait and the hold is in LockStats.
+#if ZANTETSU_OBSERVE
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             try
             {
                 return ZvnIsAvailable() != 0;
@@ -677,10 +682,12 @@ namespace Zantetsu.Rendering
             }
             finally
             {
-                long took = System.Diagnostics.Stopwatch.GetTimestamp() - began;
                 AvailabilityCalls++;
+#if ZANTETSU_OBSERVE
+                long took = System.Diagnostics.Stopwatch.GetTimestamp() - began;
                 AvailabilityTicks += took;
                 if (took > AvailabilityMaxTicks) AvailabilityMaxTicks = took;
+#endif
             }
         }
 

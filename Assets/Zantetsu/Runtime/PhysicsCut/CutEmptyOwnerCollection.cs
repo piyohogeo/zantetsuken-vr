@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -172,6 +175,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class CutEmptyOwnerCollection
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private static readonly ProfilerMarker s_retire = new ProfilerMarker("Zantetsu.EmptyOwnerCollection.Retire");
 
         private readonly CutWorldRoot _world;
@@ -325,8 +338,10 @@ namespace Zantetsu.PhysicsCut
             }
 
             double spent = Since(begin);
+#if ZANTETSU_OBSERVE
             WalkSeconds += spent;
             MaxTurnSeconds = Math.Max(MaxTurnSeconds, spent);
+#endif
             if (retired > 0)
             {
                 // Only a turn that started a retirement is a sample of what such a turn costs.
@@ -377,7 +392,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             using (s_retire.Auto())
             {
                 PhysicsFragmentOwner owner = candidate.Owner;
@@ -416,7 +431,9 @@ namespace Zantetsu.PhysicsCut
                 _shapesLeaving.Add(candidate.Shape);
             }
 
+#if ZANTETSU_OBSERVE
             RetireSeconds += Since(begin);
+#endif
             return true;
         }
 

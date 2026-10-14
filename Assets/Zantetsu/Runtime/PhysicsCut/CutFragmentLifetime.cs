@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -85,6 +88,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class CutFragmentLifetime
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private readonly CutWorldRoot _world;
         private readonly HashSet<LogicalFragmentId> _lineageRoots = new HashSet<LogicalFragmentId>();
         private readonly List<LogicalFragmentId> _round = new List<LogicalFragmentId>();
@@ -247,9 +260,11 @@ namespace Zantetsu.PhysicsCut
                 Rounds++;
             }
 
+#if ZANTETSU_OBSERVE
             double spent = Since(begin);
             StepSeconds += spent;
             MaxStepSeconds = Math.Max(MaxStepSeconds, spent);
+#endif
         }
 
         /// <summary>
@@ -267,7 +282,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             if (!_world.Ledger.Retire(fragment))
             {
                 refusal = "the ledger did not retire it";
@@ -280,7 +295,9 @@ namespace Zantetsu.PhysicsCut
             _world.Geometry?.Forget(fragment);
             Retired++;
             TargetCount = Math.Max(0, TargetCount - 1);
+#if ZANTETSU_OBSERVE
             RetireSeconds += Since(begin);
+#endif
             return true;
         }
 

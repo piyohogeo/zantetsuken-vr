@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -164,12 +167,38 @@ namespace Zantetsu.Sandbox
             if (replacementTemplate != null) replacementTemplate.SetActive(false);
         }
 
+        // The crowd's start-up -- its pool, its plan's loading -- is preparation, not play (DESIGN 21.18): told from its
+        // enabling until it is ready, or until it can no longer become so.
+        private bool preparing;
+
+        private void OnEnable()
+        {
+            if (!ready && !preparing)
+            {
+                preparing = true;
+                Zantetsu.Core.Statistics.PlayPreparation.Begin();
+            }
+        }
+
+        private void OnDisable() => EndPreparing();
+
+        private void EndPreparing()
+        {
+            if (preparing)
+            {
+                preparing = false;
+                Zantetsu.Core.Statistics.PlayPreparation.End();
+            }
+        }
+
         private void Update()
         {
             using (s_update.Auto())
             {
                 UpdateCrowd();
             }
+
+            if (preparing && (ready || stopped || loadingFailed || world == null)) EndPreparing();
         }
 
         private void UpdateCrowd()
@@ -265,7 +294,9 @@ namespace Zantetsu.Sandbox
         // registers it (the plan's range is read over the bank the slot will be driven with).
         private void PrepareLodPlans()
         {
+#if ZANTETSU_OBSERVE
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             int prepared = 0, refused = 0;
             double largest = 0;
             foreach (SandboxNpcCharacter slot in pool.Slots)
@@ -275,8 +306,10 @@ namespace Zantetsu.Sandbox
                 if (slot.PrepareLodPlan(out _)) { prepared++; largest = Math.Max(largest, slot.LodPlanSeconds); }
                 else refused++;
             }
+#if ZANTETSU_OBSERVE
             double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
             Debug.Log($"MOBPLAN LOD plans prepared: {prepared} slots, {refused} without, total_ms={seconds * 1000:F2} largest_ms={largest * 1000:F2}");
+#endif
         }
 
         // Before the scenario: the scene's characters and the spares, each configured and prepared as a dormant slot.

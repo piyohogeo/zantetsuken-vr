@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
@@ -136,7 +139,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             MaxPairSpeed = Mathf.Max(MaxPairSpeed, p.maxSpeed);
+#if ZANTETSU_OBSERVE
             MaxStageRealSeconds = Math.Max(MaxStageRealSeconds, real);
+#endif
             if (why == "deadline") StopsByDeadline++; else if (why.StartsWith("the next Slash")) StopsByNextSlash++; else StopsOther++;
             foreach (HullGroup g in new[] { p.positive, p.negative })
             {

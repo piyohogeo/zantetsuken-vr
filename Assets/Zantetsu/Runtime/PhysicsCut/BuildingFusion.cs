@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -314,7 +317,9 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+#if ZANTETSU_OBSERVE
             _stepWatch.Restart();
+#endif
             _budgetStart = Stopwatch.GetTimestamp();
             _inStep = true;
             try
@@ -339,9 +344,11 @@ namespace Zantetsu.PhysicsCut
                         FuseHeldPieces(budget);
                     }
 
+#if ZANTETSU_OBSERVE
                     double fused = EndPart();
                     FuseSeconds += fused;
                     MaxFuseSeconds = Math.Max(MaxFuseSeconds, fused);
+#endif
                 }
             }
             finally
@@ -349,6 +356,7 @@ namespace Zantetsu.PhysicsCut
                 // The frame's masses, before its physics step: an indivisible end of the turn.
                 CompleteMassJobs();
                 _inStep = false;
+#if ZANTETSU_OBSERVE
                 _stepWatch.Stop();
                 double seconds = _stepWatch.Elapsed.TotalSeconds;
                 StepSeconds += seconds;
@@ -360,6 +368,7 @@ namespace Zantetsu.PhysicsCut
                     OverrunSeconds += over;
                     MaxOverrunSeconds = Math.Max(MaxOverrunSeconds, over);
                 }
+#endif
             }
         }
 
@@ -781,7 +790,7 @@ namespace Zantetsu.PhysicsCut
                 return ProvisionalCutAcceptance.InvalidRequest;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             try
             {
                 HitRecord record = NewHit(in ask);   // one record per hit, whatever becomes of it
@@ -797,9 +806,11 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
+#if ZANTETSU_OBSERVE
                 double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
                 RequestSeconds += seconds;
                 MaxRequestSeconds = Math.Max(MaxRequestSeconds, seconds);
+#endif
             }
         }
 
@@ -851,14 +862,18 @@ namespace Zantetsu.PhysicsCut
         {
             int copyLayer = exclusion != null && exclusion.byLayers ? ExclusionLayerPairs.LayersOf(exclusion.pair).b : -1;
             int layerCalls = 0;
-            long mark = Stopwatch.GetTimestamp();
+            long mark = Began();
             double moveS = 0, shadowS = 0, ignoreS = 0, restS = 0, submitS = 0, recordS = 0;
             double Lap()
             {
+#if ZANTETSU_OBSERVE
                 long now = Stopwatch.GetTimestamp();
                 double lap = (now - mark) / (double)Stopwatch.Frequency;
                 mark = now;
                 return lap;
+#else
+                return 0.0;
+#endif
             }
 
             int membersAtStart = group.MemberCount;
@@ -1127,10 +1142,13 @@ namespace Zantetsu.PhysicsCut
             CollidersMovedAtPublication += collidersMoved;
             CopiesMovedAtPublication += shadowsMoved;
             MaxMembersMoved = Math.Max(MaxMembersMoved, membersMoved);
+#if ZANTETSU_OBSERVE
             PublishMoveSeconds += moveS; PublishShadowSeconds += shadowS; PublishIgnoreSeconds += ignoreS;
             PublishRestSeconds += restS; PublishSubmitSeconds += submitS + recordS;
+#endif
             IgnoredPairs += pairs;
             MaxIgnoredPairs = Math.Max(MaxIgnoredPairs, pairs);
+#if ZANTETSU_OBSERVE
             MaxIgnoreSeconds = Math.Max(MaxIgnoreSeconds, ignoreS);
             double ownSeconds = moveS + shadowS + ignoreS + restS + submitS + recordS;
             if (ownSeconds > _maxPublishOwn)
@@ -1140,6 +1158,7 @@ namespace Zantetsu.PhysicsCut
                     + " (members + " + positiveMembers + " / - " + negativeMembers + ", colliders + " + positiveColliders + " / - " + negativeColliders + ", copies made ahead " + preparedCopies + "), moved members " + membersMoved + ", colliders " + collidersMoved + " (copies " + shadowsMoved + "); ms: move " + (moveS * 1000).ToString("F3") + ", shadows " + (shadowS * 1000).ToString("F3")
                     + ", ignore " + (ignoreS * 1000).ToString("F3") + ", rest+drop " + (restS * 1000).ToString("F3") + ", submit " + (submitS * 1000).ToString("F3") + ", record " + (recordS * 1000).ToString("F3");
             }
+#endif
         }
 
         private double _maxPublishOwn;
@@ -1244,7 +1263,7 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             cut.exclusion = null;
             // Its own crossed member's colliders only (each member cut keeps its own): removed with a published or failed
             // source, or put back to the layers they had when they still answer.
@@ -1261,7 +1280,9 @@ namespace Zantetsu.PhysicsCut
                 e.pair = -1;
             }
 
+#if ZANTETSU_OBSERVE
             ExclusionReleaseSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
         }
 
 
@@ -1450,9 +1471,11 @@ namespace Zantetsu.PhysicsCut
                     finally
                     {
                         cut.request = null;
+#if ZANTETSU_OBSERVE
                         double seconds = EndPart();
                         FinalSeconds += seconds;
                         MaxFinalSeconds = Math.Max(MaxFinalSeconds, seconds);
+#endif
                         ReleaseExclusion(cut);
                         SettleBusy(cut.positiveGroup);
                         SettleBusy(cut.negativeGroup);
@@ -1699,9 +1722,11 @@ namespace Zantetsu.PhysicsCut
 
                     BeginPart();
                     _cook.CheckNextHull(cut.request);
+#if ZANTETSU_OBSERVE
                     double seconds = EndPart();
                     HullSeconds += seconds;
                     MaxHullSeconds = Math.Max(MaxHullSeconds, seconds);
+#endif
                     HullChecksInStep++;
                 }
             }
@@ -1794,6 +1819,7 @@ namespace Zantetsu.PhysicsCut
             return new float4(nB, -math.dot(nB, pointB));
         }
 
+        [Conditional("ZANTETSU_OBSERVE")]
         private void Record(string line)
         {
             if (_events.Count < 4096)

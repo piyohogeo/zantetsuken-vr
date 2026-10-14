@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -223,8 +226,10 @@ namespace Zantetsu.Rendering
         {
             SetsMade++;
             SetBytesMade += bytes;
+#if ZANTETSU_OBSERVE
             SetMakeSeconds += seconds;
             SetMakeMaxSeconds = Math.Max(SetMakeMaxSeconds, seconds);
+#endif
         }
 
         /// <summary>Time the route spent recording the compaction's own commands (zero events, dispatches) for <paramref name="frame"/>.</summary>

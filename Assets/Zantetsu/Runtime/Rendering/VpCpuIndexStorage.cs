@@ -94,6 +94,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            int before = _memory.CommittedLength;
             if (!_allocator.TryGetState(handle, out _, out int start, out int count)
                 || !_memory.TryCommitTo(start + count, out backingFailure))
             {
@@ -103,8 +104,12 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            if (_memory.CommittedLength > before) CommitGrowths++;
             return true;
         }
+
+        /// <summary>How often the committed backing grew (DESIGN 21.18: one compare at the commit, no scan).</summary>
+        public int CommitGrowths { get; private set; }
 
         /// <summary>
         /// A writable view of exactly the reserved range, to be filled from its start. Returns false with a default view

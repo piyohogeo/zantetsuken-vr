@@ -335,6 +335,9 @@ namespace Zantetsu.Sandbox
         private readonly List<SandboxLocomotionInput> _plainInputs = new List<SandboxLocomotionInput>();
         private readonly List<MobPlanPlayerInput> _cityInputs = new List<MobPlanPlayerInput>();
         private PlayMenuView _view;
+        private PlayDialogView _dialog;
+        private PlayStatisticsService _statistics;
+        private bool _dialogOpen;
         private PlaySettings _settings;
         private Camera _camera;
         private bool _gameInputHeldBack;
@@ -356,6 +359,11 @@ namespace Zantetsu.Sandbox
         public PlayMenuView View => _view;
         public PlaySettings Settings => _settings;
         public bool IsOpen => _state.Open;
+
+        /// <summary>The first-run consent dialog is shown (the game paused, the menu's button does nothing meanwhile).</summary>
+        public bool IsDialogOpen => _dialogOpen;
+
+        public PlayDialogView Dialog => _dialog;
 
         /// <summary>Makes the menu for this session's scenario, once. It lives across scene loads.</summary>
         public static PlayMenu Install(SandboxScenarioKind scenario)
@@ -400,6 +408,34 @@ namespace Zantetsu.Sandbox
 
             Transform trackingSpace = _camera != null ? _camera.transform.parent : null;
             PlayMenuInputFrame input = Input != null ? Input.Read(trackingSpace, _camera) : default;
+            if (_dialogOpen)
+            {
+                // The consent dialog (DESIGN 21.18) has the pointer to itself; the menu's button waits. The dialog is
+                // asked for when the scenario's scene has just loaded -- before the scene's own start and before the
+                // headset's pose reaches the camera -- so where it first stands is not where the player's head is.
+                // It is stood before the head again once the head is found away from where it was placed for (the
+                // rig placed, the tracking begun, the player walked off), and whenever the menu's button is pressed:
+                // a dialog the player cannot find cannot be answered, and the game is paused until it is.
+                if (_camera != null)
+                {
+                    bool away = (_camera.transform.position - _dialogPlacedFor).sqrMagnitude > DialogReplaceMetres * DialogReplaceMetres;
+                    bool asked = input.menuDown && !_dialogMenuWasDown;
+                    if (away || asked)
+                    {
+                        PlaceDialog(away ? "the head is away from where it was placed for" : "the menu button");
+                    }
+                }
+
+                _dialogMenuWasDown = input.menuDown;
+                int pressed = _dialog.Drive(in input);
+                if (pressed != 0)
+                {
+                    CloseDialog(pressed == 1);
+                }
+
+                return;
+            }
+
             if (_state.Open && _view != null)
             {
                 _view.Drive(in input);
@@ -462,6 +498,78 @@ namespace Zantetsu.Sandbox
         /// <see cref="SandboxPropSlashPlayerCheck.PauseAtEndingArgument"/>); nothing in a run that does not ask.
         /// False when the menu is open already.
         /// </summary>
+        /// <summary>
+        /// Asks the first-run consent to the play statistics (DESIGN 21.18) where it was never answered: the game pauses
+        /// and the controllers are taken as for the menu, the dialog stands before the head, and the answer goes to the
+        /// service. Answered before: nothing is asked. Returns whether the dialog was opened.
+        /// </summary>
+        public bool AskConsent(PlayStatisticsService statistics)
+        {
+            _statistics = statistics;
+            if (statistics == null || statistics.Consent.Decision != Core.Statistics.PlayStatisticsDecision.Undecided || _dialogOpen || _state.Open)
+            {
+                return false;
+            }
+
+            if (_camera == null)
+            {
+                _camera = Camera.main;
+            }
+
+            GamePause.SetManual(true);
+            TakeGameInput();
+            if (_dialog == null)
+            {
+                _dialog = new PlayDialogView();
+                _dialog.Build(PlayStatisticsService.ConsentTitle, PlayStatisticsService.ConsentBody, PlayStatisticsService.ConsentAgree, PlayStatisticsService.ConsentDecline);
+            }
+
+            _dialogOpen = true;
+            _dialogMenuWasDown = true;   // a button down when it opens asks for nothing
+            _dialogPlacements = 0;
+            Debug.Log(Prefix + "consent dialog opened (frame " + Time.frameCount + "); the game is paused");
+            PlaceDialog("opened");
+            return true;
+        }
+
+        /// <summary>How far the head may be from where the dialog was placed for before the dialog is stood before it again, metres.</summary>
+        public const float DialogReplaceMetres = 0.5f;
+
+        private Vector3 _dialogPlacedFor;
+        private bool _dialogMenuWasDown;
+        private int _dialogPlacements;
+
+        /// <summary>How often the open dialog was stood before the head (1 at its opening).</summary>
+        public int DialogPlacements => _dialogPlacements;
+
+        // The dialog before the head as it is now; the head's place is kept, to tell when the head has gone from it.
+        private void PlaceDialog(string why)
+        {
+            Vector3 position = _camera != null ? _camera.transform.position : Vector3.zero;
+            Quaternion rotation = _camera != null ? _camera.transform.rotation : Quaternion.identity;
+            _dialog.Show(position, rotation);
+            _dialogPlacedFor = position;
+            _dialogPlacements++;
+            // Few: the opening, the rig's placement and the tracking's beginning, then only what the player asks for.
+            if (_dialogPlacements <= 8)
+            {
+                Debug.Log(Prefix + "consent dialog placed (" + why + ", frame " + Time.frameCount + "): head at " + position.ToString("F2") + ", facing yaw " + rotation.eulerAngles.y.ToString("F0"));
+            }
+        }
+
+        private void CloseDialog(bool agreed)
+        {
+            _dialogOpen = false;
+            _dialog.Hide();
+            if (agreed) _statistics.Agree(); else _statistics.Withdraw();
+            // The controllers come back as after the menu: the katana at once, the walking once the sticks were let go
+            // (the inputs taken at the opening are still the ones held back).
+            GiveKatanaBack();
+            _state.RequireRelease();
+            GamePause.SetManual(false);
+            Debug.Log(Prefix + "consent dialog closed (frame " + Time.frameCount + "): " + (agreed ? "agreed" : "declined") + "; " + GamePause.Describe());
+        }
+
         internal bool OpenWithoutPress()
         {
             if (!_state.OpenWithoutPress())
@@ -568,6 +676,18 @@ namespace Zantetsu.Sandbox
                 step = PlaySettings.BladeAngleStep, format = "F1", unit = " °", interactable = _settings.BladeAngleChangeable,
                 read = () => _settings.BladeAngle, write = _settings.SetBladeAngle,
             });
+            // The play statistics' consent (DESIGN 21.18), changeable here: ON agrees (a new install id), OFF withdraws.
+            PlayStatisticsService statistics = _statistics != null ? _statistics : PlayStatisticsService.Instance;
+            if (statistics != null)
+            {
+                rows.Add(new PlayMenuView.Row
+                {
+                    label = "Send play statistics", isToggle = true,
+                    read = () => statistics.Consent.Agreed ? 1f : 0f,
+                    write = value => { if (value >= 0.5f) { if (!statistics.Consent.Agreed) statistics.Agree(); } else if (statistics.Consent.Agreed) statistics.Withdraw(); },
+                });
+            }
+
             return rows;
         }
 
@@ -669,6 +789,15 @@ namespace Zantetsu.Sandbox
         /// <summary>What the menu's end does: no pause and no input switched off is left behind it.</summary>
         internal void Release()
         {
+            if (_dialogOpen)
+            {
+                GiveKatanaBack();
+                GamePause.SetManual(false);
+            }
+
+            _dialog?.Destroy();
+            _dialog = null;
+            _dialogOpen = false;
             if (_state.Open)
             {
                 GiveKatanaBack();

@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Profiling;
@@ -251,6 +254,26 @@ namespace Zantetsu.Core.Animation
     [DisallowMultipleComponent]
     public sealed class PoseLodDirector : MonoBehaviour
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
+
+        // The seconds since an observed span began: 0 in a Release Player (DESIGN 21.18).
+        private static double SecondsSince(long began)
+        {
+#if ZANTETSU_OBSERVE
+            return (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#else
+            return 0.0;
+#endif
+        }
         private static readonly ProfilerMarker s_decide = new ProfilerMarker("Zantetsu.PoseLod.Decide");
 
         public const int Levels = 4;
@@ -386,11 +409,15 @@ namespace Zantetsu.Core.Animation
             PoseTablePlayer player, IReadOnlyList<Transform> references, IReadOnlyList<Transform>[] omitFrom,
             IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, out string refused)
         {
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+#if ZANTETSU_OBSERVE
+            long began = Began();
+#endif
             PoseLodPlan plan = Prepare(player, references, omitFrom, hitBoxes, out refused);
             if (plan == null) return null;
             PoseLodCharacter character = Register(plan);
+#if ZANTETSU_OBSERVE
             if (character != null) character.RegisterSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             return character;
         }
 
@@ -404,7 +431,7 @@ namespace Zantetsu.Core.Animation
             PoseTablePlayer player, IReadOnlyList<Transform> references, IReadOnlyList<Transform>[] omitFrom,
             IReadOnlyList<(Transform bone, Bounds box)> hitBoxes, out string refused)
         {
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             refused = null;
             if (player == null || player.Table == null || player.BoneCount == 0)
             {
@@ -458,7 +485,7 @@ namespace Zantetsu.Core.Animation
             if (key != null && _plans.TryGetValue(key, out Plan shared))
             {
                 return new PoseLodPlan(player, player.TableBank, shared.levelBones, shared.range, shared.largest, shared.omittedHit, true, 0.0,
-                    (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
+                    SecondsSince(began));
             }
 
             var levelBones = new int[Levels][];
@@ -496,16 +523,16 @@ namespace Zantetsu.Core.Animation
                 }
             }
 
-            long rangeBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            long rangeBegan = Began();
             Bounds range = RangeOf(player, index, hitBoxes, settings.rangeMargin, out float largest);
-            double rangeSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - rangeBegan) / (double)System.Diagnostics.Stopwatch.Frequency;
+            double rangeSeconds = SecondsSince(rangeBegan);
             if (key != null)
             {
                 _plans[key] = new Plan { levelBones = levelBones, range = range, largest = largest, omittedHit = omittedHit };
             }
 
             return new PoseLodPlan(player, player.TableBank, levelBones, range, largest, omittedHit, false, rangeSeconds,
-                (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
+                SecondsSince(began));
         }
 
         /// <summary>
@@ -515,7 +542,7 @@ namespace Zantetsu.Core.Animation
         /// </summary>
         public PoseLodCharacter Register(PoseLodPlan plan)
         {
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             if (plan == null || plan.Player == null || !ReferenceEquals(plan.Player.TableBank, plan.TableBank))
             {
                 return null;
@@ -530,7 +557,9 @@ namespace Zantetsu.Core.Animation
             };
             character.Apply(0);
             _characters.Add(character);
+#if ZANTETSU_OBSERVE
             character.RegisterSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             return character;
         }
 

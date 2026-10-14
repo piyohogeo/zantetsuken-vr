@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
@@ -374,7 +377,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            _remapBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            _remapBegan = Began();
             _totals.passesStructure++;
             _totals.remaps++;
             Room(count);
@@ -489,7 +492,9 @@ namespace Zantetsu.MeshCut
             _familiesKnown = true;
             _stampLedger = stampLedger;
             _stampInputs = stampInputs;
+#if ZANTETSU_OBSERVE
             _totals.remapSeconds += SecondsSince(_remapBegan);
+#endif
             Pick();
         }
 
@@ -552,7 +557,7 @@ namespace Zantetsu.MeshCut
             _toldAny = false;
             _pickedThisPass = true;
 
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             _pickedWords = (_count + 63) >> 6;
             if (_allHeldAsked)
             {
@@ -585,7 +590,7 @@ namespace Zantetsu.MeshCut
                     _totals.searches++;
                     int eyes = _viewEyes[i];
                     if (eyes > 0) _totals.pointsWithView++; else _totals.pointsWithoutView++;
-                    long viewBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+                    long viewBegan = Began();
                     for (int f = 0; f < found; f++)
                     {
                         int leaf = _found[f];
@@ -612,12 +617,16 @@ namespace Zantetsu.MeshCut
                         near++;
                     }
 
+#if ZANTETSU_OBSERVE
                     viewSeconds += SecondsSince(viewBegan);
+#endif
                 }
 
                 _totals.nearCandidates += candidates;
+#if ZANTETSU_OBSERVE
                 _totals.viewSeconds += viewSeconds;
                 began += (long)(viewSeconds * System.Diagnostics.Stopwatch.Frequency);   // the search's time, without the view's
+#endif
 
                 // The held and the fixed ones of the families told: through the family's registrations, as the last
                 // mapping had them.
@@ -659,7 +668,9 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+#if ZANTETSU_OBSERVE
             _totals.searchSeconds += SecondsSince(began);
+#endif
         }
 
         /// <summary>The next of this pass's targets after <paramref name="renderFragment"/> (-1 to begin), in order; -1 at the end.</summary>
@@ -712,14 +723,16 @@ namespace Zantetsu.MeshCut
                 if (fixedVouched)
                 {
                     // Held by a reading, and now vouched for by the lookup: fixed, and out of the tree (nearness asks it no more).
-                    long leaving = System.Diagnostics.Stopwatch.GetTimestamp();
+                    long leaving = Began();
                     _tree.Remove(_leaf[r]);
                     _totals.treeRemovals++;
                     _leaf[r] = -1;
                     _fixed[r] = true;
                     _fixedCount++;
                     _totals.fixedTaken++;
+#if ZANTETSU_OBSERVE
                     _totals.updateSeconds += SecondsSince(leaving);
+#endif
                 }
 
                 return;
@@ -745,7 +758,7 @@ namespace Zantetsu.MeshCut
                 return;   // the same step's result twice says nothing of standing still
             }
 
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             WorldBox(localBounds, geometryLocalToWorld, Margin, out float3 lo, out float3 hi);
             _leaf[r] = _tree.Insert(lo, hi, r);
             _totals.treeInserts++;
@@ -754,7 +767,9 @@ namespace Zantetsu.MeshCut
             _ordinaryAt[last] = at;
             _ordinaryAt[r] = -1;
             _totals.promoted++;
+#if ZANTETSU_OBSERVE
             _totals.updateSeconds += SecondsSince(began);
+#endif
         }
 
         /// <summary>
@@ -778,14 +793,16 @@ namespace Zantetsu.MeshCut
             {
                 CountHeldAsked(r);
                 if (standsWhereHeld) return;
-                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                long began = Began();
                 _tree.Remove(_leaf[r]);
                 _totals.treeRemovals++;
                 _leaf[r] = -1;
                 _ordinaryAt[r] = _ordinaryCount;
                 _ordinary[_ordinaryCount++] = r;
                 _totals.demoted++;
+#if ZANTETSU_OBSERVE
                 _totals.updateSeconds += SecondsSince(began);
+#endif
             }
             else if (selected)
             {
@@ -847,6 +864,16 @@ namespace Zantetsu.MeshCut
 
         private static double SecondsSince(long began) =>
             (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+
+        // The clock reading that begins a span: nothing in a Release Player, where no seconds are summed (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
 
         /// <summary>The world box of a local box at a placement, widened by <paramref name="margin"/> on each axis.</summary>
         internal static void WorldBox(in Bounds local, in Matrix4x4 m, float margin, out float3 lo, out float3 hi)

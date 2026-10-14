@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System.Collections.Generic;
 using System.Text;
 using Unity.Profiling;
@@ -38,6 +41,16 @@ namespace Zantetsu.Core.Animation
     [DisallowMultipleComponent]
     public sealed class PoseTablePlayer : MonoBehaviour
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private static readonly ProfilerMarker s_evaluate = new ProfilerMarker("Zantetsu.PoseTable.Evaluate");
         private static readonly ProfilerMarker s_apply = new ProfilerMarker("Zantetsu.PoseTable.Apply");
         private static readonly ProfilerMarker s_bind = new ProfilerMarker("Zantetsu.PoseTable.Bind");
@@ -170,13 +183,15 @@ namespace Zantetsu.Core.Animation
 
         private void Bind()
         {
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             using (s_bind.Auto())
             {
                 BindTable();
             }
 
+#if ZANTETSU_OBSERVE
             BindSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
         }
 
         private void BindTable()

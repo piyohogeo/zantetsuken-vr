@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Collections;
@@ -366,6 +369,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class PhysicsCutCook : IDisposable, IMainThreadPump
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         /// <summary>
         /// The one cooking profile (DESIGN 7.3). It is the configuration the Phase 2.9 cook pass-through check used —
         /// cooking for faster simulation, mesh cleaning, welding colocated vertices and the fast midphase — so that
@@ -455,7 +468,7 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             var tetrahedron = new Mesh { name = "Zantetsu cut hull probe warm-up", hideFlags = HideFlags.HideAndDontSave };
             try
             {
@@ -467,7 +480,9 @@ namespace Zantetsu.PhysicsCut
             finally
             {
                 DestroyMesh(tetrahedron);
+#if ZANTETSU_OBSERVE
                 ProbePreparationSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             }
         }
 
@@ -1056,7 +1071,9 @@ namespace Zantetsu.PhysicsCut
                     if (after < 0.0)
                     {
                         HullCheckOverruns++;
+#if ZANTETSU_OBSERVE
                         HullCheckOverrunSeconds += -after;
+#endif
                     }
                 }
             }
@@ -1079,7 +1096,7 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             try
             {
                 while (request.hullConvex < request.input.convexCount)
@@ -1110,10 +1127,12 @@ namespace Zantetsu.PhysicsCut
                     bool firstRead = HullChecks == 0;
                     HullChecks++;
                     GeometryType geometry = ProbeHull(made);
+#if ZANTETSU_OBSERVE
                     if (firstRead)
                     {
                         FirstHullCheckSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
                     }
+#endif
                     if (geometry != GeometryType.ConvexMesh)
                     {
                         var rejection = new PhysicsCutHullRejection
@@ -1151,6 +1170,7 @@ namespace Zantetsu.PhysicsCut
             }
             finally
             {
+#if ZANTETSU_OBSERVE
                 double seconds = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
                 HullCheckSeconds += seconds;
                 MaxHullCheckSeconds = Math.Max(MaxHullCheckSeconds, seconds);
@@ -1166,6 +1186,7 @@ namespace Zantetsu.PhysicsCut
                 _hullFrameChecks++;
                 MaxFrameHullSeconds = Math.Max(MaxFrameHullSeconds, _hullFrameSeconds);
                 MaxFrameHullChecks = Math.Max(MaxFrameHullChecks, _hullFrameChecks);
+#endif
             }
         }
 

@@ -68,7 +68,14 @@ namespace Zantetsu.EditorTools.Sandbox
         /// The same with several scenes, in the Player's order: the first is the one it starts in. A Player of
         /// every scenario (DESIGN 3.4) is built with the boot scene first and each scenario's scene after it.
         /// </summary>
-        public static bool Build(string directory, string[] scenes, string[] diagnosticDefines = null)
+        public static bool Build(string directory, string[] scenes, string[] diagnosticDefines = null) => Build(directory, scenes, diagnosticDefines, true);
+
+        /// <summary>
+        /// The same, with the build kind chosen: <paramref name="development"/> false builds a Release (non-Development)
+        /// Player -- the distribution kind, with the observation symbol undefined (DESIGN 21.18) -- for the check of what
+        /// such a Player measures and costs. Everything else is the same build.
+        /// </summary>
+        public static bool Build(string directory, string[] scenes, string[] diagnosticDefines, bool development)
         {
             if (scenes == null || scenes.Length == 0)
             {
@@ -107,6 +114,7 @@ namespace Zantetsu.EditorTools.Sandbox
             }
 
             settings.Append("autoGraphicsApi=").Append(PlayerSettings.GetUseDefaultGraphicsAPIs(target));
+            settings.Append(" kind=").Append(development ? "Development" : "Release");
             Debug.Log(settings.ToString());
 
             // The project's own setting, read and checked -- not set here. A build with the wrong backend would not
@@ -129,9 +137,9 @@ namespace Zantetsu.EditorTools.Sandbox
                 targetGroup = targetGroup,
                 extraScriptingDefines = diagnosticDefines ?? Array.Empty<string>(),
 
-                // Development, so that the Player writes its own log and its stack traces are readable. Nothing
-                // here asks for a profiler connection or script debugging.
-                options = BuildOptions.Development,
+                // Development (the default), so that the Player writes its own log and its stack traces are readable.
+                // Nothing here asks for a profiler connection or script debugging. Release for the distribution-kind check.
+                options = development ? BuildOptions.Development : BuildOptions.None,
             };
 
             BuildReport report = BuildPipeline.BuildPlayer(options);

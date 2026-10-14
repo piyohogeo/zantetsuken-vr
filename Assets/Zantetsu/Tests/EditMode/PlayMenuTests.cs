@@ -139,6 +139,127 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void TheConsentDialog_PausesAndTakesTheControllers_ItsAnswerGoesToTheService_AndItIsNotAskedAgain()
+        {
+            var host = new GameObject("statistics under test");
+            _made.Add(host);
+            PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+            var store = new Zantetsu.Core.Statistics.MemoryPlayStatisticsStore();
+            service.Setup(SandboxScenarioKind.Play, "WalkCity", store, null);
+            PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+            Tick(menu);
+            Assert.That(menu.AskConsent(service), Is.True, "never answered: asked");
+            Assert.That(menu.IsDialogOpen, Is.True);
+            Assert.That(menu.IsOpen, Is.False, "the menu itself is not open");
+            Assert.That(GamePause.Manual && GamePause.IsPaused, Is.True, "paused as for the menu");
+            Assert.That(_katana.LiveInputEnabled, Is.False, "the katana is taken");
+            Assert.That(menu.Dialog.Visible, Is.True);
+
+            // The menu's button does nothing while the dialog is up.
+            Tick(menu, menuDown: true);
+            Assert.That(menu.IsOpen, Is.False);
+            Assert.That(menu.IsDialogOpen, Is.True);
+
+            // "Don't send", pressed by the pointer: declined, the dialog gone, the game going on, the katana back.
+            Vector3 decline = Centre(menu.Dialog.SecondRect);
+            Tick(menu, pointAt: decline);                 // the select was down when it opened: no press
+            Tick(menu, select: true, pointAt: decline);
+            Assert.That(menu.IsDialogOpen, Is.False);
+            Assert.That(service.Consent.Decision, Is.EqualTo(Zantetsu.Core.Statistics.PlayStatisticsDecision.Declined));
+            Assert.That(GamePause.IsPaused, Is.False);
+            Assert.That(_katana.LiveInputEnabled, Is.True);
+            Assert.That(menu.AskConsent(service), Is.False, "answered: not asked again");
+
+            // The setting in the menu: the statistics row, last, reading the consent and changing it.
+            Tick(menu);
+            Tick(menu, menuDown: true);
+            Assert.That(menu.IsOpen, Is.True);
+            IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
+            Assert.That(rows.Count, Is.EqualTo(6), "the settings and the statistics row");
+            PlayMenuView.Row row = rows[5];
+            Assert.That(row.label, Is.EqualTo("Send play statistics"));
+            Assert.That(row.isToggle, Is.True);
+            Assert.That(row.read(), Is.Zero, "declined: OFF");
+            row.write(1f);
+            Assert.That(service.Consent.Agreed, Is.True, "ON agrees");
+            Assert.That(row.read(), Is.EqualTo(1f));
+            row.write(0f);
+            Assert.That(service.Consent.Agreed, Is.False, "OFF withdraws");
+            Assert.That(store.TryGet(Zantetsu.Core.Statistics.PlayStatisticsConsent.InstallIdKey, out _), Is.False, "the install id is forgotten");
+        }
+
+        [Test]
+        public void TheConsentDialog_AskedBeforeTheHeadIsWhereThePlayerIs_IsStoodBeforeTheHeadAgain_AndByTheMenuButton()
+        {
+            var host = new GameObject("statistics under test");
+            _made.Add(host);
+            PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+            service.Setup(SandboxScenarioKind.Play, "WalkCity", new Zantetsu.Core.Statistics.MemoryPlayStatisticsStore(), null);
+            PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+            Tick(menu);
+
+            // Asked as the scene loads: the camera is not yet where the player's head will be (the rig not placed, the
+            // headset's pose not yet on the camera).
+            Vector3 headAtLoad = _head.transform.position;
+            Assert.That(menu.AskConsent(service), Is.True);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(1));
+            Vector3 first = menu.Dialog.FirstRect.parent.position;
+
+            // A small movement of the head leaves the dialog where it stands (it is fixed in the world).
+            _head.transform.position = headAtLoad + new Vector3(0.1f, 0.05f, 0f);
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(1));
+            Assert.That(menu.Dialog.FirstRect.parent.position, Is.EqualTo(first));
+
+            // The head found well away (the rig placed, the tracking begun): the dialog stands before it again.
+            Vector3 tracked = headAtLoad + new Vector3(3f, 1.6f, -2f);
+            _head.transform.SetPositionAndRotation(tracked, Quaternion.Euler(0f, 90f, 0f));
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(2));
+            Vector3 second = menu.Dialog.FirstRect.parent.position;
+            Assert.That(Vector3.Distance(second, tracked + Vector3.right * PlayMenuView.Distance), Is.LessThan(1e-3f), "1.3 m along the head's horizontal facing, at the head's height");
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(2), "placed once for that head position");
+
+            // The player turns away and cannot see it: the menu's button brings it before the head (and opens no menu).
+            _head.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(2), "turning alone does not move it");
+            Tick(menu, menuDown: true);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(3));
+            Assert.That(Vector3.Distance(menu.Dialog.FirstRect.parent.position, tracked + Vector3.back * PlayMenuView.Distance), Is.LessThan(1e-3f));
+            Assert.That(menu.IsOpen, Is.False);
+            Tick(menu, menuDown: true);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(3), "held down: once");
+
+            // And it is answered where it stands now.
+            Vector3 agree = Centre(menu.Dialog.FirstRect);
+            Tick(menu, pointAt: agree);
+            Tick(menu, select: true, pointAt: agree);
+            Assert.That(menu.IsDialogOpen, Is.False);
+            Assert.That(service.Consent.Agreed, Is.True);
+        }
+
+        [Test]
+        public void TheConsentDialog_Agree_GivesTheAgreement_AndAnInstallId()
+        {
+            var host = new GameObject("statistics under test");
+            _made.Add(host);
+            PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+            service.Setup(SandboxScenarioKind.Play, "WalkCity", new Zantetsu.Core.Statistics.MemoryPlayStatisticsStore(), null);
+            PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+            Tick(menu);
+            Assert.That(menu.AskConsent(service), Is.True);
+            Vector3 agree = Centre(menu.Dialog.FirstRect);
+            Tick(menu, pointAt: agree);
+            Tick(menu, select: true, pointAt: agree);
+            Assert.That(menu.IsDialogOpen, Is.False);
+            Assert.That(service.Consent.Agreed, Is.True);
+            Assert.That(System.Guid.TryParse(service.Consent.InstallId, out _), Is.True, "a random id at the agreement");
+            Assert.That(GamePause.IsPaused, Is.False);
+        }
+
+        [Test]
         public void TheButton_TogglesOnItsPressOnly_HeldDownItDoesNothingMore()
         {
             var state = new PlayMenuState();

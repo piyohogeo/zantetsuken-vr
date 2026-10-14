@@ -290,6 +290,14 @@ namespace Zantetsu.Rendering
         /// </summary>
         public int FreeVertexRoom => _vertexSpans.Capacity - _vertexSpans.Used;
 
+        /// <summary>
+        /// How often the committed vertex and index backings grew (DESIGN 21.18). The committed capacities
+        /// (<see cref="CommittedVertexCapacity"/>, <see cref="CommittedIndexCapacity"/>) are the ends the reservations have
+        /// reached so far, holes included, in pages: what the play statistics read against the reservation's limit.
+        /// </summary>
+        public int VertexCommitGrowths => _vertices.CommitGrowths;
+        public int IndexCommitGrowths => _indices.CommitGrowths;
+
         /// <summary>The largest single vertex span that could be reserved right now, which fragmentation lowers.</summary>
         public int LargestFreeVertexSpan => _vertexSpans.LargestFreeSpan;
 

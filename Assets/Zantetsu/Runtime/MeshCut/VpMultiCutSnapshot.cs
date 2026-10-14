@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -1392,11 +1395,15 @@ namespace Zantetsu.MeshCut
 #endif
         private long _vMark;
 
+        // The laps of the validation, the placement and the collection are readouts (DESIGN 21.18): no clock is read for
+        // them in a Release Player, and their seconds stay 0 there.
         private void Lap(ref double into)
         {
+#if ZANTETSU_OBSERVE
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             into += (now - _vMark) / (double)System.Diagnostics.Stopwatch.Frequency;
             _vMark = now;
+#endif
         }
 
         /// <summary>The other stages' seconds in the last build that had them (the markers' own stages, timed here for a caller without the profiler): the branches' collection and the grouping, summed over the registrations, and the placements.</summary>
@@ -1404,7 +1411,23 @@ namespace Zantetsu.MeshCut
         public double LastGroupSeconds { get; private set; }
         public double LastPlaceSeconds { get; private set; }
 
-        private static double SecondsSince(long begin) => (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+        private static double SecondsSince(long begin)
+        {
+#if ZANTETSU_OBSERVE
+            return (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#else
+            return 0.0;
+#endif
+        }
+
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0L;
+#endif
+        }
 
         /// <summary>How often placements and what they decide have been settled, by either route.</summary>
         public long PlacementPasses { get; private set; }
@@ -1767,7 +1790,7 @@ namespace Zantetsu.MeshCut
 
             // Decided with no room of this snapshot's, so that no shortage below can be what hides it.
             VpMultiCutBuildOutcome outcome;
-            long structureBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long structureBegin = Began();
             try
             {
                 outcome = TryBuildStructure(ledger, registrations);
@@ -1781,7 +1804,9 @@ namespace Zantetsu.MeshCut
                 _lineage.Close();
                 _segLedger = null;
                 _currentRegistration = -1;
+#if ZANTETSU_OBSERVE
                 ValidateCounts.structureSeconds += SecondsSince(structureBegin);
+#endif
             }
 
             if (outcome != VpMultiCutBuildOutcome.Built)
@@ -1789,7 +1814,7 @@ namespace Zantetsu.MeshCut
                 return Fail(outcome);
             }
 
-            long placeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long placeBegin = Began();
             _placeInto = StructuralPlaceCounts;
             using (s_place.Auto())
             {
@@ -1908,7 +1933,7 @@ namespace Zantetsu.MeshCut
             _renderFragmentCount = structure._renderFragmentCount;
 
             VpMultiCutBuildOutcome placed;
-            long placeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long placeBegin = Began();
             _placeInto = PlacementOnlyPlaceCounts;
             using (s_place.Auto())
             {
@@ -1967,7 +1992,7 @@ namespace Zantetsu.MeshCut
                 int branchStart = _branchCount;
                 int candidateStart = _candidateCount;
                 int renderFragmentStart = _renderFragmentCount;
-                long collectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                long collectBegin = Began();
                 long chainSteps = VpClipCandidates.ChainSteps, operationReads = VpClipCandidates.OperationReads, candidatesMade = VpClipCandidates.CandidatesMade;
                 long visits = VpClipCandidates.LineageVisits, reads = VpClipCandidates.LineageReads, hits = VpClipCandidates.LineageHits;
                 long lookups = VpClipCandidates.ReflectedLookups, splices = VpClipCandidates.SegmentSplices, spliced = VpClipCandidates.SegmentBoundaries;
@@ -1986,22 +2011,28 @@ namespace Zantetsu.MeshCut
 
                     if (outcome == VpMultiCutBuildOutcome.Built)
                     {
-                        long capBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long capBegin = Began();
                         for (int c = candidateStart; c < _candidateCount; c++)
                         {
                             _capIdentity[c] = CapIdentityOf(ledger, _candidates[c]);
                         }
 
+#if ZANTETSU_OBSERVE
                         ValidateCounts.capIdentitySeconds += SecondsSince(capBegin);
+#endif
                         ValidateCounts.capIdentities += _candidateCount - candidateStart;
                     }
                 }
 
+#if ZANTETSU_OBSERVE
                 double collected = SecondsSince(collectBegin);
                 LastCollectSeconds += collected;
                 ValidateCounts.collectSeconds += collected;
+#endif
                 _stages.collectCalls++;
+#if ZANTETSU_OBSERVE
                 _stages.collectSeconds += collected;
+#endif
                 ValidateCounts.chainSteps += VpClipCandidates.ChainSteps - chainSteps;
                 ValidateCounts.operationReads += VpClipCandidates.OperationReads - operationReads;
                 ValidateCounts.candidatesMade += VpClipCandidates.CandidatesMade - candidatesMade;
@@ -2016,16 +2047,20 @@ namespace Zantetsu.MeshCut
                     return outcome;
                 }
 
-                long groupBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+                long groupBegin = Began();
                 using (s_group.Auto())
                 {
                     outcome = TryGroup(ledger, registration, g, branchStart, renderFragmentStart);
                 }
 
+#if ZANTETSU_OBSERVE
                 double grouped = SecondsSince(groupBegin);
                 LastGroupSeconds += grouped;
+#endif
                 _stages.groupCalls++;
+#if ZANTETSU_OBSERVE
                 _stages.groupSeconds += grouped;
+#endif
                 if (outcome != VpMultiCutBuildOutcome.Built)
                 {
                     return outcome;
@@ -2282,7 +2317,7 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             IReadOnlyList<VpMultiCutRegistration> registrations)
         {
-            long validateBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long validateBegin = Began();
             _vIndex = _vInput = _vAncestors = _vOperations = 0.0;
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             _vContract = 0.0;
@@ -2296,16 +2331,28 @@ namespace Zantetsu.MeshCut
             {
                 ValidateCounts.structural++;
                 ValidateCounts.registrations += registrations.Count;
+#if ZANTETSU_OBSERVE
                 ValidateCounts.indexSeconds += _vIndex;
+#endif
+#if ZANTETSU_OBSERVE
                 ValidateCounts.inputSeconds += _vInput;
+#endif
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 if (_numeric) ValidateCounts.contractSeconds += _vContract;
 #endif
+#if ZANTETSU_OBSERVE
                 ValidateCounts.ancestorSeconds += _vAncestors;
+#endif
+#if ZANTETSU_OBSERVE
                 ValidateCounts.operationsSeconds += _vOperations;
-                LastStructureValidateSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - validateBegin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
+#if ZANTETSU_OBSERVE
+                LastStructureValidateSeconds = SecondsSince(validateBegin);
+#endif
                 _stages.validateCalls++;
+#if ZANTETSU_OBSERVE
                 _stages.validateSeconds += LastStructureValidateSeconds;
+#endif
             }
         }
 
@@ -2324,7 +2371,7 @@ namespace Zantetsu.MeshCut
         private VpMultiCutBuildOutcome ValidatePlacementInputs(IReadOnlyList<VpMultiCutRegistration> registrations)
         {
             _vIndex = _vInput = _vAncestors = _vOperations = _vContract = 0.0;
-            _vMark = System.Diagnostics.Stopwatch.GetTimestamp();
+            _vMark = Began();
             try
             {
                 return ValidatePlacementInputsCore(registrations);
@@ -2470,7 +2517,7 @@ namespace Zantetsu.MeshCut
 #endif
             Lap(ref _vInput);
             StructureValidations++;
-            long indexBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long indexBegin = Began();
             if (_reflected.Length < registrations.Count)
             {
                 int grown = System.Math.Max(registrations.Count, _reflected.Length * 2);
@@ -2909,9 +2956,11 @@ namespace Zantetsu.MeshCut
                 return collected;
             }
 
-            long selectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long selectBegin = Began();
             int selected = VpClipCandidates.Select(_candidates, _candidateCount, count, _states);
+#if ZANTETSU_OBSERVE
             if (_inCollect) { ValidateCounts.selectSeconds += SecondsSince(selectBegin); ValidateCounts.branches++; }
+#endif
             _branches[_branchCount++] = new VpMultiCutBranch(
                 registration, fragment, pendingSide, pendingOperation, _candidateCount, count, selected, -1);
             _candidateCount += count;
@@ -2931,9 +2980,11 @@ namespace Zantetsu.MeshCut
                 return collected;
             }
 
-            long selectBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long selectBegin = Began();
             int selected = VpClipCandidates.Select(_checkCandidates, 0, count, _checkStates);
+#if ZANTETSU_OBSERVE
             if (_inCollect) { ValidateCounts.selectSeconds += SecondsSince(selectBegin); ValidateCounts.branches++; }
+#endif
             return selected < count ? VpMultiCutBuildOutcome.RetiredInsideAggregate : VpMultiCutBuildOutcome.Built;
         }
 
@@ -2945,13 +2996,15 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger, LogicalFragmentId fragment, float pendingSide, bool requireLive,
             IReadOnlyCollection<VpClipBoundary> reflected, VpClipCandidate[] into, int start, out int count)
         {
-            long begin = _inCollect ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            long begin = _inCollect ? Began() : 0;
             VpClipCandidates.CollectOutcome collectedOutcome = VpClipCandidates.CollectInto(
                 ledger, fragment, pendingSide, requireLive, reflected, _chain, into, start, into.Length - start, out count,
                 collectLineageOffForTest ? null : _lineage, SegmentFor(ledger, reflected));
             if (_inCollect)
             {
+#if ZANTETSU_OBSERVE
                 ValidateCounts.collectIntoSeconds += SecondsSince(begin);
+#endif
                 ValidateCounts.collectCalls++;
             }
 
@@ -3082,7 +3135,7 @@ namespace Zantetsu.MeshCut
 #endif
             }
 
-            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long t0 = Began();
             int refusedAt = n;
             for (int r = 0; r < n; r++)
             {
@@ -3096,7 +3149,7 @@ namespace Zantetsu.MeshCut
                 if (!_phasedAnswered[r] && refusedAt == n) refusedAt = r;
             }
 
-            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long t1 = Began();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // The numeric diagnosis of the answers, as a block of its own (no block where the diagnosis is off).
             long t2 = t1;
@@ -3127,13 +3180,17 @@ namespace Zantetsu.MeshCut
                 if (outcome != VpMultiCutBuildOutcome.Built) break;
             }
 
-            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long t3 = Began();
+#if ZANTETSU_OBSERVE
             double f = 1.0 / System.Diagnostics.Stopwatch.Frequency;
             _placeInto.providerSeconds += (t1 - t0) * f;
+#endif
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_numeric) _placeInto.checkSeconds += (t2 - t1) * f;
 #endif
+#if ZANTETSU_OBSERVE
             _placeInto.restSeconds += (t3 - t2) * f;
+#endif
             if (outcome != VpMultiCutBuildOutcome.Built) return outcome;
             return refusedAt < n ? Invalid(VpMultiCutInvalidInput.InputContract) : VpMultiCutBuildOutcome.Built;
         }

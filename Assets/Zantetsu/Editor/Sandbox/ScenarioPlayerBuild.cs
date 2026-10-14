@@ -25,6 +25,9 @@ namespace Zantetsu.EditorTools.Sandbox
 
         private const string OutArgument = "-zantetsuPlayerOut";
 
+        /// <summary>With this argument the Player is a Release (non-Development) build: the distribution kind, for the check of DESIGN 21.18.</summary>
+        private const string ReleaseArgument = "-zantetsuPlayerRelease";
+
         /// <summary>The boot scene, made if it is not there: an empty scene, saved under its fixed name.</summary>
         [MenuItem("Zantetsu/Make the scenario boot scene")]
         public static string EnsureBootScene()
@@ -69,12 +72,18 @@ namespace Zantetsu.EditorTools.Sandbox
         public static void BuildPlayerFromCommandLine()
         {
             string directory = null;
+            bool development = true;
             string[] arguments = Environment.GetCommandLineArgs();
-            for (int i = 0; i < arguments.Length - 1; i++)
+            for (int i = 0; i < arguments.Length; i++)
             {
-                if (string.Equals(arguments[i], OutArgument, StringComparison.OrdinalIgnoreCase))
+                if (i < arguments.Length - 1 && string.Equals(arguments[i], OutArgument, StringComparison.OrdinalIgnoreCase))
                 {
                     directory = arguments[i + 1];
+                }
+
+                if (string.Equals(arguments[i], ReleaseArgument, StringComparison.OrdinalIgnoreCase))
+                {
+                    development = false;
                 }
             }
 
@@ -83,10 +92,10 @@ namespace Zantetsu.EditorTools.Sandbox
             try
             {
                 PlayerSettings.enableFrameTimingStats = true;
-                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build");
+                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind " + (development ? "Development" : "Release (" + ReleaseArgument + ")"));
                 var scenes = DemoBuildPolicy.SelectScenes(new[] { CityScenePath, NpcScenePath }, out bool demo);
                 using (DemoBuildPolicy.Scope(demo, scenes))
-                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes);
+                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, null, development);
             }
             catch (Exception e)
             {

@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
@@ -49,6 +52,16 @@ namespace Zantetsu.Rendering.Urp
     /// </summary>
     public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IVpNativeClipListDrawSink, IDisposable
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        internal static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         public const string CasterVariant = "caster-plugin";
         public const string CopyShaderResource = "VpNativeConstantCopy";
 
@@ -667,7 +680,7 @@ namespace Zantetsu.Rendering.Urp
                 // outputs as indirect arguments. Each of those is a state transition Direct3D 12 requires between the
                 // commands, so the order is its own: no event of the plugin is recorded here, and none may be -- a
                 // compute dispatch recorded after a plugin event in a pass wrote nothing (play-27, 2026-10-08).
-                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                long start = Began();
                 int taken = _countSlotsUsed++;
                 using (new ProfilingScope(commands, CompactionSampler))
                 {
@@ -684,7 +697,9 @@ namespace Zantetsu.Rendering.Urp
                 bound.counts = compaction.Counts(column);
                 bound.zeroCounts = null;
                 bound.countSlot = taken;
+#if ZANTETSU_OBSERVE
                 VpCommandCompaction.NoteRecordTime(frame, System.Diagnostics.Stopwatch.GetTimestamp() - start);
+#endif
                 return true;
             }
 
@@ -694,7 +709,7 @@ namespace Zantetsu.Rendering.Urp
                 return false;
             }
 
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
 
             int slot = _countSlotsUsed++;
             batch.IssueCompaction(commands, compaction, source, column, startCommand, commandCount, slot, frame);
@@ -721,7 +736,9 @@ namespace Zantetsu.Rendering.Urp
                 bound.countSnapshotSlot = VpCommandCompaction.TakeSnapshotSlot(column, frame, startCommand, commandCount);
             }
             bound.countSlot = slot;
+#if ZANTETSU_OBSERVE
             VpCommandCompaction.NoteRecordTime(frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+#endif
             return true;
         }
         // Direct3D 12: a run of a route that compacts drawn fixed all the same is said, the first time, with why; it
@@ -2641,7 +2658,7 @@ namespace Zantetsu.Rendering.Urp
             // fixed, counted and said).
             private void ExecuteCopies(CommandBuffer commands)
             {
-                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                long began = Began();
                 _sets.Clear(); _setCommands.Clear();
                 foreach (Issue issue in _passes.bodies) if (!issue.clipList) AddColumn(issue.batch.CompactionOf(issue.view, _passes.frame), 1);
                 if (!VpCommandCompaction.CastersFixed)
@@ -2663,7 +2680,9 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 _route.IndirectCountCopies += copies;
+#if ZANTETSU_OBSERVE
                 VpCommandCompaction.NoteRecordTime(_passes.frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+#endif
             }
 
             private void Execute(CommandBuffer commands)
@@ -2675,7 +2694,7 @@ namespace Zantetsu.Rendering.Urp
                     return;
                 }
 
-                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                long began = Began();
                 if (VpCommandCompaction.SnapshotEnabled) VpCommandCompaction.PumpSnapshots(_passes.frame);
                 _route.DropUnrecorded();
                 _sets.Clear(); _setCommands.Clear();
@@ -2727,7 +2746,9 @@ namespace Zantetsu.Rendering.Urp
                     VpCommandCompaction.EntryFills += fills;
                 }
 
+#if ZANTETSU_OBSERVE
                 VpCommandCompaction.NoteRecordTime(_passes.frame, System.Diagnostics.Stopwatch.GetTimestamp() - began);
+#endif
             }
         }
 

@@ -184,7 +184,37 @@ namespace Zantetsu.Sandbox
             };
         }
 
+        // Becoming a cut target is start-up preparation, not play (DESIGN 21.18): told from the enabling until the instance
+        // is registered, has its target, has failed, or has no world to register into.
+        private bool _preparing;
+
+        private void OnEnable()
+        {
+            if (!_preparing && Registration == null && Candidate == null && Failure == null)
+            {
+                _preparing = true;
+                Zantetsu.Core.Statistics.PlayPreparation.Begin();
+            }
+        }
+
+        private void OnDisable() => EndPreparing();
+
+        private void EndPreparing()
+        {
+            if (_preparing)
+            {
+                _preparing = false;
+                Zantetsu.Core.Statistics.PlayPreparation.End();
+            }
+        }
+
         private void Update()
+        {
+            UpdateRegistration();
+            if (_preparing && (world == null || Registration != null || Candidate != null || Failure != null)) EndPreparing();
+        }
+
+        private void UpdateRegistration()
         {
             // (No registration while the game is paused, DESIGN 4.6: it goes on from where it was.)
             if (Held || Registration != null || Candidate != null || Failure != null || world == null || !world.IsReady || world.IsEnding

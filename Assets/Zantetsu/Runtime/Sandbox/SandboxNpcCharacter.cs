@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -40,6 +43,16 @@ namespace Zantetsu.Sandbox
     [DisallowMultipleComponent]
     public sealed class SandboxNpcCharacter : MonoBehaviour, IMobPlanSlot
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         [SerializeField] private CutWorldRoot world;
         [SerializeField] private SandboxSlashPropHit hit;
 
@@ -942,14 +955,16 @@ namespace Zantetsu.Sandbox
 
             // Its withdrawal at the first cut: the renderer and the Pose Table's update, if the hierarchy is confirmed to
             // hold nothing else live; the whole root otherwise.
-            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            long began = Began();
             string whyNot;
             using (s_prepareWithdraw.Auto())
             {
                 WithdrawsParts = handle.TryWithdrawParts(new Behaviour[] { _pose }, out whyNot);
             }
 
+#if ZANTETSU_OBSERVE
             ConfirmSeconds = (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             WholeRootReason = whyNot;
             return true;
         }

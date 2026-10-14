@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -246,6 +249,16 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     public sealed class CutFragmentGroupCollection
     {
+
+        // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return Stopwatch.GetTimestamp();
+#else
+            return 0;
+#endif
+        }
         private static readonly ProfilerMarker s_retire = new ProfilerMarker("Zantetsu.FragmentGroups.Retire");
         private static readonly ProfilerMarker s_return = new ProfilerMarker("Zantetsu.FragmentGroups.Return");
 
@@ -493,9 +506,11 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
+#if ZANTETSU_OBSERVE
             double chose = Since(begin);
             SelectSeconds += chose;
             MaxSelectSeconds = Math.Max(MaxSelectSeconds, chose);
+#endif
             if (!best.IsSet)
             {
                 return;
@@ -556,7 +571,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public bool TryApply(in CutGroupCandidate candidate, out CutGroupPass refusal)
         {
-            // The asking again is part of what a retirement costs: timed with it.
+            // The asking again is part of what a retirement costs: timed with it (the per-fragment cost history reads it).
             long begin = Stopwatch.GetTimestamp();
             refusal = CutGroupPass.Candidate;
             Group group = null;
@@ -615,10 +630,12 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
-            double spent = Since(begin);
+            double spent = Since(begin);   // the retirement's cost: _perFragment below is the budget's expectation (kept in every build)
+#if ZANTETSU_OBSERVE
             RetireSeconds += spent;
             MaxRetireSeconds = Math.Max(MaxRetireSeconds, spent);
             LastRetireSeconds = spent;
+#endif
             LastRetiredFrame = Time.frameCount;
             LastRetiredFragments = retired;
             LastRetiredDistance = candidate.NearestDistance;
@@ -977,8 +994,10 @@ namespace Zantetsu.PhysicsCut
             {
                 double seconds = CutPhysicsStep.LastCollectSeconds;
                 CollectionsAfterRetirement++;
+#if ZANTETSU_OBSERVE
                 CollectAfterSeconds += seconds;
                 MaxCollectAfterSeconds = Math.Max(MaxCollectAfterSeconds, seconds);
+#endif
                 _collectAfter.Add(seconds);
                 _collectAfterFrame = int.MinValue;
             }
@@ -1002,17 +1021,19 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 bool back;
                 using (s_return.Auto())
                 {
                     back = group.origin.TryReturn();
                 }
 
+#if ZANTETSU_OBSERVE
                 double spent = Since(begin);
                 ReturnSeconds += spent;
                 MaxReturnSeconds = Math.Max(MaxReturnSeconds, spent);
                 Note(EventKind.Returned, group, back, 0, spent);
+#endif
                 if (back)
                 {
                     group.returned = true;
@@ -1059,12 +1080,14 @@ namespace Zantetsu.PhysicsCut
                     return false;
                 }
 
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 bool armed = group.origin.TryRearm();
+#if ZANTETSU_OBSERVE
                 double spent = Since(begin);
                 RearmSeconds += spent;
                 MaxRearmSeconds = Math.Max(MaxRearmSeconds, spent);
                 Note(EventKind.Rearmed, group, armed, 0, spent);
+#endif
                 if (armed)
                 {
                     Rearmed++;
@@ -1107,6 +1130,10 @@ namespace Zantetsu.PhysicsCut
 
         private void Note(EventKind what, Group group, bool ok, int fragments, double seconds, float nearest = float.PositiveInfinity)
         {
+#if !ZANTETSU_OBSERVE
+            // A Release Player keeps no events (DESIGN 21.18): nothing is written at the world's end there.
+            return;
+#endif
             if (_events.Count >= EventRoom)
             {
                 EventsNotKept++;

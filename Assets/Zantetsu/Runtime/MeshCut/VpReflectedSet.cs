@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System.Collections;
 using System.Collections.Generic;
 
@@ -41,14 +44,26 @@ namespace Zantetsu.MeshCut
             {
                 counts.made++;
                 counts.entries += items.Length;
+#if ZANTETSU_OBSERVE
                 counts.seconds += (System.Diagnostics.Stopwatch.GetTimestamp() - begin) / (double)System.Diagnostics.Stopwatch.Frequency;
+#endif
             }
+        }
+
+        // The clock is read for the readout only (DESIGN 21.18): a Release Player reads none.
+        private static long Began()
+        {
+#if ZANTETSU_OBSERVE
+            return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+            return 0L;
+#endif
         }
 
         /// <summary>A set of the caller's boundaries, copied in their order.</summary>
         internal static VpReflectedSet Of(IReadOnlyCollection<VpClipBoundary> boundaries, Counts counts)
         {
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             var items = new VpClipBoundary[boundaries.Count];
             int k = 0;
             foreach (VpClipBoundary boundary in boundaries)
@@ -62,7 +77,7 @@ namespace Zantetsu.MeshCut
         /// <summary>A new set: these boundaries and one more after them. This set is not changed.</summary>
         internal VpReflectedSet With(VpClipBoundary boundary, Counts counts)
         {
-            long begin = System.Diagnostics.Stopwatch.GetTimestamp();
+            long begin = Began();
             var items = new VpClipBoundary[_items.Length + 1];
             System.Array.Copy(_items, items, _items.Length);
             items[_items.Length] = boundary;

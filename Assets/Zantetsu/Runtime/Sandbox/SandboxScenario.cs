@@ -457,7 +457,14 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            PlayMenu.Install(kind);
+            PlayMenu menu = PlayMenu.Install(kind);
+
+            // Play's statistics (DESIGN 21.18): the service, and the first-run question where it was never answered.
+            if (kind == SandboxScenarioKind.Play)
+            {
+                PlayStatisticsService statistics = PlayStatisticsService.Install(kind, scene);
+                menu.AskConsent(statistics);
+            }
         }
 
         /// <summary>

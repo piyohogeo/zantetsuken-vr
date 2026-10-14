@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -234,6 +237,8 @@ namespace Zantetsu.PhysicsCut
             _failuresLogged = true;
             UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + Driver.FailureSummary() + (Cook != null ? "; " + Cook.HullSummary() : ""), this);
 
+#if ZANTETSU_OBSERVE
+            // The collections' records (DESIGN 21.18: development only -- a Release Player writes no such strings).
             // The collection of empty owners, when it ever took a turn in this world: its counts and its times, once.
             if (EmptyOwners != null && EmptyOwners.Turns > 0)
             {
@@ -251,6 +256,7 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(), this);
                 SpatialSplit.LogEvents();   // each publication with its frame: kept until now, not written in its frame
             }
+#endif
         }
 
         private void OnDestroy()

@@ -1,3 +1,5 @@
+// No observation gate in this file (DESIGN 21.18): the simulation's measured duration is the budget's input (the cost
+// history the next decision reads), so a Release Player measures it as the Editor does. The diagnosis is under DEBUG.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -454,7 +456,7 @@ namespace Zantetsu.PhysicsCut
                     Physics.Simulate((float)s_clock.StepSeconds);
                 }
 
-                LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;
+                LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;   // the budget's input: s_costs below predicts the next step from it (kept in every build)
                 if (verify)
                 {
                     VerificationSteps++;

@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -109,7 +112,7 @@ namespace Zantetsu.PhysicsCut
         {
             HullGroup group = cut.group;
             PhysicsCutProducts products = cut.request.Products;
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             if (products.PartCount(true) != 1 || products.PartCount(false) != 1)
             {
                 Fail(cut, "Failed: the cut gave " + products.PartCount(true) + " positive and " + products.PartCount(false) + " negative convexes (one each expected)");
@@ -173,7 +176,7 @@ namespace Zantetsu.PhysicsCut
             cut.classification = null;
 
             // The display cuts, admitted first (judged possible above on this same state: another answer is a broken invariant).
-            long displayBegin = Stopwatch.GetTimestamp();
+            long displayBegin = Began();
             var admitted = new List<(MemberSide side, CutOperationId operation)>(crossed.Count);
             foreach (MemberSide s in crossed)
             {
@@ -183,7 +186,9 @@ namespace Zantetsu.PhysicsCut
                 admitted.Add((s, operation));
             }
 
+#if ZANTETSU_OBSERVE
             double displaySeconds = (Stopwatch.GetTimestamp() - displayBegin) / (double)Stopwatch.Frequency;
+#endif
 
             var positiveAnchors = new List<float3>();
             var negativeAnchors = new List<float3>();
@@ -199,7 +204,7 @@ namespace Zantetsu.PhysicsCut
             Vector3 c0 = group.Body.worldCenterOfMass;
             Transform root = group.Root.transform;
 
-            long physicsBegin = Stopwatch.GetTimestamp();
+            long physicsBegin = Began();
             HullGroup positive = group;
             ReplaceShape(positive, positiveShape, null, null);
             positive.HullIsFused = false;
@@ -243,12 +248,14 @@ namespace Zantetsu.PhysicsCut
             _rest.TrackGroup(positive.Body, positive.Building, new[] { positive.Collider }, restNow, positiveFixed);
             _rest.TrackGroup(negative.Body, negative.Building, new[] { negative.Collider }, restNow, negativeFixed);
             if (_settings.stageSeconds > 0.0 && !(positiveFixed && negativeFixed)) BeginPair(positive, negative, normal, cut.planeGroup);
+#if ZANTETSU_OBSERVE
             PublishPhysicsSeconds += (Stopwatch.GetTimestamp() - physicsBegin) / (double)Stopwatch.Frequency;
+#endif
 
             // The display members to their sides; the admitted cuts published, their children display-only owners on their sides.
             // The preparation classified the members in their order (one side a member, cut.sides[i] for Members[i]; the
             // list does not change while the group is cut): each is read once, by its index.
-            displayBegin = Stopwatch.GetTimestamp();
+            displayBegin = Began();
             int moved = 0;
             var members = new List<HullGroup.DisplayMember>(positive.Members);
             positive.Members.Clear();
@@ -265,12 +272,14 @@ namespace Zantetsu.PhysicsCut
                 else positive.Members.Add(m);
             }
 
+#if ZANTETSU_OBSERVE
             displaySeconds += (Stopwatch.GetTimestamp() - displayBegin) / (double)Stopwatch.Frequency;
             PublishDisplaySeconds += displaySeconds;
             double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             PublishSeconds += seconds;
             if (GroupCuts == 0) FirstPublishSeconds = seconds; else MaxPublishSecondsAfterFirst = Math.Max(MaxPublishSecondsAfterFirst, seconds);
             MaxPublishSeconds = Math.Max(MaxPublishSeconds, seconds);
+#endif
             GroupCuts++;
             NoteHullSize(positive);
             NoteHullSize(negative);
@@ -279,8 +288,10 @@ namespace Zantetsu.PhysicsCut
             NoteCut(positive.Building);
             cut.hit.positiveGroup = positive.Id; cut.hit.negativeGroup = negative.Id;
             Finish(cut.hit, "Published", true);
+#if ZANTETSU_OBSERVE
             Record("hit " + cut.hit.id + " published t " + _physicsSeconds().ToString("F3") + ": group " + positive.Id + " -> " + positive.Id + " (+, " + positive.VertexCount + " v, " + (positiveFixed ? "held" : "free") + ", mass " + massP.ToString("R") + " (body " + positive.Body.mass.ToString("R") + ", inertia " + positive.Body.inertiaTensor.ToString("G9") + "), members " + positive.MemberCount + ") and "
                 + negative.Id + " (-, " + negative.VertexCount + " v, " + (negativeFixed ? "held" : "free") + ", mass " + massN.ToString("R") + " (body " + negative.Body.mass.ToString("R") + ", inertia " + negative.Body.inertiaTensor.ToString("G9") + "), members " + negative.MemberCount + "); display members moved " + moved + ", cut " + admitted.Count + "; " + (seconds * 1000).ToString("F3") + " ms");
+#endif
             return PublishOutcome.Published;
         }
 
@@ -294,7 +305,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>A group's hull replaced: the collider's mesh, the shape, and what the old one owned (an authored brep and mesh) let go.</summary>
         private void ReplaceShape(HullGroup group, PhysicsOwnerShape shape, HullBrep ownedBrep, Mesh ownedMesh)
         {
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             PhysicsOwnerShape old = group.Shape;
             HullBrep oldBrep = group.OwnedBrep;
             Mesh oldMesh = group.OwnedMesh;
@@ -306,7 +317,11 @@ namespace Zantetsu.PhysicsCut
             oldBrep?.Dispose();
             if (oldMesh != null) PhysicsCutCook.DestroyMesh(oldMesh);
             HullExchanges++;
+#if ZANTETSU_OBSERVE
+#if ZANTETSU_OBSERVE
             HullExchangeSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
+#endif
         }
 
         /// <summary>An admitted display cut published: its two children display-only owners with a Root each under their side at the member's pose; the source retired. Inside the publication's section: nothing here refuses.</summary>
@@ -400,7 +415,7 @@ namespace Zantetsu.PhysicsCut
             public void Begin()
             {
                 Volatile.Write(ref _begun, 1);
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 try
                 {
                     if (stage == FusionStage.Scanning)
@@ -419,8 +434,10 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
                     if (stage == FusionStage.Scanning) scanSeconds = seconds; else bakeSeconds = seconds;
+#endif
                     Volatile.Write(ref _done, 1);
                 }
             }
@@ -510,9 +527,11 @@ namespace Zantetsu.PhysicsCut
         {
             if (a.Rejected && !double.IsNaN(a.since))
             {
+#if ZANTETSU_OBSERVE
                 double s = _realSeconds() - a.since;
                 NotAchievedSeconds += s;
                 _maxNotAchievedEnded = Math.Max(_maxNotAchievedEnded, s);
+#endif
             }
 
             _aggregations.Remove(a.building);
@@ -584,18 +603,22 @@ namespace Zantetsu.PhysicsCut
                 if (!MayStart()) return;
                 if (w.stage == FusionStage.Scanning)
                 {
+#if ZANTETSU_OBSERVE
                     FusionWorkerSeconds += w.scanSeconds;
-                    long takeBegin = Stopwatch.GetTimestamp();
+#endif
+                    long takeBegin = Began();
                     if (!TakeScan(w)) _fusions.RemoveAt(i);   // dropped or refused: over
                     Unit("mesh preparation", takeBegin);
                     continue;
                 }
 
+#if ZANTETSU_OBSERVE
                 FusionBakeSeconds += w.bakeSeconds;
+#endif
                 FusionBakes++;
                 MeshesBaked++;
                 _fusions.RemoveAt(i);
-                long adoptBegin = Stopwatch.GetTimestamp();
+                long adoptBegin = Began();
                 Adopt(w);
                 Unit("hull exchange", adoptBegin);
             }
@@ -715,14 +738,16 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             ConvexHullBuilder.ColliderArrays(w.vertices, w.faceOffsets, w.faceIndices, out Vector3[] meshVertices, out int[] triangles);
             w.mesh = new Mesh { name = "Building hull " + w.target.Id + " g" + (w.target.Generation + 1), hideFlags = HideFlags.HideAndDontSave };
             w.mesh.vertices = meshVertices;
             w.mesh.triangles = triangles;
             w.mesh.RecalculateBounds();
             w.meshId = w.mesh.GetEntityId();
+#if ZANTETSU_OBSERVE
             MeshPrepareSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
             w.Reset(FusionStage.Baking);
             Offer(w);
             return true;
@@ -737,7 +762,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void Adopt(FusionWork w)
         {
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             if (!Verify(w, out string why))
             {
                 DropCandidate(w, why + " (at the adoption)");
@@ -759,7 +784,9 @@ namespace Zantetsu.PhysicsCut
                 brep.Dispose();
                 FusionHullRefusals++;
                 RefuseCandidate(w, "PhysX refused the fused hull's mesh");
+#if ZANTETSU_OBSERVE
                 HullExchangeSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                 return;
             }
 
@@ -786,16 +813,23 @@ namespace Zantetsu.PhysicsCut
                 a.why = !verifiable ? "the penetration could not be verified (more colliders near than the query holds)"
                     : "the fused hull would penetrate " + worstOpponent + " by " + worstAfter.ToString("F3") + " m (" + worstBefore.ToString("F3") + " m before the exchange, " + worstNew.ToString("F3") + " m added, allowed " + _settings.maxNewPenetrationMetres.ToString("F3") + ")";
                 HullsNotAchieved++;
+#if ZANTETSU_OBSERVE
+                // The diagnosis of the refusal (the records and the penetration description): the judgement above stands in every build.
                 MaxRejectedNewPenetration = Mathf.Max(MaxRejectedNewPenetration, worstNew);
                 _notAchieved.Add("building " + w.building + " class [" + w.Names + "] (" + w.participants.Count + " hulls, " + w.vertices.Length + " vertices): " + a.why);
                 if (_penetrationRecords.Count < 256) _penetrationRecords.Add("building " + w.building + " class [" + w.Names + "] NOT ADOPTED (" + w.participants.Count + " hulls -> candidate " + w.vertices.Length + " v): " + DescribePenetrations(w) + (verifiable ? "" : " [unverifiable]"));
+#endif
                 Record("building " + w.building + " one hull not achieved t " + _physicsSeconds().ToString("F3") + " for the class [" + w.Names + "]: " + a.why + "; the groups stay apart, each its own hull, each cuttable");
+#if ZANTETSU_OBSERVE
                 HullExchangeSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                 return;
             }
 
+#if ZANTETSU_OBSERVE
             LastPenetrationComparison = "building " + w.building + " class [" + w.Names + "]: " + DescribePenetrations(w);
             if (_penetrationRecords.Count < 256) _penetrationRecords.Add("building " + w.building + " class [" + w.Names + "] adopted (" + w.participants.Count + " hulls -> " + w.vertices.Length + " v): " + DescribePenetrations(w));
+#endif
 
             // Adopted: the target takes the candidate as its hull, and every other participant merges into it (one section; nothing below refuses).
             PhysicsOwnerShape shape = PhysicsOwnerShape.Authored(brep.Bank, new[] { brep.Range }, new List<Mesh> { w.mesh }, PhysicsShapeSource.External(), float4x4.identity);
@@ -807,7 +841,7 @@ namespace Zantetsu.PhysicsCut
             foreach (Participant p in w.participants)
             {
                 if (ReferenceEquals(p.group, g)) continue;
-                long mergeBegin = Stopwatch.GetTimestamp();
+                long mergeBegin = Began();
                 Merge(p.group, g);
                 Unit("union", mergeBegin);
             }
@@ -829,7 +863,11 @@ namespace Zantetsu.PhysicsCut
             MaxNewPenetration = Mathf.Max(MaxNewPenetration, worstNew);
             NoteHullSize(g);
             NoteLiveHulls();
+#if ZANTETSU_OBSERVE
+#if ZANTETSU_OBSERVE
             HullExchangeSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
+#endif
             Record("group " + g.Id + " fused t " + _physicsSeconds().ToString("F3") + ": one hull of " + brep.VertexCount + " vertices, " + brep.FaceCount + " faces (generation " + g.Generation + ") from " + w.participants.Count + " groups; volume " + volumeBefore.ToString("F4") + " -> " + volumeAfter.ToString("F4")
                 + " (filled " + overhang.ToString("F4") + "; envelope expansion " + w.report.expansion.ToString("E2") + " m, shrink " + w.report.shrink.ToString("E2") + " m); deepest penetration before " + penetrationBefore.ToString("F4") + " m, after " + penetration.ToString("F4") + " m (same pose); members " + g.MemberCount + "; scan " + (w.scanSeconds * 1000).ToString("F3") + " ms, bake " + (w.bakeSeconds * 1000).ToString("F3") + " ms off Main");
         }
@@ -841,7 +879,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private void Merge(HullGroup from, HullGroup into)
         {
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             Transform intoRoot = into.Root.transform;
             float4x4 toGroup = math.mul(math.inverse((float4x4)intoRoot.localToWorldMatrix), (float4x4)from.Root.transform.localToWorldMatrix);
             foreach (HullGroup.DisplayMember m in from.Members) { m.root.transform.SetParent(intoRoot, true); into.Members.Add(m); }
@@ -872,7 +910,9 @@ namespace Zantetsu.PhysicsCut
             from.Shape = null; from.OwnedBrep = null; from.OwnedMesh = null;
             BodiesDestroyed++;
             Unions++;
+#if ZANTETSU_OBSERVE
             UniteSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
             Record("group " + from.Id + " merged into " + into.Id + " at the adoption t " + _physicsSeconds().ToString("F3") + " (members " + into.MemberCount + ", mass " + total.ToString("F3") + ")");
         }
 
@@ -931,14 +971,16 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private bool MeasurePenetrations(FusionWork w, Dictionary<Collider, float> into, Collider only)
         {
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             into.Clear();
             bool verifiable = true;
             if (only != null) verifiable &= MeasurePenetrationsOf(w, only, into);
             else foreach (Participant p in w.participants) verifiable &= MeasurePenetrationsOf(w, p.group.Collider, into);
+#if ZANTETSU_OBSERVE
             double s = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             PenetrationSeconds += s;
             MaxPenetrationSeconds = Math.Max(MaxPenetrationSeconds, s);
+#endif
             return verifiable;
         }
 
@@ -1244,6 +1286,7 @@ namespace Zantetsu.PhysicsCut
             MaxGroups = Math.Max(MaxGroups, GroupCount);
         }
 
+        [Conditional("ZANTETSU_OBSERVE")]
         private void Record(string line)
         {
             if (_events.Count < 4096) _events.Add(line);

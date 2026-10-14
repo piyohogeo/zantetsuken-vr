@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -94,7 +97,7 @@ namespace Zantetsu.PhysicsCut
             public Vector3 gravity;   // the game's gravity at the start, in the group Root's local space (fixed for the drop)
             public double start;
             public double seconds;   // T, fixed at the start
-            public DropRecord record;
+            public DropRecord record;   // the diagnosis (Editor/Development builds): null in a Release Player
         }
 
         /// <summary>
@@ -166,7 +169,7 @@ namespace Zantetsu.PhysicsCut
             public void Begin()
             {
                 Volatile.Write(ref _begun, 1);
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 try
                 {
                     if (scanning)
@@ -190,8 +193,10 @@ namespace Zantetsu.PhysicsCut
                 }
                 finally
                 {
+#if ZANTETSU_OBSERVE
                     double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
                     if (scanning) scanSeconds = seconds; else bakeSeconds = seconds;
+#endif
                     Volatile.Write(ref _done, 1);
                 }
             }
@@ -296,7 +301,7 @@ namespace Zantetsu.PhysicsCut
         private PublishOutcome PublishDisplayOnly(PendingCut cut)
         {
             HullGroup group = cut.group;
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             var crossed = new List<MemberSide>();
             foreach (MemberSide s in cut.sides) if (s.side == 0) crossed.Add(s);
             foreach (MemberSide s in crossed)
@@ -393,15 +398,17 @@ namespace Zantetsu.PhysicsCut
             HullRequestsMade++;
             MaxWaitingHullRequests = Math.Max(MaxWaitingHullRequests, _waitingRequest.Count);
             group.State = HullGroupState.Idle;
+#if ZANTETSU_OBSERVE
             double seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
             PublishSeconds += seconds;
             PublishDisplaySeconds += seconds;
             if (GroupCuts == 0) FirstPublishSeconds = seconds; else MaxPublishSecondsAfterFirst = Math.Max(MaxPublishSecondsAfterFirst, seconds);
             MaxPublishSeconds = Math.Max(MaxPublishSeconds, seconds);
+            cut.hit.publishMs = seconds * 1000;
+#endif
             GroupCuts++;
             cut.hit.positiveGroup = cut.hit.negativeGroup = group.Id;
             cut.hit.membersHeldAfter = group.MemberCount;
-            cut.hit.publishMs = seconds * 1000;
             Finish(cut.hit, "Published", true);
             if (group.Handover != null)
             {
@@ -413,7 +420,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             cut.hit.hullOutcome = "the hull's update asked for (" + (_hullWorks.Exists(w => ReferenceEquals(w.group, group)) ? "one running: this one waits" : "the next update") + (replaced ? "; the request waiting before it skipped" : "") + ")";
+#if ZANTETSU_OBSERVE
             Record("hit " + cut.hit.id + " published by the display t " + _physicsSeconds().ToString("F3") + ": group " + group.Id + ", display cuts " + admitted.Count + ", members dropping " + dropping.Count + " (" + (movingPositive ? "+" : "-") + " side, " + rule + "; " + distance.ToString("F4") + " m " + slideRule + " " + ((Vector3)slide).ToString("F3") + " over " + _settings.animationSeconds.ToString("F2") + " s); members held " + group.MemberCount + "; " + (seconds * 1000).ToString("F3") + " ms");
+#endif
             return PublishOutcome.Published;
         }
 
@@ -449,21 +458,32 @@ namespace Zantetsu.PhysicsCut
             if (members.Count == 0) return;
             Transform root = group.Root.transform;
             Vector3 gravityWorld = Physics.gravity;   // the game's gravity at the start, fixed for the drop
+            Vector3 gravityLocal = root.InverseTransformVector(gravityWorld);
+            double start = _realSeconds(), seconds = _settings.animationSeconds;
+            // The animation's own state: what the placements are made from. The record below is the drop's diagnosis
+            // (the checks' view of it: the members' start poses and the end read back): nothing of it in a Release Player.
+            var a = new DisplayAnimation { group = group, delta = deltaLocal, gravity = gravityLocal, start = start, seconds = seconds };
+#if ZANTETSU_OBSERVE
             var record = new DropRecord
             {
-                id = _dropRecords.Count + 1, hit = hit.id, group = group.Id, building = group.Building, deltaLocal = deltaLocal, gravityLocal = root.InverseTransformVector(gravityWorld),
-                deltaWorld = hit.slideWorld, gravityWorld = gravityWorld, normalWorld = hit.normalWorld, seconds = _settings.animationSeconds, start = _realSeconds(),
+                id = _dropRecords.Count + 1, hit = hit.id, group = group.Id, building = group.Building, deltaLocal = deltaLocal, gravityLocal = gravityLocal,
+                deltaWorld = hit.slideWorld, gravityWorld = gravityWorld, normalWorld = hit.normalWorld, seconds = seconds, start = start,
                 bodyRotation = group.Body != null ? group.Body.rotation : Quaternion.identity,
             };
-            var a = new DisplayAnimation { group = group, delta = deltaLocal, gravity = record.gravityLocal, start = record.start, seconds = record.seconds, record = record };
+            a.record = record;
+#endif
             foreach (HullGroup.DisplayMember m in members)
             {
                 if (m.root == null) continue;
                 a.items.Add((m, m.root.transform.localPosition));
+#if ZANTETSU_OBSERVE
                 record.members.Add(new DropMember { fragment = m.fragment, root = m.root.transform, from = m.root.transform.localPosition, rotation = m.root.transform.localRotation });
+#endif
             }
 
+#if ZANTETSU_OBSERVE
             _dropRecords.Add(record);
+#endif
             AnimationsStarted++;
             _animations.Add(a);   // where it is until the next physics step; from then on placed with every step
         }
@@ -488,30 +508,43 @@ namespace Zantetsu.PhysicsCut
         private void StepAnimations()
         {
             if (_animations.Count == 0) return;
-            long begin = Stopwatch.GetTimestamp();
+            long begin = Began();
             double now = _realSeconds();
             for (int i = _animations.Count - 1; i >= 0; i--)
             {
                 DisplayAnimation a = _animations[i];
                 double t = DropSeconds(a, now);
                 Place(a, t);
-                if (t >= a.seconds) { a.record.end = "completed"; MeasureDrop(a); _animations.RemoveAt(i); AnimationsCompleted++; }
+                if (t >= a.seconds)
+                {
+#if ZANTETSU_OBSERVE
+                    a.record.end = "completed";
+                    MeasureDrop(a);
+#endif
+                    _animations.RemoveAt(i);
+                    AnimationsCompleted++;
+                }
             }
 
+#if ZANTETSU_OBSERVE
             AnimationSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
         }
 
         private static void Place(DisplayAnimation a, double t)
         {
             foreach ((HullGroup.DisplayMember m, Vector3 from) in a.items) if (m.root != null) m.root.transform.localPosition = DropPosition(from, a.delta, a.gravity, a.seconds, t);
+#if ZANTETSU_OBSERVE
             a.record.appliedSeconds = t;
             a.record.placements++;
+#endif
         }
 
         /// <summary>
         /// A drop's end (completed or stopped): each member read back from its transform against the formula at the time
         /// last applied (on the curve where it stopped; x0 + d when completed), and its rotation and the body's against the start.
         /// </summary>
+        [System.Diagnostics.Conditional("ZANTETSU_OBSERVE")]   // a diagnosis: the members read back after the drop; nothing in a Release Player (DESIGN 21.18)
         private void MeasureDrop(DisplayAnimation a)
         {
             DropRecord r = a.record;
@@ -577,12 +610,21 @@ namespace Zantetsu.PhysicsCut
                 Place(a, t);
                 // The one placement of a drop outside a physics step (D-204): told of the members it placed (D-207).
                 foreach ((HullGroup.DisplayMember member, Vector3 _) in a.items) CutPhysicsStep.NotePlacementInputChanged(member.fragment);
+#if ZANTETSU_OBSERVE
                 a.record.end = t >= a.seconds ? "completed" : "stopped";
                 if (t < a.seconds) a.record.stoppedByHit = byHit;
                 MeasureDrop(a);
+#endif
                 _animations.RemoveAt(i);
                 if (t >= a.seconds) AnimationsCompleted++;
-                else { AnimationsStoppedByReCut++; LastStopFraction = a.record.Phase; Record("group " + group.Id + ": drop " + a.record.id + " (hit " + a.record.hit + ") stopped by " + why + " at u = " + a.record.Phase.ToString("R") + " (t " + t.ToString("R") + " s of " + a.seconds.ToString("R") + "; the pose on its curve kept)"); }
+                else
+                {
+                    AnimationsStoppedByReCut++;
+#if ZANTETSU_OBSERVE
+                    LastStopFraction = a.record.Phase;
+                    Record("group " + group.Id + ": drop " + a.record.id + " (hit " + a.record.hit + ") stopped by " + why + " at u = " + a.record.Phase.ToString("R") + " (t " + t.ToString("R") + " s of " + a.seconds.ToString("R") + "; the pose on its curve kept)");
+#endif
+                }
             }
         }
 
@@ -662,10 +704,12 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 if (!MayStart()) return;
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 if (w.scanning)
                 {
+#if ZANTETSU_OBSERVE
                     HullUpdateWorkerSeconds += w.scanSeconds;
+#endif
                     if (w.group.State == HullGroupState.Gone || w.group.Root == null) { _hullWorks.RemoveAt(i); continue; }
                     if (w.group.HullGeneration != w.generation) { _hullWorks.RemoveAt(i); HullUpdatesStale++; GiveBack(w, "stale at the scan (generation " + w.generation + " made, " + w.group.HullGeneration + " now)"); continue; }
                     if (refuseHullForTest) { w.vertices = null; w.reason = "refused (test)"; }
@@ -684,16 +728,22 @@ namespace Zantetsu.PhysicsCut
                     w.meshId = w.mesh.GetEntityId();
                     w.ResetForBake();
                     OfferHull(w);
+#if ZANTETSU_OBSERVE
                     HullUpdateMainSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                     Unit("hull update mesh", begin);
                     continue;
                 }
 
+#if ZANTETSU_OBSERVE
                 HullUpdateWorkerSeconds += w.bakeSeconds;
+#endif
                 MeshesBaked++;
                 _hullWorks.RemoveAt(i);
                 ExchangeHull(w);
+#if ZANTETSU_OBSERVE
                 HullUpdateMainSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                 Unit("hull update exchange", begin);
             }
 
@@ -702,7 +752,7 @@ namespace Zantetsu.PhysicsCut
                 HullGroup g = p.Key;
                 if (g.State == HullGroupState.Gone || g.Root == null || g.Shape == null || _hullWorks.Exists(x => ReferenceEquals(x.group, g))) continue;
                 if (!MayStart()) return;
-                long begin = Stopwatch.GetTimestamp();
+                long begin = Began();
                 ReadHull(g.Shape, out float3[] v, out int[] fo, out int[] fi);
                 var w = new HullUpdateWork { group = g, generation = g.HullGeneration, vertices = v, faceOffsets = fo, faceIndices = fi, vertexLimit = _vertexLimit, cooking = Cooking };
                 w.ops.Add(p.Value);
@@ -712,7 +762,9 @@ namespace Zantetsu.PhysicsCut
                 MaxHullUpdatesInFlight = Math.Max(MaxHullUpdatesInFlight, _hullWorks.Count);
                 HullUpdatesBegun++;
                 OfferHull(w);
+#if ZANTETSU_OBSERVE
                 HullUpdateMainSeconds += (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+#endif
                 return;   // one begun a Step: the dictionary is not walked on after a change
             }
         }
@@ -725,7 +777,9 @@ namespace Zantetsu.PhysicsCut
             bool newer = _waitingRequest.ContainsKey(w.group);
             if (newer) HullRequestsSkipped += w.ops.Count;
             else _waitingRequest[w.group] = w.ops[w.ops.Count - 1];
+#if ZANTETSU_OBSERVE
             if (_hullUpdateRecords.Count < 512) _hullUpdateRecords.Add("group " + w.group.Id + ": update not exchanged, " + why + "; the old hull kept; " + (newer ? "a newer request waits: this one skipped" : "its request waits again (none newer)"));
+#endif
         }
 
         /// <summary>A refused update: its cuts dropped, the old hull kept (the display went on without it).</summary>
@@ -734,7 +788,9 @@ namespace Zantetsu.PhysicsCut
             if (w.mesh != null) { PhysicsCutCook.DestroyMesh(w.mesh); w.mesh = null; }
             HullUpdatesRefused++;
             HullRequestsDropped += w.ops.Count;
+#if ZANTETSU_OBSERVE
             if (_hullUpdateRecords.Count < 512) _hullUpdateRecords.Add("group " + w.group.Id + ": update of " + w.ops.Count + " cut(s) refused (" + why + "); the old hull kept (generation " + w.group.HullGeneration + ")");
+#endif
         }
 
         /// <summary>A baked candidate (Main): the generation checked again, the mesh put on the group's collider and checked by PhysX; exchanged, or the old hull kept.</summary>
@@ -760,13 +816,17 @@ namespace Zantetsu.PhysicsCut
             g.HullGeneration++;
             HullUpdatesAdopted++;
             NoteHullSize(g);
+#if ZANTETSU_OBSERVE
             if (_hullUpdateRecords.Count < 512) _hullUpdateRecords.Add("group " + g.Id + ": update of " + w.ops.Count + " cut(s) exchanged: " + brep.VertexCount + " vertices, " + brep.FaceCount + " faces (generation " + g.HullGeneration + "); scan " + (w.scanSeconds * 1000).ToString("F3") + " ms, bake " + (w.bakeSeconds * 1000).ToString("F3") + " ms off Main");
+#endif
         }
 
         /// <summary>The end: the drops forgotten, the updates cancelled or let go to release themselves, the waits dropped.</summary>
         private void DisposeKinematic()
         {
+#if ZANTETSU_OBSERVE
             foreach (DisplayAnimation a in _animations) a.record.end ??= "cleared";
+#endif
             _animations.Clear();
             foreach (HullUpdateWork w in _hullWorks)
             {

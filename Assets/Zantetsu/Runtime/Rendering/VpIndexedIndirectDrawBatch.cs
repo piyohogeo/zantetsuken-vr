@@ -1,4 +1,7 @@
-﻿using System;
+﻿#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
+using System;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -367,6 +370,26 @@ namespace Zantetsu.Rendering
         /// <summary>The compacted entries and count slots of a selection's columns. Made on first use; never written by the CPU after that.</summary>
         public sealed class Compaction : IDisposable
         {
+
+            // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
+            private static long Began()
+            {
+#if ZANTETSU_OBSERVE
+                return System.Diagnostics.Stopwatch.GetTimestamp();
+#else
+                return 0;
+#endif
+            }
+
+            // The seconds since an observed span began: 0 in a Release Player (DESIGN 21.18).
+            private static double SecondsSince(long began)
+            {
+#if ZANTETSU_OBSERVE
+                return (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency;
+#else
+                return 0.0;
+#endif
+            }
             /// <summary>How many columns a set of this device's route has: 3 on Vulkan (body, casters, motion), 2 on Direct3D 12 (body, casters).</summary>
             public static int Columns => VpCommandCompaction.Layout.Columns;
 
@@ -417,7 +440,7 @@ namespace Zantetsu.Rendering
 
             internal Compaction(int commandCapacity, int stride, string name)
             {
-                long began = System.Diagnostics.Stopwatch.GetTimestamp();
+                long began = Began();
                 try
                 {
                     // The counts are written here, once, so that no slot is ever read before something set it; after
@@ -446,7 +469,7 @@ namespace Zantetsu.Rendering
                     }
 
                     VpCommandCompaction.NoteSetMade(BytesFor(commandCapacity, stride),
-                        (System.Diagnostics.Stopwatch.GetTimestamp() - began) / (double)System.Diagnostics.Stopwatch.Frequency);
+                        SecondsSince(began));
                 }
                 catch { Dispose(); throw; }
             }

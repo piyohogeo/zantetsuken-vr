@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Burst;
@@ -359,8 +362,10 @@ namespace Zantetsu.PhysicsCut
             b.aggregatedGeneration = b.cutGeneration;   // this generation is done; the held hits below make the next
             AggregationsCompleted++;
             AskCostReevaluation();
+#if ZANTETSU_OBSERVE
             AggregationSeconds += seconds;
             MaxAggregationSeconds = Math.Max(MaxAggregationSeconds, seconds);
+#endif
             List<FusedGroup> groups = GroupsOf(b.key);
             int resting = 0, free = 0;
             foreach (FusedGroup g in groups) { if (g.Kinematic) resting++; else free++; }
@@ -393,7 +398,9 @@ namespace Zantetsu.PhysicsCut
                 return;
             }
 
+#if ZANTETSU_OBSERVE
             MaxHeldWaitSeconds = Math.Max(MaxHeldWaitSeconds, realSeconds() - h.heldAt);
+#endif
             bool any = false;
             var refusedNow = new System.Text.StringBuilder();
             foreach (FusedGroup group in new List<FusedGroup>(GroupsOf(b.key)))
@@ -528,9 +535,11 @@ namespace Zantetsu.PhysicsCut
                 _rest.TrackGroupColliders(sb, source.Root);
             }
 
+#if ZANTETSU_OBSERVE
             double seconds = EndPart();
             UnionSeconds += seconds;
             MaxUnionSeconds = Math.Max(MaxUnionSeconds, seconds);
+#endif
         }
 
         public double UnionSeconds { get; private set; }

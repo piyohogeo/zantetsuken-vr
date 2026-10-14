@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
@@ -457,9 +460,12 @@ namespace Zantetsu.PhysicsCut
 
         private void RecordOverrun(ProvisionalCutTransaction transaction, ProvisionalBudgetStage stage, double expected, double remaining, double measured)
         {
+            BudgetOverrunCount++;
+#if ZANTETSU_OBSERVE
+            // The overrun's record is a readout (DESIGN 21.18); the count stays in every build.
             LastBudgetOverrun = new ProvisionalBudgetOverrun(
                 CurrentFrame, transaction.Operation, stage, expected, WholeMainBudget, remaining, measured);
-            BudgetOverrunCount++;
+#endif
         }
 
         private int? RemainingConstraintRoom(ProvisionalCutTransaction except = null)

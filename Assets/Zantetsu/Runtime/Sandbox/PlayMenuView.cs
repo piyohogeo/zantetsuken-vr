@@ -42,13 +42,13 @@ namespace Zantetsu.Sandbox
         private const float Width = 800f;
         private const float Height = 620f;
 
-        private static readonly Color PanelColour = new Color(0.06f, 0.07f, 0.09f, 0.92f);
-        private static readonly Color ControlColour = new Color(0.20f, 0.23f, 0.28f, 1f);
-        private static readonly Color HoverColour = new Color(0.32f, 0.40f, 0.52f, 1f);
+        internal static readonly Color PanelColour = new Color(0.06f, 0.07f, 0.09f, 0.92f);
+        internal static readonly Color ControlColour = new Color(0.20f, 0.23f, 0.28f, 1f);
+        internal static readonly Color HoverColour = new Color(0.32f, 0.40f, 0.52f, 1f);
         private static readonly Color FillColour = new Color(0.36f, 0.62f, 0.90f, 1f);
         private static readonly Color DisabledColour = new Color(0.14f, 0.15f, 0.17f, 1f);
-        private static readonly Color TextColour = new Color(0.94f, 0.95f, 0.96f, 1f);
-        private static readonly Color DimTextColour = new Color(0.55f, 0.57f, 0.60f, 1f);
+        internal static readonly Color TextColour = new Color(0.94f, 0.95f, 0.96f, 1f);
+        internal static readonly Color DimTextColour = new Color(0.55f, 0.57f, 0.60f, 1f);
 
         /// <summary>One slider or ON/OFF button of the menu: what it shows, its range and step, and who takes its value.</summary>
         public sealed class Row
@@ -440,7 +440,7 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        private static Image NewImage(string name, Transform parent, Color colour)
+        internal static Image NewImage(string name, Transform parent, Color colour)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -450,7 +450,7 @@ namespace Zantetsu.Sandbox
             return image;
         }
 
-        private static Text NewText(string name, Transform parent, Font font, string value, int size, Color colour, TextAnchor anchor)
+        internal static Text NewText(string name, Transform parent, Font font, string value, int size, Color colour, TextAnchor anchor)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
             go.transform.SetParent(parent, false);
@@ -466,7 +466,7 @@ namespace Zantetsu.Sandbox
             return text;
         }
 
-        private static void Stretch(RectTransform rect)
+        internal static void Stretch(RectTransform rect)
         {
             rect.anchorMin = Vector2.zero;
             rect.anchorMax = Vector2.one;
@@ -474,7 +474,7 @@ namespace Zantetsu.Sandbox
             rect.offsetMax = Vector2.zero;
         }
 
-        private static void Place(RectTransform rect, float x, float y, float width, float height)
+        internal static void Place(RectTransform rect, float x, float y, float width, float height)
         {
             rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
