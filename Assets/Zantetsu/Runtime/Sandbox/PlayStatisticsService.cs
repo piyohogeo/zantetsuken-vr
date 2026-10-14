@@ -310,6 +310,9 @@ namespace Zantetsu.Sandbox
         private void Update()
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if ZANTETSU_STATS_VERIFY
+            PlayStatisticsVerify.ServiceUpdateBegins();   // a Development verification build: the allocation record is valid here only
+#endif
             long updateBegan = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
@@ -322,6 +325,9 @@ namespace Zantetsu.Sandbox
                 _updateTicks += took;
                 if (took > _updateMaxTicks) _updateMaxTicks = took;
             }
+#if ZANTETSU_STATS_VERIFY
+            PlayStatisticsVerify.ServiceUpdateEnded(System.Diagnostics.Stopwatch.GetTimestamp() - updateBegan);
+#endif
 #elif ZANTETSU_STATS_VERIFY
             // The verification build alone (DESIGN 21.18): the whole Update between two clock reads, the allocation
             // counter read outside them. No product build, Development or Release, compiles this branch.

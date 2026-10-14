@@ -160,6 +160,51 @@ namespace Zantetsu.Core.Statistics
         }
 
         private static string Edge(double edge, CultureInfo c) => double.IsPositiveInfinity(edge) ? "inf" : edge.ToString("0.###", c);
+
+        /// <summary>Edges for a frame's allocated bytes: from 64 bytes to 4 MiB.</summary>
+        public static readonly double[] ByteEdges =
+        {
+            64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 65536, 262144, 1048576, 4194304,
+        };
+    }
+
+    /// <summary>
+    /// The engine's record of managed allocations ("GC.Alloc"), for the VERIFICATION build of the play statistics
+    /// alone (DESIGN 21.18): this thread's, enabled round one interval at a time, so that what an interval allocates
+    /// is told from what the rest of the game allocates in the same frame. <see cref="End"/> gives the number of
+    /// allocations made between it and the <see cref="Begin"/> before it -- the test framework's own constraint reads
+    /// the record this way: disabling it flushes what it holds. The record exists in the Editor and in a Development
+    /// Player; in a Release Player it is not valid, and <see cref="End"/> gives -1. A count, not bytes. Whether it
+    /// counts where it runs is for the caller to show on a known allocation.
+    /// </summary>
+    public static class PlayVerifyAllocationRecord
+    {
+        private static UnityEngine.Profiling.Recorder s_recorder;
+
+        public static bool Valid { get; private set; }
+
+        /// <summary>Called once, on the thread whose allocations are to be counted.</summary>
+        public static void Open()
+        {
+            if (s_recorder != null) return;
+            s_recorder = UnityEngine.Profiling.Recorder.Get("GC.Alloc");
+            Valid = s_recorder != null && s_recorder.isValid;
+            if (!Valid) return;
+            s_recorder.enabled = false;   // it is made enabled: disabling it flushes what its own making recorded
+            s_recorder.FilterToCurrentThread();
+        }
+
+        public static void Begin()
+        {
+            if (Valid) s_recorder.enabled = true;
+        }
+
+        public static int End()
+        {
+            if (!Valid) return -1;
+            s_recorder.enabled = false;
+            return s_recorder.sampleBlockCount;
+        }
     }
 }
 #endif

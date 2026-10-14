@@ -84,6 +84,42 @@ namespace Zantetsu.Core.Tests
             for (int i = 1; i < us.Length; i++) Assert.That(us[i], Is.GreaterThan(us[i - 1]));
         }
 
+        private static object s_one, s_two, s_three;
+
+        [Test]
+        public void TheAllocationRecord_CountsWhatEachIntervalAllocates_OneIntervalAfterAnother_AndNothingOutsideThem()
+        {
+            PlayVerifyAllocationRecord.Open();
+            Assert.That(PlayVerifyAllocationRecord.Valid, Is.True, "the engine's record exists in the Editor");
+
+            // The intervals as the verification build makes them, one after another in one frame: each End gives its
+            // own interval's allocations, not a sum with those before it.
+            var seen = new int[8];
+            PlayVerifyAllocationRecord.Begin();
+            seen[0] = PlayVerifyAllocationRecord.End();
+            PlayVerifyAllocationRecord.Begin();
+            s_one = new byte[32];
+            seen[1] = PlayVerifyAllocationRecord.End();
+            PlayVerifyAllocationRecord.Begin();
+            s_one = new byte[32];
+            s_two = new byte[32];
+            s_three = new byte[32];
+            seen[2] = PlayVerifyAllocationRecord.End();
+            s_one = new byte[4096];   // outside any interval: counted by none
+            s_two = new byte[4096];
+            PlayVerifyAllocationRecord.Begin();
+            seen[3] = PlayVerifyAllocationRecord.End();
+            PlayVerifyAllocationRecord.Begin();
+            s_three = new byte[32];
+            seen[4] = PlayVerifyAllocationRecord.End();
+
+            Assert.That(seen[0], Is.EqualTo(0), "an empty interval");
+            Assert.That(seen[1], Is.EqualTo(1), "one allocation");
+            Assert.That(seen[2], Is.EqualTo(3), "three, and not four: the interval before is not in it");
+            Assert.That(seen[3], Is.EqualTo(0), "what was allocated between two intervals is in neither");
+            Assert.That(seen[4], Is.EqualTo(1));
+        }
+
         [Test]
         public void TheVerificationSymbol_IsInNoProjectSetting_AndItsCodeIsUnderItAlone()
         {

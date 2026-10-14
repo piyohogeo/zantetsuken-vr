@@ -42,7 +42,9 @@ namespace Zantetsu.Editor.Sandbox
             // With the symbol the types must be there: that also shows the symbol reached the compilation.
             bool ok = TryRun(BuildTarget.StandaloneWindows64, BuildTargetGroup.Standalone, out string report, new[] { "ZANTETSU_STATS_VERIFY" }, out bool verify);
             ok &= verify;
-            Debug.Log("RELEASE COMPILE CHECK (ZANTETSU_STATS_VERIFY): " + report);
+            // And as a Development build with the symbol (the allocation check's kind): the service's other branch.
+            ok &= TryRun(BuildTarget.StandaloneWindows64, BuildTargetGroup.Standalone, out string development, new[] { "ZANTETSU_STATS_VERIFY" }, out bool developmentVerify, true) && developmentVerify;
+            Debug.Log("RELEASE COMPILE CHECK (ZANTETSU_STATS_VERIFY): " + report + "; as a Development build: " + development);
             if (Application.isBatchMode)
             {
                 EditorApplication.Exit(ok ? 0 : 1);
@@ -54,9 +56,12 @@ namespace Zantetsu.Editor.Sandbox
         public static bool TryRun(BuildTarget target, BuildTargetGroup group, out string report, string[] extraDefines) => TryRun(target, group, out report, extraDefines, out _);
 
         /// <summary>The type names of the statistics' verification build, as the compiled assemblies' metadata holds them.</summary>
-        private static readonly string[] VerificationTypeNames = { "PlayStatisticsVerify", "PlayVerifyTally" };
+        private static readonly string[] VerificationTypeNames = { "PlayStatisticsVerify", "PlayVerifyTally", "PlayVerifyAllocationRecord" };
 
         public static bool TryRun(BuildTarget target, BuildTargetGroup group, out string report, string[] extraDefines, out bool verificationTypes)
+            => TryRun(target, group, out report, extraDefines, out verificationTypes, false);
+
+        public static bool TryRun(BuildTarget target, BuildTargetGroup group, out string report, string[] extraDefines, out bool verificationTypes, bool development)
         {
             verificationTypes = false;
             string output = Path.Combine(Path.GetTempPath(), "zantetsu-release-compile-" + target + "-" + Guid.NewGuid().ToString("N"));
@@ -67,7 +72,7 @@ namespace Zantetsu.Editor.Sandbox
                 {
                     group = group,
                     target = target,
-                    options = ScriptCompilationOptions.None,   // a Release Player: no DEVELOPMENT_BUILD
+                    options = development ? ScriptCompilationOptions.DevelopmentBuild : ScriptCompilationOptions.None,   // None: a Release Player, no DEVELOPMENT_BUILD
                     extraScriptingDefines = extraDefines ?? Array.Empty<string>(),
                 };
                 ScriptCompilationResult result = PlayerBuildInterface.CompilePlayerScripts(settings, output);

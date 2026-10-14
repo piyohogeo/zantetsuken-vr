@@ -78,6 +78,22 @@ namespace Zantetsu.Sandbox
         // The service's Update outside the window (the first call is long: it is not a frame's steady cost).
         private long _outsideCalls, _outsideMaxTicks;
 
+        // The engine's allocation record round the service's Update (valid in a Development build only), by whether the
+        // world's structure changed since the Update before: [0] no change, [1] a change. With it, the controls: an
+        // empty interval, one allocation and three, which the record must give as 0, 1 and 3 where it counts.
+        private const int ControlEvery = 256;
+        private readonly long[] _recordCalls = new long[2], _recordEvents = new long[2], _recordCallsWith = new long[2];
+        private readonly int[] _recordMost = new int[2];
+        private long _revisionSeen = long.MinValue, _cutsBefore;
+        private int _structureChanges, _controlRuns, _controlAsExpected;
+        private string _controlFirstOther;
+        private static int s_startEmpty = -2, s_startOne = -2, s_startThree = -2;
+        private static object s_sinkA, s_sinkB, s_sinkC;
+
+        // The whole game's allocated bytes of the frame before (the engine's counter), beside the service's own count.
+        private Unity.Profiling.ProfilerRecorder _frameBytes;
+        private readonly PlayVerifyTally _frameBytesTally = new PlayVerifyTally(PlayVerifyTally.ByteEdges);
+
         // The allocation counters, tried once: what each shows for a known allocation.
         private static byte[][] s_keep;
         private static long s_selfThread, s_selfTotal, s_selfMono;
@@ -125,17 +141,37 @@ namespace Zantetsu.Sandbox
             if (Instance != null) return Instance;
             ReadArguments();
             SelfTestAllocationCounters();
+            PlayVerifyAllocationRecord.Open();
+            Controls(out s_startEmpty, out s_startOne, out s_startThree);
             var host = new GameObject("Zantetsu play statistics verification");
             DontDestroyOnLoad(host);
             PlayStatisticsVerify verify = host.AddComponent<PlayStatisticsVerify>();
             verify._service = service;
+            verify._frameBytes = Unity.Profiling.ProfilerRecorder.StartNew(Unity.Profiling.ProfilerCategory.Memory, "GC Allocated In Frame", 1);
             Instance = verify;
             Debug.Log(Prefix + "a VERIFICATION build (ZANTETSU_STATS_VERIFY): statistics " + (s_on ? "ON" : "OFF") + " by " + ModeArgument
                 + (s_modeGiven ? "" : " (not given: off)") + ", the saved consent neither read nor written; no send configuration loaded, no transport in this build"
                 + "; window " + s_seconds.ToString("F1", CultureInfo.InvariantCulture) + " s, " + s_settle.ToString("F1", CultureInfo.InvariantCulture) + " s after play begins"
                 + "; development build " + Debug.isDebugBuild + "; Stopwatch " + System.Diagnostics.Stopwatch.Frequency + " ticks/s, high resolution " + System.Diagnostics.Stopwatch.IsHighResolution
-                + "; allocation counters for " + SelfArrays + " arrays of " + SelfBytes + " bytes: this thread's +" + s_selfThread + ", GC.GetTotalMemory +" + s_selfTotal + ", mono used +" + s_selfMono);
+                + "; allocation counters for " + SelfArrays + " arrays of " + SelfBytes + " bytes: this thread's +" + s_selfThread + ", GC.GetTotalMemory +" + s_selfTotal + ", mono used +" + s_selfMono
+                + "; the engine's allocation record (\"GC.Alloc\", this thread's): valid " + PlayVerifyAllocationRecord.Valid + ", its controls at the start (an empty interval, one allocation, three): "
+                + s_startEmpty + ", " + s_startOne + ", " + s_startThree + " (0, 1, 3 where it counts)");
             return verify;
+        }
+
+        // The controls of the allocation record: an empty interval, one allocation, three -- each its own interval.
+        private static void Controls(out int empty, out int one, out int three)
+        {
+            PlayVerifyAllocationRecord.Begin();
+            empty = PlayVerifyAllocationRecord.End();
+            PlayVerifyAllocationRecord.Begin();
+            s_sinkA = new byte[32];
+            one = PlayVerifyAllocationRecord.End();
+            PlayVerifyAllocationRecord.Begin();
+            s_sinkA = new byte[32];
+            s_sinkB = new byte[32];
+            s_sinkC = new byte[32];
+            three = PlayVerifyAllocationRecord.End();
         }
 
         private static void SelfTestAllocationCounters()
@@ -153,24 +189,29 @@ namespace Zantetsu.Sandbox
 
         private static long s_threadBeforeService;
 
-        /// <summary>Before the service's Update, outside its measured interval: this thread's allocated bytes.</summary>
+        /// <summary>
+        /// Before the service's Update, outside its measured interval: this thread's allocated bytes; then, last, the
+        /// engine's allocation record is opened for the interval.
+        /// </summary>
         public static void ServiceUpdateBegins()
         {
             s_threadBeforeService = GC.GetAllocatedBytesForCurrentThread();
+            PlayVerifyAllocationRecord.Begin();
         }
 
         /// <summary>After the service's Update, with the ticks its whole Update took (one clock read inside them).</summary>
         public static void ServiceUpdateEnded(long ticks)
         {
+            int events = PlayVerifyAllocationRecord.End();   // first: the interval closes here (-1 where the record is not valid)
             long allocated = GC.GetAllocatedBytesForCurrentThread() - s_threadBeforeService;
             long a = System.Diagnostics.Stopwatch.GetTimestamp();
             long b = System.Diagnostics.Stopwatch.GetTimestamp();
             PlayStatisticsVerify verify = Instance;
             if (verify == null) return;
-            verify.NoteService(ticks, b - a, allocated);
+            verify.NoteService(ticks, b - a, allocated, events);
         }
 
-        private void NoteService(long ticks, long emptyTicks, long allocated)
+        private void NoteService(long ticks, long emptyTicks, long allocated, int events)
         {
             if (_phase != Phase.Measuring)
             {
@@ -187,6 +228,29 @@ namespace Zantetsu.Sandbox
                 _serviceCallsAllocating++;
                 _serviceBytes += allocated;
                 if (allocated > _serviceBytesMax) _serviceBytesMax = allocated;
+            }
+
+            // The engine's record of this Update's allocations, apart by whether the world's structure changed since
+            // the Update before (a cut, a collection: what the counters then read is new).
+            long revision = _world != null && _world.IsReady ? _world.Ledger.Revision : long.MinValue;
+            int k = _revisionSeen != long.MinValue && revision != _revisionSeen ? 1 : 0;
+            if (k == 1) _structureChanges++;
+            _revisionSeen = revision;
+            if (events >= 0)
+            {
+                _recordCalls[k]++;
+                _recordEvents[k] += events;
+                if (events > 0) _recordCallsWith[k]++;
+                if (events > _recordMost[k]) _recordMost[k] = events;
+            }
+
+            // The controls again, outside the service's interval, now and then through the window.
+            if (PlayVerifyAllocationRecord.Valid && _serviceUs.Count % ControlEvery == 0)
+            {
+                Controls(out int empty, out int one, out int three);
+                _controlRuns++;
+                if (empty == 0 && one == 1 && three == 3) _controlAsExpected++;
+                else if (_controlFirstOther == null) _controlFirstOther = empty + ", " + one + ", " + three;
             }
         }
 
@@ -252,6 +316,7 @@ namespace Zantetsu.Sandbox
                     if (sample.HasMain) _mainMs.Add(sample.MainMs); else _noMain++;
                     if (sample.HasRender) _renderMs.Add(sample.RenderMs); else _noRender++;
                     if (sample.HasGpu) _gpuMs.Add(sample.GpuMs); else _noGpu++;
+                    if (_frameBytes.Valid) _frameBytesTally.Add(_frameBytes.LastValue);
                     if (GamePause.IsPaused) _pausedFrames++;
                     if (XRSettings.isDeviceActive && !OpenXRUtility.IsSessionFocused) _unfocusedFrames++;
                     if (now - _windowBegan >= s_seconds)
@@ -271,6 +336,8 @@ namespace Zantetsu.Sandbox
             _monoBefore = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong();
             _threadBefore = GC.GetAllocatedBytesForCurrentThread();
             _countedBefore = _service != null ? _service.Collector.Gate.Counted : 0UL;
+            _cutsBefore = _service != null ? Convert.ToInt64(_service.Statistics.AcceptedCuts) : 0L;
+            _revisionSeen = long.MinValue;
             _phase = Phase.Measuring;
         }
 
@@ -302,6 +369,16 @@ namespace Zantetsu.Sandbox
                 + ", mono used " + Signed(mono) + ", this thread's allocated " + Signed(thread)
                 + " | what the counters showed for " + (SelfArrays * SelfBytes) + " bytes in " + SelfArrays + " arrays: this thread's +" + s_selfThread + ", GC.GetTotalMemory +" + s_selfTotal
                 + ", mono used +" + s_selfMono);
+            long cuts = (_service != null ? Convert.ToInt64(_service.Statistics.AcceptedCuts) : 0L) - _cutsBefore;
+            Debug.Log(Prefix + "allocation by the engine's record [" + mode + "] (\"GC.Alloc\", this thread's, enabled round the service's Update alone; a count of allocations, not bytes): record valid "
+                + PlayVerifyAllocationRecord.Valid + "; controls (an empty interval, one allocation, three -- 0, 1, 3 where the record counts): at the start " + s_startEmpty + ", " + s_startOne + ", " + s_startThree
+                + "; in the window " + _controlRuns + " runs, " + _controlAsExpected + " as expected" + (_controlFirstOther != null ? ", the first other " + _controlFirstOther : "")
+                + " | the service's Update with no structure change since the one before: " + _recordCalls[0] + " calls, " + _recordEvents[0] + " allocations in " + _recordCallsWith[0] + " of them, the most " + _recordMost[0]
+                + " | with a structure change: " + _recordCalls[1] + " calls, " + _recordEvents[1] + " allocations in " + _recordCallsWith[1] + " of them, the most " + _recordMost[1]
+                + " | structure changes seen in the window " + _structureChanges + ", accepted cuts " + Signed(cuts)
+                + " | the whole game, the frame before each (\"GC Allocated In Frame\", bytes): "
+                + (_frameBytes.Valid ? _frameBytesTally.Describe("bytes", "F0") + " | buckets: " + _frameBytesTally.DescribeBuckets() : "not valid in this build"));
+            if (_frameBytes.Valid) _frameBytes.Dispose();
             Debug.Log(Prefix + "done [" + mode + "]: the Player quits by itself");
             Application.Quit();
         }

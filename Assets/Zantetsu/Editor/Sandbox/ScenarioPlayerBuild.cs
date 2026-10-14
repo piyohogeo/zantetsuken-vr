@@ -35,6 +35,12 @@ namespace Zantetsu.EditorTools.Sandbox
         /// </summary>
         private const string StatsVerifyArgument = "-zantetsuPlayerStatsVerify";
 
+        /// <summary>
+        /// The verification build as a DEVELOPMENT build: for the allocation check alone, since the engine's record of
+        /// managed allocations exists in a Development Player and not in a Release one. Its times are not a Release's.
+        /// </summary>
+        private const string StatsVerifyDevelopmentArgument = "-zantetsuPlayerStatsVerifyDevelopment";
+
         public const string StatsVerifySymbol = "ZANTETSU_STATS_VERIFY";
 
         /// <summary>The boot scene, made if it is not there: an empty scene, saved under its fixed name.</summary>
@@ -82,7 +88,7 @@ namespace Zantetsu.EditorTools.Sandbox
         {
             string directory = null;
             bool development = true;
-            bool statsVerify = false;
+            bool statsVerify = false, statsVerifyDevelopment = false;
             string[] arguments = Environment.GetCommandLineArgs();
             for (int i = 0; i < arguments.Length; i++)
             {
@@ -101,6 +107,12 @@ namespace Zantetsu.EditorTools.Sandbox
                     statsVerify = true;
                     development = false;   // what it measures is a Release Player's cost
                 }
+
+                if (string.Equals(arguments[i], StatsVerifyDevelopmentArgument, StringComparison.OrdinalIgnoreCase))
+                {
+                    statsVerify = true;
+                    statsVerifyDevelopment = true;
+                }
             }
 
             bool before = PlayerSettings.enableFrameTimingStats;
@@ -108,8 +120,10 @@ namespace Zantetsu.EditorTools.Sandbox
             try
             {
                 PlayerSettings.enableFrameTimingStats = true;
+                if (statsVerifyDevelopment) development = true;   // whatever the order of the arguments
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
-                    + (development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
+                    + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
+                        : development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
                 var scenes = DemoBuildPolicy.SelectScenes(new[] { CityScenePath, NpcScenePath }, out bool demo);
                 using (DemoBuildPolicy.Scope(demo, scenes))
                     built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
