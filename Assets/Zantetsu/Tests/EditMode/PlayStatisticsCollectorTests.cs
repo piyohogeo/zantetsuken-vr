@@ -204,5 +204,70 @@ namespace Zantetsu.Core.Tests
             c.Total(PlayTotalKind.AcceptedCuts, 2, 41);
             Assert.That(s.AcceptedCuts, Is.EqualTo(1), "a re-agreement takes a new base");
         }
+
+        // The refresh rates a Quest 3S reported within a minute of one play under frame synthesis (run qStats2).
+        private static readonly float[] ReportedHz = { 45f, 45.00002f, 44.99998f, 44.99996f, 45.00004f };
+
+        [Test]
+        public void TheRefreshRatesJitter_IsNoChangeOfConditions_TheEpochStaysOne_AndItsFrameTimesAreAttributed()
+        {
+            Assert.That(PlayEnvironment.RefreshRateHz(45.00002f), Is.EqualTo(45f));
+            Assert.That(PlayEnvironment.RefreshRateHz(44.99996f), Is.EqualTo(45f));
+            Assert.That(PlayEnvironment.RefreshRateHz(90.00008f), Is.EqualTo(90f));
+            Assert.That(PlayEnvironment.RefreshRateHz(72f), Is.EqualTo(72f));
+            Assert.That(PlayEnvironment.RefreshRateHz(0f), Is.EqualTo(0f), "no rate");
+            Assert.That(PlayEnvironment.RefreshRateHz(-1f), Is.EqualTo(0f));
+            Assert.That(PlayEnvironment.RefreshRateHz(float.NaN), Is.EqualTo(0f));
+            Assert.That(PlayEnvironment.RefreshRateHz(float.PositiveInfinity), Is.EqualTo(0f));
+            Assert.That(PlayEnvironment.RefreshRateHz(90f), Is.Not.EqualTo(PlayEnvironment.RefreshRateHz(45f)), "a rate and its half are two conditions");
+
+            // As the service reads it: the reported rate made whole hertz before it is a condition.
+            var statistics = new PlayStatistics();
+            var collector = new PlayStatisticsCollector(statistics);
+            collector.Agree();
+            const int frames = 200;
+            for (int i = 0; i < frames; i++)
+            {
+                PlayConditions c = Conditions("QuestCityWalk");
+                c.RefreshRateHz = PlayEnvironment.RefreshRateHz(ReportedHz[i % ReportedHz.Length]);
+                collector.Frame(true, false, true, in c, 22.2f, Full(), 1);
+            }
+
+            Assert.That(statistics.EpochCount, Is.EqualTo(1));
+            Assert.That(statistics.EpochChangesDropped, Is.Zero);
+            Assert.That(statistics.FramesOutsideEpochs, Is.Zero);
+            PlayEpoch epoch = statistics.EpochAt(0);
+            Assert.That(epoch.Frames, Is.EqualTo((ulong)(frames - 2)), "all but the first frame after the agreement and the frame the conditions were first known in");
+            Assert.That(epoch.Unattributed, Is.EqualTo((ulong)PlayStatisticsCollector.AttributionLagFrames), "the lag once, after the one boundary");
+            Assert.That(epoch.Main.Samples, Is.EqualTo((ulong)(frames - 2 - PlayStatisticsCollector.AttributionLagFrames)));
+        }
+
+        [Test]
+        public void ConditionsComparedByTheReportedRate_AsTheyWere_ChangeEveryFrame_HardlyAFrameIsCounted()
+        {
+            // What the Quest run showed, kept as the contrast: without the whole hertz the same frames give four epochs,
+            // changes beyond them, and not one frame time attributed.
+            var statistics = new PlayStatistics();
+            var collector = new PlayStatisticsCollector(statistics);
+            collector.Agree();
+            for (int i = 0; i < 200; i++)
+            {
+                PlayConditions c = Conditions("QuestCityWalk");
+                c.RefreshRateHz = ReportedHz[i % ReportedHz.Length];
+                collector.Frame(true, false, true, in c, 22.2f, Full(), 1);
+            }
+
+            Assert.That(statistics.EpochCount, Is.EqualTo(PlayStatistics.MaxEpochs));
+            Assert.That(statistics.EpochChangesDropped, Is.GreaterThan(0));
+            ulong counted = 0, attributed = 0;
+            for (int i = 0; i < statistics.EpochCount; i++)
+            {
+                counted += statistics.EpochAt(i).Frames;
+                attributed += statistics.EpochAt(i).Main.Samples;
+            }
+
+            Assert.That(counted, Is.Zero, "every frame is the frame of a change: of neither epoch");
+            Assert.That(attributed, Is.Zero);
+        }
     }
 }

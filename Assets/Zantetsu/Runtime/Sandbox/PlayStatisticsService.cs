@@ -424,7 +424,10 @@ namespace Zantetsu.Sandbox
             {
                 PlayEpoch e = s.EpochAt(i);
                 b.Append(" | epoch ").Append(i).Append(' ').Append(e.Conditions.Scene).Append('/').Append(e.Conditions.DrawRoute).Append('/').Append(e.Conditions.RefreshRateHz.ToString("0.#"))
-                    .Append("Hz: frames ").Append(e.Frames).Append(", unattributed ").Append(e.Unattributed).Append(", structure ").Append(e.StructureChangedFrames)
+                    // Every numeric condition, so that epochs that look alike by their names can be told apart in a log.
+                    .Append("Hz scale ").Append(e.Conditions.RenderScale.ToString("0.###")).Append(" eye ").Append(e.Conditions.EyeTextureWidth).Append('x').Append(e.Conditions.EyeTextureHeight)
+                    .Append(" msaa ").Append(e.Conditions.MsaaSamples).Append(e.Conditions.CutSurfaceDebug ? " debug" : "")
+                    .Append(": frames ").Append(e.Frames).Append(", unattributed ").Append(e.Unattributed).Append(", structure ").Append(e.StructureChangedFrames)
                     .Append(", main ").Append(e.Main.Samples).Append('/').Append(e.MainMissing).Append(" max ").Append(e.Main.MaxMs.ToString("0.#"))
                     .Append(", render ").Append(e.Render.Samples).Append('/').Append(e.RenderMissing)
                     .Append(", gpu ").Append(e.Gpu.Samples).Append('/').Append(e.GpuMissing).Append(" max ").Append(e.Gpu.MaxMs.ToString("0.#"))
@@ -444,7 +447,8 @@ namespace Zantetsu.Sandbox
                 Mode = _mode,
                 DrawRoute = _world != null ? _world.BodyRoute ?? "" : "",
                 XrRuntime = _xrRuntime,
-                RefreshRateHz = _xr != null && _xr.TryGetDisplayRefreshRate(out float hz) ? hz : 0f,
+                // Whole hertz: the runtime's report jitters in its last digits, and that is no change of conditions.
+                RefreshRateHz = _xr != null && _xr.TryGetDisplayRefreshRate(out float hz) ? PlayEnvironment.RefreshRateHz(hz) : 0f,
                 RenderScale = xrActive ? XRSettings.eyeTextureResolutionScale : 0f,
                 EyeTextureWidth = xrActive ? XRSettings.eyeTextureWidth : 0,
                 EyeTextureHeight = xrActive ? XRSettings.eyeTextureHeight : 0,
