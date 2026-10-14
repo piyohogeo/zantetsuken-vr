@@ -109,7 +109,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             public bool MayEndNow(out string why) { why = mayEnd ? null : "said busy"; return mayEnd; }
             public void EndShared(string why) => ended++;
             public bool TryReturn() { returned++; return true; }
-            public bool TryRearm() { rearmed++; return true; }
+            public int rearmHitchMs;   // the first re-arm takes this long (a long frame), the others nothing
+            public bool TryRearm() { rearmed++; if (rearmHitchMs > 0) { System.Threading.Thread.Sleep(rearmHitchMs); rearmHitchMs = 0; } return true; }
         }
 
         /// <summary>
@@ -1132,6 +1133,45 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(shorter, Is.LessThanOrEqualTo(plain + 0.0001), "a frame shorter than the budget adds nothing");
             groups.FrameSeconds = 0.0;
             Assert.That(groups.RemainingMainSeconds(), Is.LessThanOrEqualTo(plain + 0.0001));
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **One re-arm in a long frame does not keep every later original from being a cut target again.** Two far
+        /// groups end whole and their originals stand again; the first re-arm takes 40 ms. With 12 ms left of a frame
+        /// afterwards, the second original is still made a cut target again: a re-arm asks twice its expected cost,
+        /// never more than half the frame's budget. (It asked twice the longest re-arm ever measured: 82 ms, never.)
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_AReArmInALongFrame_DoesNotHoldTheNextOriginalForGood()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[] { 1.0 };
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+            groups.RemainingMainSeconds = () => remaining[0];
+            LogicalFragmentId first = AddBody(root, new Vector3(-8f, 0f, -70f));
+            LogicalFragmentId second = AddBody(root, new Vector3(8f, 0f, -70f));
+            var firstOrigin = new OriginDouble { restore = new Bounds(new Vector3(-8f, 0f, -70f), Vector3.one), rearmHitchMs = 40 };
+            var secondOrigin = new OriginDouble { restore = new Bounds(new Vector3(8f, 0f, -70f), Vector3.one), rearmHitchMs = 40 };
+            groups.Register(first, firstOrigin);
+            groups.Register(second, secondOrigin);
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutInTwo(root, first, new float4(0f, 1f, 0f, 0f), sides);
+            yield return CutInTwo(root, second, new float4(0f, 1f, 0f, 0f), sides);
+            yield return Until(() => root.Driver.Transactions.Count == 0, "every cut's record is over");
+
+            groups.Settings = GroupsOn(0);
+            yield return Until(() => groups.Rearmed == 1, "the first original is a cut target again (its re-arm took 40 ms)");
+            Assert.That(groups.ExpectedRearmSeconds, Is.GreaterThanOrEqualTo(0.03), "the long re-arm was measured, in every build");
+            remaining[0] = 0.012;   // from here, 12 ms left of a frame
+            yield return Until(() => groups.Rearmed == 2, "the second original is a cut target again all the same");
+            Assert.That(groups.RearmAskSeconds, Is.LessThanOrEqualTo(0.5 * CutPhysicsStep.MainBudgetSeconds + 1e-9), "never more than half the frame's budget asked");
+            Assert.That(firstOrigin.rearmed + secondOrigin.rearmed, Is.EqualTo(2));
+            Assert.That(groups.StandingNotArmed, Is.Zero);
+            TestContext.Out.WriteLine(groups.Describe());
+            groups.Settings = GroupsOff();
             yield return EndWorld(root);
         }
     }

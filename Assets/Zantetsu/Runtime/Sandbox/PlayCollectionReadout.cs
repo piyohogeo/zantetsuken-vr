@@ -65,6 +65,8 @@ namespace Zantetsu.Sandbox
             // Two lines: a device's log cuts a line at about a thousand characters.
             Debug.Log(Prefix + (_world.Groups != null ? _world.Groups.Describe() : "no fragment group collection in this world"));
             Debug.Log(Prefix + "now: " + Describe());
+            // The spatial split (a settled owner made two), whose turns share the frame with the collection's.
+            Debug.Log(Prefix + "spatial split: " + (_world.SpatialSplit != null ? _world.SpatialSplit.Describe() : "none in this world"));
             _frames = _underReserve = _spent = 0;
             _leftSum = 0.0;
             _leftLeast = double.PositiveInfinity;
@@ -82,6 +84,10 @@ namespace Zantetsu.Sandbox
                 .Append(", fragments retired ").Append(groups != null ? groups.FragmentsRetired : 0)
                 .Append(" (by pieces ").Append(groups != null ? groups.PiecesRetired : 0).Append(" in ").Append(groups != null ? groups.PieceTurns : 0)
                 .Append(" turns; pieces seen ").Append(groups != null ? groups.PiecesSeen : 0).Append(", not ready ").Append(groups != null ? groups.PiecesNotReady : 0).Append(')');
+            b.Append(" | originals coming back ").Append(groups != null ? groups.ComingBack : 0)
+                .Append(", standing and not yet cut targets ").Append(groups != null ? groups.StandingNotArmed : 0)
+                .Append(" (a re-arm expected ").Append(groups != null ? (groups.ExpectedRearmSeconds * 1000.0).ToString("F2", c) : "-")
+                .Append(" ms, asks ").Append(groups != null ? (groups.RearmAskSeconds * 1000.0).ToString("F2", c) : "-").Append(" ms)");
             b.Append(" | last hold ").Append(groups != null ? groups.LastHold.ToString() : "-");
             b.Append(" | empty owners retired ").Append(_world.EmptyOwners != null ? _world.EmptyOwners.Retired : 0)
                 .Append(", piece lifetime retired ").Append(_world.Lifetime != null ? _world.Lifetime.Retired : 0);

@@ -282,6 +282,7 @@ namespace Zantetsu.PhysicsCut
         private readonly Plane[] _eyePlanes = new Plane[2 * VpInstanceCulling.EyePlaneCount];
         private readonly SimulateCostHistory _perFragment = new SimulateCostHistory();
         private readonly SimulateCostHistory _examinePerFragment = new SimulateCostHistory();
+        private readonly SimulateCostHistory _rearm = new SimulateCostHistory();   // making an original a cut target again, measured in every build
         private readonly SimulateCostHistory _collectAfter = new SimulateCostHistory();   // the structural collection a retirement causes, in the same frame
         private readonly List<LogicalFragmentId> _slice = new List<LogicalFragmentId>(32);
         private readonly List<LogicalFragmentId> _drawnFragments = new List<LogicalFragmentId>(32);
@@ -317,6 +318,34 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Structural collections read for the expectation beside those a retirement caused.</summary>
         public int StructuralCollectionsRead { get; private set; }
+
+        /// <summary>The seed of what making an original a cut target again is expected to cost, in seconds, before any was measured.</summary>
+        public const double SeedRearmSeconds = 0.001;
+
+        /// <summary>What making an original a cut target again is expected to cost, in seconds: the median of the last five measured, the seed before any.</summary>
+        public double ExpectedRearmSeconds => _rearm.Count == 0 ? SeedRearmSeconds : _rearm.ExpectedSeconds;
+
+        /// <summary>
+        /// What a re-arm asks of what is left of the budget besides the reserve: twice its expected cost, and never
+        /// more than half of the frame's budget (the Main budget, or the application's frame under frame synthesis).
+        /// Before, it asked twice the LONGEST re-arm ever measured, which never came down: one re-arm in a long frame
+        /// could set it past what any frame leaves, and every original standing again stayed no cut target -- a tree
+        /// that could not be cut (a Quest 3S, 2026-10-14). Capped, a re-arm whose expectation is too high waits for a
+        /// frame half free, and its own cost is measured again.
+        /// </summary>
+        public double RearmAskSeconds =>
+            Math.Min(2.0 * ExpectedRearmSeconds, 0.5 * Math.Max(CutPhysicsStep.MainBudgetSeconds, FrameSeconds));
+
+        /// <summary>Originals that stand again and are not yet cut targets again.</summary>
+        public int StandingNotArmed
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < _comingBack.Count; i++) if (_comingBack[i].returned) n++;
+                return n;
+            }
+        }
 
         /// <summary>The camera whose eyes and position the groups are judged against; null means <c>Camera.main</c>.</summary>
         public Camera ViewCamera { get; set; }
@@ -914,6 +943,8 @@ namespace Zantetsu.PhysicsCut
                 .Append(", prop ").Append(PropsRetired).Append(", building ").Append(BuildingsRetired).Append(") with ").Append(FragmentsRetired)
                 .Append(" fragments, candidates not applied ").Append(Refused)
                 .Append("; structural collections read beside retirements ").Append(StructuralCollectionsRead)
+                .Append("; originals standing, not yet cut targets ").Append(StandingNotArmed)
+                .Append(" (a re-arm expected ").Append((ExpectedRearmSeconds * 1000.0).ToString("F3", inv)).Append(" ms, asks ").Append((RearmAskSeconds * 1000.0).ToString("F3", inv)).Append(" ms)")
                 .Append(FrameSeconds > 0.0 ? "; the frame's budget " + (FrameSeconds * 1000.0).ToString("F1", inv) + " ms (frame synthesis)" : "")
                 .Append("; large groups by their pieces: turns ").Append(PieceTurns).Append(", pieces looked at ").Append(PiecesLookedAt)
                 .Append(", retired ").Append(PiecesRetired).Append(", seen ").Append(PiecesSeen).Append(", not ready ").Append(PiecesNotReady)
@@ -1319,15 +1350,18 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
-                if (RemainingMainSeconds() < Settings.reserveSeconds + (2.0 * MaxRearmSeconds))
+                if (RemainingMainSeconds() < Settings.reserveSeconds + RearmAskSeconds)
                 {
                     return false;
                 }
 
-                long begin = Began();
+                // A budget input: measured in every build (DESIGN 21.18 -- in 932a86d0 it was under the observation
+                // symbol, and a Release Player asked nothing of the budget for a re-arm).
+                long begin = Stopwatch.GetTimestamp();
                 bool armed = group.origin.TryRearm();
-#if ZANTETSU_OBSERVE
                 double spent = Since(begin);
+                _rearm.Add(spent);
+#if ZANTETSU_OBSERVE
                 RearmSeconds += spent;
                 MaxRearmSeconds = Math.Max(MaxRearmSeconds, spent);
                 Note(EventKind.Rearmed, group, armed, 0, spent);
