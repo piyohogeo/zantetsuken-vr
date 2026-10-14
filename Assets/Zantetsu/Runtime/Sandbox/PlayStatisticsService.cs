@@ -82,7 +82,13 @@ namespace Zantetsu.Sandbox
             var host = new GameObject("Zantetsu play statistics");
             if (Application.isPlaying) DontDestroyOnLoad(host);
             PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+#if ZANTETSU_STATS_VERIFY
+            // The verification build (DESIGN 21.18): the consent is the launch's argument, kept in memory -- the saved
+            // consent is neither read nor written -- and no send configuration is loaded.
+            service.Setup(kind, scene, PlayStatisticsVerify.StoreForThisLaunch(), null);
+#else
             service.Setup(kind, scene, new PlayerPrefsStatisticsStore(), PlayStatisticsConfig.Load());
+#endif
             Instance = service;
             service.HookQuit();
             // The session id is in the log so that what a receiver stored (sessions/<session id>/<revision>.json) can be found
@@ -90,6 +96,9 @@ namespace Zantetsu.Sandbox
             Debug.Log(Prefix + "installed for " + SandboxScenario.Name(kind) + " in " + scene + "; session " + service.Sender.SessionId + "; consent " + service.Consent.Decision
                 + "; config " + (service.Config != null ? service.Config.Describe() : "absent (nothing is sent)")
                 + "; frame timing " + (FrameTimeSampler.FrameTimingEnabled ? "on" : "OFF in this build"));
+#if ZANTETSU_STATS_VERIFY
+            PlayStatisticsVerify.Install(service);
+#endif
             return service;
         }
 
@@ -102,7 +111,11 @@ namespace Zantetsu.Sandbox
             Collector = new PlayStatisticsCollector(Statistics);
             Consent = new PlayStatisticsConsent(store);
             Sampler = new FrameTimeSampler();
+#if ZANTETSU_STATS_VERIFY
+            IPlayStatisticsTransport transport = null;   // the verification build sends nothing, whatever it was given
+#else
             IPlayStatisticsTransport transport = config != null && config.CanSend ? new PlayStatisticsUnityTransport(this, config) : null;
+#endif
             string role = config != null && !string.IsNullOrEmpty(config.testerRole) ? config.testerRole : (Debug.isDebugBuild ? "developer" : "external");
             Sender = new PlayStatisticsSender(Statistics, Consent, transport, role);
             Sender.Completed += (snapshot, result) => Debug.Log(Prefix + "send of revision " + snapshot.Revision + " (" + snapshot.Bytes.Length + " bytes): "
@@ -309,6 +322,14 @@ namespace Zantetsu.Sandbox
                 _updateTicks += took;
                 if (took > _updateMaxTicks) _updateMaxTicks = took;
             }
+#elif ZANTETSU_STATS_VERIFY
+            // The verification build alone (DESIGN 21.18): the whole Update between two clock reads, the allocation
+            // counter read outside them. No product build, Development or Release, compiles this branch.
+            PlayStatisticsVerify.ServiceUpdateBegins();
+            long verifyBegan = System.Diagnostics.Stopwatch.GetTimestamp();
+            UpdateCore();
+            long verifyTook = System.Diagnostics.Stopwatch.GetTimestamp() - verifyBegan;
+            PlayStatisticsVerify.ServiceUpdateEnded(verifyTook);
 #else
             UpdateCore();
 #endif

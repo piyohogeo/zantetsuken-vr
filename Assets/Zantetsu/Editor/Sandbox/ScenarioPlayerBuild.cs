@@ -28,6 +28,15 @@ namespace Zantetsu.EditorTools.Sandbox
         /// <summary>With this argument the Player is a Release (non-Development) build: the distribution kind, for the check of DESIGN 21.18.</summary>
         private const string ReleaseArgument = "-zantetsuPlayerRelease";
 
+        /// <summary>
+        /// With this argument the Player is the VERIFICATION build of the play statistics (DESIGN 21.18): a Release build
+        /// with the symbol below, which no product build defines. It measures the statistics' own cost, takes the consent
+        /// from the launch's argument and can send nothing; it is never a build to distribute.
+        /// </summary>
+        private const string StatsVerifyArgument = "-zantetsuPlayerStatsVerify";
+
+        public const string StatsVerifySymbol = "ZANTETSU_STATS_VERIFY";
+
         /// <summary>The boot scene, made if it is not there: an empty scene, saved under its fixed name.</summary>
         [MenuItem("Zantetsu/Make the scenario boot scene")]
         public static string EnsureBootScene()
@@ -73,6 +82,7 @@ namespace Zantetsu.EditorTools.Sandbox
         {
             string directory = null;
             bool development = true;
+            bool statsVerify = false;
             string[] arguments = Environment.GetCommandLineArgs();
             for (int i = 0; i < arguments.Length; i++)
             {
@@ -85,6 +95,12 @@ namespace Zantetsu.EditorTools.Sandbox
                 {
                     development = false;
                 }
+
+                if (string.Equals(arguments[i], StatsVerifyArgument, StringComparison.OrdinalIgnoreCase))
+                {
+                    statsVerify = true;
+                    development = false;   // what it measures is a Release Player's cost
+                }
             }
 
             bool before = PlayerSettings.enableFrameTimingStats;
@@ -92,10 +108,11 @@ namespace Zantetsu.EditorTools.Sandbox
             try
             {
                 PlayerSettings.enableFrameTimingStats = true;
-                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind " + (development ? "Development" : "Release (" + ReleaseArgument + ")"));
+                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
+                    + (development ? "Development" : statsVerify ? "Release with " + StatsVerifySymbol + " (" + StatsVerifyArgument + "): the statistics' VERIFICATION build, not for distribution" : "Release (" + ReleaseArgument + ")"));
                 var scenes = DemoBuildPolicy.SelectScenes(new[] { CityScenePath, NpcScenePath }, out bool demo);
                 using (DemoBuildPolicy.Scope(demo, scenes))
-                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, null, development);
+                    built = !string.IsNullOrEmpty(directory) && CutWorldSandboxPlayerBuild.Build(directory, scenes, statsVerify ? new[] { StatsVerifySymbol } : null, development);
             }
             catch (Exception e)
             {
