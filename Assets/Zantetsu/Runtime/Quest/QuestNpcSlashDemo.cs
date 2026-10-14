@@ -704,8 +704,18 @@ namespace Zantetsu.Quest
                 if (_config.mode == "vp3c-native") Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.DescribeRun());
                 if (VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.ReadVerification());
                 if (VpCommandCompaction.SnapshotEnabled || VpCommandCompaction.CastersFixed) Debug.Log("QUEST NPC SNAPSHOTS: castersFixed=" + VpCommandCompaction.CastersFixed + "; " + VpCommandCompaction.DescribeSnapshots());
+                // Under frame synthesis the application renders at the reported rate, a part of the display's: the fragment
+                // groups' collection takes that frame for its budget (TL, 2026-10-14); 0 otherwise.
+                double groupsFrame = _spaceWarpApplied && _config.appSw && refresh > 0f && physicalRefresh > 0f && refresh < 0.75f * physicalRefresh
+                    ? 1.0 / Math.Round(refresh) : 0.0;
+                foreach (CutWorldRoot cutWorld in UnityEngine.Object.FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
+                {
+                    if (cutWorld.Groups != null) cutWorld.Groups.FrameSeconds = groupsFrame;
+                }
+
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
+                    + " groupsFrameMs=" + (groupsFrame * 1000.0).ToString("F1", Inv)
                     + " dtMs=" + Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }

@@ -464,6 +464,10 @@ namespace Zantetsu.Sandbox
             {
                 PlayStatisticsService statistics = PlayStatisticsService.Install(kind, scene);
                 menu.AskConsent(statistics);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // Play has no ending, so what the fragment collection does is said in the log as it goes (Development only).
+                PlayCollectionReadout.Install();
+#endif
             }
         }
 

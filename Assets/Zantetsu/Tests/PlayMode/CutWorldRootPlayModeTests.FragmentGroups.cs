@@ -959,5 +959,180 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 DisposeCandidates();
             }
         }
+
+        /// <summary>
+        /// A budget that carries a turn's own parts and two and a half pieces by the collection's own expectations, as
+        /// they stand when it is asked: a group of three pieces or more does not fit whole, two pieces do.
+        /// </summary>
+        private static Func<double> TwoAndAHalfPieces(CutFragmentGroupCollection groups)
+        {
+            return () => groups.Settings.reserveSeconds + (2.0 * groups.ExpectedTurnSeconds) + (5.0 * groups.ExpectedPieceSeconds);
+        }
+
+        /// <summary>Cuts a body four times into five pieces, by planes of its own through its centre: across, then each half along, then one quarter through.</summary>
+        private static IEnumerator FivePieces(CutWorldRoot root, LogicalFragmentId body)
+        {
+            var halves = new LogicalFragmentId[2];
+            var a = new LogicalFragmentId[2];
+            var b = new LogicalFragmentId[2];
+            var c = new LogicalFragmentId[2];
+            yield return CutInTwo(root, body, new float4(0f, 1f, 0f, 0f), halves);
+            yield return CutInTwo(root, halves[0], new float4(1f, 0f, 0f, 0f), a);
+            yield return CutInTwo(root, halves[1], new float4(1f, 0f, 0f, 0f), b);
+            yield return CutInTwo(root, a[0], new float4(0f, 0f, 1f, 0f), c);   // planes are the body's own, through its centre
+            yield return Until(() => root.Driver.Transactions.Count == 0, "every cut's record is over");
+        }
+
+        /// <summary>
+        /// **A group whose whole does not fit the frame is ended by its pieces, the last of it whole.** A body far
+        /// behind the view is cut into five pieces; the budget carries two and a half pieces. The whole group is passed
+        /// over for the budget, unread, and its pieces outside the view are ended instead, never more than two in a
+        /// turn and never the group's last: four go so. The one left fits whole and is ended as a group.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_AGroupTooLargeForTheFrame_IsEndedByItsPieces_NoMoreThanTheBudgetCarries_ItsLastWhole()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+            LogicalFragmentId far = AddBody(root, new Vector3(0f, 0f, -60f));
+            groups.Register(far, null);
+            yield return null;
+            yield return FivePieces(root, far);
+            Assert.That(root.Ledger.LiveCutCountOf(far), Is.EqualTo(5), "the layout: five pieces");
+            List<LogicalFragmentId> pieces = LivePiecesOf(root, far);
+
+            groups.RemainingMainSeconds = TwoAndAHalfPieces(groups);
+            groups.Settings = GroupsOn(0);
+            float deadline = Time.realtimeSinceStartup + DeadlineSeconds;
+            int piecesBefore = 0, mostAtOnce = 0;
+            while (groups.GroupsRetired == 0 && Time.realtimeSinceStartup < deadline)
+            {
+                yield return null;
+                if (groups.PiecesRetired != piecesBefore)
+                {
+                    mostAtOnce = Math.Max(mostAtOnce, groups.LastRetiredFragments);
+                    Assert.That(root.Ledger.LiveCutCountOf(far), Is.GreaterThanOrEqualTo(1), "never the group's last piece by pieces");
+                    piecesBefore = groups.PiecesRetired;
+                }
+            }
+
+            Assert.That(groups.GroupsRetired, Is.EqualTo(1), "the group ended at last");
+            Assert.That(groups.PiecesRetired, Is.EqualTo(4), "four of its pieces by themselves");
+            Assert.That(mostAtOnce, Is.InRange(1, 2), "no more pieces at once than the budget carries");
+            Assert.That(groups.PieceTurns, Is.GreaterThanOrEqualTo(2));
+            Assert.That(groups.LastRetiredFragments, Is.EqualTo(1), "the last of it, whole");
+            Assert.That(groups.FragmentsRetired, Is.EqualTo(5));
+            Assert.That(groups.HeldFor(CutGroupHold.BudgetShort), Is.Zero, "the turns were never held for the budget: the group was");
+            foreach (LogicalFragmentId piece in pieces)
+            {
+                Assert.That(IsRetired(root, piece), Is.True, "retired: " + piece);
+                Assert.That(root.Owners.TryGet(piece, out _), Is.False, "no owner: " + piece);
+                Assert.That(root.Geometry.TryGetGeometry(piece, out _), Is.False, "the DAG keeps nothing: " + piece);
+            }
+
+            Assert.That(groups.IsKnown(far), Is.False, "nothing comes back for it: forgotten");
+            Assert.That(root.Display.IsHalted, Is.False);
+            Assert.That(root.TerminationRequested, Is.False);
+            TestContext.Out.WriteLine(groups.Describe());
+            groups.Settings = GroupsOff();
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **By its pieces, a piece in view stays; the rest of a small group then waits for the group's own end.** Of a
+        /// far body's five pieces one is put before the camera. The pieces outside the view go by themselves, the one
+        /// in view never; once two are left the group fits whole and is a whole group again -- one piece in view keeps
+        /// it all. Put out of view, the two are ended together.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_ByItsPieces_APieceInViewStays_AndTheSmallRestIsEndedWholeOnceUnseen()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+            LogicalFragmentId far = AddBody(root, new Vector3(0f, 0f, -60f));
+            groups.Register(far, null);
+            yield return null;
+            yield return FivePieces(root, far);
+            List<LogicalFragmentId> pieces = LivePiecesOf(root, far);
+            Assert.That(pieces.Count, Is.EqualTo(5), "the layout: five pieces");
+            LogicalFragmentId inView = pieces[2];
+            PutPiece(root, inView, new Vector3(0f, 0f, 0f));
+            for (int i = 0; i < 3; i++) yield return null;
+
+            groups.RemainingMainSeconds = TwoAndAHalfPieces(groups);
+            groups.Settings = GroupsOn(0);
+            yield return Until(() => groups.PiecesRetired == 3, "the three pieces outside the view went by themselves");
+            for (int i = 0; i < 12; i++) yield return null;
+            Assert.That(groups.PiecesRetired, Is.EqualTo(3), "and no more: two are left, a group that fits whole");
+            Assert.That(groups.PiecesSeen, Is.GreaterThan(0), "the piece in view was looked at and left");
+            Assert.That(groups.GroupsRetired, Is.Zero, "one piece in view keeps the small group");
+            Assert.That(IsRetired(root, inView), Is.False);
+            Assert.That(root.Ledger.LiveCutCountOf(far), Is.EqualTo(2));
+
+            PutPiece(root, inView, new Vector3(0f, 0f, -60f));
+            yield return Until(() => groups.GroupsRetired == 1, "out of view, the two ended together");
+            Assert.That(groups.LastRetiredFragments, Is.EqualTo(2));
+            Assert.That(groups.FragmentsRetired, Is.EqualTo(5));
+            Assert.That(root.Ledger.LiveCutCountOf(far), Is.Zero);
+            Assert.That(root.Display.IsHalted, Is.False);
+            TestContext.Out.WriteLine(groups.Describe());
+            groups.Settings = GroupsOff();
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **What a structural collection costs is read from any, not only from one a retirement caused.** A cut, with
+        /// the collection on, far under its maximum, and nothing retired: the structural collection that follows it is read for the
+        /// expectation. Read after retirements alone, an expectation once too high for any retirement to start was
+        /// never read again, and nothing was collected any more (a Quest 3S, 2026-10-14).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_TheExpectedStructuralCollection_IsReadFromACutsOwn_NotOnlyAfterARetirement()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            CutFragmentGroupCollection groups = GroupsOf(root, new Vector3(0f, 0f, -8f));
+            LogicalFragmentId body = AddBody(root, new Vector3(0f, 0f, -60f));
+            groups.Register(body, null);
+            groups.Settings = GroupsOn(1000);   // on, so that its turns run, and far under the maximum: nothing is retired
+            yield return null;
+            int before = groups.StructuralCollectionsRead;
+            var sides = new LogicalFragmentId[2];
+            yield return CutInTwo(root, body, new float4(0f, 1f, 0f, 0f), sides);
+            yield return Until(() => groups.StructuralCollectionsRead > before, "a structural collection read for the expectation");
+            Assert.That(groups.CollectionsAfterRetirement, Is.Zero, "with nothing retired");
+            Assert.That(groups.GroupsRetired + groups.PiecesRetired, Is.Zero);
+            Assert.That(groups.ExpectedCollectAfterSeconds, Is.GreaterThan(0.0));
+            TestContext.Out.WriteLine(groups.Describe());
+            groups.Settings = GroupsOff();
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **Under frame synthesis the collection's budget is the application's own frame.** With the collection's own
+        /// budget as the game gives it, a frame of 1/45 s set as the application's adds what it has beyond the Main
+        /// budget; a frame shorter than the budget adds nothing; 0 leaves it as it was.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FragmentGroups_UnderFrameSynthesis_TheBudgetIsTheApplicationsFrame()
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            CutFragmentGroupCollection groups = root.Groups;
+            for (int i = 0; i < 3; i++) yield return null;
+            double main = CutPhysicsStep.MainBudgetSeconds;
+            double plain = groups.RemainingMainSeconds();
+            Assert.That(double.IsInfinity(plain), Is.False, "inside a frame: a budget to read");
+            groups.FrameSeconds = 1.0 / 45.0;
+            double synthesised = groups.RemainingMainSeconds();
+            Assert.That(synthesised - plain, Is.InRange((1.0 / 45.0) - main - 0.0005, (1.0 / 45.0) - main + 0.0001), "the application's frame beyond the Main budget is added");
+            groups.FrameSeconds = 1.0 / 120.0;
+            double shorter = groups.RemainingMainSeconds();
+            Assert.That(shorter, Is.LessThanOrEqualTo(plain + 0.0001), "a frame shorter than the budget adds nothing");
+            groups.FrameSeconds = 0.0;
+            Assert.That(groups.RemainingMainSeconds(), Is.LessThanOrEqualTo(plain + 0.0001));
+            yield return EndWorld(root);
+        }
     }
 }

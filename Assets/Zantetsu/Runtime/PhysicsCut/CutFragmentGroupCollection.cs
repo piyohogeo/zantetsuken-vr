@@ -271,6 +271,7 @@ namespace Zantetsu.PhysicsCut
             internal bool ended;          // its pieces were retired here; the original is on its way back
             internal bool returned;       // the original stands again, not yet a cut target
             internal long adoptedAtEnd;   // the display's adopted collections when the pieces were retired
+            internal int pieceCursor;     // where the next slice of its pieces begins, while it is ended by its pieces
         }
 
         private readonly CutWorldRoot _world;
@@ -282,6 +283,7 @@ namespace Zantetsu.PhysicsCut
         private readonly SimulateCostHistory _perFragment = new SimulateCostHistory();
         private readonly SimulateCostHistory _examinePerFragment = new SimulateCostHistory();
         private readonly SimulateCostHistory _collectAfter = new SimulateCostHistory();   // the structural collection a retirement causes, in the same frame
+        private readonly List<LogicalFragmentId> _slice = new List<LogicalFragmentId>(32);
         private readonly List<LogicalFragmentId> _drawnFragments = new List<LogicalFragmentId>(32);
         private readonly List<Bounds> _drawnBounds = new List<Bounds>(32);
         private readonly int[] _holds = new int[(int)CutGroupHold.Count];
@@ -296,13 +298,25 @@ namespace Zantetsu.PhysicsCut
         {
             _world = world ?? throw new ArgumentNullException(nameof(world));
             Settings = settings;
-            RemainingMainSeconds = () => CutPhysicsStep.FrameRemainingMainSeconds;
+            // The frame's Main budget, or the application's own frame where that is longer (FrameSeconds: frame synthesis).
+            RemainingMainSeconds = () => CutPhysicsStep.FrameRemainingMainSeconds + Math.Max(0.0, FrameSeconds - CutPhysicsStep.MainBudgetSeconds);
         }
 
         public CutFragmentGroupSettings Settings { get; set; }
 
         /// <summary>What is left of this frame's Main budget. The product's frame clock; a test gives its own.</summary>
         public Func<double> RemainingMainSeconds { get; set; }
+
+        /// <summary>
+        /// The application's own frame in seconds, where it is longer than the frame's Main budget: under frame
+        /// synthesis a Quest renders at 45 Hz on a 90 Hz display and has 22.2 ms a frame, and the collection's budget is
+        /// that frame (TL, 2026-10-14). 0, the default, leaves the Main budget as it is. Set by the host that knows the
+        /// frame synthesis is on; read by the default <see cref="RemainingMainSeconds"/>.
+        /// </summary>
+        public double FrameSeconds { get; set; }
+
+        /// <summary>Structural collections read for the expectation beside those a retirement caused.</summary>
+        public int StructuralCollectionsRead { get; private set; }
 
         /// <summary>The camera whose eyes and position the groups are judged against; null means <c>Camera.main</c>.</summary>
         public Camera ViewCamera { get; set; }
@@ -415,6 +429,207 @@ namespace Zantetsu.PhysicsCut
         /// <summary>What the structural collection that follows a retirement is expected to cost, in seconds.</summary>
         public double ExpectedCollectAfterSeconds => _collectAfter.Count == 0 ? SeedCollectAfterSeconds : _collectAfter.ExpectedSeconds;
 
+        // ---- a group too large for the frame, ended by its pieces (DESIGN 7.10) -----------------------------------------
+
+        /// <summary>What looking at one piece and ending it are expected to cost together, in seconds, without a group's own parts.</summary>
+        public double ExpectedPieceSeconds =>
+            (_examinePerFragment.Count == 0 ? SeedExamineSecondsPerFragment : _examinePerFragment.ExpectedSeconds)
+            + (_perFragment.Count == 0 ? Settings.seedSecondsPerFragment : _perFragment.ExpectedSeconds);
+
+        /// <summary>What a turn that ends anything is expected to cost besides its pieces, in seconds: a group's own looking and ending, and the collection after.</summary>
+        public double ExpectedTurnSeconds => SeedExamineSecondsPerGroup + Settings.seedSecondsPerGroup + ExpectedCollectAfterSeconds;
+
+        /// <summary>Turns that looked at a slice of a large group's pieces.</summary>
+        public int PieceTurns { get; private set; }
+
+        /// <summary>Pieces looked at in those turns.</summary>
+        public int PiecesLookedAt { get; private set; }
+
+        /// <summary>Pieces retired apart from the rest of their group (they are in <see cref="FragmentsRetired"/> too).</summary>
+        public int PiecesRetired { get; private set; }
+
+        /// <summary>Pieces left because some bounds of theirs may be in an eye's view.</summary>
+        public int PiecesSeen { get; private set; }
+
+        /// <summary>Pieces left because a cut of theirs is under way, their geometry is open, they have no owner of their own, or nothing of them could be judged.</summary>
+        public int PiecesNotReady { get; private set; }
+
+        /// <summary>
+        /// Ends some pieces of a group whose WHOLE the frame's budget does not carry (the group was passed over for the
+        /// budget, unread): as many of its pieces, from where the last slice ended, as what is left of the budget carries
+        /// -- the reserve, a turn's own parts and twice each piece's looking and ending -- are looked at, each by itself,
+        /// and those that stand outside both eyes' views with nothing of theirs under way are retired, as a piece's
+        /// lifetime retires one. A piece in view stays until it is not. The group's last piece is never taken here: the
+        /// group's own end -- what its pieces share, its original standing again -- is the whole group's, asked when
+        /// what is left of it fits the budget. False when nothing was retired.
+        /// </summary>
+        private bool TryRetirePieces(Group group, Vector3 viewer, int eyes, in CutFragmentGroupSettings settings)
+        {
+            LogicalCutLedger ledger = _world.Ledger;
+            PhysicsOwnerRegistry owners = _world.Owners;
+            CutDag dag = _world.Geometry;
+            int count = ledger.LiveCutCountOf(group.root);
+            if (group.ended || count < 2 || eyes <= 0 || dag == null)
+            {
+                return false;
+            }
+
+            // What the pieces share is under way (a building cutting or dropping): none of them is taken from under it.
+            if (group.origin != null && !group.origin.MayEndNow(out _))
+            {
+                return false;
+            }
+
+            double each = 2.0 * ExpectedPieceSeconds;
+            int room = each > 0.0
+                ? (int)Math.Floor((RemainingMainSeconds() - settings.reserveSeconds - (2.0 * ExpectedTurnSeconds)) / each)
+                : 0;
+            if (room < 1)
+            {
+                return false;
+            }
+
+            long began = Stopwatch.GetTimestamp();
+            _pieces.Clear();
+            ledger.CopyLiveCutFragmentsOf(group.root, _pieces);
+            int n = _pieces.Count;
+            if (n < 2)
+            {
+                return false;
+            }
+
+            _drawnFragments.Clear();
+            _drawnBounds.Clear();
+            _world.Display?.CopyRegistrationsOf(group.root, _drawnFragments, _drawnBounds);
+            PieceTurns++;
+            if (group.pieceCursor >= n)
+            {
+                group.pieceCursor = 0;
+            }
+
+            _slice.Clear();
+            float nearestSquared = float.PositiveInfinity;
+            int looked = 0;
+            for (; looked < room && looked < n; looked++)
+            {
+                LogicalFragmentId piece = _pieces[(group.pieceCursor + looked) % n];
+                PiecesLookedAt++;
+                if (ledger.TryGetActiveOperation(piece, out _) || owners.TryGetProvisionalOf(piece, out _)
+                    || (!dag.HasNoGeometry(piece) && !dag.TryGetGeometry(piece, out _))
+                    || !owners.TryGet(piece, out PhysicsFragmentOwner owner) || owner.IsWithdrawn || owner.IsReleased || owner.IsFused || owner.Root == null)
+                {
+                    PiecesNotReady++;
+                    continue;
+                }
+
+                bool judged = false, seen = false;
+                if (owner.Shape != null && !owner.Shape.IsFreed && owner.Shape.TryLocalBounds(out float3 lo, out float3 hi))
+                {
+                    Bounds world = WorldBounds(owner.Root.transform.localToWorldMatrix * (Matrix4x4)owner.Shape.LocalToOwner, lo, hi);
+                    seen = JudgeBounds(world, viewer, eyes, ref nearestSquared) != CutGroupPass.Candidate;
+                    judged = true;
+                }
+
+                if (!seen && !dag.HasNoGeometry(piece))
+                {
+                    if (!TryGetDrawnBounds(ledger, piece, owner, out Bounds drawn))
+                    {
+                        PiecesNotReady++;   // what is drawn of it cannot be placed: not judged, not taken
+                        continue;
+                    }
+
+                    seen = JudgeBounds(drawn, viewer, eyes, ref nearestSquared) != CutGroupPass.Candidate;
+                    judged = true;
+                }
+
+                if (seen)
+                {
+                    PiecesSeen++;
+                    continue;
+                }
+
+                if (!judged)
+                {
+                    PiecesNotReady++;
+                    continue;
+                }
+
+                _slice.Add(piece);
+            }
+
+            group.pieceCursor = (group.pieceCursor + looked) % n;
+            if (looked > 0)
+            {
+                _examinePerFragment.Add(Since(began) / looked);
+            }
+
+            // Never the group's last piece, and no more than what is left of the budget now carries the ending of.
+            if (_slice.Count >= n)
+            {
+                _slice.RemoveAt(_slice.Count - 1);
+            }
+
+            double perRetirement = 2.0 * (_perFragment.Count == 0 ? settings.seedSecondsPerFragment : _perFragment.ExpectedSeconds);
+            int carried = perRetirement > 0.0
+                ? (int)Math.Floor((RemainingMainSeconds() - settings.reserveSeconds - (2.0 * (settings.seedSecondsPerGroup + ExpectedCollectAfterSeconds))) / perRetirement)
+                : 0;
+            if (carried < _slice.Count)
+            {
+                _slice.RemoveRange(Math.Max(carried, 0), _slice.Count - Math.Max(carried, 0));
+            }
+
+            if (_slice.Count == 0)
+            {
+                return false;
+            }
+
+            long retireBegan = Stopwatch.GetTimestamp();
+            int retired = 0;
+            using (s_retire.Auto())
+            {
+                RetiringRoot = group.root;
+                try
+                {
+                    for (int i = 0; i < _slice.Count; i++)
+                    {
+                        LogicalFragmentId piece = _slice[i];
+                        if (!ledger.Retire(piece))
+                        {
+                            continue;
+                        }
+
+                        owners.Retire(piece);
+                        dag.Forget(piece);
+                        retired++;
+                    }
+                }
+                finally
+                {
+                    RetiringRoot = default;
+                }
+            }
+
+            if (retired == 0)
+            {
+                return false;
+            }
+
+            double spent = Since(retireBegan);   // the budget's expectation reads it (kept in every build)
+#if ZANTETSU_OBSERVE
+            RetireSeconds += spent;
+            MaxRetireSeconds = Math.Max(MaxRetireSeconds, spent);
+            LastRetireSeconds = spent;
+#endif
+            _perFragment.Add(spent / retired);
+            LastRetiredFrame = Time.frameCount;
+            LastRetiredFragments = retired;
+            LastRetiredDistance = Mathf.Sqrt(nearestSquared);
+            _collectAfterFrame = Time.frameCount + 1;   // this frame's collection follows this turn, as after a group's end
+            FragmentsRetired += retired;
+            PiecesRetired += retired;
+            return true;
+        }
+
         /// <summary>One frame's turn: see the class notes.</summary>
         public void Step()
         {
@@ -464,6 +679,7 @@ namespace Zantetsu.PhysicsCut
             Vector3 viewer = camera != null ? camera.transform.position : default;
             int examined = 0, found = 0;
             CutGroupCandidate best = default;
+            Group tooLarge = null;
             while (examined < settings.examinePerFrame && examined < _groups.Count)
             {
                 // Looking at a group costs too: the walk begins, and goes on, only while the budget has the reserve and
@@ -494,6 +710,11 @@ namespace Zantetsu.PhysicsCut
                 if (pass != CutGroupPass.Candidate)
                 {
                     _passes[(int)pass]++;
+                    if (pass == CutGroupPass.BudgetShort && tooLarge == null)
+                    {
+                        tooLarge = group;   // its whole does not fit what is left of this frame: its pieces may
+                    }
+
                     continue;
                 }
 
@@ -513,6 +734,13 @@ namespace Zantetsu.PhysicsCut
 #endif
             if (!best.IsSet)
             {
+                // No group to end whole this turn: of one passed over because its whole does not fit the frame, the
+                // pieces outside the view are ended instead, as many as the budget carries (TryRetirePieces).
+                if (tooLarge != null)
+                {
+                    TryRetirePieces(tooLarge, viewer, eyes, in settings);
+                }
+
                 return;
             }
 
@@ -685,6 +913,10 @@ namespace Zantetsu.PhysicsCut
                 .Append("), groups retired ").Append(GroupsRetired).Append(" (NPC ").Append(NpcsRetired)
                 .Append(", prop ").Append(PropsRetired).Append(", building ").Append(BuildingsRetired).Append(") with ").Append(FragmentsRetired)
                 .Append(" fragments, candidates not applied ").Append(Refused)
+                .Append("; structural collections read beside retirements ").Append(StructuralCollectionsRead)
+                .Append(FrameSeconds > 0.0 ? "; the frame's budget " + (FrameSeconds * 1000.0).ToString("F1", inv) + " ms (frame synthesis)" : "")
+                .Append("; large groups by their pieces: turns ").Append(PieceTurns).Append(", pieces looked at ").Append(PiecesLookedAt)
+                .Append(", retired ").Append(PiecesRetired).Append(", seen ").Append(PiecesSeen).Append(", not ready ").Append(PiecesNotReady)
                 .Append("; originals returned ").Append(Returned).Append(", cut targets again ").Append(Rearmed).Append(", not returned ").Append(ReturnsFailed)
                 .Append(", on their way back ").Append(_comingBack.Count);
             text.Append("; held:");
@@ -1000,6 +1232,18 @@ namespace Zantetsu.PhysicsCut
 #endif
                 _collectAfter.Add(seconds);
                 _collectAfterFrame = int.MinValue;
+                return;
+            }
+
+            // Any other structural collection of the frame before (a cut's, a piece's lifetime's): what one costs now.
+            // Read only after a retirement, the expectation stayed where the last retirements left it -- and once too high
+            // for any retirement to start, it was never read again and nothing was collected any more (a Quest 3S at
+            // 5.05 ms, 2026-10-14).
+            VpLogicalCutDisplay display = _world.Display;
+            if (display != null && display.LastStructuralCollectionFrame == Time.frameCount - 1 && CutPhysicsStep.LastCollectSeconds > 0.0)
+            {
+                _collectAfter.Add(CutPhysicsStep.LastCollectSeconds);
+                StructuralCollectionsRead++;
             }
         }
 

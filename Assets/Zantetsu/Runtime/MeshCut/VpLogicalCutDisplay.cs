@@ -5771,6 +5771,9 @@ namespace Zantetsu.MeshCut
         public int LastCompactionRegistrations { get; private set; }
         public int LastCompactionOldestFrame { get; private set; }
         public int LastCompactionNewestFrame { get; private set; }
+        /// <summary>The frame whose collection was a structural one (what is drawn worked out again from the structure); int.MinValue before any.</summary>
+        public int LastStructuralCollectionFrame { get; private set; } = int.MinValue;
+
         public int LastCompactionFrame { get; private set; } = int.MinValue;
 
         /// <summary>
@@ -6851,6 +6854,11 @@ namespace Zantetsu.MeshCut
             //    it has selected boundaries), whether it is split -- so it is worked out again only when what a
             //    structure is settled from has changed, and stands otherwise.
             bool structural = !(stampLedger >= 0 && _drawnLedger == stampLedger && _drawnInputs == _inputRevision);
+            if (structural)
+            {
+                LastStructuralCollectionFrame = Time.frameCount;   // read by optional work that expects what a structural collection costs
+            }
+
             if (structural || collectEverythingForTest)
             {
                 _capLayoutStale = true;   // the caps' shapes and their order follow from the structure (D-208)
