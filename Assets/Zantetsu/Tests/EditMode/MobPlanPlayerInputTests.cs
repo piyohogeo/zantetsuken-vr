@@ -7,7 +7,7 @@ namespace Zantetsu.Core.Tests
     /// <summary>
     /// The city's stick move follows the head's horizontal facing (D-225), never the rig's forward and never up or down:
     /// a head turned in the room, a head looking down, a head looking straight up (the fallback), and the move's speed
-    /// forward and back.
+    /// forward and back. A scripted stick (the city walk's steps) follows the rig's forward instead (D-236).
     /// </summary>
     public sealed class MobPlanPlayerInputTests
     {
@@ -49,6 +49,23 @@ namespace Zantetsu.Core.Tests
             Assert.That(Vector3.Angle(back, -facing), Is.LessThan(1e-3f));
             Assert.That(half.magnitude, Is.EqualTo(1.49f * 0.5f * 0.5f).Within(1e-5f), "half the stick, half the speed");
             Assert.That(MobPlanPlayerInput.Move(facing, 3f, 1.49f, 0.5f, 0.5f).magnitude, Is.EqualTo(1.49f * 0.5f).Within(1e-5f), "clamped to the stick's range");
+        }
+
+        [Test]
+        public void AScriptedStick_FollowsTheRigsForward_ThoughTheHeadLooksAside_WhileAPersons_FollowsTheHead()
+        {
+            // The city walk's steps steer by the rig's yaw; under the Simulator's head replay the head looks elsewhere (D-236).
+            Vector3 rigForward = Quaternion.Euler(0f, 30f, 0f) * Vector3.forward;
+            Vector3 headForward = Quaternion.Euler(-20f, 120f, 0f) * Vector3.forward;
+            Vector3 scripted = MobPlanPlayerInput.FacingOf(false, headForward, rigForward);
+            Vector3 person = MobPlanPlayerInput.FacingOf(true, headForward, rigForward);
+            Assert.That(Vector3.Angle(scripted, rigForward), Is.LessThan(1e-3f), "a script's: the rig's forward, the head ignored");
+            Assert.That(Vector3.Angle(person, MobPlanPlayerInput.HorizontalFacing(headForward, rigForward)), Is.LessThan(1e-3f), "a person's: the head's, as D-225");
+            Assert.That(Vector3.Angle(scripted, person), Is.EqualTo(90f).Within(1e-2f), "the two differ here: the head looks 90 degrees aside");
+            // A tilted rig (never in practice) is laid flat too.
+            Vector3 tilted = MobPlanPlayerInput.FacingOf(false, headForward, Quaternion.Euler(-40f, 30f, 0f) * Vector3.forward);
+            Assert.That(tilted.y, Is.Zero);
+            Assert.That(Vector3.Angle(tilted, rigForward), Is.LessThan(1e-3f));
         }
 
         [Test]

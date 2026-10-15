@@ -15,6 +15,8 @@ namespace Zantetsu.Core.Tests
             return QuestNpcSlashDemo.CheckLaunch(json, kind, out mode, out appSw, out distance);
         }
 
+        private static QuestNpcSlashDemo.Config ReadPlay(string json) => QuestNpcSlashDemo.ReadLaunch(json, SandboxScenarioKind.Play);
+
         [Test]
         public void Play_WithNoFile_HasNoDistanceExperiment()
         {
@@ -57,6 +59,20 @@ namespace Zantetsu.Core.Tests
             Assert.That(new object[] { mode, appSw, distance }, Is.EqualTo(new object[] { "vp3c", false, false }));
             Assert.That(Check("{ \"mode\": \"unity\" }", SandboxScenarioKind.Play, out mode, out appSw, out distance), Is.EqualTo("mode must be vp3c or vp3c-native"));
             Assert.That(Check("{ \"appSpacePoseMode\": \"head\" }", SandboxScenarioKind.Play, out mode, out appSw, out distance), Is.EqualTo("appSpacePoseMode must be camera or tracking-origin"));
+        }
+
+        [Test]
+        public void Play_CarriesTheBentPartitionsSwitch_AndWithoutItPlayIsAsBefore()
+        {
+            // The bent partition's verification switch (DESIGN 7.9.2) reaches play (qBent2 of 2026-10-15 lost it);
+            // the other switches of a scripted run or an experiment still do not.
+            Assert.That(ReadPlay("{ \"spatialSplitBent\": true }").spatialSplitBent, Is.True, "asked: carried into play");
+            Assert.That(ReadPlay("{ \"spatialSplitBent\": false }").spatialSplitBent, Is.False);
+            Assert.That(ReadPlay("{ \"mode\": \"vp3c-native\" }").spatialSplitBent, Is.False, "not asked: play as before");
+            Assert.That(ReadPlay(null).spatialSplitBent, Is.False, "no file: play as before");
+            var left = ReadPlay("{ \"spatialSplitBent\": true, \"appSwDistanceExperiment\": true, \"profiler\": true }");
+            Assert.That(new object[] { left.spatialSplitBent, left.appSwDistanceExperiment, left.profiler }, Is.EqualTo(new object[] { true, false, false }),
+                "the experiment's and the profiler's switches are still left at what play needs");
         }
 
         [Test]

@@ -27,7 +27,7 @@ namespace Zantetsu.Quest
         public const string CityWalkSceneName = "QuestCityWalk";
         public const string CityWalkPackageName = "com.zantetsuken.quest.citywalk";
 
-        [Serializable] private sealed class Config
+        [Serializable] internal sealed class Config
         {
             public string scenario = "";                         // DESIGN 3.4: read by SandboxScenario (play without it); kept here so that the run's record of its configuration carries it
             public string mode = "vp3c-native";
@@ -42,6 +42,7 @@ namespace Zantetsu.Quest
             public string cityWalkScriptFile;
             public int fragmentGroupsMax = -1; // DESIGN 7.10: 0 or more switches the fragment group collection on above that many live cut fragments; -1 leaves the world's profile as it is.
             public bool spatialSplit = false; // DESIGN 7.9.2: true switches the spatial split on for the scene's cut worlds; false leaves the world's profile as it is.
+            public bool spatialSplitBent = false; // DESIGN 7.9.2, the bent partition: true switches it on for the scene's cut worlds' split (the split itself as the profile or spatialSplit has it); false leaves the profile as it is.
             public float cityWalkBudgetSeconds = 565f;
             public int inputStart = 2227;
             public int inputRows = 512;
@@ -118,6 +119,10 @@ namespace Zantetsu.Quest
                 appSw = launch.appSw,
                 appSpacePoseMode = launch.appSpacePoseMode,
                 nativeIndirectCount = launch.nativeIndirectCount,
+                // The bent partition's verification switch (DESIGN 7.9.2) is carried into play too: its default, false,
+                // leaves play as it is, and the Quest check of the bent partition runs as play (qBent2 of 2026-10-15 asked
+                // for it and got the profile's off, because this copy left it out).
+                spatialSplitBent = launch.spatialSplitBent,
                 appSwDistanceExperiment = false,
                 profiler = false,
             };
@@ -144,6 +149,9 @@ namespace Zantetsu.Quest
         /// For tests and the record: a launch's configuration text read for a scenario -- its failure (null: none),
         /// its mode, AppSW and whether the AppSW distance experiment is set up. Reads and decides only.
         /// </summary>
+        /// <summary>For tests: the configuration a scenario would run with from this launch text (null: no file). Reads only.</summary>
+        internal static Config ReadLaunch(string json, SandboxScenarioKind kind) => ConfigFor(kind, json);
+
         internal static string CheckLaunch(string json, SandboxScenarioKind kind, out string mode, out bool appSw, out bool distanceExperiment)
         {
             Config config = ConfigFor(kind, json);
@@ -279,6 +287,13 @@ namespace Zantetsu.Quest
                 _phase = "Play";
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " AppSW=" + _config.appSw + " appSpace=" + _config.appSpacePoseMode
                     + " scene=" + SceneManager.GetActiveScene().name + "; no script, no measurement, no ending");
+                // The bent partition's verification switch is the one switch of the configuration play applies to the
+                // scene's cut worlds (DESIGN 3.4, 7.9.2): the worlds exist with the scene, before any cut. (qBent3 of
+                // 2026-10-16 carried the switch into play's configuration and still ran with the profile's off, because
+                // play left here before the scripted path's block below.)
+                string playBent = BentPartition(out string playBentFailure);
+                if (playBentFailure != null) { Fail(playBentFailure); yield break; }
+                Debug.Log(LogPrefix + playBent);
                 yield break;
             }
 
@@ -436,6 +451,12 @@ namespace Zantetsu.Quest
 
             Debug.Log(LogPrefix + split);
             File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { split });
+
+            // The bent partition of the split (DESIGN 7.9.2), asked for by the configuration: on for every cut world, before any cut.
+            string bent = BentPartition(out string bentFailure);
+            if (bentFailure != null) { Fail(bentFailure); yield break; }
+            Debug.Log(LogPrefix + bent);
+            File.AppendAllLines(Path.Combine(_directory, "platform.txt"), new[] { bent });
             _run = SandboxPropSlashPlayerCheck.StartPrepared(arguments, _config.keepOpen, true, _config.startDelaySeconds,
                 _cityWalk ? PrepareCityReplay : null);
             if (_cityWalk)
@@ -669,6 +690,26 @@ namespace Zantetsu.Quest
                 + "\ndevelopment logger begin enqueue=" + _loggerBeginAdmission + "\ndevelopment logger end enqueue=" + loggerEndAdmission
                 + "\nlogger enqueue accepted does not guarantee persistence; verify npc_run_end in the saved JSONL\n");
             Debug.Log(LogPrefix + "measurement done code=" + _run.Code + " sceneRetained=" + _run.SceneRetained + " output=" + _directory);
+        }
+
+        /// <summary>
+        /// The bent partition of the split (DESIGN 7.9.2) switched on for every cut world of the scene when the
+        /// configuration asks for it; the line that says what was done, and the failure (null: none) where it was asked
+        /// and no cut world took it. Before any cut; play and the scripted scenarios alike.
+        /// </summary>
+        private string BentPartition(out string failure)
+        {
+            failure = null;
+            if (!_config.spatialSplitBent) return "bent partition=the world's profile (spatialSplitBent false)";
+            int switched = 0, worlds = 0;
+            foreach (CutWorldRoot cutWorld in UnityEngine.Object.FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
+            {
+                worlds++;
+                if (cutWorld.EnableSpatialSplitBent("the Quest configuration's spatialSplitBent")) switched++;
+            }
+
+            if (switched == 0) failure = "spatialSplitBent was asked but no cut world took it";
+            return "bent partition=on in " + switched + " of " + worlds + " cut worlds";
         }
 
         private void Fail(string failure)

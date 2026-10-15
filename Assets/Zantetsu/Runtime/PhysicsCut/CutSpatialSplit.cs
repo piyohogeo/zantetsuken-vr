@@ -63,6 +63,15 @@ namespace Zantetsu.PhysicsCut
         public double seedCutApplySeconds, seedHullCheckSeconds, seedCutPublishSeconds;
 
         /// <summary>
+        /// The bent partition (DESIGN 7.9.2): where no plane leaves the convexes whole, a surface of a few plane
+        /// pieces that leaves every convex and every triangle whole on a side is looked for
+        /// (<see cref="CutSpatialSplitBentSearch"/>), before any convex is cut by the mesh-led plane. Off: the planes
+        /// alone. No convex is cut by it.
+        /// </summary>
+        public bool bentSearch;
+        public SpatialSplitBentLimits bentLimits;
+
+        /// <summary>
         /// The triangle minimum of a split that cuts a convex: 50, the TL's choice of 2026-10-11 after city walks at
         /// 200, 100 and 50. The expected costs beside it are provisional, from no performance measurement.
         /// </summary>
@@ -94,6 +103,8 @@ namespace Zantetsu.PhysicsCut
             this.seedCutApplySeconds = seedCutApplySeconds;
             this.seedHullCheckSeconds = seedHullCheckSeconds;
             this.seedCutPublishSeconds = seedCutPublishSeconds;
+            bentSearch = false;   // the bent partition is set apart (the profile's reading, a test's): off here
+            bentLimits = default;
         }
 
         public bool IsValid => examinePerFrame >= 1 && reserveSeconds >= 0.0 && !double.IsNaN(reserveSeconds)
@@ -103,7 +114,7 @@ namespace Zantetsu.PhysicsCut
             && seedCutApplySeconds >= 0.0 && !double.IsNaN(seedCutApplySeconds)
             && seedHullCheckSeconds >= 0.0 && !double.IsNaN(seedHullCheckSeconds)
             && seedCutPublishSeconds >= 0.0 && !double.IsNaN(seedCutPublishSeconds)
-            && limits.IsValid;
+            && limits.IsValid && (!bentSearch || bentLimits.IsValid);
 
         /// <summary>Whether two settings look for the same thing: a mark made under one says nothing under another.</summary>
         internal bool SearchesAs(in CutSpatialSplitSettings other)
@@ -111,7 +122,8 @@ namespace Zantetsu.PhysicsCut
             return cutConvexes == other.cutConvexes && minCutSideTriangles == other.minCutSideTriangles
                 && limits.maxConvexes == other.limits.maxConvexes && limits.maxCentreDirections == other.limits.maxCentreDirections
                 && limits.maxPlaneTests == other.limits.maxPlaneTests && limits.maxTriangles == other.limits.maxTriangles
-                && limits.maxMeshDirections == other.limits.maxMeshDirections && limits.meshBins == other.limits.meshBins;
+                && limits.maxMeshDirections == other.limits.maxMeshDirections && limits.meshBins == other.limits.meshBins
+                && bentSearch == other.bentSearch && (!bentSearch || bentLimits.Equals(in other.bentLimits));
         }
     }
 
@@ -445,6 +457,19 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Attempts ended because a collider mesh of a cut convex could not be made on the main thread.</summary>
         public int CutMeshFailures { get; private set; }
+
+        /// <summary>
+        /// The bent partition (DESIGN 7.9.2): attempts whose search went on to it, those it found a surface for,
+        /// publications by it, the closures that read the triangles, the elements (convexes and triangles) verified
+        /// over their whole extent, and its own time on the worker (the attempt's worker time holds it too).
+        /// </summary>
+        public int BentSearches { get; private set; }
+        public int BentFound { get; private set; }
+        public int PublishedBent { get; private set; }
+        public long BentCandidates { get; private set; }
+        public long BentElementsVerified { get; private set; }
+        public double BentSeconds { get; private set; }
+        public double MaxBentSeconds { get; private set; }
 
         /// <summary>For a test: the making of the mesh of this number fails (-1: none does). The product never sets it.</summary>
         internal static int FailMeshAtForTest = -1;
@@ -1049,6 +1074,12 @@ namespace Zantetsu.PhysicsCut
                 CutWorldProfile profile = _world.Profile;
                 PhysicsOwnerShape shape = input.shape;
                 int convexCount = shape.ConvexCount;
+                int maxConvexVertices = 0;
+                for (int c = 0; c < convexCount; c++)
+                {
+                    maxConvexVertices = Math.Max(maxConvexVertices, shape.Convex(c).vertexCount);
+                }
+
                 int classificationBytes = PhysicsCutClassification.RequiredBlockBytes(shape);
                 if (storage == null || profile == null || classificationBytes < 0
                     || !storage.TryGetSubmeshes(input.geometry, out NativeArray<VpGeometrySubmesh>.ReadOnly submeshes)
@@ -1074,6 +1105,9 @@ namespace Zantetsu.PhysicsCut
                     limits = settings.limits,
                     cutConvexes = settings.cutConvexes,
                     minCutSideTriangles = settings.minCutSideTriangles,
+                    bentSearch = settings.bentSearch,
+                    bentLimits = settings.bentLimits,
+                    maxConvexVertices = maxConvexVertices,
                     geometryToOwner = input.owner.GeometryLocalToOwner.Value,
                     shapeToOwner = shape.LocalToOwner,
                     indexCount = indexView.Length,
@@ -1101,9 +1135,10 @@ namespace Zantetsu.PhysicsCut
                     long banksAt = boundsAt + Align16(4L * s * sizeof(float3));
                     long rangesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
                     long scratchAt = rangesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
-                    long bytes = scratchAt + Align16(Math.Max(
+                    long bytes = scratchAt + Align16(Math.Max(Math.Max(
                         CutSpatialSplitSearch.ScratchBytes(convexCount),
-                        settings.cutConvexes ? CutSpatialSplitSearch.MeshScratchBytes(convexCount, settings.limits) : 0));
+                        settings.cutConvexes ? CutSpatialSplitSearch.MeshScratchBytes(convexCount, settings.limits) : 0),
+                        settings.bentSearch ? CutSpatialSplitBentSearch.ScratchBytes(convexCount, maxConvexVertices, attempt.indexCount / 3) : 0));
                     attempt.block = PhysicsCutBlocks.Take<byte>(checked((int)bytes));
                     byte* block = (byte*)attempt.block.GetUnsafePtr();
                     attempt.output = (uint*)(block + outputAt);
@@ -1180,6 +1215,17 @@ namespace Zantetsu.PhysicsCut
                 LastSearch = attempt.search;
                 if (attempt.search.meshLed) MeshLedSearches++;
                 if (attempt.cut) CutAttempts++;
+                if (attempt.search.bent)
+                {
+                    BentSearches++;
+                    BentCandidates += attempt.search.bentCandidates;
+                    BentElementsVerified += attempt.search.bentElementsVerified;
+                    if (IsBentResult(in attempt.search)) BentFound++;
+#if ZANTETSU_OBSERVE
+                    BentSeconds += attempt.bentSeconds;
+                    MaxBentSeconds = Math.Max(MaxBentSeconds, attempt.bentSeconds);
+#endif
+                }
             }
 
             if (attempt.stage == AttemptStage.Baking && !attempt.bakeCounted)
@@ -1449,6 +1495,8 @@ namespace Zantetsu.PhysicsCut
                         ConvexesCut += attempt.meshCount / 2;
                     }
 
+                    if (IsBentResult(in attempt.search)) PublishedBent++;
+
                     ActorsAdded += 1;          // two actors where one stood
                     RegistrationsAdded += 1;   // two registrations where one stood (the old one goes at the next adoption)
                     IndicesTransferred += display.SplitIndicesTransferred - transferredBefore;
@@ -1519,7 +1567,7 @@ namespace Zantetsu.PhysicsCut
         // frame of a publication would be part of what that frame cost.
         private struct SplitEvent
         {
-            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut;
+            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut, bentPieces;
             internal float3 at, normal;
             internal float gap;
             internal double workerSeconds, turnSeconds;
@@ -1549,6 +1597,7 @@ namespace Zantetsu.PhysicsCut
                 positiveTriangles = attempt.search.positiveTriangles, negativeTriangles = attempt.search.negativeTriangles,
                 positiveConvexes = attempt.search.positiveConvexes, negativeConvexes = attempt.search.negativeConvexes,
                 convexesCut = attempt.cut ? attempt.meshCount / 2 : 0,
+                bentPieces = IsBentResult(in attempt.search) ? attempt.search.bentPieces : 0,
                 at = _publishedAt, normal = attempt.search.planeOwner.xyz, gap = attempt.search.gap,
                 workerSeconds = attempt.workerSeconds, turnSeconds = turnSeconds,
             });
@@ -1573,7 +1622,8 @@ namespace Zantetsu.PhysicsCut
                     + " indices transferred; the plane's normal in the owner (" + e.normal.x.ToString("F3", inv) + ", " + e.normal.y.ToString("F3", inv) + ", "
                     + e.normal.z.ToString("F3", inv) + "), the gap " + e.gap.ToString("F4", inv) + " m; worker " + (e.workerSeconds * 1000.0).ToString("F3", inv)
                     + " ms, the publishing turn " + (e.turnSeconds * 1000.0).ToString("F3", inv) + " ms"
-                    + (e.convexesCut > 0 ? "; convexes cut by the plane " + e.convexesCut : ""));
+                    + (e.convexesCut > 0 ? "; convexes cut by the plane " + e.convexesCut : "")
+                    + (e.bentPieces > 0 ? "; a bent partition of " + e.bentPieces + " pieces (the normal is its height axis, the gap its least clearance)" : ""));
             }
 
             if (EventsNotKept > 0)
@@ -1776,7 +1826,24 @@ namespace Zantetsu.PhysicsCut
                 .Append("; indices transferred ").Append(IndicesTransferred).Append(" (").Append(IndicesTransferred * sizeof(uint)).Append(" B)")
                 .Append("; actors added ").Append(ActorsAdded).Append(", draw registrations added ").Append(RegistrationsAdded)
                 .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv))
-                .Append("; ").Append(DescribeConvexCut());
+                .Append("; ").Append(DescribeConvexCut())
+                .Append("; ").Append(DescribeBent());
+            return text.ToString();
+        }
+
+        /// <summary>The bent partition's tallies, the last part of <see cref="Describe"/>, as a text of its own (a device's log cuts a long line short).</summary>
+        public string DescribeBent()
+        {
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            SpatialSplitBentLimits l = Settings.bentLimits;
+            var text = new StringBuilder(256);
+            text.Append("bent partition (").Append(Settings.bentSearch
+                    ? "on: frames " + l.maxFrames.ToString(inv) + ", seeds " + l.maxSeeds.ToString(inv) + ", candidates " + l.maxCandidates.ToString(inv)
+                      + ", iterations " + l.maxIterations.ToString(inv) + ", pieces " + l.maxPieces.ToString(inv)
+                    : "off")
+                .Append("): searches ").Append(BentSearches).Append(", found ").Append(BentFound).Append(", published ").Append(PublishedBent)
+                .Append(", candidates read with triangles ").Append(BentCandidates).Append(", elements verified ").Append(BentElementsVerified)
+                .Append("; worker ms ").Append((BentSeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxBentSeconds * 1000.0).ToString("F3", inv)).Append(')');
             return text.ToString();
         }
 
@@ -1798,6 +1865,15 @@ namespace Zantetsu.PhysicsCut
                 .Append("), hulls ").Append((HullCheckSeconds * 1000.0).ToString("F3", inv)).Append(" (longest turn ").Append((MaxHullCheckTurnSeconds * 1000.0).ToString("F3", inv))
                 .Append("), publishing turns ").Append((CutPublishSeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxCutPublishTurnSeconds * 1000.0).ToString("F3", inv)).Append(")");
             return text.ToString();
+        }
+
+        /// <summary>
+        /// Whether a search's result is the bent partition's: it went through the bent search, found, and the mesh-led
+        /// plane (searched after it, when it found nothing) is not what found.
+        /// </summary>
+        internal static bool IsBentResult(in SpatialSplitSearchResult search)
+        {
+            return search.bent && search.outcome == SpatialSplitSearchOutcome.Found && !search.meshLed;
         }
 
         /// <summary>
@@ -1897,6 +1973,13 @@ namespace Zantetsu.PhysicsCut
             internal bool cutConvexes;
             internal int minCutSideTriangles;
 
+            // The bent partition: whether to look for one after the planes, its limits, the most vertices one convex
+            // has (the search's scratch), and the search's own time on the worker.
+            internal bool bentSearch;
+            internal SpatialSplitBentLimits bentLimits;
+            internal int maxConvexVertices;
+            internal double bentSeconds;
+
             // The convex-cut branch. Set by the worker's numbers: whether a convex is cut. Then the main thread's:
             // the meshes it made of the produced convexes (positive then negative, a cut convex after another), their
             // ids and boxes, the cooking they are baked by, and how far the reading of the cooked hulls has come.
@@ -1945,10 +2028,25 @@ namespace Zantetsu.PhysicsCut
                         vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
                         banks, ranges, convexCount, in shapeToOwner, margin, in limits, scratch, ref search);
                     ran = true;
+                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && bentSearch && convexCount >= 2)
+                    {
+                        // No plane leaves the convexes and the triangles whole: a surface of a few plane pieces that
+                        // does (DESIGN 7.9.2, the bent partition), before any convex is cut. An input that is invalid,
+                        // not finite or over the limits is no reason to look further, and an owner of one convex has
+                        // nothing for the other side.
+                        long bentBegin = Began();
+                        CutSpatialSplitBentSearch.FindBentSurface(
+                            vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
+                            banks, ranges, convexCount, in shapeToOwner, margin, in limits, in bentLimits, scratch, ref search);
+#if ZANTETSU_OBSERVE
+                        bentSeconds = Since(bentBegin);
+#endif
+                    }
+
                     if (search.outcome == SpatialSplitSearchOutcome.NotFound && cutConvexes)
                     {
-                        // No plane leaves the convexes whole: one that leaves the triangles whole is looked for.
-                        // An input that is invalid, not finite or over the limits is no reason to look further.
+                        // Nothing leaves the convexes whole: a plane that leaves the triangles whole is looked for,
+                        // and the convexes that cross it are cut. (The bent partition's counts stay in the record.)
                         CutSpatialSplitSearch.FindMeshPlane(
                             vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
                             banks, ranges, convexCount, in shapeToOwner, margin, minCutSideTriangles, in limits, scratch, ref search);
@@ -1956,6 +2054,12 @@ namespace Zantetsu.PhysicsCut
 
                     if (search.outcome != SpatialSplitSearchOutcome.Found)
                     {
+                        return;
+                    }
+
+                    if (IsBentResult(in search))
+                    {
+                        BeginBent();
                         return;
                     }
 
@@ -2043,6 +2147,54 @@ namespace Zantetsu.PhysicsCut
 #endif
                     Volatile.Write(ref _done, 1);
                 }
+            }
+
+            // The bent partition's sharing out, anchors and classification (DESIGN 7.9.2): every side is what the
+            // search verified over the element's whole extent -- the triangles by the same test, the anchors by
+            // their signed distance to the surface (a length, as the plane's is), the convexes by the sides the
+            // search wrote -- and no plane stands for the surface anywhere. Nothing is cut.
+            private void BeginBent()
+            {
+                distributed = CutSpatialSplitBentSearch.DistributeBent(
+                    vertices, vertexViewLength, indices, indexCount, submeshOffsets, submeshCounts, submeshCount,
+                    in geometryToOwner, in search.bentSurface, margin, convexCount, maxConvexVertices, scratch,
+                    output, outSubmeshOffsets, outSubmeshCounts, outBoundsMin, outBoundsMax, ref distribution);
+                if (!distributed)
+                {
+                    return;
+                }
+
+                // The owner's anchors are kept in the shape's numerical frame; the surface is in the owner's.
+                positiveAnchors = new List<float3>();
+                negativeAnchors = new List<float3>();
+                var distances = new List<float>(anchors != null ? anchors.Length : 0);
+                if (anchors != null)
+                {
+                    for (int a = 0; a < anchors.Length; a++)
+                    {
+                        distances.Add(search.bentSurface.SignedDistance(search.bentSurface.Project(math.transform(shapeToOwner, anchors[a]))));
+                    }
+                }
+
+                anchorsDistributed = FixedSupportAnchors.TryDistribute(anchors, distances, anchorEpsilon, positiveAnchors, negativeAnchors, out anchorResult);
+                if (!anchorsDistributed)
+                {
+                    return;
+                }
+
+                NativeArray<byte> given = classificationBlock;
+                classificationBlock = default;   // the classification's from here, on every answer
+                if (!PhysicsCutClassification.TryClassifyWithSides(
+                        input.shape, CutSpatialSplitBentSearch.SidesOf(scratch), convexCount, parentMass, vertexLimit, given, out classification)
+                    || !classification.SplitsBothSides)
+                {
+                    return;
+                }
+
+                classified = true;
+                ConvexCutOwnerInput kernelInput = classification.Input;
+                ConvexCutOwnerOutput kernelOutput = arena.Output;
+                ConvexCutOwnerKernel.Execute(in kernelInput, in kernelOutput, ref kernel);
             }
 
             // The second run: PhysX cooks each mesh the main thread made, with the cooking the colliders will ask

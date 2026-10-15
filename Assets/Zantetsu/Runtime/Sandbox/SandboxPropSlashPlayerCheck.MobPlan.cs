@@ -430,7 +430,8 @@ namespace Zantetsu.Sandbox
                 (int start, int rows)? chunk = _mpSteps.Advance(now, at, player.eulerAngles.y, idle, _mpInput.speed, _mpInput.turnDegreesPerSecond, seconds,
                     out (float forward, float turn)? stick, line => { Log("city walk " + line); MobPlanRecord(line); }, _mpSteps.Engage != null ? CityWalkSeen() : null);
                 if (_mpSteps.Engage != null) CityWalkEngagementFrames();
-                if (stick.HasValue) _mpInput.Submit(stick.Value.forward, stick.Value.turn, seconds);
+                // The steps steer by the rig's yaw (above): their move goes along the rig's forward, not the head's (D-236).
+                if (stick.HasValue) _mpInput.SubmitAlongRig(stick.Value.forward, stick.Value.turn, seconds);
                 if (chunk.HasValue) MobPlanBeginChunk((now, chunk.Value.start, chunk.Value.rows));
                 if (_mpSteps.HoldBeforeSlash != null) CityWalkHitShotsAfter(now);
                 if (_mpSteps.Done && _mpEnd > now) _mpEnd = now;

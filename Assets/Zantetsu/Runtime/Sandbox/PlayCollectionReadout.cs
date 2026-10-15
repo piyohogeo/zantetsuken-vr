@@ -67,6 +67,8 @@ namespace Zantetsu.Sandbox
             Debug.Log(Prefix + "now: " + Describe());
             // The spatial split (a settled owner made two), whose turns share the frame with the collection's.
             Debug.Log(Prefix + "spatial split: " + (_world.SpatialSplit != null ? _world.SpatialSplit.Describe() : "none in this world"));
+            // The bent partition's tallies on a line of their own: the end of the line above is what a device's log cuts.
+            if (_world.SpatialSplit != null) Debug.Log(Prefix + "bent partition: " + _world.SpatialSplit.DescribeBent());
             _frames = _underReserve = _spent = 0;
             _leftSum = 0.0;
             _leftLeast = double.PositiveInfinity;

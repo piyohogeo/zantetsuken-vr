@@ -27,6 +27,13 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public const string SpatialSplitOffArgument = "-zantetsuSpatialSplitOff";
 
+        /// <summary>
+        /// The Player argument that switches the bent partition on for a run (DESIGN 7.9.2; off in the profile's
+        /// default of 2026-10-15), with the profile's own limits where they are valid and the provisional ones
+        /// otherwise. Nothing without the split itself on.
+        /// </summary>
+        public const string SpatialSplitBentArgument = "-zantetsuSpatialSplitBent";
+
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
@@ -82,6 +89,16 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.LogError("SPATIAL SPLIT MINIMUM: " + refusal + ": the profile's " + settings.minCutSideTriangles + " stands", this);
             }
 
+            if (Array.IndexOf(arguments, SpatialSplitBentArgument) >= 0)
+            {
+                bool valid = settings.bentLimits.IsValid;
+                UnityEngine.Debug.Log(
+                    "SPATIAL SPLIT BENT: on -- asked for by " + SpatialSplitBentArgument + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off")
+                    + "), the " + (valid ? "profile's" : "provisional") + " limits", this);
+                settings.bentSearch = true;
+                if (!valid) settings.bentLimits = SpatialSplitBentLimits.Default;
+            }
+
             if (Array.IndexOf(arguments, SpatialSplitOffArgument) >= 0)
             {
                 UnityEngine.Debug.Log(
@@ -116,7 +133,11 @@ namespace Zantetsu.PhysicsCut
                   + "and otherwise a plane that leaves its triangles whole, the convexes that cross it cut by it (convex cut on: only when the side with fewer triangles has "
                   + settings.minCutSideTriangles + " or more; an owner of one convex is looked at too); not for buildings, no triangle is cut"
                 : "a settled owner of two or more convexes that one plane separates, triangles and convexes whole, becomes two objects; not for buildings, no convex is cut (convex cut off)";
-            return what + "; " + settings.examinePerFrame + " fragments looked at a frame at most, one attempt at a time";
+            return what
+                + (settings.bentSearch
+                    ? "; bent partition on: where no plane leaves the convexes whole, a surface of a few plane pieces that leaves convexes and triangles whole, before any convex is cut"
+                    : "; bent partition off")
+                + "; " + settings.examinePerFrame + " fragments looked at a frame at most, one attempt at a time";
         }
 
         /// <summary>
@@ -136,6 +157,30 @@ namespace Zantetsu.PhysicsCut
                 "SPATIAL SPLIT: on -- asked for by " + askedBy + " (the profile's own setting is " + (settings.enabled ? "on" : "off")
                 + "): " + DescribeSplit(in settings), this);
             settings.enabled = true;
+            SpatialSplit.Settings = settings;
+            return true;
+        }
+
+        /// <summary>
+        /// Switches the bent partition on for this world's split (DESIGN 7.9.2), the profile's limits where valid and
+        /// the provisional ones otherwise: what <see cref="SpatialSplitBentArgument"/> does, for a host that has no
+        /// command line (a device run's configuration file). Nothing of the split itself is switched. False when the
+        /// world has no split.
+        /// </summary>
+        public bool EnableSpatialSplitBent(string askedBy)
+        {
+            if (SpatialSplit == null)
+            {
+                return false;
+            }
+
+            CutSpatialSplitSettings settings = SpatialSplit.Settings;
+            bool valid = settings.bentLimits.IsValid;
+            UnityEngine.Debug.Log(
+                "SPATIAL SPLIT BENT: on -- asked for by " + askedBy + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off")
+                + "), the " + (valid ? "profile's" : "provisional") + " limits", this);
+            settings.bentSearch = true;
+            if (!valid) settings.bentLimits = SpatialSplitBentLimits.Default;
             SpatialSplit.Settings = settings;
             return true;
         }

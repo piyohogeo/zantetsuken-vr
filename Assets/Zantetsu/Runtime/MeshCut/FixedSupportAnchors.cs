@@ -34,6 +34,9 @@ namespace Zantetsu.MeshCut
         /// rounded onto the plane or rescued with a substitute value (DESIGN 7.1: 無効値をOnPlaneへ分類しない).
         /// </summary>
         NonFiniteClassification,
+
+        /// <summary>The signed distances given are not as many as the anchors (the distribution by given distances).</summary>
+        MismatchedDistances,
     }
 
     /// <summary>
@@ -207,6 +210,91 @@ namespace Zantetsu.MeshCut
                 else
                 {
                     // On the plane, inside the epsilon band: the same value goes to each side exactly once.
+                    positive.Add(anchor);
+                    negative.Add(anchor);
+                    positives++;
+                    negatives++;
+                }
+            }
+
+            result = new AnchorDistributionResult(AnchorDistributionStatus.Ok, positives, negatives);
+            return true;
+        }
+
+        /// <summary>
+        /// The same distribution with the signed distances given (DESIGN 7.9.2, the bent partition: an anchor's
+        /// signed distance to the surface, a length, negative below), one a anchor in the same order: the rule is the
+        /// plane version's -- beyond the epsilon on a side, that side; within it, each side once. False as the plane
+        /// version refuses, and when the distances are not as many as the anchors.
+        /// </summary>
+        public static bool TryDistribute(
+            IReadOnlyList<float3> anchors,
+            IReadOnlyList<float> signedDistances,
+            float epsilon,
+            List<float3> positive,
+            List<float3> negative,
+            out AnchorDistributionResult result)
+        {
+            if (positive == null || negative == null)
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.NoOutput, 0, 0);
+                return false;
+            }
+
+            if (ReferenceEquals(positive, negative)
+                || ReferenceEquals(anchors, positive)
+                || ReferenceEquals(anchors, negative))
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.AliasedSets, 0, 0);
+                return false;
+            }
+
+            if (!math.isfinite(epsilon) || epsilon < 0f)
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.InvalidEpsilon, 0, 0);
+                return false;
+            }
+
+            int count = anchors?.Count ?? 0;
+            if ((signedDistances?.Count ?? 0) != count)
+            {
+                result = new AnchorDistributionResult(AnchorDistributionStatus.MismatchedDistances, 0, 0);
+                return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!math.all(math.isfinite(anchors[i])))
+                {
+                    result = new AnchorDistributionResult(AnchorDistributionStatus.NonFiniteAnchor, 0, 0);
+                    return false;
+                }
+
+                if (!math.isfinite(signedDistances[i]))
+                {
+                    result = new AnchorDistributionResult(AnchorDistributionStatus.NonFiniteClassification, 0, 0);
+                    return false;
+                }
+            }
+
+            int positives = 0;
+            int negatives = 0;
+            for (int i = 0; i < count; i++)
+            {
+                float3 anchor = anchors[i];
+                float s = signedDistances[i];
+                if (s > epsilon)
+                {
+                    positive.Add(anchor);
+                    positives++;
+                }
+                else if (s < -epsilon)
+                {
+                    negative.Add(anchor);
+                    negatives++;
+                }
+                else
+                {
                     positive.Add(anchor);
                     negative.Add(anchor);
                     positives++;

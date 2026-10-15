@@ -106,6 +106,17 @@ namespace Zantetsu.PhysicsCut
         public bool meshLed;
         public int crossingConvexes;
         public int meshDirectionsTried, meshPlanesTested, refusedForTriangleMinimum, refusedForNoConvexOnASide;
+
+        /// <summary>
+        /// The bent partition (<see cref="CutSpatialSplitBentSearch.FindBentSurface"/>): whether the search went on
+        /// to it, the surface it found (the sides are then the surface's, and the plane fields hold only its height
+        /// axis for the record), its pieces, and what it spent: frames and seeds tried, closures that read the
+        /// triangles, iterations, and elements verified over their whole extent.
+        /// </summary>
+        public bool bent;
+        public SpatialSplitBentSurface bentSurface;
+        public int bentPieces, bentFramesTried, bentSeedsTried, bentCandidates, bentIterations;
+        public long bentElementsVerified;
     }
 
     /// <summary>
@@ -179,6 +190,13 @@ namespace Zantetsu.PhysicsCut
             result.directionsTried = first.directionsTried;
             result.planesTested = first.planesTested;
             result.triangleVisits = first.triangleVisits;
+            // The bent partition's record stays too (2026-10-15: it is searched before this one; a record only).
+            result.bent = first.bent;
+            result.bentFramesTried = first.bentFramesTried;
+            result.bentSeedsTried = first.bentSeedsTried;
+            result.bentCandidates = first.bentCandidates;
+            result.bentIterations = first.bentIterations;
+            result.bentElementsVerified = first.bentElementsVerified;
             result.margin = margin;
             result.meshLed = true;
             if (vertices == null || indices == null || banks == null || convexes == null || scratch == null

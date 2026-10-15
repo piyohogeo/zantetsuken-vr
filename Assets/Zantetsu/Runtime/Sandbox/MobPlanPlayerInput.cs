@@ -61,15 +61,38 @@ namespace Zantetsu.Sandbox
             }
         }
 
+        /// <summary>A person's stick: the move follows the head's horizontal facing (D-225).</summary>
         public void Submit(float forward, float turn, float seconds)
+        {
+            SubmitAlong(forward, turn, seconds, true);
+        }
+
+        /// <summary>
+        /// A scripted stick (the city walk's steps, D-236): the move follows the RIG's horizontal forward, which is
+        /// what the script steers by -- its forward and turn are computed from the rig's yaw -- and not the head's,
+        /// which a replayed or a looking-around head turns elsewhere. The three scripted walks of 2026-10-15 went
+        /// where the replayed head looked, into obstacles, and halted at step 9.
+        /// </summary>
+        public void SubmitAlongRig(float forward, float turn, float seconds)
+        {
+            SubmitAlong(forward, turn, seconds, false);
+        }
+
+        /// <summary>The facing a submission follows: the head's laid flat (a person's stick), or the rig's own laid flat (a script's).</summary>
+        public static Vector3 FacingOf(bool byHead, Vector3 headForward, Vector3 rigForward)
+        {
+            return byHead ? HorizontalFacing(headForward, rigForward) : HorizontalFacing(rigForward, rigForward);
+        }
+
+        private void SubmitAlong(float forward, float turn, float seconds, bool byHead)
         {
             if (player == null || crowd == null || !crowd.IsReady || GamePause.IsPaused) return; // (no move or turn while the game is paused, DESIGN 4.6)
             Transform rig = player.transform;
             Quaternion turned = Quaternion.Euler(0, Mathf.Clamp(turn, -1, 1) * turnDegreesPerSecond * seconds, 0);
-            // The move follows the head's horizontal facing, turned by this frame's turn as the rig is (D-225): the
-            // rig's own forward is only the fallback for a head looking straight up or down.
+            // A person's move follows the head's horizontal facing, turned by this frame's turn as the rig is (D-225):
+            // the rig's own forward is only the fallback for a head looking straight up or down. A script's follows the rig's.
             Transform h = Head;
-            Vector3 facing = HorizontalFacing(h != null ? h.forward : rig.forward, rig.forward);
+            Vector3 facing = FacingOf(byHead, h != null ? h.forward : rig.forward, rig.forward);
             Vector3 move = turned * Move(facing, forward, speed, reverseFactor, seconds);
             player.TryRequest(new Pose(rig.position + move, turned * rig.rotation));
         }

@@ -224,6 +224,16 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float spatialSplitSeedHullCheckSeconds = (float)CutSpatialSplitSettings.DefaultSeedHullCheckSeconds;
         [SerializeField] private float spatialSplitSeedCutPublishSeconds = (float)CutSpatialSplitSettings.DefaultSeedCutPublishSeconds;
 
+        [Tooltip("With the split on: where no plane leaves the convexes whole, look for a bent partition -- a few plane pieces joined without a gap -- that leaves every convex and every triangle whole on a side (DESIGN 7.9.2), before the convex cut below is tried. No convex is cut by it. Off by default (2026-10-15): not checked in a Player.")]
+        [SerializeField] private bool spatialSplitBentSearch = false;
+
+        [Tooltip("The bent partition's limits: frames of the owner's axes (12 at most), seeds a frame, closures that read the triangles over all frames, iterations of one closure, and pieces (16 at most). Provisional, from no measurement.")]
+        [SerializeField] private int spatialSplitBentMaxFrames = SpatialSplitBentLimits.DefaultFrames;
+        [SerializeField] private int spatialSplitBentMaxSeeds = SpatialSplitBentLimits.DefaultSeeds;
+        [SerializeField] private int spatialSplitBentMaxCandidates = SpatialSplitBentLimits.DefaultCandidates;
+        [SerializeField] private int spatialSplitBentMaxIterations = SpatialSplitBentLimits.DefaultIterations;
+        [SerializeField] private int spatialSplitBentMaxPieces = SpatialSplitBentLimits.DefaultPieces;
+
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
         [SerializeField] private bool buildingRestEnabled = false;
@@ -449,14 +459,23 @@ namespace Zantetsu.PhysicsCut
         /// The spatial split's settings (DESIGN 7.9.2), from the provisional values above. The budget a turn leaves to
         /// the rest of the frame is the compaction's reserve, as the collections' is.
         /// </summary>
-        public CutSpatialSplitSettings SpatialSplit =>
-            new CutSpatialSplitSettings(
-                spatialSplitEnabled, spatialSplitExaminePerFrame, CutWorldRoot.CompactionReserveSeconds,
-                spatialSplitSeedIssueSeconds, spatialSplitSeedPublishSeconds,
-                new SpatialSplitSearchLimits(
-                    spatialSplitMaxConvexes, spatialSplitMaxCentreDirections, spatialSplitMaxPlaneTests, spatialSplitMaxTriangles),
-                spatialSplitCutConvexes, spatialSplitMinCutSideTriangles,
-                spatialSplitSeedCutApplySeconds, spatialSplitSeedHullCheckSeconds, spatialSplitSeedCutPublishSeconds);
+        public CutSpatialSplitSettings SpatialSplit
+        {
+            get
+            {
+                var settings = new CutSpatialSplitSettings(
+                    spatialSplitEnabled, spatialSplitExaminePerFrame, CutWorldRoot.CompactionReserveSeconds,
+                    spatialSplitSeedIssueSeconds, spatialSplitSeedPublishSeconds,
+                    new SpatialSplitSearchLimits(
+                        spatialSplitMaxConvexes, spatialSplitMaxCentreDirections, spatialSplitMaxPlaneTests, spatialSplitMaxTriangles),
+                    spatialSplitCutConvexes, spatialSplitMinCutSideTriangles,
+                    spatialSplitSeedCutApplySeconds, spatialSplitSeedHullCheckSeconds, spatialSplitSeedCutPublishSeconds);
+                settings.bentSearch = spatialSplitBentSearch;
+                settings.bentLimits = new SpatialSplitBentLimits(
+                    spatialSplitBentMaxFrames, spatialSplitBentMaxSeeds, spatialSplitBentMaxCandidates, spatialSplitBentMaxIterations, spatialSplitBentMaxPieces);
+                return settings;
+            }
+        }
 
         /// <summary>The trial fusion of held building pieces (2026-09-29): off unless the profile switches it on.</summary>
         public BuildingFusionSettings BuildingFusion => new BuildingFusionSettings(buildingFusionEnabled, buildingFusionPerFrame, buildingFusionDeadlineSeconds, buildingFusionMainBudgetMs * 0.001);

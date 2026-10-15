@@ -277,6 +277,131 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
+        /// <summary>
+        /// A classification with no plane (DESIGN 7.9.2, the bent partition): the side of each convex is given,
+        /// Positive or Negative, as another search verified it, and nothing is Split. The kernel's input is the same
+        /// as a scan's for convexes that are not Split -- it reads their side and integrates them whole -- so the
+        /// per-vertex distances are written as zero and the plane is left empty: nothing reads either without a
+        /// Split convex. False, with the block given back, when the input does not hold together: no shape, a side
+        /// that is not one of the two, a count that is not the shape's, a mass that is not positive, a vertex limit
+        /// that is not positive, or a vertex that is not finite.
+        /// </summary>
+        public static bool TryClassifyWithSides(
+            PhysicsOwnerShape shape,
+            byte* givenSides,
+            int sideCount,
+            double parentMass,
+            int vertexLimit,
+            NativeArray<byte> given,
+            out PhysicsCutClassification classification)
+        {
+            classification = null;
+            if (shape == null || shape.IsFreed || shape.ConvexCount <= 0 || givenSides == null || sideCount != shape.ConvexCount
+                || !(parentMass > 0.0) || double.IsNaN(parentMass) || double.IsInfinity(parentMass)
+                || vertexLimit <= 0)
+            {
+                if (given.IsCreated) given.Dispose();
+                return false;
+            }
+
+            int convexCount = shape.ConvexCount;
+            int vertices = 0;
+            for (int c = 0; c < convexCount; c++)
+            {
+                ConvexBrepRange range = shape.Convex(c);
+                if (range.vertexCount <= 0 || (givenSides[c] != (byte)ConvexSide.Positive && givenSides[c] != (byte)ConvexSide.Negative))
+                {
+                    if (given.IsCreated) given.Dispose();
+                    return false;
+                }
+
+                vertices = checked(vertices + range.vertexCount);
+            }
+
+            if (!given.IsCreated || given.Length < BlockBytes(convexCount, vertices))
+            {
+                if (given.IsCreated) given.Dispose();
+                return false;
+            }
+
+            var made = new PhysicsCutClassification();
+            try
+            {
+                long convexesAt = 0;
+                long banksAt = convexesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
+                long sidesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
+                long signedDistanceAt = sidesAt + Align16(convexCount);
+                long signClassAt = signedDistanceAt + Align16((long)vertices * sizeof(float));
+                long distanceBasesAt = signClassAt + Align16(vertices);
+                made._block = given;
+                made._sideValues = new ConvexSide[convexCount];
+
+                byte* block = (byte*)made._block.GetUnsafePtr();
+                var convexes = (ConvexBrepRange*)(block + convexesAt);
+                var banks = (ConvexBrepBank*)(block + banksAt);
+                var sides = block + sidesAt;
+                var signedDistance = (float*)(block + signedDistanceAt);
+                var signClass = (sbyte*)(block + signClassAt);
+                var distanceBases = (int*)(block + distanceBasesAt);
+
+                int at = 0;
+                bool anyPositive = false;
+                bool anyNegative = false;
+                for (int c = 0; c < convexCount; c++)
+                {
+                    ConvexBrepRange range = shape.Convex(c);
+                    ConvexBrepBank bank = shape.BankOf(c);
+                    convexes[c] = range;
+                    banks[c] = bank;
+                    distanceBases[c] = at;
+                    for (int v = 0; v < range.vertexCount; v++)
+                    {
+                        if (!math.all(math.isfinite(bank.vertices[range.vertexBase + v])))
+                        {
+                            made.Dispose();
+                            return false;
+                        }
+
+                        signedDistance[at + v] = 0f;
+                        signClass[at + v] = 0;
+                    }
+
+                    var side = (ConvexSide)givenSides[c];
+                    sides[c] = (byte)side;
+                    made._sideValues[c] = side;
+                    if (side == ConvexSide.Positive) anyPositive = true;
+                    else anyNegative = true;
+                    at += range.vertexCount;
+                }
+
+                made.SupportsPositive = anyPositive;
+                made.SupportsNegative = anyNegative;
+                made._input = new ConvexCutOwnerInput
+                {
+                    bank = default,
+                    banks = banks,
+                    convexes = convexes,
+                    convexCount = convexCount,
+                    sides = sides,
+                    signedDistance = signedDistance,
+                    signClass = signClass,
+                    distanceBases = distanceBases,
+                    plane = default,
+                    parentMass = parentMass,
+                    vertexLimit = vertexLimit,
+                };
+            }
+            catch
+            {
+                made.Dispose();
+                throw;
+            }
+
+            System.Threading.Interlocked.Increment(ref s_live);
+            classification = made;
+            return true;
+        }
+
         /// <summary>Whether the arrays this holds have gone back.</summary>
         public bool IsDisposed { get; private set; }
 
