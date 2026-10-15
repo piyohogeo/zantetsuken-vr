@@ -34,6 +34,9 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         public const string SpatialSplitBentArgument = "-zantetsuSpatialSplitBent";
 
+        /// <summary>The Player argument that switches the bent partition off for a run (on in the profile's default since 2026-10-16, D-237): the comparison's control.</summary>
+        public const string SpatialSplitBentOffArgument = "-zantetsuSpatialSplitBentOff";
+
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
@@ -71,6 +74,17 @@ namespace Zantetsu.PhysicsCut
             return false;
         }
 
+        /// <summary>
+        /// Reads <see cref="SpatialSplitBentArgument"/> and <see cref="SpatialSplitBentOffArgument"/>: false when neither
+        /// is given (the profile's setting stands); true with <paramref name="on"/> otherwise, the on argument winning
+        /// where both are given.
+        /// </summary>
+        internal static bool TryReadBentSwitch(string[] arguments, out bool on)
+        {
+            on = arguments != null && Array.IndexOf(arguments, SpatialSplitBentArgument) >= 0;
+            return on || (arguments != null && Array.IndexOf(arguments, SpatialSplitBentOffArgument) >= 0);
+        }
+
         // The profile's settings, or -- asked for by the arguments -- the same with the split on and with the
         // convex cut's triangle minimum given for the run.
         private CutSpatialSplitSettings SplitSettings(CutWorldProfile profile)
@@ -89,14 +103,23 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.LogError("SPATIAL SPLIT MINIMUM: " + refusal + ": the profile's " + settings.minCutSideTriangles + " stands", this);
             }
 
-            if (Array.IndexOf(arguments, SpatialSplitBentArgument) >= 0)
+            if (TryReadBentSwitch(arguments, out bool bentOn))
             {
-                bool valid = settings.bentLimits.IsValid;
-                UnityEngine.Debug.Log(
-                    "SPATIAL SPLIT BENT: on -- asked for by " + SpatialSplitBentArgument + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off")
-                    + "), the " + (valid ? "profile's" : "provisional") + " limits", this);
-                settings.bentSearch = true;
-                if (!valid) settings.bentLimits = SpatialSplitBentLimits.Default;
+                if (bentOn)
+                {
+                    bool valid = settings.bentLimits.IsValid;
+                    UnityEngine.Debug.Log(
+                        "SPATIAL SPLIT BENT: on -- asked for by " + SpatialSplitBentArgument + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off")
+                        + "), the " + (valid ? "profile's" : "provisional") + " limits", this);
+                    settings.bentSearch = true;
+                    if (!valid) settings.bentLimits = SpatialSplitBentLimits.Default;
+                }
+                else
+                {
+                    UnityEngine.Debug.Log(
+                        "SPATIAL SPLIT BENT: off -- asked for by " + SpatialSplitBentOffArgument + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off") + ")", this);
+                    settings.bentSearch = false;
+                }
             }
 
             if (Array.IndexOf(arguments, SpatialSplitOffArgument) >= 0)

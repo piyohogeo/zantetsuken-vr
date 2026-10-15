@@ -225,7 +225,7 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float spatialSplitSeedCutPublishSeconds = (float)CutSpatialSplitSettings.DefaultSeedCutPublishSeconds;
 
         [Tooltip("With the split on: where no plane leaves the convexes whole, look for a bent partition -- a few plane pieces joined without a gap -- that leaves every convex and every triangle whole on a side (DESIGN 7.9.2), before the convex cut below is tried. No convex is cut by it. Off by default (2026-10-15): not checked in a Player.")]
-        [SerializeField] private bool spatialSplitBentSearch = false;
+        [SerializeField] private bool spatialSplitBentSearch = true;   // on by default since 2026-10-16 (D-237); off on 2026-10-15 (D-235)
 
         [Tooltip("The bent partition's limits: frames of the owner's axes (12 at most), seeds a frame, closures that read the triangles over all frames, iterations of one closure, and pieces (16 at most). Provisional, from no measurement.")]
         [SerializeField] private int spatialSplitBentMaxFrames = SpatialSplitBentLimits.DefaultFrames;
