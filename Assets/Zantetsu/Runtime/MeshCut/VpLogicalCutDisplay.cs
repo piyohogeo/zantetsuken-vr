@@ -945,6 +945,11 @@ namespace Zantetsu.MeshCut
             public int preparedFrame = int.MinValue;
             public long preparedGeneration = -1;
             public int drawnFrame = int.MinValue;
+
+            // Draws were registered for this camera (drawnFrame) and its host has not yet reported that camera's
+            // rendering ended since (NoteCameraView): what those draws read must stay until it does. Set by Render,
+            // cleared by the host's report, whatever the frame count says.
+            public bool drawsUndrawn;
             public VpStencilPreparation preparation;
 
             // Selecting on the GPU (DESIGN 4.5.7): which of the body batch's views is this camera's -- its slot -- and,
@@ -4482,6 +4487,7 @@ namespace Zantetsu.MeshCut
             }
 #endif
             cameraStencil.drawnFrame = CurrentFrame;
+            cameraStencil.drawsUndrawn = true;
 
             // Selecting on the GPU: these draws read what this camera's selection writes, which whoever put this
             // display in the frame issues before the camera's passes run (IssueCull). The batch they read is noted
@@ -5160,10 +5166,41 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Whether a camera has draws registered in the current frame that its host has not yet reported rendered
+        /// (<see cref="Render"/> since the last <see cref="NoteCameraView"/>): what those draws read must stay until
+        /// that report or the next frame, so <see cref="Dispose"/> is refused meanwhile. A world's ending reads it
+        /// before it gives anything back (2026-10-18: the ending at an app's quit runs in the frame whose draws were
+        /// already rendered -- that frame is disposable; one whose camera has not rendered yet is not). False for a
+        /// disposed display.
+        /// </summary>
+        public bool HasUndrawnDraws
+        {
+            get
+            {
+                if (_disposed)
+                {
+                    return false;
+                }
+
+                int frame = CurrentFrame;
+                foreach (CameraStencil slot in _cameraStencils)
+                {
+                    if (slot != null && slot.drawnFrame == frame && slot.drawsUndrawn)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Gives back everything this display owns: the buffers, the batches, and every geometry registration and
         /// display instance it took, each exactly once. Refused, changing nothing, while any camera has draws
-        /// registered in the current frame; a later frame may dispose. A display that has stopped is disposed the same
-        /// way. The ledger, the storage and the borrowed materials are left alone.
+        /// registered in the current frame that its host has not reported rendered (<see cref="HasUndrawnDraws"/>);
+        /// after that report, or in a later frame, it disposes. A display that has stopped is disposed the same way.
+        /// The ledger, the storage and the borrowed materials are left alone.
         /// </summary>
         public void Dispose()
         {
@@ -5174,15 +5211,13 @@ namespace Zantetsu.MeshCut
 
             ThrowIfPreparing();
 
-            // Draws registered in this frame read these buffers until the frame is drawn, so nothing is let go before
-            // the frame boundary. This is the frame boundary, not a confirmation that the GPU has finished.
-            foreach (CameraStencil slot in _cameraStencils)
+            // Draws registered in this frame read these buffers until the camera has rendered them, so nothing is let
+            // go before the host's word for that camera or the frame boundary. Neither is a confirmation that the GPU
+            // has finished: the buffers' own release is deferred as it is at every other disposal.
+            if (HasUndrawnDraws)
             {
-                if (slot != null && slot.drawnFrame == CurrentFrame)
-                {
-                    throw new InvalidOperationException(
-                        "a camera has draws registered in this frame; dispose the display after the frame has been drawn");
-                }
+                throw new InvalidOperationException(
+                    "a camera has draws registered in this frame that have not been rendered; dispose the display after the frame has been drawn");
             }
 
             _disposed = true;
@@ -5396,6 +5431,11 @@ namespace Zantetsu.MeshCut
         /// read by the held placements of a collection in this frame or the next (D-210); an older one counts as not
         /// known. False, keeping nothing, for a camera that is not registered; a view that is not finite is kept as
         /// not known. Nothing is drawn, asked or changed by it.
+        /// <para>
+        /// It is also the word that the draws registered for this camera in this frame (<see cref="Render"/>) have
+        /// been rendered: from it on, <see cref="Dispose"/> is no longer refused for them (<see cref="HasUndrawnDraws"/>).
+        /// A host that renders a camera without reporting it keeps the display until the next frame, as before.
+        /// </para>
         /// </summary>
         public bool NoteCameraView(Camera camera, int eyes, in Matrix4x4 leftWorldToClip, in Matrix4x4 rightWorldToClip)
         {
@@ -5410,6 +5450,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            slot.drawsUndrawn = false;
             slot.viewEyes = 0;
             slot.viewFrame = CurrentFrame;
             if (eyes < 1 || eyes > VpHeldPlacements.EyeCapacity)

@@ -508,8 +508,11 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// A display whose camera has draws registered in this frame is not disposed: the refusal comes before anything
-        /// is let go, so the display is whole and still usable. Once the frame has been drawn and ended, it disposes.
+        /// A display whose camera has draws registered in this frame, not yet reported rendered, is not disposed: the
+        /// refusal comes before anything is let go, so the display is whole and still usable. Once the host reports
+        /// that camera rendered (NoteCameraView, as it does at the end of the camera's rendering) the same frame
+        /// disposes it -- the app's quit runs the ending in the frame whose draws were rendered (unit 10-A); a
+        /// registration after that report is undrawn again; and a second disposal is nothing.
         /// </summary>
         [Test]
         public void Disposing_IsRefusedWhileThisFramesDrawsAreRegistered()
@@ -520,11 +523,51 @@ namespace Zantetsu.MeshCut.Tests
                 Camera camera = TopDown(0f, 3f);
                 Draw(display, camera);
 
+                Assert.That(display.HasUndrawnDraws, Is.True, "registered this frame, not yet reported rendered");
                 Assert.Throws<InvalidOperationException>(() => display.Dispose(), "draws registered this frame");
                 Assert.That(display.IsDisposed, Is.False, "nothing was let go");
                 Assert.That(display.RegisteredCameraCount, Is.EqualTo(1), "the camera and its batch are still there");
                 Assert.That(display.ShownCount, Is.EqualTo(1), "and so is the body");
                 Assert.That(display.TryGetCameraStencil(camera, out _, out _), Is.True);
+
+                // The host's word at the end of the camera's rendering: the draws of this frame are drawn.
+                Matrix4x4 worldToClip = camera.projectionMatrix * camera.worldToCameraMatrix;
+                Assert.That(display.NoteCameraView(camera, 1, worldToClip, worldToClip), Is.True);
+                Assert.That(display.HasUndrawnDraws, Is.False);
+
+                // Registered again after it (a second pass of the same frame): undrawn again, refused again.
+                Assert.That(display.TryPrepareCamera(camera), Is.False, "the camera was prepared for this frame already");
+                display.Render(0, camera);
+                Assert.That(display.HasUndrawnDraws, Is.True);
+                Assert.Throws<InvalidOperationException>(() => display.Dispose(), "registered after the report");
+                Assert.That(display.NoteCameraView(camera, 1, worldToClip, worldToClip), Is.True);
+
+                // The same frame disposes now, and a second disposal changes nothing.
+                display.Dispose();
+                Assert.That(display.IsDisposed, Is.True);
+                Assert.That(display.HasUndrawnDraws, Is.False, "nothing is undrawn of a disposed display");
+                display.Dispose();
+                Assert.That(display.IsDisposed, Is.True);
+            }
+        }
+
+        /// <summary>
+        /// A camera the host never reports: the frame boundary still frees it, as before -- the next frame disposes
+        /// without any report.
+        /// </summary>
+        [Test]
+        public void Disposing_WithoutTheHostsReport_WaitsForTheNextFrame()
+        {
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, 0f))
+            {
+                VpLogicalCutDisplay display = scene.display;
+                Camera camera = TopDown(0f, 3f);
+                Draw(display, camera);
+                Assert.Throws<InvalidOperationException>(() => display.Dispose(), "draws registered this frame");
+                scene.endFrame();
+                Assert.That(display.HasUndrawnDraws, Is.False, "an earlier frame's draws");
+                display.Dispose();
+                Assert.That(display.IsDisposed, Is.True);
             }
         }
 

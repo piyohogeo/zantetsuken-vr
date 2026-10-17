@@ -253,10 +253,18 @@ namespace Zantetsu.PhysicsCut
 
             if (SpatialSplit != null && SpatialSplit.Turns > 0)
             {
-                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(), this);
                 SpatialSplit.LogEvents();   // each publication with its frame: kept until now, not written in its frame
             }
 #endif
+            // The spatial split's tallies, in every build (unit 10-B, 2026-10-18: on the device, where the split was
+            // seen not to work once, a Release Player wrote nothing of it at the end). Three lines, each short enough
+            // for a device's log; a reading only.
+            if (SpatialSplit != null)
+            {
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBent(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
+            }
         }
 
         private void OnDestroy()
@@ -271,14 +279,17 @@ namespace Zantetsu.PhysicsCut
             }
 
             // An ending cannot span frames from here: this is the last call this component gets. What can be finished
-            // now is finished; what cannot is **not freed**, because a worker may still be reading it.
+            // now is finished; what cannot is **not freed**, because a worker -- or this frame's draws, not yet
+            // rendered -- may still be reading it. At an app's quit the frame has been rendered by now, so the
+            // ending finishes here (2026-10-18; before, the display refused by the frame count alone and threw).
             Shutdown();
             if (!_released)
             {
+                bool drawsUndrawn = Display != null && !Display.IsDisposed && Display.HasUndrawnDraws;
                 UnityEngine.Debug.LogError(
                     name + ": this cut world was destroyed before its ending had finished. Nothing it holds has been "
-                    + "freed, because work may still be reading it. End it with Shutdown over the frames before "
-                    + "destroying it.", this);
+                    + "freed, because " + (drawsUndrawn ? "this frame's draws have not been rendered yet" : "work may still be reading it")
+                    + ". End it with Shutdown over the frames before destroying it.", this);
             }
         }
 
@@ -921,22 +932,29 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            DispatchShutdownResult stopped = Dispatcher != null
-                ? Dispatcher.Shutdown(profile != null ? profile.ShutdownTimeoutMilliseconds : 0)
-                : default;
-            if (Dispatcher != null && !stopped.workersStopped)
+            // The stop is asked for once and its confirmation kept: a turn whose release waited (below) does not ask
+            // the stopped workers again.
+            if (!_workersStopped)
             {
-                _stopRefused = true;
-                UnityEngine.Debug.LogError(
-                    name + ": the workers did not confirm that they had stopped, so nothing this world holds has been "
-                    + "freed. The storage and the shapes may still be read by them.", this);
-                return false;
+                DispatchShutdownResult stopped = Dispatcher != null
+                    ? Dispatcher.Shutdown(profile != null ? profile.ShutdownTimeoutMilliseconds : 0)
+                    : default;
+                if (Dispatcher != null && !stopped.workersStopped)
+                {
+                    _stopRefused = true;
+                    UnityEngine.Debug.LogError(
+                        name + ": the workers did not confirm that they had stopped, so nothing this world holds has been "
+                        + "freed. The storage and the shapes may still be read by them.", this);
+                    return false;
+                }
+
+                _workersStopped = true;
             }
 
-            // What the stop handed back is taken here; after it nothing else can arrive.
+            // What the stop handed back is taken here; after it nothing else can arrive. The release itself may still
+            // wait for this frame's draws to be rendered (Release says so); the next turn releases then.
             Frame?.Update(Time.frameCount);
-            Release();
-            return true;
+            return Release();
         }
 
         /// <summary>
@@ -960,8 +978,26 @@ namespace Zantetsu.PhysicsCut
             Driver.ColliderTemplate = template;
         }
 
-        private void Release()
+        /// <summary>
+        /// Gives back everything the world holds, each thing once, or nothing at all: false, with nothing given back,
+        /// while the display has draws registered in this frame that have not been rendered yet (a release then would
+        /// free what those draws read; the next turn of the ending, in a later frame or after the camera has rendered,
+        /// releases). Said once in the log when refused. True once everything has been given back.
+        /// </summary>
+        private bool Release()
         {
+            if (Display != null && !Display.IsDisposed && Display.HasUndrawnDraws)
+            {
+                if (!_releaseHeldLogged)
+                {
+                    _releaseHeldLogged = true;
+                    UnityEngine.Debug.Log(
+                        name + ": the release waits -- a camera's draws registered in this frame are not rendered yet; nothing is freed in this turn", this);
+                }
+
+                return false;
+            }
+
             if (_colliderTemplateHolder != null)
             {
                 if (Driver != null)
@@ -994,7 +1030,11 @@ namespace Zantetsu.PhysicsCut
             (_planningPool as IDisposable)?.Dispose();
             (_unityJob as IDisposable)?.Dispose();
             _released = true;
+            return true;
         }
+
+        private bool _releaseHeldLogged;
+        private bool _workersStopped;
 
         /// <summary>
         /// The termination request of DESIGN 4, made once by the first cause Main handled. The latch is fixed first;
