@@ -19,7 +19,12 @@ param(
     [int]$ExpectedMinSdk = 32,
     [int]$ExpectedTargetSdk = 34,
     [Parameter(Mandatory = $true)][string]$ExpectedSupportedDevices,   # the distribution's devices (quest3|quest3s), from the wrapper's definition
-    [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
+    [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer',
+    # The play statistics' send configuration the APK must carry ('required') or must not ('none'): the Resources asset's name
+    # and the decided endpoint are looked for in the APK's serialized data (assets/bin/Data, Managed/ excluded). An AUXILIARY look (TL review 2026-10-18): a
+    # byte search cannot prove presence or absence; the guarantee is the Editor's check of what the runtime's load finds
+    # (QuestDistributionBuild.CheckStatisticsConfig) and the Player's own install line on the device. Nothing of the token is printed.
+    [ValidateSet('required', 'none')][string]$ExpectedStatistics = 'required'
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ApkManifestChecks.ps1')
@@ -95,6 +100,44 @@ $checks['one signer'] = ($signers.Count -eq 1)
 $checks['the signer is the distribution certificate'] = ($signers.Count -eq 1) -and ($signers[0] -eq $ExpectedCertificateSha256.ToLowerInvariant())
 $debugSigner = @($verify | Where-Object { $_ -match '^Signer #\d+ certificate DN: .*CN=Android Debug' }).Count
 $checks['not the Android debug certificate'] = ($debugSigner -eq 0)
+
+# The play statistics' configuration in the APK (unit 9-B), an auxiliary look: the Resources asset's object name and the decided
+# endpoint in the serialized data under assets/bin/Data. Present when a distribution must send (required), absent when the
+# build was asked to send nothing (none).
+$statisticsName = 'ZantetsuPlayStatisticsConfig'
+$statisticsEndpoint = 'https://zantetsuken-telemetry-api.hogehogeo.workers.dev/v1/telemetry'
+$statisticsPresent = $null
+$endpointPresent = $null
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Apk)
+    try {
+        # Unity 6 keeps the serialized data under assets/bin/Data in files named by hash (no resources.assets, seen
+        # 2026-10-18 on v29), so every entry there is searched -- except the managed code (Managed/: the runtime's
+        # load name is a constant of the code itself, which says nothing of the asset).
+        $entries = @($zip.Entries | Where-Object { $_.FullName -like 'assets/bin/Data/*' -and $_.FullName -notlike 'assets/bin/Data/Managed/*' -and $_.Length -gt 0 })
+        $nameIn = @(); $endpointIn = @(); $read = 0
+        foreach ($entry in $entries) {
+            $stream = $entry.Open()
+            try { $memory = New-Object System.IO.MemoryStream; $stream.CopyTo($memory); $bytes = $memory.ToArray() } finally { $stream.Dispose() }
+            $read += $bytes.Length
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($text.Contains($statisticsName)) { $nameIn += $entry.FullName }
+            if ($text.Contains($statisticsEndpoint)) { $endpointIn += $entry.FullName }
+        }
+        if ($entries.Count -gt 0) {
+            $statisticsPresent = $nameIn.Count -gt 0
+            $endpointPresent = $endpointIn.Count -gt 0
+            $lines += "assets/bin/Data (Managed/ excluded): $($entries.Count) entries, $read bytes searched (auxiliary byte search)"
+            $lines += "statistics config name in: $(if ($nameIn.Count) { $nameIn -join ', ' } else { 'none' })"
+            $lines += "decided endpoint in: $(if ($endpointIn.Count) { $endpointIn -join ', ' } else { 'none' })"
+        } else {
+            $lines += 'assets/bin/Data: no entries in the APK'
+        }
+    } finally { $zip.Dispose() }
+} catch { $lines += "assets/bin/Data could not be read: $($_.Exception.Message)" }
+if ($ExpectedStatistics -eq 'required') { $checks['auxiliary: the play statistics config name and the decided endpoint are in the serialized data (required)'] = ($statisticsPresent -eq $true -and $endpointPresent -eq $true) }
+else { $checks['auxiliary: neither the play statistics config name nor the endpoint is in the serialized data (none)'] = ($statisticsPresent -eq $false -and $endpointPresent -eq $false) }
 
 $all = $true
 foreach ($k in $checks.Keys) { $ok = $checks[$k]; if (!$ok) { $all = $false }; $lines += "   [$(if ($ok) { 'ok' } else { 'FAIL' })] $k" }

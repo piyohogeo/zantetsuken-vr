@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEngine;
@@ -30,6 +31,13 @@ namespace Zantetsu.EditorTools.Quest
         public const string DevicesArgument = "-zantetsuDistDevices";
         /// <summary>The output argument of the shared build (<see cref="QuestStaticDemoBuild.BuildApkForScenes"/>).</summary>
         public const string OutputArgument = "-zantetsuQuestOut";
+        /// <summary>
+        /// Whether the play statistics' send configuration must be in the build (unit 9-B): "required" (the default: the
+        /// local config asset must exist, be able to send and name the external role, else the build is refused) or
+        /// "none" (a build that sends nothing, said so on purpose: a diagnosis or a check build, never the ALPHA).
+        /// </summary>
+        public const string StatisticsArgument = "-zantetsuDistStatistics";
+        public const string StatisticsRequired = "required", StatisticsNone = "none";
         /// <summary>The development option of the shared build, which a distribution build refuses.</summary>
         public const string DevelopmentArgument = "-zantetsuQuestDev";
         public const string KeystorePasswordVariable = "ZANTETSU_KEYSTORE_PASSWORD";
@@ -52,6 +60,8 @@ namespace Zantetsu.EditorTools.Quest
             public string keyAlias;
             public string output;
             public string devices;
+            /// <summary>"required" or "none" (<see cref="StatisticsArgument"/>; absent means required).</summary>
+            public string statistics = StatisticsRequired;
         }
 
         /// <summary>
@@ -70,6 +80,13 @@ namespace Zantetsu.EditorTools.Quest
             if ((failure = ReadValue(args, KeyAliasArgument, out r.keyAlias)) != null) return failure;
             if ((failure = ReadValue(args, OutputArgument, out r.output)) != null) return failure;
             if ((failure = ReadValue(args, DevicesArgument, out r.devices)) != null) return failure;
+            int statisticsAt = Array.IndexOf(args, StatisticsArgument);
+            if (statisticsAt >= 0)
+            {
+                if (statisticsAt + 1 >= args.Length) return StatisticsArgument + " is missing its value (required|none)";
+                r.statistics = args[statisticsAt + 1];
+                if (r.statistics != StatisticsRequired && r.statistics != StatisticsNone) return StatisticsArgument + " must be required or none, not '" + r.statistics + "'";
+            }
             if (!IsDigits(code) || !int.TryParse(code, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out r.versionCode) || r.versionCode < 1)
                 return VersionCodeArgument + " must be a whole number from 1 upward written in digits alone, not '" + code + "'";
             foreach (char c in r.versionName)
@@ -157,6 +174,103 @@ namespace Zantetsu.EditorTools.Quest
             }
         }
 
+        /// <summary>The receiver a distribution sends to (D-244): the production Worker's ingest endpoint, HTTPS.</summary>
+        public const string StatisticsEndpoint = "https://zantetsuken-telemetry-api.hogehogeo.workers.dev/v1/telemetry";
+
+        /// <summary>
+        /// What the project holds of the play statistics' configuration, as the build would take it (TL review 2026-10-18
+        /// [P1]): every asset of the configuration's type anywhere, every asset of any type under a Resources folder by
+        /// the name the runtime loads, and what the runtime's own load (<c>Resources.Load</c> by that name and type)
+        /// returns, with its path.
+        /// </summary>
+        public sealed class StatisticsConfigFound
+        {
+            public string[] typedPaths = new string[0];
+            public string[] namedPaths = new string[0];
+            public Zantetsu.Sandbox.PlayStatisticsConfig loaded;
+            public string loadedPath;
+
+            public static StatisticsConfigFound InThisProject()
+            {
+                var found = new StatisticsConfigFound();
+                found.typedPaths = AssetDatabase.FindAssets("t:" + nameof(Zantetsu.Sandbox.PlayStatisticsConfig))
+                    .Select(AssetDatabase.GUIDToAssetPath).Distinct().OrderBy(p => p, StringComparer.Ordinal).ToArray();
+                found.namedPaths = AssetDatabase.FindAssets(Zantetsu.Sandbox.PlayStatisticsConfig.ResourceName)
+                    .Select(AssetDatabase.GUIDToAssetPath).Distinct()
+                    .Where(p => string.Equals(Path.GetFileNameWithoutExtension(p), Zantetsu.Sandbox.PlayStatisticsConfig.ResourceName, StringComparison.OrdinalIgnoreCase)
+                        && p.Replace('\\', '/').Split('/').Any(part => string.Equals(part, "Resources", StringComparison.OrdinalIgnoreCase)))
+                    .OrderBy(p => p, StringComparer.Ordinal).ToArray();
+                found.loaded = Zantetsu.Sandbox.PlayStatisticsConfig.Load();   // the runtime's own load: the same name and type
+                found.loadedPath = found.loaded != null ? AssetDatabase.GetAssetPath(found.loaded) : null;
+                return found;
+            }
+
+            public string Describe() => "configs of the type: " + (typedPaths.Length == 0 ? "none" : string.Join(", ", typedPaths))
+                + "; named " + Zantetsu.Sandbox.PlayStatisticsConfig.ResourceName + " under Resources: " + (namedPaths.Length == 0 ? "none" : string.Join(", ", namedPaths))
+                + "; the runtime's load: " + (loaded == null ? "null" : loadedPath);
+        }
+
+        /// <summary>
+        /// The play statistics' send configuration as the build will carry it (unit 9-B; TL review 2026-10-18). With
+        /// "required": exactly one configuration of the type in the project, at the decided path, the only asset of
+        /// the runtime's name under any Resources folder, and the one the runtime's own load returns; it must send to
+        /// the decided HTTPS endpoint, hold a token, have sending on and name the external tester role. With "none":
+        /// no configuration of the type anywhere, nothing of the name under Resources, and the runtime's load null --
+        /// a build meant to send nothing carries no token. The token's value is never in the result.
+        /// The failure, or null; <paramref name="state"/> for the log.
+        /// </summary>
+        public static string CheckStatisticsConfig(Request request, out string state)
+        {
+            return CheckStatisticsConfig(request, StatisticsConfigFound.InThisProject(), out state);
+        }
+
+        /// <summary>The same for what was found (tests give it).</summary>
+        public static string CheckStatisticsConfig(Request request, StatisticsConfigFound found, out string state)
+        {
+            string expected = Zantetsu.Editor.Sandbox.PlayStatisticsConfigSetup.AssetPath;
+            Zantetsu.Sandbox.PlayStatisticsConfig config = found.loaded;
+            state = "statistics config: " + found.Describe() + (config != null ? " -- " + config.Describe() : "");
+            if (request.statistics == StatisticsNone)
+            {
+                if (found.typedPaths.Length > 0 || found.namedPaths.Length > 0 || config != null)
+                {
+                    return "statistics none was asked, but the project holds a play statistics config (" + found.Describe() + "): a build that sends nothing must carry no token; move it aside";
+                }
+
+                return null;
+            }
+
+            if (found.typedPaths.Length == 0 && config == null)
+            {
+                return "the play statistics' config asset is absent (" + expected + "): a distribution build must be able to send (make it from the environment: Tools/Quest3s/Set-StatisticsConfig.ps1), or say " + StatisticsArgument + " none on purpose";
+            }
+
+            if (found.typedPaths.Length != 1 || !string.Equals(found.typedPaths[0], expected, StringComparison.Ordinal))
+            {
+                return "the project must hold exactly one play statistics config, at " + expected + " (" + found.Describe() + "): another one would be carried or loaded in its place";
+            }
+
+            if (found.namedPaths.Length != 1 || !string.Equals(found.namedPaths[0], expected, StringComparison.Ordinal))
+            {
+                return "another asset is named " + Zantetsu.Sandbox.PlayStatisticsConfig.ResourceName + " under a Resources folder (" + found.Describe() + "): the runtime's load could find it";
+            }
+
+            if (config == null || !string.Equals(found.loadedPath, expected, StringComparison.Ordinal))
+            {
+                return "the runtime's load (Resources.Load<PlayStatisticsConfig>(\"" + Zantetsu.Sandbox.PlayStatisticsConfig.ResourceName + "\")) does not return the config at " + expected + " (" + found.Describe() + ")";
+            }
+
+            if (!config.CanSend) return "the play statistics' config cannot send (" + config.Describe() + "): endpoint, token and sending on are required";
+            if (!string.Equals(config.endpointUrl, StatisticsEndpoint, StringComparison.Ordinal))
+            {
+                return "the play statistics' config sends to '" + config.endpointUrl + "', not the decided endpoint " + StatisticsEndpoint;
+            }
+
+            if (config.testerRole != "external") return "the play statistics' config names the tester role '" + config.testerRole + "'; a distributed build must name external";
+            if (config.timeoutSeconds <= 0) return "the play statistics' config has no timeout (" + config.timeoutSeconds + " s)";
+            return null;
+        }
+
         /// <summary>The Unity entry of Tools/Quest3s/Build-Distribution.ps1.</summary>
         public static void BuildApk()
         {
@@ -166,6 +280,8 @@ namespace Zantetsu.EditorTools.Quest
             string failure = TryRead(args, out Request request);
             if (failure == null) failure = Validate(request, File.Exists(request.keystore), keystorePassword, keyPassword, args);
             if (failure == null && QuestDistributionTargets.FindFeatureDevices(out _, out string targets) == null) failure = "distribution targets: " + targets;
+            string statisticsState = null;
+            if (failure == null) failure = CheckStatisticsConfig(request, out statisticsState);
             if (failure != null)
             {
                 Debug.LogError("QUEST DISTRIBUTION BUILD refused: " + failure);
@@ -174,7 +290,7 @@ namespace Zantetsu.EditorTools.Quest
             }
 
             Debug.Log("QUEST DISTRIBUTION BUILD: package=" + ApplicationIdentifier + " versionName=" + request.versionName + " versionCode=" + request.versionCode
-                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output
+                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output + "; " + statisticsState + " (" + StatisticsArgument + " " + request.statistics + ")"
                 + "; Release, commercial, custom keystore; minSdk " + (int)MinSdk + ", targetSdk " + (int)TargetSdk + ", install location " + InstallLocation + ", the manifest's guarantees");
             bool built = false;
             try

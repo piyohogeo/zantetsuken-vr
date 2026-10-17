@@ -124,6 +124,26 @@ Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> 
 
 Quest 3S で、起動後やヘッドセットの脱着・復帰後に視点の高さがずれる（高くなる）ことが観測されている（2026-10-17、`perf/height/HEIGHT-1.md`）。確認できたのは Unity の入力値の段階で高さが変わるところまでで、OpenXR プラグイン／ランタイム内部の原因と、他アプリでの再現性は未確定。アプリから呼べる原点操作（Floor の再適用、`RefreshRecenterSpace`）は効果が無く、後者は向きと位置を変える副作用があるため採用しない。追加の床補正・STAGE の調査は行わない。**プレイヤー向けの案内文は置かない**（「立ち上がって再センター」も必須操作としない）。今回の端末・環境では、右コントローラーの Meta ボタン長押し（再センター）で高さが戻ること、立位での操作後に実際の目線に近い値になることを観測した（内部記録）。配布 APK に実験処置は入れず、開発用の詳細診断は Player 引数 `-zantetsuHeadHeightDiag` のときだけ動く（通常起動では何も記録しない）。
 
+## プレイ統計の送信設定（作業単位 9、DESIGN 21.18）
+
+- 配布 APK は、同意したテスターのプレイ統計を Cloudflare Worker（`https://zantetsuken-telemetry-api.hogehogeo.workers.dev/v1/telemetry`、保存先 R2 `zantetsuken-telemetry`）へ送る。送信契機は焦点喪失（Quest：システムメニュー・HMD 取り外し）。保持は保存から 90 日後に自動削除の対象（R2 lifecycle `sessions-expire-90d`、2026-10-18 適用）。同意文は版 2（`PlayStatisticsConsent.CurrentTextVersion`）で、旧版への同意は再度尋ねる。旧版・版なしの拒否からメニューで ON にすると、現行の全文を先に表示し、その Agree だけで同意する。
+- 送信設定は Resources の資産 `Assets/Zantetsu/Runtime/Sandbox/Resources/ZantetsuPlayStatisticsConfig.asset`（`.gitignore` 済み、**コミットしない**）。`Build-Distribution.ps1 -Statistics required`（既定）が、ビルドの直前に環境変数から作り、成功・失敗のどちらでも finally で木の外へ退避する。木に既存の資産・.meta があれば、上書きせず先に `<StatisticsAside>\preexisting\` へ退避する：
+
+```
+# ALPHA トークンは User 環境変数 ZANTETSU_INGEST_TOKEN_ALPHA にだけ置く（値を表示・貼付・記録しない）
+.\Tools\Quest3s\Build-Distribution.ps1 ... -Statistics required -StatisticsAside <repository の外のフォルダ>
+#   退避先: <StatisticsAside>\preexisting\ (ビルド前に木にあったもの)、\used\ (このビルドで作ったもの)、\failed\ (作成に失敗したもの)
+#   build.txt に「statistics config in the tree after the build: none」が出ることを確認する
+```
+
+- Editor の検査は、実行時の読み込み（`Resources.Load<PlayStatisticsConfig>("ZantetsuPlayStatisticsConfig")`）が返す資産と、プロジェクト内の型の資産すべて・Resources 下の同名資産すべてを照合する。決めた 1 か所の 1 件だけで、送信先が上記の endpoint と一致し、トークンあり・送信 ON・role external のときだけ通る（それ以外は exit 2 で拒否）。
+- 送らないビルド（診断・検査用）は `-Statistics none` を明示する。このとき型の資産・同名資産・読み込み結果のどれかがあると拒否される（送らないビルドにトークンを同梱しない）。
+- APK の検査（`Inspect-DistributionApk.ps1 -ExpectedStatistics required|none`）の `resources.assets` のバイト列検索（資産名と endpoint）は**補助**で、同梱の保証ではない。同梱の証拠は Editor の検査と、実機の起動ログの `PLAY STATISTICS: installed … config endpoint …, token present, … role external` 行。トークンの値は、ビルドログ・`build.txt`・検査記録のどこにも出ない（`Describe()` は present／absent のみ）。
+- `Set-StatisticsConfig.ps1` 単体は、`Build-Distribution.ps1` を通さない木のためのもの（作成は既存の資産があると拒否、失敗時は書かれたものを退避、`-Remove` は退避のみで削除しない。どちらも `-AsideDirectory` 必須）。
+- tester_role：配布 APK は `external`（担当者が操作する最終検証でも external のまま、試験は session id と記録で識別）。開発用の Editor 試験は `developer`（`ZANTETSU_INGEST_TOKEN`）。
+- トークンの失効・交換：ALPHA 用は Worker の secret `INGEST_TOKEN_ALPHA` を削除／差し替え（開発用 `INGEST_TOKEN` は別）。交換後は配布 APK を作り直す。
+- `-zantetsuConsentCheck` の確認起動と統計検証ビルド（`ZANTETSU_STATS_VERIFY`）は送信しない（設定を読まない）。これらの成功は実送信の証拠にならない。
+
 ## 初回同意の確認入口（作業単位 7-A）
 
 同意済みの端末で初回同意の画面と経路を確かめるとき、既存の同意・ID・設定を消さずに行う入口（DESIGN 21.18）。

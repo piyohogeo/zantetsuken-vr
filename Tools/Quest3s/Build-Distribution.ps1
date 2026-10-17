@@ -35,6 +35,16 @@ param(
     # Experiment switches the Editor's build reads from its command line (such as QuestStaticDemoBuild.NoPreloadExperimentArgument,
     # unit 8-C 2026-10-17): each is '-zantetsu' followed by letters and digits alone. Recorded in build.txt. Never for a distribution.
     [string[]]$ExperimentArguments = @(),
+    # The play statistics' send configuration (unit 9-B): 'required' (the default) or 'none' (a build that sends nothing,
+    # on purpose: no configuration may be in the project). With 'required' this script makes the configuration itself
+    # from the environment variable -StatisticsTokenVariable (Set-StatisticsConfig.ps1) after moving any one already in
+    # the tree aside, and moves the one it made aside again in its finally, whether the build succeeded or not: no tree
+    # keeps a token after this script (TL review 2026-10-18 [P2]). The Editor checks what the runtime's load would find
+    # (QuestDistributionBuild.CheckStatisticsConfig); the inspection's look at the APK is an auxiliary one.
+    [ValidateSet('required', 'none')][string]$Statistics = 'required',
+    [string]$StatisticsTokenVariable = 'ZANTETSU_INGEST_TOKEN_ALPHA',
+    # Where the configurations are moved (outside the repository; it holds the token). Required with -Statistics required.
+    [string]$StatisticsAside,
     [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
 )
 $ErrorActionPreference = 'Stop'
@@ -64,6 +74,18 @@ if ($Output -notmatch '\.apk$') { throw "Output must be an .apk file: $Output" }
 if (Test-Path -LiteralPath $Output) { throw "exists already (a distribution APK is never overwritten): $Output" }
 $record = "$Output.record"
 if (Test-Path -LiteralPath $record) { throw "exists already: $record" }
+$statisticsScript = Join-Path $PSScriptRoot 'Set-StatisticsConfig.ps1'
+$statisticsEndpoint = 'https://zantetsuken-telemetry-api.hogehogeo.workers.dev/v1/telemetry'   # QuestDistributionBuild.StatisticsEndpoint
+$statisticsAsset = Join-Path $project 'Assets\Zantetsu\Runtime\Sandbox\Resources\ZantetsuPlayStatisticsConfig.asset'
+if ($Statistics -eq 'required') {
+    if (!$StatisticsAside) { throw '-Statistics required needs -StatisticsAside (a folder outside the repository the configurations are moved to)' }
+    $StatisticsAside = [IO.Path]::GetFullPath($StatisticsAside).TrimEnd('\')
+    $projectRoot = $project.TrimEnd('\')
+    # Neither the project itself nor anything under it (TL review 2026-10-18).
+    if ($StatisticsAside.Equals($projectRoot, [StringComparison]::OrdinalIgnoreCase) -or $StatisticsAside.StartsWith($projectRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-StatisticsAside must be outside the repository (not the repository itself either): $StatisticsAside" }
+    $hasToken = -not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($StatisticsTokenVariable)) -or -not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($StatisticsTokenVariable, 'User'))
+    if (!$hasToken) { throw "the environment variable $StatisticsTokenVariable is not set (process or User)" }
+}
 $keytool = Join-Path $AndroidPlayer 'OpenJDK\bin\keytool.exe'
 if (!(Test-Path -LiteralPath $keytool)) { throw "keytool not found: $keytool" }
 
@@ -95,6 +117,7 @@ $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -bui
     + ' -zantetsuDistVersionName ' + $VersionName + ' -zantetsuDistVersionCode ' + $VersionCode `
     + ' -zantetsuDistKeystore "' + $Keystore + '" -zantetsuDistKeyAlias ' + $KeyAlias + ' -zantetsuDistDevices ' + $supportedDevices
 if ($ExperimentArguments.Count -gt 0) { $arguments += ' ' + ($ExperimentArguments -join ' ') }
+$arguments += ' -zantetsuDistStatistics ' + $Statistics
 $head =git -C $project log --format='%H %s' -1
 $dirty = @(git -C $project status --short --untracked-files=all)
 @(
@@ -105,18 +128,44 @@ $dirty = @(git -C $project status --short --untracked-files=all)
     "uncommitted changes: $($dirty.Count)",
     "conditions: Release (no development option), commercial (-zantetsuBuildMode commercial), custom keystore, Android ARM64 IL2CPP Vulkan (the shared Quest build)",
     "experiment arguments: $(if ($ExperimentArguments.Count -gt 0) { $ExperimentArguments -join ' ' } else { 'none' })",
+    "play statistics: $Statistics$(if ($Statistics -eq 'required') { "; token from $StatisticsTokenVariable; endpoint $statisticsEndpoint; role external; configurations moved aside to $StatisticsAside" }) (the token's value is never recorded)",
     "unity $Unity",
     "command $arguments"
 ) | Set-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
 if ($dirty.Count -gt 0) { $dirty | Set-Content -LiteralPath (Join-Path $record 'status.txt') -Encoding UTF8; git -C $project diff | Out-File -LiteralPath (Join-Path $record 'working-tree.patch') -Encoding utf8 }
 $exit = -1
+$buildText = Join-Path $record 'build.txt'
+$statisticsAsideFailure = $null
 try {
+    if ($Statistics -eq 'required') {
+        # A configuration already in the tree is kept, moved aside (never overwritten, updated or deleted); then the
+        # distribution's own is made from the environment.
+        $kept = @(& $statisticsScript -Project $project -Remove -AsideDirectory (Join-Path $StatisticsAside 'preexisting') -Unity $Unity)
+        "statistics config before the build: $($kept -join ' ')" | Add-Content -LiteralPath $buildText -Encoding UTF8
+        $madeLines = @(& $statisticsScript -Project $project -Endpoint $statisticsEndpoint -Role external -TokenVariable $StatisticsTokenVariable -AsideDirectory (Join-Path $StatisticsAside 'failed') -Unity $Unity)
+        "statistics config made: $($madeLines[0])" | Add-Content -LiteralPath $buildText -Encoding UTF8
+    }
     $process = Start-Process -FilePath $Unity -ArgumentList $arguments -WorkingDirectory $project -WindowStyle Hidden -PassThru
     $handle = $process.Handle
     $process.WaitForExit()
     $exit = $process.ExitCode
 }
 finally {
+    if ($Statistics -eq 'required') {
+        # Whatever happened: the configuration made for this build leaves the tree (moved aside, not deleted).
+        # A failure here is recorded now and makes the whole run fail after the other settings are put back below
+        # (TL review 2026-10-18 [P2]): a build whose token stayed in the tree never ends as a success.
+        try {
+            $moved = @(& $statisticsScript -Project $project -Remove -AsideDirectory (Join-Path $StatisticsAside 'used') -Unity $Unity)
+            "statistics config after the build: $($moved -join ' ')" | Add-Content -LiteralPath $buildText -Encoding UTF8
+        } catch {
+            $statisticsAsideFailure = "the statistics config could NOT be moved aside after the build: $($_.Exception.Message)"
+            $statisticsAsideFailure | Add-Content -LiteralPath $buildText -Encoding UTF8
+        }
+        $left = @($statisticsAsset, "$statisticsAsset.meta" | Where-Object { Test-Path -LiteralPath $_ })
+        "statistics config in the tree after the build: $(if ($left.Count -eq 0) { 'none' } else { 'STILL THERE: ' + ($left -join ', ') })" | Add-Content -LiteralPath $buildText -Encoding UTF8
+        if ($left.Count -gt 0 -and !$statisticsAsideFailure) { $statisticsAsideFailure = "the statistics config is still in the tree after the build: $($left -join ', ')" }
+    }
     foreach ($w in $watched) {
         $after = Get-Content -LiteralPath $w.Path -Raw
         $before = Get-Content -LiteralPath $w.Saved -Raw
@@ -131,6 +180,11 @@ finally {
     "unity exit $exit; ended $(Get-Date -Format o)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
     if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $record 'build.log') }
 }
+# Before anything about the build itself: whatever Unity did, a token left in the tree fails the run.
+if ($statisticsAsideFailure) {
+    "RESULT: failed -- $statisticsAsideFailure" | Add-Content -LiteralPath $buildText -Encoding UTF8
+    throw "$statisticsAsideFailure (unity exit $exit; the APK, if any, is not to be used before the tree is clean; see $buildText)"
+}
 if ($exit -eq 2) { throw "the request was refused by the Editor before the build (see ${log}: QUEST DISTRIBUTION BUILD refused)" }
 if ($exit -ne 0) { throw "Unity failed ($exit); see $log" }
 if (!(Test-Path -LiteralPath $Output)) { throw "Unity exited 0 but the APK is not there: $Output" }
@@ -138,7 +192,7 @@ if (!(Test-Path -LiteralPath $Output)) { throw "Unity exited 0 but the APK is no
 # 3. The APK itself.
 $apkSha256 = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash.ToLowerInvariant()
 "apk sha256 $apkSha256; bytes $((Get-Item -LiteralPath $Output).Length)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -ExpectedSupportedDevices $supportedDevices -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
+& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -ExpectedSupportedDevices $supportedDevices -ExpectedStatistics $Statistics -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
 if ($LASTEXITCODE -ne 0) { throw "the APK failed its inspection (see $record\inspection.txt)" }
 "distribution build of $package $VersionName ($VersionCode): $Output"
 "apk sha256 $apkSha256"
