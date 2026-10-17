@@ -623,18 +623,61 @@ namespace Zantetsu.Sandbox
 
             GamePause.SetManual(true);
             HoldGameInput(Holder.Dialog);
-            if (_dialog == null)
-            {
-                _dialog = new PlayDialogView();
-                _dialog.Build(PlayStatisticsService.ConsentTitle, PlayStatisticsService.ConsentBody, PlayStatisticsService.ConsentAgree, PlayStatisticsService.ConsentDecline);
-            }
-
+            BuildDialog();
             _dialogOpen = true;
+            _dialogFromMenu = false;
             _dialogMenuWasDown = true;   // a button down when it opens asks for nothing
             _dialogPlacements = 0;
             Debug.Log(Prefix + "consent dialog opened (frame " + Time.frameCount + "); the game is paused");
             PlaceDialog("opened");
             return true;
+        }
+
+        /// <summary>
+        /// The menu's "Send play statistics" turned ON where the saved answer was not given to the current text (an old
+        /// or version-less decline; TL review 2026-10-18): the menu steps aside and the full current text is shown
+        /// first. Only "Agree" there agrees; "Don't send" is a cancel that leaves the saved answer as it was. Nothing
+        /// is collected or sent while it is shown. The menu comes back after either answer, still open and paused.
+        /// False where the menu is not open or the dialog is up already.
+        /// </summary>
+        internal bool AskConsentFromMenu(PlayStatisticsService statistics)
+        {
+            if (statistics == null || _dialogOpen || !_state.Open)
+            {
+                return false;
+            }
+
+            _statistics = statistics;
+            if (_camera == null)
+            {
+                _camera = Camera.main;
+            }
+
+            _view?.Hide();
+            HoldGameInput(Holder.Dialog);   // the menu holds the input already; the dialog holds it as well until answered
+            BuildDialog();
+            _dialogOpen = true;
+            _dialogFromMenu = true;
+            _dialogMenuWasDown = true;
+            _dialogPlacements = 0;
+            Debug.Log(Prefix + "consent dialog opened from the menu (frame " + Time.frameCount + "): the saved answer is to text v"
+                + statistics.Consent.SavedTextVersion + ", not v" + Core.Statistics.PlayStatisticsConsent.CurrentTextVersion + "; nothing is collected until Agree");
+            PlaceDialog("asked from the menu");
+            return true;
+        }
+
+        /// <summary>The dialog was opened from the menu's setting (it returns to the menu when answered).</summary>
+        public bool IsDialogFromMenu => _dialogOpen && _dialogFromMenu;
+
+        private bool _dialogFromMenu;
+
+        private void BuildDialog()
+        {
+            if (_dialog == null)
+            {
+                _dialog = new PlayDialogView();
+                _dialog.Build(PlayStatisticsService.ConsentTitle, PlayStatisticsService.ConsentBody, PlayStatisticsService.ConsentAgree, PlayStatisticsService.ConsentDecline);
+            }
         }
 
         /// <summary>How far the head may be from where the dialog was placed for before the dialog is stood before it again, metres.</summary>
@@ -666,6 +709,23 @@ namespace Zantetsu.Sandbox
         {
             _dialogOpen = false;
             _dialog.Hide();
+            if (_dialogFromMenu)
+            {
+                // Back to the menu, still open and paused: the menu's own holding of the input stays.
+                _dialogFromMenu = false;
+                if (agreed) _statistics.Agree();
+                ReleaseGameInput(Holder.Dialog);
+                if (_view != null && _state.Open)
+                {
+                    _view.Show(_camera != null ? _camera.transform.position : Vector3.zero, _camera != null ? _camera.transform.rotation : Quaternion.identity);
+                }
+
+                Debug.Log(Prefix + "consent dialog from the menu closed (frame " + Time.frameCount + "): "
+                    + (agreed ? "agreed to text v" + Core.Statistics.PlayStatisticsConsent.CurrentTextVersion : "cancelled; the saved answer is left as it was (" + _statistics.Consent.Decision + ")")
+                    + "; back to the menu");
+                return;
+            }
+
             if (agreed) _statistics.Agree(); else _statistics.Withdraw();
             // The controllers come back as after the menu: the katana at once (unless the system still holds it), the
             // walking once the sticks were let go (the inputs taken at the opening are still the ones held back).
@@ -785,6 +845,7 @@ namespace Zantetsu.Sandbox
                 read = () => _settings.BladeAngle, write = _settings.SetBladeAngle,
             });
             // The play statistics' consent (DESIGN 21.18), changeable here: ON agrees (a new install id), OFF withdraws.
+            // ON from an answer not given to the current text shows that text first; only its Agree agrees (TL review 2026-10-18).
             PlayStatisticsService statistics = _statistics != null ? _statistics : PlayStatisticsService.Instance;
             if (statistics != null)
             {
@@ -792,8 +853,22 @@ namespace Zantetsu.Sandbox
                 {
                     label = "Send play statistics", isToggle = true,
                     read = () => statistics.Consent.Agreed ? 1f : 0f,
-                    write = value => { if (value >= 0.5f) { if (!statistics.Consent.Agreed) statistics.Agree(); } else if (statistics.Consent.Agreed) statistics.Withdraw(); },
+                    write = value =>
+                    {
+                        if (value >= 0.5f)
+                        {
+                            if (statistics.Consent.Agreed) return;
+                            if (statistics.Consent.AgreementNeedsCurrentText) AskConsentFromMenu(statistics);
+                            else statistics.Agree();
+                        }
+                        else if (statistics.Consent.Agreed)
+                        {
+                            statistics.Withdraw();
+                        }
+                    },
                 });
+                // What the toggle means (unit 9-B): the short explanation; the full text is the first-run dialog's.
+                rows.Add(new PlayMenuView.Row { label = PlayStatisticsService.MenuExplanationFor(PlayStatisticsService.IsDesktopPlayer), isText = true, interactable = false });
             }
 
             return rows;

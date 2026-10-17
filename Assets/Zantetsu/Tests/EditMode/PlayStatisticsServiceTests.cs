@@ -105,6 +105,16 @@ namespace Zantetsu.Core.Tests
             string body = PlayStatisticsService.ConsentBody;
             Assert.That(body, Does.Contain("frame time").And.Contain("Cloudflare").And.Contain("Retention").And.Contain("Never:").And.Contain("hardware IDs").And.Contain("improving"));
             Assert.That(body, Does.Not.Contain("completely anonymous").And.Not.Contain("fully anonymous"));
+            // Unit 9-B: the retention is the receiver's 90-day rule, said as eligibility (the deletion runs after the period), not as a guarantee of deletion within it;
+            // withdrawal stops future collection and sending and does not delete what was sent; a killed or crashed app sends nothing; the version is 2.
+            Assert.That(body, Does.Contain("90 days").And.Contain("eligible for automatic deletion").And.Contain("may take some time"));
+            Assert.That(body, Does.Not.Contain("to be decided").And.Not.Contain("within 90 days").And.Not.Contain("deleted within"));
+            Assert.That(body, Does.Contain("Withdraw").And.Contain("stop from then on").And.Contain("already sent stay"));
+            Assert.That(body, Does.Contain("killed or crashes"));
+            Assert.That(body, Does.Contain("CPU").And.Contain("driver version"), "format 2's environment fields are named");
+            Assert.That(PlayStatisticsConsent.CurrentTextVersion, Is.EqualTo(2));
+            Assert.That(PlayStatisticsService.MenuExplanationFor(false), Does.Contain("90 days").And.Contain("loses focus").And.Not.Contain("closed normally"));
+            Assert.That(PlayStatisticsService.MenuExplanationFor(true), Does.Contain("closed normally"));
             Assert.That(PlayStatisticsService.ConsentAgree, Is.EqualTo("Agree"));
             Assert.That(PlayStatisticsService.ConsentDecline, Is.EqualTo("Don't send"));
         }

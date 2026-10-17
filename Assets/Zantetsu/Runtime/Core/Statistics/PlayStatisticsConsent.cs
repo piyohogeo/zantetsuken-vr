@@ -29,6 +29,19 @@ namespace Zantetsu.Core.Statistics
         public const string DecisionKey = "zantetsu.statistics.consent";
         public const string InstallIdKey = "zantetsu.statistics.installId";
 
+        /// <summary>The key of the consent text's version the saved answer was given to.</summary>
+        public const string TextVersionKey = "zantetsu.statistics.consentVersion";
+
+        /// <summary>
+        /// The consent text's version now. An agreement saved to an older text (or to none: the texts before this key
+        /// existed) is not taken as an agreement to this one: the player is asked again, and nothing is collected until
+        /// they answer. The saved answer and the game's other settings are left as they are until then. A saved decline
+        /// stands whatever its version (nobody is asked again to let something be sent).
+        /// Versions: 1 = the texts up to 2026-10-17 (retention "to be decided"); 2 = the ALPHA text (unit 9-B: 90-day
+        /// retention, the Quest's send trigger, withdrawal).
+        /// </summary>
+        public const int CurrentTextVersion = 2;
+
         private readonly IPlayStatisticsStore _store;
 
         public PlayStatisticsConsent(IPlayStatisticsStore store)
@@ -39,6 +52,14 @@ namespace Zantetsu.Core.Statistics
             {
                 if (decision == "agreed") Decision = PlayStatisticsDecision.Agreed;
                 else if (decision == "declined") Decision = PlayStatisticsDecision.Declined;
+            }
+
+            SavedTextVersion = _store.TryGet(TextVersionKey, out string version) && int.TryParse(version, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int v) ? v : 0;
+            if (Decision == PlayStatisticsDecision.Agreed && SavedTextVersion != CurrentTextVersion)
+            {
+                // Agreed to another text: asked again; the saved values stay until the new answer (nothing else is touched).
+                ReconsentNeeded = true;
+                Decision = PlayStatisticsDecision.Undecided;
             }
 
             if (Decision == PlayStatisticsDecision.Agreed && _store.TryGet(InstallIdKey, out string id) && Guid.TryParse(id, out Guid parsed))
@@ -59,26 +80,46 @@ namespace Zantetsu.Core.Statistics
         /// <summary>The random install id, or null where there is no agreement.</summary>
         public string InstallId { get; private set; }
 
+        /// <summary>The consent text's version the saved answer was given to (0: none saved).</summary>
+        public int SavedTextVersion { get; private set; }
+
+        /// <summary>A saved agreement to another version of the text was found: the player is asked again (Decision is Undecided until they answer).</summary>
+        public bool ReconsentNeeded { get; private set; }
+
         public bool Agreed => Decision == PlayStatisticsDecision.Agreed;
 
-        /// <summary>The player agreed: an install id is made now (a new one each agreement) and both are kept.</summary>
+        /// <summary>
+        /// Whether an agreement now must be given to the current text shown first (TL review 2026-10-18): the saved answer,
+        /// whatever it is, was not given to this version (an old or version-less decline, an old agreement asked again,
+        /// nothing saved). A decline saved to the current text was given with that text in view, so the setting may agree
+        /// at once.
+        /// </summary>
+        public bool AgreementNeedsCurrentText => !Agreed && SavedTextVersion != CurrentTextVersion;
+
+        /// <summary>The player agreed to the current text: an install id is made now (a new one each agreement) and all three are kept.</summary>
         public void Agree()
         {
             Decision = PlayStatisticsDecision.Agreed;
             InstallId = NewId();
+            ReconsentNeeded = false;
+            SavedTextVersion = CurrentTextVersion;
             _store.Set(DecisionKey, "agreed");
             _store.Set(InstallIdKey, InstallId);
+            _store.Set(TextVersionKey, CurrentTextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
             _store.Save();
             Changed?.Invoke(Decision);
         }
 
-        /// <summary>The player declined, or withdrew: kept as declined, the install id forgotten.</summary>
+        /// <summary>The player declined, or withdrew: kept as declined (to the current text), the install id forgotten.</summary>
         public void Decline()
         {
             Decision = PlayStatisticsDecision.Declined;
             InstallId = null;
+            ReconsentNeeded = false;
+            SavedTextVersion = CurrentTextVersion;
             _store.Set(DecisionKey, "declined");
             _store.Delete(InstallIdKey);
+            _store.Set(TextVersionKey, CurrentTextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
             _store.Save();
             Changed?.Invoke(Decision);
         }

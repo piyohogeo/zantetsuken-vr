@@ -155,6 +155,20 @@ namespace Zantetsu.Core.Tests
             Assert.That(_katana.LiveInputEnabled, Is.False, "the katana is taken");
             Assert.That(menu.Dialog.Visible, Is.True);
 
+            // All of the text is in view (TL review 2026-10-18 [P2]): the body wraps, its rectangle holds every wrapped
+            // line -- the retention and the withdrawal included -- and it ends above the buttons.
+            UnityEngine.UI.Text body = menu.Dialog.BodyText;
+            RectTransform bodyRect = body.rectTransform;
+            Assert.That(body.horizontalOverflow, Is.EqualTo(HorizontalWrapMode.Wrap));
+            Assert.That(body.text, Does.Contain("Retention").And.Contain("90 days").And.Contain("Withdraw any time"));
+            float needed = PlayMenuView.NeededHeight(body);
+            Assert.That(needed, Is.GreaterThanOrEqualTo(body.text.Split('\n').Length * 20f), "measured: at least a line each");
+            Assert.That(needed, Is.LessThanOrEqualTo(bodyRect.rect.height), "every wrapped line inside the body's rectangle");
+            RectTransform agreeRect = menu.Dialog.FirstRect;
+            Assert.That(bodyRect.anchoredPosition.y - (bodyRect.rect.height * 0.5f), Is.GreaterThanOrEqualTo(agreeRect.anchoredPosition.y + (agreeRect.rect.height * 0.5f)), "the body ends above the buttons");
+            Assert.That(bodyRect.anchoredPosition.y + (bodyRect.rect.height * 0.5f), Is.LessThanOrEqualTo(((RectTransform)bodyRect.parent).rect.height * 0.5f), "and inside the panel");
+            Assert.That(bodyRect.GetSiblingIndex(), Is.GreaterThan(bodyRect.parent.Find("Panel").GetSiblingIndex()), "the body is drawn over the panel");
+
             // The menu's button does nothing while the dialog is up.
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen, Is.False);
@@ -175,17 +189,122 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen, Is.True);
             IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-            Assert.That(rows.Count, Is.EqualTo(6), "the settings and the statistics row");
+            Assert.That(rows.Count, Is.EqualTo(7), "the settings, the statistics row and its explanation (unit 9-B)");
             PlayMenuView.Row row = rows[5];
             Assert.That(row.label, Is.EqualTo("Send play statistics"));
             Assert.That(row.isToggle, Is.True);
             Assert.That(row.read(), Is.Zero, "declined: OFF");
+
+            // The explanation under it, all in view (TL review 2026-10-18 [P2]): wrapped, its rectangle as tall as its
+            // lines, between the toggle and what is below it, inside the panel.
+            PlayMenuView.Row explanation = rows[6];
+            Assert.That(explanation.isText, Is.True);
+            RectTransform er = explanation.labelText.rectTransform;
+            float explanationNeeded = PlayMenuView.NeededHeight(explanation.labelText);
+            Assert.That(explanation.labelText.text, Does.Contain("90 days").And.Contain("OFF stops collecting and sending"));
+            // Drawn over the panel, not under it (Quest 2026-10-18: the explanation, made before the panel, was drawn
+            // first and the 92 % panel over it): every graphic of the menu but the panel comes after the panel.
+            Transform panel = er.parent.Find("Panel");
+            Assert.That(panel, Is.Not.Null);
+            foreach (UnityEngine.UI.Graphic graphic in er.parent.GetComponentsInChildren<UnityEngine.UI.Graphic>(true))
+            {
+                if (graphic.transform == panel || graphic.transform.parent != er.parent) continue;
+                Assert.That(graphic.transform.GetSiblingIndex(), Is.GreaterThan(panel.GetSiblingIndex()), graphic.name + " is drawn after the panel");
+            }
+
+            // Readable (TL 2026-10-18: dim 18 pt could not be read on the Quest): the ordinary text colour, the dialog body's size.
+            Assert.That(explanation.labelText.color, Is.EqualTo(PlayMenuView.TextColour));
+            Assert.That(explanation.labelText.fontSize, Is.EqualTo(24).And.EqualTo(PlayDialogView.BodyFontSize));
+            Assert.That(explanationNeeded, Is.GreaterThan(2 * 24f), "it wraps over more than two lines");
+            Assert.That(explanationNeeded, Is.LessThanOrEqualTo(er.rect.height), "every wrapped line inside its rectangle");
+            RectTransform toggle = row.background.rectTransform;
+            float explanationTop = er.anchoredPosition.y + (er.rect.height * 0.5f), explanationBottom = er.anchoredPosition.y - (er.rect.height * 0.5f);
+            Assert.That(explanationTop, Is.LessThanOrEqualTo(toggle.anchoredPosition.y - (toggle.rect.height * 0.5f)), "below the toggle");
+            float floor = -((RectTransform)er.parent).rect.height * 0.5f;
+            if (menu.View.DetailText != null)
+            {
+                RectTransform detail = menu.View.DetailText.rectTransform;
+                floor = detail.anchoredPosition.y + (detail.rect.height * 0.5f);
+            }
+
+            Assert.That(explanationBottom, Is.GreaterThanOrEqualTo(floor), "above the development readout (or the panel's edge)");
             row.write(1f);
             Assert.That(service.Consent.Agreed, Is.True, "ON agrees");
             Assert.That(row.read(), Is.EqualTo(1f));
             row.write(0f);
             Assert.That(service.Consent.Agreed, Is.False, "OFF withdraws");
             Assert.That(store.TryGet(Zantetsu.Core.Statistics.PlayStatisticsConsent.InstallIdKey, out _), Is.False, "the install id is forgotten");
+        }
+
+        [Test]
+        public void AnOldTextsDecline_IsNotAskedAtLaunch_AndTheMenusOn_ShowsTheCurrentTextFirst_OnlyItsAgreeAgrees()
+        {
+            // TL review 2026-10-18 [P1]: an old (version-less) decline -> launch -> the menu's ON.
+            var host = new GameObject("statistics under test");
+            _made.Add(host);
+            PlayStatisticsService service = host.AddComponent<PlayStatisticsService>();
+            var store = new Zantetsu.Core.Statistics.MemoryPlayStatisticsStore();
+            store.Set(Zantetsu.Core.Statistics.PlayStatisticsConsent.DecisionKey, "declined");   // the old text's decline: no version saved
+            service.Setup(SandboxScenarioKind.Play, "WalkCity", store, null);
+            PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+            Tick(menu);
+            Assert.That(menu.AskConsent(service), Is.False, "a decline stands at launch: nobody is asked again to let something be sent");
+            Assert.That(service.Consent.AgreementNeedsCurrentText, Is.True);
+            Tick(menu, menuDown: true);
+            Tick(menu);
+            Assert.That(menu.IsOpen, Is.True);
+            PlayMenuView.Row row = menu.View.Rows[5];
+            Assume.That(row.label, Is.EqualTo("Send play statistics"));
+
+            // ON: the current text first, nothing agreed, nothing collected, the menu stepped aside but still open and paused.
+            row.write(1f);
+            Assert.That(menu.IsDialogOpen && menu.IsDialogFromMenu, Is.True, "the full current text is shown first");
+            Assert.That(menu.Dialog.Visible, Is.True);
+            Assert.That(menu.View.Visible, Is.False, "the menu steps aside for it");
+            Assert.That(menu.IsOpen, Is.True);
+            Assert.That(service.Consent.Agreed || service.Collector.Agreed, Is.False, "nothing agreed or collected while it is shown");
+            Assert.That(row.read(), Is.Zero);
+            Assert.That(store.TryGet(Zantetsu.Core.Statistics.PlayStatisticsConsent.TextVersionKey, out _), Is.False, "nothing saved yet");
+            Assert.That(GamePause.Manual && GamePause.IsPaused, Is.True);
+            Assert.That(_katana.LiveInputEnabled, Is.False);
+            Tick(menu, menuDown: true);
+            Assert.That(menu.IsDialogOpen && menu.IsOpen, Is.True, "the menu's button does not close the menu behind the dialog");
+            Tick(menu);
+
+            // "Don't send": a cancel -- back to the menu, the old answer left as it was, still nothing collected.
+            Vector3 decline = Centre(menu.Dialog.SecondRect);
+            Tick(menu, pointAt: decline);
+            Tick(menu, select: true, pointAt: decline);
+            Assert.That(menu.IsDialogOpen, Is.False);
+            Assert.That(menu.IsOpen && menu.View.Visible, Is.True, "back to the menu");
+            Assert.That(service.Consent.Decision, Is.EqualTo(Zantetsu.Core.Statistics.PlayStatisticsDecision.Declined));
+            Assert.That(service.Collector.Agreed, Is.False);
+            Assert.That(store.TryGet(Zantetsu.Core.Statistics.PlayStatisticsConsent.TextVersionKey, out _), Is.False, "the saved answer is untouched by a cancel");
+            Assert.That(row.read(), Is.Zero);
+            Assert.That(GamePause.IsPaused, Is.True, "the menu is still open");
+            Assert.That(_katana.LiveInputEnabled, Is.False, "the menu still holds the controllers");
+            Tick(menu, pointAt: decline);
+
+            // ON again: the text again; its Agree agrees to the current text, and collection starts only then.
+            row.write(1f);
+            Assert.That(menu.IsDialogOpen, Is.True, "still an old answer: the text again");
+            Vector3 agree = Centre(menu.Dialog.FirstRect);
+            Tick(menu, pointAt: agree);
+            Tick(menu, select: true, pointAt: agree);
+            Assert.That(menu.IsDialogOpen, Is.False);
+            Assert.That(service.Consent.Agreed && service.Collector.Agreed, Is.True, "agreed by the dialog's Agree");
+            Assert.That(store.TryGet(Zantetsu.Core.Statistics.PlayStatisticsConsent.TextVersionKey, out string version), Is.True);
+            Assert.That(version, Is.EqualTo(Zantetsu.Core.Statistics.PlayStatisticsConsent.CurrentTextVersion.ToString()));
+            Assert.That(menu.IsOpen && menu.View.Visible, Is.True);
+            Assert.That(row.read(), Is.EqualTo(1f));
+            Assert.That(menu.View.Rows[5].valueText.text, Is.EqualTo("ON"), "the menu shows it at once");
+
+            // Closing the menu gives the game back as ever.
+            Tick(menu, select: false);
+            Tick(menu, menuDown: true);
+            Tick(menu);
+            Assert.That(menu.IsOpen, Is.False);
+            Assert.That(GamePause.IsPaused, Is.False);
         }
 
         [Test]

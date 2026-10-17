@@ -21,7 +21,7 @@ namespace Zantetsu.Sandbox
         /// <summary>The consent and install id live under the check keys; no send configuration is loaded.</summary>
         public const string Argument = "-zantetsuConsentCheck";
 
-        /// <summary>The two check keys are deleted at this launch (and nothing else).</summary>
+        /// <summary>The check keys (consent, install id, consent text version) are deleted at this launch (and nothing else).</summary>
         public const string ResetArgument = "-zantetsuConsentCheckReset";
 
         /// <summary>What is put before a key in the check store: "zantetsu.statistics.consent" becomes "zantetsu.check.zantetsu.statistics.consent".</summary>
@@ -47,14 +47,14 @@ namespace Zantetsu.Sandbox
         public static string CheckKey(string key) => KeyPrefix + key;
 
         /// <summary>
-        /// Deletes the two check keys from the backing store (and saves), nothing else. Returns how many of the two
+        /// Deletes the three check keys (the consent, the install id, the consent text's version) from the backing store (and saves), nothing else. Returns how many of the three
         /// existed. The normal consent, the normal install id and the game's settings are untouched by construction:
-        /// only the two mapped names are deleted.
+        /// only the three mapped names are deleted.
         /// </summary>
         public static int Reset(IPlayStatisticsStore backing)
         {
             int existed = 0;
-            foreach (string key in new[] { PlayStatisticsConsent.DecisionKey, PlayStatisticsConsent.InstallIdKey })
+            foreach (string key in new[] { PlayStatisticsConsent.DecisionKey, PlayStatisticsConsent.InstallIdKey, PlayStatisticsConsent.TextVersionKey })
             {
                 string mapped = CheckKey(key);
                 if (backing.TryGet(mapped, out _)) existed++;
@@ -74,7 +74,7 @@ namespace Zantetsu.Sandbox
             if (ResetAskedFor(arguments))
             {
                 int existed = Reset(backing);
-                Debug.Log(Prefix + "the two check keys were deleted (" + existed + " existed); the normal consent, id and settings were not touched (" + ResetArgument + ")");
+                Debug.Log(Prefix + "the check keys were deleted (" + existed + " existed); the normal consent, id and settings were not touched (" + ResetArgument + ")");
             }
 
             if (!AskedFor(arguments)) return backing;

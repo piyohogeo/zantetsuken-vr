@@ -98,6 +98,7 @@ namespace Zantetsu.Sandbox
             // The session id is in the log so that what a receiver stored (sessions/<session id>/<revision>.json) can be found
             // from a run's own log: a random id of this launch, nothing of the machine or the player.
             Debug.Log(Prefix + "installed for " + SandboxScenario.Name(kind) + " in " + scene + "; session " + service.Sender.SessionId + "; consent " + service.Consent.Decision
+                + " (text v" + PlayStatisticsConsent.CurrentTextVersion + "; saved answer to v" + service.Consent.SavedTextVersion + (service.Consent.ReconsentNeeded ? ": asked again" : "") + ")"
                 + "; config " + (service.Config != null ? service.Config.Describe() : "absent (nothing is sent)")
                 + "; frame timing " + (FrameTimeSampler.FrameTimingEnabled ? "on" : "OFF in this build"));
 #if ZANTETSU_STATS_VERIFY
@@ -668,22 +669,47 @@ namespace Zantetsu.Sandbox
             if (Instance == this) Instance = null;
         }
 
-        /// <summary>The first-run dialog's text: what is sent, for what, to where, and for how long (the last not yet decided).</summary>
+        /// <summary>
+        /// The first-run dialog's text (version <see cref="PlayStatisticsConsent.CurrentTextVersion"/>, unit 9-B): what is
+        /// sent, what never, for what, to where, when (as this Player really sends: on a loss of focus; a desktop Player
+        /// also at an ordinary quit; never when the app is killed or crashes), how long it is kept (the receiver's 90-day
+        /// rule, whose deletion runs after the period, not at the instant), and how to withdraw (collection and sending
+        /// stop from then on; what was already sent stays until the rule deletes it).
+        /// </summary>
         public const string ConsentTitle = "Play statistics";
 
-        public static readonly string ConsentBody =
-            "May this game send anonymous play statistics?\n"
-            + "What: frame time histograms (CPU, GPU), counts of cuts and fragments, buffer sizes,\n"
-            + "failure counts, scene and settings, device/OS/GPU model and XR runtime, and random IDs.\n"
-            + "Never: your name, device name, hardware IDs, head or hand movement, images.\n"
-            + "For: improving performance and stability; statistical analysis only.\n"
-            + "To: our Cloudflare Worker (stored in Cloudflare R2).\n"
-            + "When: sent when the game loses focus, or when it is closed normally.\n"
-            + "Retention: to be decided before release.\n"
-            + "You can change this any time in the menu (left menu button).";
+        /// <summary>The text for THIS Player: with the quit-time send only where a desktop Player sends at its ordinary quit.</summary>
+        public static string ConsentBody => ConsentBodyFor(IsDesktopPlayer);
+
+        /// <summary>The text for a Player that does (<paramref name="desktopQuitSend"/>) or does not send at an ordinary quit.</summary>
+        public static string ConsentBodyFor(bool desktopQuitSend)
+        {
+            return "May this game send anonymous play statistics?\n"
+                + "What: frame time histograms (CPU, GPU), counts of cuts and fragments, buffer sizes, failure counts,\n"
+                + "scene and settings, device/OS/CPU/GPU model, graphics API and GPU driver version, XR runtime, random IDs.\n"
+                + "Never: your name, device name, hardware IDs, head or hand movement, images.\n"
+                + "For: improving performance and stability; statistical analysis only.\n"
+                + "To: our Cloudflare Worker, stored in Cloudflare R2 (cloud storage).\n"
+                + (desktopQuitSend
+                    ? "When: sent when the game loses focus (e.g. the system menu opens) or when it is closed normally;\n"
+                    : "When: sent when the game loses focus (e.g. the system menu opens or the headset is taken off);\n")
+                + "nothing is sent if the app is killed or crashes.\n"
+                + "Retention: each record becomes eligible for automatic deletion 90 days after it is stored;\n"
+                + "the deletion itself may take some time after that.\n"
+                + "Withdraw any time in the menu (left menu button): collection and sending stop from then on;\n"
+                + "records already sent stay until the 90-day rule deletes them.";
+        }
 
         public const string ConsentAgree = "Agree";
         public const string ConsentDecline = "Don't send";
+
+        /// <summary>The menu's short explanation beside the toggle (the dialog's text is the full one).</summary>
+        public static string MenuExplanationFor(bool desktopQuitSend)
+        {
+            return "Anonymous play statistics (frame times, cuts, fragments, buffer sizes, device model) to our Cloudflare Worker/R2, "
+                + (desktopQuitSend ? "sent when the game loses focus or is closed normally; " : "sent when the game loses focus; ")
+                + "kept up to 90 days (automatic deletion after that may take time). OFF stops collecting and sending from then on; sent records stay until deleted.";
+        }
     }
 
     /// <summary>The consent kept in PlayerPrefs, with the game's other settings.</summary>

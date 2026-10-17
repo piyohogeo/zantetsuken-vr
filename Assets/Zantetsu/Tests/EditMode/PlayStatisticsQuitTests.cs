@@ -295,7 +295,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(service.RequestQuit(1.2), Is.True, "and asked again it passes");
                 Assert.That(service.Collector.Frame(true, false, true, conditions, 14f, new FrameTimeSample(), 1), Is.False);
                 Assert.That(service.Statistics.Current.Frames, Is.EqualTo(4));
-                Assert.That(PlayStatisticsService.ConsentBody, Does.Contain("loses focus").And.Contain("closed normally"));
+                Assert.That(PlayStatisticsService.ConsentBodyFor(true), Does.Contain("loses focus").And.Contain("closed normally"), "a desktop Player sends at its ordinary quit too");
+                Assert.That(PlayStatisticsService.ConsentBodyFor(false), Does.Contain("loses focus").And.Not.Contain("closed normally"), "the Quest sends only at a loss of focus");
             }
             finally
             {

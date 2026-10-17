@@ -12,6 +12,9 @@ namespace Zantetsu.Sandbox
     public sealed class PlayDialogView
     {
         private const float Width = 980f;
+
+        /// <summary>The body's font size (the menu's explanation rows use the same).</summary>
+        internal const int BodyFontSize = 24;
         private const float UnitMetres = PlayMenuView.UnitMetres;
 
         private GameObject _root;
@@ -25,6 +28,11 @@ namespace Zantetsu.Sandbox
         public bool Visible => _root != null && _root.activeSelf;
         public RectTransform FirstRect => _first != null ? _first.rectTransform : null;
         public RectTransform SecondRect => _second != null ? _second.rectTransform : null;
+
+        /// <summary>The body's text (tests: that all of it is inside its rectangle and above the buttons).</summary>
+        public Text BodyText => _body;
+
+        private Text _body;
 
         /// <summary>Makes the canvas, hidden: a title, the body (lines by '\n'), and the two buttons' labels.</summary>
         public void Build(string title, string body, string firstLabel, string secondLabel)
@@ -41,10 +49,6 @@ namespace Zantetsu.Sandbox
                 _material = new Material(shader) { name = "Zantetsu play dialog", hideFlags = HideFlags.HideAndDontSave };
             }
 
-            int lines = 1;
-            foreach (char c in body) if (c == '\n') lines++;
-            float bodyHeight = Mathf.Max(60f, lines * 30f + 20f);
-            float height = 120f + bodyHeight + 140f;
             _root = new GameObject("Zantetsu play dialog canvas", typeof(RectTransform), typeof(Canvas));
             if (Application.isPlaying)
             {
@@ -53,12 +57,17 @@ namespace Zantetsu.Sandbox
 
             _root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
             _canvas = (RectTransform)_root.transform;
-            _canvas.sizeDelta = new Vector2(Width, height);
             _canvas.localScale = Vector3.one * UnitMetres;
             PlayMenuView.Stretch(PlayMenuView.NewImage("Panel", _canvas, PlayMenuView.PanelColour).rectTransform);
+            // The body wraps at the dialog's width, and its height is the wrapped text's own (TL review 2026-10-18 [P2]):
+            // a line counted by '\n' alone was cut where a long line wrapped. Measured before the canvas is sized.
+            Text bodyText = PlayMenuView.NewText("Body", _canvas, font, body, BodyFontSize, PlayMenuView.TextColour, TextAnchor.UpperLeft);
+            float bodyHeight = PlayMenuView.FitWrapped(bodyText, Width - 100f, 60f);
+            _body = bodyText;
+            float height = 120f + bodyHeight + 140f;
+            _canvas.sizeDelta = new Vector2(Width, height);
             Text titleText = PlayMenuView.NewText("Title", _canvas, font, title, 40, PlayMenuView.TextColour, TextAnchor.MiddleCenter);
             PlayMenuView.Place(titleText.rectTransform, 0f, height * 0.5f - 56f, Width - 80f, 60f);
-            Text bodyText = PlayMenuView.NewText("Body", _canvas, font, body, 24, PlayMenuView.TextColour, TextAnchor.UpperLeft);
             PlayMenuView.Place(bodyText.rectTransform, 0f, height * 0.5f - 110f - bodyHeight * 0.5f, Width - 100f, bodyHeight);
             _first = PlayMenuView.NewImage("First", _canvas, PlayMenuView.ControlColour);
             PlayMenuView.Place(_first.rectTransform, -Width * 0.25f, -height * 0.5f + 70f, 380f, 84f);

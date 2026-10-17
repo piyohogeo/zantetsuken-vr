@@ -67,6 +67,7 @@ namespace Zantetsu.Core.Tests
         {
             var backing = new MemoryPlayStatisticsStore();
             backing.Set(PlayStatisticsConsentCheck.CheckKey(PlayStatisticsConsent.DecisionKey), "agreed");
+            backing.Set(PlayStatisticsConsentCheck.CheckKey(PlayStatisticsConsent.TextVersionKey), PlayStatisticsConsent.CurrentTextVersion.ToString());
 
             Assert.That(PlayStatisticsConsentCheck.StoreForThisLaunch(backing, Normal), Is.SameAs(backing), "a normal launch: nothing in between, nothing deleted");
             Assert.That(backing.TryGet(PlayStatisticsConsentCheck.CheckKey(PlayStatisticsConsent.DecisionKey), out _), Is.True, "the check keys are not deleted at a normal launch");

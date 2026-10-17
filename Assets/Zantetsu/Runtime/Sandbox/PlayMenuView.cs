@@ -42,6 +42,12 @@ namespace Zantetsu.Sandbox
         private const float Width = 800f;
         private const float Height = 620f;
 
+        /// <summary>The height of a setting's row slot.</summary>
+        private const float RowStep = 96f;
+
+        /// <summary>An explanation row's font size: the consent dialog's body size (<see cref="PlayDialogView.BodyFontSize"/>).</summary>
+        internal const int ExplanationFontSize = PlayDialogView.BodyFontSize;
+
         internal static readonly Color PanelColour = new Color(0.06f, 0.07f, 0.09f, 0.92f);
         internal static readonly Color ControlColour = new Color(0.20f, 0.23f, 0.28f, 1f);
         internal static readonly Color HoverColour = new Color(0.32f, 0.40f, 0.52f, 1f);
@@ -59,6 +65,8 @@ namespace Zantetsu.Sandbox
             public string unit = "";
             public bool interactable = true;
             public bool isToggle;
+            /// <summary>A line of text alone (an explanation): no slider, no toggle, no value; read/write unused.</summary>
+            public bool isText;
             public Func<float> read;
             public Action<float> write;
 
@@ -121,7 +129,19 @@ namespace Zantetsu.Sandbox
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             _canvas = (RectTransform)_root.transform;
-            float height = Height + Mathf.Max(0, rows.Count - 3) * 96f + (resetAction != null ? 96f : 0f) + (detail != null ? DetailHeight : 0f);
+            // An explanation row takes the room its wrapped text needs (TL review 2026-10-18 [P2]: a fixed 88 cut it),
+            // measured here before the canvas is sized; every other row keeps its 96. It is drawn in the ordinary text
+            // colour at the consent dialog's body size (TL 2026-10-18: dim 18 pt was unreadable on the Quest).
+            float extra = 0f;
+            foreach (Row row in rows)
+            {
+                if (!row.isText) continue;
+                row.labelText = NewText("Text " + row.label, _canvas, font, row.label, ExplanationFontSize, TextColour, TextAnchor.UpperLeft);
+                float textHeight = FitWrapped(row.labelText, Width - 100f, 40f);
+                extra += Mathf.Max(RowStep, textHeight + 16f) - RowStep;
+            }
+
+            float height = Height + Mathf.Max(0, rows.Count - 3) * RowStep + extra + (resetAction != null ? 96f : 0f) + (detail != null ? DetailHeight : 0f);
             _canvas.sizeDelta = new Vector2(Width, height);
             _canvas.localScale = Vector3.one * UnitMetres;
 
@@ -149,12 +169,15 @@ namespace Zantetsu.Sandbox
                 Text resetText = NewText("Label", _reset.rectTransform, font, "Reset scene", 32, TextColour, TextAnchor.MiddleCenter);
                 Stretch(resetText.rectTransform);
             }
-            float y = height * 0.5f - 300f;
+            // Each row in its slot from the top down: a setting's slot is RowStep (its centre where it always was), an
+            // explanation's is its text's height with a margin.
+            float top = height * 0.5f - 300f + (RowStep * 0.5f);
             foreach (Row row in rows)
             {
-                BuildRow(row, font, y);
+                float slot = row.isText ? Mathf.Max(RowStep, row.labelText.rectTransform.sizeDelta.y + 16f) : RowStep;
+                BuildRow(row, font, top - (slot * 0.5f));
                 _rows.Add(row);
-                y -= 96f;
+                top -= slot;
             }
 
             if (detail != null)
@@ -184,6 +207,16 @@ namespace Zantetsu.Sandbox
         private void BuildRow(Row row, Font font, float y)
         {
             Color text = row.interactable ? TextColour : DimTextColour;
+            if (row.isText)
+            {
+                // The explanation of a setting (unit 9-B: the play statistics): text across the row, wrapping, made and
+                // measured in Build (its height is its text's) -- before the panel was, so it is moved after it here: a
+                // canvas draws its children in order, and the 92 % panel drawn over it made it dark (Quest, 2026-10-18).
+                Place(row.labelText.rectTransform, 0f, y, Width - 100f, row.labelText.rectTransform.sizeDelta.y);
+                row.labelText.transform.SetAsLastSibling();
+                return;
+            }
+
             row.labelText = NewText(row.label, _canvas, font, row.label, 26, text, TextAnchor.MiddleLeft);
             Place(row.labelText.rectTransform, -200f, y, 280f, 40f);
 
@@ -294,6 +327,7 @@ namespace Zantetsu.Sandbox
         {
             foreach (Row row in _rows)
             {
+                if (row.isText) continue;
                 float value = row.read != null ? row.read() : row.minimum;
                 if (row.isToggle)
                 {
@@ -489,6 +523,25 @@ namespace Zantetsu.Sandbox
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
         }
+
+        /// <summary>
+        /// Makes <paramref name="text"/> wrap at <paramref name="width"/> and gives it the height its wrapped lines take
+        /// (at least <paramref name="minimum"/>), so that none of it is cut; the height is returned for the layout. The
+        /// vertical overflow is Truncate, so that a text too long for the room it was given would show as cut in a
+        /// check rather than run over what is below it.
+        /// </summary>
+        internal static float FitWrapped(Text text, float width, float minimum)
+        {
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Truncate;
+            Place(text.rectTransform, 0f, 0f, width, minimum);
+            float height = Mathf.Max(minimum, Mathf.Ceil(text.preferredHeight) + 8f);
+            text.rectTransform.sizeDelta = new Vector2(width, height);
+            return height;
+        }
+
+        /// <summary>The height <paramref name="text"/>'s wrapped lines need in the rectangle it has now (tests: nothing cut).</summary>
+        internal static float NeededHeight(Text text) => text.preferredHeight;
 
         internal static void Place(RectTransform rect, float x, float y, float width, float height)
         {
