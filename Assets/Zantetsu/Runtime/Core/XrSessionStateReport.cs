@@ -24,6 +24,12 @@ namespace Zantetsu.Core
         /// <summary>How many changes were told in this session.</summary>
         public static int Changes { get; private set; }
 
+        /// <summary>How often the session became READY from IDLE (the first is the launch's own).</summary>
+        public static int ReadyCount { get; private set; }
+
+        /// <summary>The session restarts: every READY after the first (a sleep gives two). Counted here from the first event, whoever listens later.</summary>
+        public static int Restarts => ReadyCount > 0 ? ReadyCount - 1 : 0;
+
         /// <summary>Told after each change: the old state, the new state.</summary>
         public static event Action<int, int> Changed;
 
@@ -37,6 +43,7 @@ namespace Zantetsu.Core
             State = newState;
             ChangedFrame = frame;
             Changes++;
+            if (oldState == 1 && newState == 2) ReadyCount++;
             Changed?.Invoke(oldState, newState);
         }
 
@@ -46,6 +53,7 @@ namespace Zantetsu.Core
             State = 0;
             ChangedFrame = -1;
             Changes = 0;
+            ReadyCount = 0;
             Changed = null;
         }
     }

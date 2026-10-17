@@ -95,7 +95,7 @@ namespace Zantetsu.Rendering
                 _shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity * MaxSplits, GraphicsBuffer.IndirectDrawIndexedArgs.size) { name = "VP Culled Shadow Arguments" };
                 _forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size) { name = "VP Culled Forward Arguments" };
                 _casterBoundsArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size) { name = "VP Culled Shadow Caster Bounds Arguments" };
-                _casterBoundsArgumentBuffer.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs() });
+                _casterBoundsArgumentBuffer.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs() }, "VpCulledInstanceSet.cs:98");
             }
             catch
             {
@@ -207,7 +207,7 @@ namespace Zantetsu.Rendering
 
             if (total > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)total);
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)total, "VpCulledInstanceSet.cs:210");
             }
 
             CommandCount = commands.Length;
@@ -288,13 +288,13 @@ namespace Zantetsu.Rendering
             bool wrote = false;
             if (ForwardSelectedInstances > 0)
             {
-                _visibleBuffer.SetData(_visible, visibleBase, visibleBase, ForwardSelectedInstances);
+                _visibleBuffer.SetData(_visible, visibleBase, visibleBase, ForwardSelectedInstances, "VpCulledInstanceSet.cs:291");
                 wrote = true;
             }
 
             if (ForwardDrawCount > 0)
             {
-                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, ForwardDrawCount);
+                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, ForwardDrawCount, "VpCulledInstanceSet.cs:297");
                 wrote = true;
             }
 
@@ -441,13 +441,13 @@ namespace Zantetsu.Rendering
                 bool wrote = false;
                 if (_splitSelected[split] > 0)
                 {
-                    _visibleBuffer.SetData(_visible, split * InstanceCapacity, split * InstanceCapacity, _splitSelected[split]);
+                    _visibleBuffer.SetData(_visible, split * InstanceCapacity, split * InstanceCapacity, _splitSelected[split], "VpCulledInstanceSet.cs:444");
                     wrote = true;
                 }
 
                 if (_splitDrawCount[split] > 0)
                 {
-                    _shadowArgumentBuffer.SetData(_shadowArguments, split * CommandCapacity, split * CommandCapacity, _splitDrawCount[split]);
+                    _shadowArgumentBuffer.SetData(_shadowArguments, split * CommandCapacity, split * CommandCapacity, _splitDrawCount[split], "VpCulledInstanceSet.cs:450");
                     wrote = true;
                 }
 

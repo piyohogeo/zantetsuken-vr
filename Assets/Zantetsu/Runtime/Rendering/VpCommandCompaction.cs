@@ -338,7 +338,7 @@ namespace Zantetsu.Rendering
         public static GraphicsBuffer NewZeroSource()
         {
             var zeroes = new GraphicsBuffer(GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.CopySource, Slots, sizeof(uint)) { name = "VP Compact Zero Counts" };
-            zeroes.SetData(ZeroSlots);
+            zeroes.SetData(ZeroSlots, "VpCommandCompaction.cs:341");
             return zeroes;
         }
 
@@ -441,7 +441,7 @@ namespace Zantetsu.Rendering
                 if (s_snapshot == null)
                 {
                     s_snapshot = new GraphicsBuffer(GraphicsBuffer.Target.Raw, SnapshotSlots, sizeof(uint)) { name = "VP compaction count snapshots" };
-                    s_snapshot.SetData(new uint[SnapshotSlots]);
+                    s_snapshot.SetData(new uint[SnapshotSlots], "VpCommandCompaction.cs:444");
                 }
 
                 return s_snapshot;
@@ -540,7 +540,7 @@ namespace Zantetsu.Rendering
             if (s_stats == null)
             {
                 s_stats = new GraphicsBuffer(GraphicsBuffer.Target.Raw, StatsPerColumn * Columns, sizeof(uint)) { name = "VP compaction verification" };
-                s_stats.SetData(new uint[StatsPerColumn * Columns]);
+                s_stats.SetData(new uint[StatsPerColumn * Columns], "VpCommandCompaction.cs:543");
             }
 
             commands.SetComputeIntParam(s_shader, FirstId, firstCommand);
@@ -645,13 +645,13 @@ namespace Zantetsu.Rendering
                 source = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commands, VpGpuCullSetup.NativeArgumentStride) { name = "VP compaction self-test source" };
                 target = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commands, VpGpuCullSetup.NativeArgumentStride) { name = "VP compaction self-test target" };
                 counts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, Slots, sizeof(uint)) { name = "VP compaction self-test counts" };
-                source.SetData(entries);
+                source.SetData(entries, "VpCommandCompaction.cs:648");
                 var poison = new uint[commands * 6];
                 for (int i = 0; i < poison.Length; i++) poison[i] = 0xDEADBEEFu;
-                target.SetData(poison);
+                target.SetData(poison, "VpCommandCompaction.cs:651");
                 var stale = new uint[Slots];
                 for (int i = 0; i < stale.Length; i++) stale[i] = 77u;
-                counts.SetData(stale);
+                counts.SetData(stale, "VpCommandCompaction.cs:654");
                 buffer = new CommandBuffer { name = "VP compaction self-test" };
                 Reset(buffer, counts);
                 Compact(buffer, source, target, counts, first, count, slot);

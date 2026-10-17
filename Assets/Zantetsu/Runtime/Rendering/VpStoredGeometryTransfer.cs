@@ -62,7 +62,7 @@ namespace Zantetsu.Rendering
 
             // The window begins at the range's own start, so the source position inside it is 0 and the storage's
             // position is the destination's. Adding the start to both would put the vertices twice as far along.
-            destination.SetData(range, 0, start, count);
+            destination.SetData(range, 0, start, count, "VpStoredGeometryTransfer.cs:65", VpUploadKind.Initial);
             transferred = count;
             return true;
         }
@@ -181,7 +181,7 @@ namespace Zantetsu.Rendering
             }
 
             // Source position 0: the window already starts at indexStart, which is the destination position.
-            destination.SetData(span, 0, indexStart, indexCount);
+            destination.SetData(span, 0, indexStart, indexCount, "VpStoredGeometryTransfer.cs:184", VpUploadKind.Initial);
             transferred = indexCount;
             return true;
         }

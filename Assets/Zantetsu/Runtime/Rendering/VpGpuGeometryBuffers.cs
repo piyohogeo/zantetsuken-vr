@@ -241,12 +241,12 @@ namespace Zantetsu.Rendering
         {
             if (vertices.Length > 0)
             {
-                vertexBuffer.SetData(vertices);
+                vertexBuffer.SetData(vertices, "VpGpuGeometryBuffers.cs:244");
             }
 
             if (indices.Length > 0)
             {
-                indexBuffer.SetData(indices);
+                indexBuffer.SetData(indices, "VpGpuGeometryBuffers.cs:249");
             }
         }
 

@@ -240,13 +240,13 @@ namespace Zantetsu.Rendering
 
             if (commands.Length > 0)
             {
-                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commands.Length);
-                _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commands.Length);
+                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commands.Length, "VpIndirectDrawBatch.cs:243");
+                _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commands.Length, "VpIndirectDrawBatch.cs:244");
             }
 
             if (instanceTotal > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal, "VpIndirectDrawBatch.cs:249");
             }
 
             CommandCount = commands.Length;

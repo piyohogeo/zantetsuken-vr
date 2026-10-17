@@ -109,7 +109,8 @@ namespace Zantetsu.Sandbox
                         continue;
                     }
 
-                    if (!listed.enabled || !listed.gameObject.activeInHierarchy || listed.forceRenderingOff)
+                    // A renderer the stop stages hold off (forceRenderingOff set by VpGpuStop) is still a target: what is held and what is listed are kept apart.
+                    if (!listed.enabled || !listed.gameObject.activeInHierarchy || (listed.forceRenderingOff && !Zantetsu.Rendering.VpGpuStop.IsSuppressedByStop(listed)))
                     {
                         made.NotDrawn++;
                         continue;

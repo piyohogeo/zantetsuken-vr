@@ -1305,7 +1305,8 @@ namespace Zantetsu.MeshCut
         {
             get
             {
-                long bytes = _batch.GpuBytes + ((long)_capNormalBuffer.count * _capNormalBuffer.stride);
+                // A buffer withheld by the stop stages (null, stage 4) is 0 bytes: nothing was made in its place.
+                long bytes = _batch.GpuBytes + (_capNormalBuffer != null ? (long)_capNormalBuffer.count * _capNormalBuffer.stride : 0L);
                 foreach (CameraStencil slot in _cameraStencils)
                 {
                     if (slot != null)
@@ -2217,7 +2218,7 @@ namespace Zantetsu.MeshCut
 
                 // DESIGN 5.3: one outward normal per cap vertex for the cap pass to shade with. Made here, beside the
                 // other GPU resources, so that anything failing before the display takes them gives this back too.
-                capNormals = new GraphicsBuffer(
+                capNormals = Zantetsu.Rendering.VpGpuStop.Buffer(
                     GraphicsBuffer.Target.Structured, Math.Max(1, derived.capVertices), sizeof(float) * 4);
                 try
                 {
@@ -2274,12 +2275,13 @@ namespace Zantetsu.MeshCut
         // The cap normals' buffer written whole once with zeros, so that it stands on the device before play.
         private static void WriteWholeOnce(GraphicsBuffer normals)
         {
+            if (normals == null) return;   // withheld by the stop stages (stage 4): nothing to write
             NativeArray<Vector4> zeros = default;
             try
             {
                 zeros = VpWholeWrite.Zeros<Vector4>("cap normals", normals.count);
                 VpWholeWrite.Step("write cap normals");
-                normals.SetData(zeros, 0, 0, normals.count);
+                normals.SetData(zeros, 0, 0, normals.count, "VpLogicalCutDisplay.cs:2282", Zantetsu.Rendering.VpUploadKind.Initial);
             }
             finally
             {
@@ -3042,6 +3044,7 @@ namespace Zantetsu.MeshCut
             // vertices are the structure's, in the local frame, and are not touched here.
             int caps = snapshot.CapCount;
             int elements = caps * CapPlacementStride;
+            if (into == null) return;   // withheld by the stop stages (stage 4): no cap normal buffer to write
             if (elements > _capNormals.Length || elements > into.count)
             {
                 throw new InvalidOperationException("the snapshot holds more caps than this display's room");
@@ -3069,7 +3072,7 @@ namespace Zantetsu.MeshCut
             if (to > from)
             {
                 int first = from * CapPlacementStride, count = (to - from) * CapPlacementStride;
-                into.SetData(_capNormals.First(elements), first, first, count);
+                into.SetData(_capNormals.First(elements), first, first, count, "VpLogicalCutDisplay.cs:3072");
                 CapNormalTransfers++;
                 CapNormalVerticesTransferred += count;
                 CapNormalsMade += count;
@@ -5220,7 +5223,7 @@ namespace Zantetsu.MeshCut
             }
 
             _stencilMaterials.Dispose();
-            _capNormalBuffer.Dispose();
+            _capNormalBuffer?.Dispose();
             _batch.Dispose(_giveUpBuffer);
             _buffers.Dispose(_giveUpBuffer);
             DestroyMaterials(_ownedMaterials);
@@ -5921,7 +5924,7 @@ namespace Zantetsu.MeshCut
             {
                 reason = "room was grown in this collection";
             }
-            else if (Math.Max(_building.CapVertexCount, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count || AnyCameraStencilSmallerThanRoom())
+            else if ((_capNormalBuffer != null && Math.Max(_building.CapVertexCount, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count) || AnyCameraStencilSmallerThanRoom())
             {
                 reason = "GPU room is needed in this collection";
             }
@@ -8311,7 +8314,8 @@ namespace Zantetsu.MeshCut
             }
 
             bool bodyShort = commands > _batch.CommandCapacity || instances > _batch.InstanceCapacity;
-            bool normalsShort = Math.Max(capVertices, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count;
+            // A withheld cap normal buffer (the stop stages, stage 4) has no room to be short of: nothing is made in its place.
+            bool normalsShort = _capNormalBuffer != null && Math.Max(capVertices, _building.CapCount * CapPlacementStride) > _capNormalBuffer.count;
             if (!cameraShort && !bodyShort && !normalsShort)
             {
                 return true;
@@ -8333,7 +8337,7 @@ namespace Zantetsu.MeshCut
 
                 if (normalsShort)
                 {
-                    grownNormals = new GraphicsBuffer(
+                    grownNormals = Zantetsu.Rendering.VpGpuStop.Buffer(
                         GraphicsBuffer.Target.Structured, Math.Max(1, _stencilCapVertexCapacity), sizeof(float) * 4);
                 }
 

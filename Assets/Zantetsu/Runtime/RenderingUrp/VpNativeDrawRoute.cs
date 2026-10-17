@@ -12,6 +12,7 @@ using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
 using Plugin = Zantetsu.Rendering.VpNativeDrawPlugin;
 
+using Zantetsu.Rendering;
 namespace Zantetsu.Rendering.Urp
 {
     /// <summary>
@@ -1255,7 +1256,7 @@ namespace Zantetsu.Rendering.Urp
                 if (_zeroArguments == null)
                 {
                     _zeroArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size) { name = "VP Native Caster Bounds (no instance)" };
-                    _zeroArguments.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs() });
+                    _zeroArguments.SetData(new[] { new GraphicsBuffer.IndirectDrawIndexedArgs() }, "VpNativeDrawRoute.cs:1258");
                 }
 
                 batch.NativeDrawBuffers(0, out _, out GraphicsBuffer visible, out _, out _, out GraphicsBuffer instances, out GraphicsBuffer clips, out GraphicsBuffer cullCommands);
@@ -1692,7 +1693,7 @@ namespace Zantetsu.Rendering.Urp
                         }
 
                         var table = new GraphicsBuffer(GraphicsBuffer.Target.Structured, SlotCount, sizeof(uint)) { name = "VP Native Offsets " + buffer.Name };
-                        table.SetData(offsets);
+                        table.SetData(offsets, "VpNativeDrawRoute.cs:1695");
                         entry.gpuBlocks.Add(new GpuBlock { binding = binding, size = buffer.Size, offsets = table,
                             layoutKey = buffer.Size + ":" + string.Join(",", offsets) });
                     }

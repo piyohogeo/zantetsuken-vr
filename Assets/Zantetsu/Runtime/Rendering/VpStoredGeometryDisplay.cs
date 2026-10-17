@@ -176,11 +176,11 @@ namespace Zantetsu.Rendering
                 batch = new VpIndexedIndirectDrawBatch(commands.Count, commands.Count);
 
                 // The vertices go in at their own global numbers: that is what lets baseVertexIndex stay 0.
-                buffers.VertexBuffer.SetData(vertices.ToArray());
+                buffers.VertexBuffer.SetData(vertices.ToArray(), "VpStoredGeometryDisplay.cs:179");
                 for (int g = 0; g < uploads.Length; g++)
                 {
                     VpStoredGeometryUpload upload = uploads[g];
-                    buffers.IndexBuffer.SetData(upload.Indices, 0, upload.IndexBase, upload.Indices.Length);
+                    buffers.IndexBuffer.SetData(upload.Indices, 0, upload.IndexBase, upload.Indices.Length, "VpStoredGeometryDisplay.cs:183");
                 }
 
                 var transforms = new Matrix4x4[objectToWorld.Count];

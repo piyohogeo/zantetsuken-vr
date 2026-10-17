@@ -89,7 +89,7 @@ namespace Zantetsu.Rendering
             }
             catch
             {
-                _vertexBuffer.Dispose();
+                _vertexBuffer?.Dispose();
                 throw;
             }
 
@@ -176,6 +176,13 @@ namespace Zantetsu.Rendering
             if (!vertexGrew && !indexGrew)
             {
                 return true;
+            }
+
+            if (VpGpuStop.WithholdAllocations)
+            {
+                failure = "the GPU copy is not grown (" + VpGpuStop.Argument + " stage " + VpGpuStop.Stage + ": no allocation)";
+                vertexGrew = indexGrew = false;
+                return false;
             }
 
             if (!SystemInfo.supportsAsyncGPUReadback)
@@ -305,13 +312,13 @@ namespace Zantetsu.Rendering
 
             if (vertices.Length > 0)
             {
-                _vertexBuffer.SetData(vertices);
+                _vertexBuffer.SetData(vertices, "VpGpuIndexedGeometryBuffers.cs:308");
                 VertexGeneration++;
             }
 
             if (indices.Length > 0)
             {
-                _indexBuffer.SetData(indices);
+                _indexBuffer.SetData(indices, "VpGpuIndexedGeometryBuffers.cs:314");
                 IndexGeneration++;
             }
 
@@ -336,8 +343,9 @@ namespace Zantetsu.Rendering
             }
 
             _disposed = true;
-            if (giveUp != null) giveUp(_vertexBuffer); else _vertexBuffer.Dispose();
-            if (giveUp != null) giveUp(_indexBuffer); else _indexBuffer.Dispose();
+            // A buffer withheld by the stop stages (null, stage 4) is nothing to give up or dispose.
+            if (_vertexBuffer != null) { if (giveUp != null) giveUp(_vertexBuffer); else _vertexBuffer.Dispose(); }
+            if (_indexBuffer != null) { if (giveUp != null) giveUp(_indexBuffer); else _indexBuffer.Dispose(); }
 
             // Teardown alone waits: for each replaced buffer's readback, so the GPU is past it when it is released.
             foreach (Retired retired in _retired)
@@ -357,10 +365,10 @@ namespace Zantetsu.Rendering
             => (int)Math.Min(limit, Math.Max((long)needed, (long)current * 2));
 
         private static GraphicsBuffer NewVertexBuffer(int capacity)
-            => new GraphicsBuffer(GraphicsBuffer.Target.Structured, capacity, VpRenderVertex.Stride) { name = "VP Indexed Vertices" };
+            => VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, capacity, VpRenderVertex.Stride, "VP Indexed Vertices");
 
         private static GraphicsBuffer NewIndexBuffer(int capacity)
-            => new GraphicsBuffer(GraphicsBuffer.Target.Index, capacity, IndexStride) { name = "VP Indexed Indices" };
+            => VpGpuStop.Buffer(GraphicsBuffer.Target.Index, capacity, IndexStride, "VP Indexed Indices");
 
         private void ThrowIfDisposed()
         {

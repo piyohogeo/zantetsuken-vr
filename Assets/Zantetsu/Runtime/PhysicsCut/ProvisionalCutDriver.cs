@@ -1056,6 +1056,13 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
+            // Stop stage 2 (unit 8-C): once the registration is over the display's frame is not begun -- no collection,
+            // and with no frame open no camera preparation, no cull request and no draw registration follow. Tallied.
+            if (!Zantetsu.Rendering.VpGpuStop.DisplayUpdate())
+            {
+                return false;
+            }
+
             // The upload is made for the stereo mode this frame renders in: under Single Pass Instanced one issue carries
             // two instances per body, one per eye, and the display is told so here, the one place it collects. A camera
             // that draws a single view in the same frame drops the second copy itself (the shader's own rule).

@@ -199,15 +199,12 @@ namespace Zantetsu.Rendering
             {
                 if (culling == null)
                 {
-                    forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
-                    forwardArgumentBuffer.name = "VP Indexed Indirect Forward Arguments";
-                    shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
-                    shadowArgumentBuffer.name = "VP Indexed Indirect Shadow Arguments";
+                    forwardArgumentBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size, "VP Indexed Indirect Forward Arguments");
+                    shadowArgumentBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size, "VP Indexed Indirect Shadow Arguments");
                 }
                 else
                 {
-                    cullCommandBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, commandCapacity, VpCullCommand.Stride);
-                    cullCommandBuffer.name = "VP Cull Commands";
+                    cullCommandBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, commandCapacity, VpCullCommand.Stride, "VP Cull Commands");
                     cullViews = new CullView[culling.ViewCapacity];
                     for (int v = 0; v < cullViews.Length; v++)
                     {
@@ -217,21 +214,15 @@ namespace Zantetsu.Rendering
                         // unneeded there (probed 2026-10-06: perf/gpu-cull/probe-args).
                         // An entry is Unity's five arguments, or -- for a batch the Direct3D 12 plugin draws -- the
                         // command's number and then the five (DESIGN 4.5.8): the stride is the setup's.
-                        cullViews[v].forwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
-                        cullViews[v].forwardVisible.name = "VP Cull Forward Visible " + v;
-                        cullViews[v].forwardArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride);
-                        cullViews[v].forwardArguments.name = "VP Cull Forward Arguments " + v;
-                        cullViews[v].shadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint));
-                        cullViews[v].shadowVisible.name = "VP Cull Shadow Visible " + v;
-                        cullViews[v].shadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride);
-                        cullViews[v].shadowArguments.name = "VP Cull Shadow Arguments " + v;
+                        cullViews[v].forwardVisible = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint), "VP Cull Forward Visible " + v);
+                        cullViews[v].forwardArguments = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride, "VP Cull Forward Arguments " + v);
+                        cullViews[v].shadowVisible = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, instanceCapacity, sizeof(uint), "VP Cull Shadow Visible " + v);
+                        cullViews[v].shadowArguments = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, culling.ArgumentStride, "VP Cull Shadow Arguments " + v);
                     }
                 }
 
-                instanceBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceStride);
-                instanceBuffer.name = "VP Indexed Instance Transforms";
-                instanceClipBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceClipStride);
-                instanceClipBuffer.name = "VP Indexed Instance Clips";
+                instanceBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceStride, "VP Indexed Instance Transforms");
+                instanceClipBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceClipStride, "VP Indexed Instance Clips");
             }
             catch
             {
@@ -445,27 +436,27 @@ namespace Zantetsu.Rendering
                 {
                     // The counts are written here, once, so that no slot is ever read before something set it; after
                     // that the GPU alone writes them (the plugin's zero event on Vulkan, a copy on Direct3D 12).
-                    ForwardEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Forward Entries " + name };
+                    ForwardEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Forward Entries " + name);
                     ForwardCounts = VpCommandCompaction.NewCounts("VP Compact Forward Counts " + name);
-                    ShadowEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Shadow Entries " + name };
+                    ShadowEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Shadow Entries " + name);
                     ShadowCounts = VpCommandCompaction.NewCounts("VP Compact Shadow Counts " + name);
-                    ForwardCounts.SetData(VpCommandCompaction.ZeroSlots);
-                    ShadowCounts.SetData(VpCommandCompaction.ZeroSlots);
+                    ForwardCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:452");
+                    ShadowCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:453");
                     if (Columns > 2)
                     {
-                        MotionEntries = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride) { name = "VP Compact Motion Entries " + name };
+                        MotionEntries = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, stride, "VP Compact Motion Entries " + name);
                         MotionCounts = VpCommandCompaction.NewCounts("VP Compact Motion Counts " + name);
-                        MotionCounts.SetData(VpCommandCompaction.ZeroSlots);
+                        MotionCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:458");
                     }
 
                     if (HasDrawCounts)
                     {
-                        ForwardDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Forward Draw Counts " + name };
-                        ShadowDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Shadow Draw Counts " + name };
-                        MotionDrawCounts = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint)) { name = "VP Compact Motion Draw Counts " + name };
-                        ForwardDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
-                        ShadowDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
-                        MotionDrawCounts.SetData(VpCommandCompaction.ZeroSlots);
+                        ForwardDrawCounts = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint), "VP Compact Forward Draw Counts " + name);
+                        ShadowDrawCounts = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint), "VP Compact Shadow Draw Counts " + name);
+                        MotionDrawCounts = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, VpCommandCompaction.Slots, sizeof(uint), "VP Compact Motion Draw Counts " + name);
+                        ForwardDrawCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:466");
+                        ShadowDrawCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:467");
+                        MotionDrawCounts.SetData(VpCommandCompaction.ZeroSlots, "VpIndexedIndirectDrawBatch.cs:468");
                     }
 
                     VpCommandCompaction.NoteSetMade(BytesFor(commandCapacity, stride),
@@ -713,8 +704,8 @@ namespace Zantetsu.Rendering
                         shadowWords[at + 4] = (uint)entry.instance;
                     }
 
-                    _clipForwardArguments.SetData(forwardWords, 0, 0, count * words);
-                    _clipShadowArguments.SetData(shadowWords, 0, 0, count * words);
+                    _clipForwardArguments.SetData(forwardWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:716");
+                    _clipShadowArguments.SetData(shadowWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:717");
                 }
                 finally
                 {
@@ -729,7 +720,7 @@ namespace Zantetsu.Rendering
             {
                 if (_clipBounds == null)
                 {
-                    _clipBounds = new GraphicsBuffer(GraphicsBuffer.Target.Structured, InstanceCapacity, VpCullCommand.Stride) { name = "VP Clip List Bounds" };
+                    _clipBounds = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, InstanceCapacity, VpCullCommand.Stride, "VP Clip List Bounds");
                 }
 
                 var bounds = new NativeArray<VpCullCommand>(count, Allocator.Temp, NativeArrayOptions.ClearMemory);
@@ -749,7 +740,7 @@ namespace Zantetsu.Rendering
                         };
                     }
 
-                    _clipBounds.SetData(bounds, 0, 0, count);
+                    _clipBounds.SetData(bounds, 0, 0, count, "VpIndexedIndirectDrawBatch.cs:752");
                 }
                 finally
                 {
@@ -771,8 +762,8 @@ namespace Zantetsu.Rendering
             GraphicsBuffer made = null;
             try
             {
-                made = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride) { name = name + " Forward Arguments" };
-                shadow = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride) { name = name + " Shadow Arguments" };
+                made = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride, name + " Forward Arguments");
+                shadow = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, InstanceCapacity, _cull.ArgumentStride, name + " Shadow Arguments");
                 forward = made;
             }
             catch
@@ -837,8 +828,8 @@ namespace Zantetsu.Rendering
                 slot.written[k] = 3;
             }
 
-            slot.forward.SetData(slot.forwardWords, 0, 0, count * words);
-            slot.shadow.SetData(slot.shadowWords, 0, 0, count * words);
+            slot.forward.SetData(slot.forwardWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:840");
+            slot.shadow.SetData(slot.shadowWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:841");
             slot.serial = _clipListSerial;
             ClipArgumentWrites += 2;
             ClipArgumentBytes += 2L * count * VpGpuCullSetup.UnityArgumentStride;
@@ -888,7 +879,7 @@ namespace Zantetsu.Rendering
             int bytes = 0;
             if (forwardChanged)
             {
-                slot.forward.SetData(slot.forwardWords, 0, 0, count * words);
+                slot.forward.SetData(slot.forwardWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:891");
                 bytes += count * VpGpuCullSetup.UnityArgumentStride;
                 ClipArgumentWrites++;
                 ClipRestoreWrites++;
@@ -896,7 +887,7 @@ namespace Zantetsu.Rendering
 
             if (shadowChanged)
             {
-                slot.shadow.SetData(slot.shadowWords, 0, 0, count * words);
+                slot.shadow.SetData(slot.shadowWords, 0, 0, count * words, "VpIndexedIndirectDrawBatch.cs:899");
                 bytes += count * VpGpuCullSetup.UnityArgumentStride;
                 ClipArgumentWrites++;
                 ClipRestoreWrites++;
@@ -974,7 +965,7 @@ namespace Zantetsu.Rendering
             int bytes = 0;
             if (forwardChanged)
             {
-                commands.SetBufferData(slot.forward, slot.forwardWords, 0, 0, count * words);
+                if (VpGpuStop.CommandWrite()) commands.SetBufferData(slot.forward, slot.forwardWords, 0, 0, count * words);
                 bytes += count * VpGpuCullSetup.UnityArgumentStride;
                 ClipArgumentWrites++;
                 ClipSelectionWrites++;
@@ -982,7 +973,7 @@ namespace Zantetsu.Rendering
 
             if (shadowChanged)
             {
-                commands.SetBufferData(slot.shadow, slot.shadowWords, 0, 0, count * words);
+                if (VpGpuStop.CommandWrite()) commands.SetBufferData(slot.shadow, slot.shadowWords, 0, 0, count * words);
                 bytes += count * VpGpuCullSetup.UnityArgumentStride;
                 ClipArgumentWrites++;
                 ClipSelectionWrites++;
@@ -1021,7 +1012,7 @@ namespace Zantetsu.Rendering
                 lightProbeUsage = LightProbeUsage.Off,
                 reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.forward, entryCount, firstEntry);
+            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.forward, entryCount, firstEntry);
         }
 
         /// <summary>
@@ -1050,7 +1041,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.shadow, entryCount, firstEntry);
+            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.shadow, entryCount, firstEntry);
         }
 
         /// <summary>
@@ -1123,10 +1114,10 @@ namespace Zantetsu.Rendering
                 owner = batch;
                 try
                 {
-                    ForwardArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW distance arguments" };
-                    ForwardVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW distance visible" };
-                    ShadowArguments = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride) { name = "VP AppSW unused caster arguments" };
-                    ShadowVisible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint)) { name = "VP AppSW unused caster visible" };
+                    ForwardArguments = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride, "VP AppSW distance arguments");
+                    ForwardVisible = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint), "VP AppSW distance visible");
+                    ShadowArguments = VpGpuStop.Buffer(GraphicsBuffer.Target.IndirectArguments, batch.CommandCapacity, batch._cull.ArgumentStride, "VP AppSW unused caster arguments");
+                    ShadowVisible = VpGpuStop.Buffer(GraphicsBuffer.Target.Structured, batch.InstanceCapacity, sizeof(uint), "VP AppSW unused caster visible");
                 }
                 catch { Dispose(); throw; }
             }
@@ -1329,9 +1320,9 @@ namespace Zantetsu.Rendering
             WriteArguments(commands.AsReadOnlySpan(), commandCount, objectToWorlds.AsReadOnlySpan(), singlePassInstanced, out Bounds worldBounds);
             if (instanceTotal > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:1332");
                 InstanceGeneration++;
-                _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal);
+                _instanceClipBuffer.SetData(clips, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:1334");
                 ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
@@ -1433,9 +1424,9 @@ namespace Zantetsu.Rendering
             if (instances)
             {
                 int count = instanceEnd - instanceStart;
-                _instanceBuffer.SetData(objectToWorlds, instanceStart, instanceStart, count);
+                _instanceBuffer.SetData(objectToWorlds, instanceStart, instanceStart, count, "VpIndexedIndirectDrawBatch.cs:1436");
                 InstanceGeneration++;
-                _instanceClipBuffer.SetData(clips, instanceStart, instanceStart, count);
+                _instanceClipBuffer.SetData(clips, instanceStart, instanceStart, count, "VpIndexedIndirectDrawBatch.cs:1438");
                 ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
@@ -1586,7 +1577,7 @@ namespace Zantetsu.Rendering
             {
                 if (commandEnd > 0)
                 {
-                    int calls = SendSlotCommands(read, starts, 0, commandEnd, singlePassInstanced);
+                    int calls = SendSlotCommands(read, starts, 0, commandEnd, singlePassInstanced, first ? VpUploadKind.Initial : VpUploadKind.Frame);   // a resend for a changed stereo condition is frame data
                     WholeArgumentElementsTransferred += commandEnd;
                     WholeSetDataCalls += calls;
                     sent = true;
@@ -1600,7 +1591,7 @@ namespace Zantetsu.Rendering
                     int from = Math.Min(commandRanges.StartAt(r), commandEnd), to = Math.Min(commandRanges.EndAt(r), commandEnd);
                     if (to > from)
                     {
-                        ArgumentSetDataCalls += SendSlotCommands(read, starts, from, to, singlePassInstanced);
+                        ArgumentSetDataCalls += SendSlotCommands(read, starts, from, to, singlePassInstanced, VpUploadKind.Frame);
                         ArgumentElementsTransferred += to - from;
                         anyCommand = true;
                     }
@@ -1614,9 +1605,9 @@ namespace Zantetsu.Rendering
             {
                 if (instanceEnd > 0)
                 {
-                    _instanceBuffer.SetData(objectToWorlds, 0, 0, instanceEnd);
+                    _instanceBuffer.SetData(objectToWorlds, 0, 0, instanceEnd, "VpIndexedIndirectDrawBatch.cs:1617", VpUploadKind.Initial);
                     InstanceGeneration++;
-                    _instanceClipBuffer.SetData(clips, 0, 0, instanceEnd);
+                    _instanceClipBuffer.SetData(clips, 0, 0, instanceEnd, "VpIndexedIndirectDrawBatch.cs:1619", VpUploadKind.Initial);
                     ClipGeneration++;
                     WholeInstanceElementsTransferred += instanceEnd;
                     WholeSetDataCalls += 2;
@@ -1629,10 +1620,10 @@ namespace Zantetsu.Rendering
                 int from = Math.Max(0, Math.Min(instanceFrom, instanceEnd)), to = Math.Min(instanceTo, instanceEnd);
                 if (to > from)
                 {
-                    _instanceBuffer.SetData(objectToWorlds, from, from, to - from);
+                    _instanceBuffer.SetData(objectToWorlds, from, from, to - from, "VpIndexedIndirectDrawBatch.cs:1632");
                     InstanceGeneration++;
                     InstanceTransformSetDataCalls++;
-                    _instanceClipBuffer.SetData(clips, from, from, to - from);
+                    _instanceClipBuffer.SetData(clips, from, from, to - from, "VpIndexedIndirectDrawBatch.cs:1635");
                     ClipGeneration++;
                     InstanceClipSetDataCalls++;
                     InstanceSetDataCalls += 2;
@@ -1678,7 +1669,7 @@ namespace Zantetsu.Rendering
         // The commands of [from, to) staged as this batch sends them -- the two argument buffers, or the selection's
         // commands -- each with the start its slot says, and sent as that one range. Answers the buffer writes made.
         private int SendSlotCommands(
-            ReadOnlySpan<VpIndirectCommand> commands, ReadOnlySpan<int> startInstances, int from, int to, bool singlePassInstanced)
+            ReadOnlySpan<VpIndirectCommand> commands, ReadOnlySpan<int> startInstances, int from, int to, bool singlePassInstanced, VpUploadKind kind)
         {
             int count = to - from;
             if (_cull != null)
@@ -1703,12 +1694,12 @@ namespace Zantetsu.Rendering
 
                 if (_cullStaging != null)
                 {
-                    _cullCommandBuffer.SetData(_cullStaging.First(to), from, from, count);
+                    _cullCommandBuffer.SetData(_cullStaging.First(to), from, from, count, "VpIndexedIndirectDrawBatch.cs:1706", kind);
                     CullCommandGeneration++;
                 }
                 else
                 {
-                    _cullCommandBuffer.SetData(_cullCommands, from, from, count);
+                    _cullCommandBuffer.SetData(_cullCommands, from, from, count, "VpIndexedIndirectDrawBatch.cs:1711", kind);
                     CullCommandGeneration++;
                 }
 
@@ -1746,13 +1737,13 @@ namespace Zantetsu.Rendering
 
             if (_forwardStaging != null)
             {
-                _forwardArgumentBuffer.SetData(_forwardStaging.First(to), from, from, count);
-                _shadowArgumentBuffer.SetData(_shadowStaging.First(to), from, from, count);
+                _forwardArgumentBuffer.SetData(_forwardStaging.First(to), from, from, count, "VpIndexedIndirectDrawBatch.cs:1749");
+                _shadowArgumentBuffer.SetData(_shadowStaging.First(to), from, from, count, "VpIndexedIndirectDrawBatch.cs:1750");
             }
             else
             {
-                _forwardArgumentBuffer.SetData(_forwardArguments, from, from, count);
-                _shadowArgumentBuffer.SetData(_shadowArguments, from, from, count);
+                _forwardArgumentBuffer.SetData(_forwardArguments, from, from, count, "VpIndexedIndirectDrawBatch.cs:1754");
+                _shadowArgumentBuffer.SetData(_shadowArguments, from, from, count, "VpIndexedIndirectDrawBatch.cs:1755");
             }
 
             return 2;
@@ -1821,34 +1812,34 @@ namespace Zantetsu.Rendering
                     visible = VpWholeWrite.Zeros<uint>("visible instances", InstanceCapacity);
                     cullArguments = VpWholeWrite.Zeros<uint>("cull arguments", CommandCapacity * _cull.ArgumentStride / sizeof(uint));
                     VpWholeWrite.Step("write cull commands");
-                    _cullCommandBuffer.SetData(cullCommands, 0, 0, CommandCapacity);
+                    _cullCommandBuffer.SetData(cullCommands, 0, 0, CommandCapacity, "VpIndexedIndirectDrawBatch.cs:1824", VpUploadKind.Initial);
                     CullCommandGeneration++;
                     for (int v = 0; v < _cullViews.Length; v++)
                     {
                         VpWholeWrite.Step("write a view's lists and arguments");
-                        _cullViews[v].forwardVisible.SetData(visible, 0, 0, InstanceCapacity);
+                        _cullViews[v].forwardVisible.SetData(visible, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1829", VpUploadKind.Initial);
                         CullViewGeneration++;
-                        _cullViews[v].forwardArguments.SetData(cullArguments, 0, 0, cullArguments.Length);
+                        _cullViews[v].forwardArguments.SetData(cullArguments, 0, 0, cullArguments.Length, "VpIndexedIndirectDrawBatch.cs:1831", VpUploadKind.Initial);
                         CullViewGeneration++;
-                        _cullViews[v].shadowVisible.SetData(visible, 0, 0, InstanceCapacity);
+                        _cullViews[v].shadowVisible.SetData(visible, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1833", VpUploadKind.Initial);
                         CullViewGeneration++;
-                        _cullViews[v].shadowArguments.SetData(cullArguments, 0, 0, cullArguments.Length);
+                        _cullViews[v].shadowArguments.SetData(cullArguments, 0, 0, cullArguments.Length, "VpIndexedIndirectDrawBatch.cs:1835", VpUploadKind.Initial);
                         CullViewGeneration++;
                     }
                 }
                 else
                 {
                     VpWholeWrite.Step("write forward arguments");
-                    _forwardArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                    _forwardArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity, "VpIndexedIndirectDrawBatch.cs:1842", VpUploadKind.Initial);
                     VpWholeWrite.Step("write shadow arguments");
-                    _shadowArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity);
+                    _shadowArgumentBuffer.SetData(arguments, 0, 0, CommandCapacity, "VpIndexedIndirectDrawBatch.cs:1844", VpUploadKind.Initial);
                 }
 
                 VpWholeWrite.Step("write transforms");
-                _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity);
+                _instanceBuffer.SetData(transforms, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1848", VpUploadKind.Initial);
                 InstanceGeneration++;
                 VpWholeWrite.Step("write clips");
-                _instanceClipBuffer.SetData(clips, 0, 0, InstanceCapacity);
+                _instanceClipBuffer.SetData(clips, 0, 0, InstanceCapacity, "VpIndexedIndirectDrawBatch.cs:1851", VpUploadKind.Initial);
                 ClipGeneration++;
             }
             finally
@@ -1914,9 +1905,9 @@ namespace Zantetsu.Rendering
             {
                 for (int v = 0; v < _cullViews.Length; v++)
                 {
-                    _cullViews[v].forwardArguments.SetData(zeros, 0, 0, zeros.Length);
+                    _cullViews[v].forwardArguments.SetData(zeros, 0, 0, zeros.Length, "VpIndexedIndirectDrawBatch.cs:1917");
                     CullViewGeneration++;
-                    _cullViews[v].shadowArguments.SetData(zeros, 0, 0, zeros.Length);
+                    _cullViews[v].shadowArguments.SetData(zeros, 0, 0, zeros.Length, "VpIndexedIndirectDrawBatch.cs:1919");
                     CullViewGeneration++;
                 }
             }
@@ -2029,7 +2020,7 @@ namespace Zantetsu.Rendering
             WriteArguments(commands, commandCount, objectToWorlds, singlePassInstanced, out Bounds worldBounds);
             if (instanceTotal > 0)
             {
-                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+                _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2032");
                 InstanceGeneration++;
 
                 // No clips given is the ordinary display: every instance takes a record that clips nothing and
@@ -2045,7 +2036,7 @@ namespace Zantetsu.Rendering
                     _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
                 }
 
-                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
+                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal, "VpIndexedIndirectDrawBatch.cs:2048");
                 ClipGeneration++;
                 InstanceSetDataCalls += 2;
                 InstanceTransfers++;
@@ -2125,13 +2116,13 @@ namespace Zantetsu.Rendering
             {
                 if (_forwardStaging != null)
                 {
-                    _forwardArgumentBuffer.SetData(_forwardStaging.First(commandCount), 0, 0, commandCount);
-                    _shadowArgumentBuffer.SetData(_shadowStaging.First(commandCount), 0, 0, commandCount);
+                    _forwardArgumentBuffer.SetData(_forwardStaging.First(commandCount), 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2128");
+                    _shadowArgumentBuffer.SetData(_shadowStaging.First(commandCount), 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2129");
                 }
                 else
                 {
-                    _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount);
-                    _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount);
+                    _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2133");
+                    _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2134");
                 }
 
                 ArgumentSetDataCalls += 2;
@@ -2168,12 +2159,12 @@ namespace Zantetsu.Rendering
             {
                 if (_cullStaging != null)
                 {
-                    _cullCommandBuffer.SetData(_cullStaging.First(commandCount), 0, 0, commandCount);
+                    _cullCommandBuffer.SetData(_cullStaging.First(commandCount), 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2171");
                     CullCommandGeneration++;
                 }
                 else
                 {
-                    _cullCommandBuffer.SetData(_cullCommands, 0, 0, commandCount);
+                    _cullCommandBuffer.SetData(_cullCommands, 0, 0, commandCount, "VpIndexedIndirectDrawBatch.cs:2176");
                     CullCommandGeneration++;
                 }
 
@@ -2230,6 +2221,7 @@ namespace Zantetsu.Rendering
 
         private void DispatchCull(CommandBuffer commands, CullView target, VpCullConditions conditions)
         {
+            if (!VpGpuStop.Dispatch()) return;   // stop stage 2: nothing of the cull is recorded, the parameters included
             ComputeShader shader = _cull.Shader;
             int kernel = _cull.Kernel;
             commands.SetComputeIntParam(shader, CommandCountId, CommandCount);
@@ -2357,7 +2349,7 @@ namespace Zantetsu.Rendering
                 lightProbeUsage = LightProbeUsage.Off,
                 reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }
 
         /// <summary>
@@ -2428,7 +2420,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }
 
         public void Dispose()

@@ -124,11 +124,9 @@ namespace Zantetsu.Rendering
             try
             {
                 volumes = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity, stagingBacking);
-                capVertexBuffer = new GraphicsBuffer(
-                    GraphicsBuffer.Target.Structured, capVertexCapacity, sizeof(float) * 4);
-                capVertexBuffer.name = "VP Stencil Cap Vertices";
-                capIndexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, capIndexCapacity, sizeof(uint));
-                capIndexBuffer.name = "VP Stencil Cap Indices";
+                capVertexBuffer = VpGpuStop.Buffer(
+                    GraphicsBuffer.Target.Structured, capVertexCapacity, sizeof(float) * 4, "VP Stencil Cap Vertices");
+                capIndexBuffer = VpGpuStop.Buffer(GraphicsBuffer.Target.Index, capIndexCapacity, sizeof(uint), "VP Stencil Cap Indices");
 
                 ColorCapacity = colorCapacity;
                 CapVertexCapacity = capVertexCapacity;
@@ -173,9 +171,9 @@ namespace Zantetsu.Rendering
                 vertices = VpWholeWrite.Zeros<Vector4>("cap vertices", CapVertexCapacity);
                 indices = VpWholeWrite.Zeros<uint>("cap indices", CapIndexCapacity);
                 VpWholeWrite.Step("write cap vertices");
-                _capVertexBuffer.SetData(vertices, 0, 0, CapVertexCapacity);
+                _capVertexBuffer.SetData(vertices, 0, 0, CapVertexCapacity, "VpStencilCapBatch.cs:176", VpUploadKind.Initial);
                 VpWholeWrite.Step("write cap indices");
-                _capIndexBuffer.SetData(indices, 0, 0, CapIndexCapacity);
+                _capIndexBuffer.SetData(indices, 0, 0, CapIndexCapacity, "VpStencilCapBatch.cs:178", VpUploadKind.Initial);
             }
             finally
             {
@@ -250,7 +248,7 @@ namespace Zantetsu.Rendering
                             staged[i] = new Vector4(vertex.x, vertex.y, vertex.z, 1f);
                         }
 
-                        _capVertexBuffer.SetData(_capVertexStaging.First(capVertexCount), 0, 0, capVertexCount);
+                        _capVertexBuffer.SetData(_capVertexStaging.First(capVertexCount), 0, 0, capVertexCount, "VpStencilCapBatch.cs:253");
                     }
                     else
                     {
@@ -260,7 +258,7 @@ namespace Zantetsu.Rendering
                             _capVertices[i] = new Vector4(vertex.x, vertex.y, vertex.z, 1f);
                         }
 
-                        _capVertexBuffer.SetData(_capVertices, 0, 0, capVertexCount);
+                        _capVertexBuffer.SetData(_capVertices, 0, 0, capVertexCount, "VpStencilCapBatch.cs:263");
                     }
 
                     BufferWrites++;
@@ -269,7 +267,7 @@ namespace Zantetsu.Rendering
                 if (capIndexCount > 0)
                 {
                     // The indices were checked to be within the vertices, so none is negative: read as unsigned as they stand.
-                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount);
+                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount, "VpStencilCapBatch.cs:272");
                     BufferWrites++;
                 }
             }
@@ -341,7 +339,7 @@ namespace Zantetsu.Rendering
                 {
                     if (capVertexCount > 0)
                     {
-                        _capVertexBuffer.SetData(capVertices, 0, 0, capVertexCount);
+                        _capVertexBuffer.SetData(capVertices, 0, 0, capVertexCount, "VpStencilCapBatch.cs:344");
                         BufferWrites++;
                         CapLayoutUploads++;
                         CapLayoutVertices += capVertexCount;
@@ -353,7 +351,7 @@ namespace Zantetsu.Rendering
                 if (capIndexCount > 0)
                 {
                     // The indices were checked to be within the vertices, so none is negative: read as unsigned as they stand.
-                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount);
+                    _capIndexBuffer.SetData(capIndices.Reinterpret<uint>(), 0, 0, capIndexCount, "VpStencilCapBatch.cs:356");
                     BufferWrites++;
                 }
             }
@@ -621,13 +619,13 @@ namespace Zantetsu.Rendering
 
                 if (capVertexCount > 0)
                 {
-                    _capVertexBuffer.SetData(_capVertices, 0, 0, capVertexCount);
+                    _capVertexBuffer.SetData(_capVertices, 0, 0, capVertexCount, "VpStencilCapBatch.cs:624");
                     BufferWrites++;
                 }
 
                 if (capIndexCount > 0)
                 {
-                    _capIndexBuffer.SetData(_capIndices, 0, 0, capIndexCount);
+                    _capIndexBuffer.SetData(_capIndices, 0, 0, capIndexCount, "VpStencilCapBatch.cs:630");
                     BufferWrites++;
                 }
             }
@@ -894,7 +892,7 @@ namespace Zantetsu.Rendering
                         shadowCastingMode = ShadowCastingMode.Off,
                         receiveShadows = false,
                     };
-                    Graphics.RenderPrimitives(initParams, MeshTopology.Triangles, 3, eyeInstances);
+                    if (VpGpuStop.Draw()) Graphics.RenderPrimitives(initParams, MeshTopology.Triangles, 3, eyeInstances);
                     StencilInitIssues++;
 
                     // 2. Every volume of this colour, in one call over this colour's command range.
@@ -929,7 +927,7 @@ namespace Zantetsu.Rendering
                             lightProbeUsage = LightProbeUsage.Off,
                             reflectionProbeUsage = ReflectionProbeUsage.Off,
                         };
-                        Graphics.RenderPrimitivesIndexed(
+                        if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexed(
                             capParams, MeshTopology.Triangles, _capIndexBuffer, color.capIndexCount,
                             color.capIndexStart, eyeInstances);
                         CapIssues++;
@@ -954,8 +952,8 @@ namespace Zantetsu.Rendering
 
             _disposed = true;
             _volumes.Dispose();
-            _capVertexBuffer.Dispose();
-            _capIndexBuffer.Dispose();
+            _capVertexBuffer?.Dispose();
+            _capIndexBuffer?.Dispose();
             _capVertexStaging?.Dispose();
         }
 

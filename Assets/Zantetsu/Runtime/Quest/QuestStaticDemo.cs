@@ -32,6 +32,7 @@ namespace Zantetsu.Quest
             public bool nativeShareGpuConstants = true;
             public bool nativeIndirectCount = true;    // DESIGN 4.5.10 (D-217): the command compaction is asked for by default; false keeps the fixed draw
             public bool nativeIndirectCountSelfTest = false; // diagnosis: the wave kernel's self-test with a readback, before the run; a failure keeps the fixed draw
+            public int gpuStopStage = 0;               // diagnosis (unit 8-C): VpGpuStop stage 0..4, applied before the scene loads; never a product option
             public bool nativeIndirectCountVerify = false;   // the experiment's GPU check of every compaction, read back for the log (a check run, not a measurement)
             public bool nativeIndirectCountDrill = false;    // the experiment's rest-and-resume drill: the camera, the shadows and the motion pass stopped for a few frames in turn (a check run)
             public int nativeIndirectCountFirstSlot = 0;     // diagnosis (2026-10-10): the count slot a pass's first run takes; 1 draws the scene's one run from countBufferOffset 4 (a check run)
@@ -56,9 +57,28 @@ namespace Zantetsu.Quest
             SandboxScenarioChoice choice = SandboxScenario.Current;
             if (choice.Failure != null || choice.Kind != SandboxScenarioKind.StaticWait) return;
             string file = Path.Combine(Application.persistentDataPath, "quest3s-config.json");
-            if (File.Exists(file)) Zantetsu.Rendering.VpNativeDrawSetup.Requested = JsonUtility.FromJson<Config>(File.ReadAllText(file))?.mode == "vp3c-native";
+            if (!File.Exists(file)) return;
+            Config early = JsonUtility.FromJson<Config>(File.ReadAllText(file));
+            Zantetsu.Rendering.VpNativeDrawSetup.Requested = early?.mode == "vp3c-native";
+            // The stop stage (unit 8-C) must be in force before CutWorldRoot.Build makes the display at scene load.
+            if (early != null && early.gpuStopStage != 0)
+            {
+                Zantetsu.Rendering.VpGpuStop.Set(early.gpuStopStage);
+                Debug.Log("QUEST STATIC: " + Zantetsu.Rendering.VpGpuStop.Describe());
+                // Stage 1: the scene's own renderers are held off when the scene has loaded, before its first frame (the
+                // inventory still lists them). sceneLoaded comes after the scene objects' Awake and before any render.
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded += HoldSceneRenderersForStop;
+            }
 #endif
         }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private static void HoldSceneRenderersForStop(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            int held = Zantetsu.Rendering.VpGpuStop.SuppressSceneRenderers();
+            Debug.Log("QUEST STATIC: stop stage " + Zantetsu.Rendering.VpGpuStop.Stage + ": " + held + " renderers of scene '" + scene.name + "' held off before its first frame");
+        }
+#endif
 
         /// <summary>
         /// The Quest's entry for the static scene (DESIGN 3.4), called by <see cref="SandboxScenario"/> once the
@@ -100,6 +120,7 @@ namespace Zantetsu.Quest
             Zantetsu.Rendering.VpNativeDrawPlugin.VulkanIndirectCount = _config.nativeIndirectCount;
             Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled = _config.nativeIndirectCount && _config.nativeIndirectCountVerify;
             Zantetsu.Rendering.VpCommandCompaction.FirstSlot = _config.nativeIndirectCount ? _config.nativeIndirectCountFirstSlot : 0;
+            Debug.Log("QUEST STATIC: " + Zantetsu.Rendering.VpGpuStop.Describe() + " (configured gpuStopStage=" + _config.gpuStopStage + ")");
             Debug.Log("QUEST STATIC: indirectCount=" + _config.nativeIndirectCount + " verify=" + Zantetsu.Rendering.VpCommandCompaction.VerificationEnabled
                 + " firstSlot=" + Zantetsu.Rendering.VpCommandCompaction.FirstSlot);
             if (_config.nativeIndirectCount && _config.nativeIndirectCountSelfTest)

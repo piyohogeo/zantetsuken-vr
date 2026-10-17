@@ -896,7 +896,14 @@ namespace Zantetsu.Sandbox
                 // The registration: only in the display's way. Spread over frames; each frame's share is bounded.
                 int showRefused = 0, registrationFrames = 0;
                 double registrationMs = 0;
-                if (settings.mode != Mode.Unity)
+                if (settings.mode != Mode.Unity && Zantetsu.Rendering.VpGpuStop.WithholdAllocations)
+                {
+                    // Stop stage 4 (unit 8-C): no display buffer was made, so nothing is shown; the run goes on to its measurement
+                    // wait with the scene's renderers held off (stage 1) -- not a refusal, a condition.
+                    Zantetsu.Rendering.VpGpuStop.NoteRegistrationDone();
+                    Note("registration skipped: " + Zantetsu.Rendering.VpGpuStop.Describe());
+                }
+                else if (settings.mode != Mode.Unity)
                 {
                     VpDisplay = new SceneDrawVpDisplay(world);
                     int next = 0;
@@ -931,6 +938,8 @@ namespace Zantetsu.Sandbox
                     }
 
                     VpDisplay.ReleaseScaledCopies();
+                    Zantetsu.Rendering.VpGpuStop.NoteRegistrationDone();   // stop stage 2: the display's frame update and the uploads from here are frame work
+                    Note("stop stages after the registration: " + Zantetsu.Rendering.VpGpuStop.Describe());
                     Note("registration: shown " + VpDisplay.ShownCount + " of " + Inventory.Targets.Count + " (draw commands " + VpDisplay.Commands + ", vertices " + VpDisplay.Vertices + ", indices " + VpDisplay.Indices
                         + "), refused when shown " + showRefused + "; " + registrationFrames + " frames, " + registrationMs.ToString("F1", Inv) + " ms in them (append " + (VpDisplay.AppendSeconds * 1000).ToString("F1", Inv)
                         + " ms, show and first transfer " + (VpDisplay.ShowSeconds * 1000).ToString("F1", Inv) + " ms); the targets' renderers are off");
