@@ -265,6 +265,22 @@ namespace Zantetsu.Sandbox
             _held = null;
         }
 
+        /// <summary>
+        /// An interruption's boundary (D-241): a drag in progress is dropped, a select held is no press until it was
+        /// let go and pressed anew, a resume asked but not taken is forgotten, and the pointer is hidden. The picture
+        /// stays as it is.
+        /// </summary>
+        public void CancelInput()
+        {
+            _held = null;
+            _selectWasDown = true;
+            _resumeAsked = false;
+            if (_cursor != null) _cursor.gameObject.SetActive(false);
+        }
+
+        /// <summary>The row being dragged now, or null (tests).</summary>
+        internal Row HeldRow => _held;
+
         /// <summary>Whether the resume button was pressed since this was last asked.</summary>
         public bool ConsumeResume()
         {

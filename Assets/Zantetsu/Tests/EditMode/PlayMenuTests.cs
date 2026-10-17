@@ -902,6 +902,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(GamePause.System && !GamePause.Manual, Is.True);
             GamePause.ResetForTest();
 
+            // After an interruption the button must be seen let go in a read frame before a press counts (D-241).
+            Tick(menu);
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen && GamePause.Manual, Is.True);
             GamePause.SetSystem(true);

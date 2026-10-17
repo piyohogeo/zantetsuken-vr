@@ -21,15 +21,32 @@ namespace Zantetsu.Core
     /// counted as paused (its delta reads zero).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Why the game is paused (DESIGN 4.6, D-241): each reason is held on its own and ended on its own, and the game
+    /// is paused while any holds. Manual is the player's (the menu, the consent dialog); Application is the
+    /// application's own pause (OnApplicationPause: the app sent to the background, the headset asleep); Focus is the
+    /// XR session's input focus lost (the system UI over the game). Application and Focus are the system reasons.
+    /// </summary>
+    [Flags]
+    public enum GamePauseReason
+    {
+        None = 0,
+        Manual = 1,
+        Application = 2,
+        Focus = 4,
+    }
+
     public sealed class GamePauseState
     {
+        private const GamePauseReason SystemReasons = GamePauseReason.Application | GamePauseReason.Focus;
+
         private readonly Func<double> _unscaledNow;
         private readonly Func<double> _realtimeNow;
         private readonly Func<int> _frame;
 
         private bool _manual;
-        private bool _system;
-        private bool _systemLeaving;
+        private GamePauseReason _systemHeld;      // the system reasons holding now
+        private GamePauseReason _systemLeaving;   // the system reasons whose end waits for the next frame
         private int _systemLeaveFrame;
         private int _zeroDeltaFrame = int.MinValue;
         private double _pausedUnscaled;
@@ -52,16 +69,33 @@ namespace Zantetsu.Core
         /// <summary>Raised when the manual pause begins (true) and ends (false), whatever the system pause is.</summary>
         public event Action<bool> ManualChanged;
 
+        /// <summary>
+        /// Raised when the system pause begins (true: the first system reason held) and ends (false: the last system
+        /// reason's end taken), whatever the manual pause is -- so a menu already holding the game sees the system's
+        /// interruption too, which <see cref="PausedChanged"/> would not tell it.
+        /// </summary>
+        public event Action<bool> SystemChanged;
+
         /// <summary>The player's pause.</summary>
         public bool Manual => _manual;
 
-        /// <summary>The application's pause, until the first frame after it ended has begun.</summary>
+        /// <summary>The system pause -- the application's, or the XR focus lost -- until the first frame after its last reason ended has begun.</summary>
         public bool System
         {
             get
             {
                 Refresh();
-                return _system;
+                return _systemHeld != GamePauseReason.None;
+            }
+        }
+
+        /// <summary>Every reason holding now (a system reason stays held until the frame after its end).</summary>
+        public GamePauseReason Reasons
+        {
+            get
+            {
+                Refresh();
+                return (_manual ? GamePauseReason.Manual : GamePauseReason.None) | _systemHeld;
             }
         }
 
@@ -70,9 +104,15 @@ namespace Zantetsu.Core
             get
             {
                 Refresh();
-                return _manual || _system;
+                return _manual || _systemHeld != GamePauseReason.None;
             }
         }
+
+        /// <summary>
+        /// The reasons requested now, as the requests stand: a system reason whose end waits for its frame is not
+        /// among them. Read without taking any waiting end -- for a log, which must advance nothing.
+        /// </summary>
+        public GamePauseReason Requested => (_manual ? GamePauseReason.Manual : GamePauseReason.None) | (_systemHeld & ~_systemLeaving);
 
         /// <summary>Whether any pause has happened since this state was made: until then every clock is the engine's own.</summary>
         public bool EverPaused { get; private set; }
@@ -88,7 +128,7 @@ namespace Zantetsu.Core
                 return;
             }
 
-            bool before = _manual || _system;
+            bool before = _manual || _systemHeld != GamePauseReason.None;
             _manual = paused;
             if (paused)
             {
@@ -99,53 +139,121 @@ namespace Zantetsu.Core
             ManualChanged?.Invoke(paused);
         }
 
-        public void SetSystem(bool paused)
+        /// <summary>The application's own pause (OnApplicationPause): the Application reason.</summary>
+        public bool SetSystem(bool paused) => SetSystemReason(GamePauseReason.Application, paused);
+
+        /// <summary>The XR session's input focus lost (true) or back (false): the Focus reason.</summary>
+        public bool SetFocusLost(bool lost) => SetSystemReason(GamePauseReason.Focus, lost);
+
+        /// <summary>
+        /// Holds or ends one system reason. Holding one that holds already changes nothing (a repeated notification);
+        /// holding one whose end was waiting for the next frame cancels that end (it never ended). An end is taken at
+        /// the first frame after it, by <see cref="Refresh"/>, and only the last reason's end ends the system pause:
+        /// the reasons' order of ending does not matter, and no reason's end is undone by another's.
+        /// <para>
+        /// Returns whether the reason's request changed: held anew (or held again while its end waited), or let go
+        /// while it was held. A repeated hold, a repeated release, or the release of a reason not held is false. The
+        /// request is read before anything else, so that telling it takes no waiting end first.
+        /// </para>
+        /// </summary>
+        public bool SetSystemReason(GamePauseReason reason, bool paused)
         {
-            Refresh();
-            if (paused)
+            if ((reason & SystemReasons) == 0 || (reason & (reason - 1)) != 0) throw new ArgumentException("one system reason: Application or Focus", nameof(reason));
+            bool requestedBefore = (_systemHeld & reason) != 0 && (_systemLeaving & reason) == 0;
+            if (paused == requestedBefore)
             {
-                // Paused again before the frame that would have taken the end: it never ended.
-                _systemLeaving = false;
-                if (_system)
+                // Nothing of the request changes; the frame's refresh is still owed (a repeated hold took it before).
+                if (paused)
                 {
-                    return;
+                    Refresh();
                 }
 
-                bool before = _manual || _system;
-                _system = true;
-                SystemPauses++;
-                Apply(before);
-                return;
+                return false;
             }
 
-            if (_system && !_systemLeaving)
+            if (paused)
             {
-                _systemLeaving = true;
-                _systemLeaveFrame = _frame();
+                // Paused again before the frame that would have taken the end -- or in that very frame, before the
+                // frame's refresh took it: it never ended. The cancel comes before the refresh, so that a reason told
+                // in the frame after its end's frame neither resumes nor pauses anything: it holds on. (The observers
+                // of a reason run before the frame's first refresh: XrFocusPause before GamePause's own listener.)
+                _systemLeaving &= ~reason;
+                if ((_systemHeld & reason) != 0)
+                {
+                    Refresh();
+                    return true;   // held again: the waiting end is cancelled
+                }
+
+                // A reason held while another's end waits for its frame: the new reason is in the set before that end
+                // is taken, so the pause goes on from one reason to the other with no resumption between them and no
+                // notification but the first pause's.
+                bool before = _manual || _systemHeld != GamePauseReason.None;
+                bool systemBefore = _systemHeld != GamePauseReason.None;
+                _systemHeld |= reason;
+                if (!systemBefore)
+                {
+                    SystemPauses++;
+                }
+
+                Apply(before);
+                if (!systemBefore)
+                {
+                    SystemChanged?.Invoke(true);
+                }
+
+                Refresh();
+                return true;
             }
+
+            Refresh();
+            _systemLeaving |= reason;
+            _systemLeaveFrame = _frame();
+            return true;
         }
 
         /// <summary>
-        /// Takes a system pause's end once a frame has begun after it. Every reading does this first; a listener that
-        /// calls it at each frame's beginning makes the frame it happens in the same for every reader.
+        /// Takes a system reason's end once a frame has begun after it. Every reading does this first; a listener that
+        /// calls it at each frame's beginning makes the frame it happens in the same for every reader. While another
+        /// system reason still holds, the pause goes on: the frame that ends the last one is the one with no progress.
         /// </summary>
         public void Refresh()
         {
-            if (!_systemLeaving || _frame() <= _systemLeaveFrame)
+            if (_systemLeaving == GamePauseReason.None || _frame() <= _systemLeaveFrame)
             {
                 return;
             }
 
-            bool before = _manual || _system;
-            _systemLeaving = false;
-            _system = false;
+            bool before = _manual || _systemHeld != GamePauseReason.None;
+            _systemHeld &= ~_systemLeaving;
+            _systemLeaving = GamePauseReason.None;
+            if (_systemHeld != GamePauseReason.None)
+            {
+                return;   // another system reason holds on: nothing ends
+            }
+
             _zeroDeltaFrame = _frame();
             Apply(before);
+            SystemChanged?.Invoke(false);
+        }
+
+        /// <summary>For tests: the next frame has begun, but its refresh has not run yet (a waiting end is now takeable).</summary>
+        internal void BeginNextFrameForTest()
+        {
+            if (_systemLeaving == GamePauseReason.None) return;
+            _systemLeaveFrame = _frame() - 1;
+        }
+
+        /// <summary>For tests: takes every waiting system end now, as the next frame's beginning would.</summary>
+        internal void TakeSystemEndsForTest()
+        {
+            if (_systemLeaving == GamePauseReason.None) return;
+            _systemLeaveFrame = _frame() - 1;
+            Refresh();
         }
 
         private void Apply(bool before)
         {
-            bool now = _manual || _system;
+            bool now = _manual || _systemHeld != GamePauseReason.None;
             if (now == before)
             {
                 return;
@@ -174,7 +282,7 @@ namespace Zantetsu.Core
             get
             {
                 Refresh();
-                return _manual || _system ? _frozenUnscaled : _unscaledNow() - _pausedUnscaled;
+                return _manual || _systemHeld != GamePauseReason.None ? _frozenUnscaled : _unscaledNow() - _pausedUnscaled;
             }
         }
 
@@ -184,7 +292,7 @@ namespace Zantetsu.Core
             get
             {
                 Refresh();
-                return _manual || _system ? _frozenRealtime : _realtimeNow() - _pausedRealtime;
+                return _manual || _systemHeld != GamePauseReason.None ? _frozenRealtime : _realtimeNow() - _pausedRealtime;
             }
         }
 
@@ -198,7 +306,7 @@ namespace Zantetsu.Core
             get
             {
                 Refresh();
-                return _manual || _system ? _frozenFrame : _frame() - _pausedFrames;
+                return _manual || _systemHeld != GamePauseReason.None ? _frozenFrame : _frame() - _pausedFrames;
             }
         }
 
@@ -209,7 +317,7 @@ namespace Zantetsu.Core
         public float UnscaledDelta(float engineDelta)
         {
             Refresh();
-            return _manual || _system || _frame() == _zeroDeltaFrame ? 0f : engineDelta;
+            return _manual || _systemHeld != GamePauseReason.None || _frame() == _zeroDeltaFrame ? 0f : engineDelta;
         }
 
         /// <summary>The real seconds paused so far, the pause going on now included.</summary>
@@ -218,7 +326,7 @@ namespace Zantetsu.Core
             get
             {
                 Refresh();
-                return _manual || _system ? _realtimeNow() - _frozenRealtime : _pausedRealtime;
+                return _manual || _systemHeld != GamePauseReason.None ? _realtimeNow() - _frozenRealtime : _pausedRealtime;
             }
         }
     }
@@ -271,6 +379,7 @@ namespace Zantetsu.Core
                 () => Time.unscaledTimeAsDouble, () => Time.realtimeSinceStartupAsDouble, () => Time.frameCount);
             state.PausedChanged += OnPausedChanged;
             state.ManualChanged += paused => ManualChanged?.Invoke(paused);
+            state.SystemChanged += paused => { Log("system pause " + (paused ? "began" : "ended")); SystemChanged?.Invoke(paused); };
             return state;
         }
 
@@ -280,16 +389,47 @@ namespace Zantetsu.Core
         /// <summary>Progress stopped (true) or went on again (false).</summary>
         public static event Action<bool> PausedChanged;
 
+        /// <summary>The system pause (the application's, or the XR focus lost) began (true) or ended (false), whatever the manual pause is.</summary>
+        public static event Action<bool> SystemChanged;
+
+        public const string LogPrefix = "GAME PAUSE: ";
+
         public static bool IsPaused => s_state.IsPaused;
         public static bool Manual => s_state.Manual;
         public static bool System => s_state.System;
+        public static GamePauseReason Reasons => s_state.Reasons;
         public static bool EverPaused => s_state.EverPaused;
         public static int ManualPauses => s_state.ManualPauses;
         public static int SystemPauses => s_state.SystemPauses;
         public static double PausedSeconds => s_state.PausedSeconds;
 
         public static void SetManual(bool paused) => s_state.SetManual(paused);
-        public static void SetSystem(bool paused) => s_state.SetSystem(paused);
+        /// <summary>The application's pause (the Application reason); true when the request changed (and was logged).</summary>
+        public static bool SetSystem(bool paused) => SetSystemReason(GamePauseReason.Application, paused);
+
+        /// <summary>The XR focus lost or back (the Focus reason); true when the request changed (and was logged).</summary>
+        public static bool SetFocusLost(bool lost) => SetSystemReason(GamePauseReason.Focus, lost);
+
+        // Every reason's own request is one log line too (never a frame): a reason that comes or goes while another
+        // holds changes nothing of the progress, and the lines of the progress alone could not tell it. The setter
+        // says whether the request changed; the log reads the requests as they stand and takes no waiting end, so
+        // that a reason told in the frame after its end's frame holds on (never a resumption before the hold).
+        private static bool SetSystemReason(GamePauseReason reason, bool paused)
+        {
+            if (!s_state.SetSystemReason(reason, paused))
+            {
+                return false;
+            }
+
+            Debug.Log(LogPrefix + "reason " + reason + (paused ? " held" : " released (its end is taken at the next frame)") + "; requested now=" + s_state.Requested + " (frame " + Time.frameCount + ")");
+            return true;
+        }
+
+        // One line a transition, never a frame: what holds now, and what progress does.
+        private static void Log(string what)
+        {
+            Debug.Log(LogPrefix + what + "; reasons=" + s_state.Reasons + "; paused=" + s_state.IsPaused + " (frame " + Time.frameCount + ")");
+        }
 
         public static float UnscaledTime => s_state.EverPaused ? (float)s_state.UnscaledTime : Time.unscaledTime;
         public static double UnscaledTimeAsDouble => s_state.EverPaused ? s_state.UnscaledTime : Time.unscaledTimeAsDouble;
@@ -326,6 +466,7 @@ namespace Zantetsu.Core
                 s_timeScaleHeld = false;
             }
 
+            Log("progress " + (paused ? "paused" : "resumed"));
             PausedChanged?.Invoke(paused);
         }
 
@@ -342,6 +483,7 @@ namespace Zantetsu.Core
             s_state = NewState();
             ManualChanged = null;
             PausedChanged = null;
+            SystemChanged = null;
             s_listener = null;
         }
 
@@ -358,6 +500,12 @@ namespace Zantetsu.Core
             s_listener = host.AddComponent<Listener>();
         }
 
+        /// <summary>For tests: the next frame has begun and its refresh has not run yet.</summary>
+        internal static void BeginNextFrameForTest() => s_state.BeginNextFrameForTest();
+
+        /// <summary>For tests: takes the waiting system ends now, as the next frame would (the manual pause and the totals stay).</summary>
+        internal static void TakeSystemEndsForTest() => s_state.TakeSystemEndsForTest();
+
         /// <summary>For tests: ends every pause and forgets the totals, as a new session would.</summary>
         internal static void ResetForTest()
         {
@@ -368,11 +516,25 @@ namespace Zantetsu.Core
             }
 
             Action<bool> manual = ManualChanged;
+            Action<bool> system = SystemChanged;
+            Action<bool> paused = PausedChanged;
             bool wasManual = s_state.Manual;
+            bool wasSystem = s_state.System;
+            bool wasPaused = s_state.IsPaused;
             s_state = NewState();
             if (wasManual)
             {
                 manual?.Invoke(false);
+            }
+
+            if (wasSystem)
+            {
+                system?.Invoke(false);   // a listener holding for the system pause lets go, as the frame after its end would make it
+            }
+
+            if (wasPaused)
+            {
+                paused?.Invoke(false);   // and what follows the progress (the physics step) goes on, as the resumption would make it
             }
         }
 
@@ -380,7 +542,10 @@ namespace Zantetsu.Core
         /// The application's own pause is the system pause; and each frame's beginning takes a system pause's end, so
         /// that every reader of the frame sees the same state.
         /// </summary>
-        [DefaultExecutionOrder(-32000)]
+        /// <summary>The listener's order: an observer of a reason (XrFocusPause) runs before it, so that a reason told in the frame after its end's frame cancels the end before this refresh would take it.</summary>
+        public const int ListenerExecutionOrder = -32000;
+
+        [DefaultExecutionOrder(ListenerExecutionOrder)]
         private sealed class Listener : MonoBehaviour
         {
             private void OnApplicationPause(bool paused) => SetSystem(paused);

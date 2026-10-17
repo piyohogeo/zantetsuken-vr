@@ -457,6 +457,9 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
+            // The XR session's focus as a reason of the game's pause (DESIGN 4.6, D-241), before the menu: it holds the
+            // game whenever the system UI takes the input, whatever the scenario and whatever the statistics' consent.
+            XrFocusPause.Install();
             PlayMenu menu = PlayMenu.Install(kind);
 
             // Play's statistics (DESIGN 21.18): the service, and the first-run question where it was never answered.

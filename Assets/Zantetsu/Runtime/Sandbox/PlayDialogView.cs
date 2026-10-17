@@ -98,6 +98,13 @@ namespace Zantetsu.Sandbox
             if (_root != null) _root.SetActive(false);
         }
 
+        /// <summary>An interruption's boundary (D-241): a select held is no press until let go and pressed anew; the pointer is hidden. The dialog stays.</summary>
+        public void CancelInput()
+        {
+            _selectWasDown = true;
+            if (_cursor != null) _cursor.gameObject.SetActive(false);
+        }
+
         /// <summary>One frame of the pointer: 1 where the first button was pressed, 2 the second, 0 neither.</summary>
         public int Drive(in PlayMenuInputFrame input)
         {

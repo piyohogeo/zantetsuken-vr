@@ -59,6 +59,13 @@ namespace Zantetsu.Sandbox
         /// <summary>Closes the menu without a press (the menu itself going away): the game's input comes back at once.</summary>
         internal void RequireRelease() => AwaitingRelease = true;
 
+        /// <summary>
+        /// After an interruption, or a frame whose input was not read (D-241): a menu button down now is no press
+        /// until a read frame showed it let go and it is pressed anew. What the button read while the system had the
+        /// input, or while it was not read, is no evidence of a release.
+        /// </summary>
+        internal void ForgetPress() => _menuWasDown = true;
+
         public void ForceClosed()
         {
             Open = false;
@@ -299,8 +306,12 @@ namespace Zantetsu.Sandbox
             }
         }
 
+        /// <summary>How often the settings were written through (tests): once a close, once an interruption's start.</summary>
+        public static int Flushes { get; private set; }
+
         public void Flush()
         {
+            Flushes++;
             if (_persist)
             {
                 PlayerPrefs.Save();
@@ -341,6 +352,20 @@ namespace Zantetsu.Sandbox
         private PlaySettings _settings;
         private Camera _camera;
         private bool _gameInputHeldBack;
+
+        /// <summary>
+        /// Who holds the game's input away from the game (D-241): the menu, the consent dialog, the system pause.
+        /// The input is taken when the first holder comes and given back when the last one goes; no holder's coming
+        /// takes it twice, and no holder's going gives back what another still holds.
+        /// </summary>
+        [System.Flags]
+        internal enum Holder { None = 0, Menu = 1, Dialog = 2, System = 4 }
+
+        private Holder _holders;
+        private bool _inputUnavailable;
+        private PlayMenuInputUnavailable _unavailableCause;
+
+        internal Holder Holders => _holders;
 
         public static PlayMenu Instance { get; private set; }
 
@@ -392,10 +417,52 @@ namespace Zantetsu.Sandbox
             Scenario = scenario;
             _settings = new PlaySettings(scenario == SandboxScenarioKind.Play);
             _settings.Bind();
+            FollowSystemPause();
             return _settings.ApplySaved();
         }
 
         private void Update() => Tick();
+
+        private bool _followingSystemPause;
+
+        /// <summary>
+        /// Follows the system pause (D-241): its beginning holds the game's input, drops the menu's and the dialog's
+        /// pending pointer state and saves the settings once; its end gives the input back as a close does -- the
+        /// katana at once unless a menu or a dialog still holds it, the walking once the input is read and let go.
+        /// A system pause already holding when this is called is taken as beginning now.
+        /// </summary>
+        internal void FollowSystemPause()
+        {
+            if (_followingSystemPause) return;
+            _followingSystemPause = true;
+            GamePause.SystemChanged += OnSystemChanged;
+            if (GamePause.System) OnSystemChanged(true);
+        }
+
+        private void OnSystemChanged(bool began)
+        {
+            if (began)
+            {
+                _settings?.Flush();   // the settings changed so far are kept, once, whatever the pause does next
+                HoldGameInput(Holder.System);
+                _view?.CancelInput();
+                _dialog?.CancelInput();
+                Debug.Log(Prefix + "system pause began (frame " + Time.frameCount + "): input held by " + _holders + "; menu " + (_state.Open ? "open" : "closed")
+                    + ", dialog " + (_dialogOpen ? "open" : "closed") + "; settings flushed; " + GamePause.Describe());
+                return;
+            }
+
+            // The pointer's select and the menu's button as they are now are no press: what a read frame shows let go
+            // and then pressed anew counts. The walking waits for a frame whose input is read and let go.
+            _view?.CancelInput();
+            _dialog?.CancelInput();
+            _state.ForgetPress();
+            _dialogMenuWasDown = true;
+            _state.RequireRelease();
+            ReleaseGameInput(Holder.System);
+            Debug.Log(Prefix + "system pause ended (frame " + Time.frameCount + "): input held by " + _holders + "; menu " + (_state.Open ? "open" : "closed")
+                + ", dialog " + (_dialogOpen ? "open" : "closed") + "; the walking waits for the input to be read and let go; " + GamePause.Describe());
+        }
 
         /// <summary>One frame of the menu: what <c>Update</c> does, before any game input of the frame.</summary>
         internal void Tick()
@@ -408,6 +475,34 @@ namespace Zantetsu.Sandbox
 
             Transform trackingSpace = _camera != null ? _camera.transform.parent : null;
             PlayMenuInputFrame input = Input != null ? Input.Read(trackingSpace, _camera) : default;
+            if (GamePause.System)
+            {
+                // The system has the input (D-241): nothing of the menu, the dialog or the game acts on it, and what
+                // the controllers read meanwhile is no evidence of a release (the end forgets the press); the
+                // pictures stay as they are.
+                return;
+            }
+
+            if (input.inputUnavailable != _inputUnavailable || (input.inputUnavailable && input.unavailableCause != _unavailableCause))
+            {
+                // One line a transition -- read / not read, and a change of cause while not read -- never a frame.
+                _inputUnavailable = input.inputUnavailable;
+                _unavailableCause = input.unavailableCause;
+                Debug.Log(Prefix + (input.inputUnavailable ? "the input is not read: cause=" + input.unavailableCause + "; nothing is let go, nothing is pressed"
+                    : "the input is read again") + " (frame " + Time.frameCount + ")");
+            }
+
+            if (input.inputUnavailable)
+            {
+                // Not read (D-241): no pointer reaches the menu or the dialog, a drag is dropped, a select or the menu
+                // button held across this is no press afterwards, and the walking is not let go (GameInputHeld).
+                _view?.CancelInput();
+                _dialog?.CancelInput();
+                _state.ForgetPress();
+                _dialogMenuWasDown = true;
+                return;
+            }
+
             if (_dialogOpen)
             {
                 // The consent dialog (DESIGN 21.18) has the pointer to itself; the menu's button waits. The dialog is
@@ -468,6 +563,11 @@ namespace Zantetsu.Sandbox
         /// </summary>
         private bool GameInputHeld(in PlayMenuInputFrame input)
         {
+            if (input.inputUnavailable)
+            {
+                return true;   // not read is not let go (D-241): the release waits for a frame whose input is read
+            }
+
             if (input.otherGameInputHeld || input.selectDown)
             {
                 return true;
@@ -517,7 +617,7 @@ namespace Zantetsu.Sandbox
             }
 
             GamePause.SetManual(true);
-            TakeGameInput();
+            HoldGameInput(Holder.Dialog);
             if (_dialog == null)
             {
                 _dialog = new PlayDialogView();
@@ -562,9 +662,9 @@ namespace Zantetsu.Sandbox
             _dialogOpen = false;
             _dialog.Hide();
             if (agreed) _statistics.Agree(); else _statistics.Withdraw();
-            // The controllers come back as after the menu: the katana at once, the walking once the sticks were let go
-            // (the inputs taken at the opening are still the ones held back).
-            GiveKatanaBack();
+            // The controllers come back as after the menu: the katana at once (unless the system still holds it), the
+            // walking once the sticks were let go (the inputs taken at the opening are still the ones held back).
+            ReleaseGameInput(Holder.Dialog);
             _state.RequireRelease();
             GamePause.SetManual(false);
             Debug.Log(Prefix + "consent dialog closed (frame " + Time.frameCount + "): " + (agreed ? "agreed" : "declined") + "; " + GamePause.Describe());
@@ -591,7 +691,7 @@ namespace Zantetsu.Sandbox
         {
             // Before anything else of this frame reads it: the game's progress stops here.
             GamePause.SetManual(true);
-            TakeGameInput();
+            HoldGameInput(Holder.Menu);
             if (_view == null)
             {
                 _view = new PlayMenuView();
@@ -614,14 +714,17 @@ namespace Zantetsu.Sandbox
         {
             _state.RequireRelease();
             TakeGameInput();
-            GiveKatanaBack();
+            if (_holders == Holder.None)
+            {
+                GiveKatanaBack();   // the walking alone is held; the katana is nobody's to keep
+            }
         }
 
         private void Close()
         {
             _view?.Hide();
             _settings.Flush();
-            GiveKatanaBack();
+            ReleaseGameInput(Holder.Menu);
             GamePause.SetManual(false);
             Debug.Log(Prefix + "closed (frame " + Time.frameCount + "); " + GamePause.Describe());
         }
@@ -697,6 +800,47 @@ namespace Zantetsu.Sandbox
         {
             SandboxRightHandKatana katana = _katanas.Count > 0 ? _katanas[0] : FindFirstObjectByType<SandboxRightHandKatana>();
             return "Last swings (development readout; newest first)\n" + (katana != null ? katana.Swings.Describe(4) : "no katana");
+        }
+
+        // A holder comes: the input is taken for the first, and the katana's preview in the hand follows who holds.
+        private void HoldGameInput(Holder holder)
+        {
+            bool first = _holders == Holder.None;
+            _holders |= holder;
+            if (first)
+            {
+                TakeGameInput();
+            }
+
+            UpdateKatanaPreview();
+        }
+
+        // A holder goes: the katana comes back with the last one; otherwise its preview follows who still holds.
+        private void ReleaseGameInput(Holder holder)
+        {
+            _holders &= ~holder;
+            if (_holders == Holder.None)
+            {
+                GiveKatanaBack();
+            }
+            else
+            {
+                UpdateKatanaPreview();
+            }
+        }
+
+        // In play the katana is shown in the hand while the menu sets its angle -- but not while the system has the
+        // input: the hand's picture goes with the pointer then, and comes back with the focus.
+        private void UpdateKatanaPreview()
+        {
+            bool show = Scenario == SandboxScenarioKind.Play && (_holders & Holder.System) == 0;
+            foreach (SandboxRightHandKatana katana in _katanas)
+            {
+                if (katana != null)
+                {
+                    katana.ShowPoseWhileInputOff = show;
+                }
+            }
         }
 
         // What reads the controllers by itself is switched off for the menu's time, and only what was on comes back.
@@ -782,6 +926,7 @@ namespace Zantetsu.Sandbox
             _plainInputs.Clear();
             _cityInputs.Clear();
             _gameInputHeldBack = false;
+            Debug.Log(Prefix + "the walking input is the game's again (frame " + Time.frameCount + "): the input was read and let go");
         }
 
         private void OnDestroy() => Release();
@@ -789,9 +934,14 @@ namespace Zantetsu.Sandbox
         /// <summary>What the menu's end does: no pause and no input switched off is left behind it.</summary>
         internal void Release()
         {
+            if (_followingSystemPause)
+            {
+                GamePause.SystemChanged -= OnSystemChanged;
+                _followingSystemPause = false;
+            }
+
             if (_dialogOpen)
             {
-                GiveKatanaBack();
                 GamePause.SetManual(false);
             }
 
@@ -800,10 +950,11 @@ namespace Zantetsu.Sandbox
             _dialogOpen = false;
             if (_state.Open)
             {
-                GiveKatanaBack();
                 GamePause.SetManual(false);
             }
 
+            _holders = Holder.None;
+            GiveKatanaBack();
             _state.ForceClosed();
             if (_gameInputHeldBack)
             {

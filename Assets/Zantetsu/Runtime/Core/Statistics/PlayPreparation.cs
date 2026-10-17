@@ -124,5 +124,19 @@ namespace Zantetsu.Core.Statistics
         {
             return xrActive && openXr ? xrSessionFocused : desktopFocused;
         }
+
+        /// <summary>
+        /// Whether the game is to be paused for the XR focus (DESIGN 4.6, D-241): in XR by an OpenXR session, the
+        /// session's own input focus lost (the system UI over the game) pauses it; XR gone inactive after it had been
+        /// active pauses it too (a runtime restarting), rather than letting the desktop window's focus resume the
+        /// game. Never before XR was first active (the start-up, a PC without XR), and never by the desktop window's
+        /// focus: without XR the game is not paused by focus at all, and in XR the window's focus is not the headset's.
+        /// </summary>
+        public static bool PauseByFocus(bool xrActive, bool xrEverActive, bool openXr, bool xrSessionFocused)
+        {
+            if (!xrEverActive) return false;
+            if (!xrActive) return true;
+            return openXr && !xrSessionFocused;
+        }
     }
 }

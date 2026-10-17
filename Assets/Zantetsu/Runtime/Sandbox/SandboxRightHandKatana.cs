@@ -627,7 +627,25 @@ namespace Zantetsu.Sandbox
         /// Shows the katana where the hand holds it while its live input is off: the pose only, nothing of it given to
         /// the gesture. For the menu in play, so that the blade's angle can be seen while it is set.
         /// </summary>
-        internal bool ShowPoseWhileInputOff { get; set; }
+        private bool showPoseWhileInputOff;
+
+        /// <summary>
+        /// Whether the hand's pose goes on being shown while the live input is off (the menu in play). Turned off
+        /// while the input is off, the katana shown so far is hidden at once (D-241: the focus lost hides the hand).
+        /// </summary>
+        internal bool ShowPoseWhileInputOff
+        {
+            get => showPoseWhileInputOff;
+            set
+            {
+                if (showPoseWhileInputOff == value) return;
+                showPoseWhileInputOff = value;
+                if (!value && !liveInputEnabled) Hide();
+            }
+        }
+
+        /// <summary>Whether the katana is shown in the hand now (tests).</summary>
+        internal bool IsShown => katana != null && katana.gameObject.activeSelf;
 
         /// <summary>Blade-local coordinate system of the katana visual root: the core blade's.</summary>
         internal BladeFrame BladeFrame => new SlashBlade(GripToKatanaOffset, bladeLength).Frame;

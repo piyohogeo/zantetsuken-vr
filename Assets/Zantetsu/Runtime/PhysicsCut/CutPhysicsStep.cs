@@ -69,8 +69,9 @@ namespace Zantetsu.PhysicsCut
         private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
         private static double s_mainBudgetSeconds = DefaultMainBudgetSeconds;
         private static long s_frameStart;
-        private static bool s_gamePaused;
-        private static bool s_applicationPaused;
+        private static bool s_explicitPaused;      // SetPaused: a caller's own pause, ended only by that caller
+        private static bool s_applicationPaused;   // the application's own pause, by the listener below
+        private static bool s_gamePaused;          // the game's pause as a whole (Zantetsu.Core.GamePause: manual, application, XR focus)
         private static PauseListener s_pauseListener;
 
         /// <summary>The clock of this run: frequency, step, time owed, physics time and step id.</summary>
@@ -165,11 +166,37 @@ namespace Zantetsu.PhysicsCut
             for (int i = 0; i < SimulateCostHistory.Capacity; i++) s_costs.Add(seconds);
         }
 
-        /// <summary>The game's pause: while it holds, no time is owed to the physics.</summary>
+        /// <summary>
+        /// A caller's own pause of the step: while it holds, no time is owed to the physics. It is one of three
+        /// reasons -- this, the application's pause, the game's pause as a whole -- and the step runs only while none
+        /// holds; no reason's end ends another (DESIGN 4.6, D-241).
+        /// </summary>
         public static void SetPaused(bool paused)
         {
+            s_explicitPaused = paused;
+            ApplyPause();
+        }
+
+        /// <summary>The step is paused while any reason holds: the explicit pause, the application's, the game's.</summary>
+        internal static bool PauseAggregate(bool explicitPaused, bool applicationPaused, bool gamePaused) => explicitPaused || applicationPaused || gamePaused;
+
+        /// <summary>Whether the clock stands now (tests).</summary>
+        internal static bool IsClockPaused => s_clock.IsPaused;
+
+        private static void SetGamePaused(bool paused)
+        {
             s_gamePaused = paused;
-            s_clock.SetPaused(s_gamePaused || s_applicationPaused);
+            ApplyPause();
+        }
+
+        private static void ApplyPause() => s_clock.SetPaused(PauseAggregate(s_explicitPaused, s_applicationPaused, s_gamePaused));
+
+        /// <summary>Follows the game's pause as a whole (tests; in a Player this is done at the session's start).</summary>
+        internal static void FollowGamePause()
+        {
+            Zantetsu.Core.GamePause.PausedChanged -= SetGamePaused;
+            Zantetsu.Core.GamePause.PausedChanged += SetGamePaused;
+            SetGamePaused(Zantetsu.Core.GamePause.IsPaused);
         }
 
         /// <summary>
@@ -245,6 +272,7 @@ namespace Zantetsu.PhysicsCut
             s_clock = new ManualPhysicsClock(FrequencyFromCommandLine(), Stopwatch.Frequency);
             s_mainBudgetSeconds = DefaultMainBudgetSeconds;
             s_frameStart = 0;
+            s_explicitPaused = false;
             s_gamePaused = false;
             s_applicationPaused = false;
             s_pauseListener = null;
@@ -304,10 +332,10 @@ namespace Zantetsu.PhysicsCut
         {
             Loop.EnsureInstalled();
 
-            // The game's manual pause (DESIGN 4.6) pauses the step here, and nothing else of the game does: the pause
-            // of progress itself -- no cut taken, nothing published -- is each entrance's own reading of Zantetsu.Core.GamePause.
-            Zantetsu.Core.GamePause.ManualChanged -= SetPaused;
-            Zantetsu.Core.GamePause.ManualChanged += SetPaused;
+            // The game's pause as a whole (DESIGN 4.6: manual, application, XR focus) pauses the step here, beside a
+            // caller's own SetPaused and the application's pause; the pause of progress itself -- no cut taken, nothing
+            // published -- is each entrance's own reading of Zantetsu.Core.GamePause.
+            FollowGamePause();
         }
 
         private static void BeginFrame()
@@ -524,7 +552,7 @@ namespace Zantetsu.PhysicsCut
             private void OnApplicationPause(bool paused)
             {
                 s_applicationPaused = paused;
-                s_clock.SetPaused(s_gamePaused || s_applicationPaused);
+                ApplyPause();
             }
         }
 

@@ -101,6 +101,25 @@ Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> 
 
 記録（`<apk>.record\build.txt`）：package・versionName・versionCode、keystore の場所・alias・証明書 SHA-256、ソース commit、未コミット差分の有無（あれば `status.txt`／`working-tree.patch`）、ビルド条件、Unity のコマンド、ProjectSettings の復元の有無、APK の SHA-256。秘密情報は含まない。
 
+## システムによる中断と復帰（D-241）の確認手順
+
+配布ビルドは、Horizon のシステムUI（入力フォーカスの喪失）やスリープ（アプリケーションの停止）でゲームの進行を止め、復帰時に移動・斬撃・UI 操作が誤発火しない（DESIGN 4.6「停止理由を区別する」「中断と復帰」）。端末確認は通常の起動経路（設定注入・CPU 固定なし）で行う。
+
+| 操作 | 確認内容 |
+| --- | --- |
+| 通常プレイ中にシステムUIへ移り、戻る | フォーカス喪失中にゲーム・入力が停止し、刀とポインターが消える。復帰後は正常操作できる |
+| 手動メニューを開いたまま中断・復帰 | メニューと手動停止が残り、勝手に Resume しない |
+| スティック／トリガーを保持して中断・復帰 | 勝手な移動・旋回・クリック・斬撃が出ず、離した後の操作が正常 |
+| スライダー操作中に中断・復帰 | ドラッグが勝手に継続せず、設定値が変わらない |
+| 電源ボタンでスリープし、復帰 | 停止時間分の進行や物理の急変がなく、設定が保持される |
+| 中断・復帰を繰り返す | 停止解除漏れ、入力が戻らない状態、誤操作がない |
+| コントローラーの追跡喪失・復帰 | 保持中のトリガーが新規クリックとして扱われない。ログ `ZANTETSU MENU: the input is not read: cause=RightNotTracked … / the input is read again` が実際の追跡喪失の証拠（cause が LeftNotValid／RightNotValid／ValueNotRead／PoseNotRead なら別の事象） |
+| メニューで値を変え、閉じずにスリープ → 復帰 → アプリ再起動 | 変えた値が保持される（中断開始時の flush） |
+
+実機での観測（Quest 3S、2026-10-17、v7）：システムUI・電源スリープ・HMD 脱着のそれぞれで XR フォーカス喪失による停止・復帰を確認した。`OnApplicationPause` 通知の有無は当時のログ（集約状態の変化のみ）では判定できない。HMD 脱着では OpenXR セッションが停止・再開する。**未解決の不具合（復帰時）**：再装着後に視点が 30〜50 cm 高くなる（Meta ボタン長押しの再センターが暫定回避策。原因は未切り分け、次の優先作業）。コントローラー単独の追跡喪失は遮蔽では再現しなかった（未確認）。
+
+ログで見る行（遷移時のみ）：`XR FOCUS PAUSE: focus lost / focus back`、`GAME PAUSE: system pause began / ended; reasons=…; paused=…`、`GAME PAUSE: progress paused / resumed`、`ZANTETSU MENU: system pause began / ended …`、`ZANTETSU MENU: the walking input is the game's again`。HMD の脱着で実際にどの通知（`OnApplicationPause`、フォーカス）が来たかはログから記録する。通知が来なかったケースは停止成功として扱わない。
+
 ## 検証結果
 
 - 2026-10-17、テスト鍵（配布鍵ではない）で：v1（versionCode 1）・v2（versionCode 2）の検査 10/10 PASSED、v1 → v2 の上書き更新に成功（起動、旋回速度の設定と設定ファイルが維持、v1 への後退は `INSTALL_FAILED_VERSION_DOWNGRADE`）。詳細は `C:\log\zantetsuken-vr\walk-city-2026-10-03\perf\distribution\DISTRIBUTION-1.md`。配布鍵での検証は、鍵の提供後に同じ手順で行う（未完了）。
