@@ -150,7 +150,11 @@ namespace Zantetsu.Core.Tests
                 + "            // consent is neither read nor written -- and no send configuration is loaded.\n"
                 + "            service.Setup(kind, scene, PlayStatisticsVerify.StoreForThisLaunch(), null);\n"
                 + "#else\n"
-                + "            service.Setup(kind, scene, new PlayerPrefsStatisticsStore(), PlayStatisticsConfig.Load());\n"
+                + "            // The first-run consent's check (DESIGN 21.18, unit 7-A): with its argument the consent and id live under\n"
+                + "            // separate keys and no send configuration is loaded; without it the normal store and configuration.\n"
+                + "            string[] arguments = System.Environment.GetCommandLineArgs();\n"
+                + "            bool check = PlayStatisticsConsentCheck.AskedFor(arguments);\n"
+                + "            service.Setup(kind, scene, PlayStatisticsConsentCheck.StoreForThisLaunch(new PlayerPrefsStatisticsStore(), arguments), check ? null : PlayStatisticsConfig.Load());\n"
                 + "#endif\n"));
 
             // The transport: none under the symbol, whatever configuration reaches Setup.

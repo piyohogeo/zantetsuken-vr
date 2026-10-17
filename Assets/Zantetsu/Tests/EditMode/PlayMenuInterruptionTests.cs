@@ -278,6 +278,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void TheConsentDialog_StandsBeforeTheHeadAgain_WhenASystemPauseEnds_AndNotAtItsBeginning()
+        {
+            PlayMenu menu = NewMenu();
+            PlayStatisticsService statistics = NewStatistics();
+            Tick(menu);
+            Assert.That(menu.AskConsent(statistics), Is.True);
+            Tick(menu);
+            int placed = menu.DialogPlacements;
+
+            GamePause.SetFocusLost(true);
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(placed), "nothing is moved while the system has the view");
+            GamePause.SetFocusLost(false);
+            GamePause.TakeSystemEndsForTest();
+            Assert.That(menu.DialogPlacements, Is.EqualTo(placed + 1), "stood before the head once at the end (a restarted session remakes the space about the head)");
+            Assert.That(menu.IsDialogOpen, Is.True, "open and unanswered still");
+            Tick(menu);
+            Assert.That(menu.DialogPlacements, Is.EqualTo(placed + 1), "and not again at the next frame");
+        }
+
+        [Test]
         public void TheSettings_AreSavedOnce_AtTheInterruptionsStart_AndTheMenuWorksWithoutAnyConsent()
         {
             PlayMenu menu = NewMenu();

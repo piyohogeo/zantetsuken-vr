@@ -460,6 +460,11 @@ namespace Zantetsu.Sandbox
             _dialogMenuWasDown = true;
             _state.RequireRelease();
             ReleaseGameInput(Holder.System);
+            // The consent dialog stands before the head again (unit 7-B, B4): a system pause that restarted the XR
+            // session (a sleep, the headset taken off) remakes the tracking space about the head's new place and
+            // facing, and a dialog left where it was in the world is then beside or behind the player, who cannot
+            // answer what they cannot find. The head's position alone did not tell it (within 0.5 m).
+            if (_dialogOpen && _dialog != null) PlaceDialog("the system pause ended");
             Debug.Log(Prefix + "system pause ended (frame " + Time.frameCount + "): input held by " + _holders + "; menu " + (_state.Open ? "open" : "closed")
                 + ", dialog " + (_dialogOpen ? "open" : "closed") + "; the walking waits for the input to be read and let go; " + GamePause.Describe());
         }

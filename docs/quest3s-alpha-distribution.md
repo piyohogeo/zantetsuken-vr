@@ -124,6 +124,16 @@ Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> 
 
 Quest 3S で、起動後やヘッドセットの脱着・復帰後に視点の高さがずれる（高くなる）ことが観測されている（2026-10-17、`perf/height/HEIGHT-1.md`）。確認できたのは Unity の入力値の段階で高さが変わるところまでで、OpenXR プラグイン／ランタイム内部の原因と、他アプリでの再現性は未確定。アプリから呼べる原点操作（Floor の再適用、`RefreshRecenterSpace`）は効果が無く、後者は向きと位置を変える副作用があるため採用しない。追加の床補正・STAGE の調査は行わない。**プレイヤー向けの案内文は置かない**（「立ち上がって再センター」も必須操作としない）。今回の端末・環境では、右コントローラーの Meta ボタン長押し（再センター）で高さが戻ること、立位での操作後に実際の目線に近い値になることを観測した（内部記録）。配布 APK に実験処置は入れず、開発用の詳細診断は Player 引数 `-zantetsuHeadHeightDiag` のときだけ動く（通常起動では何も記録しない）。
 
+## 初回同意の確認入口（作業単位 7-A）
+
+同意済みの端末で初回同意の画面と経路を確かめるとき、既存の同意・ID・設定を消さずに行う入口（DESIGN 21.18）。
+
+- `-zantetsuConsentCheck`：同意と install ID を検証用の 2 キー（`zantetsu.check.` 接頭）で保持し、送信設定を読み込まず、何も送らない。通常の同意・ID・ゲーム設定には触れない。
+- `-zantetsuConsentCheckReset`：検証用の 2 キーだけをその起動で削除する。通常起動では作用しない。
+- Quest では intent の extra で渡す：`adb shell am start -a android.intent.action.MAIN -c com.oculus.intent.category.VR -n com.zantetsuken.quest/com.unity3d.player.UnityPlayerGameActivity --es unity "-zantetsuConsentCheck -zantetsuConsentCheckReset"`。
+- ログ：`PLAY STATISTICS CONSENT CHECK: …`（検証キーの使用、削除した件数）、`PLAY STATISTICS: installed … consent Undecided; config absent (nothing is sent)`、`ZANTETSU MENU: consent dialog opened`。
+- 引数なしで起動すれば従来の同意・設定に戻る。これは「保存先を分離した初回同意経路の確認」であり、新規インストール全体の確認は ALPHA 経由の導入試験で行う。
+
 ## 検証結果
 
 - 2026-10-17、テスト鍵（配布鍵ではない）で：v1（versionCode 1）・v2（versionCode 2）の検査 10/10 PASSED、v1 → v2 の上書き更新に成功（起動、旋回速度の設定と設定ファイルが維持、v1 への後退は `INSTALL_FAILED_VERSION_DOWNGRADE`）。詳細は `C:\log\zantetsuken-vr\walk-city-2026-10-03\perf\distribution\DISTRIBUTION-1.md`。配布鍵での検証は、鍵の提供後に同じ手順で行う（未完了）。

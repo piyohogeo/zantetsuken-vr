@@ -87,7 +87,11 @@ namespace Zantetsu.Sandbox
             // consent is neither read nor written -- and no send configuration is loaded.
             service.Setup(kind, scene, PlayStatisticsVerify.StoreForThisLaunch(), null);
 #else
-            service.Setup(kind, scene, new PlayerPrefsStatisticsStore(), PlayStatisticsConfig.Load());
+            // The first-run consent's check (DESIGN 21.18, unit 7-A): with its argument the consent and id live under
+            // separate keys and no send configuration is loaded; without it the normal store and configuration.
+            string[] arguments = System.Environment.GetCommandLineArgs();
+            bool check = PlayStatisticsConsentCheck.AskedFor(arguments);
+            service.Setup(kind, scene, PlayStatisticsConsentCheck.StoreForThisLaunch(new PlayerPrefsStatisticsStore(), arguments), check ? null : PlayStatisticsConfig.Load());
 #endif
             Instance = service;
             service.HookQuit();

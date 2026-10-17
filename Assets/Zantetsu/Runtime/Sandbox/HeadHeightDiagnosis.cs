@@ -28,8 +28,8 @@ namespace Zantetsu.Sandbox
     /// On only with the Player argument <see cref="Argument"/> (a normal launch, the distribution's, creates nothing).
     /// The 6-B comparison's treatments (a Floor re-application, the plugin's RefreshRecenterSpace) were tried from
     /// here on 2026-10-17 and removed again: neither restored the height, and the Refresh turned the space (record
-    /// perf/height/HEIGHT-1.md §5.1). The ALPHA keeps the manual recentre (the right controller's Meta button held)
-    /// as the provisional workaround; the defect stays open.
+    /// perf/height/HEIGHT-1.md §5.1). The ALPHA takes the shift as an accepted observation (D-242): no correction, no
+    /// guidance to the player; what the manual recentre did on one device is in the record only.
     /// </para>
     /// </summary>
     [DefaultExecutionOrder(ExecutionOrder)]
