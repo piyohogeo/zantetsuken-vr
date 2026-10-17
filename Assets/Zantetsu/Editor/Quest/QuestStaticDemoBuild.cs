@@ -212,22 +212,45 @@ namespace Zantetsu.EditorTools.Quest
         /// The same; in batch mode a failure exits the Editor at once when <paramref name="exitOnFailure"/>, and is
         /// thrown to the caller otherwise (the distribution build, which has settings to put back first).
         /// </summary>
+        /// <summary>EXPERIMENT ONLY (unit 8-C): builds the APK with the Vulkan plugin not preloaded; the importer is put back after the build.</summary>
+        public const string NoPreloadExperimentArgument = "-zantetsuQuestNoPreloadExperiment";
+
         public static void BuildApkForScenes(string[] scenePaths, bool exitOnFailure)
         {
+            // The importer is put back inside (WithPreload's finally) before this catch may end the Editor:
+            // EditorApplication.Exit returns to no finally.
             try
             {
-                foreach (string scenePath in scenePaths)
-                    if (!File.Exists(scenePath)) throw new FileNotFoundException("Configure this scene first", scenePath);
-                const string nativePath = "Assets/Zantetsu/Runtime/Rendering/Plugins/Android/arm64-v8a/libZantetsuVpVulkan.so";
-                AssetDatabase.ImportAsset(nativePath, ImportAssetOptions.ForceUpdate);
-                var native = AssetImporter.GetAtPath(nativePath) as PluginImporter;
-                if (native == null) throw new InvalidOperationException("Vulkan native plugin has no PluginImporter: " + nativePath);
-                native.SetCompatibleWithAnyPlatform(false);
-                native.SetCompatibleWithEditor(false);
-                native.SetCompatibleWithPlatform(BuildTarget.Android, true);
-                native.SetPlatformData(BuildTarget.Android, "CPU", "ARM64");
-                native.isPreloaded = true;
-                native.SaveAndReimport();
+                BuildApkForScenesKeepingThePreload(scenePaths);
+            }
+            catch (Exception e) { Debug.LogError(e); if (exitOnFailure && Application.isBatchMode) EditorApplication.Exit(1); throw; }
+        }
+
+        private static void BuildApkForScenesKeepingThePreload(string[] scenePaths)
+        {
+            foreach (string scenePath in scenePaths)
+                if (!File.Exists(scenePath)) throw new FileNotFoundException("Configure this scene first", scenePath);
+            const string nativePath = "Assets/Zantetsu/Runtime/Rendering/Plugins/Android/arm64-v8a/libZantetsuVpVulkan.so";
+            AssetDatabase.ImportAsset(nativePath, ImportAssetOptions.ForceUpdate);
+            var native = AssetImporter.GetAtPath(nativePath) as PluginImporter;
+            if (native == null) throw new InvalidOperationException("Vulkan native plugin has no PluginImporter: " + nativePath);
+            native.SetCompatibleWithAnyPlatform(false);
+            native.SetCompatibleWithEditor(false);
+            native.SetCompatibleWithPlatform(BuildTarget.Android, true);
+            native.SetPlatformData(BuildTarget.Android, "CPU", "ARM64");
+            // The plugin is preloaded so that its Vulkan initialization intercept runs before the device is made
+            // (DESIGN 4.5.10). The experiment argument (unit 8-C, 2026-10-17) builds ONE comparison APK with the preload
+            // off -- the plugin in the APK but not loaded at start, so nothing intercepts -- and WithPreload puts the
+            // importer back whatever happens, so that the tree and every later build keep the preload. Never a product option.
+            bool noPreload = Array.IndexOf(Environment.GetCommandLineArgs(), NoPreloadExperimentArgument) >= 0;
+            // The Meta Quest feature's optimizeBufferDiscards is ON in the product (ConfigureXr, unit 22). The experiment
+            // argument builds ONE comparison APK with it OFF and puts the setting back afterwards (the feature's own
+            // setting; the OpenXR settings asset is also put back by the distribution wrapper). Without the argument the
+            // build asks for ON here too, so a tree that still has it off is corrected for the build and put back.
+            bool bufferDiscardsOff = Array.IndexOf(Environment.GetCommandLineArgs(), BufferDiscardsOffExperimentArgument) >= 0;
+            WithPreload(native, !noPreload, () => WithMetaQuestBufferDiscards(!bufferDiscardsOff, () =>
+            {
+                if (noPreload) Debug.LogWarning("QUEST NATIVE BUILD: EXPERIMENT " + NoPreloadExperimentArgument + ": the Vulkan plugin is NOT preloaded in this APK (no device intercept); the importer is put back after the build");
                 Debug.Log("QUEST NATIVE BUILD: Android=" + native.GetCompatibleWithPlatform(BuildTarget.Android) + " CPU=" + native.GetPlatformData(BuildTarget.Android, "CPU") + " preload=" + native.isPreloaded);
                 string[] args = Environment.GetCommandLineArgs();
                 int index = Array.IndexOf(args, "-zantetsuQuestOut");
@@ -238,9 +261,102 @@ namespace Zantetsu.EditorTools.Quest
                     locationPathName = output, options = Array.IndexOf(args, "-zantetsuQuestDev") >= 0 ? BuildOptions.Development : BuildOptions.None });
                 Debug.Log("QUEST BUILD: " + report.summary.result + " size=" + report.summary.totalSize + " errors=" + report.summary.totalErrors + " output=" + output);
                 if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0) throw new InvalidOperationException("Android build failed or reported errors; inspect quest-build.log");
-            }
-            catch (Exception e) { Debug.LogError(e); if (exitOnFailure && Application.isBatchMode) EditorApplication.Exit(1); throw; }
+            }));
         }
+
+        /// <summary>EXPERIMENT ONLY (unit 22): builds the APK with the Meta Quest feature's optimizeBufferDiscards OFF (the product has it on); the setting is put back after the build.</summary>
+        public const string BufferDiscardsOffExperimentArgument = "-zantetsuQuestBufferDiscardsOffExperiment";
+
+        /// <summary>
+        /// Runs <paramref name="body"/> with the Meta Quest feature's optimizeBufferDiscards set to <paramref name="optimize"/>
+        /// when that differs from the tree's value, and puts the tree's value back afterwards whatever happened. The value
+        /// to put back is read before anything is changed. Nothing is touched when the tree already has the value asked
+        /// (the normal build of a tree with the product's ON). Public for its test.
+        /// </summary>
+        /// <summary>The tree's Android Meta Quest feature's optimizeBufferDiscards, as its asset has it now (for the tests).</summary>
+        public static bool MetaQuestBufferDiscardsInTree()
+        {
+            OpenXRFeature quest = FeatureHelpers.GetFeatureWithIdForBuildTarget(BuildTargetGroup.Android, MetaQuestFeature.featureId);
+            if (quest == null) throw new InvalidOperationException("MetaQuestFeature not found for Android");
+            SerializedProperty property = new SerializedObject(quest).FindProperty("m_optimizeBufferDiscards");
+            if (property == null) throw new InvalidOperationException("MetaQuestFeature has no m_optimizeBufferDiscards");
+            return property.boolValue;
+        }
+
+        public static void WithMetaQuestBufferDiscards(bool optimize, Action body)
+        {
+            const BuildTargetGroup group = BuildTargetGroup.Android;
+            OpenXRFeature quest = FeatureHelpers.GetFeatureWithIdForBuildTarget(group, MetaQuestFeature.featureId);
+            SerializedProperty Property(SerializedObject on) => on.FindProperty("m_optimizeBufferDiscards") ?? throw new InvalidOperationException("MetaQuestFeature has no m_optimizeBufferDiscards");
+            if (quest == null) throw new InvalidOperationException("MetaQuestFeature not found for Android");
+            var serialized = new SerializedObject(quest);
+            bool before = Property(serialized).boolValue;
+            if (before == optimize)
+            {
+                Debug.Log("QUEST XR BUILD: MetaQuestFeature optimizeBufferDiscards=" + before + " (as the tree has it)");
+                body();
+                return;
+            }
+
+            try
+            {
+                Property(serialized).boolValue = optimize;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(quest);
+                AssetDatabase.SaveAssets();
+                bool applied = Property(new SerializedObject(quest)).boolValue;
+                Debug.LogWarning("QUEST XR BUILD: MetaQuestFeature optimizeBufferDiscards=" + applied + " for this build (the tree has " + before + "; put back after the build"
+                    + (optimize ? "; the product's value is ON: run ConfigureXr to bring the tree's asset up to date)" : "; EXPERIMENT " + BufferDiscardsOffExperimentArgument + ")"));
+                if (applied != optimize) throw new InvalidOperationException("MetaQuestFeature optimizeBufferDiscards could not be set to " + optimize);
+                body();
+            }
+            finally
+            {
+                var back = new SerializedObject(quest);
+                Property(back).boolValue = before;
+                back.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(quest);
+                AssetDatabase.SaveAssets();
+                Debug.Log("QUEST XR BUILD: MetaQuestFeature optimizeBufferDiscards put back to " + Property(new SerializedObject(quest)).boolValue + " after the build");
+            }
+        }
+
+        /// <summary>
+        /// Sets the plugin's preload for <paramref name="body"/> and, when it was turned off (the experiment), puts it
+        /// back on afterwards whatever happened -- the body's failure, the save's own exception included: the importer
+        /// to put back is held before anything is changed. Public for its test.
+        /// </summary>
+        public static void WithPreload(PluginImporter native, bool preload, Action body)
+        {
+            PluginImporter toRestore = preload ? null : native;
+            try
+            {
+                native.isPreloaded = preload;
+                native.SaveAndReimport();
+                body();
+            }
+            finally
+            {
+                if (toRestore != null)
+                {
+                    toRestore.isPreloaded = true;
+                    toRestore.SaveAndReimport();
+                    Debug.Log("QUEST NATIVE BUILD: the plugin's preload was put back (isPreloaded=" + toRestore.isPreloaded + ") after the experiment build");
+                }
+            }
+        }
+        /// <summary>
+        /// The XR settings alone, written to the tree's assets (OpenXR Package Settings, the XR loader): for a tree whose
+        /// assets predate a product setting ConfigureXr changed (unit 22: optimizeBufferDiscards ON). Batch entry.
+        /// </summary>
+        public static void ConfigureXrForTree()
+        {
+            var report = new List<string>();
+            ConfigureXr(report);
+            AssetDatabase.SaveAssets();
+            Debug.Log("QUEST XR CONFIGURE: " + string.Join("; ", report));
+        }
+
         private static void ConfigureXr(List<string> report)
         {
             const BuildTargetGroup group = BuildTargetGroup.Android;
@@ -291,7 +407,11 @@ namespace Zantetsu.EditorTools.Quest
                 SetBool(so, "lateLatchingMode", false);
                 SetBool(so, "lateLatchingDebug", false);
                 SetBool(so, "m_symmetricProjection", false);
-                SetBool(so, "m_optimizeBufferDiscards", false);
+                // ON since 2026-10-17 (unit 22): off, every XR session restart (a sleep gives two) grew the GPU memory by
+                // ~631 MB on the Quest 3S until the process was killed; on, +2..4 MB a restart, and the GPU frame ~1 ms
+                // shorter in the static scene (perf\sleep-kill\SLEEP-KILL-1.md 22d-22j). The off side is kept as an
+                // experiment build only (BufferDiscardsOffExperimentArgument).
+                SetBool(so, "m_optimizeBufferDiscards", true);
                 SetBool(so, "forceRemoveInternetPermission", false);
                 SerializedProperty format = so.FindProperty("spacewarpMotionVectorTextureFormat");
                 if (format != null) format.intValue = (int)OpenXRSettings.SpaceWarpMotionVectorTextureFormat.RGBA16f;
@@ -311,7 +431,7 @@ namespace Zantetsu.EditorTools.Quest
 
                 so.ApplyModifiedPropertiesWithoutUndo();
                 EditorUtility.SetDirty(quest);
-                report.Add("XR: MetaQuestFeature lateLatching off, symmetricProjection off, optimizeBufferDiscards off, MV format RGBA16f, devices " + string.Join(",", enabledDevices));
+                report.Add("XR: MetaQuestFeature lateLatching off, symmetricProjection off, optimizeBufferDiscards ON (unit 22), MV format RGBA16f, devices " + string.Join(",", enabledDevices));
             }
 
             OpenXRFeature spaceWarp = EnableFeature(group, SpaceWarpFeature.k_SpaceWarpFeatureId, report);

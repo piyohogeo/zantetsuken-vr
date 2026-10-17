@@ -32,6 +32,9 @@ param(
     [Parameter(Mandatory = $true)][string]$KeyAlias,
     [string]$Output,
     [string]$Unity = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe',
+    # Experiment switches the Editor's build reads from its command line (such as QuestStaticDemoBuild.NoPreloadExperimentArgument,
+    # unit 8-C 2026-10-17): each is '-zantetsu' followed by letters and digits alone. Recorded in build.txt. Never for a distribution.
+    [string[]]$ExperimentArguments = @(),
     [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
 )
 $ErrorActionPreference = 'Stop'
@@ -49,6 +52,7 @@ if ($VersionName -match '\s' -or $VersionName.Length -eq 0) { throw "VersionName
 # refused here rather than carried wrongly (keytool alone would have taken it whole).
 if ($KeyAlias -match '\s' -or $KeyAlias.Length -eq 0 -or $KeyAlias.StartsWith('-')) { throw "KeyAlias must hold no space and not begin with '-' (it is carried on Unity's command line): '$KeyAlias'" }
 if ($VersionName.StartsWith('-')) { throw "VersionName must not begin with '-': '$VersionName'" }
+foreach ($x in $ExperimentArguments) { if ($x -notmatch '^-zantetsu[A-Za-z0-9]+$') { throw "an experiment argument must be '-zantetsu' followed by letters and digits alone: '$x'" } }
 $Keystore = [IO.Path]::GetFullPath($Keystore)
 if (!(Test-Path -LiteralPath $Keystore -PathType Leaf)) { throw "the keystore does not exist: $Keystore" }
 if ($Keystore -notmatch '\.(keystore|jks)$') { throw "the keystore must be a .keystore or .jks file: $Keystore" }
@@ -90,7 +94,8 @@ $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -bui
     + ' -zantetsuBuildMode commercial -zantetsuQuestOut "' + $Output + '"' `
     + ' -zantetsuDistVersionName ' + $VersionName + ' -zantetsuDistVersionCode ' + $VersionCode `
     + ' -zantetsuDistKeystore "' + $Keystore + '" -zantetsuDistKeyAlias ' + $KeyAlias + ' -zantetsuDistDevices ' + $supportedDevices
-$head = git -C $project log --format='%H %s' -1
+if ($ExperimentArguments.Count -gt 0) { $arguments += ' ' + ($ExperimentArguments -join ' ') }
+$head =git -C $project log --format='%H %s' -1
 $dirty = @(git -C $project status --short --untracked-files=all)
 @(
     "distribution build begun $(Get-Date -Format o)",
@@ -99,6 +104,7 @@ $dirty = @(git -C $project status --short --untracked-files=all)
     "source $head",
     "uncommitted changes: $($dirty.Count)",
     "conditions: Release (no development option), commercial (-zantetsuBuildMode commercial), custom keystore, Android ARM64 IL2CPP Vulkan (the shared Quest build)",
+    "experiment arguments: $(if ($ExperimentArguments.Count -gt 0) { $ExperimentArguments -join ' ' } else { 'none' })",
     "unity $Unity",
     "command $arguments"
 ) | Set-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
