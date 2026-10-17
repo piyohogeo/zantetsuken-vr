@@ -15,7 +15,7 @@ namespace Zantetsu.Core.Tests
     /// </summary>
     public sealed class QuestDistributionBuildTests
     {
-        private static string[] Args(string versionName = "0.2.0", string versionCode = "3", string keystore = "C:/keys/alpha.keystore", string alias = "alpha", string output = "C:/out/alpha.apk", params string[] more)
+        private static string[] Args(string versionName = "0.2.0", string versionCode = "3", string keystore = "C:/keys/alpha.keystore", string alias = "alpha", string output = "C:/out/alpha.apk", string devices = "quest3|quest3s", params string[] more)
         {
             var a = new System.Collections.Generic.List<string> { "Unity.exe", "-batchmode" };
             if (versionName != null) a.AddRange(new[] { QuestDistributionBuild.VersionNameArgument, versionName });
@@ -23,8 +23,23 @@ namespace Zantetsu.Core.Tests
             if (keystore != null) a.AddRange(new[] { QuestDistributionBuild.KeystoreArgument, keystore });
             if (alias != null) a.AddRange(new[] { QuestDistributionBuild.KeyAliasArgument, alias });
             if (output != null) a.AddRange(new[] { QuestDistributionBuild.OutputArgument, output });
+            if (devices != null) a.AddRange(new[] { QuestDistributionBuild.DevicesArgument, devices });
             a.AddRange(more);
             return a.ToArray();
+        }
+
+        [Test]
+        public void TheDevices_AreRequired_AndMustBeTheDistributions()
+        {
+            Assert.That(QuestDistributionBuild.TryRead(Args(devices: null), out var r), Does.Contain(QuestDistributionBuild.DevicesArgument).And.Contain("missing"));
+            Assert.That(QuestDistributionBuild.TryRead(Commercial(), out r), Is.Null);
+            Assert.That(r.devices, Is.EqualTo("quest3|quest3s"));
+            Assert.That(QuestDistributionBuild.Validate(r, true, "s", "k", Commercial()), Is.Null);
+            foreach (string wrong in new[] { "quest3s|quest3", "quest3", "quest3|quest3s|quest2", "Quest3|quest3s", "eureka|quest3s" })
+            {
+                Assert.That(QuestDistributionBuild.TryRead(Args(devices: wrong, more: new[] { DemoBuildPolicy.ModeArgument, "commercial" }), out r), Is.Null);
+                Assert.That(QuestDistributionBuild.Validate(r, true, "s", "k", Commercial()), Does.Contain("QuestDistributionTargets"), "the wrapper's '" + wrong + "' must equal the build's definition exactly");
+            }
         }
 
         private static string[] Commercial(params string[] more)

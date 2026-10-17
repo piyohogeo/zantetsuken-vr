@@ -19,6 +19,8 @@ namespace Zantetsu.EditorTools.Quest
     /// <see cref="LaunchActivity"/> -- gets android:excludeFromRecents="true", and that intent-filter holds the
     /// category com.oculus.intent.category.VR</item>
     /// <item>uses-feature android.hardware.vr.headtracking with required="true" and version="1"</item>
+    /// <item>the one meta-data com.oculus.supportedDevices under application holds exactly the distribution's
+    /// devices (<see cref="QuestDistributionTargets"/>), written canonically; anything else fails the build</item>
     /// </list>
     /// minSdkVersion and targetSdkVersion come from the player settings (<see cref="QuestDistributionBuild.SettingsScope"/>).
     /// </summary>
@@ -39,13 +41,27 @@ namespace Zantetsu.EditorTools.Quest
         /// activity holding MAIN, or whose that activity is not <see cref="LaunchActivity"/>: the attribute goes on
         /// the real launch activity, never on another.
         /// </summary>
-        public static List<string> Apply(XmlDocument manifest)
+        public static List<string> Apply(XmlDocument manifest) => Apply(manifest, null);
+
+        /// <summary>
+        /// The same over the two manifests the Gradle project merges: the unityLibrary's own, and XR Management's
+        /// library manifest (unityLibrary/xrmanifest.androidlib/AndroidManifest.xml, null where there is none), into
+        /// which XR Management writes the features' requirements -- the supported devices and the headtracking feature
+        /// among them. The activity and the install location are the unityLibrary's; the devices meta-data must be
+        /// exactly one across both applications; the headtracking feature is set where it is and added to the
+        /// unityLibrary only when neither holds it.
+        /// </summary>
+        public static List<string> Apply(XmlDocument manifest, XmlDocument xrLibraryManifest)
         {
             var changes = new List<string>();
             XmlElement root = manifest.DocumentElement;
             if (root == null || root.Name != "manifest") throw new BuildFailedException("the manifest has no <manifest> root");
             var ns = new XmlNamespaceManager(manifest.NameTable);
             ns.AddNamespace("android", AndroidNamespace);
+            XmlElement xrRoot = xrLibraryManifest?.DocumentElement;
+            if (xrLibraryManifest != null && (xrRoot == null || xrRoot.Name != "manifest")) throw new BuildFailedException("the XR library manifest has no <manifest> root");
+            XmlNamespaceManager xrNs = null;
+            if (xrLibraryManifest != null) { xrNs = new XmlNamespaceManager(xrLibraryManifest.NameTable); xrNs.AddNamespace("android", AndroidNamespace); }
 
             if (Set(root, "installLocation", "auto")) changes.Add("manifest android:installLocation=auto");
 
@@ -69,7 +85,24 @@ namespace Zantetsu.EditorTools.Quest
                 changes.Add("launch intent-filter category " + VrCategory);
             }
 
+            // The supported devices (D-240): exactly one meta-data of the name directly under <application>, whose
+            // devices -- as the package writes them (eureka) or canonical -- are exactly the distribution's; then the
+            // value is written canonically (quest3|quest3s). Nothing missing, extra or unknown is corrected.
+            var devicesElements = new List<XmlElement>();
+            foreach (XmlElement e in application.SelectNodes("meta-data[@android:name='" + QuestDistributionTargets.MetaDataName + "']", ns)) devicesElements.Add(e);
+            XmlElement xrApplication = xrRoot?.SelectSingleNode("application") as XmlElement;
+            if (xrApplication != null)
+                foreach (XmlElement e in xrApplication.SelectNodes("meta-data[@android:name='" + QuestDistributionTargets.MetaDataName + "']", xrNs)) devicesElements.Add(e);
+            if (devicesElements.Count != 1)
+                throw new BuildFailedException("the manifests must hold exactly one <meta-data android:name=\"" + QuestDistributionTargets.MetaDataName + "\"> directly under <application> (the unityLibrary's and XR Management's library manifest together), found " + devicesElements.Count);
+            XmlElement devicesElement = devicesElements[0];
+            string devicesValue = devicesElement.HasAttribute("value", AndroidNamespace) ? devicesElement.GetAttribute("value", AndroidNamespace) : null;
+            string devicesFailure = QuestDistributionTargets.Split(devicesValue, out List<string> deviceNames) ?? QuestDistributionTargets.Check(deviceNames);
+            if (devicesFailure != null) throw new BuildFailedException(QuestDistributionTargets.MetaDataName + " as generated is '" + devicesValue + "': " + devicesFailure);
+            if (Set(devicesElement, "value", QuestDistributionTargets.CanonicalValue)) changes.Add("meta-data " + QuestDistributionTargets.MetaDataName + "=" + QuestDistributionTargets.CanonicalValue + " (was " + devicesValue + ")");
+
             XmlElement feature = root.SelectSingleNode("uses-feature[@android:name='" + HeadTrackingFeature + "']", ns) as XmlElement;
+            if (feature == null && xrRoot != null) feature = xrRoot.SelectSingleNode("uses-feature[@android:name='" + HeadTrackingFeature + "']", xrNs) as XmlElement;
             if (feature == null)
             {
                 feature = manifest.CreateElement("uses-feature");
@@ -101,9 +134,14 @@ namespace Zantetsu.EditorTools.Quest
                 if (!File.Exists(file)) throw new BuildFailedException("the generated unityLibrary manifest is not at " + file);
                 var manifest = new XmlDocument { PreserveWhitespace = true };
                 manifest.Load(file);
-                List<string> changes = Apply(manifest);
+                // XR Management's own library manifest, where it writes the features' requirements (the devices, the headtracking feature).
+                string xrFile = Path.Combine(path, "xrmanifest.androidlib", "AndroidManifest.xml");
+                XmlDocument xrManifest = null;
+                if (File.Exists(xrFile)) { xrManifest = new XmlDocument { PreserveWhitespace = true }; xrManifest.Load(xrFile); }
+                List<string> changes = Apply(manifest, xrManifest);
                 manifest.Save(file);
-                Debug.Log("QUEST DISTRIBUTION MANIFEST: " + file + "; set: " + (changes.Count == 0 ? "nothing (all held already)" : string.Join("; ", changes)));
+                xrManifest?.Save(xrFile);
+                Debug.Log("QUEST DISTRIBUTION MANIFEST: " + file + (xrManifest != null ? " and " + xrFile : " (no XR library manifest)") + "; set: " + (changes.Count == 0 ? "nothing (all held already)" : string.Join("; ", changes)));
             }
         }
     }

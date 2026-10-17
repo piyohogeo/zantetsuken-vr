@@ -54,7 +54,12 @@ function Get-AttributeValue { param($Node, [string]$Name) if ($null -eq $Node -o
 
 function Test-DistributionManifest {
     # The checks ([ordered] name -> bool) and the facts ([ordered]) of a manifest tree against the expected levels.
-    param($Root, [int]$MinSdk = 32, [int]$TargetSdk = 34, [string]$LaunchActivity = 'com.unity3d.player.UnityPlayerGameActivity')
+    param($Root, [int]$MinSdk = 32, [int]$TargetSdk = 34, [string]$LaunchActivity = 'com.unity3d.player.UnityPlayerGameActivity', [Parameter(Mandatory = $true)][string]$ExpectedDevices)
+    # The expected devices: the distribution's definition as the wrapper passes it (quest3|quest3s), never read from the APK.
+    # (PowerShell variable names ignore case: the names list is not called $expectedDevices.)
+    $expectedDeviceNames = @($ExpectedDevices -split '\|')
+    if ($expectedDeviceNames.Count -eq 0 -or @($expectedDeviceNames | Where-Object { $_.Length -eq 0 }).Count -gt 0) { throw "ExpectedDevices must name devices separated by '|': '$ExpectedDevices'" }
+    $devicesCheck = 'com.oculus.supportedDevices under application, once, holds exactly ' + $ExpectedDevices
     $checks = [ordered]@{}
     $facts = [ordered]@{}
     $manifest = $null
@@ -69,7 +74,8 @@ function Test-DistributionManifest {
             ('one launch activity (the one with MAIN) and it is ' + $LaunchActivity),
             'the launch intent-filter holds MAIN and com.oculus.intent.category.VR',
             'the launch activity has excludeFromRecents=true',
-            'uses-feature android.hardware.vr.headtracking under manifest with required=true and version=1')
+            'uses-feature android.hardware.vr.headtracking under manifest with required=true and version=1',
+            $devicesCheck)
         foreach ($k in $names) { $checks[$k] = $false }
         return @{ Checks = $checks; Facts = $facts }
     }
@@ -126,10 +132,31 @@ function Test-DistributionManifest {
     $facts['uses-feature android.hardware.vr.headtracking'] = "elements $($features.Count); required $required; version $version"
     $checks['uses-feature android.hardware.vr.headtracking under manifest with required=true and version=1'] = ($features.Count -eq 1) -and (Test-AaptTrue $required) -and ($version -is [int64]) -and ($version -eq 1)
 
-    # Facts for the record: the permissions and the supported devices as they are now (their choice is another unit's).
+    # The permissions as they are (a fact for the record).
     $facts['uses-permission'] = ((Get-ManifestChildren $manifest 'uses-permission' | ForEach-Object { Get-AttributeValue $_ 'name' }) -join ', ')
-    $devices = @()
-    if ($application.Count -eq 1) { $devices = @(Get-ManifestChildren $application[0] 'meta-data' | Where-Object { (Get-AttributeValue $_ 'name') -ceq 'com.oculus.supportedDevices' } | ForEach-Object { Get-AttributeValue $_ 'value' }) }
-    $facts['com.oculus.supportedDevices'] = $(if ($devices.Count -eq 0) { 'absent' } else { $devices -join ' | ' })
+
+    # The supported devices (D-240): exactly one meta-data of the name directly under application (one inside an
+    # activity does not count), with a value whose devices -- split at '|', no empty part, no repeat, case-sensitive --
+    # are exactly the expected ones in any order; the package's internal name eureka is never acceptable in a finished APK.
+    $deviceElements = @()
+    if ($application.Count -eq 1) { $deviceElements = @(Get-ManifestChildren $application[0] 'meta-data' | Where-Object { (Get-AttributeValue $_ 'name') -ceq 'com.oculus.supportedDevices' }) }
+    $facts['com.oculus.supportedDevices expected'] = $ExpectedDevices
+    $devicesOk = $false
+    if ($deviceElements.Count -eq 1) {
+        $value = Get-AttributeValue $deviceElements[0] 'value'
+        $facts['com.oculus.supportedDevices actual'] = $(if ($null -eq $value) { 'absent' } else { "$value" })
+        if ($value -is [string] -and $value.Length -gt 0) {
+            $parts = @($value -split '\|')
+            $empty = @($parts | Where-Object { $_.Length -eq 0 }).Count
+            $distinct = @($parts | Select-Object -Unique)   # Select-Object -Unique is case-sensitive for strings
+            $missing = @($expectedDeviceNames | Where-Object { -not ($parts -ccontains $_) })
+            $extra = @($parts | Where-Object { -not ($expectedDeviceNames -ccontains $_) })
+            $devicesOk = ($empty -eq 0) -and ($distinct.Count -eq $parts.Count) -and ($missing.Count -eq 0) -and ($extra.Count -eq 0) -and -not ($parts -ccontains 'eureka')
+            $facts['com.oculus.supportedDevices judgement'] = "parts $($parts.Count); empty $empty; repeated $($parts.Count - $distinct.Count); missing [$($missing -join ', ')]; extra [$($extra -join ', ')]"
+        }
+    } else {
+        $facts['com.oculus.supportedDevices actual'] = "meta-data elements under application: $($deviceElements.Count)"
+    }
+    $checks[$devicesCheck] = $devicesOk
     return @{ Checks = $checks; Facts = $facts }
 }

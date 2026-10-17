@@ -16,13 +16,77 @@ namespace Zantetsu.Core.Tests
     {
         private const string A = QuestDistributionManifest.AndroidNamespace;
 
+        private const string Devices = "    <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"eureka|quest3s\" />\n";
+
         private static string Manifest(string installLocation = " android:installLocation=\"preferExternal\"", string headTracking = "<uses-feature android:name=\"android.hardware.vr.headtracking\" android:required=\"true\" android:version=\"1\" />",
-            string launchName = QuestDistributionManifest.LaunchActivity, string exclude = "", string vrCategory = "<category android:name=\"com.oculus.intent.category.VR\" />", string moreActivities = "")
+            string launchName = QuestDistributionManifest.LaunchActivity, string exclude = "", string vrCategory = "<category android:name=\"com.oculus.intent.category.VR\" />", string moreActivities = "", string devices = Devices, string activityMetaData = "")
         {
             return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"" + A + "\"" + installLocation + ">\n  <uses-permission android:name=\"android.permission.INTERNET\" />\n  " + headTracking + "\n"
-                + "  <application android:label=\"x\">\n    <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"quest3s\" />\n"
-                + "    <activity android:name=\"" + launchName + "\"" + exclude + ">\n      <intent-filter>\n        <category android:name=\"android.intent.category.LAUNCHER\" />\n        <action android:name=\"android.intent.action.MAIN\" />\n        " + vrCategory + "\n      </intent-filter>\n    </activity>\n"
+                + "  <application android:label=\"x\">\n    <meta-data android:name=\"unity.splash-mode\" android:value=\"0\" />\n" + devices
+                + "    <activity android:name=\"" + launchName + "\"" + exclude + ">\n      <intent-filter>\n        <category android:name=\"android.intent.category.LAUNCHER\" />\n        <action android:name=\"android.intent.action.MAIN\" />\n        " + vrCategory + "\n      </intent-filter>\n" + activityMetaData + "    </activity>\n"
                 + moreActivities + "  </application>\n</manifest>\n";
+        }
+
+        private static string DevicesValue(XmlDocument d) => ((XmlElement)d.DocumentElement.SelectSingleNode("application/meta-data[@android:name='com.oculus.supportedDevices']", Ns(d))).GetAttribute("value", A);
+
+        [Test]
+        public void TheSupportedDevices_AreWrittenCanonically_OnceVerified_AndTheOtherMetaDataStays()
+        {
+            XmlDocument d = Load(Manifest());
+            List<string> changes = QuestDistributionManifest.Apply(d);
+            Assert.That(DevicesValue(d), Is.EqualTo("quest3|quest3s"), "eureka (the package's Quest 3) -> quest3");
+            Assert.That(changes, Does.Contain("meta-data com.oculus.supportedDevices=quest3|quest3s (was eureka|quest3s)"));
+            Assert.That(QuestDistributionManifest.Apply(d), Is.Empty, "applied again: nothing changes");
+            Assert.That(DevicesValue(d), Is.EqualTo("quest3|quest3s"));
+            Assert.That(d.DocumentElement.SelectNodes("application/meta-data", Ns(d)).Count, Is.EqualTo(2), "the other meta-data is kept");
+            Assert.That(((XmlElement)d.DocumentElement.SelectSingleNode("application/meta-data[@android:name='unity.splash-mode']", Ns(d))).GetAttribute("value", A), Is.EqualTo("0"));
+            // The canonical names already, in the other order: accepted and written in the distribution's order.
+            d = Load(Manifest(devices: "    <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"quest3s|quest3\" />\n"));
+            QuestDistributionManifest.Apply(d);
+            Assert.That(DevicesValue(d), Is.EqualTo("quest3|quest3s"));
+        }
+
+        private const string XrLibrary = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"" + A + "\" package=\"com.UnityTechnologies.XR.Manifest\">\n  <application>\n    <activity android:name=\"com.unity3d.player.UnityPlayerGameActivity\" android:exported=\"true\">\n      <meta-data android:name=\"com.oculus.vr.focusaware\" android:value=\"true\" />\n    </activity>\n    <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"eureka|quest3s\" />\n  </application>\n  <uses-feature android:name=\"android.hardware.vr.headtracking\" android:required=\"true\" android:version=\"1\" />\n</manifest>\n";
+
+        [Test]
+        public void TheDevicesAndTheHeadTracking_InXrManagementsLibraryManifest_AreFoundThere_AndNothingIsDuplicated()
+        {
+            // As the Gradle project is generated: the unityLibrary manifest holds neither, XR Management's library holds both.
+            XmlDocument unity = Load(Manifest(headTracking: "", devices: ""));
+            XmlDocument xr = Load(XrLibrary);
+            List<string> changes = QuestDistributionManifest.Apply(unity, xr);
+            Assert.That(((XmlElement)xr.DocumentElement.SelectSingleNode("application/meta-data[@android:name='com.oculus.supportedDevices']", Ns(xr))).GetAttribute("value", A), Is.EqualTo("quest3|quest3s"), "canonical, in the library manifest where it is");
+            Assert.That(unity.DocumentElement.SelectNodes("application/meta-data[@android:name='com.oculus.supportedDevices']", Ns(unity)).Count, Is.EqualTo(0), "none added to the unityLibrary");
+            Assert.That(unity.DocumentElement.SelectNodes("uses-feature[@android:name='android.hardware.vr.headtracking']", Ns(unity)).Count, Is.EqualTo(0), "the headtracking feature held by the library is not duplicated");
+            Assert.That(xr.DocumentElement.SelectNodes("uses-feature[@android:name='android.hardware.vr.headtracking']", Ns(xr)).Count, Is.EqualTo(1));
+            Assert.That(xr.DocumentElement.SelectNodes("application/activity/meta-data", Ns(xr)).Count, Is.EqualTo(1), "the library's other meta-data stays");
+            Assert.That(changes, Does.Contain("meta-data com.oculus.supportedDevices=quest3|quest3s (was eureka|quest3s)"));
+            Assert.That(QuestDistributionManifest.Apply(unity, xr), Is.Empty, "applied again: nothing changes");
+            // The devices in both manifests: two, refused.
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest()), Load(XrLibrary)));
+            // The devices in neither: refused.
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: "")), Load(XrLibrary.Replace("<meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"eureka|quest3s\" />", ""))));
+            // Wrong devices in the library manifest: refused, left as they were.
+            XmlDocument wrong = Load(XrLibrary.Replace("eureka|quest3s", "quest2|eureka|quest3s"));
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: "")), wrong));
+            Assert.That(((XmlElement)wrong.DocumentElement.SelectSingleNode("application/meta-data[@android:name='com.oculus.supportedDevices']", Ns(wrong))).GetAttribute("value", A), Is.EqualTo("quest2|eureka|quest3s"));
+        }
+
+        [Test]
+        public void TheSupportedDevices_MissingExtraUnknownRepeatedEmpty_OrTheMetaDataMissingOrRepeated_AreRefused_NotCorrected()
+        {
+            foreach (string value in new[] { "quest3s", "eureka", "quest2|eureka|quest3s", "eureka|quest3s|quest2", "eureka|quest3s|", "eureka||quest3s", "eureka|quest3s|quest3s", "eureka|quest3s|quest3", "Eureka|quest3s", "", "unknown|quest3s" })
+            {
+                XmlDocument d = Load(Manifest(devices: "    <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"" + value + "\" />\n"));
+                Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(d), "refused: '" + value + "'");
+                Assert.That(DevicesValue(d), Is.EqualTo(value), "and left as it was: '" + value + "'");
+            }
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: "    <meta-data android:name=\"com.oculus.supportedDevices\" />\n"))), "no value");
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: ""))), "no meta-data");
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: Devices + Devices))), "two meta-data");
+            // The meta-data inside the activity does not count: with none under application the build fails.
+            const string inActivity = "      <meta-data android:name=\"com.oculus.supportedDevices\" android:value=\"eureka|quest3s\" />\n";
+            Assert.Throws<BuildFailedException>(() => QuestDistributionManifest.Apply(Load(Manifest(devices: "", activityMetaData: inActivity))), "only inside the activity");
         }
 
         private static XmlDocument Load(string xml) { var d = new XmlDocument(); d.LoadXml(xml); return d; }
@@ -38,7 +102,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(Launch(d).GetAttribute("excludeFromRecents", A), Is.EqualTo("true"));
             Assert.That(d.DocumentElement.SelectNodes("uses-feature[@android:name='android.hardware.vr.headtracking']", Ns(d)).Count, Is.EqualTo(1), "the feature that held is not duplicated");
             Assert.That(Launch(d).SelectNodes("intent-filter/category[@android:name='com.oculus.intent.category.VR']", Ns(d)).Count, Is.EqualTo(1), "the category that held is not duplicated");
-            Assert.That(changes, Is.EqualTo(new[] { "manifest android:installLocation=auto", "activity " + QuestDistributionManifest.LaunchActivity + " android:excludeFromRecents=true" }));
+            Assert.That(changes, Is.EqualTo(new[] { "manifest android:installLocation=auto", "activity " + QuestDistributionManifest.LaunchActivity + " android:excludeFromRecents=true", "meta-data com.oculus.supportedDevices=quest3|quest3s (was eureka|quest3s)" }));
             // Applied again: nothing to set.
             Assert.That(QuestDistributionManifest.Apply(d), Is.Empty);
         }
@@ -92,7 +156,7 @@ namespace Zantetsu.Core.Tests
                 PlayerSettings.Android.preferredInstallLocation = AndroidPreferredInstallLocation.PreferExternal;
                 PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel33;
                 Assert.That(QuestDistributionBuild.TryRead(new[] { "Unity.exe", QuestDistributionBuild.VersionNameArgument, "0.2.0", QuestDistributionBuild.VersionCodeArgument, "3",
-                    QuestDistributionBuild.KeystoreArgument, "C:/keys/a.keystore", QuestDistributionBuild.KeyAliasArgument, "a", QuestDistributionBuild.OutputArgument, "C:/out/a.apk" }, out var r), Is.Null);
+                    QuestDistributionBuild.KeystoreArgument, "C:/keys/a.keystore", QuestDistributionBuild.KeyAliasArgument, "a", QuestDistributionBuild.OutputArgument, "C:/out/a.apk", QuestDistributionBuild.DevicesArgument, "quest3|quest3s" }, out var r), Is.Null);
                 using (new QuestDistributionBuild.SettingsScope(r, "s", "k"))
                 {
                     Assert.That(PlayerSettings.Android.minSdkVersion, Is.EqualTo(AndroidSdkVersions.AndroidApiLevel32));

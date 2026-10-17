@@ -26,6 +26,8 @@ namespace Zantetsu.EditorTools.Quest
         public const string VersionCodeArgument = "-zantetsuDistVersionCode";
         public const string KeystoreArgument = "-zantetsuDistKeystore";
         public const string KeyAliasArgument = "-zantetsuDistKeyAlias";
+        /// <summary>The devices the wrapper expects (quest3|quest3s): it must equal <see cref="QuestDistributionTargets.CanonicalValue"/>, so that the build, the inspection and the record agree (D-240).</summary>
+        public const string DevicesArgument = "-zantetsuDistDevices";
         /// <summary>The output argument of the shared build (<see cref="QuestStaticDemoBuild.BuildApkForScenes"/>).</summary>
         public const string OutputArgument = "-zantetsuQuestOut";
         /// <summary>The development option of the shared build, which a distribution build refuses.</summary>
@@ -49,6 +51,7 @@ namespace Zantetsu.EditorTools.Quest
             public string keystore;
             public string keyAlias;
             public string output;
+            public string devices;
         }
 
         /// <summary>
@@ -66,6 +69,7 @@ namespace Zantetsu.EditorTools.Quest
             if ((failure = ReadValue(args, KeystoreArgument, out r.keystore)) != null) return failure;
             if ((failure = ReadValue(args, KeyAliasArgument, out r.keyAlias)) != null) return failure;
             if ((failure = ReadValue(args, OutputArgument, out r.output)) != null) return failure;
+            if ((failure = ReadValue(args, DevicesArgument, out r.devices)) != null) return failure;
             if (!IsDigits(code) || !int.TryParse(code, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out r.versionCode) || r.versionCode < 1)
                 return VersionCodeArgument + " must be a whole number from 1 upward written in digits alone, not '" + code + "'";
             foreach (char c in r.versionName)
@@ -92,6 +96,8 @@ namespace Zantetsu.EditorTools.Quest
             catch (BuildFailedException e) { return e.Message; }
             if (mode != DemoBuildMode.Commercial) return "a distribution build must be asked for with " + DemoBuildPolicy.ModeArgument + " commercial (it never switches to the demo)";
             if (Array.IndexOf(args, DevelopmentArgument) >= 0) return "a distribution build is never a development build: remove " + DevelopmentArgument;
+            if (!string.Equals(request.devices, QuestDistributionTargets.CanonicalValue, StringComparison.Ordinal))
+                return DevicesArgument + " is '" + request.devices + "' but the distribution's devices are " + QuestDistributionTargets.CanonicalValue + " (QuestDistributionTargets): the wrapper and the build must agree";
             return null;
         }
 
@@ -159,6 +165,7 @@ namespace Zantetsu.EditorTools.Quest
             string keyPassword = Environment.GetEnvironmentVariable(KeyPasswordVariable);
             string failure = TryRead(args, out Request request);
             if (failure == null) failure = Validate(request, File.Exists(request.keystore), keystorePassword, keyPassword, args);
+            if (failure == null && QuestDistributionTargets.FindFeatureDevices(out _, out string targets) == null) failure = "distribution targets: " + targets;
             if (failure != null)
             {
                 Debug.LogError("QUEST DISTRIBUTION BUILD refused: " + failure);
@@ -173,8 +180,10 @@ namespace Zantetsu.EditorTools.Quest
             try
             {
                 QuestDistributionManifest.Required = true;
+                using (var targetsScope = new QuestDistributionTargets.Scope())
                 using (new SettingsScope(request, keystorePassword, keyPassword))
                 {
+                    Debug.Log("QUEST DISTRIBUTION TARGETS: " + QuestDistributionTargets.CanonicalValue + "; the feature's devices before: " + targetsScope.Before + "; during the build: " + targetsScope.During);
                     QuestScenarioPlayerBuild.Build(false);
                     built = true;
                 }

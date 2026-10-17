@@ -37,6 +37,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $package = 'com.zantetsuken.quest'
+# The distribution's devices (D-240). The Editor's definition (QuestDistributionTargets.CanonicalValue) must equal this:
+# the build refuses otherwise, so the build, the inspection and the record never disagree.
+$supportedDevices = 'quest3|quest3s'
 $storeVariable = 'ZANTETSU_KEYSTORE_PASSWORD'; $keyVariable = 'ZANTETSU_KEY_PASSWORD'
 
 # 1. What can be known before Unity starts.
@@ -70,21 +73,28 @@ $validity = @($listed | Where-Object { $_ -match '^\s*Valid from' }) | Select-Ob
 
 # 2. The build, with the settings file saved and put back whatever happens.
 New-Item -ItemType Directory -Path $record | Out-Null
-$settings = Join-Path $project 'ProjectSettings\ProjectSettings.asset'
-$saved = Join-Path $record 'ProjectSettings.asset.before'
-Copy-Item -LiteralPath $settings -Destination $saved
+# The files the build may change and must leave as they were: the player settings and the OpenXR package settings
+# (the Meta Quest feature's target devices live there). Saved here, compared and put back afterwards whatever happened.
+$watched = @(
+    @{ Path = (Join-Path $project 'ProjectSettings\ProjectSettings.asset'); Saved = (Join-Path $record 'ProjectSettings.asset.before'); After = (Join-Path $record 'ProjectSettings.asset.after-unity'); Name = 'ProjectSettings.asset' },
+    @{ Path = (Join-Path $project 'Assets\XR\Settings\OpenXR Package Settings.asset'); Saved = (Join-Path $record 'OpenXR Package Settings.asset.before'); After = (Join-Path $record 'OpenXR Package Settings.asset.after-unity'); Name = 'OpenXR Package Settings.asset' }
+)
+foreach ($w in $watched) {
+    if (!(Test-Path -LiteralPath $w.Path -PathType Leaf)) { throw "the watched settings file is not there: $($w.Path)" }
+    Copy-Item -LiteralPath $w.Path -Destination $w.Saved
+}
 $logs = Join-Path $project 'Logs/quest-distribution'
 [IO.Directory]::CreateDirectory($logs) | Out-Null
 $log = Join-Path $logs "build-$VersionName-$VersionCode.log"
 $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -buildTarget Android -executeMethod Zantetsu.EditorTools.Quest.QuestDistributionBuild.BuildApk -logFile "' + $log + '"' `
     + ' -zantetsuBuildMode commercial -zantetsuQuestOut "' + $Output + '"' `
     + ' -zantetsuDistVersionName ' + $VersionName + ' -zantetsuDistVersionCode ' + $VersionCode `
-    + ' -zantetsuDistKeystore "' + $Keystore + '" -zantetsuDistKeyAlias ' + $KeyAlias
+    + ' -zantetsuDistKeystore "' + $Keystore + '" -zantetsuDistKeyAlias ' + $KeyAlias + ' -zantetsuDistDevices ' + $supportedDevices
 $head = git -C $project log --format='%H %s' -1
 $dirty = @(git -C $project status --short --untracked-files=all)
 @(
     "distribution build begun $(Get-Date -Format o)",
-    "package $package; versionName $VersionName; versionCode $VersionCode",
+    "package $package; versionName $VersionName; versionCode $VersionCode; supported devices $supportedDevices",
     "keystore $Keystore; alias $KeyAlias; certificate sha256 $certificateSha256; $validity",
     "source $head",
     "uncommitted changes: $($dirty.Count)",
@@ -101,14 +111,16 @@ try {
     $exit = $process.ExitCode
 }
 finally {
-    $after = Get-Content -LiteralPath $settings -Raw
-    $before = Get-Content -LiteralPath $saved -Raw
-    if ($after -ne $before) {
-        Copy-Item -LiteralPath $settings -Destination (Join-Path $record 'ProjectSettings.asset.after-unity')
-        Copy-Item -LiteralPath $saved -Destination $settings -Force
-        "ProjectSettings.asset differed after Unity and was put back from the saved copy" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-    } else {
-        "ProjectSettings.asset unchanged after Unity" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+    foreach ($w in $watched) {
+        $after = Get-Content -LiteralPath $w.Path -Raw
+        $before = Get-Content -LiteralPath $w.Saved -Raw
+        if ($after -ne $before) {
+            Copy-Item -LiteralPath $w.Path -Destination $w.After
+            Copy-Item -LiteralPath $w.Saved -Destination $w.Path -Force
+            "$($w.Name) differed after Unity and was put back from the saved copy" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+        } else {
+            "$($w.Name) unchanged after Unity" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+        }
     }
     "unity exit $exit; ended $(Get-Date -Format o)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
     if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $record 'build.log') }
@@ -120,7 +132,7 @@ if (!(Test-Path -LiteralPath $Output)) { throw "Unity exited 0 but the APK is no
 # 3. The APK itself.
 $apkSha256 = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash.ToLowerInvariant()
 "apk sha256 $apkSha256; bytes $((Get-Item -LiteralPath $Output).Length)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
+& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -ExpectedSupportedDevices $supportedDevices -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
 if ($LASTEXITCODE -ne 0) { throw "the APK failed its inspection (see $record\inspection.txt)" }
 "distribution build of $package $VersionName ($VersionCode): $Output"
 "apk sha256 $apkSha256"

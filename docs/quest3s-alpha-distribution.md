@@ -1,6 +1,6 @@
 # Quest ALPHA 配布：署名とバージョン管理
 
-対象は「配布用 APK の署名と更新管理」だけ。Target API・Manifest 全般・対応機種の調整は次の単位、Store へのアップロードやテスターへの配布は別工程（DESIGN 3.5）。
+対象は、配布用 APK の署名と更新管理（D-238）、Android 設定と Manifest の指定項目（D-239）、配布対象の機種と `supportedDevices`（D-240）。Store へのアップロードやテスターへの配布は別工程（DESIGN 3.5）。正式配布鍵での検証、Dashboard の Package Name 照合、ALPHA 経由の配布・導入確認は残件。
 
 ## 入口
 
@@ -74,16 +74,30 @@ $env:ZANTETSU_KEYSTORE_PASSWORD = ...; $env:ZANTETSU_KEY_PASSWORD = ...
 | 起動用 intent-filter | MAIN と `com.oculus.intent.category.VR` | OpenXR（XR Management）の生成を活かし、無ければ category を追加 |
 | headtracking | `uses-feature` required=true、version=1 | 同上、無ければ追加・値が違えば設定 |
 
-- Manifest 後処理は `QuestDistributionManifest.Hook`（`IPostGenerateGradleAndroidProject`、order 10000＝XR Management の 1 の後）。配布ビルド中（`QuestDistributionManifest.Required`）だけ動き、生成された `unityLibrary/src/main/AndroidManifest.xml` に足りない属性を最小限追加する（PackageCache の編集や Manifest の置き換えはしない）。`ConfigureCommon` は呼ばない。
+- Manifest 後処理は `QuestDistributionManifest.Hook`（`IPostGenerateGradleAndroidProject`、order 10000＝XR Management の 1 の後）。配布ビルド中（`QuestDistributionManifest.Required`）だけ動き、生成された Gradle プロジェクトの **2 つの Manifest** を扱う：unityLibrary 本体 `unityLibrary/src/main/AndroidManifest.xml`（installLocation、起動 Activity の excludeFromRecents、intent-filter の VR category）と、XR Management が feature の要件を書く自前のライブラリ `unityLibrary/xrmanifest.androidlib/AndroidManifest.xml`（supportedDevices の meta-data、headtracking、focusaware）。Gradle のマージで、完成 APK では supportedDevices の meta-data が `application` 直下に、headtracking の `uses-feature` が `manifest` 直下に入る。足りない属性を最小限追加し（headtracking はどちらかに在ればそこで値を揃え、どちらにも無いときだけ本体に追加）、PackageCache の編集や Manifest の置き換えはしない。`ConfigureCommon` は呼ばない。
 - min／target SDK と installLocation は `SettingsScope` が保存・適用・復元する（成功時・例外時とも）。
+
+## 配布対象の機種（D-240）
+
+初期 ALPHA の対象は **Quest 3 と Quest 3S** の 2 機種。完成 APK の `application` 直下：
+
+```
+<meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s" />
+```
+
+- 定義は 1 か所：`QuestDistributionTargets.Devices`（内部名 → 正規名：`eureka` → `quest3`、`quest3s` → `quest3s`）、`CanonicalValue = "quest3|quest3s"`。ラッパーの `$supportedDevices` はこれと一致していなければビルドが拒否する（`-zantetsuDistDevices`）。検査の期待値もラッパーから渡す（完成 APK から逆算しない）。
+- ビルド中：`QuestDistributionTargets.Scope` が Android の OpenXR 設定の Meta Quest Support feature の `targetDevices` を `SerializedObject` で読み、対象 2 機種だけ `enabled` にし、終了後（例外時も）元へ戻す。内部名（`manifestName`）は書き換えない。feature が無い・無効・`targetDevices` が無い・対象機種が定義に無い場合は、設定変更前に理由を出して拒否する。`ConfigureCommon`／`RefreshFeatures`・PackageCache の編集はしない。
+- Manifest：OpenXR の生成（XR Management のライブラリ Manifest `xrmanifest.androidlib` に `eureka|quest3s`）を配布 Hook が検査し、unityLibrary 本体とライブラリの `application` 直下を合わせて `com.oculus.supportedDevices` がちょうど 1 件・機種集合が定義と一致（内部名 `eureka` は `quest3` と読む）するときだけ、在る側で正規表記 `quest3|quest3s` に書く。不足・余計・未知名・重複・空は失敗（黙って補正しない）。再適用で変化なし、他の meta-data は保持。
+- ラッパーは `ProjectSettings.asset` と `Assets/XR/Settings/OpenXR Package Settings.asset` をビルド前に保存し、終了後に差があれば戻す（記録に残る）。
+- 機種ごとの実機検証状況：**Quest 3S**＝実機確認済み（テスト鍵）。**Quest 3**＝ALPHA 対象・実機未検証。テスターによる最初の検証項目：ALPHA での導入、起動、両眼表示、コントローラー操作、メニュー、通常プレイ時のフレーム時間。
 
 ## APK の検査
 
 ```
-Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> -ExpectedVersionCode <番号> -ExpectedCertificateSha256 <64桁> [-Record <txt>]
+Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> -ExpectedVersionCode <番号> -ExpectedCertificateSha256 <64桁> -ExpectedSupportedDevices 'quest3|quest3s' [-Record <txt>] [-ManifestDump <txt>] [-BadgingDump <txt>]
 ```
 
-設定値ではなく APK そのものから（Unity 同梱 SDK の `aapt2`・`apksigner`）。Manifest は `aapt2 dump xmltree` を木に読み（`Tools/Quest3s/ApkManifestChecks.ps1`）、属性の所属要素で判定する（別要素に同じ文字列があっても合格にしない；数値・16 進・`(type …)` 表記を扱う；読み取り・解析失敗は FAIL）：`aapt2` の 2 回の読み取り（badging と Manifest）が exit 0 で必要な出力を持つこと（読み取り失敗は検査失敗）、package ID／versionName／versionCode が指定値と一致、APK Signature Scheme v2 の検証に成功、署名者が 1 人で配布証明書（必須引数、64 桁の 16 進）と一致（Android debug 証明書でない）、`android:debuggable` が false か未指定；minSdk 32・targetSdk 34・compileSdk ≥ target（記載時）・installLocation が存在し 0・MAIN を持つ唯一の Activity が `UnityPlayerGameActivity` でその intent-filter に MAIN と VR category・その Activity に excludeFromRecents=true・manifest 直下の headtracking `uses-feature` が required=true／version=1。すべて成立で exit 0。記録には Manifest のダンプ（`manifest.txt`）・badging（`badging.txt`）・権限一覧・`com.oculus.supportedDevices` の現値も残す（対応機種の選定は次の単位）。ラッパーはビルド後にこれを自動で行い、`<apk>.record\inspection.txt` に残す。
+設定値ではなく APK そのものから（Unity 同梱 SDK の `aapt2`・`apksigner`）。Manifest は `aapt2 dump xmltree` を木に読み（`Tools/Quest3s/ApkManifestChecks.ps1`）、属性の所属要素で判定する（別要素に同じ文字列があっても合格にしない；数値・16 進・`(type …)` 表記を扱う；読み取り・解析失敗は FAIL）：`aapt2` の 2 回の読み取り（badging と Manifest）が exit 0 で必要な出力を持つこと（読み取り失敗は検査失敗）、package ID／versionName／versionCode が指定値と一致、APK Signature Scheme v2 の検証に成功、署名者が 1 人で配布証明書（必須引数、64 桁の 16 進）と一致（Android debug 証明書でない）、`android:debuggable` が false か未指定；minSdk 32・targetSdk 34・compileSdk ≥ target（記載時）・installLocation が存在し 0・MAIN を持つ唯一の Activity が `UnityPlayerGameActivity` でその intent-filter に MAIN と VR category・その Activity に excludeFromRecents=true・manifest 直下の headtracking `uses-feature` が required=true／version=1。すべて成立で exit 0。対応機種：`application` 直下の `com.oculus.supportedDevices` がちょうど 1 件（Activity 内の同名は数えない）、値が存在し、`|` で分けた機種集合が `quest3` と `quest3s` の 2 つに一致（順序不問、大文字小文字は厳密、空値・空要素・重複・不足・余計・内部名 `eureka` は不合格）。期待値は `-ExpectedSupportedDevices`（必須）で渡す。記録には Manifest のダンプ（`manifest.txt`）・badging（`badging.txt`）・権限一覧・対応機種の期待値と実値も残す。ラッパーはビルド後にこれを自動で行い、`<apk>.record\inspection.txt` に残す。
 
 記録（`<apk>.record\build.txt`）：package・versionName・versionCode、keystore の場所・alias・証明書 SHA-256、ソース commit、未コミット差分の有無（あれば `status.txt`／`working-tree.patch`）、ビルド条件、Unity のコマンド、ProjectSettings の復元の有無、APK の SHA-256。秘密情報は含まない。
 

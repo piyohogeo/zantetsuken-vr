@@ -18,6 +18,7 @@ param(
     [string]$BadgingDump,       # where aapt2's badging is written; empty: not written
     [int]$ExpectedMinSdk = 32,
     [int]$ExpectedTargetSdk = 34,
+    [Parameter(Mandatory = $true)][string]$ExpectedSupportedDevices,   # the distribution's devices (quest3|quest3s), from the wrapper's definition
     [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
 )
 $ErrorActionPreference = 'Stop'
@@ -78,7 +79,7 @@ if ($BadgingDump) { $badging | Set-Content -LiteralPath $BadgingDump -Encoding U
 # install location, the launch activity and its intent-filter, excludeFromRecents, the headtracking feature.
 $tree = $null
 if ($manifestRead) { $tree = ConvertFrom-AaptXmlTree $manifest }
-$guarantees = Test-DistributionManifest -Root $tree -MinSdk $ExpectedMinSdk -TargetSdk $ExpectedTargetSdk
+$guarantees = Test-DistributionManifest -Root $tree -MinSdk $ExpectedMinSdk -TargetSdk $ExpectedTargetSdk -ExpectedDevices $ExpectedSupportedDevices
 foreach ($k in $guarantees.Facts.Keys) { $lines += "manifest: $k = $($guarantees.Facts[$k])" }
 foreach ($k in $guarantees.Checks.Keys) { $checks[$k] = $guarantees.Checks[$k] }
 
