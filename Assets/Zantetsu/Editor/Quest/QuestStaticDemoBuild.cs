@@ -206,7 +206,13 @@ namespace Zantetsu.EditorTools.Quest
         public static void BuildApkForScene(string scenePath) => BuildApkForScenes(new[] { scenePath });
 
         /// <summary>The same with several scenes, in the APK's order: the first is the one it starts in (DESIGN 3.4).</summary>
-        public static void BuildApkForScenes(string[] scenePaths)
+        public static void BuildApkForScenes(string[] scenePaths) => BuildApkForScenes(scenePaths, true);
+
+        /// <summary>
+        /// The same; in batch mode a failure exits the Editor at once when <paramref name="exitOnFailure"/>, and is
+        /// thrown to the caller otherwise (the distribution build, which has settings to put back first).
+        /// </summary>
+        public static void BuildApkForScenes(string[] scenePaths, bool exitOnFailure)
         {
             try
             {
@@ -233,7 +239,7 @@ namespace Zantetsu.EditorTools.Quest
                 Debug.Log("QUEST BUILD: " + report.summary.result + " size=" + report.summary.totalSize + " errors=" + report.summary.totalErrors + " output=" + output);
                 if (report.summary.result != BuildResult.Succeeded || report.summary.totalErrors != 0) throw new InvalidOperationException("Android build failed or reported errors; inspect quest-build.log");
             }
-            catch (Exception e) { Debug.LogError(e); if (Application.isBatchMode) EditorApplication.Exit(1); throw; }
+            catch (Exception e) { Debug.LogError(e); if (exitOnFailure && Application.isBatchMode) EditorApplication.Exit(1); throw; }
         }
         private static void ConfigureXr(List<string> report)
         {

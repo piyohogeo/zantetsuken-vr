@@ -17,6 +17,7 @@
         "Zantetsu.Sandbox",
         "Zantetsu.Sandbox.Editor",
         "Zantetsu.Quest",
+        "Zantetsu.Quest.Editor",
         "Zantetsu.Rendering",
         "Zantetsu.Rendering.Editor",
         "Unity.XR.Management",

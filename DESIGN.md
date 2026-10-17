@@ -159,6 +159,26 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 **未確認。** この節の内容はEditorの試験で確かめた範囲である。全シナリオのPlayerのビルドと起動（PC・Quest）、Questでの `play`、Questの3パッケージを新しい選択処理で起動した結果は、確かめていない。
 
+### 3.5 Quest ALPHA 配布の署名とバージョン管理
+
+**範囲。** 配布用 APK の署名と更新（バージョン）の管理だけ（D-238、2026-10-17、TL の指示）。Target API・Manifest 全般・対応機種は次の単位、Store へのアップロードやテスターへの配布は別工程。手順と秘密情報の扱いは `docs/quest3s-alpha-distribution.md`。
+
+**入口。** `Tools/Quest3s/Build-Distribution.ps1` → `QuestDistributionBuild.BuildApk`（Editor）。全シナリオ APK の既存ビルド（3.4、`QuestScenarioPlayerBuild`）に薄い入口を重ね、ビルド処理は共有する（重複なし）。Release（`-zantetsuQuestDev` は拒否）・Commercial（`-zantetsuBuildMode commercial` を必須。素材不足で Bunny デモへ切り替わらない）を明示し、package ID は既存本体の `com.zantetsuken.quest` に固定する。versionName・正の整数の versionCode・keystore の場所・alias は引数で受け、2 つのパスワードは環境変数 `ZANTETSU_KEYSTORE_PASSWORD`／`ZANTETSU_KEY_PASSWORD` からだけ受ける（コマンドライン・ログ・記録・Git 管理ファイルへ出さない。鍵は Git に含めず、リポジトリ内の keystore は拒否する）。
+
+**事前の検査。** ビルド前に分かる不足・不正は Unity を起動する前に（ラッパー）、また Editor の入口でも（exit 2）理由を示して失敗させる：引数の欠落・重複・不正、versionCode が 1 以上の数字でない、versionName の空白、keystore の不在・拡張子、パスワード未設定、alias の不在（`keytool -storepass:env`）、mode が commercial でない、開発オプション。デバッグ署名へ暗黙に切り替えない。
+
+**設定の復元。** ビルド中だけ変える Player 設定（identifier、bundleVersion、bundleVersionCode、useCustomKeystore、keystoreName、keyaliasName、2 つのパスワード）は `SettingsScope` が成功・失敗どちらでも元へ戻し、パスワードは空にする。共有ビルドの失敗時の `EditorApplication.Exit` は配布入口からは行わず（`exitOnFailure=false`）、復元後に入口自身が終了する。ラッパーは `ProjectSettings.asset` を保存して終了後に戻す。
+
+**versionCode。** 自動増分しない。配布担当が、配布済みの最大値より大きい値を明示する。同じ出力 APK は上書きしない。
+
+**検査と記録。** 生成後、設定値でなく APK そのものから（`aapt2`・`apksigner`）package ID・versionName・versionCode の一致、APK Signature Scheme v2 の成功、署名者が配布証明書と一致（debug 証明書でない）、`android:debuggable` が false か未指定を検査する（`Inspect-DistributionApk.ps1`）。記録 `<apk>.record\`：ソース commit、未コミット差分の有無、ビルド条件、バージョン、APK の SHA-256、証明書の SHA-256、検査結果。秘密情報は記録しない。
+
+**更新試験。** 同じ鍵・同じ package で versionCode を上げた次版を、テスト端末で上書き更新し、起動と保存済み設定の維持を確かめる。デバッグ署名版との不一致（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）は配布鍵同士の更新試験と区別し、端末データを消すアンインストールは自動では行わない。
+
+**鍵。** 配布鍵は TL が指名する担当が作り保管する（使い捨ての鍵は配布に採用しない）。検証はテスト鍵で行い、配布鍵での検証は鍵の提供後に行う。
+
+**未確認。** Meta Developer Dashboard でアプリに登録された Package Name（App ID とは別の識別子）が `com.zantetsuken.quest` か（配布担当が確認）。配布鍵での検証。
+
 ## 4. システムアーキテクチャ
 
 共通Player終了出口へ送るのは、共用Geometry切断またはFragment／Boundary／Operation構築で既存境界から表面化した予期しない内部エラー、4.5.4で定めるCPU backing容量の不成立、同節のGPU backing容量の不成立、5.6の必須Stencil構成の不成立の4条件とする。製品PlayerのComposition Root上の共通Player lifecycle境界が、Renderer初期化より前からPlayer寿命を通じて単一の非永続終了要求latchを所有する。Renderer初期化処理と切断Coordinatorはこの境界へ報告し、切断受付・Commitも同じlatchを参照する。外部Poolを含むWorkerの異常は既存の通知・回収境界でMainへ渡し、Workerはlatchや終了APIを直接操作しない。Mainが最初に扱った原因でlatchを一方向に確定し、同じMain Threadで直列に処理する新規切断受付と未公開切断成果物のCommitを閉じてから、既存ログへbest effortで一度記録し、製品Playerの終了APIを一度呼ぶ。「終了要求後」はAPI呼出し後ではなくlatch確定後を指す。エラーに関わる未公開成果物を公開せず、初期化中はGameplayを開始しない。同一sessionでのrollback・整合回復、全Work／資源回収、ログ永続化、Trace／Captureのトリガー・post-roll・freeze・保存・Publication・CaptureComplete・durable flush完了、終了所要時間は保証しない。ログが使えなくても終了を妨げず、回収・保存を待たない。任意の保存は非待機のbest effortに限る。内部エラーの全検出は保証せず、このためのValidator・詳細Reason・永続schema・復旧基盤を追加しない。通常の世代失効・出力予約不足、7.1の個別物理退役、Capture-only Fail Fast／Poison、Tool／Benchmark／Trace・Capture Run単位の失敗は既存境界を維持する。
@@ -1913,6 +1933,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-234 | 元インスタンスを切断対象へ戻す処理は、期待費用（直近5回の中央値）の2倍を、フレームの予算の半分を上限として求める | 7.10の「切断対象へ戻す処理の予算」のとおり。実測はどのビルドでも行う | 2026-10-14、TL判断（2案「中央値にしてどのビルドでも測る」と「確認用ログに戻す処理の見込みと待ち数を出す」）。Quest 3S実機の「切れない木」と、932a86d0でこの実測をReleaseから外していた誤りによる | 確定 |
 | D-235 | 追加空間分割の曲面探索：Convexを切らない平面が不成立のとき、Convex切断より先に、少数の平面片をつないだ関数グラフの仕切りで、ConvexとTriangleを丸ごと振り分ける（Convexは切らない） | 7.9.2「折れ曲がった仕切りによる分離」のとおり。全要素を射影凸包で全体検証し、余裕は2次元距離。Anchor・Convex分類は所属で受け渡し、平面係数で代用しない。既定は無効（D-237 で有効に） | 2026-10-15、TLの依頼（表現・候補生成・暫定上限は着手時に提示）。治具で成立、実データ未確認、Player未確認 | 確定 |
 | D-237 | 曲面探索を既定で有効にする | `CutWorldProfile.spatialSplitBentSearch` の既定を true に。Playerは `-zantetsuSpatialSplitBentOff` で無効化できる（比較用）。上限はD-235の暫定値のまま（枠12・種2・候補8・反復4・片16） | 2026-10-16、TL決定。材料：PC街歩き bentW5/W6（曲面16件、worker平均2 ms・最長17 ms、Mainは対照と同じ桁）、Quest play qBent4/qBent2（99件＝公開の21%、worker平均5.7 ms・最長232 ms、Mainは同じ桁、BudgetShort 455→1,097）。Questの1探索の上限や探索の分割は別件（未着手） | 確定 |
+| D-238 | Quest ALPHA 配布の署名とバージョン管理：既存の全シナリオ APK ビルドに薄い配布入口を重ねる | 3.5 のとおり。`QuestDistributionBuild`＋`Build-Distribution.ps1`＋`Inspect-DistributionApk.ps1`。Release・Commercial 明示、package `com.zantetsuken.quest` 固定、versionCode は配布担当が明示、パスワードは環境変数のみ、設定はビルド中だけ（復元）、APK 自体を検査 | 2026-10-17、TL の指示。テスト鍵で検証、配布鍵は未提供 | 確定 |
 | D-236 | 街歩きの台本の移動入力はリグの正面に従う（人のスティックは頭の正面のまま） | `MobPlanPlayerInput.SubmitAlongRig`：台本（`CityWalkSteps`）はリグのyawで前と旋回を計算するので、移動もリグの正面（水平）に沿う。人のスティック（`Submit`）はD-225のまま頭の水平方向の正面。2026-10-15、TL指示（「この場で行って下さい」）。D-225後の台本走行3本（bentW2〜W4）が、再生中の頭の向きへ進んで経路を外れ、障害物に当たり歩行9で止まった件 | 確定 |
 
 ## 13. 未決事項

@@ -18,7 +18,13 @@ namespace Zantetsu.EditorTools.Quest
     {
         public const string ApplicationIdentifier = "com.zantetsuken.quest";
 
-        public static void BuildApk()
+        public static void BuildApk() => Build(true);
+
+        /// <summary>
+        /// The build itself. In batch mode a failure exits the Editor at once when <paramref name="exitOnFailure"/>
+        /// (the plain entry); the distribution build passes false, puts its settings back, and exits itself.
+        /// </summary>
+        public static void Build(bool exitOnFailure)
         {
             var scenes = DemoBuildPolicy.SelectScenes(new[] { QuestCityWalkBuild.ScenePath, QuestStaticDemoBuild.ScenePath, QuestNpcSlashBuild.ScenePath }, out bool demo);
             if (demo)
@@ -27,7 +33,7 @@ namespace Zantetsu.EditorTools.Quest
                 UnityEditor.AssetDatabase.SaveAssets();
             }
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, demo ? ApplicationIdentifier + ".bunnydemo" : ApplicationIdentifier);
-            using (DemoBuildPolicy.Scope(demo, scenes)) QuestStaticDemoBuild.BuildApkForScenes(scenes);
+            using (DemoBuildPolicy.Scope(demo, scenes)) QuestStaticDemoBuild.BuildApkForScenes(scenes, exitOnFailure);
         }
     }
 }
