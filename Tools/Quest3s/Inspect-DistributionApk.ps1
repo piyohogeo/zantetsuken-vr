@@ -14,9 +14,14 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedVersionCode,
     [Parameter(Mandatory = $true)][string]$ExpectedCertificateSha256,   # the distribution certificate's SHA-256, 64 hex digits; always compared
     [string]$Record,
+    [string]$ManifestDump,      # where the manifest as aapt2 dumps it is written (the record); empty: not written
+    [string]$BadgingDump,       # where aapt2's badging is written; empty: not written
+    [int]$ExpectedMinSdk = 32,
+    [int]$ExpectedTargetSdk = 34,
     [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ApkManifestChecks.ps1')
 $Apk = [IO.Path]::GetFullPath($Apk)
 if (!(Test-Path -LiteralPath $Apk -PathType Leaf)) { throw "no such APK: $Apk" }
 if ($ExpectedCertificateSha256 -notmatch '^[0-9A-Fa-f]{64}$') { throw "ExpectedCertificateSha256 must be 64 hexadecimal digits, not '$ExpectedCertificateSha256'" }
@@ -66,6 +71,16 @@ $checks['aapt2 read the manifest (dump xmltree exit 0 with the manifest element)
 $debuggableAttribute = @($manifest | Where-Object { $_ -match 'android:debuggable\(0x0101000f\)=(\S+)' } | ForEach-Object { $Matches[1] })
 $lines += "application-debuggable lines $debuggable; android:debuggable attribute values: $(if ($debuggableAttribute.Count -eq 0) { 'absent' } else { $debuggableAttribute -join ',' })"
 $checks['android:debuggable is false or absent'] = $manifestRead -and ($debuggable -eq 0) -and (@($debuggableAttribute | Where-Object { $_ -ne 'false' }).Count -eq 0)
+if ($ManifestDump) { $manifest | Set-Content -LiteralPath $ManifestDump -Encoding UTF8 }
+if ($BadgingDump) { $badging | Set-Content -LiteralPath $BadgingDump -Encoding UTF8 }
+
+# The Android settings and the manifest's guarantees (DESIGN 3.5, D-239), from the manifest tree: the SDK levels, the
+# install location, the launch activity and its intent-filter, excludeFromRecents, the headtracking feature.
+$tree = $null
+if ($manifestRead) { $tree = ConvertFrom-AaptXmlTree $manifest }
+$guarantees = Test-DistributionManifest -Root $tree -MinSdk $ExpectedMinSdk -TargetSdk $ExpectedTargetSdk
+foreach ($k in $guarantees.Facts.Keys) { $lines += "manifest: $k = $($guarantees.Facts[$k])" }
+foreach ($k in $guarantees.Checks.Keys) { $checks[$k] = $guarantees.Checks[$k] }
 
 # The signature as apksigner verifies it.
 $verify = Invoke-Native { & $apksigner verify --print-certs -v $Apk }

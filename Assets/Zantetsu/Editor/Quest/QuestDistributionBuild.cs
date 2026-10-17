@@ -36,6 +36,10 @@ namespace Zantetsu.EditorTools.Quest
         public const string ApplicationIdentifier = QuestScenarioPlayerBuild.ApplicationIdentifier;
         /// <summary>The exit code of a request refused before the build.</summary>
         public const int RefusedExitCode = 2;
+        /// <summary>The Android settings a distribution build fixes (DESIGN 3.5, D-239): the SDK levels and the install location.</summary>
+        public const AndroidSdkVersions MinSdk = AndroidSdkVersions.AndroidApiLevel32;
+        public const AndroidSdkVersions TargetSdk = AndroidSdkVersions.AndroidApiLevel34;
+        public const AndroidPreferredInstallLocation InstallLocation = AndroidPreferredInstallLocation.Auto;
 
         /// <summary>What a distribution build is asked for, from the command line (the passwords are not here).</summary>
         public sealed class Request
@@ -93,13 +97,16 @@ namespace Zantetsu.EditorTools.Quest
 
         /// <summary>
         /// The player settings a distribution build sets, put back when disposed -- the identifier, the version name
-        /// and code, the custom keystore, its name and the alias -- and the two passwords, which are cleared then.
+        /// and code, the custom keystore, its name and the alias, the SDK levels and the install location -- and the
+        /// two passwords, which are cleared then.
         /// </summary>
         public sealed class SettingsScope : IDisposable
         {
             private readonly string _identifier, _versionName, _keystore, _alias;
             private readonly int _versionCode;
             private readonly bool _customKeystore;
+            private readonly AndroidSdkVersions _minSdk, _targetSdk;
+            private readonly AndroidPreferredInstallLocation _installLocation;
             private bool _disposed;
 
             public SettingsScope(Request request, string keystorePassword, string keyPassword)
@@ -110,6 +117,9 @@ namespace Zantetsu.EditorTools.Quest
                 _customKeystore = PlayerSettings.Android.useCustomKeystore;
                 _keystore = PlayerSettings.Android.keystoreName;
                 _alias = PlayerSettings.Android.keyaliasName;
+                _minSdk = PlayerSettings.Android.minSdkVersion;
+                _targetSdk = PlayerSettings.Android.targetSdkVersion;
+                _installLocation = PlayerSettings.Android.preferredInstallLocation;
                 PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, ApplicationIdentifier);
                 PlayerSettings.bundleVersion = request.versionName;
                 PlayerSettings.Android.bundleVersionCode = request.versionCode;
@@ -118,6 +128,9 @@ namespace Zantetsu.EditorTools.Quest
                 PlayerSettings.Android.keyaliasName = request.keyAlias;
                 PlayerSettings.Android.keystorePass = keystorePassword;
                 PlayerSettings.Android.keyaliasPass = keyPassword;
+                PlayerSettings.Android.minSdkVersion = MinSdk;
+                PlayerSettings.Android.targetSdkVersion = TargetSdk;   // named, never the automatic (highest installed) level
+                PlayerSettings.Android.preferredInstallLocation = InstallLocation;
             }
 
             public void Dispose()
@@ -132,6 +145,9 @@ namespace Zantetsu.EditorTools.Quest
                 PlayerSettings.Android.useCustomKeystore = _customKeystore;
                 PlayerSettings.Android.keystoreName = _keystore;
                 PlayerSettings.Android.keyaliasName = _alias;
+                PlayerSettings.Android.minSdkVersion = _minSdk;
+                PlayerSettings.Android.targetSdkVersion = _targetSdk;
+                PlayerSettings.Android.preferredInstallLocation = _installLocation;
             }
         }
 
@@ -151,10 +167,12 @@ namespace Zantetsu.EditorTools.Quest
             }
 
             Debug.Log("QUEST DISTRIBUTION BUILD: package=" + ApplicationIdentifier + " versionName=" + request.versionName + " versionCode=" + request.versionCode
-                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output + "; Release, commercial, custom keystore");
+                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output
+                + "; Release, commercial, custom keystore; minSdk " + (int)MinSdk + ", targetSdk " + (int)TargetSdk + ", install location " + InstallLocation + ", the manifest's guarantees");
             bool built = false;
             try
             {
+                QuestDistributionManifest.Required = true;
                 using (new SettingsScope(request, keystorePassword, keyPassword))
                 {
                     QuestScenarioPlayerBuild.Build(false);
@@ -168,6 +186,7 @@ namespace Zantetsu.EditorTools.Quest
             finally
             {
                 // The scope is disposed by now (also when the build threw); the passwords are cleared with it.
+                QuestDistributionManifest.Required = false;
                 PlayerSettings.Android.keystorePass = "";
                 PlayerSettings.Android.keyaliasPass = "";
             }

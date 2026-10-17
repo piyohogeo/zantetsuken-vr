@@ -60,13 +60,30 @@ $env:ZANTETSU_KEYSTORE_PASSWORD = ...; $env:ZANTETSU_KEY_PASSWORD = ...
 - 同じ versionCode を再ビルドしない（出力 APK が既にあればラッパーが止まる）。
 - 更新（上書きインストール）は同じ package ID・同じ署名鍵で versionCode が大きいときだけ成功する。デバッグ署名版（開発ビルド、`CN=Android Debug`）が入っている端末には配布鍵版を上書きできない（署名不一致、`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。これは配布鍵同士の更新試験とは別の事象で、端末のデータを消すアンインストールは**自動では行わない**（人が判断する）。
 
+## Android 設定と Manifest（D-239）
+
+配布入口は毎回、完成 APK が次の状態であることを保証する（Meta の Manifest 要件に基づく）。
+
+| 項目 | 完成 APK の期待値 | 決め方 |
+| --- | --- | --- |
+| minSdkVersion | 32 | `SettingsScope` が `PlayerSettings.Android.minSdkVersion` に設定（ビルド中だけ） |
+| targetSdkVersion | 34（自動選択にしない） | 同 `targetSdkVersion = AndroidApiLevel34` |
+| compileSdkVersion | 記載される場合は target 以上 | Unity／SDK の既定のまま（実値は記録の `manifest.txt`；Unity 6000.3 は target と同じ値を書いた） |
+| installLocation | auto（0） | `preferredInstallLocation = Auto` ＋ Manifest 後処理で `android:installLocation="auto"` |
+| 起動 Activity | `excludeFromRecents=true` | Manifest 後処理：MAIN を持つ唯一の Activity（`com.unity3d.player.UnityPlayerGameActivity` でなければ失敗）に付与 |
+| 起動用 intent-filter | MAIN と `com.oculus.intent.category.VR` | OpenXR（XR Management）の生成を活かし、無ければ category を追加 |
+| headtracking | `uses-feature` required=true、version=1 | 同上、無ければ追加・値が違えば設定 |
+
+- Manifest 後処理は `QuestDistributionManifest.Hook`（`IPostGenerateGradleAndroidProject`、order 10000＝XR Management の 1 の後）。配布ビルド中（`QuestDistributionManifest.Required`）だけ動き、生成された `unityLibrary/src/main/AndroidManifest.xml` に足りない属性を最小限追加する（PackageCache の編集や Manifest の置き換えはしない）。`ConfigureCommon` は呼ばない。
+- min／target SDK と installLocation は `SettingsScope` が保存・適用・復元する（成功時・例外時とも）。
+
 ## APK の検査
 
 ```
 Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> -ExpectedVersionCode <番号> -ExpectedCertificateSha256 <64桁> [-Record <txt>]
 ```
 
-設定値ではなく APK そのものから（Unity 同梱 SDK の `aapt2`・`apksigner`）：`aapt2` の 2 回の読み取り（badging と Manifest）が exit 0 で必要な出力を持つこと（読み取り失敗は検査失敗）、package ID／versionName／versionCode が指定値と一致、APK Signature Scheme v2 の検証に成功、署名者が 1 人で配布証明書（必須引数、64 桁の 16 進）と一致（Android debug 証明書でない）、`android:debuggable` が false か未指定。すべて成立で exit 0。ラッパーはビルド後にこれを自動で行い、`<apk>.record\inspection.txt` に残す。
+設定値ではなく APK そのものから（Unity 同梱 SDK の `aapt2`・`apksigner`）。Manifest は `aapt2 dump xmltree` を木に読み（`Tools/Quest3s/ApkManifestChecks.ps1`）、属性の所属要素で判定する（別要素に同じ文字列があっても合格にしない；数値・16 進・`(type …)` 表記を扱う；読み取り・解析失敗は FAIL）：`aapt2` の 2 回の読み取り（badging と Manifest）が exit 0 で必要な出力を持つこと（読み取り失敗は検査失敗）、package ID／versionName／versionCode が指定値と一致、APK Signature Scheme v2 の検証に成功、署名者が 1 人で配布証明書（必須引数、64 桁の 16 進）と一致（Android debug 証明書でない）、`android:debuggable` が false か未指定；minSdk 32・targetSdk 34・compileSdk ≥ target（記載時）・installLocation が存在し 0・MAIN を持つ唯一の Activity が `UnityPlayerGameActivity` でその intent-filter に MAIN と VR category・その Activity に excludeFromRecents=true・manifest 直下の headtracking `uses-feature` が required=true／version=1。すべて成立で exit 0。記録には Manifest のダンプ（`manifest.txt`）・badging（`badging.txt`）・権限一覧・`com.oculus.supportedDevices` の現値も残す（対応機種の選定は次の単位）。ラッパーはビルド後にこれを自動で行い、`<apk>.record\inspection.txt` に残す。
 
 記録（`<apk>.record\build.txt`）：package・versionName・versionCode、keystore の場所・alias・証明書 SHA-256、ソース commit、未コミット差分の有無（あれば `status.txt`／`working-tree.patch`）、ビルド条件、Unity のコマンド、ProjectSettings の復元の有無、APK の SHA-256。秘密情報は含まない。
 
