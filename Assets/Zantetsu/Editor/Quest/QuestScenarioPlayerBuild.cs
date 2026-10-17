@@ -26,7 +26,8 @@ namespace Zantetsu.EditorTools.Quest
         /// </summary>
         public static void Build(bool exitOnFailure)
         {
-            var scenes = DemoBuildPolicy.SelectScenes(new[] { QuestCityWalkBuild.ScenePath, QuestStaticDemoBuild.ScenePath, QuestNpcSlashBuild.ScenePath }, out bool demo);
+            // The empty XR diagnosis scene (unit 22) rides along: it has no game content and is started only by the scenario "empty-xr".
+            var scenes = DemoBuildPolicy.SelectScenes(new[] { QuestCityWalkBuild.ScenePath, QuestStaticDemoBuild.ScenePath, QuestNpcSlashBuild.ScenePath, QuestEmptyXrBuild.ScenePath }, out bool demo);
             if (demo)
             {
                 QuestStaticDemoBuild.ConfigureCommon(new System.Collections.Generic.List<string>());

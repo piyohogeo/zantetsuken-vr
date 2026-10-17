@@ -20,6 +20,9 @@ namespace Zantetsu.Sandbox
 
         /// <summary>The NPC slash script: the Prop Slash entry without the city walk.</summary>
         NpcSlash = 3,
+
+        /// <summary>DIAGNOSIS ONLY (unit 22): the empty XR scene -- the project's XR and URP configuration with nothing of the game (Quest).</summary>
+        EmptyXr = 4,
     }
 
     /// <summary>The scenario a launch chose, where it was read from, and what is wrong with the launch if anything is.</summary>
@@ -90,7 +93,7 @@ namespace Zantetsu.Sandbox
         /// <summary>The Player's exit code when the launch's scenario cannot be run as asked.</summary>
         public const int FailureExitCode = 22;
 
-        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash" };
+        private static readonly string[] k_names = { "play", "static-wait", "city-walk", "npc-slash", "empty-xr" };
 
         /// <summary>
         /// The development checks that start by themselves on their own argument: the sandbox scene's walk, the
@@ -130,6 +133,7 @@ namespace Zantetsu.Sandbox
                 case SandboxScenarioKind.Play: return new[] { "StanfordBunnyDemo", "WalkCity", "QuestCityWalk" };
                 case SandboxScenarioKind.StaticWait: return new[] { "WalkCity", "QuestStaticSeed14" };
                 case SandboxScenarioKind.NpcSlash: return new[] { "MultiNpcCity", "QuestNpcSlash10" };
+                case SandboxScenarioKind.EmptyXr: return new[] { "QuestEmptyXr" };
                 default: return new[] { "WalkCity", "QuestCityWalk" };
             }
         }
@@ -446,6 +450,10 @@ namespace Zantetsu.Sandbox
             {
                 failure = SandboxDrawComparePlayerCheck.StartForScenario() ? null : "the draw comparison did not start (its own line says why)";
             }
+            else if (kind == SandboxScenarioKind.EmptyXr)
+            {
+                failure = "the empty XR scene diagnosis runs on the Quest only (no platform entry here)";
+            }
             else
             {
                 failure = SandboxPropSlashPlayerCheck.StartForScenario() ? null : "the Prop Slash entry did not start";
@@ -460,10 +468,23 @@ namespace Zantetsu.Sandbox
             // The XR session's focus as a reason of the game's pause (DESIGN 4.6, D-241), before the menu: it holds the
             // game whenever the system UI takes the input, whatever the scenario and whatever the statistics' consent.
             XrFocusPause.Install();
+            if (kind == SandboxScenarioKind.EmptyXr)
+            {
+                // DIAGNOSIS ONLY (unit 22): the empty XR scene keeps the interruption handling (the pause above and
+                // GamePause's listener) and the memory readout; no menu, no statistics, no view-height diagnosis.
+                GpuMemoryReadout.InstallIfAsked();
+                Zantetsu.Core.LaunchDiagnosis.NoteStoodDown("play menu, statistics (SandboxScenario)");
+                Debug.Log(Prefix + "empty XR scene: " + Zantetsu.Core.LaunchDiagnosis.Describe());
+                return;
+            }
+
             // The view-height diagnosis (DESIGN 4.6, unit 6-A): records the head's height along its way at each
             // transition and for a short window after it; reads only, one log line a record; only when the Player
             // argument asks for it (a normal launch creates nothing).
             HeadHeightDiagnosis.InstallIfAsked();
+            // The engine's own GPU memory accounting (unit 8-B), one line in 10 s and one a session change; only when
+            // the Player argument asks for it.
+            GpuMemoryReadout.InstallIfAsked();
             PlayMenu menu = PlayMenu.Install(kind);
 
             // Play's statistics (DESIGN 21.18): the service, and the first-run question where it was never answered.

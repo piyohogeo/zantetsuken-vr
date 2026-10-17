@@ -22,7 +22,9 @@ namespace Zantetsu.Quest
         /// <summary>The scenario's demo, made once; a failure in words, or null.</summary>
         internal static string Start(SandboxScenarioKind kind)
         {
-            return kind == SandboxScenarioKind.StaticWait ? QuestStaticDemo.StartForScenario() : QuestNpcSlashDemo.StartForScenario(kind);
+            if (kind == SandboxScenarioKind.StaticWait) return QuestStaticDemo.StartForScenario();
+            if (kind == SandboxScenarioKind.EmptyXr) return QuestEmptyXrDiagnosis.StartForScenario();   // diagnosis only (unit 22)
+            return QuestNpcSlashDemo.StartForScenario(kind);
         }
     }
 }

@@ -330,6 +330,15 @@ namespace Zantetsu.PhysicsCut
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void InstallForSession()
         {
+            if (Zantetsu.Core.LaunchDiagnosis.EmptyXrScene)
+            {
+                // DIAGNOSIS ONLY (unit 22): the empty XR scene has no physics to step; the player-loop systems are not
+                // installed and the scene is not simulated (script mode: nothing else steps it).
+                Zantetsu.Core.LaunchDiagnosis.NoteStoodDown("physics step loop (CutPhysicsStep)");
+                UnityEngine.Debug.Log("CUT PHYSICS STEP: not installed -- " + Zantetsu.Core.LaunchDiagnosis.Describe());
+                return;
+            }
+
             Loop.EnsureInstalled();
 
             // The game's pause as a whole (DESIGN 4.6: manual, application, XR focus) pauses the step here, beside a

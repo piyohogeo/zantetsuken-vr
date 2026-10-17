@@ -45,6 +45,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(Read("-zantetsuScenario", "static-wait", DrawCompare, "d").Kind, Is.EqualTo(SandboxScenarioKind.StaticWait));
             Assert.That(Read("-zantetsuScenario", "city-walk", PropSlash, "d", CityWalk).Kind, Is.EqualTo(SandboxScenarioKind.CityWalk));
             Assert.That(Read("-zantetsuScenario", "npc-slash", PropSlash, "d").Kind, Is.EqualTo(SandboxScenarioKind.NpcSlash));
+            Assert.That(SandboxScenario.TryParse("empty-xr", out SandboxScenarioKind empty) && empty == SandboxScenarioKind.EmptyXr, Is.True, "the empty XR diagnosis scenario (unit 22)");
+            Assert.That(SandboxScenario.Name(SandboxScenarioKind.EmptyXr), Is.EqualTo("empty-xr"));
+            Assert.That(SandboxScenario.ScenesFor(SandboxScenarioKind.EmptyXr), Is.EqualTo(new[] { "QuestEmptyXr" }), "its own scene alone: no city scene is a fallback");
             foreach (SandboxScenarioKind kind in new[] { SandboxScenarioKind.Play, SandboxScenarioKind.StaticWait, SandboxScenarioKind.CityWalk, SandboxScenarioKind.NpcSlash })
             {
                 Assert.That(SandboxScenario.TryParse(SandboxScenario.Name(kind), out SandboxScenarioKind back), Is.True);

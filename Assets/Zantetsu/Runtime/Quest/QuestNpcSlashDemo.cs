@@ -168,7 +168,7 @@ namespace Zantetsu.Quest
         /// </summary>
         internal static void SelectRouteFor(SandboxScenarioChoice choice, string json)
         {
-            if (choice.Failure != null || choice.Kind == SandboxScenarioKind.StaticWait) return;
+            if (choice.Failure != null || choice.Kind == SandboxScenarioKind.StaticWait || choice.Kind == SandboxScenarioKind.EmptyXr) return;
             Config config = ConfigFor(choice.Kind, json);
             VpNativeDrawSetup.Requested = config.mode == "vp3c-native";
             ApplyNativeOptions(config);
