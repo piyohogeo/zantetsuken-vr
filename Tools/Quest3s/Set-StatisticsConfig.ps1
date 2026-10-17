@@ -20,8 +20,8 @@
   this script alone is for a tree that is not built by it.
 
 .EXAMPLE
-  .\Tools\Quest3s\Set-StatisticsConfig.ps1 -Project %USERPROFILE%\src\zantetsuken-vr-questbuild -Role external -TokenVariable ZANTETSU_INGEST_TOKEN_ALPHA -AsideDirectory C:\log\...\config-aside
-  .\Tools\Quest3s\Set-StatisticsConfig.ps1 -Project %USERPROFILE%\src\zantetsuken-vr-questbuild -Remove -AsideDirectory C:\log\...\config-aside
+  .\Tools\Quest3s\Set-StatisticsConfig.ps1 -Project <build tree> -Role external -TokenVariable ZANTETSU_INGEST_TOKEN_ALPHA -AsideDirectory <folder outside the repository>
+  .\Tools\Quest3s\Set-StatisticsConfig.ps1 -Project <build tree> -Remove -AsideDirectory <folder outside the repository>
 #>
 [CmdletBinding()]
 param(
