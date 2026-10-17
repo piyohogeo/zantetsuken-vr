@@ -94,6 +94,16 @@ namespace Zantetsu.Quest
             return Marshal.GetDelegateForFunctionPointer<T>(fn);
         }
 
+        /// <summary>
+        /// The session's state as the runtime tells it, kept with its frame for the frame records (DESIGN 4.6, the
+        /// view-height diagnosis): the package logs the same change with a clock time and no frame.
+        /// </summary>
+        protected override void OnSessionStateChange(int oldState, int newState)
+        {
+            Zantetsu.Core.XrSessionStateReport.Set(oldState, newState, Time.frameCount);
+            Debug.Log("XR SESSION: " + Zantetsu.Core.XrSessionStateReport.NameOf(oldState) + "->" + Zantetsu.Core.XrSessionStateReport.NameOf(newState) + " (frame " + Time.frameCount + ")");
+        }
+
         protected override unsafe void OnSessionBegin(ulong xrSession)
         {
             Session = xrSession;

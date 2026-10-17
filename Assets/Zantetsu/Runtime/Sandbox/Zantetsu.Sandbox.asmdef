@@ -15,7 +15,8 @@
         "Unity.Burst",
         "Unity.InputSystem",
         "UnityEngine.UI",
-        "Unity.XR.OpenXR"
+        "Unity.XR.OpenXR",
+        "Unity.XR.CoreUtils"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

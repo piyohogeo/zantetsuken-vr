@@ -460,6 +460,10 @@ namespace Zantetsu.Sandbox
             // The XR session's focus as a reason of the game's pause (DESIGN 4.6, D-241), before the menu: it holds the
             // game whenever the system UI takes the input, whatever the scenario and whatever the statistics' consent.
             XrFocusPause.Install();
+            // The view-height diagnosis (DESIGN 4.6, unit 6-A): records the head's height along its way at each
+            // transition and for a short window after it; reads only, one log line a record; only when the Player
+            // argument asks for it (a normal launch creates nothing).
+            HeadHeightDiagnosis.InstallIfAsked();
             PlayMenu menu = PlayMenu.Install(kind);
 
             // Play's statistics (DESIGN 21.18): the service, and the first-run question where it was never answered.

@@ -398,6 +398,8 @@ namespace Zantetsu.Core
         public static bool Manual => s_state.Manual;
         public static bool System => s_state.System;
         public static GamePauseReason Reasons => s_state.Reasons;
+        /// <summary>The reasons requested now, read without taking a waiting end (for a record that must advance nothing).</summary>
+        public static GamePauseReason Requested => s_state.Requested;
         public static bool EverPaused => s_state.EverPaused;
         public static int ManualPauses => s_state.ManualPauses;
         public static int SystemPauses => s_state.SystemPauses;

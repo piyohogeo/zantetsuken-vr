@@ -116,9 +116,13 @@ Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> 
 | コントローラーの追跡喪失・復帰 | 保持中のトリガーが新規クリックとして扱われない。ログ `ZANTETSU MENU: the input is not read: cause=RightNotTracked … / the input is read again` が実際の追跡喪失の証拠（cause が LeftNotValid／RightNotValid／ValueNotRead／PoseNotRead なら別の事象） |
 | メニューで値を変え、閉じずにスリープ → 復帰 → アプリ再起動 | 変えた値が保持される（中断開始時の flush） |
 
-実機での観測（Quest 3S、2026-10-17、v7）：システムUI・電源スリープ・HMD 脱着のそれぞれで XR フォーカス喪失による停止・復帰を確認した。`OnApplicationPause` 通知の有無は当時のログ（集約状態の変化のみ）では判定できない。HMD 脱着では OpenXR セッションが停止・再開する。**未解決の不具合（復帰時）**：再装着後に視点が 30〜50 cm 高くなる（Meta ボタン長押しの再センターが暫定回避策。原因は未切り分け、次の優先作業）。コントローラー単独の追跡喪失は遮蔽では再現しなかった（未確認）。
+実機での観測（Quest 3S、2026-10-17、v7）：システムUI・電源スリープ・HMD 脱着のそれぞれで XR フォーカス喪失による停止・復帰を確認した。`OnApplicationPause` 通知の有無は当時のログ（集約状態の変化のみ）では判定できなかった（後日 v8 の理由別ログで、脱着時に Application 通知も来ることを確認）。HMD 脱着では OpenXR セッションが停止・再開する。再装着後に視点が高くなる観測があり、その扱いは下記「視点の高さの観測事項（D-242）」を参照する。コントローラー単独の追跡喪失は遮蔽では再現しなかった（未確認）。
 
 ログで見る行（遷移時のみ）：`XR FOCUS PAUSE: focus lost / focus back`、`GAME PAUSE: system pause began / ended; reasons=…; paused=…`、`GAME PAUSE: progress paused / resumed`、`ZANTETSU MENU: system pause began / ended …`、`ZANTETSU MENU: the walking input is the game's again`。HMD の脱着で実際にどの通知（`OnApplicationPause`、フォーカス）が来たかはログから記録する。通知が来なかったケースは停止成功として扱わない。
+
+## 視点の高さの観測事項（D-242、ALPHA で受容）
+
+Quest 3S で、起動後やヘッドセットの脱着・復帰後に視点の高さがずれる（高くなる）ことが観測されている（2026-10-17、`perf/height/HEIGHT-1.md`）。確認できたのは Unity の入力値の段階で高さが変わるところまでで、OpenXR プラグイン／ランタイム内部の原因と、他アプリでの再現性は未確定。アプリから呼べる原点操作（Floor の再適用、`RefreshRecenterSpace`）は効果が無く、後者は向きと位置を変える副作用があるため採用しない。追加の床補正・STAGE の調査は行わない。**プレイヤー向けの案内文は置かない**（「立ち上がって再センター」も必須操作としない）。今回の端末・環境では、右コントローラーの Meta ボタン長押し（再センター）で高さが戻ること、立位での操作後に実際の目線に近い値になることを観測した（内部記録）。配布 APK に実験処置は入れず、開発用の詳細診断は Player 引数 `-zantetsuHeadHeightDiag` のときだけ動く（通常起動では何も記録しない）。
 
 ## 検証結果
 
