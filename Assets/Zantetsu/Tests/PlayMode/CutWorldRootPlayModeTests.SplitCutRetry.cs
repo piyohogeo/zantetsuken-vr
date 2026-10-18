@@ -74,12 +74,26 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.CutPublishMeasured, Is.True, "the publication is measured now");
             Assert.That(retry.PublishSeconds, Is.GreaterThanOrEqualTo(0.0), "its turn's time was kept");
 
-            // The collection after it is read by the next turn.
+            // The size of what it published, as kept.
+            Assert.That(retry.Convexes, Is.EqualTo(1), "the wrapped body's lower side: one convex");
+            Assert.That(retry.ConvexesCut, Is.EqualTo(1));
+            Assert.That(retry.Triangles, Is.GreaterThan(0));
+            Assert.That(retry.PositiveTriangles + retry.NegativeTriangles, Is.EqualTo(retry.Triangles), "every triangle on a side");
+            Assert.That(retry.DisplayShown, Is.GreaterThan(0));
+            Assert.That(retry.FrameBeforeSeconds, Is.EqualTo(0.025).Within(1e-12), "the frame before it, as this case gives play time");
+
+            // The collection after it is read by the next turn, and the frame after it by the one after.
+            yield return null;
             yield return null;
             yield return null;
             Assert.That(split.CutCollectAfterMeasured, Is.True, "the collection after it is measured too");
             Assert.That(split.LastRetry.CollectAfterMissed, Is.False);
             Assert.That(double.IsNaN(split.LastRetry.CollectAfterSeconds), Is.False);
+            Assert.That(double.IsNaN(split.LastRetry.FrameSeconds) || double.IsNaN(split.LastRetry.FrameAfterSeconds), Is.False, "its own frame's length and the next one's were read");
+            Assert.That(split.LastRetry.FrameBeforeOf, Is.EqualTo(retry.Frame - 1), "the frames named: the one before");
+            Assert.That(split.LastRetry.FrameOf, Is.EqualTo(retry.Frame), "the retry's own");
+            Assert.That(split.LastRetry.FrameAfterOf, Is.EqualTo(retry.Frame + 1), "the one after: consecutive");
+            Assert.That(split.LastRetry.Describe(), Does.Contain("size: convexes 1 (cut 1)").And.Contain("frames: before frame " + (retry.Frame - 1) + " 25.000 ms").And.Contain(", its own frame " + retry.Frame + " "));
             Assert.That(split.ExpectedCutPublishSeconds, Is.LessThan(0.004), "no seed in the estimate any more");
 
             // The later split follows, and nothing is retried again.
@@ -212,6 +226,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.CollectionsAfterPublicationMissed, Is.GreaterThanOrEqualTo(1));
             Assert.That(split.LastRetry.CollectAfterMissed, Is.True, "and the retry says so");
             Assert.That(split.LastRetry.Describe(), Does.Contain("NOT READ (its seed stands)"));
+            Assert.That(split.LastRetry.FrameOf == int.MinValue && split.LastRetry.FrameAfterOf == int.MinValue, Is.True, "the paused frames' lengths were not read: missing, not guessed");
+            Assert.That(split.LastRetry.Describe(), Does.Contain("its own not read, after not read"));
             split.Settings = default;
             yield return EndWorld(root);
         }
@@ -228,6 +244,46 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 Assert.That(CutWorldRoot.TryReadRetryAfter(bad, out _, out _, out refusal), Is.False, string.Join(" ", bad));
                 Assert.That(refusal, Does.Contain("not followed by"), string.Join(" ", bad));
             }
+        }
+
+        /// <summary>
+        /// **The diagnosis's reset (the load check's preparation, same process): after a measured cut publication, the
+        /// measurement is forgotten -- the seeds stand again -- and the next cut publication held short of budget is
+        /// retried, once, under the ordinary conditions.**
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SplitRetry_AfterThePreparationsMeasurementIsForgotten_TheNextCutPublicationIsRetried()
+        {
+            CutWorldRoot root = null; CutSpatialSplit split = null; double[] remaining = null; LogicalFragmentId lower = default, other = default;
+            yield return RetryCaseWorld((r, s, b, l, o) => { root = r; split = s; remaining = b; lower = l; other = o; });
+            LogicalFragmentId second = AddWrappedBody(root, new Vector3(-8f, 0f, 0f));
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1, "the preparation: a cut publication within budget");
+            Assert.That(split.CutPublishMeasured, Is.True, "the layout: measured by the preparation");
+            yield return null;
+            yield return null;
+            remaining[0] = 0.0;
+
+            string forgotten = split.ForgetCutPublicationMeasurementForDiagnosis();
+            TestContext.Out.WriteLine(forgotten);
+            Assert.That(forgotten, Does.Contain("forgotten").And.Contain("4.000 ms (the seeds)"));
+            Assert.That(split.CutPublishMeasured || split.CutCollectAfterMeasured, Is.False, "nothing measured any more");
+            Assert.That(split.ExpectedCutPublishSeconds, Is.EqualTo(SplitCutOn(12).seedCutPublishSeconds + CutSpatialSplit.SeedCollectAfterSeconds).Within(1e-12), "the seeds stand again");
+
+            // The next cut publication, held short of budget: retried once under the ordinary conditions (shortened here).
+            split.FrameSeconds = () => 0.025;
+            split.RetryAfterHolds = 20;
+            split.RetryAfterHeldSeconds = 0.4;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, second, sides, 1);
+            remaining[0] = RetryCaseBudget;
+            yield return Until(() => split.PublishRetries == 1, "the retry of the next cut publication");
+            Assert.That(split.LastSource, Is.EqualTo(sides[1]));
+            Assert.That(split.LastRetry.Holds, Is.EqualTo(20));
+            Assert.That(split.LastRetry.Overridden.Expected, Is.EqualTo(0.004).Within(1e-12), "it overrode the seeds' comparison");
+            Assert.That(split.CutPublishMeasured, Is.True);
+            split.Settings = default;
+            yield return EndWorld(root);
         }
 
         /// <summary>**Within budget nothing changes: the cut split is published by its ordinary comparison, and nothing is retried or counted.**</summary>

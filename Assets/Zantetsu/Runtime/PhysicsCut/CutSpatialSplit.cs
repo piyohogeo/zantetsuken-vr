@@ -292,26 +292,20 @@ namespace Zantetsu.PhysicsCut
 
     /// <summary>
     /// A retry of an unmeasured cut publication (unit 10-B): when, for which attempt, after how many budget-short
-    /// comparisons and how much play time, the comparison it overrode, and then what it measured -- the publishing
-    /// turn's time and the collection after it (or that the collection was not read, its seed then standing).
+    /// comparisons and how much play time, the comparison it overrode, the size of what it published (convexes, the
+    /// convexes it cut, triangles on each side, the display's shown registrations the collection after it goes over),
+    /// and then what it measured -- the publishing turn's time, the collection after it (or that the collection was not
+    /// read, its seed then standing), and the length of the frame before it, of its own frame and of the frame after.
     /// </summary>
-    public readonly struct SpatialSplitPublishRetry
+    public sealed class SpatialSplitPublishRetry
     {
         public SpatialSplitPublishRetry(int frame, long attempt, int holds, double heldSeconds, SpatialSplitBudgetDecision overridden)
-            : this(frame, attempt, holds, heldSeconds, overridden, double.NaN, double.NaN, false)
-        {
-        }
-
-        private SpatialSplitPublishRetry(int frame, long attempt, int holds, double heldSeconds, SpatialSplitBudgetDecision overridden, double publishSeconds, double collectAfterSeconds, bool collectMissed)
         {
             Frame = frame;
             Attempt = attempt;
             Holds = holds;
             HeldSeconds = heldSeconds;
             Overridden = overridden;
-            PublishSeconds = publishSeconds;
-            CollectAfterSeconds = collectAfterSeconds;
-            CollectAfterMissed = collectMissed;
         }
 
         public int Frame { get; }
@@ -320,29 +314,52 @@ namespace Zantetsu.PhysicsCut
         public double HeldSeconds { get; }
         public SpatialSplitBudgetDecision Overridden { get; }
 
+        /// <summary>The size of the publication: the piece's convexes, of them cut, its triangles, on each side, and the display's shown registrations then.</summary>
+        public int Convexes { get; internal set; }
+        public int ConvexesCut { get; internal set; }
+        public int Triangles { get; internal set; }
+        public int PositiveTriangles { get; internal set; }
+        public int NegativeTriangles { get; internal set; }
+        public int DisplayShown { get; internal set; }
+
         /// <summary>The publishing turn's own time, and the collection after it; NaN until measured.</summary>
-        public double PublishSeconds { get; }
-        public double CollectAfterSeconds { get; }
+        public double PublishSeconds { get; internal set; } = double.NaN;
+        public double CollectAfterSeconds { get; internal set; } = double.NaN;
 
         /// <summary>The collection after the publication was not read (no turn in the frame after): its cost stays the seed.</summary>
-        public bool CollectAfterMissed { get; }
+        public bool CollectAfterMissed { get; internal set; }
+
+        /// <summary>The length of the frame before the retry's, of the retry's own, and of the one after (unscaled), seconds; NaN where not read.</summary>
+        public double FrameBeforeSeconds { get; internal set; } = double.NaN;
+        public double FrameSeconds { get; internal set; } = double.NaN;
+        public double FrameAfterSeconds { get; internal set; } = double.NaN;
+
+        /// <summary>
+        /// The frames those three lengths are of (a frame's length is read as the next frame's unscaled delta): the
+        /// frame before the retry's, the retry's, the one after -- each <see cref="int.MinValue"/> where not read. A
+        /// length is read only in the frame right after the one it is of, so those read are of consecutive frames.
+        /// </summary>
+        public int FrameBeforeOf { get; internal set; } = int.MinValue;
+        public int FrameOf { get; internal set; } = int.MinValue;
+        public int FrameAfterOf { get; internal set; } = int.MinValue;
 
         public bool IsSet => Frame != int.MinValue;
 
-        public static SpatialSplitPublishRetry None => new SpatialSplitPublishRetry(int.MinValue, 0, 0, 0.0, SpatialSplitBudgetDecision.None);
-
-        internal SpatialSplitPublishRetry WithPublish(double seconds) => new SpatialSplitPublishRetry(Frame, Attempt, Holds, HeldSeconds, Overridden, seconds, CollectAfterSeconds, CollectAfterMissed);
-        internal SpatialSplitPublishRetry WithCollect(double seconds) => new SpatialSplitPublishRetry(Frame, Attempt, Holds, HeldSeconds, Overridden, PublishSeconds, seconds, false);
-        internal SpatialSplitPublishRetry WithCollectMissed() => new SpatialSplitPublishRetry(Frame, Attempt, Holds, HeldSeconds, Overridden, PublishSeconds, double.NaN, true);
+        public static readonly SpatialSplitPublishRetry None = new SpatialSplitPublishRetry(int.MinValue, 0, 0, 0.0, SpatialSplitBudgetDecision.None);
 
         public string Describe()
         {
             if (!IsSet) return "publication retry: none";
             CultureInfo inv = CultureInfo.InvariantCulture;
-            string Ms(double s) => double.IsNaN(s) ? "not yet" : (s * 1000.0).ToString("F3", inv) + " ms";
+            string Ms(double s) => double.IsNaN(s) ? "not read" : (s * 1000.0).ToString("F3", inv) + " ms";
             return "publication retry at frame " + Frame.ToString(inv) + ": attempt " + Attempt.ToString(inv) + " after " + Holds.ToString(inv)
-                + " budget-short comparisons over " + HeldSeconds.ToString("F2", inv) + " s of play; overrode " + Overridden.Describe()
-                + "; publishing turn " + Ms(PublishSeconds) + ", the collection after it " + (CollectAfterMissed ? "NOT READ (its seed stands)" : Ms(CollectAfterSeconds));
+                + " budget-short comparisons over " + HeldSeconds.ToString("F2", inv) + " s of play; size: convexes " + Convexes.ToString(inv) + " (cut " + ConvexesCut.ToString(inv)
+                + "), triangles " + Triangles.ToString(inv) + " (" + PositiveTriangles.ToString(inv) + " + " + NegativeTriangles.ToString(inv) + "), display shown " + DisplayShown.ToString(inv)
+                + "; overrode " + Overridden.Describe()
+                + "; publishing turn " + Ms(PublishSeconds) + ", the collection after it " + (CollectAfterMissed ? "NOT READ (its seed stands)" : Ms(CollectAfterSeconds))
+                + "; frames: before " + Of(FrameBeforeOf, FrameBeforeSeconds) + ", its own " + Of(FrameOf, FrameSeconds) + ", after " + Of(FrameAfterOf, FrameAfterSeconds);
+
+            string Of(int at, double seconds) => at == int.MinValue || double.IsNaN(seconds) ? "not read" : "frame " + at.ToString(inv) + " " + Ms(seconds);
         }
     }
 
@@ -802,6 +819,7 @@ namespace Zantetsu.PhysicsCut
         public void Step()
         {
             FollowPublication();
+            FollowRetryFrame();
 
             CutSpatialSplitSettings settings = Settings;
             bool on = settings.enabled && settings.IsValid && _world.IsReady && !_world.IsEnding && !_world.TerminationRequested;
@@ -1800,10 +1818,11 @@ namespace Zantetsu.PhysicsCut
                 _cutPublishCosts.Add(spent);
                 if (attempt.publishRetried && LastRetry.IsSet && LastRetry.Attempt == attempt.serial)
                 {
-                    LastRetry = LastRetry.WithPublish(spent);
+                    LastRetry.PublishSeconds = spent;
                     if (LastEnd != SpatialSplitEnd.Published || LastPublishedFrame != Time.frameCount)
                     {
                         // The retry ended without a publication (overtaken, short of room): no collection follows it.
+                        _followIsRetry = false;
                         UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe() + "; ended " + LastEnd + " without a publication");
                     }
                 }
@@ -1980,7 +1999,7 @@ namespace Zantetsu.PhysicsCut
                     if (_followIsRetry)
                     {
                         _followIsRetry = false;
-                        LastRetry = LastRetry.WithCollectMissed();
+                        LastRetry.CollectAfterMissed = true;
                         UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe());
                     }
                 }
@@ -1998,11 +2017,12 @@ namespace Zantetsu.PhysicsCut
             (_followIsCut ? _cutCollectAfter : _collectAfter).Add(seconds);
             if (_followIsRetry)
             {
-                // The retry's frame is over: said now, with the frame's own length beside what it measured.
+                // The retry's frame is over: its length is this frame's delta. Said once the frame after it is over too.
                 _followIsRetry = false;
-                LastRetry = LastRetry.WithCollect(seconds);
-                UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe() + "; that frame lasted "
-                    + (UnityEngine.Time.unscaledDeltaTime * 1000.0).ToString("F3", CultureInfo.InvariantCulture) + " ms");
+                LastRetry.CollectAfterSeconds = seconds;
+                LastRetry.FrameSeconds = UnityEngine.Time.unscaledDeltaTime;
+                LastRetry.FrameOf = Time.frameCount - 1;   // read only in the frame right after the retry's (_followCollectOf)
+                _retryAfterFrameOf = Time.frameCount + 1;
             }
         }
 
@@ -2120,6 +2140,42 @@ namespace Zantetsu.PhysicsCut
         public SpatialSplitPublishRetry LastRetry { get; private set; } = SpatialSplitPublishRetry.None;
 
         private bool _followIsRetry;
+        private int _retryAfterFrameOf = int.MinValue;
+
+        /// <summary>
+        /// DIAGNOSIS ONLY (unit 10-B's load check, 2026-10-18): forgets what was measured of a cut publication and of
+        /// the collection after one, so that the next cut publication is unmeasured again and may be retried -- in the
+        /// same process, after a preparation cut that measured them (a restart would bring back the first cut's own
+        /// stop). Nothing else changes: the seeds, the budget comparison, the conditions of a retry and once an attempt.
+        /// Called only by a diagnosis that a launch argument asks for; never by the product. Returns what was forgotten.
+        /// </summary>
+        public string ForgetCutPublicationMeasurementForDiagnosis()
+        {
+            string what = "cut publication samples " + _cutPublishCosts.Count + ", collection-after samples " + _cutCollectAfter.Count
+                + ", expected " + (ExpectedCutPublishSeconds * 1000.0).ToString("F3", CultureInfo.InvariantCulture) + " ms";
+            _cutPublishCosts.Clear();
+            _cutCollectAfter.Clear();
+            return what + " -> forgotten; expected now " + (ExpectedCutPublishSeconds * 1000.0).ToString("F3", CultureInfo.InvariantCulture) + " ms (the seeds)";
+        }
+
+        // The frame after the retry's: its length is read in the turn after it, and the retry is said then, once
+        // (or in a later turn, without that length, where no turn came in that frame).
+        private void FollowRetryFrame()
+        {
+            if (_retryAfterFrameOf == int.MinValue || Time.frameCount < _retryAfterFrameOf)
+            {
+                return;
+            }
+
+            if (Time.frameCount == _retryAfterFrameOf)
+            {
+                LastRetry.FrameAfterSeconds = UnityEngine.Time.unscaledDeltaTime;
+                LastRetry.FrameAfterOf = Time.frameCount - 1;
+            }
+
+            _retryAfterFrameOf = int.MinValue;
+            UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe());
+        }
 
         // One budget-short comparison at a cut split's publication: counted while it is unmeasured, and the retry
         // decided. True when this turn is to go on as if the budget held.
@@ -2148,7 +2204,17 @@ namespace Zantetsu.PhysicsCut
             attempt.publishRetried = true;
             PublishRetries++;
             // Said in the turn after, with what it measured: a line written in this frame would be part of its cost.
-            LastRetry = new SpatialSplitPublishRetry(UnityEngine.Time.frameCount, attempt.serial, attempt.publishBudgetHolds, attempt.publishHeldSeconds, LastBudgetDecision);
+            LastRetry = new SpatialSplitPublishRetry(UnityEngine.Time.frameCount, attempt.serial, attempt.publishBudgetHolds, attempt.publishHeldSeconds, LastBudgetDecision)
+            {
+                Convexes = attempt.convexCount,
+                ConvexesCut = attempt.meshCount / 2,
+                Triangles = attempt.indexCount / 3,
+                PositiveTriangles = attempt.search.positiveTriangles,
+                NegativeTriangles = attempt.search.negativeTriangles,
+                DisplayShown = _world.Display != null ? _world.Display.ShownCount : 0,
+                FrameBeforeSeconds = frame,   // this frame's unscaled delta: the length of the frame before it
+                FrameBeforeOf = UnityEngine.Time.frameCount - 1,
+            };
             return true;
         }
 

@@ -75,8 +75,53 @@ namespace Zantetsu.Sandbox
         private float _next;
         private int _sessionState = -1;
         private int _changes;
+
+        /// <summary>
+        /// DIAGNOSIS ONLY (unit 10-B's load check, 2026-10-18): with this argument as well as <see cref="Argument"/>,
+        /// a file of <see cref="MeasurementResetFile"/> in the app's persistent data folder (put there by adb) makes the
+        /// spatial split of every cut world forget what it measured of a cut publication, once per file (the file is
+        /// deleted): so that, in the same process after a preparation cut, the next cut publication is unmeasured
+        /// again. Looked for once a second. Nothing of it without the argument.
+        /// </summary>
+        public const string MeasurementResetArgument = "-zantetsuSplitMeasurementResetFile";
+        public const string MeasurementResetFile = "split-measurement-reset";
+
+        private bool _resetAsked;
+        private float _nextResetLook;
+
+        private void Start()
+        {
+            _resetAsked = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), MeasurementResetArgument) >= 0;
+            if (_resetAsked) Debug.Log(Prefix + "measurement reset: on -- a file '" + MeasurementResetFile + "' in " + Application.persistentDataPath + " makes the split forget its cut publication's measurement (diagnosis only)");
+        }
+
+        private void LookForMeasurementReset()
+        {
+            if (!_resetAsked || Time.realtimeSinceStartup < _nextResetLook) return;
+            _nextResetLook = Time.realtimeSinceStartup + 1f;
+            string path = System.IO.Path.Combine(Application.persistentDataPath, MeasurementResetFile);
+            try
+            {
+                if (!System.IO.File.Exists(path)) return;
+                System.IO.File.Delete(path);
+            }
+            catch (System.Exception e)
+            {
+                Debug.Log(Prefix + "measurement reset: the file could not be read or deleted (" + e.GetType().Name + "); nothing was reset");
+                return;
+            }
+
+            foreach (Zantetsu.PhysicsCut.CutWorldRoot world in Object.FindObjectsByType<Zantetsu.PhysicsCut.CutWorldRoot>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            {
+                Zantetsu.PhysicsCut.CutSpatialSplit split = world.SpatialSplit;
+                Debug.Log(Prefix + "measurement reset f=" + Time.frameCount + " world=" + world.name + " "
+                    + (split == null ? "no split" : split.ForgetCutPublicationMeasurementForDiagnosis() + "; attempt now " + split.AttemptSerial + ", retries so far " + split.PublishRetries));
+            }
+        }
+
         private void Update()
         {
+            LookForMeasurementReset();
             int state = XrSessionStateReport.State;
             bool changed = state != _sessionState;
             if (changed) { _sessionState = state; _changes++; }
@@ -133,7 +178,10 @@ namespace Zantetsu.Sandbox
                     Debug.Log(Prefix + "hold-before " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.PreviousHoldStreak.Describe());
                     Debug.Log(Prefix + "hold-longest " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.LongestHoldStreak.Describe());
                     // The retry of an unmeasured cut publication (unit 10-B): how often, put off how often, what is measured now, the last one.
-                    Debug.Log(Prefix + "split-retry " + why + " f=" + Time.frameCount + " world=" + world.name + " retries " + split.PublishRetries
+                    Debug.Log(Prefix + "split-retry " + why + " f=" + Time.frameCount + " world=" + world.name
+                        + " after " + split.RetryAfterHolds + " comparisons and " + split.RetryAfterHeldSeconds.ToString("R") + " s (the product's "
+                        + Zantetsu.PhysicsCut.CutSpatialSplit.DefaultRetryAfterHolds + " and " + Zantetsu.PhysicsCut.CutSpatialSplit.DefaultRetryAfterHeldSeconds.ToString("R") + ")"
+                        + "; retries " + split.PublishRetries
                         + ", put off " + split.PublishRetriesPutOff + ", cut publication measured " + split.CutPublishMeasured
                         + ", collection after it measured " + split.CutCollectAfterMeasured + ", collections after a publication not read " + split.CollectionsAfterPublicationMissed
                         + "; expected cut publication " + (split.ExpectedCutPublishSeconds * 1000.0).ToString("F3") + " ms | " + split.LastRetry.Describe());
