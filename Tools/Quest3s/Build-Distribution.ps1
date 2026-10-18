@@ -49,7 +49,10 @@ param(
     # The forbidden-word list (Tools/ForbiddenWords.ps1; outside the repository). Required (unit 11, TL 2026-10-18 [P1]):
     # before Unity starts the repository must pass Verify-PublicRepository.ps1 with it, and the APK's inspection
     # searches every entry and the signer's certificate with it.
-    [string]$ForbiddenWordsFile = $env:ZANTETSU_FORBIDDEN_WORDS_FILE
+    [string]$ForbiddenWordsFile = $env:ZANTETSU_FORBIDDEN_WORDS_FILE,
+    # Where the licensed inputs' originals are copied while their source is blank for the build (InputSources.ps1;
+    # outside the repository). Required when the tree holds such inputs.
+    [string]$InputSourceAside
 )
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -103,6 +106,18 @@ $hygiene = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Pat
 $hygieneExit = $LASTEXITCODE
 $hygieneSummary = (@($hygiene | Where-Object { $_ -match 'Repository hygiene check|Forbidden words|Violation\(s\)|^ERROR' }) -join '; ') -replace '\s+', ' '
 if ($hygieneExit -ne 0) { throw "the repository fails the public check with the forbidden-word list (exit $hygieneExit): $hygieneSummary -- run Tools\Verify-PublicRepository.ps1 -ForbiddenWordsFile <list> to see where" }
+# The licensed inputs whose source names the machine's folders (unit 11): blanked for the build, put back after it.
+. (Join-Path $PSScriptRoot 'InputSources.ps1')
+$inputTargets = @(Find-InputSourceTargets $project)
+$inputManifest = $null; $inputAside = $null
+if ($inputTargets.Count -gt 0) {
+    if (!$InputSourceAside) { throw "the tree holds $($inputTargets.Count) licensed inputs whose source is an absolute path: -InputSourceAside (a folder outside the repository) is needed to blank them for the build" }
+    $InputSourceAside = [IO.Path]::GetFullPath($InputSourceAside).TrimEnd('\')
+    $projectRootPath = $project.TrimEnd('\')
+    if ($InputSourceAside.Equals($projectRootPath, [StringComparison]::OrdinalIgnoreCase) -or $InputSourceAside.StartsWith($projectRootPath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-InputSourceAside must be outside the repository: $InputSourceAside" }
+    $inputAside = Join-Path $InputSourceAside ("$VersionName-$VersionCode-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    if (Test-Path -LiteralPath $inputAside) { throw "exists already: $inputAside" }
+}
 $keytool = Join-Path $AndroidPlayer 'OpenJDK\bin\keytool.exe'
 if (!(Test-Path -LiteralPath $keytool)) { throw "keytool not found: $keytool" }
 
@@ -135,6 +150,10 @@ $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -bui
     + ' -zantetsuDistKeystore "' + $Keystore + '" -zantetsuDistKeyAlias ' + $KeyAlias + ' -zantetsuDistDevices ' + $supportedDevices
 if ($ExperimentArguments.Count -gt 0) { $arguments += ' ' + ($ExperimentArguments -join ' ') }
 $arguments += ' -zantetsuDistStatistics ' + $Statistics
+if ($inputTargets.Count -gt 0) {
+    $inputManifest = Join-Path $record 'input-sources.tsv'
+    $arguments += ' -zantetsuDistInputSources "' + $inputManifest + '" -zantetsuDistInputSourcesAside "' + $inputAside + '"'
+}
 $head =git -C $project log --format='%H %s' -1
 $dirty = @(git -C $project status --short --untracked-files=all)
 @(
@@ -150,11 +169,24 @@ $dirty = @(git -C $project status --short --untracked-files=all)
     "unity $Unity",
     "command $arguments"
 ) | Set-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-if ($dirty.Count -gt 0) { $dirty | Set-Content -LiteralPath (Join-Path $record 'status.txt') -Encoding UTF8; git -C $project diff | Out-File -LiteralPath (Join-Path $record 'working-tree.patch') -Encoding utf8 }
+if ($dirty.Count -gt 0) {
+    $dirty | Set-Content -LiteralPath (Join-Path $record 'status.txt') -Encoding UTF8
+    # git's warnings on its error stream (such as a CRLF note) are not failures of the diff: read as data, exit code decides.
+    $previousPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $patch = @(git -C $project diff 2>$null); $diffExit = $LASTEXITCODE } finally { $ErrorActionPreference = $previousPreference }
+    if ($diffExit -ne 0) { throw "git diff of the working tree failed (exit $diffExit)" }
+    $patch | Out-File -LiteralPath (Join-Path $record 'working-tree.patch') -Encoding utf8
+}
 $exit = -1
 $buildText = Join-Path $record 'build.txt'
 $statisticsAsideFailure = $null
+$inputSourceFailure = $null
 try {
+    if ($inputTargets.Count -gt 0) {
+        # Each original copied aside, then its source written empty; the Editor imports and checks them before the build.
+        Set-BlankInputSources -Project $project -Targets $inputTargets -Aside $inputAside -Manifest $inputManifest
+        "input sources: $($inputTargets.Count) licensed inputs blanked for the build (originals aside in $inputAside; manifest $inputManifest)" | Add-Content -LiteralPath $buildText -Encoding UTF8
+    }
     if ($Statistics -eq 'required') {
         # A configuration already in the tree is kept, moved aside (never overwritten, updated or deleted); then the
         # distribution's own is made from the environment.
@@ -184,6 +216,20 @@ finally {
         "statistics config in the tree after the build: $(if ($left.Count -eq 0) { 'none' } else { 'STILL THERE: ' + ($left -join ', ') })" | Add-Content -LiteralPath $buildText -Encoding UTF8
         if ($left.Count -gt 0 -and !$statisticsAsideFailure) { $statisticsAsideFailure = "the statistics config is still in the tree after the build: $($left -join ', ')" }
     }
+    if ($inputManifest -and (Test-Path -LiteralPath $inputManifest)) {
+        # Whatever happened: every original back (its hash checked), then Unity's import of them checked again, so the
+        # tree and its import are the originals' after the run. Any failure fails the run (below).
+        $putBack = @(Restore-InputSources -Project $project -Aside $inputAside -Manifest $inputManifest)
+        if ($putBack.Count -gt 0) {
+            $inputSourceFailure = "the licensed inputs were NOT all put back: $($putBack -join '; ')"
+        } else {
+            $checkLog = Join-Path $logs "input-sources-original-$VersionName-$VersionCode.log"
+            $checkExit = Invoke-InputSourceCheck -Unity $Unity -Project $project -Manifest $inputManifest -Aside $inputAside -Expect original -Log $checkLog
+            if (Test-Path -LiteralPath $checkLog) { Copy-Item -LiteralPath $checkLog -Destination (Join-Path $record 'input-sources-original.log') }
+            if ($checkExit -ne 0) { $inputSourceFailure = "the licensed inputs are back, but Unity's import of them is not the originals' (check exit $checkExit; see $checkLog)" }
+        }
+        "input sources after the build: $(if ($inputSourceFailure) { $inputSourceFailure } else { 'every original back (hash) and imported again as the original (Unity check)' })" | Add-Content -LiteralPath $buildText -Encoding UTF8
+    }
     foreach ($w in $watched) {
         $after = Get-Content -LiteralPath $w.Path -Raw
         $before = Get-Content -LiteralPath $w.Saved -Raw
@@ -202,6 +248,10 @@ finally {
 if ($statisticsAsideFailure) {
     "RESULT: failed -- $statisticsAsideFailure" | Add-Content -LiteralPath $buildText -Encoding UTF8
     throw "$statisticsAsideFailure (unity exit $exit; the APK, if any, is not to be used before the tree is clean; see $buildText)"
+}
+if ($inputSourceFailure) {
+    "RESULT: failed -- $inputSourceFailure" | Add-Content -LiteralPath $buildText -Encoding UTF8
+    throw "$inputSourceFailure (unity exit $exit; the APK, if any, is not to be used before the tree and its import are the originals'; see $buildText)"
 }
 if ($exit -eq 2) { throw "the request was refused by the Editor before the build (see ${log}: QUEST DISTRIBUTION BUILD refused)" }
 if ($exit -ne 0) { throw "Unity failed ($exit); see $log" }

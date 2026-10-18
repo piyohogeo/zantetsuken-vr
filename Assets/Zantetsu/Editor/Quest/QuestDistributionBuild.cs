@@ -282,6 +282,20 @@ namespace Zantetsu.EditorTools.Quest
             if (failure == null && QuestDistributionTargets.FindFeatureDevices(out _, out string targets) == null) failure = "distribution targets: " + targets;
             string statisticsState = null;
             if (failure == null) failure = CheckStatisticsConfig(request, out statisticsState);
+            // The licensed inputs with their source blanked by the wrapper (unit 11): imported from disk and checked
+            // before the build reads them; a build asked for them is refused when Unity does not hold them so.
+            string inputSourcesState = "input sources: none named";
+            string inputManifest = QuestDistributionInputSources.Value(args, QuestDistributionInputSources.ManifestArgument);
+            if (failure == null && inputManifest != null)
+            {
+                failure = QuestDistributionInputSources.ReadManifest(inputManifest, out var inputEntries);
+                if (failure == null)
+                {
+                    failure = QuestDistributionInputSources.Check(inputEntries, QuestDistributionInputSources.ExpectBlank,
+                        QuestDistributionInputSources.Value(args, QuestDistributionInputSources.AsideArgument), out inputSourcesState);
+                }
+            }
+
             if (failure != null)
             {
                 Debug.LogError("QUEST DISTRIBUTION BUILD refused: " + failure);
@@ -290,7 +304,7 @@ namespace Zantetsu.EditorTools.Quest
             }
 
             Debug.Log("QUEST DISTRIBUTION BUILD: package=" + ApplicationIdentifier + " versionName=" + request.versionName + " versionCode=" + request.versionCode
-                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output + "; " + statisticsState + " (" + StatisticsArgument + " " + request.statistics + ")"
+                + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output + "; " + statisticsState + " (" + StatisticsArgument + " " + request.statistics + "); " + inputSourcesState
                 + "; Release, commercial, custom keystore; minSdk " + (int)MinSdk + ", targetSdk " + (int)TargetSdk + ", install location " + InstallLocation + ", the manifest's guarantees");
             bool built = false;
             try
