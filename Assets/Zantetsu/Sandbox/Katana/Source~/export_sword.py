@@ -33,7 +33,7 @@ bpy.ops.export_scene.fbx(
     filepath=os.path.join(out, 'aikuchi_sword.fbx'), use_selection=True, object_types={'MESH'},
     apply_unit_scale=True, apply_scale_options='FBX_SCALE_UNITS', bake_space_transform=True,
     axis_forward='-Z', axis_up='Y', use_mesh_modifiers=True, mesh_smooth_type='FACE', use_tspace=False,
-    add_leaf_bones=False, bake_anim=False, path_mode='AUTO', embed_textures=False)
+    add_leaf_bones=False, bake_anim=False, path_mode='STRIP', embed_textures=False)   # texture names only, no folders
 print('EXPORT fbx: objects %s, triangles %d' % (names, triangles))
 
 

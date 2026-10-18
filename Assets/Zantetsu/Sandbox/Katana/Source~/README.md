@@ -10,9 +10,16 @@ This folder's name ends with `~`, so Unity does not import it: the game reads th
 
 ## Exporting again
 
-    blender --background aikuchi_original.blend --python export_sword.py -- <output folder>
+The FBX keeps the absolute paths of the .blend and of the textures beside it (the exporter writes them whatever
+`path_mode` is; the script's `STRIP` only shortens the relative ones). So export from a folder whose path says
+nothing about the machine or its user: copy the .blend and the script into an empty folder and give it a drive
+letter of its own,
 
-writes `aikuchi_sword.fbx` and the four textures (`aikuchi_blade_basecolor.png`, `aikuchi_blade_normal.png`,
+    subst Z: <that folder>
+    blender --background --factory-startup Z:\aikuchi_original.blend --python Z:\export_sword.py -- Z:\out
+    subst Z: /D
+
+which writes `aikuchi_sword.fbx` and the four textures (`aikuchi_blade_basecolor.png`, `aikuchi_blade_normal.png`,
 `aikuchi_blade_metallic_smoothness.png`, `aikuchi_wood_basecolor.png`). Copy them over the files in
 `Assets/Zantetsu/Sandbox/Katana/`, then in Unity run **Zantetsu > Make the katana model prefab**
 (`KatanaModelSetup.Build`): it sets the import settings, the three materials and the prefab
