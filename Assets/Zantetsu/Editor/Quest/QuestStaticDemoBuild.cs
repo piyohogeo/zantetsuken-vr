@@ -28,7 +28,7 @@ namespace Zantetsu.EditorTools.Quest
     /// <summary>Repeatable Android settings and a private copy of the licensed seed14 scene.</summary>
     public static class QuestStaticDemoBuild
     {
-        public const string ApplicationIdentifier = "com.zantetsuken.quest.static";
+        public const string ApplicationIdentifier = "com.zantetsuken.quest.staticdemo";
         public const string SourceScene = "Assets/Licensed/WalkCity/WalkCity.unity";
         public const string Root = "Assets/Zantetsu/QuestSettings";
         public const string RendererPath = Root + "/Quest_Renderer.asset";

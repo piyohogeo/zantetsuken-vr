@@ -101,7 +101,7 @@ Unity Android moduleと接続済みQuestが必要。ignoredの`Assets/Licensed`�
 python .\Tools\Quest3s\Summarize-StaticDemo.py <vp-run-folder> <unity-run-folder> --output .\Logs\quest-summary.json
 ```
 
-次のrunは前のrunの結果が書かれた後に開始する。アプリのデータディレクトリ`/sdcard/Android/data/com.zantetsuken.quest.static/files/runs/`からADBで回収する。起動スクリプトはUnityのaffinity引数を一つのremote commandとして渡す。
+次のrunは前のrunの結果が書かれた後に開始する。アプリのデータディレクトリ`/sdcard/Android/data/com.zantetsuken.quest.staticdemo/files/runs/`からADBで回収する。起動スクリプトはUnityのaffinity引数を一つのremote commandとして渡す。
 
 ## 検証記録
 

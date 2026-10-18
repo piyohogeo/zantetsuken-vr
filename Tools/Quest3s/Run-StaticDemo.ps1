@@ -23,7 +23,7 @@ param(
     [switch]$IndirectCountVerify,
     [switch]$IndirectCountDrill,
     [int]$IndirectCountFirstSlot = 0, # diagnosis (2026-10-10): the count slot a pass's first run takes (1 = the scene's one run from countBufferOffset 4)
-    [string]$Package = 'com.zantetsuken.quest.static',   # the APK that runs it: this scenario's own, or the one of every scenario (com.zantetsuken.quest)
+    [string]$Package = 'com.zantetsuken.quest.staticdemo',   # the APK that runs it: this scenario's own, or the one of every scenario (com.zantetsuken.quest)
     [string]$Serial = '340YC10G7D0FZ9',
     [string]$Adb = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe'
 )

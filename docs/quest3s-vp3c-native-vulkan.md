@@ -63,7 +63,7 @@ Unity Android module／NDK、ignoredのLicensed scene／素材が必要。
 # install／頭部追従／1 lap相当warm-up／40秒計測／終了後もnativeを保持
 .\Tools\Quest3s\Run-StaticDemo.ps1 -Apk .\Build\quest-native-vulkan-dev.apk -Mode vp3c-native -CameraMode head -Profiler -KeepOpen
 
-# /sdcard/Android/data/com.zantetsuken.quest.static/files/runs/<run>/ を回収後
+# /sdcard/Android/data/com.zantetsuken.quest.staticdemo/files/runs/<run>/ を回収後
 python .\Tools\Quest3s\Summarize-StaticDemo.py <run-folder> --output .\Logs\quest-vulkan-summary.json
 ```
 
