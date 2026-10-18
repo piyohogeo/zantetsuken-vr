@@ -84,9 +84,39 @@ namespace Zantetsu.Quest
         private string _profileFileBefore;
         private string _loggerBeginAdmission = "Disabled";
         private string _warmFailure;
-        private QuestNpcUnityPrewarm _unityPrewarm;
-        private bool _unityPrewarmRetireFailureLogged;
+        private QuestDrawPrewarm _prewarm;
         private float _nextStatus;
+
+        // Play's preparation (2026-10-18): from the scenario's start until the drawing is warmed (or that has failed or
+        // been given up), the katana's cut input is held (PlayMenu's Holder.Preparation, beside the menu, the dialog and
+        // the system pause) and the statistics' play start waits (PlayPreparation). Begun once, ended once.
+        private static bool s_playPreparing;
+
+        /// <summary>How long play waits for the world, the display's materials and the crowd before it gives the preparation up, seconds of the game's pausable clock.</summary>
+        internal const double PlayReadySeconds = 60.0;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetPlayPreparation() => s_playPreparing = false;
+
+        internal static bool PlayPreparing => s_playPreparing;
+
+        internal static void BeginPlayPreparation()
+        {
+            if (s_playPreparing) return;
+            s_playPreparing = true;
+            Zantetsu.Core.Statistics.PlayPreparation.Begin();
+            PlayMenu.HoldForPreparation();
+            Debug.Log("QUEST PLAY: preparation begins (frame " + Time.frameCount + "): the cut input is held and play's start waits until the drawing is warmed");
+        }
+
+        internal static void EndPlayPreparation(string outcome)
+        {
+            if (!s_playPreparing) return;
+            s_playPreparing = false;
+            Zantetsu.Core.Statistics.PlayPreparation.End();
+            PlayMenu.ReleasePreparation();
+            Debug.Log("QUEST PLAY: preparation ended (frame " + Time.frameCount + "): " + outcome + "; the preparation's hold of the cut input is let go (another holder's stands)");
+        }
         private readonly List<XRDisplaySubsystem> _displays = new List<XRDisplaySubsystem>();
 
         private static string ReadConfigText()
@@ -230,6 +260,9 @@ namespace Zantetsu.Quest
             if (play)
             {
                 // (The recorder's own controls and the diagnostic overlay are quieted for play by SandboxScenario, on the device as on a PC.)
+                // The cut input held and play's start waiting from here, before any frame of the scene and before the
+                // statistics first ask whether play has begun: until the drawing is warmed (Start, PreparePlay).
+                BeginPlayPreparation();
                 new GameObject("Quest play").AddComponent<QuestNpcSlashDemo>();
                 return null;
             }
@@ -294,6 +327,8 @@ namespace Zantetsu.Quest
                 string playBent = BentPartition(out string playBentFailure);
                 if (playBentFailure != null) { Fail(playBentFailure); yield break; }
                 Debug.Log(LogPrefix + playBent);
+                // The drawing warmed before the first cut, as the scripted runs did before their replay (2026-10-18).
+                yield return PreparePlay();
                 yield break;
             }
 
@@ -476,119 +511,80 @@ namespace Zantetsu.Quest
             if (_warmFailure == null) RecordPhase("city-ready");
         }
 
+        // The scripted runs' preparation before their replay: the shared drawing preparation (QuestDrawPrewarm), held
+        // while the game is paused, with this run's phases and its prewarm.txt around it.
         private IEnumerator PrewarmBeforeReplay()
         {
             RecordPhase("warm-begin");
-            double deadline = Zantetsu.Core.GamePause.UnscaledTimeAsDouble + 30.0;
-            var report = new List<string> { "native requested=" + (_config.mode == "vp3c-native"), "Unity expected rendered warm frames=3" };
-            var nativeRoute = _drawing != null ? _drawing.NativeRoute : null;
-            if (_config.mode == "vp3c-native")
-            {
-                if (_drawing == null) _warmFailure = "the prepared world has no camera drawing component";
-                while (_warmFailure == null && nativeRoute == null && Zantetsu.Core.GamePause.UnscaledTimeAsDouble < deadline)
-                {
-                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
-                    nativeRoute = _drawing.NativeRoute;
-                }
-                if (_warmFailure == null && nativeRoute == null) _warmFailure = "the native route did not become available within 30 s";
-                if (_warmFailure == null)
-                {
-                    try
-                    {
-                        if (!nativeRoute.RequestPrewarm(_camera, _world.Display, out string failure, _config.appSw)) _warmFailure = failure ?? "native prewarm was not accepted";
-                    }
-                    catch (Exception e) { _warmFailure = "native prewarm request: " + e.Message; }
-                }
-            }
-
-            if (_warmFailure == null)
-            {
-                try { _unityPrewarm = QuestNpcUnityPrewarm.Create(_camera, _world.Display.PrewarmStencilMaterials, _world.Display.SinglePassInstanced, _world.gameObject.layer, SandboxPropSlashPlayerCheck.ReplayVisualRenderers()); }
-                catch (Exception e) { _warmFailure = "Unity prewarm creation: " + e.Message; }
-            }
-            if (_unityPrewarm != null)
-            {
-                for (int frame = 0; frame < 3 && _warmFailure == null; frame++)
-                {
-                    try { _unityPrewarm.Issue(); }
-                    catch (Exception e) { _warmFailure = "Unity prewarm issue: " + e.Message; }
-                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
-                }
-                // Allow real camera clears and the last warm frame's GPU work to finish.
-                for (int frame = 0; frame < 4; frame++) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
-                bool readyKnown = TryUnityPrewarmReady(out bool ready);
-                while (readyKnown && !ready && Zantetsu.Core.GamePause.UnscaledTimeAsDouble < deadline)
-                {
-                    { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
-                    readyKnown = TryUnityPrewarmReady(out ready);
-                }
-                report.Add("Unity rendered warm frames=" + _unityPrewarm.RenderedWarmFrames);
-                report.Add("Unity replay visual renderers=" + _unityPrewarm.ReplayVisualRendererCount + "; material slots=" + _unityPrewarm.ReplayVisualMaterialCount);
-                report.Add("Unity buffer retirement query succeeded=" + readyKnown + "; ready=" + ready);
-                if (_unityPrewarm.RenderedWarmFrames != 3 && _warmFailure == null) _warmFailure = "Unity prewarm did not render all three preparation frames";
-                if (!ready && _warmFailure == null) _warmFailure = "Unity prewarm GPU completion was not observed within 30 s";
-                if (ready)
-                {
-                    try { _unityPrewarm.Dispose(); _unityPrewarm = null; }
-                    catch (Exception e) { if (_warmFailure == null) _warmFailure = "Unity prewarm disposal: " + e.Message; }
-                }
-                RetireUnityPrewarmSafely(); // Never free an in-flight or unconfirmed buffer on failure.
-            }
-
-            if (_config.mode == "vp3c-native" && nativeRoute != null)
-            {
-                bool complete = false;
-                // Preserve native completion evidence even when Unity's fence query failed.
-                try
-                {
-                    bool requested = nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure);
-                    if (_warmFailure == null && (!requested || failure != null)) _warmFailure = failure ?? "native prewarm request disappeared";
-                }
-                catch (Exception e) { if (_warmFailure == null) _warmFailure = "native prewarm status: " + e.Message; }
-                while (_warmFailure == null && !complete)
-                {
-                    try
-                    {
-                        if (!nativeRoute.GetPrewarmStatus(_camera, out complete, out string failure)) _warmFailure = "native prewarm request disappeared";
-                        else if (failure != null) _warmFailure = failure;
-                    }
-                    catch (Exception e) { _warmFailure = "native prewarm status: " + e.Message; }
-                    if (_warmFailure == null && !complete && Zantetsu.Core.GamePause.UnscaledTimeAsDouble >= deadline) _warmFailure = "native prewarm did not complete within 30 s";
-                    if (_warmFailure == null && !complete) { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
-                }
-                report.Add("native complete=" + complete);
-                report.Add(nativeRoute.DescribePrewarm(_camera));
-            }
-            report.Add("result=" + (_warmFailure ?? "completed"));
-            File.WriteAllLines(Path.Combine(_directory, "prewarm.txt"), report);
+            _prewarm = new QuestDrawPrewarm(_camera, _world, _drawing, _config.mode == "vp3c-native", _config.appSw, true);
+            yield return _prewarm.Run();
+            _warmFailure = _prewarm.Failure;
+            File.WriteAllLines(Path.Combine(_directory, "prewarm.txt"), _prewarm.Report);
             RecordPhase(_warmFailure == null ? "warm-end" : "warm-failed");
         }
 
-        private bool TryUnityPrewarmReady(out bool ready)
+        /// <summary>
+        /// Play's preparation (2026-10-18): the world ready, the display's materials made and the scene's crowds through
+        /// their start-up -- each asked on its own, never by the shared preparation count, which counts this one too --
+        /// then the drawing preparation, NOT held by the game's pause (the consent dialog and the menu pause the game;
+        /// the drawing goes on meanwhile and so does this). Whatever the outcome the preparation ends once, and with it
+        /// its hold of the cut input; a failure is said as one and never as a completion.
+        /// </summary>
+        private IEnumerator PreparePlay()
         {
-            ready = false;
-            try { ready = _unityPrewarm.ReadyToDispose; return true; }
-            catch (Exception e)
+            _phase = "Preparing play";
+            CutWorldRoot world = _world = UnityEngine.Object.FindAnyObjectByType<CutWorldRoot>();
+            _drawing = world != null ? world.GetComponent<CutWorldCameraDrawing>() : null;
+            MobPlanCrowd[] crowds = UnityEngine.Object.FindObjectsByType<MobPlanCrowd>(FindObjectsSortMode.None);
+            int askedFrame = Time.frameCount;
+            double readyBy = Zantetsu.Core.GamePause.UnscaledTimeAsDouble + PlayReadySeconds;
+            string waiting = PlayWaitingFor(world, crowds);
+            while (waiting != null && Zantetsu.Core.GamePause.UnscaledTimeAsDouble < readyBy)
             {
-                if (_warmFailure == null) _warmFailure = "Unity prewarm GPU completion query: " + e.Message;
-                return false;
+                yield return null;
+                waiting = PlayWaitingFor(world, crowds);
+            }
+
+            if (waiting != null)
+            {
+                Debug.LogError(LogPrefix + "prewarm NOT done: still waiting for " + waiting + " after " + PlayReadySeconds + " s");
+                _phase = "Play";
+                EndPlayPreparation("the drawing was NOT warmed (" + waiting + " not ready)");
+                yield break;
+            }
+
+            Debug.Log(LogPrefix + "ready to warm the drawing at frame " + Time.frameCount + " (asked from frame " + askedFrame + "): the world, the display's materials and "
+                + crowds.Length + " crowd(s)");
+            _prewarm = new QuestDrawPrewarm(_camera, world, _drawing, _config.mode == "vp3c-native", _config.appSw, false);
+            yield return _prewarm.Run();
+            _phase = "Play";
+            foreach (string line in _prewarm.Report) Debug.Log(LogPrefix + "prewarm: " + line);
+            if (_prewarm.Completed)
+            {
+                EndPlayPreparation("the drawing was warmed (frames " + _prewarm.BeganFrame + ".." + _prewarm.FinishedFrame + ")");
+            }
+            else
+            {
+                Debug.LogError(LogPrefix + "prewarm FAILED: " + _prewarm.Failure);
+                EndPlayPreparation("the drawing was NOT warmed (failed: " + _prewarm.Failure + ")");
             }
         }
 
-        private void RetireUnityPrewarmSafely()
+        /// <summary>What play's preparation still waits for before the drawing is warmed; null when nothing.</summary>
+        internal static string PlayWaitingFor(CutWorldRoot world, IReadOnlyList<MobPlanCrowd> crowds)
         {
-            if (_unityPrewarm == null) return;
-            try { _unityPrewarm.RetireWhenReady(); _unityPrewarm = null; }
-            catch (Exception e)
+            if (world == null) return "a cut world";
+            if (!world.IsReady) return "the cut world";
+            if (world.Display == null || world.Display.PrewarmStencilMaterials == null) return "the display's materials";
+            if (crowds != null)
             {
-                // Retain the helper if the driver cannot prove completion. Optional diagnostics
-                // never force-release buffers that the GPU may still read or abort the coroutine.
-                if (!_unityPrewarmRetireFailureLogged)
+                foreach (MobPlanCrowd crowd in crowds)
                 {
-                    _unityPrewarmRetireFailureLogged = true;
-                    Debug.LogWarning("QUEST NPC: prewarm buffers retained; retirement failed: " + e.Message);
+                    if (crowd != null && crowd.isActiveAndEnabled && !crowd.PreparationEnded) return "the crowd " + crowd.name;
                 }
             }
+
+            return null;
         }
 
         private static string[] NpcSkinQualityLines()
@@ -716,6 +712,7 @@ namespace Zantetsu.Quest
         {
             _phase = "Failed";
             Debug.LogError(LogPrefix + failure);
+            EndPlayPreparation("play could not start (" + failure + ")");   // nothing unless play's preparation stands
             StopProfiler();
             if (!string.IsNullOrEmpty(_directory)) File.WriteAllText(Path.Combine(_directory, "demo-result.txt"), "NOT started: " + failure + "\n");
             if (_config != null && !_config.keepOpen) Application.Quit(13);
@@ -780,7 +777,9 @@ namespace Zantetsu.Quest
 
         private void OnDestroy()
         {
-            RetireUnityPrewarmSafely();
+            // A preparation still going: its Unity buffers to their own retirement (freed once the GPU is done), and play's hold let go once.
+            _prewarm?.Abandon("the demo was destroyed");
+            EndPlayPreparation("the demo was destroyed before the drawing was warmed");   // nothing unless play's preparation stands (only play begins one)
             _distanceSetup?.Dispose();
             RenderPipelineManager.beginCameraRendering -= BeforeCamera;
             SandboxPropSlashPlayerCheck.ReplayBegun -= OnReplayBegun;

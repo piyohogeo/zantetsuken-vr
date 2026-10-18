@@ -354,14 +354,46 @@ namespace Zantetsu.Sandbox
         private bool _gameInputHeldBack;
 
         /// <summary>
-        /// Who holds the game's input away from the game (D-241): the menu, the consent dialog, the system pause.
-        /// The input is taken when the first holder comes and given back when the last one goes; no holder's coming
-        /// takes it twice, and no holder's going gives back what another still holds.
+        /// Who holds the game's input away from the game (D-241): the menu, the consent dialog, the system pause, and
+        /// play's start-up preparation (2026-10-18: the drawing warmed before the first cut). The input is taken when the
+        /// first holder comes and given back when the last one goes; no holder's coming takes it twice, and no holder's
+        /// going gives back what another still holds. The preparation holds the katana's cut input alone: the head, the
+        /// drawing and the walking go on while it holds, and it pauses nothing.
         /// </summary>
         [System.Flags]
-        internal enum Holder { None = 0, Menu = 1, Dialog = 2, System = 4 }
+        internal enum Holder { None = 0, Menu = 1, Dialog = 2, System = 4, Preparation = 8 }
 
         private Holder _holders;
+
+        // Play's preparation asks for its hold before the menu is installed (the scenario's entry runs first): kept here
+        // and applied by the menu once it is set up.
+        private static bool s_preparationHeld;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetPreparationHold() => s_preparationHeld = false;
+
+        /// <summary>Play's start-up preparation holds the katana's cut input (with the other holders, never instead of them) until <see cref="ReleasePreparation"/>.</summary>
+        public static void HoldForPreparation()
+        {
+            if (s_preparationHeld) return;
+            s_preparationHeld = true;
+            if (Instance != null) Instance.HoldGameInput(Holder.Preparation);
+        }
+
+        /// <summary>The preparation's hold goes; what the menu, the dialog or the system pause hold stays held.</summary>
+        public static void ReleasePreparation()
+        {
+            if (!s_preparationHeld) return;
+            s_preparationHeld = false;
+            if (Instance != null)
+            {
+                Instance.ReleaseGameInput(Holder.Preparation);
+                Debug.Log(Prefix + "the preparation let the cut input go (frame " + Time.frameCount + "); input held by " + Instance._holders);
+            }
+        }
+
+        /// <summary>Whether play's preparation holds the cut input now.</summary>
+        public static bool PreparationHeld => s_preparationHeld;
         private bool _inputUnavailable;
         private PlayMenuInputUnavailable _unavailableCause;
 
@@ -418,7 +450,15 @@ namespace Zantetsu.Sandbox
             _settings = new PlaySettings(scenario == SandboxScenarioKind.Play);
             _settings.Bind();
             FollowSystemPause();
-            return _settings.ApplySaved();
+            string applied = _settings.ApplySaved();
+            if (s_preparationHeld)
+            {
+                // Asked for before the menu was here (play's entry runs before the menu's installation).
+                HoldGameInput(Holder.Preparation);
+                applied += "; the cut input held by the start-up preparation";
+            }
+
+            return applied;
         }
 
         private void Update() => Tick();
@@ -882,14 +922,20 @@ namespace Zantetsu.Sandbox
             return "Last swings (development readout; newest first)\n" + (katana != null ? katana.Swings.Describe(4) : "no katana");
         }
 
-        // A holder comes: the input is taken for the first, and the katana's preview in the hand follows who holds.
+        // A holder comes: the katana is taken for the first, the walking for the first that is not the preparation (which
+        // holds the cut input alone), and the katana's preview in the hand follows who holds.
         private void HoldGameInput(Holder holder)
         {
             bool first = _holders == Holder.None;
             _holders |= holder;
             if (first)
             {
-                TakeGameInput();
+                TakeKatanas();
+            }
+
+            if (holder != Holder.Preparation)
+            {
+                TakeLocomotion();
             }
 
             UpdateKatanaPreview();
@@ -926,6 +972,12 @@ namespace Zantetsu.Sandbox
         // What reads the controllers by itself is switched off for the menu's time, and only what was on comes back.
         private void TakeGameInput()
         {
+            TakeKatanas();
+            TakeLocomotion();
+        }
+
+        private void TakeKatanas()
+        {
             _katanas.Clear();
             foreach (SandboxRightHandKatana katana in FindObjectsByType<SandboxRightHandKatana>(FindObjectsSortMode.None))
             {
@@ -938,7 +990,10 @@ namespace Zantetsu.Sandbox
                     katana.ShowPoseWhileInputOff = Scenario == SandboxScenarioKind.Play;
                 }
             }
+        }
 
+        private void TakeLocomotion()
+        {
             if (_gameInputHeldBack)
             {
                 // Opened again before the sticks were let go: the inputs taken at the first opening are still the ones to give back.

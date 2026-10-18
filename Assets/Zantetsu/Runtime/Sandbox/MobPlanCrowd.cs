@@ -152,6 +152,13 @@ namespace Zantetsu.Sandbox
         public double ComputeMilliseconds { get; private set; }
         public double CollectionMilliseconds { get; private set; }
         public bool IsReady => ready;
+
+        /// <summary>
+        /// The crowd's start-up is over, one way or the other: ready, or no longer able to become so (stopped, its plan
+        /// not loaded, no world). The same condition that ends its <see cref="Zantetsu.Core.Statistics.PlayPreparation"/>
+        /// part; a waiter that is itself a preparation asks this instead of the shared count, which counts the waiter too.
+        /// </summary>
+        public bool PreparationEnded => ready || stopped || loadingFailed || world == null;
         public bool PlannerBusy => busy;
         public int LiveCount => actors.Count;
         public WalkableMap Map => ready ? simulation.Map : null;

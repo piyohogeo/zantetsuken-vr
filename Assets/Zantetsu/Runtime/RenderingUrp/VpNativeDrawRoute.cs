@@ -1034,6 +1034,13 @@ namespace Zantetsu.Rendering.Urp
         public long PrewarmConstantDispatches { get; private set; }
         public long PrewarmCullDispatches { get; private set; }
 
+        /// <summary>
+        /// Whether <see cref="RequestPrewarm"/>'s preconditions of the route itself hold for the camera: the route's draw
+        /// data made and the camera enqueued at least once (its passes exist). Until then a request is refused as "not
+        /// enqueued yet"; a caller that waits for the route asks this rather than reading that refusal's words.
+        /// </summary>
+        public bool IsCameraEnqueued(Camera camera) => !_disposed && camera != null && _drawData != null && PassesOf(camera, false) != null;
+
         /// <summary>Quest-only startup request. Materials must be the display's own culled copies, not asset clones.</summary>
         public bool RequestPrewarm(Camera camera, IVpNativeDrawHost display, out string failure, bool motion = true)
         {
