@@ -121,6 +121,16 @@ namespace Zantetsu.Sandbox
         /// </summary>
         public const float BladeAngleDefault = 30f;
 
+        /// <summary>
+        /// The physics' maximum depenetration velocity, m/s (TL 2026-10-19): the speed at which overlapping bodies
+        /// are pushed apart -- the project's default is 1 (TL 2026-10-11: at 10 the corpses were flung away), and the
+        /// player may raise it to 10. Applied to the physics' default (what every new body takes) and to every body in
+        /// the scene then.
+        /// </summary>
+        public const string DepenetrationKey = "zantetsu.play.maxDepenetrationVelocity";
+        public const float DepenetrationMinimum = 1f, DepenetrationMaximum = 10f, DepenetrationStep = 0.5f;
+        public const float DepenetrationDefault = 1f;
+
         private readonly bool _persist;
         private MobPlanPlayerInput _city;
         private SandboxLocomotionInput _plain;
@@ -144,6 +154,9 @@ namespace Zantetsu.Sandbox
         /// scenario replays recorded hands with the offset they were recorded for.
         /// </summary>
         public bool BladeAngleChangeable => _persist && _katanas.Count > 0;
+
+        /// <summary>Whether the depenetration velocity is the player's to change: in play (a scripted scenario runs with the project's physics as it is).</summary>
+        public bool DepenetrationChangeable => _persist;
 
         /// <summary>Finds the scene's live locomotion input: the crowd's where there is one, the plain one otherwise.</summary>
         public void Bind()
@@ -213,7 +226,41 @@ namespace Zantetsu.Sandbox
                 blade = "; blade angle " + BladeAngle.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + (saved ? " (saved)" : " (play's default)");
             }
 
-            return "saved settings applied: " + applied + blade;
+            // The depenetration velocity is play's own too: the saved one, or the default where none was saved.
+            bool depenetrationSaved = PlayerPrefs.HasKey(DepenetrationKey);
+            SetDepenetration(depenetrationSaved ? PlayerPrefs.GetFloat(DepenetrationKey) : DepenetrationDefault, false);
+            if (depenetrationSaved) applied++;
+            string depenetration = "; max depenetration velocity " + Depenetration.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + " m/s" + (depenetrationSaved ? " (saved)" : " (default)");
+            return "saved settings applied: " + applied + blade + depenetration;
+        }
+
+        /// <summary>The physics' maximum depenetration velocity now, m/s (the default every new body takes).</summary>
+        public float Depenetration => Physics.defaultMaxDepenetrationVelocity;
+
+        public void SetDepenetration(float value) => SetDepenetration(value, true);
+
+        private void SetDepenetration(float value, bool save)
+        {
+            if (!_persist)
+            {
+                return;
+            }
+
+            value = Mathf.Clamp(value, DepenetrationMinimum, DepenetrationMaximum);
+            Physics.defaultMaxDepenetrationVelocity = value;
+            // The bodies that exist already (the NPCs standing, the pieces cut so far): the default is only what a body
+            // takes when its actor is made. An inactive body cannot be set (the value is the actor's: set while
+            // inactive it is lost, seen in the Editor 2026-10-19): the crowd's pool, never active before, takes the
+            // default when activated; a body that was active once comes back with the value it had then.
+            foreach (Rigidbody body in Object.FindObjectsByType<Rigidbody>(FindObjectsSortMode.None))
+            {
+                body.maxDepenetrationVelocity = value;
+            }
+
+            if (save)
+            {
+                Save(DepenetrationKey, value);
+            }
         }
 
         public float BladeAngle => _katanas.Count > 0 && _katanas[0] != null ? _katanas[0].EdgewardTiltDegrees : 0f;
@@ -877,6 +924,13 @@ namespace Zantetsu.Sandbox
                 write = value => VpCutSurfaceColour.SetDebugEnabled(value >= 0.5f),
             });
 
+            // How fast overlapping bodies are pushed apart (TL 2026-10-19): play's own; a scripted run keeps the project's physics.
+            rows.Add(new PlayMenuView.Row
+            {
+                label = "Depenetration", minimum = PlaySettings.DepenetrationMinimum, maximum = PlaySettings.DepenetrationMaximum,
+                step = PlaySettings.DepenetrationStep, format = "F1", unit = " m/s", interactable = _settings.DepenetrationChangeable,
+                read = () => _settings.Depenetration, write = _settings.SetDepenetration,
+            });
             // The katana's angle in the hand, last: play's own (a scripted run keeps the offset its hands were recorded for).
             rows.Add(new PlayMenuView.Row
             {

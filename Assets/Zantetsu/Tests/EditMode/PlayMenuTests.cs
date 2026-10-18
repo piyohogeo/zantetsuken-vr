@@ -135,7 +135,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(menu.IsOpen, Is.True);
             Assert.That(menu.View.DetailText, Is.Not.Null, "the development readout under the settings");
             Assert.That(menu.View.DetailText.text, Does.StartWith("Last swings").And.Contain("no swing yet"));
-            Assert.That(menu.View.Rows.Count, Is.EqualTo(5), "the rows are the settings alone");
+            Assert.That(menu.View.Rows.Count, Is.EqualTo(6), "the rows are the settings alone (volume, speed, turn, cut surface debug, depenetration, blade angle)");
         }
 
         [Test]
@@ -189,15 +189,15 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen, Is.True);
             IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-            Assert.That(rows.Count, Is.EqualTo(7), "the settings, the statistics row and its explanation (unit 9-B)");
-            PlayMenuView.Row row = rows[5];
+            Assert.That(rows.Count, Is.EqualTo(8), "the six settings, the statistics row and its explanation (unit 9-B)");
+            PlayMenuView.Row row = rows[6];
             Assert.That(row.label, Is.EqualTo("Send play statistics"));
             Assert.That(row.isToggle, Is.True);
             Assert.That(row.read(), Is.Zero, "declined: OFF");
 
             // The explanation under it, all in view (TL review 2026-10-18 [P2]): wrapped, its rectangle as tall as its
             // lines, between the toggle and what is below it, inside the panel.
-            PlayMenuView.Row explanation = rows[6];
+            PlayMenuView.Row explanation = rows[7];
             Assert.That(explanation.isText, Is.True);
             RectTransform er = explanation.labelText.rectTransform;
             float explanationNeeded = PlayMenuView.NeededHeight(explanation.labelText);
@@ -253,7 +253,7 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Tick(menu);
             Assert.That(menu.IsOpen, Is.True);
-            PlayMenuView.Row row = menu.View.Rows[5];
+            PlayMenuView.Row row = menu.View.Rows[6];
             Assume.That(row.label, Is.EqualTo("Send play statistics"));
 
             // ON: the current text first, nothing agreed, nothing collected, the menu stepped aside but still open and paused.
@@ -297,7 +297,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(version, Is.EqualTo(Zantetsu.Core.Statistics.PlayStatisticsConsent.CurrentTextVersion.ToString()));
             Assert.That(menu.IsOpen && menu.View.Visible, Is.True);
             Assert.That(row.read(), Is.EqualTo(1f));
-            Assert.That(menu.View.Rows[5].valueText.text, Is.EqualTo("ON"), "the menu shows it at once");
+            Assert.That(menu.View.Rows[6].valueText.text, Is.EqualTo("ON"), "the menu shows it at once");
 
             // Closing the menu gives the game back as ever.
             Tick(menu, select: false);
@@ -615,7 +615,7 @@ namespace Zantetsu.Core.Tests
                 Tick(menu, menuDown: true);
                 Tick(menu);
                 IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-                Assert.That(rows.Count, Is.EqualTo(5));
+                Assert.That(rows.Count, Is.EqualTo(6), "volume, speed, turn, cut surface debug, depenetration, blade angle");
                 Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label }, Is.EqualTo(new[] { "Volume", "Speed", "Turn" }));
 
                 // Each slider is taken by a press on it and follows the ray until the select is let go.
