@@ -153,6 +153,72 @@ namespace Zantetsu.PhysicsCut
         Count,
     }
 
+    /// <summary>Which stage of a turn asked the budget (<see cref="SpatialSplitBudgetDecision"/>).</summary>
+    public enum SpatialSplitBudgetStage
+    {
+        /// <summary>A turn without an attempt: a round's start when due, one look, an issue.</summary>
+        Choose,
+
+        /// <summary>A turn with a collected attempt that cuts nothing: building and publishing the two objects.</summary>
+        Publish,
+
+        /// <summary>A cut attempt's stages: making its collider meshes, reading one cooked hull, publishing.</summary>
+        CutApply,
+        HullCheck,
+        CutPublish,
+    }
+
+    /// <summary>
+    /// One turn's budget comparison as it was made (unit 10-B, 2026-10-18): the values the comparison used, kept so
+    /// that a device's periodic line can show why a turn was held short of budget -- the remaining time read once
+    /// and compared, not read again for the record. The last one only; nothing is written every frame.
+    /// </summary>
+    public readonly struct SpatialSplitBudgetDecision
+    {
+        public SpatialSplitBudgetDecision(int frame, SpatialSplitBudgetStage stage, double remaining, double reserve, double laterStep, double expected, bool held)
+        {
+            Frame = frame;
+            Stage = stage;
+            Remaining = remaining;
+            Reserve = reserve;
+            LaterStep = laterStep;
+            Expected = expected;
+            Held = held;
+        }
+
+        /// <summary>The frame of the comparison; <see cref="int.MinValue"/> before any.</summary>
+        public int Frame { get; }
+        public SpatialSplitBudgetStage Stage { get; }
+
+        /// <summary>What the comparison read as left of the frame's Main budget, in seconds.</summary>
+        public double Remaining { get; }
+
+        /// <summary>The settings' reserve, the physics step still expected in this frame, and the stage's own expected cost, in seconds.</summary>
+        public double Reserve { get; }
+        public double LaterStep { get; }
+        public double Expected { get; }
+
+        /// <summary>The whole threshold: reserve + laterStep + 2 x expected.</summary>
+        public double Threshold => Reserve + LaterStep + (2.0 * Expected);
+
+        /// <summary>Whether the turn was held for the budget (remaining below the threshold).</summary>
+        public bool Held { get; }
+
+        public bool IsSet => Frame != int.MinValue;
+
+        public static SpatialSplitBudgetDecision None => new SpatialSplitBudgetDecision(int.MinValue, SpatialSplitBudgetStage.Choose, 0.0, 0.0, 0.0, 0.0, false);
+
+        public string Describe()
+        {
+            if (!IsSet) return "budget decision: none yet";
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            return "budget decision at frame " + Frame.ToString(inv) + " (" + Stage + "): remaining " + (Remaining * 1000.0).ToString("F3", inv)
+                + " ms vs threshold " + (Threshold * 1000.0).ToString("F3", inv) + " ms = reserve " + (Reserve * 1000.0).ToString("F3", inv)
+                + " + later step " + (LaterStep * 1000.0).ToString("F3", inv) + " + 2 x expected " + (Expected * 1000.0).ToString("F3", inv)
+                + " -> " + (Held ? "held (BudgetShort)" : "went on");
+        }
+    }
+
     /// <summary>What a fragment looked at turned out to be.</summary>
     public enum SpatialSplitPass
     {
@@ -594,7 +660,10 @@ namespace Zantetsu.PhysicsCut
                     : _attempt.hullsChecked < _attempt.meshCount ? ExpectedHullCheckSeconds
                     : ExpectedCutPublishSeconds;
                 double stepLater = LaterStep();
-                SpatialSplitHold held = HoldNow(in settings, stageCost, stepLater);
+                SpatialSplitBudgetStage cutStage = !_attempt.applied ? SpatialSplitBudgetStage.CutApply
+                    : _attempt.hullsChecked < _attempt.meshCount ? SpatialSplitBudgetStage.HullCheck
+                    : SpatialSplitBudgetStage.CutPublish;
+                SpatialSplitHold held = HoldNow(in settings, stageCost, stepLater, cutStage);
                 LastHold = held;
                 if (held != SpatialSplitHold.None)
                 {
@@ -648,7 +717,7 @@ namespace Zantetsu.PhysicsCut
             Turns++;
             double expected = _attempt != null ? ExpectedPublishSeconds : ExpectedChooseSeconds;
             double later = LaterStep();
-            SpatialSplitHold hold = HoldNow(in settings, expected, later);
+            SpatialSplitHold hold = HoldNow(in settings, expected, later, _attempt != null ? SpatialSplitBudgetStage.Publish : SpatialSplitBudgetStage.Choose);
             LastHold = hold;
             if (hold != SpatialSplitHold.None)
             {
@@ -1747,7 +1816,10 @@ namespace Zantetsu.PhysicsCut
 
         // ---- holds ----------------------------------------------------------------------------------------------------
 
-        private SpatialSplitHold HoldNow(in CutSpatialSplitSettings settings, double expectedSeconds, double laterStepSeconds)
+        /// <summary>The last budget comparison a turn made, with the values it used (unit 10-B); none before any.</summary>
+        public SpatialSplitBudgetDecision LastBudgetDecision { get; private set; } = SpatialSplitBudgetDecision.None;
+
+        private SpatialSplitHold HoldNow(in CutSpatialSplitSettings settings, double expectedSeconds, double laterStepSeconds, SpatialSplitBudgetStage stage)
         {
             switch (_world.FrameEventsHold(out _))
             {
@@ -1768,12 +1840,11 @@ namespace Zantetsu.PhysicsCut
 
             // The turn runs before this frame's decision to simulate: what that step is expected to take is not the
             // turn's to spend. Added as it is -- it is the step's own estimate, which its decision compares once.
-            if (RemainingMainSeconds() < settings.reserveSeconds + laterStepSeconds + (2.0 * expectedSeconds))
-            {
-                return SpatialSplitHold.BudgetShort;
-            }
-
-            return SpatialSplitHold.None;
+            // The remaining time is read once; the comparison and the record use that same reading.
+            double remaining = RemainingMainSeconds();
+            bool held = remaining < settings.reserveSeconds + laterStepSeconds + (2.0 * expectedSeconds);
+            LastBudgetDecision = new SpatialSplitBudgetDecision(Time.frameCount, stage, remaining, settings.reserveSeconds, laterStepSeconds, expectedSeconds, held);
+            return held ? SpatialSplitHold.BudgetShort : SpatialSplitHold.None;
         }
 
         private void Remember()

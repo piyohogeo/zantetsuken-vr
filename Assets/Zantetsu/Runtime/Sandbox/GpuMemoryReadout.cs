@@ -122,6 +122,23 @@ namespace Zantetsu.Sandbox
                 Zantetsu.PhysicsCut.CutSpatialSplit split = world.SpatialSplit;
                 Debug.Log(Prefix + "split " + why + " f=" + Time.frameCount + " world=" + world.name + " " + (split == null ? "none (the split is off or not made)"
                     : split.Describe() + " | bent: " + split.DescribeBent() + " | convex cut: " + split.DescribeConvexCut()));
+                if (split != null)
+                {
+                    // The split's last budget comparison with the very values it used (unit 10-B, 2026-10-18: on the Quest,
+                    // after a sleep, every turn was held BudgetShort; which of the terms moved is what this tells), then the
+                    // physics step's own last decision as auxiliary information. Readings only; nothing is changed by it.
+                    Debug.Log(Prefix + "budget " + why + " f=" + Time.frameCount + " world=" + world.name + " splitLastHold=" + split.LastHold
+                        + " | " + split.LastBudgetDecision.Describe()
+                        + " | step (auxiliary): budgetS=" + Zantetsu.PhysicsCut.CutPhysicsStep.MainBudgetSeconds.ToString("G4")
+                        + " lastRemainingS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecisionRemainingSeconds.ToString("G4")
+                        + " lastExpectedS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecisionExpectedSeconds.ToString("G4")
+                        + " lastSimulateS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastSimulateSeconds.ToString("G4")
+                        + " lastStepped=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecisionStepped
+                        + " skippedForCostInARow=" + Zantetsu.PhysicsCut.CutPhysicsStep.SkippedForCostInARow
+                        + " verificationSteps=" + Zantetsu.PhysicsCut.CutPhysicsStep.VerificationSteps
+                        + " lastSimulatedFrame=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastSimulatedFrame
+                        + " lastDecidedFrame=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecidedFrame);
+                }
             }
             // The display's own GPU uploads since the last line, by call site (unit 8-C): every site that uploaded, one line each.
             foreach (string line in Zantetsu.Rendering.VpUploadMeter.Snapshot())

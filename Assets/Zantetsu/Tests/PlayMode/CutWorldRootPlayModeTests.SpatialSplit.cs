@@ -1153,16 +1153,30 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             const double later = 0.004;
             split.LaterStepSeconds = () => later;
             bool heldForTheStep = false;
+            SpatialSplitBudgetDecision decision = default;
             for (int attempt = 0; attempt < 8 && !heldForTheStep; attempt++)
             {
                 SpatialSplitHold hold = Turn(() => CutWorldRoot.CompactionReserveSeconds + (2.0 * split.ExpectedChooseSeconds) + later - 1.0e-5);
                 Assert.That(hold, Is.Not.EqualTo(SpatialSplitHold.None), "the reserve and twice the turn's cost are there, the step's room is not");
                 heldForTheStep = hold == SpatialSplitHold.BudgetShort;
+                if (heldForTheStep) decision = split.LastBudgetDecision;   // read now: the frame's own turn, later, records its own comparison
                 yield return null;
             }
 
             Assert.That(heldForTheStep, Is.True, "a turn was held for the budget with the step allowed for");
             Assert.That(split.Examined, Is.Zero, "and looked at nothing");
+
+            // The comparison as it was made is kept (unit 10-B): the very remaining it read, the reserve, the step and the
+            // stage's expected cost, and that it held.
+            Assert.That(decision.IsSet, Is.True);
+            Assert.That(decision.Held, Is.True);
+            Assert.That(decision.Stage, Is.EqualTo(SpatialSplitBudgetStage.Choose));
+            Assert.That(decision.Reserve, Is.EqualTo(CutWorldRoot.CompactionReserveSeconds));
+            Assert.That(decision.LaterStep, Is.EqualTo(later));
+            Assert.That(decision.Expected, Is.EqualTo(split.ExpectedChooseSeconds).Within(1e-12));
+            Assert.That(decision.Remaining, Is.EqualTo(decision.Threshold - 1.0e-5).Within(1e-9), "the remaining the comparison read: the budget the turn was given");
+            Assert.That(decision.Remaining, Is.LessThan(decision.Threshold));
+            Assert.That(decision.Describe(), Does.Contain("held (BudgetShort)").And.Contain("Choose"));
 
             // A budget that runs out after the first look: the walk stops there.
             int asked = 0;
