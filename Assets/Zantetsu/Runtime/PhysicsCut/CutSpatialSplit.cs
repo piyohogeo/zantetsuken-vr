@@ -201,6 +201,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The whole threshold: reserve + laterStep + 2 x expected.</summary>
         public double Threshold => Reserve + LaterStep + (2.0 * Expected);
 
+        /// <summary>What the comparison had to spare: remaining - threshold. Held exactly when it is below zero (equal goes on).</summary>
+        public double Margin => Remaining - Threshold;
+
         /// <summary>Whether the turn was held for the budget (remaining below the threshold).</summary>
         public bool Held { get; }
 
@@ -216,6 +219,64 @@ namespace Zantetsu.PhysicsCut
                 + " ms vs threshold " + (Threshold * 1000.0).ToString("F3", inv) + " ms = reserve " + (Reserve * 1000.0).ToString("F3", inv)
                 + " + later step " + (LaterStep * 1000.0).ToString("F3", inv) + " + 2 x expected " + (Expected * 1000.0).ToString("F3", inv)
                 + " -> " + (Held ? "held (BudgetShort)" : "went on");
+        }
+    }
+
+    /// <summary>
+    /// A run of budget comparisons that held, for one attempt at one stage (unit 10-B, 2026-10-18): how many in a row,
+    /// from which frame to which, and the comparison of the run with the largest margin (remaining - threshold), with
+    /// the values it used. A new attempt or a new stage begins a new run; a comparison that goes on ends the run.
+    /// Holds for another reason (heavy work, a collection, a cut in flight, a structural change, room grown) make
+    /// no comparison and neither lengthen nor end it. The attempt is 0 for a turn without one (Choose).
+    /// </summary>
+    public readonly struct SpatialSplitHoldStreak
+    {
+        public SpatialSplitHoldStreak(long attempt, SpatialSplitBudgetStage stage, int firstFrame, int lastFrame, int holds, SpatialSplitBudgetDecision best, bool ended, bool endedByGoingOn)
+        {
+            Attempt = attempt;
+            Stage = stage;
+            FirstFrame = firstFrame;
+            LastFrame = lastFrame;
+            Holds = holds;
+            Best = best;
+            Ended = ended;
+            EndedByGoingOn = endedByGoingOn;
+        }
+
+        public long Attempt { get; }
+        public SpatialSplitBudgetStage Stage { get; }
+        public int FirstFrame { get; }
+        public int LastFrame { get; }
+
+        /// <summary>Comparisons in a row that held.</summary>
+        public int Holds { get; }
+
+        /// <summary>The held comparison of this run with the largest margin (closest to going on), with its values.</summary>
+        public SpatialSplitBudgetDecision Best { get; }
+
+        /// <summary>Whether the run is over, and whether a comparison of the same attempt and stage then went on (else the attempt or the stage changed).</summary>
+        public bool Ended { get; }
+        public bool EndedByGoingOn { get; }
+
+        public bool IsSet => Holds > 0;
+
+        public static SpatialSplitHoldStreak None => default;
+
+        internal SpatialSplitHoldStreak Held(in SpatialSplitBudgetDecision decision)
+        {
+            SpatialSplitBudgetDecision best = Holds == 0 || decision.Margin > Best.Margin ? decision : Best;
+            return new SpatialSplitHoldStreak(Attempt, Stage, Holds == 0 ? decision.Frame : FirstFrame, decision.Frame, Holds + 1, best, false, false);
+        }
+
+        internal SpatialSplitHoldStreak EndedAs(bool byGoingOn) => new SpatialSplitHoldStreak(Attempt, Stage, FirstFrame, LastFrame, Holds, Best, true, byGoingOn);
+
+        public string Describe()
+        {
+            if (!IsSet) return "hold streak: none";
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            return "hold streak: attempt " + Attempt.ToString(inv) + " at " + Stage + ", " + Holds.ToString(inv) + " held in a row (frames "
+                + FirstFrame.ToString(inv) + ".." + LastFrame.ToString(inv) + ")" + (Ended ? (EndedByGoingOn ? ", ended: went on" : ", ended: the attempt or the stage changed") : ", going on")
+                + "; largest margin " + (Best.Margin * 1000.0).ToString("F3", inv) + " ms in its " + Best.Describe();
         }
     }
 
@@ -487,6 +548,11 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The fragment the outstanding attempt is of, unset without one.</summary>
         public LogicalFragmentId AttemptFragment => _attempt != null ? _attempt.fragment : default;
+
+        /// <summary>The outstanding attempt's number in this world (from 1), or 0 with none.</summary>
+        public long AttemptSerial => _attempt != null ? _attempt.serial : 0;
+
+        private long _attemptSerial;
 
         /// <summary>Turns taken while on, those that were held, and rounds of the walk finished.</summary>
         public int Turns { get; private set; }
@@ -1162,6 +1228,7 @@ namespace Zantetsu.PhysicsCut
 
                 var attempt = new Attempt
                 {
+                    serial = ++_attemptSerial,
                     fragment = fragment,
                     input = input,
                     lease = lease,
@@ -1843,8 +1910,46 @@ namespace Zantetsu.PhysicsCut
             // The remaining time is read once; the comparison and the record use that same reading.
             double remaining = RemainingMainSeconds();
             bool held = remaining < settings.reserveSeconds + laterStepSeconds + (2.0 * expectedSeconds);
-            LastBudgetDecision = new SpatialSplitBudgetDecision(Time.frameCount, stage, remaining, settings.reserveSeconds, laterStepSeconds, expectedSeconds, held);
+            var decision = new SpatialSplitBudgetDecision(Time.frameCount, stage, remaining, settings.reserveSeconds, laterStepSeconds, expectedSeconds, held);
+            LastBudgetDecision = decision;
+            NoteBudgetDecision(_attempt != null ? _attempt.serial : 0, in decision);
             return held ? SpatialSplitHold.BudgetShort : SpatialSplitHold.None;
+        }
+
+        /// <summary>The run of held budget comparisons going on now (or the last one, ended), for one attempt at one stage.</summary>
+        public SpatialSplitHoldStreak CurrentHoldStreak { get; private set; }
+
+        /// <summary>The run that ended before <see cref="CurrentHoldStreak"/> began, and the longest run of the world so far.</summary>
+        public SpatialSplitHoldStreak PreviousHoldStreak { get; private set; }
+        public SpatialSplitHoldStreak LongestHoldStreak { get; private set; }
+
+        // A comparison's place in the runs: a new attempt or stage ends the run before and begins another; a held one
+        // lengthens the run and keeps the largest margin; one that went on ends the run.
+        private void NoteBudgetDecision(long attempt, in SpatialSplitBudgetDecision decision)
+        {
+            SpatialSplitHoldStreak current = CurrentHoldStreak;
+            bool same = current.IsSet && !current.Ended && current.Attempt == attempt && current.Stage == decision.Stage;
+            if (current.IsSet && !current.Ended && !same)
+            {
+                PreviousHoldStreak = current.EndedAs(false);
+                current = default;
+            }
+
+            if (decision.Held)
+            {
+                if (!same) current = new SpatialSplitHoldStreak(attempt, decision.Stage, decision.Frame, decision.Frame, 0, SpatialSplitBudgetDecision.None, false, false);
+                current = current.Held(in decision);
+                CurrentHoldStreak = current;
+                if (current.Holds > LongestHoldStreak.Holds) LongestHoldStreak = current;
+                return;
+            }
+
+            if (same)
+            {
+                PreviousHoldStreak = current.EndedAs(true);
+                CurrentHoldStreak = PreviousHoldStreak;
+                if (PreviousHoldStreak.Holds >= LongestHoldStreak.Holds) LongestHoldStreak = PreviousHoldStreak;
+            }
         }
 
         private void Remember()
@@ -1856,7 +1961,10 @@ namespace Zantetsu.PhysicsCut
         // ---- the record -----------------------------------------------------------------------------------------------
 
         /// <summary>The run's tallies in one line, for the world's end.</summary>
-        public string Describe()
+        public string Describe() => Describe(true);
+
+        /// <summary>The run's tallies; without the convex cut's and the bent partition's own parts where they are written on lines of their own.</summary>
+        public string Describe(bool withParts)
         {
             CultureInfo inv = CultureInfo.InvariantCulture;
             var text = new StringBuilder(512);
@@ -1896,9 +2004,12 @@ namespace Zantetsu.PhysicsCut
                 .Append((CollectAfterSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest ").Append((MaxCollectAfterSeconds * 1000.0).ToString("F3", inv)).Append(")")
                 .Append("; indices transferred ").Append(IndicesTransferred).Append(" (").Append(IndicesTransferred * sizeof(uint)).Append(" B)")
                 .Append("; actors added ").Append(ActorsAdded).Append(", draw registrations added ").Append(RegistrationsAdded)
-                .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv))
-                .Append("; ").Append(DescribeConvexCut())
-                .Append("; ").Append(DescribeBent());
+                .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv));
+            if (withParts)
+            {
+                text.Append("; ").Append(DescribeConvexCut()).Append("; ").Append(DescribeBent());
+            }
+
             return text.ToString();
         }
 
@@ -2016,6 +2127,7 @@ namespace Zantetsu.PhysicsCut
         /// </summary>
         private sealed unsafe class Attempt : IDispatchWork
         {
+            internal long serial;   // the attempt's number in this world, from 1 (diagnosis: the hold streak's key)
             internal LogicalFragmentId fragment;
             internal Input input;
             internal VpIndexReadLease lease;

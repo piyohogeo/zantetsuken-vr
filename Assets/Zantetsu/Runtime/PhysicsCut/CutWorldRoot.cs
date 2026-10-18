@@ -261,7 +261,7 @@ namespace Zantetsu.PhysicsCut
             // for a device's log; a reading only.
             if (SpatialSplit != null)
             {
-                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(false), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBent(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
             }

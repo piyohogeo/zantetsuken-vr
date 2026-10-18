@@ -120,10 +120,18 @@ namespace Zantetsu.Sandbox
             foreach (Zantetsu.PhysicsCut.CutWorldRoot world in Object.FindObjectsByType<Zantetsu.PhysicsCut.CutWorldRoot>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
             {
                 Zantetsu.PhysicsCut.CutSpatialSplit split = world.SpatialSplit;
-                Debug.Log(Prefix + "split " + why + " f=" + Time.frameCount + " world=" + world.name + " " + (split == null ? "none (the split is off or not made)"
-                    : split.Describe() + " | bent: " + split.DescribeBent() + " | convex cut: " + split.DescribeConvexCut()));
+                // Three lines (2026-10-18: one line was cut at the device log's limit, about 1,024 characters, and the
+                // convex cut's part of it was never seen).
+                Debug.Log(Prefix + "split " + why + " f=" + Time.frameCount + " world=" + world.name + " " + (split == null ? "none (the split is off or not made)" : split.Describe(false)));
                 if (split != null)
                 {
+                    Debug.Log(Prefix + "split-bent " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.DescribeBent());
+                    Debug.Log(Prefix + "split-cut " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.DescribeConvexCut());
+                    // The runs of held budget comparisons, by attempt and stage (unit 10-B): the one going on (or the last), the one before, the longest.
+                    Debug.Log(Prefix + "hold " + why + " f=" + Time.frameCount + " world=" + world.name + " attempt now " + split.AttemptSerial
+                        + " | now: " + split.CurrentHoldStreak.Describe());
+                    Debug.Log(Prefix + "hold-before " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.PreviousHoldStreak.Describe());
+                    Debug.Log(Prefix + "hold-longest " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.LongestHoldStreak.Describe());
                     // The split's last budget comparison with the very values it used (unit 10-B, 2026-10-18: on the Quest,
                     // after a sleep, every turn was held BudgetShort; which of the terms moved is what this tells), then the
                     // physics step's own last decision as auxiliary information. Readings only; nothing is changed by it.
