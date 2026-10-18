@@ -74,6 +74,7 @@ function Test-DistributionManifest {
             ('one launch activity (the one with MAIN) and it is ' + $LaunchActivity),
             'the launch intent-filter holds MAIN and com.oculus.intent.category.VR',
             'the launch activity has excludeFromRecents=true',
+            'the launch activity has screenOrientation=landscape (0)',
             'uses-feature android.hardware.vr.headtracking under manifest with required=true and version=1',
             $devicesCheck)
         foreach ($k in $names) { $checks[$k] = $false }
@@ -113,7 +114,7 @@ function Test-DistributionManifest {
     $facts['activities'] = ($activities -join ', ')
     $facts['activities with MAIN'] = (($launchers | ForEach-Object { $_.Name }) -join ', ')
     $checks['one launch activity (the one with MAIN) and it is ' + $LaunchActivity] = ($application.Count -eq 1) -and ($launchers.Count -eq 1) -and ($launchers[0].Name -ceq $LaunchActivity)
-    $filterOk = $false; $excludeOk = $false
+    $filterOk = $false; $excludeOk = $false; $landscapeOk = $false
     if ($launchers.Count -eq 1 -and $launchers[0].Name -ceq $LaunchActivity) {
         $categories = @(Get-ManifestChildren $launchers[0].Filter 'category' | ForEach-Object { Get-AttributeValue $_ 'name' })
         $facts['launch intent-filter categories'] = ($categories -join ', ')
@@ -121,9 +122,14 @@ function Test-DistributionManifest {
         $exclude = Get-AttributeValue $launchers[0].Activity 'excludeFromRecents'
         $facts['launch activity excludeFromRecents'] = $(if ($null -eq $exclude) { 'absent' } else { "$exclude" })
         $excludeOk = Test-AaptTrue $exclude
+        # Meta's upload requires the landscape orientation on the launch activity (android:screenOrientation 0, "landscape").
+        $orientation = Get-AttributeValue $launchers[0].Activity 'screenOrientation'
+        $facts['launch activity screenOrientation'] = $(if ($null -eq $orientation) { 'absent' } else { "$orientation" })
+        $landscapeOk = ($orientation -is [int64] -and $orientation -eq 0) -or ($orientation -is [string] -and $orientation -ceq 'landscape')
     }
     $checks['the launch intent-filter holds MAIN and com.oculus.intent.category.VR'] = $filterOk
     $checks['the launch activity has excludeFromRecents=true'] = $excludeOk
+    $checks['the launch activity has screenOrientation=landscape (0)'] = $landscapeOk
 
     # headtracking: one uses-feature, a direct child of the manifest.
     $features = @(Get-ManifestChildren $manifest 'uses-feature' | Where-Object { (Get-AttributeValue $_ 'name') -ceq 'android.hardware.vr.headtracking' })
