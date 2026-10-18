@@ -40,6 +40,51 @@ namespace Zantetsu.PhysicsCut
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
+            if (TryReadRetryAfter(Environment.GetCommandLineArgs(), out int holds, out double seconds, out string refusal))
+            {
+                SpatialSplit.RetryAfterHolds = holds;
+                SpatialSplit.RetryAfterHeldSeconds = seconds;
+                UnityEngine.Debug.Log("SPATIAL SPLIT RETRY AFTER: " + holds + " budget-short comparisons and " + seconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                    + " s of play, asked for by " + SpatialSplitRetryAfterArgument + " (the product's are " + CutSpatialSplit.DefaultRetryAfterHolds + " and "
+                    + CutSpatialSplit.DefaultRetryAfterHeldSeconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ")", this);
+            }
+            else if (refusal != null)
+            {
+                UnityEngine.Debug.LogError("SPATIAL SPLIT RETRY AFTER: " + refusal + ": the product's stand", this);
+            }
+        }
+
+        /// <summary>
+        /// The Player argument that gives the retry of an unmeasured cut publication its two conditions for a run (unit
+        /// 10-B, a device check of the retry itself): followed by a whole number of budget-short comparisons (1 or more)
+        /// and a play time in seconds (0 or more). Without it the product's stand (<see cref="CutSpatialSplit.DefaultRetryAfterHolds"/>,
+        /// <see cref="CutSpatialSplit.DefaultRetryAfterHeldSeconds"/>).
+        /// </summary>
+        public const string SpatialSplitRetryAfterArgument = "-zantetsuSpatialSplitRetryAfter";
+
+        internal static bool TryReadRetryAfter(string[] arguments, out int holds, out double seconds, out string refusal)
+        {
+            holds = 0;
+            seconds = 0.0;
+            refusal = null;
+            int at = arguments != null ? Array.IndexOf(arguments, SpatialSplitRetryAfterArgument) : -1;
+            if (at < 0)
+            {
+                return false;
+            }
+
+            if (at + 2 < arguments.Length
+                && int.TryParse(arguments[at + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out holds) && holds >= 1
+                && double.TryParse(arguments[at + 2], System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out seconds)
+                && seconds >= 0.0 && !double.IsInfinity(seconds))
+            {
+                return true;
+            }
+
+            refusal = SpatialSplitRetryAfterArgument + " is not followed by a whole number of 1 or more and a number of seconds of 0 or more";
+            holds = 0;
+            seconds = 0.0;
+            return false;
         }
 
         /// <summary>

@@ -113,6 +113,18 @@ namespace Zantetsu.PhysicsCut
                 ? 0.0
                 : s_costs.ExpectedSeconds;
 
+        /// <summary>
+        /// Whether this frame's decision, still to come, may take its verification step past the budget (a step owed,
+        /// and either enough cost skips in a row that one more makes the count, or a re-evaluation asked for). Main work
+        /// that may itself go past the budget once -- the spatial split's retry of an unmeasured publication -- reads
+        /// it to keep the two out of one frame. A reading ahead; it decides nothing. False outside Play, once this
+        /// frame's decision is made, or when not in script mode.
+        /// </summary>
+        public static bool VerificationStepMayComeLaterThisFrame =>
+            Application.isPlaying && LastDecidedFrame != Time.frameCount && Physics.simulationMode == SimulationMode.Script
+            && s_clock.WouldOweAStepAt(Stopwatch.GetTimestamp())
+            && (SkippedForCostInARow + 1 >= VerifyAfterSkippedFrames || s_reevaluateAsked);
+
         /// <summary>The expected cost the last decision compared, in seconds. For tests and observation.</summary>
         public static double LastDecisionExpectedSeconds { get; private set; }
 

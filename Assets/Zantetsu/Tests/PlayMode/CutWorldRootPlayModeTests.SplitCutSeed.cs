@@ -30,6 +30,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             root.Driver.RemainingMainSeconds = () => 1.0;
             var remaining = new double[1];
             CutSpatialSplit split = SplitCutClosed(root, remaining, 12);
+            split.RetryAfterHolds = int.MaxValue;   // the mechanism without the retry of 2026-10-18 (its own cases are SplitCutRetry)
             LogicalFragmentId wrapped = AddWrappedBody(root, new Vector3(0f, 0f, 0f));
             LogicalFragmentId other = AddBodyWithAHand(root, new Vector3(8f, 0f, 0f));
             yield return null;
