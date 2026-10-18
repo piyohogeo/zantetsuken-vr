@@ -223,11 +223,14 @@ namespace Zantetsu.PhysicsCut
     }
 
     /// <summary>
-    /// A run of budget comparisons that held, for one attempt at one stage (unit 10-B, 2026-10-18): how many in a row,
-    /// from which frame to which, and the comparison of the run with the largest margin (remaining - threshold), with
-    /// the values it used. A new attempt or a new stage begins a new run; a comparison that goes on ends the run.
-    /// Holds for another reason (heavy work, a collection, a cut in flight, a structural change, room grown) make
-    /// no comparison and neither lengthen nor end it. The attempt is 0 for a turn without one (Choose).
+    /// A run of budget comparisons that held, for one attempt at one stage (unit 10-B, 2026-10-18): how many budget
+    /// comparisons held at that attempt and stage with no comparison that went on between them (<see cref="Holds"/>),
+    /// from which frame to which (<see cref="FrameSpan"/>, a separate reading: the frames between include turns held
+    /// for other reasons and frames with no turn), and the comparison of the run with the largest margin
+    /// (remaining - threshold), with the values it used. A comparison for another attempt or another stage ends the
+    /// run and begins another (if it held); one that goes on at the same attempt and stage ends it. Holds for another
+    /// reason (heavy work, a collection, a cut in flight, a structural change, room grown) make no comparison and
+    /// neither lengthen nor end it. The attempt is 0 for a turn without one (Choose).
     /// </summary>
     public readonly struct SpatialSplitHoldStreak
     {
@@ -248,8 +251,14 @@ namespace Zantetsu.PhysicsCut
         public int FirstFrame { get; }
         public int LastFrame { get; }
 
-        /// <summary>Comparisons in a row that held.</summary>
+        /// <summary>Budget comparisons that held at this attempt and stage, with no comparison that went on between them.</summary>
         public int Holds { get; }
+
+        /// <summary>Frames from the first held comparison to the last, both counted (not the number of comparisons).</summary>
+        public int FrameSpan => IsSet ? LastFrame - FirstFrame + 1 : 0;
+
+        /// <summary>Whether <paramref name="other"/> is this same run (the same attempt, stage and first frame), whatever its state.</summary>
+        public bool IsSameRun(in SpatialSplitHoldStreak other) => IsSet && other.IsSet && Attempt == other.Attempt && Stage == other.Stage && FirstFrame == other.FirstFrame;
 
         /// <summary>The held comparison of this run with the largest margin (closest to going on), with its values.</summary>
         public SpatialSplitBudgetDecision Best { get; }
@@ -274,9 +283,57 @@ namespace Zantetsu.PhysicsCut
         {
             if (!IsSet) return "hold streak: none";
             CultureInfo inv = CultureInfo.InvariantCulture;
-            return "hold streak: attempt " + Attempt.ToString(inv) + " at " + Stage + ", " + Holds.ToString(inv) + " held in a row (frames "
-                + FirstFrame.ToString(inv) + ".." + LastFrame.ToString(inv) + ")" + (Ended ? (EndedByGoingOn ? ", ended: went on" : ", ended: the attempt or the stage changed") : ", going on")
+            return "hold streak: attempt " + Attempt.ToString(inv) + " at " + Stage + ", " + Holds.ToString(inv) + " budget comparisons held with none going on between"
+                + " (frames " + FirstFrame.ToString(inv) + ".." + LastFrame.ToString(inv) + ", a span of " + FrameSpan.ToString(inv) + " frames)"
+                + (Ended ? (EndedByGoingOn ? ", ended: went on" : ", ended: the attempt or the stage changed") : ", going on")
                 + "; largest margin " + (Best.Margin * 1000.0).ToString("F3", inv) + " ms in its " + Best.Describe();
+        }
+    }
+
+    /// <summary>
+    /// The runs of held budget comparisons of one split (<see cref="SpatialSplitHoldStreak"/>): the one going on (or the
+    /// last, ended), the one that ended last, and the longest -- kept consistent with one another: a run that ends is
+    /// ended in all three where it stands. A diagnosis only; nothing of the split reads it.
+    /// </summary>
+    public sealed class SpatialSplitHoldRuns
+    {
+        public SpatialSplitHoldStreak Current { get; private set; }
+        public SpatialSplitHoldStreak Previous { get; private set; }
+        public SpatialSplitHoldStreak Longest { get; private set; }
+
+        /// <summary>One budget comparison, of the attempt numbered <paramref name="attempt"/> (0 with none).</summary>
+        public void Note(long attempt, in SpatialSplitBudgetDecision decision)
+        {
+            SpatialSplitHoldStreak current = Current;
+            bool open = current.IsSet && !current.Ended;
+            bool same = open && current.Attempt == attempt && current.Stage == decision.Stage;
+            if (open && !same)
+            {
+                // Another attempt or stage: the run going on ends here, whatever this comparison says.
+                End(current.EndedAs(false));
+            }
+
+            if (decision.Held)
+            {
+                SpatialSplitHoldStreak run = same ? current : new SpatialSplitHoldStreak(attempt, decision.Stage, decision.Frame, decision.Frame, 0, SpatialSplitBudgetDecision.None, false, false);
+                run = run.Held(in decision);
+                Current = run;
+                if (Longest.IsSameRun(in run) || run.Holds > Longest.Holds) Longest = run;
+                return;
+            }
+
+            if (same)
+            {
+                End(current.EndedAs(true));
+            }
+        }
+
+        // A run that ended: the last ended, the current one shown as ended, and the longest's state where it is that run.
+        private void End(in SpatialSplitHoldStreak ended)
+        {
+            Previous = ended;
+            Current = ended;
+            if (Longest.IsSameRun(in ended)) Longest = ended;
         }
     }
 
@@ -1916,41 +1973,16 @@ namespace Zantetsu.PhysicsCut
             return held ? SpatialSplitHold.BudgetShort : SpatialSplitHold.None;
         }
 
-        /// <summary>The run of held budget comparisons going on now (or the last one, ended), for one attempt at one stage.</summary>
-        public SpatialSplitHoldStreak CurrentHoldStreak { get; private set; }
+        private readonly SpatialSplitHoldRuns _holdRuns = new SpatialSplitHoldRuns();
 
-        /// <summary>The run that ended before <see cref="CurrentHoldStreak"/> began, and the longest run of the world so far.</summary>
-        public SpatialSplitHoldStreak PreviousHoldStreak { get; private set; }
-        public SpatialSplitHoldStreak LongestHoldStreak { get; private set; }
+        /// <summary>The run of held budget comparisons going on now, or the last one (ended), for one attempt at one stage.</summary>
+        public SpatialSplitHoldStreak CurrentHoldStreak => _holdRuns.Current;
 
-        // A comparison's place in the runs: a new attempt or stage ends the run before and begins another; a held one
-        // lengthens the run and keeps the largest margin; one that went on ends the run.
-        private void NoteBudgetDecision(long attempt, in SpatialSplitBudgetDecision decision)
-        {
-            SpatialSplitHoldStreak current = CurrentHoldStreak;
-            bool same = current.IsSet && !current.Ended && current.Attempt == attempt && current.Stage == decision.Stage;
-            if (current.IsSet && !current.Ended && !same)
-            {
-                PreviousHoldStreak = current.EndedAs(false);
-                current = default;
-            }
+        /// <summary>The run that ended last, and the longest run of the world so far (with its ending, once it ended).</summary>
+        public SpatialSplitHoldStreak PreviousHoldStreak => _holdRuns.Previous;
+        public SpatialSplitHoldStreak LongestHoldStreak => _holdRuns.Longest;
 
-            if (decision.Held)
-            {
-                if (!same) current = new SpatialSplitHoldStreak(attempt, decision.Stage, decision.Frame, decision.Frame, 0, SpatialSplitBudgetDecision.None, false, false);
-                current = current.Held(in decision);
-                CurrentHoldStreak = current;
-                if (current.Holds > LongestHoldStreak.Holds) LongestHoldStreak = current;
-                return;
-            }
-
-            if (same)
-            {
-                PreviousHoldStreak = current.EndedAs(true);
-                CurrentHoldStreak = PreviousHoldStreak;
-                if (PreviousHoldStreak.Holds >= LongestHoldStreak.Holds) LongestHoldStreak = PreviousHoldStreak;
-            }
-        }
+        private void NoteBudgetDecision(long attempt, in SpatialSplitBudgetDecision decision) => _holdRuns.Note(attempt, in decision);
 
         private void Remember()
         {
