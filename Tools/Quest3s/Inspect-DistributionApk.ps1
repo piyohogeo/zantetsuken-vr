@@ -24,7 +24,11 @@ param(
     # and the decided endpoint are looked for in the APK's serialized data (assets/bin/Data, Managed/ excluded). An AUXILIARY look (TL review 2026-10-18): a
     # byte search cannot prove presence or absence; the guarantee is the Editor's check of what the runtime's load finds
     # (QuestDistributionBuild.CheckStatisticsConfig) and the Player's own install line on the device. Nothing of the token is printed.
-    [ValidateSet('required', 'none')][string]$ExpectedStatistics = 'required'
+    [ValidateSet('required', 'none')][string]$ExpectedStatistics = 'required',
+    # The forbidden-word list (Tools/ForbiddenWords.ps1; kept outside the repository). Required: without it the
+    # inspection fails. Every entry of the APK, as the zip reader inflates it, and the signer's certificate are searched;
+    # only entry names (words masked) and counts are written.
+    [string]$ForbiddenWordsFile = $env:ZANTETSU_FORBIDDEN_WORDS_FILE
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ApkManifestChecks.ps1')
@@ -139,8 +143,49 @@ try {
 if ($ExpectedStatistics -eq 'required') { $checks['auxiliary: the play statistics config name and the decided endpoint are in the serialized data (required)'] = ($statisticsPresent -eq $true -and $endpointPresent -eq $true) }
 else { $checks['auxiliary: neither the play statistics config name nor the endpoint is in the serialized data (none)'] = ($statisticsPresent -eq $false -and $endpointPresent -eq $false) }
 
+# Forbidden words (unit 11, TL 2026-10-18): none in any entry of the APK nor in the signer's certificate.
+. (Join-Path $PSScriptRoot '..\ForbiddenWords.ps1')
+$forbidden = $null
+if ($ForbiddenWordsFile) {
+    try { $forbidden = New-ForbiddenMatcher -Words (Read-ForbiddenWords -Path $ForbiddenWordsFile -RepositoryRoot (Join-Path $PSScriptRoot '..\..')) }
+    catch { $lines += "forbidden words: $($_.Exception.Message)" }
+} else {
+    $lines += 'forbidden words: no list given (-ForbiddenWordsFile or ZANTETSU_FORBIDDEN_WORDS_FILE)'
+}
+$checks['a forbidden-word list was read'] = ($null -ne $forbidden)
+if ($forbidden) {
+    $entriesRead = $null; $entryHits = @(); $inflated = 0
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Apk)
+        try {
+            $entriesRead = 0
+            foreach ($entry in $zip.Entries) {
+                $stream = $entry.Open()
+                try { $memory = New-Object System.IO.MemoryStream; $stream.CopyTo($memory); $bytes = $memory.ToArray() } finally { $stream.Dispose() }
+                if ($bytes.Length -ne $entry.Length) { throw "entry $($entriesRead + 1) inflated to $($bytes.Length) bytes, not $($entry.Length)" }
+                $entriesRead++
+                $inflated += $bytes.Length
+                $n = (Get-ForbiddenCount $forbidden $bytes) + $(if ((Hide-ForbiddenWords $forbidden $entry.FullName) -ne $entry.FullName) { 1 } else { 0 })
+                if ($n -gt 0) { $entryHits += ('{0} ({1} match(es))' -f (Hide-ForbiddenWords $forbidden $entry.FullName), $n) }
+            }
+            if ($entriesRead -ne $zip.Entries.Count) { throw 'not every entry was read' }
+        } finally { $zip.Dispose() }
+    } catch { $lines += "forbidden words: the APK's entries could not all be read: $($_.Exception.Message)"; $entriesRead = $null }
+    $dnLines = @($verify | Where-Object { $_ -match '^Signer #\d+ certificate DN: ' })
+    $dnHits = @($dnLines | Where-Object { (Hide-ForbiddenWords $forbidden $_) -ne $_ }).Count
+    $lines += "forbidden words: $($forbidden.Count) word(s); $(if ($null -ne $entriesRead) { "$entriesRead entries read ($inflated bytes inflated), $($entryHits.Count) with a match" } else { 'entries NOT read' }); signer certificate DN lines $($dnLines.Count), $dnHits with a match"
+    $shownHits = @($entryHits | Select-Object -First 40)
+    foreach ($h in $shownHits) { $lines += "  forbidden word in $h" }
+    if ($entryHits.Count -gt $shownHits.Count) { $lines += "  ... and $($entryHits.Count - $shownHits.Count) more entries" }
+    $checks["no forbidden word in the APK's entries"] = ($null -ne $entriesRead) -and ($entryHits.Count -eq 0)
+    $checks['no forbidden word in the signer certificate'] = ($dnLines.Count -gt 0) -and ($dnHits -eq 0)
+    # Nothing written below shows a word (the certificate's DN is among the lines above).
+    $lines = @($lines | ForEach-Object { Hide-ForbiddenWords $forbidden "$_" })
+}
+
 $all = $true
-foreach ($k in $checks.Keys) { $ok = $checks[$k]; if (!$ok) { $all = $false }; $lines += "   [$(if ($ok) { 'ok' } else { 'FAIL' })] $k" }
+foreach ($k in $checks.Keys) { $ok = $checks[$k]; if (!$ok) { $all = $false }; $shownKey = if ($forbidden) { Hide-ForbiddenWords $forbidden $k } else { $k }; $lines += "   [$(if ($ok) { 'ok' } else { 'FAIL' })] $shownKey" }
 $lines += "INSPECTION: $(if ($all) { 'PASSED' } else { 'FAILED' })"
 $lines | ForEach-Object { $_ }
 if ($Record) { $lines | Set-Content -LiteralPath $Record -Encoding UTF8 }

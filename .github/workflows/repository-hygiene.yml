@@ -18,6 +18,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run repository hygiene checks
+      # The forbidden-word list comes from the repository secret ZANTETSU_FORBIDDEN_WORDS (one word a line) and is
+      # REQUIRED: without the secret the list has no words and the check fails (unit 11, TL 2026-10-18 [P1]). The
+      # check never prints a word.
+      - name: Run repository hygiene checks (forbidden words required, whole history)
         shell: pwsh
-        run: ./Tools/Verify-PublicRepository.ps1
+        env:
+          ZANTETSU_FORBIDDEN_WORDS: ${{ secrets.ZANTETSU_FORBIDDEN_WORDS }}
+        run: |
+          $list = Join-Path $env:RUNNER_TEMP 'forbidden-words.txt'
+          [System.IO.File]::WriteAllText($list, "$env:ZANTETSU_FORBIDDEN_WORDS")
+          ./Tools/Verify-PublicRepository.ps1 -ForbiddenWordsFile $list -RequireForbiddenWords -ScanHistoryContents

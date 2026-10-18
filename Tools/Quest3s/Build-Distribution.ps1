@@ -45,7 +45,11 @@ param(
     [string]$StatisticsTokenVariable = 'ZANTETSU_INGEST_TOKEN_ALPHA',
     # Where the configurations are moved (outside the repository; it holds the token). Required with -Statistics required.
     [string]$StatisticsAside,
-    [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
+    [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer',
+    # The forbidden-word list (Tools/ForbiddenWords.ps1; outside the repository). Required (unit 11, TL 2026-10-18 [P1]):
+    # before Unity starts the repository must pass Verify-PublicRepository.ps1 with it, and the APK's inspection
+    # searches every entry and the signer's certificate with it.
+    [string]$ForbiddenWordsFile = $env:ZANTETSU_FORBIDDEN_WORDS_FILE
 )
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -86,6 +90,16 @@ if ($Statistics -eq 'required') {
     $hasToken = -not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($StatisticsTokenVariable)) -or -not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($StatisticsTokenVariable, 'User'))
     if (!$hasToken) { throw "the environment variable $StatisticsTokenVariable is not set (process or User)" }
 }
+# The repository itself, with the forbidden-word list required: a distribution is never built from a tree the public
+# check refuses, nor without the list (the check's own exit code decides; its lines name no word).
+# The commits looked at are those the built HEAD reaches (other local branches are not what is built).
+if (!$ForbiddenWordsFile) { throw 'a distribution build needs -ForbiddenWordsFile (or ZANTETSU_FORBIDDEN_WORDS_FILE): the list kept outside the repository' }
+$headCommit = (git -C $project rev-parse HEAD).Trim()
+if ($headCommit -notmatch '^[0-9a-f]{40}$') { throw "the HEAD commit of $project could not be read" }
+$hygiene = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $project 'Tools\Verify-PublicRepository.ps1') -RepositoryPath $project -ForbiddenWordsFile $ForbiddenWordsFile -RequireForbiddenWords -Revisions $headCommit 2>&1 | ForEach-Object { "$_" })
+$hygieneExit = $LASTEXITCODE
+$hygieneSummary = (@($hygiene | Where-Object { $_ -match 'Repository hygiene check|Forbidden words|Violation\(s\)|^ERROR' }) -join '; ') -replace '\s+', ' '
+if ($hygieneExit -ne 0) { throw "the repository fails the public check with the forbidden-word list (exit $hygieneExit): $hygieneSummary -- run Tools\Verify-PublicRepository.ps1 -ForbiddenWordsFile <list> to see where" }
 $keytool = Join-Path $AndroidPlayer 'OpenJDK\bin\keytool.exe'
 if (!(Test-Path -LiteralPath $keytool)) { throw "keytool not found: $keytool" }
 
@@ -125,6 +139,7 @@ $dirty = @(git -C $project status --short --untracked-files=all)
     "package $package; versionName $VersionName; versionCode $VersionCode; supported devices $supportedDevices",
     "keystore $Keystore; alias $KeyAlias; certificate sha256 $certificateSha256; $validity",
     "source $head",
+    "public check before the build: exit $hygieneExit; $hygieneSummary",
     "uncommitted changes: $($dirty.Count)",
     "conditions: Release (no development option), commercial (-zantetsuBuildMode commercial), custom keystore, Android ARM64 IL2CPP Vulkan (the shared Quest build)",
     "experiment arguments: $(if ($ExperimentArguments.Count -gt 0) { $ExperimentArguments -join ' ' } else { 'none' })",
@@ -192,7 +207,7 @@ if (!(Test-Path -LiteralPath $Output)) { throw "Unity exited 0 but the APK is no
 # 3. The APK itself.
 $apkSha256 = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash.ToLowerInvariant()
 "apk sha256 $apkSha256; bytes $((Get-Item -LiteralPath $Output).Length)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -ExpectedSupportedDevices $supportedDevices -ExpectedStatistics $Statistics -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
+& (Join-Path $PSScriptRoot 'Inspect-DistributionApk.ps1') -Apk $Output -ExpectedPackage $package -ExpectedVersionName $VersionName -ExpectedVersionCode $VersionCode -ExpectedCertificateSha256 $certificateSha256 -ExpectedSupportedDevices $supportedDevices -ExpectedStatistics $Statistics -ForbiddenWordsFile $ForbiddenWordsFile -Record (Join-Path $record 'inspection.txt') -ManifestDump (Join-Path $record 'manifest.txt') -BadgingDump (Join-Path $record 'badging.txt') -AndroidPlayer $AndroidPlayer
 if ($LASTEXITCODE -ne 0) { throw "the APK failed its inspection (see $record\inspection.txt)" }
 "distribution build of $package $VersionName ($VersionCode): $Output"
 "apk sha256 $apkSha256"

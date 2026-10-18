@@ -1,0 +1,34 @@
+#!/bin/sh
+# Before a push (unit 11, TL 2026-10-18 [P1]): Tools/Verify-PublicRepository.ps1 with the forbidden-word list
+# REQUIRED, over the commits this push sends and every blob they reach. The list is kept outside the repository and
+# named by the environment variable ZANTETSU_FORBIDDEN_WORDS_FILE or the local git config value
+# zantetsu.forbiddenWordsFile. Without it, or when the check does not pass, the push is refused.
+#
+# Installed for a clone and all its worktrees with
+#   git config core.hooksPath <absolute path of this folder>
+#   git config zantetsu.forbiddenWordsFile <absolute path of the list>
+root="$(git rev-parse --show-toplevel)" || exit 1
+list="${ZANTETSU_FORBIDDEN_WORDS_FILE:-$(git config --get zantetsu.forbiddenWordsFile)}"
+if [ -z "$list" ]; then
+    echo "pre-push: no forbidden-word list (ZANTETSU_FORBIDDEN_WORDS_FILE or git config zantetsu.forbiddenWordsFile); push refused" >&2
+    exit 1
+fi
+zero=0000000000000000000000000000000000000000
+revs=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue    # a deletion sends no commit
+    revs="${revs:+$revs,}$local_sha"
+done
+[ -z "$revs" ] && exit 0
+script="$root/Tools/Verify-PublicRepository.ps1"
+if [ ! -f "$script" ]; then
+    echo "pre-push: Tools/Verify-PublicRepository.ps1 is not in this tree; push refused" >&2
+    exit 1
+fi
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" -RepositoryPath "$root" -ForbiddenWordsFile "$list" -RequireForbiddenWords -ScanHistoryContents -Revisions "$revs"
+status=$?
+if [ $status -ne 0 ]; then
+    echo "pre-push: the public repository check did not pass (exit $status); push refused" >&2
+    exit 1
+fi
+exit 0

@@ -41,6 +41,13 @@ finally {
 
 - 署名鍵（keystore）はリポジトリの外に置く（ラッパーがリポジトリ内の場所を拒否する）。`.gitignore` は `Build/` と `*.apk` を除外しているが、keystore はそもそもリポジトリに置かない。
 
+## 禁止語一覧（作業単位 11）
+
+- 公開物と配布物に出てはならない語（個人名など）の一覧を、**リポジトリの外**の UTF-8 テキスト（1 行 1 語、`#` から行末は注記）に置き、`-ForbiddenWordsFile <場所>` か環境変数 `ZANTETSU_FORBIDDEN_WORDS_FILE` で渡す。照合は `Tools/ForbiddenWords.ps1`（UTF-8 と UTF-16LE、ASCII の大文字小文字を区別しない）。語そのものはどの出力・記録にも書かれない（語を伏せたパス・エントリ名と件数だけ）。
+- **配布ビルドでは必須**：`Build-Distribution.ps1` は一覧が無ければ Unity を起動せずに拒否し、ビルド前にリポジトリを `Verify-PublicRepository.ps1 -RequireForbiddenWords`（ビルドする HEAD から辿れるコミット）で検査して、通らなければ拒否する。ビルド後の `Inspect-DistributionApk.ps1` は APK の全エントリ（zip から展開した内容）と署名証明書の DN を照合し、一覧が無い・読めないエントリがある・語があるときは FAIL。**本番署名証明書の DN にも個人名を入れない。**
+- **公開（push）では必須**：`Tools/Hooks/pre-push` が、push するコミットとそこから辿れる全ブロブを一覧必須で検査し、通らなければ push を拒否する。有効化はクローンごとに `git config core.hooksPath <Tools\Hooks の絶対パス>` と `git config zantetsu.forbiddenWordsFile <一覧の絶対パス>`。CI（`.github/workflows/repository-hygiene.yml`）は一覧をリポジトリのシークレット `ZANTETSU_FORBIDDEN_WORDS` から作り、無ければ失敗する。
+- 通常の開発用の検査（引数なし）では「NOT CHECKED」と出して通る。ファイルの中の圧縮データ（zstd の .blend、.gz、PNG の圧縮テキスト）は開かない。
+
 ## 鍵の作成・保管・バックアップ
 
 - **配布鍵は配布担当（TL が指名する 1 人）が作り、保管する。** 検証用に作った使い捨ての鍵（`perf\distribution\test-key\test-only.keystore`、CN=ZANTETSU TEST ONLY）は配布には使わない。
@@ -94,7 +101,7 @@ $env:ZANTETSU_KEYSTORE_PASSWORD = ...; $env:ZANTETSU_KEY_PASSWORD = ...
 ## APK の検査
 
 ```
-Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> -ExpectedVersionCode <番号> -ExpectedCertificateSha256 <64桁> -ExpectedSupportedDevices 'quest3|quest3s' [-Record <txt>] [-ManifestDump <txt>] [-BadgingDump <txt>]
+Tools\Quest3s\Inspect-DistributionApk.ps1 -Apk <apk> -ExpectedVersionName <名> -ExpectedVersionCode <番号> -ExpectedCertificateSha256 <64桁> -ExpectedSupportedDevices 'quest3|quest3s' -ForbiddenWordsFile <一覧> [-Record <txt>] [-ManifestDump <txt>] [-BadgingDump <txt>]
 ```
 
 設定値ではなく APK そのものから（Unity 同梱 SDK の `aapt2`・`apksigner`）。Manifest は `aapt2 dump xmltree` を木に読み（`Tools/Quest3s/ApkManifestChecks.ps1`）、属性の所属要素で判定する（別要素に同じ文字列があっても合格にしない；数値・16 進・`(type …)` 表記を扱う；読み取り・解析失敗は FAIL）：`aapt2` の 2 回の読み取り（badging と Manifest）が exit 0 で必要な出力を持つこと（読み取り失敗は検査失敗）、package ID／versionName／versionCode が指定値と一致、APK Signature Scheme v2 の検証に成功、署名者が 1 人で配布証明書（必須引数、64 桁の 16 進）と一致（Android debug 証明書でない）、`android:debuggable` が false か未指定；minSdk 32・targetSdk 34・compileSdk ≥ target（記載時）・installLocation が存在し 0・MAIN を持つ唯一の Activity が `UnityPlayerGameActivity` でその intent-filter に MAIN と VR category・その Activity に excludeFromRecents=true・manifest 直下の headtracking `uses-feature` が required=true／version=1。すべて成立で exit 0。対応機種：`application` 直下の `com.oculus.supportedDevices` がちょうど 1 件（Activity 内の同名は数えない）、値が存在し、`|` で分けた機種集合が `quest3` と `quest3s` の 2 つに一致（順序不問、大文字小文字は厳密、空値・空要素・重複・不足・余計・内部名 `eureka` は不合格）。期待値は `-ExpectedSupportedDevices`（必須）で渡す。記録には Manifest のダンプ（`manifest.txt`）・badging（`badging.txt`）・権限一覧・対応機種の期待値と実値も残す。ラッパーはビルド後にこれを自動で行い、`<apk>.record\inspection.txt` に残す。
