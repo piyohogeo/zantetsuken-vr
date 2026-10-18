@@ -15,6 +15,10 @@ namespace Zantetsu.Rendering.Urp.Tests
     /// </summary>
     public sealed class VpShadowMapCopyPass : ScriptableRenderPass
     {
+        // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
+        // folders into the Player (unit 11): the project-relative path is given instead.
+        private const string RenderGraphFile = "Assets/Zantetsu/Tests/EditMode/RenderingUrp/VpShadowMapCopyPass.cs";
+
         private readonly VpCascadeShadowPass _cascadePass;
 
         private class CopyData
@@ -68,7 +72,7 @@ namespace Zantetsu.Rendering.Urp.Tests
 
         private static void Copy(RenderGraph renderGraph, TextureHandle source, TextureHandle destination, string name)
         {
-            using (IRasterRenderGraphBuilder builder = renderGraph.AddRasterRenderPass(name, out CopyData data))
+            using (IRasterRenderGraphBuilder builder = renderGraph.AddRasterRenderPass(name, out CopyData data, file: RenderGraphFile))
             {
                 data.source = source;
                 builder.UseTexture(source);

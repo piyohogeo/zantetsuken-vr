@@ -19,6 +19,10 @@ namespace Zantetsu.Rendering.Urp
     /// </summary>
     public static class VpEyeShot
     {
+        // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
+        // folders into the Player (unit 11): the project-relative path is given instead.
+        private const string RenderGraphFile = "Assets/Zantetsu/Runtime/RenderingUrp/VpEyeShot.cs";
+
         private static readonly List<Pass> s_passes = new List<Pass>();
         private static int s_pending;
 
@@ -236,7 +240,7 @@ namespace Zantetsu.Rendering.Urp
                     }
 
                     TextureDesc description = renderGraph.GetTextureDesc(shadowMap);
-                    using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out ShadowMapPassData data, profilingSampler))
+                    using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out ShadowMapPassData data, profilingSampler, file: RenderGraphFile))
                     {
                         data.pass = this;
                         data.shadowMap = shadowMap;
@@ -375,7 +379,7 @@ namespace Zantetsu.Rendering.Urp
                         // An imported texture: the camera's descriptor stands.
                     }
 
-                    using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out PassData data, profilingSampler))
+                    using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out PassData data, profilingSampler, file: RenderGraphFile))
                     {
                         data.pass = this;
                         data.colour = colour;

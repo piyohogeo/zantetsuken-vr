@@ -55,6 +55,10 @@ namespace Zantetsu.Rendering.Urp
     /// </summary>
     public sealed class VpCascadeShadowPass : ScriptableRenderPass
     {
+        // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
+        // folders into the Player (unit 11): the project-relative path is given instead.
+        private const string RenderGraphFile = "Assets/Zantetsu/Runtime/RenderingUrp/VpCascadeShadowPass.cs";
+
         private static readonly ProfilerMarker SelectMarker = new ProfilerMarker("VpCascadeShadows.Select");
         private static readonly ProfilerMarker UploadMarker = new ProfilerMarker("VpCascadeShadows.Upload");
         private static readonly ProfilerMarker IssueMarker = new ProfilerMarker("VpCascadeShadows.Issue");
@@ -280,13 +284,13 @@ namespace Zantetsu.Rendering.Urp
             // SetupCameraProperties must not run inside the same native pass as these draws: it changes the native
             // projection/winding state even though this shader uses its own GPU VP. The empty pass needs no resources;
             // its global-state sync point preserves ordering and prevents it from being culled.
-            using (IUnsafeRenderGraphBuilder boundary = renderGraph.AddUnsafePass<BoundaryPassData>("VP Shadow Native Pass Boundary", out _))
+            using (IUnsafeRenderGraphBuilder boundary = renderGraph.AddUnsafePass<BoundaryPassData>("VP Shadow Native Pass Boundary", out _, file: RenderGraphFile))
             {
                 boundary.AllowGlobalStateModification(true);
                 boundary.SetRenderFunc(static (BoundaryPassData data, UnsafeGraphContext context) => { });
             }
 
-            using (IRasterRenderGraphBuilder builder = renderGraph.AddRasterRenderPass(passName, out PassData data, profilingSampler))
+            using (IRasterRenderGraphBuilder builder = renderGraph.AddRasterRenderPass(passName, out PassData data, profilingSampler, file: RenderGraphFile))
             {
                 data.pass = this;
                 data.splitCount = cascades;

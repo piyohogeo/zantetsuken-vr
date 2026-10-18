@@ -36,6 +36,10 @@ namespace Zantetsu.Rendering.Urp
     /// </summary>
     public sealed class VpGpuCullCameraRoute
     {
+        // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
+        // folders into the Player (unit 11): the project-relative path is given instead.
+        private const string RenderGraphFile = "Assets/Zantetsu/Runtime/RenderingUrp/VpGpuCullCameraRoute.cs";
+
         private const string NotUrp = "the active render pipeline is not URP";
         private const string CompatibilityMode = "URP compatibility mode is on; the selection is recorded only through the render graph";
         private const string NoRenderer = "the camera has no URP renderer to enqueue a pass on";
@@ -266,7 +270,7 @@ namespace Zantetsu.Rendering.Urp
                 _route.LastEyeCount = _conditions.eyeCount;
                 _route.LastSplitCount = _conditions.shadowSplitCount;
 
-                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass("VP GPU Cull", out PassData data, profilingSampler))
+                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass("VP GPU Cull", out PassData data, profilingSampler, file: RenderGraphFile))
                 {
                     data.target = target;
                     data.camera = camera;

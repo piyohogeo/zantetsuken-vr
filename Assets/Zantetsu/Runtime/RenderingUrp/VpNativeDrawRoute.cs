@@ -53,6 +53,10 @@ namespace Zantetsu.Rendering.Urp
     /// </summary>
     public sealed class VpNativeDrawRoute : IVpNativeDrawSink, IVpNativeClipDrawSink, IVpNativeClipListDrawSink, IDisposable
     {
+        // RenderGraph takes the caller's file through [CallerFilePath], which would put the building machine's
+        // folders into the Player (unit 11): the project-relative path is given instead.
+        private const string RenderGraphFile = "Assets/Zantetsu/Runtime/RenderingUrp/VpNativeDrawRoute.cs";
+
 
         // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
         internal static long Began()
@@ -2281,7 +2285,7 @@ namespace Zantetsu.Rendering.Urp
                 RenderTargetInfo colourDesc = renderGraph.GetRenderTargetInfo(colour);
                 RenderTargetInfo depthDesc = renderGraph.GetRenderTargetInfo(depth);
                 RenderTextureDescriptor target = _motion ? cameraData.xr.motionVectorRenderTargetDesc : cameraData.cameraTargetDescriptor;
-                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out BodyPassData data, profilingSampler))
+                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out BodyPassData data, profilingSampler, file: RenderGraphFile))
                 {
                     data.pass = this;
                     // Match UniversalCameraData's target convention without resolving/reading the attachments
@@ -2631,7 +2635,7 @@ namespace Zantetsu.Rendering.Urp
             {
                 var camera = frameData.Get<UniversalCameraData>();
                 if (!ReferenceEquals(camera.camera, _passes.camera)) return;
-                using (var builder = graph.AddUnsafePass<Data>(passName, out var data, profilingSampler))
+                using (var builder = graph.AddUnsafePass<Data>(passName, out var data, profilingSampler, file: RenderGraphFile))
                 {
                     data.pass = this;
                     builder.AllowPassCulling(false);
@@ -2770,7 +2774,7 @@ namespace Zantetsu.Rendering.Urp
                 if (!ReferenceEquals(camera.camera, _passes.camera)) return;
                 var resources = frameData.Get<UniversalResourceData>();
                 if (!resources.activeColorTexture.IsValid() || !resources.activeDepthTexture.IsValid()) return;
-                using (var builder = graph.AddRasterRenderPass<Data>(passName, out var data, profilingSampler))
+                using (var builder = graph.AddRasterRenderPass<Data>(passName, out var data, profilingSampler, file: RenderGraphFile))
                 {
                     data.pass = this;
                     builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
@@ -2864,7 +2868,7 @@ namespace Zantetsu.Rendering.Urp
                 }
 
                 _route.LastSplitCount = splits;
-                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out CasterPassData data, profilingSampler))
+                using (IUnsafeRenderGraphBuilder builder = renderGraph.AddUnsafePass(passName, out CasterPassData data, profilingSampler, file: RenderGraphFile))
                 {
                     data.pass = this;
                     data.shadowMap = shadowMap;
