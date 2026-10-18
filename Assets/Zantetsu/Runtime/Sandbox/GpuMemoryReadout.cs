@@ -177,14 +177,17 @@ namespace Zantetsu.Sandbox
                         + " | now: " + split.CurrentHoldStreak.Describe());
                     Debug.Log(Prefix + "hold-before " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.PreviousHoldStreak.Describe());
                     Debug.Log(Prefix + "hold-longest " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.LongestHoldStreak.Describe());
-                    // The retry of an unmeasured cut publication (unit 10-B): how often, put off how often, what is measured now, the last one.
+                    // The retry of a publication past the budget (unit 10-B, D-245): how often, put off how often, what is measured now, the last one.
                     Debug.Log(Prefix + "split-retry " + why + " f=" + Time.frameCount + " world=" + world.name
                         + " after " + split.RetryAfterHolds + " comparisons and " + split.RetryAfterHeldSeconds.ToString("R") + " s (the product's "
                         + Zantetsu.PhysicsCut.CutSpatialSplit.DefaultRetryAfterHolds + " and " + Zantetsu.PhysicsCut.CutSpatialSplit.DefaultRetryAfterHeldSeconds.ToString("R") + ")"
-                        + "; retries " + split.PublishRetries
-                        + ", put off " + split.PublishRetriesPutOff + ", cut publication measured " + split.CutPublishMeasured
-                        + ", collection after it measured " + split.CutCollectAfterMeasured + ", collections after a publication not read " + split.CollectionsAfterPublicationMissed
-                        + "; expected cut publication " + (split.ExpectedCutPublishSeconds * 1000.0).ToString("F3") + " ms | " + split.LastRetry.Describe());
+                        + "; retries " + split.PublishRetries + ", put off " + split.PublishRetriesPutOff
+                        + "; measured (seeds until " + Zantetsu.PhysicsCut.CutSpatialSplit.PublicationSamplesBeforeUse + "): publication " + split.PublishSamples
+                        + " + collection after " + split.CollectAfterSamples + ", cut publication " + split.CutPublishSamples + " + collection after " + split.CutCollectAfterSamples
+                        + ", collections after a publication not read " + split.CollectionsAfterPublicationMissed
+                        + "; expected publication " + (split.ExpectedPublishSeconds * 1000.0).ToString("F3") + " ms, cut publication "
+                        + (split.ExpectedCutPublishSeconds * 1000.0).ToString("F3") + " ms");
+                    Debug.Log(Prefix + "split-retry-last " + why + " f=" + Time.frameCount + " world=" + world.name + " " + split.LastRetry.Describe());
                     // The split's last budget comparison with the very values it used (unit 10-B, 2026-10-18: on the Quest,
                     // after a sleep, every turn was held BudgetShort; which of the terms moved is what this tells), then the
                     // physics step's own last decision as auxiliary information. Readings only; nothing is changed by it.

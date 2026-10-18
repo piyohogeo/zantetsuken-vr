@@ -95,7 +95,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.PreviousHoldStreak.Attempt == serial && split.PreviousHoldStreak.Ended && split.PreviousHoldStreak.EndedByGoingOn, Is.True,
                 "the run ended when the same attempt and stage went on");
             Assert.That(split.LongestHoldStreak.Holds, Is.GreaterThanOrEqualTo(run.Holds));
-            Assert.That(split.ExpectedCutPublishSeconds, Is.Not.EqualTo(seed).Within(1e-12), "published once: measured, the seed no longer stands");
+            Assert.That(split.CutPublishSamples, Is.EqualTo(1), "published once: measured once");
+            Assert.That(split.ExpectedCutPublishSeconds, Is.EqualTo(seed).Within(1e-12), "one of five measured: the seed still stands (D-245)");
 
             // The later split follows under the same 9 ms (a plain publication's threshold is 2 + 2 x 2.5 ms).
             yield return Until(() => !root.Ledger.IsCurrentTarget(otherSides[1]), "the other body's lower side was split");

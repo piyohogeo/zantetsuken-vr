@@ -290,12 +290,26 @@ namespace Zantetsu.PhysicsCut
         }
     }
 
+    /// <summary>Why a publication was retried past the budget (D-245).</summary>
+    public enum SpatialSplitRetryReason
+    {
+        /// <summary>Not a retry.</summary>
+        None,
+
+        /// <summary>Its expected cost was still the seeds': fewer than five of that publication measured (unit 10-B's case).</summary>
+        Seeded,
+
+        /// <summary>Its expected cost was measured but could not fit the frame's whole Main budget: no frame would ever let it through.</summary>
+        NeverFits,
+    }
+
     /// <summary>
-    /// A retry of an unmeasured cut publication (unit 10-B): when, for which attempt, after how many budget-short
-    /// comparisons and how much play time, the comparison it overrode, the size of what it published (convexes, the
-    /// convexes it cut, triangles on each side, the display's shown registrations the collection after it goes over),
-    /// and then what it measured -- the publishing turn's time, the collection after it (or that the collection was not
-    /// read, its seed then standing), and the length of the frame before it, of its own frame and of the frame after.
+    /// A retry of a publication past the budget (unit 10-B; D-245): when, for which attempt, why, after how many
+    /// budget-short comparisons and how much play time, the comparison it overrode, the size of what it published
+    /// (convexes, the convexes it cut, triangles on each side, the display's shown registrations the collection after it
+    /// goes over), and then what it measured -- the publishing turn's time, the collection after it (or that the
+    /// collection was not read, its seed then standing), and the length of the frame before it, of its own frame and of
+    /// the frame after.
     /// </summary>
     public sealed class SpatialSplitPublishRetry
     {
@@ -313,6 +327,11 @@ namespace Zantetsu.PhysicsCut
         public int Holds { get; }
         public double HeldSeconds { get; }
         public SpatialSplitBudgetDecision Overridden { get; }
+
+        /// <summary>Why it was retried, whether the publication cut convexes, and how many of that publication's costs were measured then.</summary>
+        public SpatialSplitRetryReason Reason { get; internal set; }
+        public bool Cut { get; internal set; }
+        public int SamplesBefore { get; internal set; }
 
         /// <summary>The size of the publication: the piece's convexes, of them cut, its triangles, on each side, and the display's shown registrations then.</summary>
         public int Convexes { get; internal set; }
@@ -352,7 +371,10 @@ namespace Zantetsu.PhysicsCut
             if (!IsSet) return "publication retry: none";
             CultureInfo inv = CultureInfo.InvariantCulture;
             string Ms(double s) => double.IsNaN(s) ? "not read" : (s * 1000.0).ToString("F3", inv) + " ms";
-            return "publication retry at frame " + Frame.ToString(inv) + ": attempt " + Attempt.ToString(inv) + " after " + Holds.ToString(inv)
+            string why = Reason == SpatialSplitRetryReason.NeverFits ? "its measured expected cost could not fit the whole budget"
+                : "its expected cost was the seeds' (" + SamplesBefore.ToString(inv) + " of " + CutSpatialSplit.PublicationSamplesBeforeUse.ToString(inv) + " measured)";
+            return "publication retry at frame " + Frame.ToString(inv) + ": attempt " + Attempt.ToString(inv) + " (" + (Cut ? "cutting convexes" : "not cutting convexes")
+                + "; " + why + ") after " + Holds.ToString(inv)
                 + " budget-short comparisons over " + HeldSeconds.ToString("F2", inv) + " s of play; size: convexes " + Convexes.ToString(inv) + " (cut " + ConvexesCut.ToString(inv)
                 + "), triangles " + Triangles.ToString(inv) + " (" + PositiveTriangles.ToString(inv) + " + " + NegativeTriangles.ToString(inv) + "), display shown " + DisplayShown.ToString(inv)
                 + "; overrode " + Overridden.Describe()
@@ -746,12 +768,41 @@ namespace Zantetsu.PhysicsCut
         public double CutPublishSeconds { get; private set; }
         public double MaxCutPublishTurnSeconds { get; private set; }
 
-        /// <summary>What the Main stages of a split that cuts convexes are expected to cost: the seeds, then the medians of the last five measured.</summary>
+        /// <summary>
+        /// What the Main stages of a split that cuts convexes are expected to cost: the seeds, then the medians of the
+        /// last five measured -- the publication and the collection after it only once five of each were measured (D-245).
+        /// </summary>
         public double ExpectedCutApplySeconds => _cutApplyCosts.Count == 0 ? Settings.seedCutApplySeconds : _cutApplyCosts.ExpectedSeconds;
         public double ExpectedHullCheckSeconds => _hullCheckCosts.Count == 0 ? Settings.seedHullCheckSeconds : _hullCheckCosts.ExpectedSeconds;
         public double ExpectedCutPublishSeconds =>
-            (_cutPublishCosts.Count == 0 ? Settings.seedCutPublishSeconds : _cutPublishCosts.ExpectedSeconds)
-            + (_cutCollectAfter.Count == 0 ? SeedCollectAfterSeconds : _cutCollectAfter.ExpectedSeconds);
+            PublicationExpected(_cutPublishCosts, Settings.seedCutPublishSeconds) + PublicationExpected(_cutCollectAfter, SeedCollectAfterSeconds);
+
+        /// <summary>
+        /// How many of a publication's costs (its turn, or the collection after it) are measured before they stand in
+        /// for the seed (D-245, TL 2026-10-18): a single first publication can be far above the rest (6.85 ms on the
+        /// Quest 3S, the session's first), and as the only sample it set the estimate so high that no frame let any
+        /// publication through again, so it was never replaced. With five, the median puts one such sample aside.
+        /// </summary>
+        public const int PublicationSamplesBeforeUse = SimulateCostHistory.Capacity;
+
+        private static double PublicationExpected(SimulateCostHistory measured, double seed) =>
+            measured.Count < PublicationSamplesBeforeUse ? seed : measured.ExpectedSeconds;
+
+        /// <summary>TESTS ONLY: publications' measured costs, given as if that many publications (and the collections after them) had taken them.</summary>
+        internal void AddPublicationSamplesForTests(bool cut, double publishSeconds, double collectAfterSeconds, int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                (cut ? _cutPublishCosts : _publishCosts).Add(publishSeconds);
+                (cut ? _cutCollectAfter : _collectAfter).Add(collectAfterSeconds);
+            }
+        }
+
+        /// <summary>How many publications (with no convex cut, and with one) and collections after them are measured so far, at most five each.</summary>
+        public int PublishSamples => _publishCosts.Count;
+        public int CollectAfterSamples => _collectAfter.Count;
+        public int CutPublishSamples => _cutPublishCosts.Count;
+        public int CutCollectAfterSamples => _cutCollectAfter.Count;
 
         /// <summary>The worker's time over every attempt collected, and the longest.</summary>
         public double WorkerSeconds { get; private set; }
@@ -809,11 +860,10 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// What a publishing turn is expected to cost on Main, with the collection that follows it in the same
-        /// frame: the seeds, then the medians of the last five measured of each.
+        /// frame: the seeds until five of each were measured, then the medians of the last five (D-245).
         /// </summary>
         public double ExpectedPublishSeconds =>
-            (_publishCosts.Count == 0 ? Settings.seedPublishSeconds : _publishCosts.ExpectedSeconds)
-            + (_collectAfter.Count == 0 ? SeedCollectAfterSeconds : _collectAfter.ExpectedSeconds);
+            PublicationExpected(_publishCosts, Settings.seedPublishSeconds) + PublicationExpected(_collectAfter, SeedCollectAfterSeconds);
 
         /// <summary>One frame's turn: see the class notes.</summary>
         public void Step()
@@ -865,7 +915,7 @@ namespace Zantetsu.PhysicsCut
                 bool retry = false;
                 if (held == SpatialSplitHold.BudgetShort && cutStage == SpatialSplitBudgetStage.CutPublish)
                 {
-                    retry = NoteUnmeasuredPublicationHold(_attempt);
+                    retry = NotePublicationHold(_attempt);
                 }
 
                 if (held != SpatialSplitHold.None && !retry)
@@ -922,6 +972,12 @@ namespace Zantetsu.PhysicsCut
             double later = LaterStep();
             SpatialSplitHold hold = HoldNow(in settings, expected, later, _attempt != null ? SpatialSplitBudgetStage.Publish : SpatialSplitBudgetStage.Choose);
             LastHold = hold;
+            if (hold == SpatialSplitHold.BudgetShort && _attempt != null && NotePublicationHold(_attempt))
+            {
+                // A publication held short of budget long enough, whose estimate is the seeds' or could never fit: once, past the budget (D-245).
+                hold = SpatialSplitHold.None;
+            }
+
             if (hold != SpatialSplitHold.None)
             {
                 _holds[(int)hold]++;
@@ -1816,16 +1872,6 @@ namespace Zantetsu.PhysicsCut
                 MaxCutPublishTurnSeconds = Math.Max(MaxCutPublishTurnSeconds, spent);
 #endif
                 _cutPublishCosts.Add(spent);
-                if (attempt.publishRetried && LastRetry.IsSet && LastRetry.Attempt == attempt.serial)
-                {
-                    LastRetry.PublishSeconds = spent;
-                    if (LastEnd != SpatialSplitEnd.Published || LastPublishedFrame != Time.frameCount)
-                    {
-                        // The retry ended without a publication (overtaken, short of room): no collection follows it.
-                        _followIsRetry = false;
-                        UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe() + "; ended " + LastEnd + " without a publication");
-                    }
-                }
             }
             else
             {
@@ -1833,6 +1879,17 @@ namespace Zantetsu.PhysicsCut
 #if ZANTETSU_OBSERVE
                 MaxPublishTurnSeconds = Math.Max(MaxPublishTurnSeconds, spent);
 #endif
+            }
+
+            if (attempt.publishRetried && LastRetry.IsSet && LastRetry.Attempt == attempt.serial)
+            {
+                LastRetry.PublishSeconds = spent;
+                if (LastEnd != SpatialSplitEnd.Published || LastPublishedFrame != Time.frameCount)
+                {
+                    // The retry ended without a publication (overtaken, short of room): no collection follows it.
+                    _followIsRetry = false;
+                    UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe() + "; ended " + LastEnd + " without a publication");
+                }
             }
 
             if (LastEnd == SpatialSplitEnd.Published && LastPublishedFrame == Time.frameCount)
@@ -2092,17 +2149,21 @@ namespace Zantetsu.PhysicsCut
             return held ? SpatialSplitHold.BudgetShort : SpatialSplitHold.None;
         }
 
-        // ---- the retry of an unmeasured publication (unit 10-B, 2026-10-18) --------------------------------------------
+        // ---- the retry of a publication past the budget (unit 10-B, then D-245, 2026-10-18) ---------------------------
         //
-        // A cut split's publication is held while what is left of the frame's Main budget is short of reserve + the
-        // physics step still to come + twice its expected cost; until one has been measured that expected cost is the
-        // seeds' (3 ms + 1 ms), a threshold near the whole frame. Held, it is never measured; one attempt stands over
-        // the whole world, so every split stops behind it (seen on the Quest: about two minutes once, 2.4 s another
-        // time). This lets such a publication through ONCE an attempt, past the budget, after it has been held short of
-        // budget long enough in play: so that it is measured. Nothing else is bypassed: no other stage, no other reason
-        // of a hold (heavy work, a collection, a cut in flight, a structural change, room grown), no measured
-        // publication; and not in a frame whose physics decision may itself take its verification step past the
-        // budget. The seeds themselves are not changed.
+        // A split's publication is held while what is left of the frame's Main budget is short of reserve + the physics
+        // step still to come + twice its expected cost. Held, it is never measured; one attempt stands over the whole
+        // world, so every split stops behind it. Two estimates can hold it so:
+        //  - a cut publication's seeds (3 ms + 1 ms, a threshold near the whole frame), which stand until five of it were
+        //    measured (D-245) -- unit 10-B's case, seen on the Quest for about two minutes once (the other publication's
+        //    seeds fit an ordinary frame and are not retried);
+        //  - a measured one that cannot fit even the frame's whole budget (D-245: one 6.85 ms first publication, the only
+        //    sample then, held every later publication for the rest of a Quest 3S session).
+        // This lets such a publication through ONCE an attempt, past the budget, after it has been held short of budget
+        // long enough in play: so that it is measured, and the sample goes into the five. Nothing else is bypassed: no
+        // other stage, no other reason of a hold (heavy work, a collection, a cut in flight, a structural change, room
+        // grown), no publication whose measured estimate could fit a frame; and not in a frame whose physics decision
+        // may itself take its verification step past the budget. The seeds themselves are not changed.
 
         /// <summary>
         /// Budget-short comparisons at the publication, and the play time over them (seconds), before the retry. Both
@@ -2125,11 +2186,17 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether this frame's physics decision may still take its verification step (the product's; a test gives its own).</summary>
         public Func<bool> VerificationStepMayCome { get; set; } = () => CutPhysicsStep.VerificationStepMayComeLaterThisFrame;
 
+        /// <summary>The frame's whole Main budget, seconds, which a measured estimate's threshold is compared with (the product's; a test gives its own).</summary>
+        public Func<double> MainBudgetSeconds { get; set; } = () => CutPhysicsStep.MainBudgetSeconds;
+
         /// <summary>Retries taken, and retries put off for a frame because the physics' verification step might come in it.</summary>
         public int PublishRetries { get; private set; }
         public int PublishRetriesPutOff { get; private set; }
 
-        /// <summary>The publication of a cut split is measured (its cost no longer the seed), and the collection after one.</summary>
+        /// <summary>
+        /// The publication of a cut split was measured at least once, and the collection after one. Its estimate is
+        /// still the seeds' until five were measured (D-245): <see cref="CutPublishSamples"/>.
+        /// </summary>
         public bool CutPublishMeasured => _cutPublishCosts.Count > 0;
         public bool CutCollectAfterMeasured => _cutCollectAfter.Count > 0;
 
@@ -2177,11 +2244,23 @@ namespace Zantetsu.PhysicsCut
             UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe());
         }
 
-        // One budget-short comparison at a cut split's publication: counted while it is unmeasured, and the retry
-        // decided. True when this turn is to go on as if the budget held.
-        private bool NoteUnmeasuredPublicationHold(Attempt attempt)
+        // One budget-short comparison at a split's publication (this turn's, in LastBudgetDecision): counted while its
+        // estimate is the seeds' or could never fit the whole budget, and the retry decided. True when this turn is to
+        // go on as if the budget held.
+        private bool NotePublicationHold(Attempt attempt)
         {
-            if (CutPublishMeasured || attempt.publishRetried)
+            if (attempt.publishRetried)
+            {
+                return false;
+            }
+
+            // The seeds' estimate is retried for a cut publication only, as unit 10-B did: the other publication's seeds
+            // (1.5 ms + 1 ms) fit an ordinary frame, so holding it is the budget's own answer, not a stuck estimate.
+            int samples = attempt.cut ? _cutPublishCosts.Count : _publishCosts.Count;
+            SpatialSplitRetryReason reason = attempt.cut && samples < PublicationSamplesBeforeUse ? SpatialSplitRetryReason.Seeded
+                : LastBudgetDecision.IsSet && LastBudgetDecision.Threshold > MainBudgetSeconds() ? SpatialSplitRetryReason.NeverFits
+                : SpatialSplitRetryReason.None;
+            if (reason == SpatialSplitRetryReason.None)
             {
                 return false;
             }
@@ -2206,6 +2285,9 @@ namespace Zantetsu.PhysicsCut
             // Said in the turn after, with what it measured: a line written in this frame would be part of its cost.
             LastRetry = new SpatialSplitPublishRetry(UnityEngine.Time.frameCount, attempt.serial, attempt.publishBudgetHolds, attempt.publishHeldSeconds, LastBudgetDecision)
             {
+                Reason = reason,
+                Cut = attempt.cut,
+                SamplesBefore = samples,
                 Convexes = attempt.convexCount,
                 ConvexesCut = attempt.meshCount / 2,
                 Triangles = attempt.indexCount / 3,

@@ -9,10 +9,11 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// <summary>
     /// The retry of an unmeasured cut publication (unit 10-B, 2026-10-18: a measure against a long hold by an unmeasured
     /// budget comparison; not a statement of the Quest's v32 cause). A cut split's publication held short of budget
-    /// while its cost is the seeds' is let through once an attempt, after enough budget-short comparisons and play
-    /// time, so that it is measured; no other stage or reason of a hold is bypassed, and not in a frame whose physics
-    /// decision may take its verification step. Each case gives 9 ms of budget a frame: the meshes (3 ms) and the hulls
-    /// (2.4 ms) go through, the unmeasured publication (2 + 2 x 4 ms) does not.
+    /// while its cost is the seeds' -- until five were measured (D-245) -- is let through once an attempt, after enough
+    /// budget-short comparisons and play time, so that it is measured; no other stage or reason of a hold is bypassed,
+    /// and not in a frame whose physics decision may take its verification step. Each case gives 9 ms of budget a
+    /// frame: the meshes (3 ms) and the hulls (2.4 ms) go through, the unmeasured publication (2 + 2 x 4 ms) does not.
+    /// The plain publications and the estimates that could never fit are SplitPublishEstimate's.
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
@@ -68,6 +69,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(retry.HeldSeconds, Is.EqualTo(180 * 0.025).Within(1e-9));
             Assert.That(retry.Overridden.Held && retry.Overridden.Stage == SpatialSplitBudgetStage.CutPublish, Is.True, "it overrode a held comparison at the publication");
             Assert.That(retry.Overridden.Remaining, Is.EqualTo(RetryCaseBudget).Within(1e-12));
+            Assert.That(retry.Reason == SpatialSplitRetryReason.Seeded && retry.Cut && retry.SamplesBefore == 0, Is.True, "a cut publication on the seeds, none measured");
             Assert.That(split.Published, Is.EqualTo(1), "published in the retry's turn");
             Assert.That(split.PublishedWithCut, Is.EqualTo(1));
             Assert.That(split.LastSource, Is.EqualTo(lower));
@@ -94,7 +96,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.LastRetry.FrameOf, Is.EqualTo(retry.Frame), "the retry's own");
             Assert.That(split.LastRetry.FrameAfterOf, Is.EqualTo(retry.Frame + 1), "the one after: consecutive");
             Assert.That(split.LastRetry.Describe(), Does.Contain("size: convexes 1 (cut 1)").And.Contain("frames: before frame " + (retry.Frame - 1) + " 25.000 ms").And.Contain(", its own frame " + retry.Frame + " "));
-            Assert.That(split.ExpectedCutPublishSeconds, Is.LessThan(0.004), "no seed in the estimate any more");
+            Assert.That(split.CutPublishSamples, Is.EqualTo(1));
+            Assert.That(split.ExpectedCutPublishSeconds, Is.EqualTo(0.004).Within(1e-12), "one of five measured: the seeds still stand (D-245)");
 
             // The later split follows, and nothing is retried again.
             var otherSides = new LogicalFragmentId[2];
