@@ -490,6 +490,8 @@ namespace Zantetsu.Sandbox
             // Play's statistics (DESIGN 21.18): the service, and the first-run question where it was never answered.
             if (kind == SandboxScenarioKind.Play)
             {
+                // The start-up's picture ("Now loading..."), until the world is ready and the preparations ended (2026-10-18).
+                PlayLoadingIndicator.Install();
                 PlayStatisticsService statistics = PlayStatisticsService.Install(kind, scene);
                 menu.AskConsent(statistics);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
