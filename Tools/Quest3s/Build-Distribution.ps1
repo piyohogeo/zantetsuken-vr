@@ -181,6 +181,7 @@ $exit = -1
 $buildText = Join-Path $record 'build.txt'
 $statisticsAsideFailure = $null
 $inputSourceFailure = $null
+$settingsFailures = @()
 try {
     if ($inputTargets.Count -gt 0) {
         # Each original copied aside, then its source written empty; the Editor imports and checks them before the build.
@@ -219,30 +220,48 @@ finally {
     if ($inputManifest -and (Test-Path -LiteralPath $inputManifest)) {
         # Whatever happened: every original back (its hash checked), then Unity's import of them checked again, so the
         # tree and its import are the originals' after the run. Any failure fails the run (below).
-        $putBack = @(Restore-InputSources -Project $project -Aside $inputAside -Manifest $inputManifest)
-        if ($putBack.Count -gt 0) {
-            $inputSourceFailure = "the licensed inputs were NOT all put back: $($putBack -join '; ')"
-        } else {
-            $checkLog = Join-Path $logs "input-sources-original-$VersionName-$VersionCode.log"
-            $checkExit = Invoke-InputSourceCheck -Unity $Unity -Project $project -Manifest $inputManifest -Aside $inputAside -Expect original -Log $checkLog
-            if (Test-Path -LiteralPath $checkLog) { Copy-Item -LiteralPath $checkLog -Destination (Join-Path $record 'input-sources-original.log') }
-            if ($checkExit -ne 0) { $inputSourceFailure = "the licensed inputs are back, but Unity's import of them is not the originals' (check exit $checkExit; see $checkLog)" }
+        # An exception here (the put-back, the check's Unity not starting, the log's copy) is kept as the failure, never
+        # thrown past the settings files' put-back below.
+        try {
+            $putBack = @(Restore-InputSources -Project $project -Aside $inputAside -Manifest $inputManifest)
+            if ($putBack.Count -gt 0) {
+                $inputSourceFailure = "the licensed inputs were NOT all put back: $($putBack -join '; ')"
+            } else {
+                $checkLog = Join-Path $logs "input-sources-original-$VersionName-$VersionCode.log"
+                $checkExit = Invoke-InputSourceCheck -Unity $Unity -Project $project -Manifest $inputManifest -Aside $inputAside -Expect original -Log $checkLog
+                if ($checkExit -ne 0) { $inputSourceFailure = "the licensed inputs are back, but Unity's import of them is not the originals' (check exit $checkExit; see $checkLog)" }
+                try { if (Test-Path -LiteralPath $checkLog) { Copy-Item -LiteralPath $checkLog -Destination (Join-Path $record 'input-sources-original.log') } }
+                catch { "the import check's log could not be copied into the record: $($_.Exception.Message)" | Add-Content -LiteralPath $buildText -Encoding UTF8 }
+            }
+        } catch {
+            $inputSourceFailure = "the licensed inputs' put-back or its import check did not complete: $($_.Exception.Message)"
         }
-        "input sources after the build: $(if ($inputSourceFailure) { $inputSourceFailure } else { 'every original back (hash) and imported again as the original (Unity check)' })" | Add-Content -LiteralPath $buildText -Encoding UTF8
+        try { "input sources after the build: $(if ($inputSourceFailure) { $inputSourceFailure } else { 'every original back (hash) and imported again as the original (Unity check)' })" | Add-Content -LiteralPath $buildText -Encoding UTF8 } catch { }
     }
+    # Each settings file put back on its own: a failure with one is kept and the others are still tried.
     foreach ($w in $watched) {
-        $after = Get-Content -LiteralPath $w.Path -Raw
-        $before = Get-Content -LiteralPath $w.Saved -Raw
-        if ($after -ne $before) {
-            Copy-Item -LiteralPath $w.Path -Destination $w.After
-            Copy-Item -LiteralPath $w.Saved -Destination $w.Path -Force
-            "$($w.Name) differed after Unity and was put back from the saved copy" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-        } else {
-            "$($w.Name) unchanged after Unity" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+        try {
+            $after = Get-Content -LiteralPath $w.Path -Raw
+            $before = Get-Content -LiteralPath $w.Saved -Raw
+            if ($after -ne $before) {
+                Copy-Item -LiteralPath $w.Path -Destination $w.After
+                Copy-Item -LiteralPath $w.Saved -Destination $w.Path -Force
+                "$($w.Name) differed after Unity and was put back from the saved copy" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+            } else {
+                "$($w.Name) unchanged after Unity" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+            }
+        } catch {
+            $settingsFailures += "$($w.Name) could NOT be compared or put back: $($_.Exception.Message)"
         }
     }
-    "unity exit $exit; ended $(Get-Date -Format o)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
-    if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $record 'build.log') }
+    try {
+        foreach ($s in $settingsFailures) { $s | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8 }
+        "unity exit $exit; ended $(Get-Date -Format o)" | Add-Content -LiteralPath (Join-Path $record 'build.txt') -Encoding UTF8
+        if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $record 'build.log') }
+    } catch { $settingsFailures += "the end of the record could not be written: $($_.Exception.Message)" }
+}
+if ($settingsFailures.Count -gt 0) {
+    throw "the settings were not all put back or recorded: $($settingsFailures -join '; ') (unity exit $exit; see $buildText)"
 }
 # Before anything about the build itself: whatever Unity did, a token left in the tree fails the run.
 if ($statisticsAsideFailure) {

@@ -68,7 +68,8 @@ function Set-BlankInputSources([string]$Project, [string[]]$Targets, [string]$As
         [IO.File]::WriteAllBytes($copy, $bytes)
         if ((Get-FileSha256 ([IO.File]::ReadAllBytes($copy))) -ne (Get-FileSha256 $bytes)) { throw "the original of $rel was not copied aside whole" }
         # The line first, then the change: a failure between them leaves an original that equals the file.
-        Add-Content -LiteralPath $Manifest -Value ("{0}`t{1}`t{2}`t{3}" -f $rel, (Get-FileSha256 $blankBytes), (Get-FileSha256 $bytes), $rel) -Encoding ASCII
+        # UTF-8 without a byte order mark (the Editor reads it so): an asset path may hold any character.
+        [IO.File]::AppendAllText($Manifest, ("{0}`t{1}`t{2}`t{3}`n" -f $rel, (Get-FileSha256 $blankBytes), (Get-FileSha256 $bytes), $rel), $script:Utf8NoBom)
         [IO.File]::WriteAllBytes($path, $blankBytes)
     }
 }
@@ -77,7 +78,7 @@ function Set-BlankInputSources([string]$Project, [string[]]$Targets, [string]$As
 function Restore-InputSources([string]$Project, [string]$Aside, [string]$Manifest) {
     $failures = @()
     if (!(Test-Path -LiteralPath $Manifest)) { return $failures }
-    foreach ($line in Get-Content -LiteralPath $Manifest) {
+    foreach ($line in [IO.File]::ReadAllLines($Manifest, $script:Utf8NoBom)) {
         if (!$line) { continue }
         $f = $line.Split("`t")
         if ($f.Count -ne 4) { $failures += "a malformed manifest line"; continue }

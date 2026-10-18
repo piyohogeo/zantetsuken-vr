@@ -19,7 +19,7 @@ namespace Zantetsu.EditorTools.Quest
     /// is empty. After the originals are back the same check, asked for "original", shows the import is the original's
     /// again. <c>source</c> is carried and copied at run time but read by nothing (PlayableCityCuttable.Scaled copies it).
     ///
-    /// The manifest the wrapper writes: one line an input, tab-separated -- the asset path, the SHA-256 of the blank
+    /// The manifest the wrapper writes (UTF-8): one line an input, tab-separated -- the asset path, the SHA-256 of the blank
     /// file, the SHA-256 of the original, and the original's copy relative to the aside folder. No content of an input.
     /// </summary>
     public static class QuestDistributionInputSources
@@ -41,7 +41,8 @@ namespace Zantetsu.EditorTools.Quest
         {
             entries = new List<Entry>();
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "the input-source manifest is not there: " + path;
-            foreach (string line in File.ReadAllLines(path))
+            // UTF-8 (an asset path may hold any character), as the wrapper writes it.
+            foreach (string line in File.ReadAllLines(path, new System.Text.UTF8Encoding(false)))
             {
                 if (line.Length == 0) continue;
                 string[] f = line.Split('\t');
