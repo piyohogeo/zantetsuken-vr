@@ -31,10 +31,13 @@
       blob passed over.
 
       The distribution and publication entries require the list: the
-      distribution build (Tools/Quest3s/Build-Distribution.ps1), the pre-push
-      hook (Tools/Hooks/pre-push, with -ScanHistoryContents and the pushed
-      commits) and the CI workflow (.github/workflows/repository-hygiene.yml,
-      the list from the repository secret ZANTETSU_FORBIDDEN_WORDS).
+      distribution build (Tools/Quest3s/Build-Distribution.ps1: the current
+      contents and the built HEAD's commit metadata, not the history's past
+      contents), the pre-push hook (Tools/Hooks/pre-push: the pushed commits
+      with -ScanHistoryContents; this local check is what stops a leak before
+      publication) and the CI workflow (.github/workflows/repository-hygiene.yml,
+      after a push; the list from the repository secret
+      ZANTETSU_FORBIDDEN_WORDS).
 
     Exit codes:
       0 - repository is clean

@@ -91,8 +91,11 @@ if ($Statistics -eq 'required') {
     if (!$hasToken) { throw "the environment variable $StatisticsTokenVariable is not set (process or User)" }
 }
 # The repository itself, with the forbidden-word list required: a distribution is never built from a tree the public
-# check refuses, nor without the list (the check's own exit code decides; its lines name no word).
-# The commits looked at are those the built HEAD reaches (other local branches are not what is built).
+# check refuses, nor without the list (the check's own exit code decides; its lines name no word). What it looks at
+# here: the tracked files' current contents and paths, the ref names, and the metadata (authors, committers,
+# messages) of the commits the built HEAD reaches -- NOT the contents of past versions in the history, which the
+# pre-push hook scans before anything is published (Tools/Hooks/pre-push, -ScanHistoryContents). What is built is the
+# current tree, and the APK itself is searched after the build (Inspect-DistributionApk.ps1).
 if (!$ForbiddenWordsFile) { throw 'a distribution build needs -ForbiddenWordsFile (or ZANTETSU_FORBIDDEN_WORDS_FILE): the list kept outside the repository' }
 $headCommit = (git -C $project rev-parse HEAD).Trim()
 if ($headCommit -notmatch '^[0-9a-f]{40}$') { throw "the HEAD commit of $project could not be read" }

@@ -44,8 +44,9 @@ finally {
 ## 禁止語一覧（作業単位 11）
 
 - 公開物と配布物に出てはならない語（個人名など）の一覧を、**リポジトリの外**の UTF-8 テキスト（1 行 1 語、`#` から行末は注記）に置き、`-ForbiddenWordsFile <場所>` か環境変数 `ZANTETSU_FORBIDDEN_WORDS_FILE` で渡す。照合は `Tools/ForbiddenWords.ps1`（UTF-8 と UTF-16LE、ASCII の大文字小文字を区別しない）。語そのものはどの出力・記録にも書かれない（語を伏せたパス・エントリ名と件数だけ）。
-- **配布ビルドでは必須**：`Build-Distribution.ps1` は一覧が無ければ Unity を起動せずに拒否し、ビルド前にリポジトリを `Verify-PublicRepository.ps1 -RequireForbiddenWords`（ビルドする HEAD から辿れるコミット）で検査して、通らなければ拒否する。ビルド後の `Inspect-DistributionApk.ps1` は APK の全エントリ（zip から展開した内容）と署名証明書の DN を照合し、一覧が無い・読めないエントリがある・語があるときは FAIL。**本番署名証明書の DN にも個人名を入れない。**
-- **公開（push）では必須**：`Tools/Hooks/pre-push` が、push するコミットとそこから辿れる全ブロブを一覧必須で検査し、通らなければ push を拒否する。有効化はクローンごとに `git config core.hooksPath <Tools\Hooks の絶対パス>` と `git config zantetsu.forbiddenWordsFile <一覧の絶対パス>`。CI（`.github/workflows/repository-hygiene.yml`）は一覧をリポジトリのシークレット `ZANTETSU_FORBIDDEN_WORDS` から作り、無ければ失敗する。
+- **配布ビルドでは必須（今の内容と APK）**：`Build-Distribution.ps1` は一覧が無ければ Unity を起動せずに拒否し、ビルド前にリポジトリを `Verify-PublicRepository.ps1 -RequireForbiddenWords -Revisions <HEAD>` で検査して、通らなければ拒否する。この検査が見るのは、管理ファイルの**現在の**内容とパス、ref 名、HEAD から辿れるコミットの作者・コミッタ・メッセージ。**履歴の過去の版の内容は見ない**（それは公開前のフックが見る）。ビルド後の `Inspect-DistributionApk.ps1` は APK の全エントリ（zip から展開した内容）と署名証明書の DN を照合し、一覧が無い・読めないエントリがある・語があるときは FAIL。**本番署名証明書の DN にも個人名を入れない。**
+- **公開（push）の前に必須（履歴まで）**：`Tools/Hooks/pre-push` が、push するコミットとそこから辿れる全ブロブの内容を一覧必須で検査し（`-ScanHistoryContents`）、通らなければ push を拒否する。有効化はクローンごとに `git config core.hooksPath <Tools\Hooks の絶対パス>` と `git config zantetsu.forbiddenWordsFile <一覧の絶対パス>`。**公開前に漏れを止めるのはこのローカルの検査とフック**。CI（`.github/workflows/repository-hygiene.yml`）は push の**後**に動く確認で、一覧をリポジトリのシークレット `ZANTETSU_FORBIDDEN_WORDS` から作り、無ければ失敗する（公開前に設定しておく）。
+- 検査の PASSED は、そのときの指定（一覧の有無、`-Revisions`、`-ScanHistoryContents`）が見た範囲についてだけの結果。
 - 通常の開発用の検査（引数なし）では「NOT CHECKED」と出して通る。ファイルの中の圧縮データ（zstd の .blend、.gz、PNG の圧縮テキスト）は開かない。
 
 ## 鍵の作成・保管・バックアップ
