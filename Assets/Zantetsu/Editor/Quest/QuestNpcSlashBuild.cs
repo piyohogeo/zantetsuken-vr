@@ -66,32 +66,36 @@ namespace Zantetsu.EditorTools.Quest
                 var cameraData = camera.GetUniversalAdditionalCameraData();
                 cameraData.SetRenderer(0); cameraData.renderPostProcessing = false;
                 if (!AssetDatabase.IsValidFolder(MaterialRoot)) AssetDatabase.CreateFolder("Assets/Licensed/Quest3s", "NpcSlashMaterials");
-                var materials = new Dictionary<Material, Material>();
-                int materialIndex = 0;
+                // The skins' VP Mesh Surface slots take URP's object motion (2026-10-19), one copy per source material and
+                // motion (QuestSurfaceMotionMaterials); the scene's ordinary Meshes keep their own materials, as before.
+                var materials = new QuestSurfaceMotionMaterials(MaterialRoot, "Surface-", "Skin-Object-");
+                var skinsBefore = new Dictionary<string, int>();
+                var notSurface = new Dictionary<string, int>();
                 foreach (var renderer in Object.FindObjectsByType<SkinnedMeshRenderer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 {
                     // The cut input and Unity skin must both retain all four authored bone weights.
                     renderer.quality = SkinQuality.Bone4;
+                    QuestSurfaceMotionMaterials.EnableSkinHistory(renderer, skinsBefore);
                     var slots = renderer.sharedMaterials;
                     for (int i = 0; i < slots.Length; i++)
                     {
                         Material source = slots[i];
-                        if (source == null || source.shader == null || source.shader.name != "Zantetsu/VP Mesh Surface") continue;
-                        if (!materials.TryGetValue(source, out var questMaterial))
+                        if (source == null || source.shader == null || source.shader.name != QuestSurfaceMotionMaterials.SurfaceShaderName)
                         {
-                            string path = MaterialRoot + "/Skin-" + materialIndex++ + ".mat";
-                            questMaterial = AssetDatabase.LoadAssetAtPath<Material>(path);
-                            if (questMaterial == null) { questMaterial = new Material(source); AssetDatabase.CreateAsset(questMaterial, path); }
-                            else questMaterial.CopyPropertiesFromMaterial(source);
-                            questMaterial.EnableKeyword("VP_CAMERA_ONLY_ASW");
-                            EditorUtility.SetDirty(questMaterial);
-                            materials.Add(source, questMaterial);
+                            string key = (source == null ? "(none)" : source.name) + " [" + (source == null || source.shader == null ? "no shader" : source.shader.name) + "]";
+                            notSurface[key] = notSurface.TryGetValue(key, out int n) ? n + 1 : 1;
+                            continue;
                         }
-                        slots[i] = questMaterial;
+
+                        slots[i] = materials.CopyOf(source, QuestSurfaceMotion.Object);
                     }
                     renderer.sharedMaterials = slots;
                     EditorUtility.SetDirty(renderer);
                 }
+
+                report.Add("skins before: " + QuestSurfaceMotionMaterials.Describe(skinsBefore) + " (now Object, skinned motion vectors on)");
+                report.Add("skin slots not VP Mesh Surface (left as they are): " + QuestSurfaceMotionMaterials.Describe(notSurface));
+                report.Add("characters settling their skin's motion history: " + QuestSurfaceMotionMaterials.EnableCharacterSkinHistory());
                 ConfigureReplayVisualMaterials(report);
                 foreach (var recorder in Object.FindObjectsByType<SandboxSlashPoseRecorder>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 {
@@ -114,7 +118,7 @@ namespace Zantetsu.EditorTools.Quest
                 EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
                 AssetDatabase.Refresh(); AssetDatabase.SaveAssets();
                 Debug.Log("QUEST NPC CONFIGURE: " + string.Join("; ", report) + "; scene=" + ScenePath + "; NPCs=" + npcCount
-                    + "; camera-only skin materials=" + materials.Count + "; G=1 B=1; GPU initial=32MiB; input=" + input);
+                    + "; object-motion skin materials=" + materials.ObjectCount + "; G=1 B=1; GPU initial=32MiB; input=" + input);
             }
             catch (Exception e) { Debug.LogError(e); if (Application.isBatchMode) EditorApplication.Exit(1); throw; }
         }

@@ -175,7 +175,8 @@ Shader "Zantetsu/VP Mesh Surface"
         }
 
         // Populate the AppSW low-resolution depth and motion targets through URP's XRDepthMotionPass.
-        // Its default uses Unity's standard object motion. Quest NPC materials select camera-only motion.
+        // Its default uses Unity's standard object motion: the Quest builds' skin copies (2026-10-19, the NPCs' object
+        // matrix and skinned vertices, this and the previous frame's). Their ordinary Mesh copies select camera-only motion.
         Pass
         {
             Name "XRMotionVectors"
@@ -193,8 +194,9 @@ Shader "Zantetsu/VP Mesh Surface"
                 half4 _BaseColor;
                 float _VpUsePaletteAtlas;
             CBUFFER_END
-            // The Quest NPC material opts into camera-only motion. The POSITION stream is Unity's current
-            // skinned pose; no old vertex stream or previous object transform is read by this variant.
+            // A Quest Mesh copy opts into camera-only motion: no old vertex stream or previous object transform is read by
+            // this variant. Without it, URP's ObjectMotionVectors.hlsl reads both (TEXCOORD4 for a skin with skinned
+            // motion vectors, UNITY_PREV_MATRIX_M).
             #pragma target 3.5
             #pragma vertex vert
             #pragma fragment frag

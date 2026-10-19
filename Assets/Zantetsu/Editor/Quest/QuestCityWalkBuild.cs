@@ -61,28 +61,44 @@ namespace Zantetsu.EditorTools.Quest
                 var cameraData = camera.GetUniversalAdditionalCameraData();
                 cameraData.SetRenderer(0); cameraData.renderPostProcessing = false;
                 if (!AssetDatabase.IsValidFolder(MaterialRoot)) AssetDatabase.CreateFolder("Assets/Licensed/Quest3s", "CityWalkMaterials");
-                var materials = new Dictionary<Material, Material>();
+                // One copy per source material AND motion (2026-10-19): a skin's VP Mesh Surface slots take URP's object
+                // motion (this and the previous frame's object matrix and skinned vertices), every other renderer's the
+                // camera's alone, as before -- a source shared by both gets two copies.
+                var materials = new QuestSurfaceMotionMaterials(MaterialRoot, "Surface-", "Surface-Skin-");
+                var skinsBefore = new Dictionary<string, int>();
+                var notSurface = new Dictionary<string, int>();
                 foreach (var renderer in Object.FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 {
-                    if (renderer is SkinnedMeshRenderer skin) skin.quality = SkinQuality.Bone4;
+                    QuestSurfaceMotion motion = QuestSurfaceMotionMaterials.MotionOf(renderer);
+                    if (renderer is SkinnedMeshRenderer skin)
+                    {
+                        skin.quality = SkinQuality.Bone4;
+                        QuestSurfaceMotionMaterials.EnableSkinHistory(skin, skinsBefore);
+                    }
+
                     var slots = renderer.sharedMaterials;
                     for (int i = 0; i < slots.Length; i++)
                     {
                         Material source = slots[i];
-                        if (source == null || source.shader == null || source.shader.name != "Zantetsu/VP Mesh Surface") continue;
-                        if (!materials.TryGetValue(source, out var copy))
+                        if (source == null || source.shader == null || source.shader.name != QuestSurfaceMotionMaterials.SurfaceShaderName)
                         {
-                            string path = MaterialRoot + "/Surface-" + materials.Count + ".mat";
-                            copy = AssetDatabase.LoadAssetAtPath<Material>(path);
-                            if (copy == null) { copy = new Material(source); AssetDatabase.CreateAsset(copy, path); }
-                            else copy.CopyPropertiesFromMaterial(source);
-                            copy.EnableKeyword("VP_CAMERA_ONLY_ASW");
-                            EditorUtility.SetDirty(copy); materials.Add(source, copy);
+                            // Not this change's: a skin's other material is listed, not taken for done.
+                            if (renderer is SkinnedMeshRenderer)
+                            {
+                                string key = (source == null ? "(none)" : source.name) + " [" + (source == null || source.shader == null ? "no shader" : source.shader.name) + "]";
+                                notSurface[key] = notSurface.TryGetValue(key, out int n) ? n + 1 : 1;
+                            }
+                            continue;
                         }
-                        slots[i] = copy;
+
+                        slots[i] = materials.CopyOf(source, motion);
                     }
                     renderer.sharedMaterials = slots; EditorUtility.SetDirty(renderer);
                 }
+
+                report.Add("skins before: " + QuestSurfaceMotionMaterials.Describe(skinsBefore) + " (now Object, skinned motion vectors on)");
+                report.Add("skin slots not VP Mesh Surface (left as they are): " + QuestSurfaceMotionMaterials.Describe(notSurface));
+                report.Add("characters settling their skin's motion history: " + QuestSurfaceMotionMaterials.EnableCharacterSkinHistory());
                 QuestNpcSlashBuild.ConfigureReplayVisualMaterials(report, MaterialRoot);
                 foreach (var recorder in Object.FindObjectsByType<SandboxSlashPoseRecorder>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 {
@@ -110,7 +126,8 @@ namespace Zantetsu.EditorTools.Quest
                 EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
                 AssetDatabase.Refresh(); AssetDatabase.SaveAssets();
                 Debug.Log("QUEST CITY CONFIGURE: " + string.Join("; ", report) + "; cuttables=" + cuttables
-                    + "; G=1 B=1; GPU initial=32MiB; colour far=100m; camera-only surface materials=" + materials.Count + "; route=" + script);
+                    + "; G=1 B=1; GPU initial=32MiB; colour far=100m; camera-only surface materials=" + materials.CameraOnlyCount
+                    + "; object-motion skin materials=" + materials.ObjectCount + "; route=" + script);
             }
             catch (Exception e) { Debug.LogError(e); if (Application.isBatchMode) EditorApplication.Exit(1); throw; }
         }

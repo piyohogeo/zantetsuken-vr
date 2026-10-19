@@ -74,6 +74,9 @@ namespace Zantetsu.Sandbox
         [Tooltip("The ankle bones (hull bones): below them is left out from level 1, they themselves from level 3.")]
         [SerializeField] private string[] ankleBones = { "DEF-foot.L", "DEF-foot.R" };
 
+        [Tooltip("The Quest builds' AppSW object motion of the skin (2026-10-19): the skinned motion vectors off for the one frame after the renderer was not drawn, so that its first frame back writes no stale bone motion (VpSkinMotionHistory). Off: as before.")]
+        [SerializeField] private bool skinMotionHistory;
+
         /// <summary>The character under the bone level of detail, when there is one.</summary>
         public PoseLodCharacter Lod { get; private set; }
 
@@ -437,6 +440,10 @@ namespace Zantetsu.Sandbox
 
         private void Update()
         {
+            // Before anything returns: the drawn skin's history, whatever the slot is doing (a reused slot's renderer was
+            // off, a character out of view was not skinned).
+            if (skinMotionHistory && _fixedInput != null && _fixedInput.Renderer != null) VpSkinMotionHistory.Settle(_fixedInput.Renderer);
+
             if (Pooled)
             {
                 // A slot finishes its preparation on the loading frames and stays dormant until activated.
