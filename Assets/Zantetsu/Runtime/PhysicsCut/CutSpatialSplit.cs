@@ -328,10 +328,14 @@ namespace Zantetsu.PhysicsCut
         public double HeldSeconds { get; }
         public SpatialSplitBudgetDecision Overridden { get; }
 
-        /// <summary>Why it was retried, whether the publication cut convexes, and how many of that publication's costs were measured then.</summary>
+        /// <summary>The stage retried (a cut attempt's mesh making, hull check or publication; the plain publication), why, whether the attempt cuts convexes, and how many of that stage's costs were measured then.</summary>
+        public SpatialSplitBudgetStage Stage { get; internal set; }
         public SpatialSplitRetryReason Reason { get; internal set; }
         public bool Cut { get; internal set; }
         public int SamplesBefore { get; internal set; }
+
+        /// <summary>Whether the stage is a publication (one a collection follows); a mesh making or a hull check is not.</summary>
+        public bool IsPublication => Stage == SpatialSplitBudgetStage.Publish || Stage == SpatialSplitBudgetStage.CutPublish;
 
         /// <summary>The size of the publication: the piece's convexes, of them cut, its triangles, on each side, and the display's shown registrations then.</summary>
         public int Convexes { get; internal set; }
@@ -373,12 +377,12 @@ namespace Zantetsu.PhysicsCut
             string Ms(double s) => double.IsNaN(s) ? "not read" : (s * 1000.0).ToString("F3", inv) + " ms";
             string why = Reason == SpatialSplitRetryReason.NeverFits ? "its measured expected cost could not fit the whole budget"
                 : "its expected cost was the seeds' (" + SamplesBefore.ToString(inv) + " of " + CutSpatialSplit.PublicationSamplesBeforeUse.ToString(inv) + " measured)";
-            return "publication retry at frame " + Frame.ToString(inv) + ": attempt " + Attempt.ToString(inv) + " (" + (Cut ? "cutting convexes" : "not cutting convexes")
+            return "retry at frame " + Frame.ToString(inv) + ": attempt " + Attempt.ToString(inv) + " at " + Stage + " (" + (Cut ? "cutting convexes" : "not cutting convexes")
                 + "; " + why + ") after " + Holds.ToString(inv)
                 + " budget-short comparisons over " + HeldSeconds.ToString("F2", inv) + " s of play; size: convexes " + Convexes.ToString(inv) + " (cut " + ConvexesCut.ToString(inv)
                 + "), triangles " + Triangles.ToString(inv) + " (" + PositiveTriangles.ToString(inv) + " + " + NegativeTriangles.ToString(inv) + "), display shown " + DisplayShown.ToString(inv)
                 + "; overrode " + Overridden.Describe()
-                + "; publishing turn " + Ms(PublishSeconds) + ", the collection after it " + (CollectAfterMissed ? "NOT READ (its seed stands)" : Ms(CollectAfterSeconds))
+                + "; the stage's turn " + Ms(PublishSeconds) + ", the collection after it " + (!IsPublication ? "none (not a publication)" : CollectAfterMissed ? "NOT READ (its seed stands)" : Ms(CollectAfterSeconds))
                 + "; frames: before " + Of(FrameBeforeOf, FrameBeforeSeconds) + ", its own " + Of(FrameOf, FrameSeconds) + ", after " + Of(FrameAfterOf, FrameAfterSeconds);
 
             string Of(int at, double seconds) => at == int.MinValue || double.IsNaN(seconds) ? "not read" : "frame " + at.ToString(inv) + " " + Ms(seconds);
@@ -772,20 +776,21 @@ namespace Zantetsu.PhysicsCut
         /// What the Main stages of a split that cuts convexes are expected to cost: the seeds, then the medians of the
         /// last five measured -- the publication and the collection after it only once five of each were measured (D-245).
         /// </summary>
-        public double ExpectedCutApplySeconds => _cutApplyCosts.Count == 0 ? Settings.seedCutApplySeconds : _cutApplyCosts.ExpectedSeconds;
-        public double ExpectedHullCheckSeconds => _hullCheckCosts.Count == 0 ? Settings.seedHullCheckSeconds : _hullCheckCosts.ExpectedSeconds;
+        public double ExpectedCutApplySeconds => MeasuredOrSeed(_cutApplyCosts, Settings.seedCutApplySeconds);
+        public double ExpectedHullCheckSeconds => MeasuredOrSeed(_hullCheckCosts, Settings.seedHullCheckSeconds);
         public double ExpectedCutPublishSeconds =>
-            PublicationExpected(_cutPublishCosts, Settings.seedCutPublishSeconds) + PublicationExpected(_cutCollectAfter, SeedCollectAfterSeconds);
+            MeasuredOrSeed(_cutPublishCosts, Settings.seedCutPublishSeconds) + MeasuredOrSeed(_cutCollectAfter, SeedCollectAfterSeconds);
 
         /// <summary>
-        /// How many of a publication's costs (its turn, or the collection after it) are measured before they stand in
-        /// for the seed (D-245, TL 2026-10-18): a single first publication can be far above the rest (6.85 ms on the
-        /// Quest 3S, the session's first), and as the only sample it set the estimate so high that no frame let any
-        /// publication through again, so it was never replaced. With five, the median puts one such sample aside.
+        /// How many of a gated stage's costs (a publication's turn or the collection after it; a cut attempt's mesh
+        /// making or hull check) are measured before they stand in for the seed (D-245, TL 2026-10-18; the cut
+        /// stages 2026-10-19): a single first measurement can be far above the rest (6.85 ms on the Quest 3S, the
+        /// session's first publication), and as the only sample it set the estimate so high that no frame let the
+        /// stage through again, so it was never replaced. With five, the median puts one such sample aside.
         /// </summary>
         public const int PublicationSamplesBeforeUse = SimulateCostHistory.Capacity;
 
-        private static double PublicationExpected(SimulateCostHistory measured, double seed) =>
+        private static double MeasuredOrSeed(SimulateCostHistory measured, double seed) =>
             measured.Count < PublicationSamplesBeforeUse ? seed : measured.ExpectedSeconds;
 
         /// <summary>TESTS ONLY: publications' measured costs, given as if that many publications (and the collections after them) had taken them.</summary>
@@ -798,11 +803,22 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        /// <summary>How many publications (with no convex cut, and with one) and collections after them are measured so far, at most five each.</summary>
+        /// <summary>TESTS ONLY: a cut attempt's mesh making (CutApply) or hull check (HullCheck) measured costs, given as if that many had taken them.</summary>
+        internal void AddCutStageSamplesForTests(SpatialSplitBudgetStage stage, double seconds, int count)
+        {
+            SimulateCostHistory costs = stage == SpatialSplitBudgetStage.CutApply ? _cutApplyCosts
+                : stage == SpatialSplitBudgetStage.HullCheck ? _hullCheckCosts
+                : throw new ArgumentOutOfRangeException(nameof(stage), stage, "a cut attempt's mesh making or hull check");
+            for (int i = 0; i < count; i++) costs.Add(seconds);
+        }
+
+        /// <summary>How many publications (with no convex cut, and with one), collections after them, mesh makings and hull checks are measured so far, at most five each.</summary>
         public int PublishSamples => _publishCosts.Count;
         public int CollectAfterSamples => _collectAfter.Count;
         public int CutPublishSamples => _cutPublishCosts.Count;
         public int CutCollectAfterSamples => _cutCollectAfter.Count;
+        public int CutApplySamples => _cutApplyCosts.Count;
+        public int HullCheckSamples => _hullCheckCosts.Count;
 
         /// <summary>The worker's time over every attempt collected, and the longest.</summary>
         public double WorkerSeconds { get; private set; }
@@ -863,7 +879,7 @@ namespace Zantetsu.PhysicsCut
         /// frame: the seeds until five of each were measured, then the medians of the last five (D-245).
         /// </summary>
         public double ExpectedPublishSeconds =>
-            PublicationExpected(_publishCosts, Settings.seedPublishSeconds) + PublicationExpected(_collectAfter, SeedCollectAfterSeconds);
+            MeasuredOrSeed(_publishCosts, Settings.seedPublishSeconds) + MeasuredOrSeed(_collectAfter, SeedCollectAfterSeconds);
 
         /// <summary>One frame's turn: see the class notes.</summary>
         public void Step()
@@ -912,12 +928,8 @@ namespace Zantetsu.PhysicsCut
                     : SpatialSplitBudgetStage.CutPublish;
                 SpatialSplitHold held = HoldNow(in settings, stageCost, stepLater, cutStage);
                 LastHold = held;
-                bool retry = false;
-                if (held == SpatialSplitHold.BudgetShort && cutStage == SpatialSplitBudgetStage.CutPublish)
-                {
-                    retry = NotePublicationHold(_attempt);
-                }
-
+                // Held short of budget at any of its three stages: counted, and once a stage retried past the budget (D-245).
+                bool retry = held == SpatialSplitHold.BudgetShort && NoteStageHold(_attempt, cutStage);
                 if (held != SpatialSplitHold.None && !retry)
                 {
                     _holds[(int)held]++;
@@ -972,7 +984,7 @@ namespace Zantetsu.PhysicsCut
             double later = LaterStep();
             SpatialSplitHold hold = HoldNow(in settings, expected, later, _attempt != null ? SpatialSplitBudgetStage.Publish : SpatialSplitBudgetStage.Choose);
             LastHold = hold;
-            if (hold == SpatialSplitHold.BudgetShort && _attempt != null && NotePublicationHold(_attempt))
+            if (hold == SpatialSplitHold.BudgetShort && _attempt != null && NoteStageHold(_attempt, SpatialSplitBudgetStage.Publish))
             {
                 // A publication held short of budget long enough, whose estimate is the seeds' or could never fit: once, past the budget (D-245).
                 hold = SpatialSplitHold.None;
@@ -1023,6 +1035,7 @@ namespace Zantetsu.PhysicsCut
             CutApplySeconds += spent;
             MaxCutApplySeconds = Math.Max(MaxCutApplySeconds, spent);
 #endif
+            NoteRetriedStageTime(attempt, SpatialSplitBudgetStage.CutApply, spent);
             if (attempt.meshesBad)
             {
                 // A mesh could not be made. What was made before it is still the attempt's and goes back with it,
@@ -1086,6 +1099,7 @@ namespace Zantetsu.PhysicsCut
             HullCheckSeconds += spent;
             MaxHullCheckTurnSeconds = Math.Max(MaxHullCheckTurnSeconds, spent);
 #endif
+            NoteRetriedStageTime(attempt, SpatialSplitBudgetStage.HullCheck, spent);
             if (read > 0)
             {
                 _hullCheckCosts.Add(spent / read);
@@ -2229,8 +2243,21 @@ namespace Zantetsu.PhysicsCut
         // (or in a later turn, without that length, where no turn came in that frame).
         private void FollowRetryFrame()
         {
-            if (_retryAfterFrameOf == int.MinValue || Time.frameCount < _retryAfterFrameOf)
+            if (_retryAfterFrameOf == int.MinValue || Time.frameCount < _retryAfterFrameOf - 1)
             {
+                return;
+            }
+
+            if (Time.frameCount == _retryAfterFrameOf - 1)
+            {
+                // The frame before the one it is said in: the retry's own frame's length (a publication's was read with
+                // the collection after it; a mesh making's or a hull check's is read here).
+                if (LastRetry.FrameOf == int.MinValue)
+                {
+                    LastRetry.FrameSeconds = UnityEngine.Time.unscaledDeltaTime;
+                    LastRetry.FrameOf = Time.frameCount - 1;
+                }
+
                 return;
             }
 
@@ -2244,19 +2271,31 @@ namespace Zantetsu.PhysicsCut
             UnityEngine.Debug.Log("SPATIAL SPLIT RETRY: " + LastRetry.Describe());
         }
 
-        // One budget-short comparison at a split's publication (this turn's, in LastBudgetDecision): counted while its
-        // estimate is the seeds' or could never fit the whole budget, and the retry decided. True when this turn is to
-        // go on as if the budget held.
-        private bool NotePublicationHold(Attempt attempt)
+        // One budget-short comparison at a gated stage of the attempt (this turn's, in LastBudgetDecision): a cut
+        // attempt's mesh making, hull check or publication, or the plain publication. Counted while the stage's estimate
+        // is the seeds' or could never fit the whole budget, and the retry decided -- once a stage of an attempt. True
+        // when this turn is to go on as if the budget held. (D-245; the cut stages 2026-10-19, after a cut attempt
+        // stood held at its mesh making on the Quest 3S with the retry at the publication alone.)
+        private bool NoteStageHold(Attempt attempt, SpatialSplitBudgetStage stage)
         {
-            if (attempt.publishRetried)
+            if (attempt.RetriedAt(stage))
             {
                 return false;
             }
 
-            // The seeds' estimate is retried for a cut publication only, as unit 10-B did: the other publication's seeds
-            // (1.5 ms + 1 ms) fit an ordinary frame, so holding it is the budget's own answer, not a stuck estimate.
-            int samples = attempt.cut ? _cutPublishCosts.Count : _publishCosts.Count;
+            if (attempt.holdStage != stage)
+            {
+                // Another stage's holds are not this one's: the count and the time start over.
+                attempt.holdStage = stage;
+                attempt.publishBudgetHolds = 0;
+                attempt.publishHeldSeconds = 0.0;
+            }
+
+            // The seeds' estimate is retried for a cut attempt's stages only, as unit 10-B did: the plain publication's
+            // seeds (1.5 ms + 1 ms) fit an ordinary frame, so holding it is the budget's own answer, not a stuck estimate.
+            int samples = stage == SpatialSplitBudgetStage.CutApply ? _cutApplyCosts.Count
+                : stage == SpatialSplitBudgetStage.HullCheck ? _hullCheckCosts.Count
+                : attempt.cut ? _cutPublishCosts.Count : _publishCosts.Count;
             SpatialSplitRetryReason reason = attempt.cut && samples < PublicationSamplesBeforeUse ? SpatialSplitRetryReason.Seeded
                 : LastBudgetDecision.IsSet && LastBudgetDecision.Threshold > MainBudgetSeconds() ? SpatialSplitRetryReason.NeverFits
                 : SpatialSplitRetryReason.None;
@@ -2280,11 +2319,12 @@ namespace Zantetsu.PhysicsCut
                 return false;
             }
 
-            attempt.publishRetried = true;
+            attempt.MarkRetried(stage);
             PublishRetries++;
             // Said in the turn after, with what it measured: a line written in this frame would be part of its cost.
             LastRetry = new SpatialSplitPublishRetry(UnityEngine.Time.frameCount, attempt.serial, attempt.publishBudgetHolds, attempt.publishHeldSeconds, LastBudgetDecision)
             {
+                Stage = stage,
                 Reason = reason,
                 Cut = attempt.cut,
                 SamplesBefore = samples,
@@ -2298,6 +2338,16 @@ namespace Zantetsu.PhysicsCut
                 FrameBeforeOf = UnityEngine.Time.frameCount - 1,
             };
             return true;
+        }
+
+        // A retried mesh making or hull check has run: its turn's time is the retry's, and the retry is said two turns
+        // on (its own frame's length read in the next, the frame after's in the one after that), as a publication's is.
+        private void NoteRetriedStageTime(Attempt attempt, SpatialSplitBudgetStage stage, double spent)
+        {
+            if (!attempt.RetriedAt(stage) || !LastRetry.IsSet || LastRetry.Attempt != attempt.serial || LastRetry.Stage != stage) return;
+            if (!double.IsNaN(LastRetry.PublishSeconds)) return;   // said once: the first turn of the stage after the retry
+            LastRetry.PublishSeconds = spent;
+            _retryAfterFrameOf = Time.frameCount + 2;
         }
 
         private readonly SpatialSplitHoldRuns _holdRuns = new SpatialSplitHoldRuns();
@@ -2488,11 +2538,23 @@ namespace Zantetsu.PhysicsCut
         {
             internal long serial;   // the attempt's number in this world, from 1 (diagnosis: the hold streak's key)
 
-            // The retry of an unmeasured publication (unit 10-B): the budget-short comparisons at its publication, the
-            // play time over them, and whether it was retried (once an attempt at most).
+            // The retry past the budget (unit 10-B, D-245): the budget-short comparisons at the stage it is held at
+            // (holdStage; another stage's start over), the play time over them, and which stages were retried (once a
+            // stage of an attempt at most; publishRetried is the publication's, read by its measurement).
             internal int publishBudgetHolds;
             internal double publishHeldSeconds;
-            internal bool publishRetried;
+            internal bool publishRetried, applyRetried, hullCheckRetried;
+            internal SpatialSplitBudgetStage holdStage;
+
+            internal bool RetriedAt(SpatialSplitBudgetStage stage) =>
+                stage == SpatialSplitBudgetStage.CutApply ? applyRetried : stage == SpatialSplitBudgetStage.HullCheck ? hullCheckRetried : publishRetried;
+
+            internal void MarkRetried(SpatialSplitBudgetStage stage)
+            {
+                if (stage == SpatialSplitBudgetStage.CutApply) applyRetried = true;
+                else if (stage == SpatialSplitBudgetStage.HullCheck) hullCheckRetried = true;
+                else publishRetried = true;
+            }
             internal LogicalFragmentId fragment;
             internal Input input;
             internal VpIndexReadLease lease;

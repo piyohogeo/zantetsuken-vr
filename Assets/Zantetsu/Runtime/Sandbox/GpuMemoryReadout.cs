@@ -184,6 +184,7 @@ namespace Zantetsu.Sandbox
                         + "; retries " + split.PublishRetries + ", put off " + split.PublishRetriesPutOff
                         + "; measured (seeds until " + Zantetsu.PhysicsCut.CutSpatialSplit.PublicationSamplesBeforeUse + "): publication " + split.PublishSamples
                         + " + collection after " + split.CollectAfterSamples + ", cut publication " + split.CutPublishSamples + " + collection after " + split.CutCollectAfterSamples
+                        + ", cut mesh making " + split.CutApplySamples + ", hull check " + split.HullCheckSamples
                         + ", collections after a publication not read " + split.CollectionsAfterPublicationMissed
                         + "; expected publication " + (split.ExpectedPublishSeconds * 1000.0).ToString("F3") + " ms, cut publication "
                         + (split.ExpectedCutPublishSeconds * 1000.0).ToString("F3") + " ms");

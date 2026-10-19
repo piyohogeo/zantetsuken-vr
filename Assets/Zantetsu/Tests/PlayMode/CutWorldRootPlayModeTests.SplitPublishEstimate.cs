@@ -124,6 +124,82 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
+        /// **A cut attempt's mesh making (D-248): one heavy measurement leaves the seed standing, and the meshes are
+        /// made under an ordinary budget.** With one 6 ms mesh making measured (as the Quest's one publication had
+        /// measured it) the estimate is still the seed (0.5 ms), so under 9 ms a frame the attempt makes its meshes
+        /// and goes on; with five measured the estimate is their median.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SplitCutApply_OneHeavyMeasurement_TheSeedStandsUntilFive_AndTheMeshesAreMade()
+        {
+            CutWorldRoot root = null; CutSpatialSplit split = null; double[] remaining = null; LogicalFragmentId lower = default, other = default;
+            yield return RetryCaseWorld((r, s, b, l, o) => { root = r; split = s; remaining = b; lower = l; other = o; });
+            double seed = SplitCutOn(12).seedCutApplySeconds;
+            split.AddCutStageSamplesForTests(SpatialSplitBudgetStage.CutApply, 0.006, 1);
+            Assert.That(split.CutApplySamples, Is.EqualTo(1));
+            Assert.That(split.ExpectedCutApplySeconds, Is.EqualTo(seed).Within(1e-12), "one of five measured: the seed still stands");
+            remaining[0] = RetryCaseBudget;
+            yield return Until(() => split.CutMeshesMade >= 2, "the meshes made under 9 ms a frame");
+            Assert.That(split.PublishRetries, Is.Zero, "by the ordinary comparison");
+            Assert.That(split.CutApplySamples, Is.EqualTo(2), "and measured");
+            split.AddCutStageSamplesForTests(SpatialSplitBudgetStage.CutApply, 0.006, 3);
+            Assert.That(split.ExpectedCutApplySeconds, Is.EqualTo(0.006).Within(1e-12), "five measured: the median");
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **A cut attempt held at its mesh making by a measured estimate no frame could fit is retried once at that
+        /// stage, measured, and goes on to its hull check and publication (D-248).** Five mesh makings of 7 ms measured
+        /// make the threshold 2 + 2 x 7 = 16 ms, above the whole 11.1 ms budget: held with the whole frame left; after
+        /// 20 budget-short comparisons and 0.4 s of play (the case's own) the meshes are made past the budget, the retry
+        /// names the stage, and the attempt is published by its later stages' own comparisons.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SplitCutApply_AMeasuredEstimateThatCanNeverFit_IsRetriedOnceAtThatStage_AndTheAttemptGoesOn()
+        {
+            CutWorldRoot root = null; CutSpatialSplit split = null; double[] remaining = null; LogicalFragmentId lower = default, other = default;
+            yield return RetryCaseWorld((r, s, b, l, o) => { root = r; split = s; remaining = b; lower = l; other = o; });
+            split.AddCutStageSamplesForTests(SpatialSplitBudgetStage.CutApply, 0.007, 5);
+            Assert.That(split.ExpectedCutApplySeconds, Is.EqualTo(0.007).Within(1e-12), "the layout: five measured");
+            split.FrameSeconds = () => 0.025;
+            split.RetryAfterHolds = 20;
+            split.RetryAfterHeldSeconds = 0.4;
+            remaining[0] = WholeBudgetForCases;
+            yield return Until(() => split.AttemptCutsConvexes && split.LastBudgetDecision.Stage == SpatialSplitBudgetStage.CutApply && split.LastBudgetDecision.Held,
+                "the cut attempt held at its mesh making with the whole budget left");
+            Assert.That(split.LastBudgetDecision.Threshold, Is.GreaterThan(WholeBudgetForCases));
+            long serial = split.AttemptSerial;
+            Assert.That(split.CutMeshesMade, Is.Zero, "the layout: no mesh made yet");
+
+            yield return Until(() => split.PublishRetries == 1, "the retry at the mesh making");
+            SpatialSplitPublishRetry retry = split.LastRetry;
+            Assert.That(retry.Attempt, Is.EqualTo(serial));
+            Assert.That(retry.Stage, Is.EqualTo(SpatialSplitBudgetStage.CutApply));
+            Assert.That(retry.Reason, Is.EqualTo(SpatialSplitRetryReason.NeverFits));
+            Assert.That(retry.Holds, Is.EqualTo(20));
+            Assert.That(retry.Overridden.Stage, Is.EqualTo(SpatialSplitBudgetStage.CutApply));
+            Assert.That(split.CutMeshesMade, Is.EqualTo(2), "the meshes made in the retry's turn");
+            Assert.That(split.CutApplySamples, Is.EqualTo(5), "measured: the oldest gave way to it");
+            yield return null;
+            yield return null;
+            yield return null;
+            Assert.That(retry.PublishSeconds, Is.GreaterThanOrEqualTo(0.0), "the stage's turn's time was kept");
+            Assert.That(retry.FrameOf, Is.EqualTo(retry.Frame), "its own frame's length read in the frame after");
+            Assert.That(retry.FrameAfterOf, Is.EqualTo(retry.Frame + 1));
+            Assert.That(retry.Describe(), Does.Contain("at CutApply").And.Contain("none (not a publication)"));
+
+            // The hull check and the publication under their seeds (2.4 ms and 10 ms thresholds) go through with the whole budget left.
+            yield return Until(() => split.Published == 1, "published after its later stages");
+            Assert.That(split.PublishedWithCut, Is.EqualTo(1));
+            Assert.That(split.LastSource, Is.EqualTo(lower));
+            Assert.That(split.PublishRetries, Is.EqualTo(1), "one retry in all: the later stages needed none");
+            Assert.That(root.GeometryFaults, Is.Zero);
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
         /// **What could fit a frame is the budget's own answer: never retried.** Five measured publications of 3 ms
         /// (threshold 2 + 2 x 3.3 = 8.6 ms, under the whole budget) held under 8 ms a frame, and the seeds of a plain
         /// publication (7 ms) held under 6 ms: neither is retried, however long.
