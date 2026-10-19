@@ -11,13 +11,14 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
     /// budget comparison; not a statement of the Quest's v32 cause). A cut split's publication held short of budget
     /// while its cost is the seeds' -- until five were measured (D-245) -- is let through once an attempt, after enough
     /// budget-short comparisons and play time, so that it is measured; no other stage or reason of a hold is bypassed,
-    /// and not in a frame whose physics decision may take its verification step. Each case gives 9 ms of budget a
-    /// frame: the meshes (3 ms) and the hulls (2.4 ms) go through, the unmeasured publication (2 + 2 x 4 ms) does not.
-    /// The plain publications and the estimates that could never fit are SplitPublishEstimate's.
+    /// and not in a frame whose physics decision may take its verification step. Each case gives 7 ms of budget a
+    /// frame: the meshes (3 ms) and the hulls (2.4 ms) go through, the unmeasured publication (2 x 4 ms) does not.
+    /// (9 ms and 2 + 2 x 4 ms before 2026-10-19, when the split's reserve of 2 ms became the shared budget's common
+    /// margin: the same layout.) The plain publications and the estimates that could never fit are SplitPublishEstimate's.
     /// </summary>
     public unsafe partial class CutWorldRootPlayModeTests
     {
-        private const double RetryCaseBudget = 0.009;
+        private const double RetryCaseBudget = 0.007;
 
         // A world with the wrapped body cut at the waist and a second body (with a hand) beside it; the split closed.
         private IEnumerator RetryCaseWorld(System.Action<CutWorldRoot, CutSpatialSplit, double[], LogicalFragmentId, LogicalFragmentId> take)

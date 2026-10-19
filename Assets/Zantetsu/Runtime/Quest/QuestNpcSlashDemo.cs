@@ -325,6 +325,9 @@ namespace Zantetsu.Quest
             }
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = -1; // The 90 Hz OpenXR display and AppSW select the application cadence.
+            // The shared Main budget follows that cadence (DESIGN 4.4): the frame synthesis's period while it is on.
+            _frameSource = ApplicationFrameSeconds;
+            CutPhysicsStep.SetApplicationFrameSource(_frameSource);
             Application.runInBackground = true;
             if (_play)
             {
@@ -758,21 +761,52 @@ namespace Zantetsu.Quest
                 if (_config.mode == "vp3c-native") Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.DescribeRun());
                 if (VpCommandCompaction.VerificationEnabled) Debug.Log("QUEST NPC COMPACTION: " + VpCommandCompaction.ReadVerification());
                 if (VpCommandCompaction.SnapshotEnabled || VpCommandCompaction.CastersFixed) Debug.Log("QUEST NPC SNAPSHOTS: castersFixed=" + VpCommandCompaction.CastersFixed + "; " + VpCommandCompaction.DescribeSnapshots());
-                // Under frame synthesis the application renders at the reported rate, a part of the display's: the fragment
-                // groups' collection takes that frame for its budget (TL, 2026-10-14); 0 otherwise.
-                double groupsFrame = _spaceWarpApplied && _config.appSw && refresh > 0f && physicalRefresh > 0f && refresh < 0.75f * physicalRefresh
-                    ? 1.0 / Math.Round(refresh) : 0.0;
-                foreach (CutWorldRoot cutWorld in UnityEngine.Object.FindObjectsByType<CutWorldRoot>(FindObjectsSortMode.None))
-                {
-                    if (cutWorld.Groups != null) cutWorld.Groups.FrameSeconds = groupsFrame;
-                }
-
+                // The shared Main budget of the frame this line is written in (DESIGN 4.4): the application's period as
+                // settled at the frame's start (from ApplicationFrameSeconds, below), the common margin and the budget.
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
-                    + " groupsFrameMs=" + (groupsFrame * 1000.0).ToString("F1", Inv)
+                    + " appFrameMs=" + (CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F2", Inv) + (CutPhysicsStep.ApplicationFrameFromSource ? " (frame synthesis)" : " (default)")
+                    + " marginMs=" + (CutPhysicsStep.CommonMarginSeconds * 1000.0).ToString("F1", Inv)
+                    + " mainBudgetMs=" + (CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F2", Inv)
                     + " dtMs=" + Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }
         }
+
+        /// <summary>
+        /// The application's target frame period under frame synthesis (DESIGN 4.4, the shared Main budget's source): one
+        /// frame at the runtime's reported rate while AppSW is applied and that rate is under 3/4 of the display's (a
+        /// Quest at 45 Hz on a 90 Hz display: 1/45 s); otherwise no answer (NaN), and the budget takes its default 90 Hz
+        /// frame -- AppSW off or not applied, a rate not known, or one that is not a part of the display's. The runtime's
+        /// rates only: never a measured frame time. Pure; the demo's source reads it every frame.
+        /// </summary>
+        internal static double FrameSecondsUnderSynthesis(bool spaceWarpApplied, bool appSw, bool rateKnown, float reportedHz, bool displayKnown, float displayHz)
+        {
+            if (!spaceWarpApplied || !appSw || !rateKnown || !displayKnown) return double.NaN;
+            if (!(reportedHz > 0f) || !(displayHz > 0f) || float.IsInfinity(reportedHz) || float.IsInfinity(displayHz)) return double.NaN;
+            return reportedHz < 0.75f * displayHz ? 1.0 / Math.Round(reportedHz) : double.NaN;
+        }
+
+        // The source given to CutPhysicsStep: read once at each frame's start. Allocates nothing once the display is found.
+        private double ApplicationFrameSeconds()
+        {
+            if (_config == null) return double.NaN;
+            if (_frameDisplay == null || !_frameDisplay.running)
+            {
+                _frameDisplay = null;
+                SubsystemManager.GetSubsystems(_frameDisplays);
+                for (int i = 0; i < _frameDisplays.Count; i++) if (_frameDisplays[i].running) { _frameDisplay = _frameDisplays[i]; break; }
+            }
+
+            bool rateKnown = false;
+            float reported = 0f;
+            if (_frameDisplay != null) rateKnown = _frameDisplay.TryGetDisplayRefreshRate(out reported);
+            bool displayKnown = QuestDisplayRefreshRateFeature.TryReadReported(out float display);
+            return FrameSecondsUnderSynthesis(_spaceWarpApplied, _config.appSw, rateKnown, reported, displayKnown, display);
+        }
+
+        private readonly List<XRDisplaySubsystem> _frameDisplays = new List<XRDisplaySubsystem>();
+        private XRDisplaySubsystem _frameDisplay;
+        private Func<double> _frameSource;
 
         private void BeforeCamera(ScriptableRenderContext context, Camera camera)
         {
@@ -797,6 +831,7 @@ namespace Zantetsu.Quest
             _prewarm?.Abandon("the demo was destroyed");
             EndPlayPreparation("the demo was destroyed before the drawing was warmed");   // nothing unless play's preparation stands (only play begins one)
             _distanceSetup?.Dispose();
+            if (_frameSource != null) CutPhysicsStep.ClearApplicationFrameSource(_frameSource);   // the default from the next frame on
             RenderPipelineManager.beginCameraRendering -= BeforeCamera;
             SandboxPropSlashPlayerCheck.ReplayBegun -= OnReplayBegun;
             SandboxPropSlashPlayerCheck.ReplayPrepared -= OnReplayPrepared;

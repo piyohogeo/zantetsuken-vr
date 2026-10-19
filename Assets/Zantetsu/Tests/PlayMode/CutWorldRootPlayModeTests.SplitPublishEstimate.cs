@@ -201,8 +201,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
 
         /// <summary>
         /// **What could fit a frame is the budget's own answer: never retried.** Five measured publications of 3 ms
-        /// (threshold 2 + 2 x 3.3 = 8.6 ms, under the whole budget) held under 8 ms a frame, and the seeds of a plain
-        /// publication (7 ms) held under 6 ms: neither is retried, however long.
+        /// (threshold 2 x 3.3 = 6.6 ms, under the whole budget) held under 6 ms a frame, and the seeds of a plain
+        /// publication (5 ms) held under 4 ms: neither is retried, however long. (The reserve is 0 since 2026-10-19: the
+        /// room it left is the shared budget's common margin. Before, each figure here was 2 ms more.)
         /// </summary>
         [UnityTest]
         public IEnumerator SplitPublish_AnEstimateThatCouldFit_OrThePlainSeeds_AreNeverRetried()
@@ -213,8 +214,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             split.RetryAfterHolds = 20;
             split.RetryAfterHeldSeconds = 0.4;
 
-            // The plain seeds (nothing measured), held under 6 ms.
-            remaining[0] = 0.006;
+            // The plain seeds (nothing measured), held under 4 ms.
+            remaining[0] = 0.004;
             yield return Until(() => split.HasAttempt && split.LastBudgetDecision.Stage == SpatialSplitBudgetStage.Publish && split.LastBudgetDecision.Held,
                 "held at its publication under the seeds");
             int shortBefore = split.HeldFor(SpatialSplitHold.BudgetShort);
@@ -222,17 +223,17 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.PublishRetries, Is.Zero, "the plain seeds fit a frame: not retried");
             Assert.That(split.Published, Is.Zero);
 
-            // Five measured of 3 ms, held under 8 ms.
+            // Five measured of 3 ms, held under 6 ms.
             split.AddPublicationSamplesForTests(false, 0.003, 0.0003, 5);
-            remaining[0] = 0.008;
+            remaining[0] = 0.006;
             shortBefore = split.HeldFor(SpatialSplitHold.BudgetShort);
             yield return Until(() => split.HeldFor(SpatialSplitHold.BudgetShort) >= shortBefore + 100, "100 more budget-short comparisons");
-            Assert.That(split.LastBudgetDecision.Threshold, Is.EqualTo(0.0086).Within(1e-12));
+            Assert.That(split.LastBudgetDecision.Threshold, Is.EqualTo(CutWorldRoot.CompactionReserveSeconds + 0.0066).Within(1e-12));
             Assert.That(split.PublishRetries, Is.Zero, "an estimate that could fit a frame: not retried");
             Assert.That(split.Published, Is.Zero);
 
             // Room enough: published by the ordinary comparison.
-            remaining[0] = 0.009;
+            remaining[0] = 0.007;
             yield return Until(() => split.Published == 1, "published once the frame holds its threshold");
             Assert.That(split.PublishRetries, Is.Zero);
             split.Settings = default;

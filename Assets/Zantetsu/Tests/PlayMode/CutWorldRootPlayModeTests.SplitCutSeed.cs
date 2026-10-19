@@ -18,8 +18,9 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         /// <summary>
         /// **An unmeasured CutPublish short of budget in every frame holds the split: no publication, so no measurement
         /// and the seed stays; the attempt stays and no later split is issued. One comparison with room enough -- an
-        /// equal one goes on -- lets it publish, and the later split follows.** A budget of 9 ms in every frame lets the
-        /// meshes (threshold 3 ms) and the hulls (2.4 ms) through and holds the publication (10 ms). Meanwhile a second
+        /// equal one goes on -- lets it publish, and the later split follows.** A budget of 7 ms in every frame lets the
+        /// meshes (threshold 3 ms) and the hulls (2.4 ms) through and holds the publication (8 ms; 9 ms against 10 ms
+        /// before 2026-10-19, when the reserve of 2 ms became the shared budget's common margin). Meanwhile a second
         /// body is cut so that a plain split of it is wanted: nothing is issued for it while the cut attempt stands.
         /// The hold run is recorded with its attempt, its stage, its count and its largest margin.
         /// </summary>
@@ -41,18 +42,18 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             double seed = SplitCutOn(12).seedCutPublishSeconds + CutSpatialSplit.SeedCollectAfterSeconds;
             Assert.That(split.ExpectedCutPublishSeconds, Is.EqualTo(seed).Within(1e-12), "the layout: the publication of a cut split is not measured yet -- the seed, 3 ms + 1 ms");
             double threshold = CutWorldRoot.CompactionReserveSeconds + (2.0 * seed);
-            Assert.That(threshold, Is.EqualTo(0.010).Within(1e-12), "the layout: 2 ms + 2 x 4 ms");
+            Assert.That(threshold, Is.EqualTo(0.008).Within(1e-12), "the layout: 2 x 4 ms (no reserve of its own)");
 
-            // 9 ms in every frame: the meshes and the hulls go through, the publication does not.
-            const double nineMs = 0.009;
-            remaining[0] = nineMs;
+            // 7 ms in every frame: the meshes and the hulls go through, the publication does not.
+            const double sevenMs = 0.007;
+            remaining[0] = sevenMs;
             yield return Until(
                 () => split.AttemptCutsConvexes && split.HullsChecked == 2 && split.LastBudgetDecision.Stage == SpatialSplitBudgetStage.CutPublish && split.LastBudgetDecision.Held,
                 "the cut attempt reached its publication and was held there");
             long serial = split.AttemptSerial;
             int issued = split.Issued;
             Assert.That(split.AttemptFragment, Is.EqualTo(lower));
-            Assert.That(split.CutMeshesMade, Is.EqualTo(2), "the meshes were made under 9 ms");
+            Assert.That(split.CutMeshesMade, Is.EqualTo(2), "the meshes were made under 7 ms");
 
             // A second body cut while it is held: its lower side is a plain split's candidate from now on.
             var otherSides = new LogicalFragmentId[2];
@@ -74,8 +75,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(run.Stage, Is.EqualTo(SpatialSplitBudgetStage.CutPublish));
             Assert.That(run.Ended, Is.False, "still going on");
             Assert.That(run.Holds, Is.GreaterThanOrEqualTo(100), "held in about every frame");
-            Assert.That(run.Best.Margin, Is.EqualTo(nineMs - threshold).Within(1e-9), "its largest margin: 9 ms against 10 ms");
-            Assert.That(run.Best.Remaining, Is.EqualTo(nineMs).Within(1e-12));
+            Assert.That(run.Best.Margin, Is.EqualTo(sevenMs - threshold).Within(1e-9), "its largest margin: 7 ms against 8 ms");
+            Assert.That(run.Best.Remaining, Is.EqualTo(sevenMs).Within(1e-12));
             Assert.That(run.Best.Threshold, Is.EqualTo(threshold).Within(1e-12));
             Assert.That(run.Best.Expected, Is.EqualTo(seed).Within(1e-12));
 

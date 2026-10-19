@@ -431,11 +431,18 @@ namespace Zantetsu.PhysicsCut
 
         public int DisplayInstanceCapacityLimit => displayInstanceCapacityLimit;
 
-        /// <summary>The piece lifetime's settings (DESIGN 7.10), from the provisional values above.</summary>
+        /// <summary>
+        /// The piece lifetime's settings (DESIGN 7.10), from the provisional values above. The least remainder it looks
+        /// at a frame with is the value above less the shared budget's common margin (DESIGN 4.4, 2026-10-19): that much
+        /// of it was room left to the rest of the frame, which the margin leaves now; the rest is the lifetime's own.
+        /// </summary>
         public CutFragmentLifetimeSettings PieceLifetime =>
             new CutFragmentLifetimeSettings(
                 pieceLifetimeEnabled, pieceLifetimeThreshold, pieceLifetimeDistance, pieceLifetimeExaminePerFrame,
-                pieceLifetimeRetirePerFrame, pieceLifetimeMinRemainingMainSeconds, pieceLifetimeMaxStepSeconds);
+                pieceLifetimeRetirePerFrame, BeyondCommonMargin(pieceLifetimeMinRemainingMainSeconds), pieceLifetimeMaxStepSeconds);
+
+        /// <summary>A reserve that also left room to the rest of the frame, less the shared budget's common margin (never below 0).</summary>
+        public static double BeyondCommonMargin(double reserveSeconds) => System.Math.Max(0.0, reserveSeconds - CutPhysicsStep.CommonMarginSeconds);
 
         /// <summary>
         /// The empty owner collection's settings (DESIGN 7.9.3), from the provisional values above. The budget a turn

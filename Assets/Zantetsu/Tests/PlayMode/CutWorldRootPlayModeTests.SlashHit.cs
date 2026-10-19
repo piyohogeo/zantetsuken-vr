@@ -198,6 +198,10 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutWorldRoot root = NewWorld(
                 out Shader _, null, null, profile => SetPrivate(profile, "maxIncompleteCuts", 1));
+            // The room for incomplete cuts is the subject, not the Main budget: the driver is given a sufficient remainder,
+            // as the cases around it are. (On the live clock, under the shared budget of 2026-10-19 -- 9.1 ms by default --
+            // the first cut was admitted and its publication carried over, Pending, in the Editor's frame.)
+            root.Driver.RemainingMainSeconds = () => 1.0;
             LogicalFragmentId left = AddBody(root, new Vector3(-4f, 0f, 0f));
             LogicalFragmentId right = AddBody(root, new Vector3(4f, 0f, 0f));
             yield return null;
@@ -208,7 +212,8 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(both.Count, Is.EqualTo(2), "both boxes are hit");
             SlashHitConfirmed cut = both.Find(h => h.Acceptance == ProvisionalCutAcceptance.Published);
             SlashHitConfirmed full = both.Find(h => h.Acceptance == ProvisionalCutAcceptance.NotAccepted);
-            Assert.That(cut.Fragment.IsSet && full.Fragment.IsSet, Is.True, "one accepted, one refused");
+            Assert.That(cut.Fragment.IsSet && full.Fragment.IsSet, Is.True, "one accepted, one refused (were: "
+                + string.Join(", ", both.ConvertAll(h => h.Acceptance + "/" + h.Admission)) + ")");
             Assert.That(full.Admission, Is.EqualTo(LogicalCutAdmission.Full));
             yield return null;
 

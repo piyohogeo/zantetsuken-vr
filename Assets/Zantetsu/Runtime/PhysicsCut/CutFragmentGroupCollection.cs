@@ -299,22 +299,15 @@ namespace Zantetsu.PhysicsCut
         {
             _world = world ?? throw new ArgumentNullException(nameof(world));
             Settings = settings;
-            // The frame's Main budget, or the application's own frame where that is longer (FrameSeconds: frame synthesis).
-            RemainingMainSeconds = () => CutPhysicsStep.FrameRemainingMainSeconds + Math.Max(0.0, FrameSeconds - CutPhysicsStep.MainBudgetSeconds);
+            // The shared Main budget as it is (DESIGN 4.4): the application's frame under frame synthesis is in it already,
+            // so the collection's own addition of that frame (D-233, 2026-10-14) is gone with it.
+            RemainingMainSeconds = () => CutPhysicsStep.FrameRemainingMainSeconds;
         }
 
         public CutFragmentGroupSettings Settings { get; set; }
 
         /// <summary>What is left of this frame's Main budget. The product's frame clock; a test gives its own.</summary>
         public Func<double> RemainingMainSeconds { get; set; }
-
-        /// <summary>
-        /// The application's own frame in seconds, where it is longer than the frame's Main budget: under frame
-        /// synthesis a Quest renders at 45 Hz on a 90 Hz display and has 22.2 ms a frame, and the collection's budget is
-        /// that frame (TL, 2026-10-14). 0, the default, leaves the Main budget as it is. Set by the host that knows the
-        /// frame synthesis is on; read by the default <see cref="RemainingMainSeconds"/>.
-        /// </summary>
-        public double FrameSeconds { get; set; }
 
         /// <summary>Structural collections read for the expectation beside those a retirement caused.</summary>
         public int StructuralCollectionsRead { get; private set; }
@@ -327,14 +320,14 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// What a re-arm asks of what is left of the budget besides the reserve: twice its expected cost, and never
-        /// more than half of the frame's budget (the Main budget, or the application's frame under frame synthesis).
+        /// more than half of the frame's shared Main budget (which holds the application's frame under frame synthesis).
         /// Before, it asked twice the LONGEST re-arm ever measured, which never came down: one re-arm in a long frame
         /// could set it past what any frame leaves, and every original standing again stayed no cut target -- a tree
         /// that could not be cut (a Quest 3S, 2026-10-14). Capped, a re-arm whose expectation is too high waits for a
         /// frame half free, and its own cost is measured again.
         /// </summary>
         public double RearmAskSeconds =>
-            Math.Min(2.0 * ExpectedRearmSeconds, 0.5 * Math.Max(CutPhysicsStep.MainBudgetSeconds, FrameSeconds));
+            Math.Min(2.0 * ExpectedRearmSeconds, 0.5 * CutPhysicsStep.MainBudgetSeconds);
 
         /// <summary>Originals that stand again and are not yet cut targets again.</summary>
         public int StandingNotArmed
@@ -945,7 +938,7 @@ namespace Zantetsu.PhysicsCut
                 .Append("; structural collections read beside retirements ").Append(StructuralCollectionsRead)
                 .Append("; originals standing, not yet cut targets ").Append(StandingNotArmed)
                 .Append(" (a re-arm expected ").Append((ExpectedRearmSeconds * 1000.0).ToString("F3", inv)).Append(" ms, asks ").Append((RearmAskSeconds * 1000.0).ToString("F3", inv)).Append(" ms)")
-                .Append(FrameSeconds > 0.0 ? "; the frame's budget " + (FrameSeconds * 1000.0).ToString("F1", inv) + " ms (frame synthesis)" : "")
+                .Append("; the shared Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", inv)).Append(CutPhysicsStep.ApplicationFrameFromSource ? " ms (frame synthesis)" : " ms")
                 .Append("; large groups by their pieces: turns ").Append(PieceTurns).Append(", pieces looked at ").Append(PiecesLookedAt)
                 .Append(", retired ").Append(PiecesRetired).Append(", seen ").Append(PiecesSeen).Append(", not ready ").Append(PiecesNotReady)
                 .Append("; originals returned ").Append(Returned).Append(", cut targets again ").Append(Rearmed).Append(", not returned ").Append(ReturnsFailed)

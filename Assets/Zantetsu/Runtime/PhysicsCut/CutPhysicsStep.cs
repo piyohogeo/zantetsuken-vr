@@ -42,10 +42,20 @@ namespace Zantetsu.PhysicsCut
     /// time it owed stays owed.
     /// </para>
     /// <para>
-    /// **Chosen once, here, before the first simulation.** The frequency and the budget belong to the physics scene,
-    /// not to any world: they are settled when a play session starts (<see cref="ResetForSession"/>), from the start-up
-    /// argument <c>-zantetsuPhysicsHz 45|90</c> or else 45 Hz, and the budget is <see cref="DefaultMainBudgetSeconds"/>.
-    /// Nothing a world does later -- whenever it is loaded -- changes either.
+    /// **Chosen once, here, before the first simulation.** The frequency belongs to the physics scene, not to any world:
+    /// it is settled when a play session starts (<see cref="ResetForSession"/>), from the start-up argument
+    /// <c>-zantetsuPhysicsHz 45|90</c> or else 45 Hz. Nothing a world does later -- whenever it is loaded -- changes it.
+    /// </para>
+    /// <para>
+    /// **The shared Main budget** (DESIGN 4.4, 2026-10-19) is the application's target frame period less one common
+    /// margin, <see cref="CommonMarginSeconds"/>, for what follows in the frame; what is left of it is that less the time
+    /// since the frame's player loop began. Every Main reader -- the cuts' build and publication, this step, the spatial
+    /// split, the collections, the compaction, the crowd's refill -- reads this one remainder, from the one start: no
+    /// reader has a frame of its own, no reading or change of work starts it again, and a negative remainder is a
+    /// shortfall as it stands. The period is settled at each frame's start from the host's source
+    /// (<see cref="SetApplicationFrameSource"/>: a Quest under frame synthesis renders at 45 Hz, 22.2 ms) and is one
+    /// 90 Hz frame (<see cref="DefaultApplicationFrameSeconds"/>) when there is no source, the source has no answer, or
+    /// its answer is not a frame period (<see cref="AcceptedFrameSeconds"/>). Never from measured frame times or fps.
     /// </para>
     /// </summary>
     public static partial class CutPhysicsStep
@@ -53,8 +63,21 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The physics frequency when nothing else was chosen (DESIGN 4.4: 45 Hz by default).</summary>
         public const int DefaultFrequencyHz = 45;
 
-        /// <summary>The frame's Main budget: one 90 Hz frame. A provisional value, to be adjusted from measurement.</summary>
-        public const double DefaultMainBudgetSeconds = 1.0 / 90.0;
+        /// <summary>The application's frame period taken when the host gives none (or none usable): one 90 Hz frame.</summary>
+        public const double DefaultApplicationFrameSeconds = 1.0 / 90.0;
+
+        /// <summary>
+        /// The one margin the shared Main budget leaves in every frame for what follows its Main readers (the cameras'
+        /// preparations and the rendering): 2 ms, **provisional** -- not a measured right value (TL, 2026-10-19). Kept
+        /// here alone; a reader's own reserve for the same purpose is not taken again.
+        /// </summary>
+        public const double CommonMarginSeconds = 0.002;
+
+        /// <summary>The shared Main budget with no source: <see cref="DefaultApplicationFrameSeconds"/> less <see cref="CommonMarginSeconds"/>.</summary>
+        public const double DefaultMainBudgetSeconds = DefaultApplicationFrameSeconds - CommonMarginSeconds;
+
+        /// <summary>The shortest and the longest frame period a source's answer is taken as (144 Hz to 30 Hz); outside it, the default.</summary>
+        public const double MinimumFrameSeconds = 1.0 / 144.0, MaximumFrameSeconds = 1.0 / 30.0;
 
         /// <summary>The start-up argument that chooses the physics frequency, followed by 45 or 90.</summary>
         public const string FrequencyArgument = "-zantetsuPhysicsHz";
@@ -67,7 +90,8 @@ namespace Zantetsu.PhysicsCut
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
         private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
-        private static double s_mainBudgetSeconds = DefaultMainBudgetSeconds;
+        private static double s_frameSeconds = DefaultApplicationFrameSeconds;   // this frame's period, settled at its start
+        private static Func<double> s_frameSource;
         private static long s_frameStart;
         private static bool s_explicitPaused;      // SetPaused: a caller's own pause, ended only by that caller
         private static bool s_applicationPaused;   // the application's own pause, by the listener below
@@ -77,13 +101,67 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The clock of this run: frequency, step, time owed, physics time and step id.</summary>
         public static ManualPhysicsClock Clock => s_clock;
 
-        /// <summary>The frame's Main budget the decision compares with, in seconds.</summary>
-        public static double MainBudgetSeconds => s_mainBudgetSeconds;
+        /// <summary>This frame's application frame period, in seconds, as settled at the frame's start.</summary>
+        public static double ApplicationFrameSeconds => s_frameSeconds;
+
+        /// <summary>The shared Main budget of this frame, in seconds: <see cref="ApplicationFrameSeconds"/> less <see cref="CommonMarginSeconds"/>.</summary>
+        public static double MainBudgetSeconds => BudgetFor(s_frameSeconds);
+
+        /// <summary>Whether this frame's period came from the host's source (false: the default, for want of a usable answer).</summary>
+        public static bool ApplicationFrameFromSource { get; private set; }
 
         /// <summary>Live remaining Main time, shared by publication and simulation; querying never refills it.</summary>
         internal static double RemainingMainSeconds => !Application.isPlaying || s_frameStart == 0
             ? double.PositiveInfinity
-            : s_mainBudgetSeconds - (Stopwatch.GetTimestamp() - s_frameStart) / (double)Stopwatch.Frequency;
+            : RemainingAt(s_frameSeconds, s_frameStart, Stopwatch.GetTimestamp(), Stopwatch.Frequency);
+
+        /// <summary>The shared budget of a frame period: the period less the common margin (pure; tests read it).</summary>
+        internal static double BudgetFor(double frameSeconds) => frameSeconds - CommonMarginSeconds;
+
+        /// <summary>What is left of the shared budget at <paramref name="now"/> of a frame begun at <paramref name="frameStart"/>: negative when short (pure).</summary>
+        internal static double RemainingAt(double frameSeconds, long frameStart, long now, long frequency) =>
+            BudgetFor(frameSeconds) - (now - frameStart) / (double)frequency;
+
+        /// <summary>
+        /// The frame period a source's answer is taken as: the answer when it is a frame period (finite, from
+        /// <see cref="MinimumFrameSeconds"/> to <see cref="MaximumFrameSeconds"/>), otherwise the default -- no answer
+        /// (NaN), 0 or less, or anything else is never an extended budget. Pure.
+        /// </summary>
+        internal static double AcceptedFrameSeconds(double answer, out bool fromSource)
+        {
+            fromSource = !double.IsNaN(answer) && !double.IsInfinity(answer) && answer >= MinimumFrameSeconds && answer <= MaximumFrameSeconds;
+            return fromSource ? answer : DefaultApplicationFrameSeconds;
+        }
+
+        /// <summary>
+        /// The host's source of the application's target frame period, read once at each frame's start (null: none, the
+        /// default from the next frame on). The Quest's demo gives the frame synthesis's period while AppSW is applied
+        /// and NaN otherwise; a source that throws is taken as having no answer. Replaces the source before it.
+        /// </summary>
+        public static void SetApplicationFrameSource(Func<double> source) => s_frameSource = source;
+
+        /// <summary>Clears the source only if it is still <paramref name="source"/> (a host leaving does not clear another's).</summary>
+        public static void ClearApplicationFrameSource(Func<double> source)
+        {
+            if (s_frameSource == source) s_frameSource = null;
+        }
+
+        /// <summary>The timestamp this frame began at (0 before the first frame): for tests of the order at the frame's start.</summary>
+        internal static long FrameStartTimestamp => s_frameStart;
+
+        /// <summary>Settles the frame's period from the source (the frame's start; tests call it to stand for one).</summary>
+        internal static void SettleFramePeriod()
+        {
+            double answer = double.NaN;
+            if (s_frameSource != null)
+            {
+                try { answer = s_frameSource(); }
+                catch (Exception error) { answer = double.NaN; UnityEngine.Debug.LogException(error); }
+            }
+
+            s_frameSeconds = AcceptedFrameSeconds(answer, out bool fromSource);
+            ApplicationFrameFromSource = fromSource;
+        }
 
         /// <summary>
         /// What is left of this frame's Main budget now, in seconds (positive infinity outside Play or before the first
@@ -282,7 +360,9 @@ namespace Zantetsu.PhysicsCut
         private static void ResetForSession()
         {
             s_clock = new ManualPhysicsClock(FrequencyFromCommandLine(), Stopwatch.Frequency);
-            s_mainBudgetSeconds = DefaultMainBudgetSeconds;
+            s_frameSeconds = DefaultApplicationFrameSeconds;
+            s_frameSource = null;
+            ApplicationFrameFromSource = false;
             s_frameStart = 0;
             s_explicitPaused = false;
             s_gamePaused = false;
@@ -359,9 +439,13 @@ namespace Zantetsu.PhysicsCut
             FollowGamePause();
         }
 
-        private static void BeginFrame()
+        internal static void BeginFrame()
         {
+            // The frame's one start and one period: every reader of this frame compares with these. The start first: the
+            // time the source takes (the Quest's XR and OpenXR queries, an interruption in them) is the frame's own and is
+            // taken from the shared remainder like any other (TL review, 2026-10-19).
             s_frameStart = Stopwatch.GetTimestamp();
+            SettleFramePeriod();
             s_gcCountAtFrameStart = GC.CollectionCount(0);
         }
 
@@ -469,7 +553,7 @@ namespace Zantetsu.PhysicsCut
             LastDecidedFrame = Time.frameCount;
             // A frame that began before the system was installed has no start of its own: it is taken as beginning now.
             long frameStart = s_frameStart != 0 ? s_frameStart : now;
-            double remaining = s_mainBudgetSeconds - ((double)(now - frameStart) / Stopwatch.Frequency);
+            double remaining = RemainingAt(s_frameSeconds, frameStart, now, Stopwatch.Frequency);
             double expected = s_costs.ExpectedSeconds;
             bool scripted = Physics.simulationMode == SimulationMode.Script;
             bool step = scripted && s_clock.ShouldStep(expected, remaining);

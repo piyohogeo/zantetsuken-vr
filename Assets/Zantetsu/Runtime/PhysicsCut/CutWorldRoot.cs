@@ -1069,11 +1069,13 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The Main budget a compaction of the display's instance regions must leave to the rest of the frame, in
-        /// seconds, beyond twice its own expected cost (D-202). The collection runs after the simulation, and the
-        /// cameras' preparations and the frame's rendering come after it; a provisional value, from no measurement
-        /// of those.
+        /// seconds, beyond twice its own expected cost (D-202), and with it the collections' and the spatial split's
+        /// reserve. **0 since 2026-10-19**: what it left -- the cameras' preparations and the frame's rendering, after
+        /// the collection -- is the shared budget's common margin now (<see cref="CutPhysicsStep.CommonMarginSeconds"/>,
+        /// the same 2 ms), not taken a second time. A reader's reservation for a particular later work (the step later
+        /// in the frame, the structural collection a retirement causes) is that reader's own and stays.
         /// </summary>
-        public const double CompactionReserveSeconds = 0.002;
+        public const double CompactionReserveSeconds = 0.0;
 
         /// <summary>
         /// The counts a placement changes with (D-204): the physics steps really simulated, and the placement inputs

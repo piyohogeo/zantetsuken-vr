@@ -83,7 +83,7 @@ namespace Zantetsu.PhysicsCut
                 "reason", reason, "stepped", B(step), "verify", B(verify), "scripted", B(scripted),
                 "clockPaused", B(s_clock.IsPaused), "gamePaused", B(s_gamePaused), "applicationPaused", B(s_applicationPaused),
                 "owed", s_clock.UnsimulatedSeconds, "stepSeconds", s_clock.StepSeconds, "dropped", s_clock.DroppedSeconds,
-                "remaining", remaining, "expected", expected, "budget", s_mainBudgetSeconds,
+                "remaining", remaining, "expected", expected, "budget", MainBudgetSeconds, "appFrame", s_frameSeconds,
                 "shouldStep", B(shouldStep), "owedAndBudget", B(owedAndBudget), "withinCostAlone", B(withinCostAlone),
                 "reevaluateAsked", B(s_reevaluateAsked), "frameStartWasZero", B(frameStart == 0),
                 "skippedInARow", SkippedForCostInARow, "collectors", s_collectors.Count, "costSamples", s_costs.Count, "stepId", s_clock.StepId,
@@ -159,7 +159,7 @@ namespace Zantetsu.PhysicsCut
             b.Append("clock paused ").Append(s_clock.IsPaused).Append(", game paused ").Append(s_gamePaused).Append(", application paused ").Append(s_applicationPaused)
                 .Append(", owed ").Append(R(s_clock.UnsimulatedSeconds)).Append(" s (step ").Append(R(s_clock.StepSeconds)).Append(" s, dropped ").Append(R(s_clock.DroppedSeconds))
                 .Append(" s), step id ").Append(s_clock.StepId).Append(", physics s ").Append(R(s_clock.PhysicsSeconds))
-                .Append(", budget ").Append(R(s_mainBudgetSeconds)).Append(" s, expected ").Append(R(s_costs.ExpectedSeconds)).Append(" s from ").Append(s_costs.Count).Append(" samples")
+                .Append(", budget ").Append(R(MainBudgetSeconds)).Append(" s (application frame ").Append(R(s_frameSeconds)).Append(" s less the margin), expected ").Append(R(s_costs.ExpectedSeconds)).Append(" s from ").Append(s_costs.Count).Append(" samples")
                 .Append(", skipped for cost in a row ").Append(SkippedForCostInARow).Append(", re-evaluation asked ").Append(s_reevaluateAsked)
                 .Append(", verification steps ").Append(VerificationSteps).Append(", collectors ").Append(s_collectors.Count)
                 .Append(", last decided frame ").Append(LastDecidedFrame).Append(", last simulated frame ").Append(LastSimulatedFrame)

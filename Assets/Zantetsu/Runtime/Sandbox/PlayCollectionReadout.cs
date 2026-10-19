@@ -48,8 +48,10 @@ namespace Zantetsu.Sandbox
                 _frames++;
                 _leftSum += left;
                 if (left < _leftLeast) _leftLeast = left;
-                if (left < CutWorldRoot.CompactionReserveSeconds) _underReserve++;
-                if (left <= 0.0) _spent++;
+                // The shared budget is the application's frame less the common margin (DESIGN 4.4): under 0, the frame's
+                // scripts went into the margin; under minus the margin, they spent the application's whole frame.
+                if (left < 0.0) _underReserve++;
+                if (left < -CutPhysicsStep.CommonMarginSeconds) _spent++;
             }
 
             float intervalMs = Time.unscaledDeltaTime * 1000f;
@@ -93,11 +95,13 @@ namespace Zantetsu.Sandbox
             b.Append(" | last hold ").Append(groups != null ? groups.LastHold.ToString() : "-");
             b.Append(" | empty owners retired ").Append(_world.EmptyOwners != null ? _world.EmptyOwners.Retired : 0)
                 .Append(", piece lifetime retired ").Append(_world.Lifetime != null ? _world.Lifetime.Retired : 0);
-            b.Append(" | Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", c)).Append(" ms a frame; left of it at the end of the frame's scripts in the last ")
+            b.Append(" | Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", c)).Append(" ms a frame (application frame ")
+                .Append((CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F1", c)).Append(CutPhysicsStep.ApplicationFrameFromSource ? " ms, frame synthesis" : " ms, default")
+                .Append(", less the common margin ").Append((CutPhysicsStep.CommonMarginSeconds * 1000.0).ToString("F1", c)).Append(" ms); left of it at the end of the frame's scripts in the last ")
                 .Append(_frames).Append(" frames: mean ").Append(_frames > 0 ? (_leftSum / _frames * 1000.0).ToString("F2", c) : "-")
                 .Append(" ms, least ").Append(_frames > 0 ? (_leftLeast * 1000.0).ToString("F2", c) : "-")
-                .Append(" ms; under the reserve of ").Append((CutWorldRoot.CompactionReserveSeconds * 1000.0).ToString("F1", c)).Append(" ms in ").Append(_underReserve)
-                .Append(" frames, nothing left in ").Append(_spent).Append("; longest frame interval ").Append(_longestIntervalMs.ToString("F1", c)).Append(" ms")
+                .Append(" ms; into the margin in ").Append(_underReserve)
+                .Append(" frames, past the application frame in ").Append(_spent).Append("; longest frame interval ").Append(_longestIntervalMs.ToString("F1", c)).Append(" ms")
                 .Append(GamePause.IsPaused ? "; paused now" : "");
             return b.ToString();
         }

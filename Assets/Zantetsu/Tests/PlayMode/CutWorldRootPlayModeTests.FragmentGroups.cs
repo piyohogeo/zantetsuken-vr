@@ -1112,27 +1112,43 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         }
 
         /// <summary>
-        /// **Under frame synthesis the collection's budget is the application's own frame.** With the collection's own
-        /// budget as the game gives it, a frame of 1/45 s set as the application's adds what it has beyond the Main
-        /// budget; a frame shorter than the budget adds nothing; 0 leaves it as it was.
+        /// **Under frame synthesis the shared Main budget is the application's frame, and the collection adds nothing of
+        /// its own** (DESIGN 4.4, 2026-10-19). With the host's source answering 1/45 s, the next frame's budget is that
+        /// frame less the common margin; the collection reads the one remainder every reader of the frame reads, from the
+        /// frame's one start (a later read is lower by the time between); the physics step's decision compared with it
+        /// too. Without the source, the next frame is back at the default 90 Hz frame: no stale 45 Hz budget.
         /// </summary>
         [UnityTest]
-        public IEnumerator FragmentGroups_UnderFrameSynthesis_TheBudgetIsTheApplicationsFrame()
+        public IEnumerator FragmentGroups_UnderFrameSynthesis_ReadTheSharedBudget_FromTheFramesOneStart()
         {
             CutWorldRoot root = NewWorld(out Shader _);
             CutFragmentGroupCollection groups = root.Groups;
-            for (int i = 0; i < 3; i++) yield return null;
-            double main = CutPhysicsStep.MainBudgetSeconds;
-            double plain = groups.RemainingMainSeconds();
-            Assert.That(double.IsInfinity(plain), Is.False, "inside a frame: a budget to read");
-            groups.FrameSeconds = 1.0 / 45.0;
-            double synthesised = groups.RemainingMainSeconds();
-            Assert.That(synthesised - plain, Is.InRange((1.0 / 45.0) - main - 0.0005, (1.0 / 45.0) - main + 0.0001), "the application's frame beyond the Main budget is added");
-            groups.FrameSeconds = 1.0 / 120.0;
-            double shorter = groups.RemainingMainSeconds();
-            Assert.That(shorter, Is.LessThanOrEqualTo(plain + 0.0001), "a frame shorter than the budget adds nothing");
-            groups.FrameSeconds = 0.0;
-            Assert.That(groups.RemainingMainSeconds(), Is.LessThanOrEqualTo(plain + 0.0001));
+            Func<double> source = () => 1.0 / 45.0;
+            CutPhysicsStep.SetApplicationFrameSource(source);
+            try
+            {
+                for (int i = 0; i < 3; i++) yield return null;
+                double budget = CutPhysicsStep.BudgetFor(1.0 / 45.0);
+                Assert.That(CutPhysicsStep.ApplicationFrameSeconds, Is.EqualTo(1.0 / 45.0));
+                Assert.That(CutPhysicsStep.MainBudgetSeconds, Is.EqualTo(budget));
+                Assert.That(CutPhysicsStep.LastDecisionRemainingSeconds, Is.LessThanOrEqualTo(budget), "the step's decision compared with the same budget");
+                double shared = CutPhysicsStep.FrameRemainingMainSeconds;
+                double collection = groups.RemainingMainSeconds();
+                Assert.That(collection, Is.LessThanOrEqualTo(shared), "the collection's is the shared remainder, read a moment later: nothing added");
+                Assert.That(collection, Is.GreaterThan(shared - 0.002));
+                System.Threading.Thread.Sleep(3);
+                double later = groups.RemainingMainSeconds();
+                Assert.That(collection - later, Is.GreaterThanOrEqualTo(0.0029), "the same start: 3 ms later, 3 ms less (no reader's start of its own)");
+                Assert.That(collection, Is.LessThanOrEqualTo(budget));
+            }
+            finally
+            {
+                CutPhysicsStep.ClearApplicationFrameSource(source);
+            }
+
+            yield return null;
+            Assert.That(CutPhysicsStep.ApplicationFrameSeconds, Is.EqualTo(CutPhysicsStep.DefaultApplicationFrameSeconds), "the source gone: the next frame's budget is the default");
+            Assert.That(CutPhysicsStep.MainBudgetSeconds, Is.EqualTo(CutPhysicsStep.DefaultMainBudgetSeconds));
             yield return EndWorld(root);
         }
 
