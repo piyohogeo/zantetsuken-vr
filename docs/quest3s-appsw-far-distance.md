@@ -49,6 +49,29 @@ unique vertex数や実際のVS invocation数とは異なり、Vulkan multiview�
 - 遠方のVPオブジェクトの削減率はこのNPCシーンでは測れていない。VPだけで街を描く静的シーンでの結果とは分けて扱う。
 - Unityの追加CPUカリングとVPの追加GPUカリングのコストが発生する。CPUカリングには`Zantetsu.AppSwDistance.UnityCull`マーカーを用意したが、この比較ではCPUコストを個別計測していない。
 
+### 街歩きでのCPU区間とApp GPU全体（2026-10-19）
+
+10体NPCデモとは別に、街歩き（scenario=city-walk、vp3c-native、AppSW ON、checks/detail off、Profiler記録off、prewarm on、固定視点off）で、同一APKの `AppSwFarMeters=-1`（A）と `30`（B）を A,B,B,A の順に各2回走らせた。
+CPU区間は `VpAppSwMarkers` の4つを街歩きの `frames.csv` に記録する（時間ns＋呼出回数の列、前フレームの値を前フレームの行へ）。
+
+- `Zantetsu.AppSwDistance.UnityCull`：`Cull()` の呼び出しだけ（Main。Workerのカリングジョブは含まない）。
+- `Zantetsu.AppSwDistance.Record`：実験の外側（パラメータ準備、Cull、既定パスの更新とAppSW描画リストの記録）。Aにはこのクラスがない。
+- `Zantetsu.AppSwDistance.NativeCullRecord`：native側の追加GPUカリングのコマンド記録（CPU時間）。
+- `Zantetsu.AppSwDistance.MotionClipKeep`：native側motionパスのClip記録のCPU選別（A・B同じ区間）。
+
+通常歩行（再生40秒以降）の平均：
+
+| | A | B | B−A |
+|---|---:|---:|---:|
+| Cull()＋native記録（追加呼び出し区間） | — | 0.126 ms | — |
+| 外側区間（Cullを含む） | — | 0.217 ms | — |
+| ftMainMs | 6.71 ms | 6.61 ms | −0.09 ms（判定不能：A同士の差0.29 ms、2組で符号が逆） |
+| XR App GPU | 10.94 ms | 9.78 ms | −1.16 ms（2組とも−1.15／−1.17、範囲が重ならない） |
+
+- 区間の値は純増費用の上下限ではない。AのURP内部の描画リスト記録は未計測、計測区間外の準備もあり、描画対象の減少によるCPU軽減も差し引けていない。Main全体の純増は判定不能。
+- App GPUの差は、追加GPUカリングの負担とAppSW描画対象の減少などを合わせた有効化による総差。各条件2回なので統計的な確かさは示せず、視点の向きが走行で揃っていない（Bの1回はpitchが約16°違う）ため、30mだけによる改善量とは確定しない。
+- `frames.csv` の `xrAppGpuMs` 列は名前に反して秒で、約1秒に1回更新される。
+
 ## 見た目の確認
 
 通常のヘッドトラッキングで、追加制限なし → 60m → 30mを比較。

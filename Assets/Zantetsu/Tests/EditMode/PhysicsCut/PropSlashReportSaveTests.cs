@@ -84,6 +84,49 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         [Test]
+        public void Timeline_WritesTheMotionPassCountsAsDifferences_AndTheAppSwSectionsCallsAsTheyStand()
+        {
+            object first = Activator.CreateInstance(Row, true);
+            object unknown = Activator.CreateInstance(Row, true);
+            object last = Activator.CreateInstance(Row, true);
+            Set(first, "nativeKnown", true); Set(last, "nativeKnown", true);
+            foreach (object row in new[] { first, unknown, last }) Set(row, "markers", new long[] { 42 });
+            Set(first, "nMotionIssues", 100L); Set(first, "nClipMotionTaken", 20L); Set(first, "nClipMotionKept", 10L);
+            Set(last, "nMotionIssues", 107L); Set(last, "nClipMotionTaken", 26L); Set(last, "nClipMotionKept", 12L);
+            Set(last, "appSwCullCalls", 1L); Set(last, "appSwRecordCalls", 1L); Set(last, "appSwNativeCullCalls", 3L); Set(last, "appSwMotionClipKeepCalls", 0L);
+            object frozen = Row.GetMethod("FrozenCopy", Instance).Invoke(last, null);
+            Set(last, "appSwNativeCullCalls", 999L);
+            string[] lines = Format(first, unknown, frozen).Split('\n');
+            string[] columns = lines[0].Split(',');
+            int motion = Array.IndexOf(columns, "nMotionIssues"), calls = Array.IndexOf(columns, "appSwCullCalls");
+            Assert.That(motion, Is.EqualTo(Array.IndexOf(columns, "nBlocksInFlight") + 1), "after the plugin's own counts");
+            Assert.That(string.Join(",", columns, calls, 4), Is.EqualTo("appSwCullCalls,appSwRecordCalls,appSwNativeCullCalls,appSwMotionClipKeepCalls"));
+            Assert.That(columns[columns.Length - 1], Is.EqualTo("fixture-marker"), "the markers stay last");
+            for (int row = 1; row <= 3; row++) Assert.That(lines[row].Split(',').Length, Is.EqualTo(columns.Length));
+            Assert.That(string.Join(",", lines[1].Split(','), motion, 3), Is.EqualTo(",,"), "the first row has no row before");
+            Assert.That(string.Join(",", lines[1].Split(','), calls, 4), Is.EqualTo("-1,-1,-1,-1"), "a row never completed: not known");
+            Assert.That(string.Join(",", lines[3].Split(','), motion, 3), Is.EqualTo("7,6,2"), "the difference from the last known row");
+            Assert.That(string.Join(",", lines[3].Split(','), calls, 4), Is.EqualTo("1,1,3,0"), "as frozen at the save");
+        }
+
+        [Test]
+        public void TheTimeline_RecordsTheFourAppSwSections_InTheirOrder()
+        {
+            var fixedMarkers = (Array)Walk.GetField("TimelineMarkers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            var names = new System.Collections.Generic.List<string>();
+            foreach (object marker in fixedMarkers) names.Add((string)marker.GetType().GetField("Item2").GetValue(marker));
+            // This assembly does not reference the URP one: the sections' class is read by its name.
+            Type sections = Type.GetType("Zantetsu.Rendering.Urp.VpAppSwMarkers, Zantetsu.Rendering.Urp", true);
+            var expected = (string[])sections.GetField("Names").GetValue(null);
+            Assert.That(expected, Is.EqualTo(new[] { "Zantetsu.AppSwDistance.UnityCull", "Zantetsu.AppSwDistance.Record",
+                "Zantetsu.AppSwDistance.NativeCullRecord", "Zantetsu.AppSwDistance.MotionClipKeep" }), "the existing UnityCull marker's name is kept");
+            int at = names.IndexOf(expected[0]);
+            Assert.That(at, Is.GreaterThanOrEqualTo(0));
+            Assert.That(names.GetRange(at, 4), Is.EqualTo(expected));
+            Assert.That(sections.GetMethod("Ensure").Invoke(null, null), Is.EqualTo(4), "the markers exist");
+        }
+
+        [Test]
         public void FailedWorkerWrite_CompletesBeforeTheExistingClosingGuard_AndDoneStillFollowsLogRelease()
         {
             using var gate = new ManualResetEventSlim(false);

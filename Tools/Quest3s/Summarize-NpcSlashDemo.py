@@ -87,6 +87,16 @@ def counter_delta(rows, column):
             "delta": known[-1] - known[0] if len(known) >= 2 and not decreases else None}
 
 
+# Counts among the columns after roomCommittedBytes, not ProfilerRecorder durations:
+# the plugin route's per-row counts (nBlocksInFlight a level, the rest differences)
+# and the AppSW sections' calls of the row's frame (-1 = not known, counted unavailable).
+COUNT_COLUMNS = frozenset((
+    "nPointersAsked", "nPointersKept", "nBodyIssues", "nCasterIssues", "nNotDrawn", "nBuffersRetired", "nBlocksInFlight",
+    "nMotionIssues", "nClipMotionTaken", "nClipMotionKept",
+    "appSwCullCalls", "appSwRecordCalls", "appSwNativeCullCalls", "appSwMotionClipKeepCalls",
+))
+
+
 def summarize_frames(rows, headers):
     # Prop Slash writes FrameTimingManager values in ms but XR API values in
     # seconds, WITHOUT converting them despite the xr*Ms column names.
@@ -114,12 +124,15 @@ def summarize_frames(rows, headers):
     for column in headers:
         if column.endswith("Ms") and column not in specs:
             metrics[column] = metric(rows, column)
-    # All appended columns after roomCommittedBytes are ProfilerRecorder values.
-    # GC allocation is bytes, duration markers are ns; counters are not durations.
+    # The columns after roomCommittedBytes: the plugin route's counts and the AppSW
+    # sections' calls (counts, written before the markers), then the ProfilerRecorder
+    # values. GC allocation is bytes, duration markers are ns; counters are not durations.
     marker_columns = headers[headers.index("roomCommittedBytes") + 1:] if "roomCommittedBytes" in headers else []
     time_markers, counters = {}, {}
     for column in marker_columns:
-        if column == "GC Allocated In Frame" or column.endswith(" Count") or column.endswith(" Bytes"):
+        if column in COUNT_COLUMNS:
+            counters[column] = metric(rows, column, 1, unit="count")
+        elif column == "GC Allocated In Frame" or column.endswith(" Count") or column.endswith(" Bytes"):
             counters[column] = metric(rows, column, unit="bytes" if "Bytes" in column or column == "GC Allocated In Frame" else "count")
         else:
             time_markers[column] = metric(rows, column, 1e-6)

@@ -2541,10 +2541,14 @@ namespace Zantetsu.Rendering.Urp
                                 _motionSelections.Add(issue.batch, selection = issue.batch.CreateCullOutput());
                             if (_motionSelected.Add(issue.batch))
                             {
-                                // The commands of the clip route keep nothing here either: the batch's commands say which.
-                                issue.batch.IssueCull(commands, selection, _motionConditions);
-                                // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
-                                _route.NoteSelectionIssued();
+                                // The CPU time of recording the extra culling's commands (VpAppSwMarkers), not the GPU's.
+                                using (VpAppSwMarkers.NativeCullRecord.Auto())
+                                {
+                                    // The commands of the clip route keep nothing here either: the batch's commands say which.
+                                    issue.batch.IssueCull(commands, selection, _motionConditions);
+                                    // Its entries are read by this pass's compaction next: the plugin's barrier goes between.
+                                    _route.NoteSelectionIssued();
+                                }
                             }
                             forwardArguments = selection.ForwardArguments; forwardVisible = selection.ForwardVisible;
                         }
@@ -2580,7 +2584,10 @@ namespace Zantetsu.Rendering.Urp
                 bool grouped = false;
                 if (Clips.Count > 0)
                 {
+                    // The motion pass's selection is one section with the distance or without it (VpAppSwMarkers).
+                    if (_motion) VpAppSwMarkers.MotionClipKeep.Begin();
                     List<ClipIssue> kept = _route.KeptClipBodies(Clips, _motion && motionFar > 0f ? _motionConditions : null);
+                    if (_motion) VpAppSwMarkers.MotionClipKeep.End();
                     if (_motion)
                     {
                         _route.DirectClipMotionTaken += Clips.Count;

@@ -757,7 +757,17 @@ namespace Zantetsu.Sandbox
                 (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanDisplay"),
                 (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanLifetime"),
                 (ProfilerCategory.Scripts, "Zantetsu.Check.MobPlanHitRegistry"),
+
+                // The AppSW motion pass's extra distance culling (2026-10-19), its four CPU sections as VpAppSwMarkers
+                // says: Record holds UnityCull; the other two are the plugin route's. Their calls are columns of their own.
+                (ProfilerCategory.Scripts, Zantetsu.Rendering.Urp.VpAppSwMarkers.UnityCullName),
+                (ProfilerCategory.Scripts, Zantetsu.Rendering.Urp.VpAppSwMarkers.RecordName),
+                (ProfilerCategory.Scripts, Zantetsu.Rendering.Urp.VpAppSwMarkers.NativeCullRecordName),
+                (ProfilerCategory.Scripts, Zantetsu.Rendering.Urp.VpAppSwMarkers.MotionClipKeepName),
             };
+
+            // Where the AppSW sections are among the timeline's recorders (found once, in StartTimeline).
+            private int[] _appSwAt = Array.Empty<int>();
 
             private (ProfilerCategory category, string name)[] _timelineMarkers;
             private ProfilerRecorder[] _timelineRecorders;
@@ -833,6 +843,13 @@ namespace Zantetsu.Sandbox
                 public bool nativeKnown;
                 public long nPointersAsked, nPointersKept, nBodyIssues, nCasterIssues, nNotDrawn, nBuffersRetired;
                 public int nBlocksInFlight;
+
+                // The same, of the AppSW motion pass (2026-10-19): its body issues, and its clip records taken and kept.
+                public long nMotionIssues, nClipMotionTaken, nClipMotionKept;
+
+                // The calls of the AppSW sections in this row's frame (VpAppSwMarkers' order), read with the markers:
+                // -1 where the recorder is not valid or the row was not completed.
+                public long appSwCullCalls = -1, appSwRecordCalls = -1, appSwNativeCullCalls = -1, appSwMotionClipKeepCalls = -1;
                 public VpPlaceCounts placeStructural, placePlacementOnly;   // the Place passes of this frame, structural and placement-only (copies), null when not known
             }
 
@@ -1690,11 +1707,23 @@ namespace Zantetsu.Sandbox
                     Log("available recorders (" + names.Count + " of " + handles.Count + "): " + string.Join(" | ", names));
                 }
 
+                Zantetsu.Rendering.Urp.VpAppSwMarkers.Ensure();   // the AppSW sections' markers made before their recorders
                 _timelineRecorders = new ProfilerRecorder[_timelineMarkers.Length];
                 for (int i = 0; i < _timelineMarkers.Length; i++)
                 {
                     _timelineRecorders[i] = ProfilerRecorder.StartNew(_timelineMarkers[i].category, _timelineMarkers[i].name);
                 }
+
+                string[] appSw = Zantetsu.Rendering.Urp.VpAppSwMarkers.Names;
+                _appSwAt = new int[appSw.Length];
+                var appSwValid = new StringBuilder();
+                for (int k = 0; k < appSw.Length; k++)
+                {
+                    _appSwAt[k] = Array.FindIndex(_timelineMarkers, marker => marker.name == appSw[k]);
+                    appSwValid.Append(k == 0 ? "" : ", ").Append(appSw[k]).Append(_appSwAt[k] >= 0 && _timelineRecorders[_appSwAt[k]].Valid ? " valid" : " NOT valid");
+                }
+
+                Log("appsw sections' recorders: " + appSwValid + " (time ns and calls of each row's frame; -1 where not valid)");
 
                 PrepareTimelineRoom();
                 _timing = startRecording;
@@ -1779,6 +1808,16 @@ namespace Zantetsu.Sandbox
                 return new FrameRow();
             }
 
+            // The calls of the AppSW section k in the frame before: its recorder's last sample, as the markers' values are
+            // its last value (0 where the section did not run); -1 where its recorder is not valid.
+            private long CallsOf(int k)
+            {
+                int at = k < _appSwAt.Length ? _appSwAt[k] : -1;
+                if (at < 0) return -1;
+                ProfilerRecorder recorder = _timelineRecorders[at];
+                return !recorder.Valid ? -1 : recorder.Count > 0 ? recorder.GetSample(recorder.Count - 1).Count : 0;
+            }
+
             // One row for this frame, and the markers of the frame before into that frame's row. The rows come from the
             // room made at the timeline's start: an ordinary frame makes nothing here. The row before is the frame
             // before's (a row is taken every frame of the timeline), looked up by its place, not through a table.
@@ -1795,6 +1834,11 @@ namespace Zantetsu.Sandbox
                     {
                         previous.markers[i] = _timelineRecorders[i].Valid ? _timelineRecorders[i].LastValue : -1;
                     }
+
+                    previous.appSwCullCalls = CallsOf(0);
+                    previous.appSwRecordCalls = CallsOf(1);
+                    previous.appSwNativeCullCalls = CallsOf(2);
+                    previous.appSwMotionClipKeepCalls = CallsOf(3);
 
                     // The display's counts of that same frame, as it stamped them (not the counters' difference between two reads).
                     if (_world != null && _world.Display != null && _world.Display.TryGetFrameCounts(frame - 1, out VpLogicalCutDisplay.FrameCounts counts))
@@ -1837,6 +1881,9 @@ namespace Zantetsu.Sandbox
                             previous.nNotDrawn += route.Refused + route.RingFull + route.PipelineFailures + route.XrFramesNotDrawn;
                             previous.nBuffersRetired += route.BuffersRetired;
                             previous.nBlocksInFlight += route.BlocksInFlight;
+                            previous.nMotionIssues += route.MotionIssued;
+                            previous.nClipMotionTaken += route.DirectClipMotionTaken;
+                            previous.nClipMotionKept += route.DirectClipMotionKept;
                         }
                     }
                 }
@@ -1963,7 +2010,8 @@ namespace Zantetsu.Sandbox
                 var text = new StringBuilder(rows.Count * 160);
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
                 text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes"
-                    + ",nPointersAsked,nPointersKept,nBodyIssues,nCasterIssues,nNotDrawn,nBuffersRetired,nBlocksInFlight");
+                    + ",nPointersAsked,nPointersKept,nBodyIssues,nCasterIssues,nNotDrawn,nBuffersRetired,nBlocksInFlight"
+                    + ",nMotionIssues,nClipMotionTaken,nClipMotionKept,appSwCullCalls,appSwRecordCalls,appSwNativeCullCalls,appSwMotionClipKeepCalls");
                 foreach (string name in markerNames)
                 {
                     text.Append(',').Append(name);
@@ -2132,13 +2180,18 @@ namespace Zantetsu.Sandbox
                         text.Append(',').Append(r.nPointersAsked - nativeBefore.nPointersAsked).Append(',').Append(r.nPointersKept - nativeBefore.nPointersKept)
                             .Append(',').Append(r.nBodyIssues - nativeBefore.nBodyIssues).Append(',').Append(r.nCasterIssues - nativeBefore.nCasterIssues)
                             .Append(',').Append(r.nNotDrawn - nativeBefore.nNotDrawn).Append(',').Append(r.nBuffersRetired - nativeBefore.nBuffersRetired)
-                            .Append(',').Append(r.nBlocksInFlight);
+                            .Append(',').Append(r.nBlocksInFlight)
+                            .Append(',').Append(r.nMotionIssues - nativeBefore.nMotionIssues).Append(',').Append(r.nClipMotionTaken - nativeBefore.nClipMotionTaken)
+                            .Append(',').Append(r.nClipMotionKept - nativeBefore.nClipMotionKept);
                     }
                     else
                     {
                         // Not the plugin's world, or the first row of one (no row before to take the difference from).
-                        text.Append(",,,,,,,");
+                        text.Append(",,,,,,,,,,");
                     }
+
+                    text.Append(',').Append(r.appSwCullCalls).Append(',').Append(r.appSwRecordCalls)
+                        .Append(',').Append(r.appSwNativeCullCalls).Append(',').Append(r.appSwMotionClipKeepCalls);
 
                     if (r.nativeKnown) nativeBefore = r;
                     for (int i = 0; i < markerNames.Length; i++)

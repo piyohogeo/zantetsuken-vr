@@ -13,7 +13,6 @@ namespace Zantetsu.Rendering.Urp
     public sealed class VpAppSwDistanceExperiment : IDisposable
     {
         private static readonly Dictionary<Camera, VpAppSwDistanceExperiment> Active = new();
-        private static readonly ProfilerMarker CullMarker = new("Zantetsu.AppSwDistance.UnityCull");
         private readonly Camera _camera;
         private readonly ScriptableRenderer _renderer;
         private readonly FieldInfo _stockField;
@@ -65,6 +64,8 @@ namespace Zantetsu.Rendering.Urp
             if (camera.xr == null || !camera.xr.enabled || !camera.xr.singlePassEnabled || !camera.xr.hasMotionVectorPass) return;
             var rendering = frame.Get<UniversalRenderingData>();
             var original = rendering.cullResults;
+            // The outer section (VpAppSwMarkers): the parameters, the Cull (its own section inside), the stock update and recording.
+            using var recordSection = VpAppSwMarkers.Record.Auto();
             try
             {
                 if (ReferenceEquals(camera.camera, _camera) && FarMeters > 0f)
@@ -81,7 +82,7 @@ namespace Zantetsu.Rendering.Urp
                     parameters.SetCullingPlane(slot, plane);
                     parameters.cullingOptions &= ~(CullingOptions.ShadowCasters | CullingOptions.NeedsLighting | CullingOptions.NeedsReflectionProbes);
                     parameters.maximumVisibleLights = 0;
-                    using (CullMarker.Auto()) rendering.cullResults = _pass.Context.Cull(ref parameters);
+                    using (VpAppSwMarkers.UnityCull.Auto()) rendering.cullResults = _pass.Context.Cull(ref parameters);
                     CulledFrames++;
                 }
                 _stock.Update(ref camera);
