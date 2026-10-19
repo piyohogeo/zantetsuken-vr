@@ -142,6 +142,9 @@ namespace Zantetsu.Sandbox
         // Play's own turn of the katana toward its edge (EdgewardTiltDegrees): not a scene's value, not saved with one.
         private float edgewardTiltDegrees;
 
+        // Play's own shift of the katana along its blade axis (GripAxialOffsetMetres): not a scene's value either.
+        private float gripAxialOffsetMetres;
+
         [Header("Blade")]
         [Tooltip("Blade length in metres, from the katana origin toward the tip.")]
         [SerializeField] private float bladeLength = 0.9f;
@@ -599,8 +602,39 @@ namespace Zantetsu.Sandbox
             return Core.TryGetWaveSpanClose(index, out spanClosedAt, out frozenGuideOrigin, out frozenGuideDirection);
         }
 
-        /// <summary>The single provisional fixed grip-to-katana offset.</summary>
-        internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles) * Quaternion.Euler(edgewardTiltDegrees, 0f, 0f));
+        /// <summary>
+        /// The single provisional fixed grip-to-katana offset, with play's own turn toward the edge and shift along the
+        /// blade axis (the axis as turned: the katana's forward, from its origin toward the tip).
+        /// </summary>
+        internal Pose GripToKatanaOffset
+        {
+            get
+            {
+                Quaternion rotation = Quaternion.Euler(offsetEulerAngles) * Quaternion.Euler(edgewardTiltDegrees, 0f, 0f);
+                return new Pose(offsetPosition + (rotation * new Vector3(0f, 0f, gripAxialOffsetMetres)), rotation);
+            }
+        }
+
+        /// <summary>
+        /// The katana moved along its own blade axis from the scene's grip-to-katana offset, in metres (positive:
+        /// toward the tip, so the hand comes nearer the hilt's end). It moves the blade frame -- what is shown and what
+        /// cuts together -- and is the player's own setting in play (<see cref="PlaySettings"/>); a scene's saved offset
+        /// and a scripted run are not changed by it (0 unless play sets it). Changing it starts the slash state over.
+        /// </summary>
+        internal float GripAxialOffsetMetres
+        {
+            get => gripAxialOffsetMetres;
+            set
+            {
+                if (Mathf.Approximately(gripAxialOffsetMetres, value))
+                {
+                    return;
+                }
+
+                gripAxialOffsetMetres = value;
+                ResetToKnownState();
+            }
+        }
 
         /// <summary>
         /// The katana turned toward its edge from the scene's own grip-to-katana offset, in degrees about the side
@@ -810,7 +844,7 @@ namespace Zantetsu.Sandbox
             SpanCaptureTimeoutSeconds = spanCaptureTimeoutSeconds,
             BeginBladeAxisViewDotMinimum = beginBladeAxisViewDotMinimum,
             BladeLength = bladeLength,
-            GripOffsetPosition = offsetPosition,
+            GripOffsetPosition = GripToKatanaOffset.position,   // with play's shift along the blade, as the rotation is with its turn (equal to the scene's at 0)
             GripOffsetRotation = GripToKatanaOffset.rotation,
             EmissionControlPointRatio = SlashBlade.EmissionControlPointRatio,
             CutSampleRatio = CutSampleRatio,

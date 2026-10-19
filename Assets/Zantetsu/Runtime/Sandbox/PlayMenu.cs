@@ -122,6 +122,15 @@ namespace Zantetsu.Sandbox
         public const float BladeAngleDefault = 30f;
 
         /// <summary>
+        /// The katana moved along its blade axis from the scenes' grip offset, in centimetres (TL 2026-10-19: the hand
+        /// seemed to hold the blade's root, not the hilt): positive toward the tip, so the hand comes nearer the hilt's
+        /// end. Shown and saved in cm; the katana takes metres.
+        /// </summary>
+        public const string GripOffsetKey = "zantetsu.play.gripOffsetCentimetres";
+        public const float GripOffsetMinimum = -10f, GripOffsetMaximum = 30f, GripOffsetStep = 1f;
+        public const float GripOffsetDefault = 5f;   // TL 2026-10-19, after trying it on the device
+
+        /// <summary>
         /// The physics' maximum depenetration velocity, m/s (TL 2026-10-19): the speed at which overlapping bodies
         /// are pushed apart -- the project's default is 1 (TL 2026-10-11: at 10 the corpses were flung away), and the
         /// player may raise it to 10. Applied to the physics' default (what every new body takes) and to every body in
@@ -226,6 +235,15 @@ namespace Zantetsu.Sandbox
                 blade = "; blade angle " + BladeAngle.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + (saved ? " (saved)" : " (play's default)");
             }
 
+            // The grip offset along the blade is play's own as well: the saved one, or the default (0: the scenes' offset).
+            if (_katanas.Count > 0)
+            {
+                bool gripSaved = PlayerPrefs.HasKey(GripOffsetKey);
+                SetGripOffset(gripSaved ? PlayerPrefs.GetFloat(GripOffsetKey) : GripOffsetDefault, false);
+                if (gripSaved) applied++;
+                blade += "; grip offset " + GripOffset.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " cm" + (gripSaved ? " (saved)" : " (default)");
+            }
+
             // The depenetration velocity is play's own too: the saved one, or the default where none was saved.
             bool depenetrationSaved = PlayerPrefs.HasKey(DepenetrationKey);
             SetDepenetration(depenetrationSaved ? PlayerPrefs.GetFloat(DepenetrationKey) : DepenetrationDefault, false);
@@ -260,6 +278,35 @@ namespace Zantetsu.Sandbox
             if (save)
             {
                 Save(DepenetrationKey, value);
+            }
+        }
+
+        /// <summary>The katana's shift along its blade axis now, cm (0 without a katana).</summary>
+        public float GripOffset => _katanas.Count > 0 && _katanas[0] != null ? _katanas[0].GripAxialOffsetMetres * 100f : 0f;
+
+        public void SetGripOffset(float centimetres) => SetGripOffset(centimetres, true);
+
+        private void SetGripOffset(float centimetres, bool save)
+        {
+            if (!_persist)
+            {
+                return;
+            }
+
+            centimetres = Mathf.Clamp(centimetres, GripOffsetMinimum, GripOffsetMaximum);
+            bool any = false;
+            foreach (SandboxRightHandKatana katana in _katanas)
+            {
+                if (katana != null)
+                {
+                    katana.GripAxialOffsetMetres = centimetres / 100f;
+                    any = true;
+                }
+            }
+
+            if (any && save)
+            {
+                Save(GripOffsetKey, centimetres);
             }
         }
 
@@ -930,6 +977,13 @@ namespace Zantetsu.Sandbox
                 label = "Depenetration", minimum = PlaySettings.DepenetrationMinimum, maximum = PlaySettings.DepenetrationMaximum,
                 step = PlaySettings.DepenetrationStep, format = "F1", unit = " m/s", interactable = _settings.DepenetrationChangeable,
                 read = () => _settings.Depenetration, write = _settings.SetDepenetration,
+            });
+            // Where the hand holds the katana along its blade, before its angle: play's own (a scripted run keeps the offset its hands were recorded for).
+            rows.Add(new PlayMenuView.Row
+            {
+                label = "Grip offset", minimum = PlaySettings.GripOffsetMinimum, maximum = PlaySettings.GripOffsetMaximum,
+                step = PlaySettings.GripOffsetStep, format = "F0", unit = " cm", interactable = _settings.BladeAngleChangeable,
+                read = () => _settings.GripOffset, write = _settings.SetGripOffset,
             });
             // The katana's angle in the hand, last: play's own (a scripted run keeps the offset its hands were recorded for).
             rows.Add(new PlayMenuView.Row

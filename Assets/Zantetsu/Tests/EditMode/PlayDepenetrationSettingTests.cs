@@ -114,7 +114,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void TheMenu_HasTheRow_BeforeTheBladeAngle_WithTheRangeAndStep()
+        public void TheMenu_HasTheRow_BeforeTheKatanasRows_WithTheRangeAndStep()
         {
             var camera = new GameObject("Main Camera", typeof(Camera)) { tag = "MainCamera" };
             _made.Add(camera);
@@ -130,7 +130,7 @@ namespace Zantetsu.Core.Tests
                 int at = -1;
                 for (int i = 0; i < rows.Count; i++) if (rows[i].label == "Depenetration") at = i;
                 Assert.That(at, Is.GreaterThanOrEqualTo(0), "the row is there");
-                Assert.That(rows[at + 1].label, Is.EqualTo("Blade angle"), "right before the blade angle");
+                Assert.That(rows[at + 1].label, Is.EqualTo("Grip offset"), "before the katana's own rows (grip offset, blade angle)");
                 PlayMenuView.Row row = rows[at];
                 Assert.That(row.minimum, Is.EqualTo(1f));
                 Assert.That(row.maximum, Is.EqualTo(10f));
