@@ -18,13 +18,14 @@ namespace Zantetsu.Core.Tests
         private static QuestNpcSlashDemo.Config ReadPlay(string json) => QuestNpcSlashDemo.ReadLaunch(json, SandboxScenarioKind.Play);
 
         [Test]
-        public void Play_WithNoFile_HasNoDistanceExperiment()
+        public void Play_WithNoFile_HasItsOwnAppSwDistance_30m()
         {
             string failure = Check(null, SandboxScenarioKind.Play, out string mode, out bool appSw, out bool distance);
             Assert.That(failure, Is.Null);
             Assert.That(mode, Is.EqualTo("vp3c-native"), "the product's route");
             Assert.That(appSw, Is.True);
-            Assert.That(distance, Is.False, "the experiment is the scripted runs': never play's, whatever the class's default is");
+            Assert.That(distance, Is.True, "D-250: play's own AppSW extra culling, by its own default");
+            Assert.That(ReadPlay(null).appSwFarMeters, Is.EqualTo(30f));
 
             // The same absence of a file for a scripted run keeps the experiment its default has.
             Assert.That(Check(null, SandboxScenarioKind.CityWalk, out mode, out appSw, out distance), Is.Null);
@@ -40,9 +41,14 @@ namespace Zantetsu.Core.Tests
                 + " \"inputStart\": -5, \"inputRows\": 0, \"cityWalkBudgetSeconds\": -1 }";
             string failure = Check(left, SandboxScenarioKind.Play, out string mode, out bool appSw, out bool distance);
             Assert.That(failure, Is.Null, "nothing of a script is asked of play: not its input range, not its budget");
-            Assert.That(new object[] { mode, appSw, distance }, Is.EqualTo(new object[] { "vp3c-native", true, false }));
+            Assert.That(new object[] { mode, appSw, distance }, Is.EqualTo(new object[] { "vp3c-native", true, true }), "play's own distance (D-250)");
+            var played = ReadPlay(left);
+            Assert.That(new object[] { played.appSwFixedView, played.profiler, played.nativeIndirectCountVerify }, Is.EqualTo(new object[] { "off", false, false }),
+                "the script's fixed view, profile and diagnoses are not taken");
+            Assert.That(ReadPlay("{ \"appSwDistanceExperiment\": false }").appSwDistanceExperiment, Is.True,
+                "the scripted runs' switch is not read either way: no file and a file left behind start the same play");
 
-            // The experiment's file with the other route: the experiment would refuse it; play starts.
+            // The experiment's file with the other route: the extra culling is not made there; play starts.
             const string unityCalls = "{ \"mode\": \"vp3c\", \"appSw\": true, \"appSwDistanceExperiment\": true, \"appSwFarMeters\": 30 }";
             failure = Check(unityCalls, SandboxScenarioKind.Play, out mode, out appSw, out distance);
             Assert.That(failure, Is.Null, "the experiment's condition is not play's");
@@ -70,9 +76,37 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReadPlay("{ \"spatialSplitBent\": false }").spatialSplitBent, Is.False);
             Assert.That(ReadPlay("{ \"mode\": \"vp3c-native\" }").spatialSplitBent, Is.False, "not asked: play as before");
             Assert.That(ReadPlay(null).spatialSplitBent, Is.False, "no file: play as before");
-            var left = ReadPlay("{ \"spatialSplitBent\": true, \"appSwDistanceExperiment\": true, \"profiler\": true }");
-            Assert.That(new object[] { left.spatialSplitBent, left.appSwDistanceExperiment, left.profiler }, Is.EqualTo(new object[] { true, false, false }),
-                "the experiment's and the profiler's switches are still left at what play needs");
+            var left = ReadPlay("{ \"spatialSplitBent\": true, \"appSwDistanceExperiment\": true, \"appSwFarMeters\": 60, \"profiler\": true }");
+            Assert.That(new object[] { left.spatialSplitBent, left.appSwFarMeters, left.profiler }, Is.EqualTo(new object[] { true, 30f, false }),
+                "the experiment's and the profiler's switches are still left at what play needs (its distance is play's own)");
+        }
+
+        [Test]
+        public void Play_TakesItsOwnAppSwDistance_30mByDefault_MinusOneTheWayBack()
+        {
+            // Play's own switch (D-250): the extra culling with the fixed view off, 30 m unless the file says otherwise.
+            string failure = Check("{ \"mode\": \"vp3c-native\", \"appSw\": true }", SandboxScenarioKind.Play, out string mode, out bool appSw, out bool distance);
+            Assert.That(failure, Is.Null);
+            Assert.That(distance, Is.True, "by play's own default");
+            var config = ReadPlay("{ \"playAppSwFarMeters\": 60, \"appSwFixedView\": \"capture\", \"appSwFarMeters\": 30 }");
+            Assert.That(new object[] { config.appSwFarMeters, config.appSwFixedView }, Is.EqualTo(new object[] { 60f, "off" }),
+                "play's distance, not the scripted runs'; the view never fixed in play");
+
+            // The way back: -1.
+            Assert.That(ReadPlay("{ \"playAppSwFarMeters\": -1 }").appSwDistanceExperiment, Is.False);
+            Assert.That(Check("{ \"playAppSwFarMeters\": -1 }", SandboxScenarioKind.Play, out mode, out appSw, out distance), Is.Null);
+            Assert.That(distance, Is.False);
+
+            // Made only where it applies: AppSW off or the other route play without it (no failure); past the colour far is refused.
+            Assert.That(Check("{ \"appSw\": false }", SandboxScenarioKind.Play, out mode, out appSw, out distance), Is.Null);
+            Assert.That(distance, Is.False, "no AppSW, no extra culling of it");
+            Assert.That(Check("{ \"mode\": \"vp3c\" }", SandboxScenarioKind.Play, out mode, out appSw, out distance), Is.Null, "the other route plays");
+            Assert.That(distance, Is.False, "and without the extra culling");
+            Assert.That(Check("{ \"playAppSwFarMeters\": 150 }", SandboxScenarioKind.Play, out mode, out appSw, out distance),
+                Is.EqualTo("play's AppSW distance must be within the colour far (100 m)"));
+
+            // A scripted run does not read play's switch.
+            Assert.That(QuestNpcSlashDemo.ReadLaunch("{ \"appSwDistanceExperiment\": false, \"playAppSwFarMeters\": 30 }", SandboxScenarioKind.CityWalk).appSwDistanceExperiment, Is.False);
         }
 
         [Test]

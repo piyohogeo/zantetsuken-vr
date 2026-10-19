@@ -43,6 +43,7 @@ namespace Zantetsu.Quest
             public int fragmentGroupsMax = -1; // DESIGN 7.10: 0 or more switches the fragment group collection on above that many live cut fragments; -1 leaves the world's profile as it is.
             public bool spatialSplit = false; // DESIGN 7.9.2: true switches the spatial split on for the scene's cut worlds; false leaves the world's profile as it is.
             public bool spatialSplitBent = false; // DESIGN 7.9.2, the bent partition: true switches it on for the scene's cut worlds' split (the split itself as the profile or spatialSplit has it); false leaves the profile as it is.
+            public float playAppSwFarMeters = 30f; // DESIGN 3.4, D-250 (2026-10-19): play's own AppSW extra culling distance, metres; 30 by default, -1 the way back (none). The scripted runs' experiment switches never reach play; this does.
             public float cityWalkBudgetSeconds = 565f;
             public int inputStart = 2227;
             public int inputRows = 512;
@@ -129,8 +130,8 @@ namespace Zantetsu.Quest
         /// The configuration a scenario runs with, from the launch's file (null: no file, every default). A scripted
         /// scenario takes the file as it is. **Play takes the common settings alone** (DESIGN 3.4): the draw route's
         /// mode and its documented way back (the fixed draw), AppSW and the application space's pose. Everything of a
-        /// scripted run or an experiment is left at what play needs whatever the file says -- no distance experiment
-        /// (the class's default has it on, for the scripted runs), no profile, no diagnosis of the compaction, no
+        /// scripted run or an experiment is left at what play needs whatever the file says -- the scripted runs' distance
+        /// experiment is not read (play has its own, playAppSwFarMeters: 30 m by default, D-250), no profile, no diagnosis of the compaction, no
         /// comparison switch of the native route -- so that a file left by an earlier experiment, or no file at all,
         /// starts the same play.
         /// </summary>
@@ -153,7 +154,13 @@ namespace Zantetsu.Quest
                 // leaves play as it is, and the Quest check of the bent partition runs as play (qBent2 of 2026-10-15 asked
                 // for it and got the profile's off, because this copy left it out).
                 spatialSplitBent = launch.spatialSplitBent,
-                appSwDistanceExperiment = false,
+                // The AppSW extra culling in play by play's own switch alone (D-250: 30 m by default, -1 none): the
+                // scripted runs' appSwDistanceExperiment, true by the class's default, is never read here. It is made
+                // only where it applies -- the native route with AppSW; with the other route play runs without it.
+                playAppSwFarMeters = launch.playAppSwFarMeters,
+                appSwDistanceExperiment = launch.playAppSwFarMeters > 0f && launch.mode == "vp3c-native",
+                appSwFarMeters = launch.playAppSwFarMeters > 0f ? launch.playAppSwFarMeters : 0f,
+                appSwFixedView = "off",
                 profiler = false,
             };
         }
@@ -166,7 +173,13 @@ namespace Zantetsu.Quest
         {
             if (config == null || (config.mode != "vp3c" && config.mode != "vp3c-native")) return "mode must be vp3c or vp3c-native";
             if (config.appSpacePoseMode != "camera" && config.appSpacePoseMode != "tracking-origin") return "appSpacePoseMode must be camera or tracking-origin";
-            if (kind == SandboxScenarioKind.Play) return null;
+            if (kind == SandboxScenarioKind.Play)
+            {
+                // Play's own AppSW distance: only a value written past the colour far is refused (the route was settled in ConfigFor).
+                if (config.playAppSwFarMeters > 0f && (!float.IsFinite(config.playAppSwFarMeters) || config.playAppSwFarMeters > 100f))
+                    return "play's AppSW distance must be within the colour far (100 m)";
+                return null;
+            }
             if (config.inputStart < 0 || config.inputRows < 1 || config.inputRows > 4096
                 || !float.IsFinite(config.startDelaySeconds) || config.startDelaySeconds < 0f) return "invalid input range or start delay";
             if (kind == SandboxScenarioKind.CityWalk && (!float.IsFinite(config.cityWalkBudgetSeconds) || config.cityWalkBudgetSeconds <= 0f))
@@ -305,8 +318,10 @@ namespace Zantetsu.Quest
             ApplyNativeOptions(_config);
             if (_config.appSw && _config.appSwDistanceExperiment)
             {
-                // (Never in play: its configuration has the experiment off. The mode was checked with the rest.)
-                _distanceSetup = new QuestAppSwDistanceSetup(_camera, _config.appSwFarMeters, _config.appSwFixedView, Application.persistentDataPath);
+                // (In play by its own switch, playAppSwFarMeters, D-250, with the fixed view off. The mode was checked with
+                // the rest.) Refused in play, play goes on without it: it saves GPU time, play does not depend on it.
+                try { _distanceSetup = new QuestAppSwDistanceSetup(_camera, _config.appSwFarMeters, _config.appSwFixedView, Application.persistentDataPath); }
+                catch (Exception refused) when (_play) { Debug.LogWarning(LogPrefix + "AppSW distance refused, play goes on without it: " + refused.Message); }
             }
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = -1; // The 90 Hz OpenXR display and AppSW select the application cadence.
@@ -319,6 +334,7 @@ namespace Zantetsu.Quest
                 RenderPipelineManager.beginCameraRendering += BeforeCamera;
                 _phase = "Play";
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " AppSW=" + _config.appSw + " appSpace=" + _config.appSpacePoseMode
+                    + " AppSW distance=" + (_distanceSetup != null ? _distanceSetup.Describe : "none")
                     + " scene=" + SceneManager.GetActiveScene().name + "; no script, no measurement, no ending");
                 // The bent partition's verification switch is the one switch of the configuration play applies to the
                 // scene's cut worlds (DESIGN 3.4, 7.9.2): the worlds exist with the scene, before any cut. (qBent3 of

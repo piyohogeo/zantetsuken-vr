@@ -72,6 +72,10 @@ CPU区間は `VpAppSwMarkers` の4つを街歩きの `frames.csv` に記録す�
 - App GPUの差は、追加GPUカリングの負担とAppSW描画対象の減少などを合わせた有効化による総差。各条件2回なので統計的な確かさは示せず、視点の向きが走行で揃っていない（Bの1回はpitchが約16°違う）ため、30mだけによる改善量とは確定しない。
 - `frames.csv` の `xrAppGpuMs` 列は名前に反して秒で、約1秒に1回更新される。
 
+### playの既定（D-250、2026-10-19）
+
+playでも30mの追加カリングを既定にした（`playAppSwFarMeters`、既定30、−1で無し。`Run-Play.ps1 -AppSwFarMeters -1` が戻し方）。play での試行で見た目の問題なし（ユーザー確認）。台本側の `appSwDistanceExperiment` はplayに入らない。ネイティブ経路とAppSWのときだけ作る。
+
 ## 見た目の確認
 
 通常のヘッドトラッキングで、追加制限なし → 60m → 30mを比較。
