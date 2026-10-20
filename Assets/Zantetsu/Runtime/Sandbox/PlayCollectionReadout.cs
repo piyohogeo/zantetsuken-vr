@@ -96,7 +96,7 @@ namespace Zantetsu.Sandbox
             b.Append(" | empty owners retired ").Append(_world.EmptyOwners != null ? _world.EmptyOwners.Retired : 0)
                 .Append(", piece lifetime retired ").Append(_world.Lifetime != null ? _world.Lifetime.Retired : 0);
             b.Append(" | Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", c)).Append(" ms a frame (application frame ")
-                .Append((CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F1", c)).Append(CutPhysicsStep.ApplicationFrameFromSource ? " ms, frame synthesis" : " ms, default")
+                .Append((CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F1", c)).Append(" ms, ").Append(CutPhysicsStep.ApplicationFrameSourceName)
                 .Append(", less the common margin ").Append((CutPhysicsStep.CommonMarginSeconds * 1000.0).ToString("F1", c)).Append(" ms); left of it at the end of the frame's scripts in the last ")
                 .Append(_frames).Append(" frames: mean ").Append(_frames > 0 ? (_leftSum / _frames * 1000.0).ToString("F2", c) : "-")
                 .Append(" ms, least ").Append(_frames > 0 ? (_leftLeast * 1000.0).ToString("F2", c) : "-")

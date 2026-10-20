@@ -1072,8 +1072,9 @@ namespace Zantetsu.PhysicsCut
         /// seconds, beyond twice its own expected cost (D-202), and with it the collections' and the spatial split's
         /// reserve. **0 since 2026-10-19**: what it left -- the cameras' preparations and the frame's rendering, after
         /// the collection -- is the shared budget's common margin now (<see cref="CutPhysicsStep.CommonMarginSeconds"/>,
-        /// the same 2 ms), not taken a second time. A reader's reservation for a particular later work (the step later
-        /// in the frame, the structural collection a retirement causes) is that reader's own and stays.
+        /// 2 ms when it was set; 9 % of the period since 2026-10-20, and still 0 here: no offsetting), not taken a second
+        /// time. A reader's reservation for a particular later work (the step later in the frame, the structural
+        /// collection a retirement causes) is that reader's own and stays.
         /// </summary>
         public const double CompactionReserveSeconds = 0.0;
 

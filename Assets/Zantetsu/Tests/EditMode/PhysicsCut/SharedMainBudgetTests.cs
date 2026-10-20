@@ -23,13 +23,49 @@ namespace Zantetsu.PhysicsCut.Tests
             CutPhysicsStep.SettleFramePeriod();
         }
 
+        /// <summary>
+        /// **The margin is 9 % of the target period** (TL, 2026-10-20): PCVR 90 Hz 1.00 ms (budget 10.11 ms), PCVR 72 Hz
+        /// 1.25 ms (12.64 ms), Quest under AppSW at 45 Hz 2.00 ms (20.22 ms, as with the fixed 2 ms). The fixed 2 ms of
+        /// 2026-10-19 stays for comparison.
+        /// </summary>
         [Test]
-        public void TheBudget_IsTheApplicationFrameLessTheCommonMargin_At45And90Hz()
+        public void TheBudget_IsTheTargetPeriodLess9Percent_At90_72And45Hz_AndTheFixed2MsIsKeptForComparison()
         {
-            Assert.That(CutPhysicsStep.CommonMarginSeconds, Is.EqualTo(0.002), "2 ms, provisional");
-            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 45.0) * 1000.0, Is.EqualTo(22.2222 - 2.0).Within(1e-3), "an application at 45 Hz: 22.2 ms less the margin");
-            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 90.0) * 1000.0, Is.EqualTo(11.1111 - 2.0).Within(1e-3), "at 90 Hz: 11.1 ms less the margin");
+            const MainMarginKind nine = MainMarginKind.PeriodFraction, two = MainMarginKind.Fixed2Ms;
+            Assert.That(CutPhysicsStep.MarginFraction, Is.EqualTo(0.09));
+            Assert.That(CutPhysicsStep.MarginFor(1.0 / 90.0, nine) * 1000.0, Is.EqualTo(1.00).Within(1e-9), "PCVR 90 Hz: 1.00 ms");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 90.0, nine) * 1000.0, Is.EqualTo(10.1111).Within(1e-3), "budget ~10.11 ms");
+            Assert.That(CutPhysicsStep.MarginFor(1.0 / 72.0, nine) * 1000.0, Is.EqualTo(1.25).Within(1e-9), "PCVR 72 Hz: 1.25 ms");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 72.0, nine) * 1000.0, Is.EqualTo(12.6389).Within(1e-3), "budget ~12.64 ms");
+            Assert.That(CutPhysicsStep.MarginFor(1.0 / 45.0, nine) * 1000.0, Is.EqualTo(2.00).Within(1e-9), "Quest AppSW 45 Hz: 2.00 ms, as before");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 45.0, nine) * 1000.0, Is.EqualTo(20.2222).Within(1e-3), "budget ~20.22 ms, as before");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 45.0, nine), Is.EqualTo(CutPhysicsStep.BudgetFor(1.0 / 45.0, two)).Within(1e-12), "at 45 Hz the two margins agree");
+
+            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 45.0 })
+            {
+                Assert.That(CutPhysicsStep.MarginFor(frame, two), Is.EqualTo(0.002), "the fixed 2 ms whatever the period");
+                Assert.That(CutPhysicsStep.BudgetFor(frame, two), Is.EqualTo(frame - 0.002).Within(1e-15));
+            }
+
+            Assert.That(CutPhysicsStep.MarginKind, Is.EqualTo(nine), "the default kind (no argument)");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 90.0), Is.EqualTo(CutPhysicsStep.BudgetFor(1.0 / 90.0, nine)), "the session's kind is the default");
             Assert.That(CutPhysicsStep.DefaultMainBudgetSeconds, Is.EqualTo(CutPhysicsStep.BudgetFor(CutPhysicsStep.DefaultApplicationFrameSeconds)));
+        }
+
+        /// <summary>
+        /// **The margin is taken once, from the period alone.** The remainder is the budget less the time since the frame's
+        /// start -- the margin not taken again -- and nothing of the step enters it: a double step's frame has the same
+        /// budget as any other.
+        /// </summary>
+        [Test]
+        public void TheMargin_IsTakenOnce_AndTheDoubleStepDoesNotEnlargeTheBudget()
+        {
+            long f = Stopwatch.Frequency, start = 5_000_000;
+            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 45.0 })
+            {
+                double remaining = CutPhysicsStep.RemainingAt(frame, start, start + (2 * f / 1000), f);
+                Assert.That(remaining, Is.EqualTo(frame - (0.09 * frame) - 0.002).Within(1e-9), "period, less 9 % once, less 2 ms spent");
+            }
         }
 
         [Test]
@@ -132,6 +168,11 @@ namespace Zantetsu.PhysicsCut.Tests
             // Through the budget's acceptance: no answer is the default 90 Hz frame, never 45 Hz's.
             Assert.That(CutPhysicsStep.AcceptedFrameSeconds(QuestNpcSlashDemo.FrameSecondsUnderSynthesis(true, false, true, 45f, true, 90f), out _),
                 Is.EqualTo(CutPhysicsStep.DefaultApplicationFrameSeconds));
+            // Quest under AppSW at 45 Hz, through its source: the 9 % margin is 2.00 ms and the budget ~20.22 ms, as with the fixed 2 ms.
+            double quest = CutPhysicsStep.AcceptedFrameSeconds(QuestNpcSlashDemo.FrameSecondsUnderSynthesis(true, true, true, 44.99932f, true, 90f), out bool fromQuest);
+            Assert.That(fromQuest, Is.True);
+            Assert.That(CutPhysicsStep.MarginFor(quest, MainMarginKind.PeriodFraction) * 1000.0, Is.EqualTo(2.0).Within(1e-9));
+            Assert.That(CutPhysicsStep.BudgetFor(quest, MainMarginKind.PeriodFraction) * 1000.0, Is.EqualTo(20.2222).Within(1e-3));
         }
 
         [Test]
@@ -141,12 +182,16 @@ namespace Zantetsu.PhysicsCut.Tests
                 "the fragment groups' addition of the application's frame (D-233) is gone: the shared budget holds it");
             Assert.That(CutWorldRoot.CompactionReserveSeconds, Is.Zero,
                 "the compaction's, the collections' and the split's reserve was the same room the common margin leaves now");
-            Assert.That(CutWorldProfile.BeyondCommonMargin(0.004), Is.EqualTo(0.002).Within(1e-12), "a 4 ms floor keeps its own 2 ms beyond the margin");
-            Assert.That(CutWorldProfile.BeyondCommonMargin(0.001), Is.Zero, "never below 0");
+            Assert.That(CutWorldProfile.ReserveFrameTailSeconds, Is.EqualTo(0.002), "the part D-251 took over: 2 ms, fixed");
+            Assert.That(CutWorldProfile.BeyondFrameTail(0.004), Is.EqualTo(0.002).Within(1e-12), "a 4 ms floor keeps its own 2 ms");
+            Assert.That(CutWorldProfile.BeyondFrameTail(0.001), Is.Zero, "never below 0");
+            // No offsetting (TL, 2026-10-20): at PCVR 90 Hz the margin is 1 ms, and a reserve is not given that 1 ms back.
+            Assert.That(CutWorldProfile.BeyondFrameTail(0.004), Is.Not.EqualTo(0.004 - CutPhysicsStep.MarginFor(1.0 / 90.0, MainMarginKind.PeriodFraction)).Within(1e-9),
+                "not the reserve less the frame's margin (that would be 3 ms at 90 Hz)");
             var profile = ScriptableObject.CreateInstance<CutWorldProfile>();
             try
             {
-                Assert.That(profile.PieceLifetime.minRemainingMainSeconds, Is.EqualTo(0.002).Within(1e-9), "the piece lifetime's 4 ms less the margin");
+                Assert.That(profile.PieceLifetime.minRemainingMainSeconds, Is.EqualTo(0.002).Within(1e-9), "the piece lifetime's 4 ms less the fixed 2 ms: 2 ms at every rate");
                 Assert.That(profile.FragmentGroupCollection.reserveSeconds, Is.Zero);
                 Assert.That(profile.EmptyOwnerCollection.reserveSeconds, Is.Zero);
                 Assert.That(profile.SpatialSplit.reserveSeconds, Is.Zero);

@@ -44,6 +44,7 @@ namespace Zantetsu.Sandbox
                 float.TryParse(Value("-zantetsuBuildingObserveSeconds"), System.Globalization.NumberStyles.Float, Inv, out float s) && s > BuildingObservationPhysicsSeconds
                     ? s : BuildingObservationPhysicsSeconds;
             private long _observeFromStep = -1;
+            private double _observeFromPhysics = double.NaN;   // the physics time there: times are physics-time differences, never steps times 1/Hz (PCVR's double step, DESIGN 4.4)
 
             // [quality] thresholds, written into the log with every result.
             private const float TeleportComMetres = 0.10f;    // COM displacement in a read beyond what the linear velocity explains
@@ -89,6 +90,7 @@ namespace Zantetsu.Sandbox
                 public Vector3 lastCom, lastV, lastW;
                 public Quaternion lastRot;
                 public long lastStep = -1;
+                public double lastPhysics = double.NaN;
                 public int lastFrame;
                 public float lastTotal = float.NaN, lastDTotal;
                 public int reversals;
@@ -104,9 +106,11 @@ namespace Zantetsu.Sandbox
                 // Sleep in the observation period after the last cut: the step it first slept, how many times it went to
                 // sleep, how many times it woke after having slept, and whether it sleeps at the end. Recorded, not required.
                 public long firstSleepStep = -1;
+                public double firstSleepPhysics = double.NaN;
                 public int sleeps, wakes;
                 public bool sleeping, observedAny;
                 public readonly List<long> wakeSteps = new List<long>();
+                public readonly List<double> wakePhysics = new List<double>();
                 public PhysicsFragmentOwner owner;
                 public readonly Queue<string> recent = new Queue<string>();
                 public int after;
@@ -354,7 +358,8 @@ namespace Zantetsu.Sandbox
                 bool d6On = _world.Profile.BuildingWorld.enabled;   // with the World D6 off (the fusion's runs) nothing about a D6 is judged
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 long step = clock != null ? clock.StepId : -1;
-                float h = clock != null ? 1f / clock.FrequencyHz : 0f;
+                double physicsNow = clock != null ? clock.PhysicsSeconds : double.NaN;   // the elapsed time between reads is its difference
+
                 BuildingWorldD6Settings d6 = _world.Profile.BuildingWorld;
                 var live = new HashSet<int>();
                 _bodyFragment.Clear();
@@ -405,7 +410,7 @@ namespace Zantetsu.Sandbox
                         {
                             firstFrame = frame, firstStep = step, originOp = hasOrigin ? origin.value : 0, depth = depth,
                             derived = owner.Building.IsBuildingDerived, anchors = anchors, fixedOwner = owner.FixedByAnchors,
-                            firstPosition = position, lastCom = com, lastV = v, lastW = w, lastRot = rot, lastStep = step, lastFrame = frame,
+                            firstPosition = position, lastCom = com, lastV = v, lastW = w, lastRot = rot, lastStep = step, lastPhysics = physicsNow, lastFrame = frame,
                         };
                         if (hasOrigin && _buildingOps.TryGetValue(origin.value, out BuildingOp parent) && parent.sourceDepth >= 0
                             && depth != parent.sourceDepth + 1)
@@ -514,7 +519,8 @@ namespace Zantetsu.Sandbox
                     bool stepped = step != t.lastStep;
                     if (stepped)
                     {
-                        float dt = Mathf.Max(0L, step - t.lastStep) * h;
+                        // The physics time between the two reads: the sum of the steps taken (a double step is 2h), not their count times h.
+                        float dt = double.IsNaN(t.lastPhysics) || double.IsNaN(physicsNow) ? 0f : (float)System.Math.Max(0.0, physicsNow - t.lastPhysics);
                         comJump = Mathf.Max(0f, Vector3.Distance(com, t.lastCom) - Mathf.Max(v.magnitude, t.lastV.magnitude) * dt);
                         rotJump = Mathf.Max(0f, Quaternion.Angle(rot, t.lastRot) - Mathf.Max(w.magnitude, t.lastW.magnitude) * dt * Mathf.Rad2Deg);
                         if (comJump > t.maxComJump) { t.maxComJump = comJump; t.maxComJumpAt = "frame " + frame + " step " + step; }
@@ -542,7 +548,7 @@ namespace Zantetsu.Sandbox
 
                     t.maxSpeed = Mathf.Max(t.maxSpeed, v.magnitude);
                     t.owner = owner;
-                    if (_observing && _observeFromStep < 0) _observeFromStep = step;
+                    if (_observing && _observeFromStep < 0) { _observeFromStep = step; _observeFromPhysics = physicsNow; }
                     if (_observing && stepped)
                     {
                         bool asleep = body.IsSleeping();
@@ -550,12 +556,12 @@ namespace Zantetsu.Sandbox
                         {
                             t.observedAny = true;
                             t.sleeping = asleep;
-                            if (asleep) { t.firstSleepStep = step; t.sleeps = 1; }
+                            if (asleep) { t.firstSleepStep = step; t.firstSleepPhysics = physicsNow; t.sleeps = 1; }
                         }
                         else if (asleep != t.sleeping)
                         {
-                            if (asleep) { t.sleeps++; if (t.firstSleepStep < 0) t.firstSleepStep = step; }
-                            else { t.wakes++; t.wakeSteps.Add(step); }
+                            if (asleep) { t.sleeps++; if (t.firstSleepStep < 0) { t.firstSleepStep = step; t.firstSleepPhysics = physicsNow; } }
+                            else { t.wakes++; t.wakeSteps.Add(step); t.wakePhysics.Add(physicsNow); }
                             t.sleeping = asleep;
                         }
                     }
@@ -621,6 +627,7 @@ namespace Zantetsu.Sandbox
                     t.lastW = w;
                     t.lastRot = rot;
                     t.lastStep = step;
+                    t.lastPhysics = physicsNow;
                     t.lastFrame = frame;
                 }
 
@@ -724,9 +731,8 @@ namespace Zantetsu.Sandbox
                 List<BuildingTrack> liveFree = _buildingTracks.Values.Where(t => t.endedLive && !t.fixedOwner && t.observedAny).ToList();
                 // Per free piece live at the end: whether its body's inertia was raised, when it first slept and woke in the
                 // observation (physics seconds after it began), and, for one still awake, its motion and what it touches.
-                ManualPhysicsClock sleepClock = CutPhysicsStep.Clock;
-                float hz = sleepClock != null ? sleepClock.FrequencyHz : 45f;
-                string S(long stepAt) => stepAt < 0 ? "" : ((stepAt - _observeFromStep) / hz).ToString("F2", Inv);
+                // Physics seconds from the observation's start: physics-time differences, not steps divided by the frequency.
+                string S(double physicsAt) => double.IsNaN(physicsAt) || double.IsNaN(_observeFromPhysics) ? "" : (physicsAt - _observeFromPhysics).ToString("F2", Inv);
                 using (var sleep = new StreamWriter(Path.Combine(directory, "building-sleep.csv")))
                 {
                     sleep.WriteLine("fragment,depth,mass,firstSleepSeconds,sleeps,wakes,wakeSeconds,asleepAtEnd,endSpeed,endDegPerS,normalizedEnergy,sleepThreshold,contacts");
@@ -757,8 +763,8 @@ namespace Zantetsu.Sandbox
                             energy = 0.5f * b.linearVelocity.sqrMagnitude + 0.5f * (i.x * w.x * w.x + i.y * w.y * w.y + i.z * w.z * w.z) / b.mass;
                         }
 
-                        sleep.WriteLine(string.Join(",", k.Key, t.depth, b != null ? F(b.mass) : "", S(t.firstSleepStep), t.sleeps, t.wakes,
-                            string.Join("|", t.wakeSteps.Select(S)), t.sleeping, b != null ? F(b.linearVelocity.magnitude) : "",
+                        sleep.WriteLine(string.Join(",", k.Key, t.depth, b != null ? F(b.mass) : "", S(t.firstSleepPhysics), t.sleeps, t.wakes,
+                            string.Join("|", t.wakePhysics.Select(S)), t.sleeping, b != null ? F(b.linearVelocity.magnitude) : "",
                             b != null ? F(b.angularVelocity.magnitude * Mathf.Rad2Deg) : "", F(energy), b != null ? F(b.sleepThreshold) : "", contacts));
                     }
                 }

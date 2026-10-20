@@ -12,7 +12,8 @@ namespace Zantetsu.PhysicsCut
 {
     /// <summary>
     /// **The one place the default physics scene is advanced** (DESIGN 4.4): with
-    /// <see cref="SimulationMode.Script"/>, a fixed step of 45 or 90 Hz chosen at start, at most one
+    /// <see cref="SimulationMode.Script"/>, a fixed step of 45 or 90 Hz chosen at start -- or, on PCVR, the display's
+    /// step of 72 or 90 Hz with one double step when two are owed (CutPhysicsStep.Pcvr.cs) -- at most one
     /// <see cref="Physics.Simulate"/> per rendered frame, taken only when a whole step is owed and its expected cost fits
     /// what is left of the frame's Main budget.
     /// <para>
@@ -44,18 +45,21 @@ namespace Zantetsu.PhysicsCut
     /// <para>
     /// **Chosen once, here, before the first simulation.** The frequency belongs to the physics scene, not to any world:
     /// it is settled when a play session starts (<see cref="ResetForSession"/>), from the start-up argument
-    /// <c>-zantetsuPhysicsHz 45|90</c> or else 45 Hz. Nothing a world does later -- whenever it is loaded -- changes it.
+    /// <c>-zantetsuPhysicsHz 45|90</c>, or else from the PCVR display once at the session's start (no step is taken
+    /// before), or else 45 Hz. Nothing a world does later -- whenever it is loaded -- changes it.
     /// </para>
     /// <para>
-    /// **The shared Main budget** (DESIGN 4.4, 2026-10-19) is the application's target frame period less one common
-    /// margin, <see cref="CommonMarginSeconds"/>, for what follows in the frame; what is left of it is that less the time
+    /// **The shared Main budget** (DESIGN 4.4, 2026-10-19; margin 2026-10-20) is the application's target frame period
+    /// less one common margin, <see cref="CommonMarginSeconds"/> -- 9 % of that period, or the fixed 2 ms of before by
+    /// <c>-zantetsuMainMargin fixed2ms</c> -- for what follows in the frame; what is left of it is that less the time
     /// since the frame's player loop began. Every Main reader -- the cuts' build and publication, this step, the spatial
     /// split, the collections, the compaction, the crowd's refill -- reads this one remainder, from the one start: no
     /// reader has a frame of its own, no reading or change of work starts it again, and a negative remainder is a
     /// shortfall as it stands. The period is settled at each frame's start from the host's source
-    /// (<see cref="SetApplicationFrameSource"/>: a Quest under frame synthesis renders at 45 Hz, 22.2 ms) and is one
-    /// 90 Hz frame (<see cref="DefaultApplicationFrameSeconds"/>) when there is no source, the source has no answer, or
-    /// its answer is not a frame period (<see cref="AcceptedFrameSeconds"/>). Never from measured frame times or fps.
+    /// (<see cref="SetApplicationFrameSource"/>: a Quest under frame synthesis renders at 45 Hz, 22.2 ms), else from the
+    /// PCVR display's rate settled at the session's start (72 or 90 Hz), and is one 90 Hz frame
+    /// (<see cref="DefaultApplicationFrameSeconds"/>) when there is neither, the source has no answer, or its answer is
+    /// not a frame period (<see cref="AcceptedFrameSeconds"/>). Never from measured frame times or fps.
     /// </para>
     /// </summary>
     public static partial class CutPhysicsStep
@@ -68,13 +72,29 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The one margin the shared Main budget leaves in every frame for what follows its Main readers (the cameras'
-        /// preparations and the rendering): 2 ms, **provisional** -- not a measured right value (TL, 2026-10-19). Kept
-        /// here alone; a reader's own reserve for the same purpose is not taken again.
+        /// preparations and the rendering), this frame's: <see cref="MarginFor"/> of this frame's period with the
+        /// session's <see cref="MarginKind"/> -- 9 % of the period (90 Hz: 1.00 ms, 72 Hz: 1.25 ms, 45 Hz: 2.00 ms), or
+        /// the fixed 2 ms of 2026-10-19 for comparison. **Provisional** -- not a measured right value. Kept here alone; a
+        /// reader's own reserve for the same purpose is not taken again, and none is given back for a smaller margin
+        /// (<see cref="CutWorldProfile.ReserveFrameTailSeconds"/>).
         /// </summary>
-        public const double CommonMarginSeconds = 0.002;
+        public static double CommonMarginSeconds => MarginFor(s_frameSeconds, s_marginKind);
 
-        /// <summary>The shared Main budget with no source: <see cref="DefaultApplicationFrameSeconds"/> less <see cref="CommonMarginSeconds"/>.</summary>
-        public const double DefaultMainBudgetSeconds = DefaultApplicationFrameSeconds - CommonMarginSeconds;
+        /// <summary>The share of the target period the margin is (TL, 2026-10-20): 9 %.</summary>
+        public const double MarginFraction = 0.09;
+
+        /// <summary>The margin of 2026-10-19 (D-251), kept for comparison by <c>-zantetsuMainMargin fixed2ms</c>: 2 ms whatever the period.</summary>
+        public const double FixedMarginSeconds = 0.002;
+
+        /// <summary>How the session's margin is taken: <see cref="MainMarginKind.PeriodFraction"/> unless the start-up argument says otherwise.</summary>
+        public static MainMarginKind MarginKind => s_marginKind;
+
+        /// <summary>The margin of a frame period with a kind (pure): 9 % of the period, or the fixed 2 ms.</summary>
+        internal static double MarginFor(double frameSeconds, MainMarginKind kind) =>
+            kind == MainMarginKind.Fixed2Ms ? FixedMarginSeconds : MarginFraction * frameSeconds;
+
+        /// <summary>The shared Main budget with no source: <see cref="DefaultApplicationFrameSeconds"/> less its margin.</summary>
+        public static double DefaultMainBudgetSeconds => BudgetFor(DefaultApplicationFrameSeconds);
 
         /// <summary>The shortest and the longest frame period a source's answer is taken as (144 Hz to 30 Hz); outside it, the default.</summary>
         public const double MinimumFrameSeconds = 1.0 / 144.0, MaximumFrameSeconds = 1.0 / 30.0;
@@ -89,7 +109,10 @@ namespace Zantetsu.PhysicsCut
         private static readonly List<Action> s_afterCollect = new List<Action>(2);
 
         private static ManualPhysicsClock s_clock = new ManualPhysicsClock(DefaultFrequencyHz, Stopwatch.Frequency);
-        private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();
+        private static readonly SimulateCostHistory s_costs = new SimulateCostHistory();          // normal steps only
+        private static readonly SimulateCostHistory s_doubleCosts = new SimulateCostHistory();    // double steps only
+        private static MainMarginKind s_marginKind = MainMarginKind.PeriodFraction;
+        private static bool s_stepSettled = true;   // false only while a PCVR display step waits for its rate at the start
         private static double s_frameSeconds = DefaultApplicationFrameSeconds;   // this frame's period, settled at its start
         private static Func<double> s_frameSource;
         private static long s_frameStart;
@@ -107,18 +130,29 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The shared Main budget of this frame, in seconds: <see cref="ApplicationFrameSeconds"/> less <see cref="CommonMarginSeconds"/>.</summary>
         public static double MainBudgetSeconds => BudgetFor(s_frameSeconds);
 
-        /// <summary>Whether this frame's period came from the host's source (false: the default, for want of a usable answer).</summary>
-        public static bool ApplicationFrameFromSource { get; private set; }
+        /// <summary>Whether this frame's period came from a source -- the host's or the PCVR display's settled rate (false: the default, for want of a usable answer).</summary>
+        public static bool ApplicationFrameFromSource => ApplicationFrameSource != ApplicationFrameSourceKind.Default;
+
+        /// <summary>Where this frame's period came from: the host's source (a Quest's frame synthesis), the PCVR display's settled rate, or the default.</summary>
+        public static ApplicationFrameSourceKind ApplicationFrameSource { get; private set; }
+
+        /// <summary>This frame's period source in words, for records.</summary>
+        public static string ApplicationFrameSourceName => ApplicationFrameSource == ApplicationFrameSourceKind.Host ? "frame synthesis"
+            : ApplicationFrameSource == ApplicationFrameSourceKind.PcvrDisplay ? "PCVR display " + s_pcvrHz + " Hz (settled at start)"
+            : "default";
 
         /// <summary>Live remaining Main time, shared by publication and simulation; querying never refills it.</summary>
         internal static double RemainingMainSeconds => !Application.isPlaying || s_frameStart == 0
             ? double.PositiveInfinity
             : RemainingAt(s_frameSeconds, s_frameStart, Stopwatch.GetTimestamp(), Stopwatch.Frequency);
 
-        /// <summary>The shared budget of a frame period: the period less the common margin (pure; tests read it).</summary>
-        internal static double BudgetFor(double frameSeconds) => frameSeconds - CommonMarginSeconds;
+        /// <summary>The shared budget of a frame period with the session's margin kind: the period less its margin.</summary>
+        internal static double BudgetFor(double frameSeconds) => BudgetFor(frameSeconds, s_marginKind);
 
-        /// <summary>What is left of the shared budget at <paramref name="now"/> of a frame begun at <paramref name="frameStart"/>: negative when short (pure).</summary>
+        /// <summary>The shared budget of a frame period with a margin kind (pure; tests read it). A double step does not change it.</summary>
+        internal static double BudgetFor(double frameSeconds, MainMarginKind kind) => frameSeconds - MarginFor(frameSeconds, kind);
+
+        /// <summary>What is left of the shared budget at <paramref name="now"/> of a frame begun at <paramref name="frameStart"/>: negative when short (pure but for the session's margin kind).</summary>
         internal static double RemainingAt(double frameSeconds, long frameStart, long now, long frequency) =>
             BudgetFor(frameSeconds) - (now - frameStart) / (double)frequency;
 
@@ -160,7 +194,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             s_frameSeconds = AcceptedFrameSeconds(answer, out bool fromSource);
-            ApplicationFrameFromSource = fromSource;
+            ApplicationFrameSource = fromSource ? ApplicationFrameSourceKind.Host : ApplicationFrameSourceKind.Default;
+            if (!fromSource && s_pcvrState == PcvrRateState.Obtained)
+            {
+                // The PCVR display's rate, settled once at the session's start: never this frame's measured length, so a
+                // reprojected frame (45 or 36 fps) does not widen the budget.
+                s_frameSeconds = 1.0 / s_pcvrHz;
+                ApplicationFrameSource = ApplicationFrameSourceKind.PcvrDisplay;
+            }
         }
 
         /// <summary>
@@ -175,21 +216,54 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The duration of the last frame's collection (the drivers' display snapshots after the decision), in seconds.</summary>
         public static double LastCollectSeconds { get; private set; }
 
-        /// <summary>The expected cost of the next simulation: the median of the last five real ones, 0 before any.</summary>
+        /// <summary>The expected cost of the next normal simulation: the median of the last five real normal ones, 0 before any.</summary>
         public static double ExpectedSimulateSeconds => s_costs.ExpectedSeconds;
 
         /// <summary>
-        /// What this frame's decision is still expected to spend on a simulation, in seconds, for Main work that runs
-        /// **before** it (a late update): the expected cost of a step when the physics is stepped here and a whole step
-        /// will be owed at the decision, 0 when none will be, when this frame's decision has already been made, or
-        /// outside Play. It is the decision's own estimate, read ahead; it forbids nothing and decides nothing, and
-        /// work that leaves it room does not thereby stop the steps.
+        /// The expected cost of the next double step: the median of the last five real double steps, its own history,
+        /// apart from the normal steps'. Before any (or after a re-measurement cleared it), twice the normal step's
+        /// expected cost -- a conservative first estimate: one simulation of twice the time is one solver pass, and is
+        /// not expected to cost more than two normal ones. Only a real double step adds a sample.
         /// </summary>
-        public static double ExpectedStepSecondsLaterThisFrame =>
-            !Application.isPlaying || LastDecidedFrame == Time.frameCount || Physics.simulationMode != SimulationMode.Script
-            || !s_clock.WouldOweAStepAt(Stopwatch.GetTimestamp())
-                ? 0.0
+        public static double ExpectedDoubleSimulateSeconds => ExpectedDoubleFrom(s_doubleCosts, s_costs);
+
+        /// <summary>
+        /// What Main work before the decision reserves for the step, always (unlike
+        /// <see cref="ExpectedStepSecondsLaterThisFrame"/>, which is 0 when no step will be owed): the normal step's
+        /// expected cost, or the double step's on a clock with the double step when two steps will be owed. On the fixed
+        /// step it is <see cref="ExpectedSimulateSeconds"/>, as before.
+        /// </summary>
+        public static double ExpectedStepReserveSeconds =>
+            s_clock.DoubleStep && Application.isPlaying && s_clock.WouldOweADoubleStepAt(Stopwatch.GetTimestamp())
+                ? ExpectedDoubleSimulateSeconds
                 : s_costs.ExpectedSeconds;
+
+        /// <summary>The double step's estimate from the two histories (pure): its own median, or twice the normal one with no double sample.</summary>
+        internal static double ExpectedDoubleFrom(SimulateCostHistory doubles, SimulateCostHistory normals) =>
+            doubles.Count > 0 ? doubles.ExpectedSeconds : 2.0 * normals.ExpectedSeconds;
+
+        /// <summary>
+        /// What this frame's decision is still expected to spend on a simulation, in seconds, for Main work that runs
+        /// **before** it (a late update): the expected cost of the step the owing will make the candidate -- the double
+        /// step's when two normal steps will be owed on a clock with the double step, the normal step's otherwise --
+        /// when the physics is stepped here; 0 when no step will be owed, when this frame's decision has already been
+        /// made, before the step is settled, or outside Play. It is the decision's own estimate, read ahead; it forbids
+        /// nothing and decides nothing, and work that leaves it room does not thereby stop the steps.
+        /// </summary>
+        public static double ExpectedStepSecondsLaterThisFrame
+        {
+            get
+            {
+                if (!Application.isPlaying || !s_stepSettled || LastDecidedFrame == Time.frameCount || Physics.simulationMode != SimulationMode.Script)
+                {
+                    return 0.0;
+                }
+
+                long now = Stopwatch.GetTimestamp();
+                if (!s_clock.WouldOweAStepAt(now)) return 0.0;
+                return s_clock.WouldOweADoubleStepAt(now) ? ExpectedDoubleSimulateSeconds : s_costs.ExpectedSeconds;
+            }
+        }
 
         /// <summary>
         /// Whether this frame's decision, still to come, may take its verification step past the budget (a step owed,
@@ -199,12 +273,40 @@ namespace Zantetsu.PhysicsCut
         /// frame's decision is made, or when not in script mode.
         /// </summary>
         public static bool VerificationStepMayComeLaterThisFrame =>
-            Application.isPlaying && LastDecidedFrame != Time.frameCount && Physics.simulationMode == SimulationMode.Script
+            Application.isPlaying && s_stepSettled && LastDecidedFrame != Time.frameCount && Physics.simulationMode == SimulationMode.Script
             && s_clock.WouldOweAStepAt(Stopwatch.GetTimestamp())
             && (SkippedForCostInARow + 1 >= VerifyAfterSkippedFrames || s_reevaluateAsked);
 
-        /// <summary>The expected cost the last decision compared, in seconds. For tests and observation.</summary>
+        /// <summary>The expected cost the last decision compared, in seconds: the double step's when it took one, the normal step's otherwise. For tests and observation.</summary>
         public static double LastDecisionExpectedSeconds { get; private set; }
+
+        /// <summary>The step the last decision simulated, in seconds: 0 for none, the normal step, or twice it. For tests and observation.</summary>
+        public static double LastDecisionStepSeconds { get; private set; }
+
+        /// <summary>The step the owing made the candidate at the last decision, before the cost and the budget, in seconds (0: none owed). For tests and observation.</summary>
+        public static double LastDecisionCandidateSeconds { get; private set; }
+
+        /// <summary>Real simulations of the normal step and of the double step, and their measured durations summed, in seconds, this session.</summary>
+        public static double NormalSimulateSeconds { get; private set; }
+
+        /// <inheritdoc cref="NormalSimulateSeconds"/>
+        public static double DoubleSimulateSeconds { get; private set; }
+
+        /// <summary>The longest measured duration of a normal step and of a double step this session, in seconds.</summary>
+        public static double MaxNormalSimulateSeconds { get; private set; }
+
+        /// <inheritdoc cref="MaxNormalSimulateSeconds"/>
+        public static double MaxDoubleSimulateSeconds { get; private set; }
+
+        /// <summary>
+        /// Decisions with a step owed that the budget refused (the estimate over what was left, or nothing left), before
+        /// a verification step is considered; a decision that then took its verification step past the budget is
+        /// counted here and in <see cref="VerificationSteps"/>.
+        /// </summary>
+        public static long BudgetShortDecisions { get; private set; }
+
+        /// <summary>Decisions where two steps were owed and the double step did not fit, and the normal step was taken instead.</summary>
+        public static long DoubleFellBackToNormal { get; private set; }
 
         /// <summary>What was left of the Main budget at the last decision, in seconds. For tests and observation.</summary>
         public static double LastDecisionRemainingSeconds { get; private set; }
@@ -247,12 +349,41 @@ namespace Zantetsu.PhysicsCut
         public static void RequestCostReevaluation()
         {
             s_reevaluateAsked = true;
+            s_doubleReevaluateAsked = true;   // held apart: a normal step taken does not clear it, only a double candidacy
         }
 
-        /// <summary>Tests only: the estimate the next decisions compare with, as if five real simulations had cost this.</summary>
+        /// <summary>
+        /// After this many decisions in a row where the double step was the candidate and the normal step was taken for
+        /// want of room for the double step's estimate, that estimate is taken again from the normal step's (twice it).
+        /// </summary>
+        public const int DoubleRefreshAfterFallbacks = 45;
+
+        /// <summary>How many times the double step's measured estimate was set aside to be taken again from the normal step's.</summary>
+        public static int DoubleEstimateRefreshes { get; private set; }
+
+        private static bool s_doubleReevaluateAsked;
+        private static int s_doubleFellBackInARow;
+
+        /// <summary>
+        /// Whether this decision takes the double step's estimate again from the normal step's (pure): only when the
+        /// double step is the candidate, and a re-evaluation was asked for or <see cref="DoubleRefreshAfterFallbacks"/>
+        /// candidacies in a row fell back to the normal step.
+        /// </summary>
+        internal static bool ShouldRefreshDoubleEstimate(bool doubleCandidate, bool asked, int fellBackInARow) =>
+            doubleCandidate && (asked || fellBackInARow >= DoubleRefreshAfterFallbacks);
+
+        /// <summary>Tests only: the double step's estimate as if five real double steps had cost this.</summary>
+        internal static void InjectExpectedDoubleCostForTest(double seconds)
+        {
+            s_doubleCosts.Clear();
+            for (int i = 0; i < SimulateCostHistory.Capacity; i++) s_doubleCosts.Add(seconds);
+        }
+
+        /// <summary>Tests only: the estimate the next decisions compare with, as if five real normal simulations had cost this (no double sample: the double step's estimate is twice it).</summary>
         internal static void InjectExpectedCostForTest(double seconds)
         {
             s_costs.Clear();
+            s_doubleCosts.Clear();
             for (int i = 0; i < SimulateCostHistory.Capacity; i++) s_costs.Add(seconds);
         }
 
@@ -352,17 +483,30 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// A play session starts from nothing, whether or not the domain was reloaded: the frequency chosen for this
-        /// session, the budget, no time owed, no step taken, no pause, no collector left from a previous session. This
+        /// A play session starts from nothing, whether or not the domain was reloaded: the frequency and the step's mode
+        /// chosen for this session (a PCVR display step is settled at the first frames, CutPhysicsStep.Pcvr.cs), the
+        /// margin, the budget, no time owed, no step taken, no pause, no collector left from a previous session. This
         /// runs before any scene is loaded and so before any simulation.
         /// </summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForSession()
         {
-            s_clock = new ManualPhysicsClock(FrequencyFromCommandLine(), Stopwatch.Frequency);
+            string[] arguments = Environment.GetCommandLineArgs();
+            s_marginKind = MarginFromCommandLine(arguments);
+            int explicitHz = FrequencyFromCommandLine(arguments);
+            PhysicsStepRequest request = StepRequestFromCommandLine(arguments);
+            bool pc = Application.platform != RuntimePlatform.Android;
+            ChooseStepAtSessionStart(pc, explicitHz, request);
+            s_doubleCosts.Clear();
+            NormalSimulateSeconds = DoubleSimulateSeconds = MaxNormalSimulateSeconds = MaxDoubleSimulateSeconds = 0.0;
+            BudgetShortDecisions = DoubleFellBackToNormal = 0;
+            DoubleEstimateRefreshes = 0;
+            s_doubleReevaluateAsked = false;
+            s_doubleFellBackInARow = 0;
+            LastDecisionStepSeconds = LastDecisionCandidateSeconds = 0.0;
             s_frameSeconds = DefaultApplicationFrameSeconds;
             s_frameSource = null;
-            ApplicationFrameFromSource = false;
+            ApplicationFrameSource = ApplicationFrameSourceKind.Default;
             s_frameStart = 0;
             s_explicitPaused = false;
             s_gamePaused = false;
@@ -388,12 +532,11 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// The frequency chosen at start: <see cref="FrequencyArgument"/> followed by 45 or 90, or else
-        /// <see cref="DefaultFrequencyHz"/>. Anything else given there is reported once and the default is used.
+        /// The frequency given at start: <see cref="FrequencyArgument"/> followed by 45 or 90, or 0 when none is given.
+        /// Anything else given there is reported once and taken as none given: the automatic choice is made.
         /// </summary>
-        private static int FrequencyFromCommandLine()
+        internal static int FrequencyFromCommandLine(string[] arguments)
         {
-            string[] arguments = Environment.GetCommandLineArgs();
             for (int i = 0; i < arguments.Length - 1; i++)
             {
                 if (!string.Equals(arguments[i], FrequencyArgument, StringComparison.OrdinalIgnoreCase))
@@ -401,18 +544,17 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
-                if (int.TryParse(arguments[i + 1], out int hz) && ManualPhysicsClock.IsSupportedFrequency(hz))
+                if (int.TryParse(arguments[i + 1], out int hz) && (hz == 45 || hz == 90))
                 {
                     return hz;
                 }
 
                 UnityEngine.Debug.LogWarning(
-                    FrequencyArgument + " takes 45 or 90; '" + arguments[i + 1] + "' is not one, so "
-                    + DefaultFrequencyHz + " Hz is used.");
+                    FrequencyArgument + " takes 45 or 90; '" + arguments[i + 1] + "' is not one, so the frequency is chosen as if none were given.");
                 break;
             }
 
-            return DefaultFrequencyHz;
+            return 0;
         }
 
         /// <summary>
@@ -445,7 +587,9 @@ namespace Zantetsu.PhysicsCut
             // time the source takes (the Quest's XR and OpenXR queries, an interruption in them) is the frame's own and is
             // taken from the shared remainder like any other (TL review, 2026-10-19).
             s_frameStart = Stopwatch.GetTimestamp();
+            ReadPcvrDisplay(s_frameStart);   // PCVR only: the rate settled at the start, then watched (CutPhysicsStep.Pcvr.cs)
             SettleFramePeriod();
+            SayPcvrSettled();
             s_gcCountAtFrameStart = GC.CollectionCount(0);
         }
 
@@ -549,18 +693,58 @@ namespace Zantetsu.PhysicsCut
 
             EnsurePauseListener();
             long now = Stopwatch.GetTimestamp();
-            s_clock.Accumulate(now);
+            if (s_pcvrState == PcvrRateState.Pending)
+            {
+                ReadPcvrDisplay(now);   // a frame whose start this system missed: the start's reading, here
+                SayPcvrSettled();
+            }
+
+            // Before the step is settled (a PCVR display step waiting for its rate at the session's start) nothing is
+            // owed and nothing is simulated: the first step taken is of the settled length.
+            if (s_stepSettled)
+            {
+                s_clock.Accumulate(now);   // the time since the last decision added, what is over the cap dropped
+            }
+
             LastDecidedFrame = Time.frameCount;
             // A frame that began before the system was installed has no start of its own: it is taken as beginning now.
             long frameStart = s_frameStart != 0 ? s_frameStart : now;
             double remaining = RemainingAt(s_frameSeconds, frameStart, now, Stopwatch.Frequency);
             double expected = s_costs.ExpectedSeconds;
-            bool scripted = Physics.simulationMode == SimulationMode.Script;
-            bool step = scripted && s_clock.ShouldStep(expected, remaining);
+            bool scripted = Physics.simulationMode == SimulationMode.Script && s_stepSettled;
+            double candidate = scripted ? s_clock.CandidateStepSeconds() : 0.0;
+            // The double step's estimate is taken again from the normal step's (twice it) when a re-evaluation was asked
+            // for, or after DoubleRefreshAfterFallbacks double candidacies in a row fell back to the normal step: a stale
+            // high estimate would otherwise never be measured again, the normal steps going on. It is still compared with
+            // the budget; nothing is simulated past it for this (TL review, 2026-10-20).
+            if (ShouldRefreshDoubleEstimate(candidate > s_clock.StepSeconds, s_doubleReevaluateAsked, s_doubleFellBackInARow))
+            {
+                if (s_doubleCosts.Count > 0) DoubleEstimateRefreshes++;
+                s_doubleCosts.Clear();
+                s_doubleReevaluateAsked = false;
+                s_doubleFellBackInARow = 0;
+            }
+
+            double expectedDouble = ExpectedDoubleSimulateSeconds;
+            // Then the step is chosen from what is owed (ManualPhysicsClock.Choose): the double step when two normal steps
+            // are owed and its own estimate fits, else the normal step when its estimate fits, else none.
+            double chosen = scripted ? s_clock.Choose(expected, expectedDouble, remaining) : 0.0;
+            bool step = chosen > 0.0;
             bool shouldStep = step;   // DIAGNOSIS ONLY: the plain decision, before a verification step
+            if (candidate > 0.0 && !step) BudgetShortDecisions++;
+            if (step && candidate > s_clock.StepSeconds && chosen == s_clock.StepSeconds)
+            {
+                DoubleFellBackToNormal++;
+                s_doubleFellBackInARow++;
+            }
+            else if (step && chosen > s_clock.StepSeconds)
+            {
+                s_doubleFellBackInARow = 0;
+            }
             // A skip for the cost alone (time owed, the estimate over what is left): counted; after enough of them in a
             // row, or when a re-evaluation was asked for, one verification step is taken past the budget so that the
-            // estimate is measured again -- a stale high estimate never holds the physics for ever. One step, not a catch-up.
+            // estimate is measured again -- a stale high estimate never holds the physics for ever. One normal step,
+            // never the double one, and not a catch-up.
             bool verify = false;
             if (scripted && !step && s_clock.ShouldStep(0.0, remaining) && s_clock.ShouldStep(expected, double.PositiveInfinity))
             {
@@ -569,6 +753,7 @@ namespace Zantetsu.PhysicsCut
                 {
                     step = true;
                     verify = true;
+                    chosen = s_clock.StepSeconds;
                 }
             }
             else if (step)
@@ -577,19 +762,22 @@ namespace Zantetsu.PhysicsCut
                 s_reevaluateAsked = false;   // the steps go on by themselves: nothing to measure again
             }
 
-            LastDecisionExpectedSeconds = expected;
+            bool isDouble = step && chosen > s_clock.StepSeconds;
+            LastDecisionExpectedSeconds = isDouble ? expectedDouble : expected;
             LastDecisionRemainingSeconds = remaining;
             LastDecisionStepped = step;
+            LastDecisionStepSeconds = step ? chosen : 0.0;
+            LastDecisionCandidateSeconds = candidate;
             RecordDecision(scripted, remaining, expected, shouldStep, step, verify, s_frameStart, now);   // DIAGNOSIS ONLY: nothing when off
             if (step)
             {
                 long begin = Stopwatch.GetTimestamp();
                 using (s_simulate.Auto())
                 {
-                    Physics.Simulate((float)s_clock.StepSeconds);
+                    Physics.Simulate((float)chosen);   // one simulation: the normal step or the double one, never two
                 }
 
-                LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;   // the budget's input: s_costs below predicts the next step from it (kept in every build)
+                LastSimulateSeconds = (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;   // the budget's input: the histories below predict the next steps from it (kept in every build)
                 if (verify)
                 {
                     VerificationSteps++;
@@ -597,11 +785,27 @@ namespace Zantetsu.PhysicsCut
                     VerificationOverrunSeconds += Math.Max(0.0, LastSimulateSeconds - remaining);
                     SkippedForCostInARow = 0;
                     s_reevaluateAsked = false;
-                    s_costs.Clear();   // the estimate starts over from this measurement
+                    s_costs.Clear();         // the estimate starts over from this measurement
+                    s_doubleCosts.Clear();   // and the double step's from twice it, until a double step is measured
+                    s_doubleReevaluateAsked = false;
+                    s_doubleFellBackInARow = 0;
                 }
 
-                s_costs.Add(LastSimulateSeconds);
-                s_clock.Stepped();
+                if (isDouble)
+                {
+                    s_doubleCosts.Add(LastSimulateSeconds);
+                    DoubleSimulateSeconds += LastSimulateSeconds;
+                    MaxDoubleSimulateSeconds = Math.Max(MaxDoubleSimulateSeconds, LastSimulateSeconds);
+                }
+                else
+                {
+                    s_costs.Add(LastSimulateSeconds);
+                    NormalSimulateSeconds += LastSimulateSeconds;
+                    MaxNormalSimulateSeconds = Math.Max(MaxNormalSimulateSeconds, LastSimulateSeconds);
+                }
+
+                s_clock.Stepped(chosen);   // what was simulated is consumed; the physics time moves by it, the step id by one
+                s_clock.CarryOver();       // with the double step: at most two normal steps carried to the next decision
                 LastSimulatedFrame = Time.frameCount;
 
                 // What moves with the steps (JoinStep), before anything is collected. Backwards and bounds-checked, as below.
@@ -612,6 +816,10 @@ namespace Zantetsu.PhysicsCut
                         s_afterStep[i]();
                     }
                 }
+            }
+            else if (s_stepSettled)
+            {
+                s_clock.CarryOver();   // a decision without a step carries at most two normal steps too (nothing on the fixed step)
             }
 
             // Backwards and bounds-checked: a collection may end a driver (the termination latch), which leaves.

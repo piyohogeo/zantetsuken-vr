@@ -196,7 +196,7 @@ namespace Zantetsu.Sandbox
                         + " | " + split.LastBudgetDecision.Describe()
                         + " | step (auxiliary): budgetS=" + Zantetsu.PhysicsCut.CutPhysicsStep.MainBudgetSeconds.ToString("G4")
                         + " appFrameS=" + Zantetsu.PhysicsCut.CutPhysicsStep.ApplicationFrameSeconds.ToString("G4")
-                        + (Zantetsu.PhysicsCut.CutPhysicsStep.ApplicationFrameFromSource ? " (frame synthesis)" : " (default)")
+                        + " (" + Zantetsu.PhysicsCut.CutPhysicsStep.ApplicationFrameSourceName + ")"
                         + " lastRemainingS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecisionRemainingSeconds.ToString("G4")
                         + " lastExpectedS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastDecisionExpectedSeconds.ToString("G4")
                         + " lastSimulateS=" + Zantetsu.PhysicsCut.CutPhysicsStep.LastSimulateSeconds.ToString("G4")

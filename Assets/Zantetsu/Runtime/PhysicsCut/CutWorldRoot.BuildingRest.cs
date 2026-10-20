@@ -64,6 +64,8 @@ namespace Zantetsu.PhysicsCut
 
             using (s_restMarker.Auto())
             {
+                // Steps are updates (a double step is one, its contacts reported once), and time is the physics time summed
+                // over the steps really taken: never the step id times the normal step (DESIGN 4.4, 2026-10-20).
                 ManualPhysicsClock clock = CutPhysicsStep.Clock;
                 int steps = (int)(clock.StepId - _restStepId);
                 _restStepId = clock.StepId;

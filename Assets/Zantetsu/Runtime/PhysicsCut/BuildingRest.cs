@@ -1246,8 +1246,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>
         /// One turn, to be called outside the simulation after the frame's step decision: <paramref name="steps"/> is
         /// how many physics steps happened since the last turn (0 on a frame that skipped its step: the timers stand
-        /// still and the notes are kept for the next turn), <paramref name="stepSeconds"/> the step length and
-        /// <paramref name="physicsSeconds"/> the physics time now.
+        /// still and the notes are kept for the next turn), <paramref name="stepSeconds"/> the normal step length (not
+        /// read: with PCVR's double step a step may be twice it) and <paramref name="physicsSeconds"/> the physics time
+        /// now, the sum of the steps really taken. The step counts (<c>supportSteps</c>, the stale edges) are updates.
         /// </summary>
         public void Step(int steps, double stepSeconds, double physicsSeconds)
         {

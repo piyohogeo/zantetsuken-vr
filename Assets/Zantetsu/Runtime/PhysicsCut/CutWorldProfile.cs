@@ -433,16 +433,25 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// The piece lifetime's settings (DESIGN 7.10), from the provisional values above. The least remainder it looks
-        /// at a frame with is the value above less the shared budget's common margin (DESIGN 4.4, 2026-10-19): that much
-        /// of it was room left to the rest of the frame, which the margin leaves now; the rest is the lifetime's own.
+        /// at a frame with is the value above less <see cref="ReserveFrameTailSeconds"/> (DESIGN 4.4, 2026-10-19): that
+        /// much of it was room left to the rest of the frame, which the common margin leaves now; the rest is the
+        /// lifetime's own.
         /// </summary>
         public CutFragmentLifetimeSettings PieceLifetime =>
             new CutFragmentLifetimeSettings(
                 pieceLifetimeEnabled, pieceLifetimeThreshold, pieceLifetimeDistance, pieceLifetimeExaminePerFrame,
-                pieceLifetimeRetirePerFrame, BeyondCommonMargin(pieceLifetimeMinRemainingMainSeconds), pieceLifetimeMaxStepSeconds);
+                pieceLifetimeRetirePerFrame, BeyondFrameTail(pieceLifetimeMinRemainingMainSeconds), pieceLifetimeMaxStepSeconds);
 
-        /// <summary>A reserve that also left room to the rest of the frame, less the shared budget's common margin (never below 0).</summary>
-        public static double BeyondCommonMargin(double reserveSeconds) => System.Math.Max(0.0, reserveSeconds - CutPhysicsStep.CommonMarginSeconds);
+        /// <summary>
+        /// The part of a reserve set before 2026-10-19 that left room to the rest of the frame, taken over by the common
+        /// margin then (D-251): 2 ms, fixed. **Not the margin of the frame**: the margin is now 9 % of the period (1 ms
+        /// at 90 Hz) and a reserve is not given that difference back -- each reserve's own part stays what it was
+        /// (TL, 2026-10-20: no offsetting).
+        /// </summary>
+        public const double ReserveFrameTailSeconds = 0.002;
+
+        /// <summary>A reserve that also left room to the rest of the frame, less <see cref="ReserveFrameTailSeconds"/> (never below 0).</summary>
+        public static double BeyondFrameTail(double reserveSeconds) => System.Math.Max(0.0, reserveSeconds - ReserveFrameTailSeconds);
 
         /// <summary>
         /// The empty owner collection's settings (DESIGN 7.9.3), from the provisional values above. The budget a turn

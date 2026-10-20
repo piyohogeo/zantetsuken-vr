@@ -433,10 +433,11 @@ namespace Zantetsu.Sandbox
             int broken = pool.BrokenCount;
             int records = refill.Records.Count;
             int started = refill.Started, prepared = refill.Prepared, baked = refill.Baked;
-            // The reserve left to the rest of the frame, less the shared budget's common margin that leaves it now
-            // (DESIGN 4.4, 2026-10-19), and the step's expected cost (a later work of its own).
+            // The reserve left to the rest of the frame, less the part the shared budget's common margin took over
+            // (DESIGN 4.4, 2026-10-19; a fixed 2 ms, whatever the margin now), and the step's expected cost (a later work
+            // of its own: the double step's on PCVR when two steps will be owed).
             refill.Run(Time.frameCount, refillCap, refillRemaining,
-                CutWorldProfile.BeyondCommonMargin(refillReserveMilliseconds / 1000.0) + CutPhysicsStep.ExpectedSimulateSeconds, refillStart, refillHasPrepare, refillPrepare, refillNeedsBake, refillBake);
+                CutWorldProfile.BeyondFrameTail(refillReserveMilliseconds / 1000.0) + CutPhysicsStep.ExpectedStepReserveSeconds, refillStart, refillHasPrepare, refillPrepare, refillNeedsBake, refillBake);
             if (refill.Started != started) CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.NpcRefill);
             if (refill.Prepared != prepared || refill.Baked != baked) CutWorldFrameNotes.Note(CutWorldFrameNotes.Work.NpcReprepare);
             if (pool.BrokenCount > broken) Debug.LogError("MobPlan slot not prepared again: " + pool.Broken[pool.BrokenCount - 1].Failure, pool.Broken[pool.BrokenCount - 1]);

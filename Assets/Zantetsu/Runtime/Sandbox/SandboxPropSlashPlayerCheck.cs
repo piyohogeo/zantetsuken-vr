@@ -810,6 +810,8 @@ namespace Zantetsu.Sandbox
                 public float viewYaw, viewPitch;
                 public int decisionFrame = -1;
                 public double lastSimulateMs = double.NaN, expectedMs = double.NaN, remainingMs = double.NaN;
+                // The step this frame's decision simulated (0 none, the normal step or the double one), the physics time after it, and the time dropped at the cap so far (DESIGN 4.4, 2026-10-20).
+                public double stepTakenMs = double.NaN, physicsSeconds = double.NaN, droppedMs = double.NaN;
                 public int stepped = -1;
                 public int lodL0 = -1, lodL1 = -1, lodL2 = -1, lodL3 = -1, lodUpdated = -1, lodForced = -1, lodTarget = -1;
                 public string lodPhases;
@@ -895,7 +897,7 @@ namespace Zantetsu.Sandbox
             }
 
             private long _observedSteps = -1;
-            private long _askedSteps;
+            private double _observedPhysics = -1.0, _askedPhysics;
             private readonly List<Accepted> _accepted = new List<Accepted>();
             private readonly List<(long slash, LogicalFragmentId fragment)> _confirmed = new List<(long, LogicalFragmentId)>();
             private readonly List<string> _pictures = new List<string>();
@@ -1341,6 +1343,7 @@ namespace Zantetsu.Sandbox
                     + " stepId=" + (clock != null ? clock.StepId : -1)
                     + " box=" + (_probe != null && _probe.Actor != null ? _probe.Actor.transform.position.ToString("F4") : "none") + " targetFrameRate=" + frameRate
                     + " debugColours=" + debugColours + " light=" + light + " iteration=" + iteration);
+                Log("physics step at start: " + CutPhysicsStep.DescribeStepSettings());
                 RequestPicture("0-start");
 
                 LogDisplayRoom("when the script begins");
@@ -1399,22 +1402,28 @@ namespace Zantetsu.Sandbox
                 _phase = "observe";
                 _observing = !light;
                 long observeFrom = stepClock != null ? stepClock.StepId : 0;
+                // The period is physics time, read as the physics time's own difference: with PCVR's double step a step can
+                // be 2h, so a count of steps times 1/Hz would observe up to twice the time (DESIGN 4.4, 2026-10-20).
+                double observeFromPhysics = stepClock != null ? stepClock.PhysicsSeconds : 0.0;
                 float observeSeconds = building ? BuildingObserveSeconds : ObservationPhysicsSeconds;
                 float observeCap = building ? Mathf.Max(BuildingObservationRealCap, 2f * BuildingObserveSeconds + 10f) : 10f;
-                long observeSteps = stepClock != null ? (long)Math.Round(observeSeconds * stepClock.FrequencyHz) : 0;
                 int observeFrame = Time.frameCount;
                 float observeBy = StageBegin("observation", observeCap);
-                while (!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps && Zantetsu.Core.GamePause.RealtimeSinceStartup < observeBy)
+                bool ObservedShort() => stepClock.PhysicsSeconds - observeFromPhysics < observeSeconds - 1e-6;
+                while (!light && stepClock != null && ObservedShort() && Zantetsu.Core.GamePause.RealtimeSinceStartup < observeBy)
                 {
                     { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 }
 
-                StageEnd(!light && stepClock != null && stepClock.StepId < observeFrom + observeSteps, light ? "a light run observes nothing" : "steps " + ((stepClock != null ? stepClock.StepId : 0) - observeFrom) + " of " + observeSteps);
+                double observedPhysics = stepClock != null ? stepClock.PhysicsSeconds - observeFromPhysics : 0.0;
+                StageEnd(!light && stepClock != null && ObservedShort(), light ? "a light run observes nothing"
+                    : "physics " + observedPhysics.ToString("F3", Inv) + " s of " + observeSeconds.ToString("R", Inv) + " s, steps " + ((stepClock != null ? stepClock.StepId : 0) - observeFrom));
 
                 _observedSteps = (stepClock != null ? stepClock.StepId : 0) - observeFrom;
-                _askedSteps = observeSteps;
+                _observedPhysics = observedPhysics;
+                _askedPhysics = stepClock != null ? observeSeconds : 0.0;
                 Log("observation: frames " + observeFrame + ".." + Time.frameCount + " steps " + observeFrom + ".." + (stepClock != null ? stepClock.StepId : -1)
-                    + " (asked " + observeSteps + " steps = " + observeSeconds.ToString("R", Inv) + " s of physics; real cap " + observeCap.ToString("R", Inv) + " s)");
+                    + " physics " + observedPhysics.ToString("F4", Inv) + " s (asked " + observeSeconds.ToString("R", Inv) + " s of physics; real cap " + observeCap.ToString("R", Inv) + " s)");
                 { yield return null; while (Zantetsu.Core.GamePause.IsPaused) yield return null; }
                 _observing = false;
                 if (endHoldSeconds > 0f)
@@ -1534,6 +1543,7 @@ namespace Zantetsu.Sandbox
                         new CheckEnding.Part("cooking audit after the reclaim", CookingAuditFinal),
                         new CheckEnding.Part("records close", MultiClose),
                         new CheckEnding.Part("city walk stages close", CityWalkClose),
+                        new CheckEnding.Part("physics step counts", () => Log("physics step at the end: " + CutPhysicsStep.DescribeStepSettings() + " | " + CutPhysicsStep.DescribeStepCounts())),
                         new CheckEnding.Part("timeline", () => WriteTimeline(true)),
                         new CheckEnding.Part("view target", ReleaseTarget),
                     };
@@ -1958,6 +1968,12 @@ namespace Zantetsu.Sandbox
                 row.expectedMs = CutPhysicsStep.LastDecisionExpectedSeconds * 1000.0;
                 row.remainingMs = CutPhysicsStep.LastDecisionRemainingSeconds * 1000.0;
                 row.stepped = CutPhysicsStep.LastDecisionStepped ? 1 : 0;
+                row.stepTakenMs = CutPhysicsStep.LastDecisionStepSeconds * 1000.0;
+                if (CutPhysicsStep.Clock != null)
+                {
+                    row.physicsSeconds = CutPhysicsStep.Clock.PhysicsSeconds;
+                    row.droppedMs = CutPhysicsStep.Clock.DroppedSeconds * 1000.0;
+                }
                 if (!_lodLooked)
                 {
                     _lodDirector = FindAnyObjectByType<PoseLodDirector>(FindObjectsInactive.Include);
@@ -2011,7 +2027,8 @@ namespace Zantetsu.Sandbox
                 text.Append("frame,phase,real,delta,fed,recorded,realMinusRecorded,stepId,unsimulated,sweeps,waves,hits,picturesAsked");
                 text.Append(",ftCpuMs,ftMainMs,ftMainPresentWaitMs,ftRenderMs,ftGpuMs,xrAppGpuMs,xrCompositorGpuMs,xrDropped,viewX,viewY,viewZ,viewYaw,viewPitch,decisionFrame,lastSimulateMs,expectedMs,remainingMs,stepped,lodL0,lodL1,lodL2,lodL3,lodUpdated,lodForced,lodTarget,lodPhases,displayCollections,displayBuilds,displayValidations,displayPlacements,displayRoomGrowths,displaySnapshotRegrowths,displayFragments,displayGpuReplacements,dCmdWritten,dCmdCaughtUp,dInstWritten,dInstCaughtUp,dRegWritten,dRegionsTaken,dArgElems,dArgCalls,dInstElems,dInstCalls,dWholeArgElems,dWholeInstElems,dWholeCalls,drawCmdEnd,drawCmdLive,drawCmdCapacity,drawInstEnd,drawInstLive,drawInstCapacity,dRegionsMoved,dInstMoved,dCompactions,dCompactRecords,dCompactMs,dCompactSkipped,dCompactCandidates,dCompactOrderMs,dCompactWriteMs,dCompactUploadMs,dHistWrites,dXformCalls,dClipCalls,vStructural,vPlacementOnly,vRegistrations,vPlacementRegistrations,vIndexMs,vInputMs,vContractMs,vAncestorsMs,vOperationsMs,vPlacementInputMs,vPlacementContractMs,vAncestorSteps,vAncestorLookups,vPlaneChecks,vOperations,vOwnerLookups,vOwnerSteps,vOwnerCacheHits,vUnreflectedSteps,vIndexesBuilt,vIndexesReused,vAncestorReads,cMs,cChainsMs,cSelectMs,cCapMs,cBranches,cCollections,cChainSteps,cOperationReads,cCandidates,cCapIdentities,vAncestorHits,cVisits,cReads,cHits,sMs,vSegEntries,cSplices,cSegBoundaries,cLookups,psPasses,psMs,psRenderFragments,psQueries,psChecks,psPlaneTransforms,psSectionsFound,psSectionsReused,psSectionsBuilt,psSectionCompared,psCapClips,ppPasses,ppMs,ppRenderFragments,ppQueries,ppChecks,ppPlaneTransforms,ppSectionsFound,ppSectionsReused,ppSectionsBuilt,ppSectionCompared,ppCapClips,psProviderMs,psCheckMs,psRestMs,ppProviderMs,ppCheckMs,ppRestMs,psKept,ppKept,psSelected,psClipsKept,psCapInVerts,psCapOutVerts,psFollowing,psStatic,psPlacedAnew,psAnewNotTakenOver,psAnewCarried,psAnewStartsShifted,psAnewSelected,psAnewMoved,psAnewClipped,psAnewCapped,psAnewClippedAndCapped,psAnewShiftedPlain,ppSelected,ppClipsKept,ppCapInVerts,ppCapOutVerts,ppFollowing,ppStatic,ppPlacedAnew,ppAnewNotTakenOver,ppAnewCarried,ppAnewStartsShifted,ppAnewSelected,ppAnewMoved,ppAnewClipped,ppAnewCapped,ppAnewClippedAndCapped,ppAnewShiftedPlain,tCollections,tCollectMs,tStage0Ms,tStage1Ms,tStage2Ms,tStage3Ms,tStage4Ms,tStage5Ms,tStage6Ms,tStage7Ms,tStage8Ms,tStage9Ms,tBuildCalls,tBuildMs,tBuildHeapDeltaBytes,sValidateCalls,sValidateMs,sCollectCalls,sCollectMs,sGroupCalls,sGroupMs,sStructureMs,sPlaceCalls,sPlaceMs,sKeptWhole,sWalks,sFamiliesRebuilt,sRegistrationsRebuilt,sRenderFragmentsRebuilt,sBranchesRebuilt,sCandidatesRebuilt,sRegistrationsReused,sArrayGrowths,sArrayGrowthElements,sPlaceReused,sQueriesOmitted,sCapShapes,sCapShapeVertices,sCapShapeMs,sCapLayouts,sCapLayoutVertices,sCameraCapUploads,sCameraCapVertices,sCapRecordFloat4,sCameraCapFirstUploads,sCameraCapFirstVertices,hSelective,hStructure,hUnvouched,hOther,hOmitted,hQOrdinary,hQNear,hQSelected,hQNotified,hQUnvouched,hQOther,hPromoted,hDemoted,hInvalidations,hResets,hShiftedPasses,hShiftedRebuilt,hSearches,hSearchMs,hUpdateMs,hHeldAtEnd,hOrdinaryAtEnd,hPointsAtEnd,hRemaps,hCarried,hFresh,hDroppedHeld,hRemapMs,hToldFamilies,hNearCandidates,hOutOfView,hViewTests,hViewMs,hPointsWithView,hPointsWithoutView,hTreeInserts,hTreeRemovals,hPickedNoView,stepCollectMs,notesMask,gcCountAtRow,roomCommittedBytes"
                     + ",nPointersAsked,nPointersKept,nBodyIssues,nCasterIssues,nNotDrawn,nBuffersRetired,nBlocksInFlight"
-                    + ",nMotionIssues,nClipMotionTaken,nClipMotionKept,appSwCullCalls,appSwRecordCalls,appSwNativeCullCalls,appSwMotionClipKeepCalls");
+                    + ",nMotionIssues,nClipMotionTaken,nClipMotionKept,appSwCullCalls,appSwRecordCalls,appSwNativeCullCalls,appSwMotionClipKeepCalls"
+                    + ",stepTakenMs,physicsSeconds,droppedMs");
                 foreach (string name in markerNames)
                 {
                     text.Append(',').Append(name);
@@ -2192,6 +2209,8 @@ namespace Zantetsu.Sandbox
 
                     text.Append(',').Append(r.appSwCullCalls).Append(',').Append(r.appSwRecordCalls)
                         .Append(',').Append(r.appSwNativeCullCalls).Append(',').Append(r.appSwMotionClipKeepCalls);
+                    text.Append(',').Append(r.stepTakenMs.ToString("R", Inv)).Append(',').Append(r.physicsSeconds.ToString("R", Inv))
+                        .Append(',').Append(r.droppedMs.ToString("R", Inv));
 
                     if (r.nativeKnown) nativeBefore = r;
                     for (int i = 0; i < markerNames.Length; i++)
@@ -3136,8 +3155,8 @@ namespace Zantetsu.Sandbox
             // collider apart from its own vertices), and no general contact check is made here.
             private void SummariseObservation()
             {
-                Expect(_observedSteps >= _askedSteps && _askedSteps > 0,
-                    "the ordinary Steps went on through the observation (" + _observedSteps + " of " + _askedSteps + " steps)");
+                Expect(_askedPhysics > 0.0 && _observedPhysics >= _askedPhysics - 1e-6,
+                    "the ordinary Steps went on through the observation (physics " + _observedPhysics.ToString("F3", Inv) + " of " + _askedPhysics.ToString("R", Inv) + " s, " + _observedSteps + " steps)");
                 foreach (KeyValuePair<int, PieceTrack> at in _tracks)
                 {
                     PieceTrack t = at.Value;

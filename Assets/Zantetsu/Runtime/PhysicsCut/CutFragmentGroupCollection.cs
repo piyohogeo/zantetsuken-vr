@@ -938,7 +938,7 @@ namespace Zantetsu.PhysicsCut
                 .Append("; structural collections read beside retirements ").Append(StructuralCollectionsRead)
                 .Append("; originals standing, not yet cut targets ").Append(StandingNotArmed)
                 .Append(" (a re-arm expected ").Append((ExpectedRearmSeconds * 1000.0).ToString("F3", inv)).Append(" ms, asks ").Append((RearmAskSeconds * 1000.0).ToString("F3", inv)).Append(" ms)")
-                .Append("; the shared Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", inv)).Append(CutPhysicsStep.ApplicationFrameFromSource ? " ms (frame synthesis)" : " ms")
+                .Append("; the shared Main budget ").Append((CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F1", inv)).Append(CutPhysicsStep.ApplicationFrameFromSource ? " ms (" + CutPhysicsStep.ApplicationFrameSourceName + ")" : " ms")
                 .Append("; large groups by their pieces: turns ").Append(PieceTurns).Append(", pieces looked at ").Append(PiecesLookedAt)
                 .Append(", retired ").Append(PiecesRetired).Append(", seen ").Append(PiecesSeen).Append(", not ready ").Append(PiecesNotReady)
                 .Append("; originals returned ").Append(Returned).Append(", cut targets again ").Append(Rearmed).Append(", not returned ").Append(ReturnsFailed)

@@ -765,8 +765,8 @@ namespace Zantetsu.Quest
                 // settled at the frame's start (from ApplicationFrameSeconds, below), the common margin and the budget.
                 Debug.Log(LogPrefix + "mode=" + _config.mode + " phase=" + (_run != null ? _run.Phase : _phase)
                     + " displayHz=" + physicalRefresh + " xrReportedHz=" + refresh + " AppSWRequested=" + _config.appSw + " AppSWConfigApplied=" + _spaceWarpApplied
-                    + " appFrameMs=" + (CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F2", Inv) + (CutPhysicsStep.ApplicationFrameFromSource ? " (frame synthesis)" : " (default)")
-                    + " marginMs=" + (CutPhysicsStep.CommonMarginSeconds * 1000.0).ToString("F1", Inv)
+                    + " appFrameMs=" + (CutPhysicsStep.ApplicationFrameSeconds * 1000.0).ToString("F2", Inv) + " (" + CutPhysicsStep.ApplicationFrameSourceName + ")"
+                    + " marginMs=" + (CutPhysicsStep.CommonMarginSeconds * 1000.0).ToString("F2", Inv) + " (" + CutPhysicsStep.MarginKind + ")"
                     + " mainBudgetMs=" + (CutPhysicsStep.MainBudgetSeconds * 1000.0).ToString("F2", Inv)
                     + " dtMs=" + Zantetsu.Core.GamePause.UnscaledDeltaTime * 1000f + " appGpuMs=" + gpu * 1000f + " stereo=" + XRSettings.stereoRenderingMode);
             }

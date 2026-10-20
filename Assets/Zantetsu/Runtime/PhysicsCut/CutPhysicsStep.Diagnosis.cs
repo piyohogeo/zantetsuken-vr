@@ -70,7 +70,8 @@ namespace Zantetsu.PhysicsCut
             bool owedAndBudget = s_clock.ShouldStep(0.0, remaining);
             bool withinCostAlone = s_clock.ShouldStep(expected, double.PositiveInfinity);
             string reason;
-            if (!scripted) reason = "not-script-mode";
+            if (!s_stepSettled) reason = "step-not-settled";
+            else if (!scripted) reason = "not-script-mode";
             else if (verify) reason = "verification-step";
             else if (step) reason = "stepped";
             else if (s_clock.IsPaused) reason = "paused";
@@ -83,6 +84,7 @@ namespace Zantetsu.PhysicsCut
                 "reason", reason, "stepped", B(step), "verify", B(verify), "scripted", B(scripted),
                 "clockPaused", B(s_clock.IsPaused), "gamePaused", B(s_gamePaused), "applicationPaused", B(s_applicationPaused),
                 "owed", s_clock.UnsimulatedSeconds, "stepSeconds", s_clock.StepSeconds, "dropped", s_clock.DroppedSeconds,
+                "candidateSeconds", LastDecisionCandidateSeconds, "takenSeconds", LastDecisionStepSeconds, "expectedDouble", ExpectedDoubleSimulateSeconds,
                 "remaining", remaining, "expected", expected, "budget", MainBudgetSeconds, "appFrame", s_frameSeconds,
                 "shouldStep", B(shouldStep), "owedAndBudget", B(owedAndBudget), "withinCostAlone", B(withinCostAlone),
                 "reevaluateAsked", B(s_reevaluateAsked), "frameStartWasZero", B(frameStart == 0),
