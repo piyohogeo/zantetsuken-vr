@@ -117,6 +117,21 @@ namespace Zantetsu.Core.Tests
 
         private static Vector3 Centre(RectTransform rect) => rect.TransformPoint(rect.rect.center);
 
+        private static List<string> RowLabels(PlayMenu menu)
+        {
+            var labels = new List<string>();
+            foreach (PlayMenuView.Row row in menu.View.Rows) labels.Add(row.label);
+            return labels;
+        }
+
+        // A row by its label (the crowd's input in play has the snap turn's rows, 2026-10-20).
+        private static int RowIndex(IReadOnlyList<PlayMenuView.Row> rows, string label)
+        {
+            for (int i = 0; i < rows.Count; i++) if (rows[i].label == label) return i;
+            Assert.Fail("no row " + label);
+            return -1;
+        }
+
         private static Vector3 Along(RectTransform rect, float t)
         {
             Rect r = rect.rect;
@@ -135,7 +150,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(menu.IsOpen, Is.True);
             Assert.That(menu.View.DetailText, Is.Not.Null, "the development readout under the settings");
             Assert.That(menu.View.DetailText.text, Does.StartWith("Last swings").And.Contain("no swing yet"));
-            Assert.That(menu.View.Rows.Count, Is.EqualTo(7), "the rows are the settings alone (volume, speed, turn, cut surface debug, depenetration, grip offset, blade angle)");
+            Assert.That(menu.View.Rows.Count, Is.EqualTo(8), "the rows are the settings alone (volume, speed, snap turn, snap angle -- or turn, continuous --, cut surface debug, depenetration, grip offset, blade angle)");
         }
 
         [Test]
@@ -189,15 +204,17 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen, Is.True);
             IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-            Assert.That(rows.Count, Is.EqualTo(9), "the seven settings, the statistics row and its explanation (unit 9-B)");
-            PlayMenuView.Row row = rows[7];
+            Assert.That(rows.Count, Is.EqualTo(10), "the eight settings, the statistics row and its explanation (unit 9-B)");
+            int statisticsRow = RowIndex(rows, "Send play statistics");
+            Assert.That(statisticsRow, Is.EqualTo(rows.Count - 2), "after the settings");
+            PlayMenuView.Row row = rows[statisticsRow];
             Assert.That(row.label, Is.EqualTo("Send play statistics"));
             Assert.That(row.isToggle, Is.True);
             Assert.That(row.read(), Is.Zero, "declined: OFF");
 
             // The explanation under it, all in view (TL review 2026-10-18 [P2]): wrapped, its rectangle as tall as its
             // lines, between the toggle and what is below it, inside the panel.
-            PlayMenuView.Row explanation = rows[8];
+            PlayMenuView.Row explanation = rows[statisticsRow + 1];
             Assert.That(explanation.isText, Is.True);
             RectTransform er = explanation.labelText.rectTransform;
             float explanationNeeded = PlayMenuView.NeededHeight(explanation.labelText);
@@ -253,8 +270,8 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Tick(menu);
             Assert.That(menu.IsOpen, Is.True);
-            PlayMenuView.Row row = menu.View.Rows[7];
-            Assume.That(row.label, Is.EqualTo("Send play statistics"));
+            int statisticsRow = RowIndex(menu.View.Rows, "Send play statistics");
+            PlayMenuView.Row row = menu.View.Rows[statisticsRow];
 
             // ON: the current text first, nothing agreed, nothing collected, the menu stepped aside but still open and paused.
             row.write(1f);
@@ -297,7 +314,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(version, Is.EqualTo(Zantetsu.Core.Statistics.PlayStatisticsConsent.CurrentTextVersion.ToString()));
             Assert.That(menu.IsOpen && menu.View.Visible, Is.True);
             Assert.That(row.read(), Is.EqualTo(1f));
-            Assert.That(menu.View.Rows[7].valueText.text, Is.EqualTo("ON"), "the menu shows it at once");
+            Assert.That(menu.View.Rows[statisticsRow].valueText.text, Is.EqualTo("ON"), "the menu shows it at once");
 
             // Closing the menu gives the game back as ever.
             Tick(menu, select: false);
@@ -605,18 +622,21 @@ namespace Zantetsu.Core.Tests
                 }
             }
 
+            string savedMode = PlayerPrefs.HasKey(PlaySettings.TurnModeKey) ? PlayerPrefs.GetString(PlaySettings.TurnModeKey) : null;
+            PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
             try
             {
                 _city.speed = 1.49f;
                 _city.turnDegreesPerSecond = 120f;
                 PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
-                Assert.That(menu.Settings.TurnIsContinuous && menu.Settings.MovementChangeable, Is.True, "the crowd's input is the one the scene moves by");
+                Assert.That(menu.Settings.TurnModeChangeable && menu.Settings.MovementChangeable, Is.True, "the crowd's input is the one the scene moves by");
+                Assert.That(menu.Settings.SnapTurn && !menu.Settings.TurnIsContinuous, Is.True, "nothing saved: play snap-turns (2026-10-20)");
                 Tick(menu);
                 Tick(menu, menuDown: true);
                 Tick(menu);
                 IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-                Assert.That(rows.Count, Is.EqualTo(7), "volume, speed, turn, cut surface debug, depenetration, grip offset, blade angle");
-                Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label }, Is.EqualTo(new[] { "Volume", "Speed", "Turn" }));
+                Assert.That(rows.Count, Is.EqualTo(8), "volume, speed, snap turn, snap angle, cut surface debug, depenetration, grip offset, blade angle");
+                Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label, rows[3].label }, Is.EqualTo(new[] { "Volume", "Speed", "Snap turn", "Snap angle" }));
 
                 // Each slider is taken by a press on it and follows the ray until the select is let go.
                 RectTransform volume = (RectTransform)rows[0].slider.transform;
@@ -636,10 +656,15 @@ namespace Zantetsu.Core.Tests
                 Assert.That(_city.speed, Is.EqualTo(1.4f).Within(1e-4f), "stepped to a tenth: 0.5 + 0.37 * 2.5 = 1.425 -> 1.4");
                 Tick(menu);
 
-                RectTransform turn = (RectTransform)rows[2].slider.transform;
+                // Continuous by its toggle: the turn speed's row takes the snap angle's place.
+                Tick(menu, select: true, pointAt: Centre(rows[2].background.rectTransform));
+                Tick(menu);
+                rows = menu.View.Rows;
+                Assert.That(new[] { rows[2].label, rows[3].label }, Is.EqualTo(new[] { "Snap turn", "Turn" }));
+                RectTransform turn = (RectTransform)rows[3].slider.transform;
                 Tick(menu, select: true, pointAt: Along(turn, 0.001f));
                 Assert.That(_city.turnDegreesPerSecond, Is.EqualTo(PlaySettings.TurnSpeedMinimum).Within(1e-4f));
-                Assert.That(rows[2].valueText.text, Is.EqualTo("30 °/s"));
+                Assert.That(rows[3].valueText.text, Is.EqualTo("30 °/s"));
                 Assert.That(_plain.SnapTurnDegrees, Is.EqualTo(30f), "the other input's turn is not this scene's and is not touched");
 
                 // Kept, for play: the next menu of play puts them back.
@@ -663,6 +688,8 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
+                PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
+                if (savedMode != null) PlayerPrefs.SetString(PlaySettings.TurnModeKey, savedMode);
                 PlayerPrefs.Save();
             }
         }
@@ -679,8 +706,7 @@ namespace Zantetsu.Core.Tests
                 Tick(menu);
                 Tick(menu, menuDown: true);
                 Tick(menu);
-                var row = menu.View.Rows[3];
-                Assert.That(row.label, Is.EqualTo("Cut surface debug"));
+                var row = menu.View.Rows[RowIndex(menu.View.Rows, "Cut surface debug")];
                 Assert.That(row.isToggle, Is.True);
                 Assert.That(VpCutSurfaceColour.DebugEnabled, Is.False);
                 Assert.That(row.valueText.text, Is.EqualTo("OFF"));
@@ -854,6 +880,167 @@ namespace Zantetsu.Core.Tests
                 }
 
                 PlayerPrefs.Save();
+            }
+        }
+
+        // The turn's keys saved and put back around a case (the Editor's own PlayerPrefs).
+        private static System.Action KeepTurnKeys()
+        {
+            var floats = new Dictionary<string, float>();
+            foreach (string key in new[] { PlaySettings.TurnSpeedKey, PlaySettings.SnapTurnKey })
+            {
+                if (PlayerPrefs.HasKey(key)) floats[key] = PlayerPrefs.GetFloat(key);
+                PlayerPrefs.DeleteKey(key);
+            }
+
+            string mode = PlayerPrefs.HasKey(PlaySettings.TurnModeKey) ? PlayerPrefs.GetString(PlaySettings.TurnModeKey) : null;
+            PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
+            return () =>
+            {
+                foreach (string key in new[] { PlaySettings.TurnSpeedKey, PlaySettings.SnapTurnKey })
+                {
+                    PlayerPrefs.DeleteKey(key);
+                    if (floats.TryGetValue(key, out float value)) PlayerPrefs.SetFloat(key, value);
+                }
+
+                PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
+                if (mode != null) PlayerPrefs.SetString(PlaySettings.TurnModeKey, mode);
+                PlayerPrefs.Save();
+            };
+        }
+
+        [Test]
+        public void InPlay_TheCrowdsTurn_IsSnapAt30WhereNothingIsSaved_EvenWithASavedTurnSpeed_WhichIsKept()
+        {
+            System.Action restore = KeepTurnKeys();
+            try
+            {
+                PlayMenu fresh = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.SnapTurn && fresh.Settings.SnapTurn, Is.True, "a new player: snap");
+                Assert.That(_city.SnapTurnDegrees, Is.EqualTo(30f));
+                Assert.That(PlayerPrefs.HasKey(PlaySettings.TurnModeKey), Is.False, "the default is applied, not saved");
+
+                // A player who saved a turn speed before there was a choice: snap all the same, the speed kept for continuous.
+                _city.SnapTurn = false;
+                _city.turnDegreesPerSecond = 120f;
+                PlayerPrefs.SetFloat(PlaySettings.TurnSpeedKey, 90f);
+                PlayMenu existing = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.SnapTurn, Is.True, "no way saved: snap");
+                Assert.That(_city.turnDegreesPerSecond, Is.EqualTo(90f), "the saved speed kept");
+                Assert.That(existing.Settings.TurnSpeed, Is.EqualTo(90f));
+                Assert.That(existing.Settings.Turn, Is.EqualTo(30f), "the turn as it is set now: the snap angle");
+                Assert.That(existing.Settings.TurnIsContinuous, Is.False);
+            }
+            finally
+            {
+                restore();
+            }
+        }
+
+        [Test]
+        public void InPlay_TheWayAndTheSnapAngle_AreSetByTheMenu_Saved_AndPutBackAtTheNextStart()
+        {
+            System.Action restore = KeepTurnKeys();
+            try
+            {
+                PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
+                PlayMenuView.Row way = rows[RowIndex(rows, "Snap turn")];
+                PlayMenuView.Row angle = rows[RowIndex(rows, "Snap angle")];
+                Assert.That(way.isToggle, Is.True);
+                Assert.That(way.valueText.text, Is.EqualTo("ON"));
+
+                // The angle: 15, 30 or 45, by the slider.
+                RectTransform slider = (RectTransform)angle.slider.transform;
+                foreach (var (t, expected) in new[] { (0.001f, 15f), (0.5f, 30f), (0.999f, 45f), (0.3f, 30f) })
+                {
+                    Tick(menu, select: true, pointAt: Along(slider, t));
+                    Assert.That(_city.SnapTurnDegrees, Is.EqualTo(expected), "along " + t);
+                    Tick(menu);
+                }
+
+                Tick(menu, select: true, pointAt: Along(slider, 0.999f));
+                Tick(menu);
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.SnapTurnKey), Is.EqualTo(45f), "saved");
+                Assert.That(angle.valueText.text, Is.EqualTo("45 °"));
+
+                // The way: the toggle, once a press. Its value's row follows (TL 2026-10-20): snap shows the snap
+                // angle alone, continuous the turn speed alone, the menu standing where it stood.
+                Assert.That(RowLabels(menu), Does.Contain("Snap angle").And.Not.Contain("Turn"), "snap: the angle alone");
+                Vector3 target = Centre(way.background.rectTransform);
+                Vector3 standing = way.background.rectTransform.position;
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(_city.SnapTurn, Is.False, "continuous");
+                Assert.That(menu.Settings.TurnIsContinuous, Is.True);
+                Assert.That(PlayerPrefs.GetString(PlaySettings.TurnModeKey), Is.EqualTo(PlaySettings.TurnModeContinuous), "saved");
+                Assert.That(RowLabels(menu), Does.Contain("Turn").And.Not.Contain("Snap angle"), "continuous: the turn speed alone");
+                PlayMenuView.Row wayAgain = menu.View.Rows[RowIndex(menu.View.Rows, "Snap turn")];
+                Assert.That(Vector3.Distance(wayAgain.background.rectTransform.position, standing), Is.LessThan(1e-4f), "rebuilt where it stood");
+                Assert.That(wayAgain.valueText.text, Is.EqualTo("OFF"));
+                Assert.That(menu.IsOpen, Is.True, "still open");
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(_city.SnapTurn, Is.False, "holding the select does not toggle again");
+                Tick(menu);
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(_city.SnapTurn, Is.True, "a new press: snap again");
+                Assert.That(RowLabels(menu), Does.Contain("Snap angle").And.Not.Contain("Turn"));
+                Tick(menu);
+                Tick(menu, select: true, pointAt: target);
+                Assert.That(_city.SnapTurn, Is.False, "and continuous, saved so for the next start");
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+
+                // The next start of play puts both back.
+                _city.SnapTurn = true;
+                _city.SnapTurnDegrees = 30f;
+                PlayMenu again = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.SnapTurn, Is.False, "continuous, as saved");
+                Assert.That(_city.SnapTurnDegrees, Is.EqualTo(45f), "45, as saved");
+                Assert.That(again.Settings.Turn, Is.EqualTo(_city.turnDegreesPerSecond), "continuous: the turn is the speed");
+
+                // Snap again, saved as such.
+                again.Settings.SetSnapTurn(true);
+                Assert.That(PlayerPrefs.GetString(PlaySettings.TurnModeKey), Is.EqualTo(PlaySettings.TurnModeSnap));
+                NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.SnapTurn, Is.True);
+            }
+            finally
+            {
+                restore();
+            }
+        }
+
+        [Test]
+        public void TheCrowdsSnapAngle_IsBroughtTo15_30Or45_AndAScriptedRunKeepsTheScenesTurn()
+        {
+            Assert.That(new[] { PlaySettings.CityAngle(15f), PlaySettings.CityAngle(20f), PlaySettings.CityAngle(23f), PlaySettings.CityAngle(30f), PlaySettings.CityAngle(44f), PlaySettings.CityAngle(60f), PlaySettings.CityAngle(90f), PlaySettings.CityAngle(5f), PlaySettings.CityAngle(float.NaN) },
+                Is.EqualTo(new[] { 15f, 15f, 30f, 30f, 45f, 45f, 45f, 15f, 30f }));
+
+            System.Action restore = KeepTurnKeys();
+            try
+            {
+                // A plain scene's saved 90 is 45 for the crowd's input; nothing is written by putting it back.
+                PlayerPrefs.SetFloat(PlaySettings.SnapTurnKey, 90f);
+                NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.SnapTurnDegrees, Is.EqualTo(45f));
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.SnapTurnKey), Is.EqualTo(90f), "the saved value is not rewritten");
+
+                // A scripted run: nothing saved is applied, the scene's continuous turn stays, and the way is not the menu's.
+                PlayerPrefs.SetString(PlaySettings.TurnModeKey, PlaySettings.TurnModeSnap);
+                _city.SnapTurn = false;
+                PlayMenu scripted = NewMenu(SandboxScenarioKind.CityWalk);
+                Assert.That(_city.SnapTurn, Is.False, "a script's scene keeps its turn");
+                Assert.That(scripted.Settings.TurnModeChangeable, Is.False);
+                scripted.Settings.SetSnapTurn(true);
+                Assert.That(_city.SnapTurn, Is.False, "and nothing changes it");
+            }
+            finally
+            {
+                restore();
             }
         }
 

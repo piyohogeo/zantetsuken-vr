@@ -112,6 +112,16 @@ namespace Zantetsu.Sandbox
         public const float TurnSpeedMinimum = 30f, TurnSpeedMaximum = 240f, TurnSpeedStep = 10f;
         public const float SnapTurnMinimum = 15f, SnapTurnMaximum = 90f, SnapTurnStep = 15f;
 
+        /// <summary>
+        /// The crowd's input's way of turning (2026-10-20): "snap" or "continuous". Where none is saved -- a new player,
+        /// or one who saved only a turn speed before there was a choice -- play snap-turns.
+        /// </summary>
+        public const string TurnModeKey = "zantetsu.play.turnMode";
+        public const string TurnModeSnap = "snap", TurnModeContinuous = "continuous";
+
+        /// <summary>The crowd's input's snap angle: 15, 30 or 45 degrees, 30 where none is saved (the saved snap angle, <see cref="SnapTurnKey"/>, brought to the nearest).</summary>
+        public const float CitySnapAngleMinimum = 15f, CitySnapAngleMaximum = 45f, CitySnapAngleStep = 15f, CitySnapAngleDefault = 30f;
+
         /// <summary>The katana's turn toward its edge from the scene's grip offset, in degrees (negative: toward the spine).</summary>
         public const float BladeAngleMinimum = -30f, BladeAngleMaximum = 60f, BladeAngleStep = 2.5f;
 
@@ -153,8 +163,14 @@ namespace Zantetsu.Sandbox
         /// <summary>Whether the move speed and the turn are the player's to change: in play, with a locomotion input found.</summary>
         public bool MovementChangeable => _persist && (_city != null || _plain != null);
 
-        /// <summary>The turn is a speed (the crowd's input) rather than a snap angle (the plain one).</summary>
-        public bool TurnIsContinuous => _city != null;
+        /// <summary>The turn is continuous, a speed: the crowd's input set to continuous. The plain input and the crowd's set to snap turn by an angle.</summary>
+        public bool TurnIsContinuous => _city != null && !_city.SnapTurn;
+
+        /// <summary>Whether the way of turning (snap or continuous) is the player's to choose: in play, with the crowd's input (the plain one only snap-turns).</summary>
+        public bool TurnModeChangeable => _persist && _city != null;
+
+        /// <summary>The scene's input is the plain one, whose turn is a snap angle only.</summary>
+        public bool TurnIsPlainSnap => _city == null && _plain != null;
 
         public bool HasLocomotion => _city != null || _plain != null;
 
@@ -218,11 +234,26 @@ namespace Zantetsu.Sandbox
                 applied++;
             }
 
-            string turnKey = TurnIsContinuous ? TurnSpeedKey : SnapTurnKey;
+            // The crowd's input: its turn speed as saved, and its way of turning and snap angle -- the saved ones, or
+            // snap at 30 degrees where none is saved. The plain input: its snap angle as saved.
+            string turn = "";
+            string turnKey = _city != null ? TurnSpeedKey : SnapTurnKey;
             if (HasLocomotion && PlayerPrefs.HasKey(turnKey))
             {
                 SetTurn(PlayerPrefs.GetFloat(turnKey), false);
                 applied++;
+            }
+
+            if (_city != null)
+            {
+                bool modeSaved = PlayerPrefs.HasKey(TurnModeKey);
+                SetSnapTurn(!modeSaved || PlayerPrefs.GetString(TurnModeKey) != TurnModeContinuous, false);
+                bool angleSaved = PlayerPrefs.HasKey(SnapTurnKey);
+                SetSnapAngle(angleSaved ? PlayerPrefs.GetFloat(SnapTurnKey) : CitySnapAngleDefault, false);
+                if (modeSaved) applied++;
+                if (angleSaved) applied++;
+                turn = "; turn " + (_city.SnapTurn ? "snap" : "continuous") + (modeSaved ? " (saved)" : " (default)")
+                    + ", snap angle " + SnapAngle.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + (angleSaved ? " (saved)" : " (default)");
             }
 
             // The blade's angle is play's own: the saved one, or play's default where none was saved.
@@ -249,7 +280,7 @@ namespace Zantetsu.Sandbox
             SetDepenetration(depenetrationSaved ? PlayerPrefs.GetFloat(DepenetrationKey) : DepenetrationDefault, false);
             if (depenetrationSaved) applied++;
             string depenetration = "; max depenetration velocity " + Depenetration.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + " m/s" + (depenetrationSaved ? " (saved)" : " (default)");
-            return "saved settings applied: " + applied + blade + depenetration;
+            return "saved settings applied: " + applied + turn + blade + depenetration;
         }
 
         /// <summary>The physics' maximum depenetration velocity now, m/s (the default every new body takes).</summary>
@@ -372,7 +403,58 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        public float Turn => _city != null ? _city.turnDegreesPerSecond : _plain != null ? _plain.SnapTurnDegrees : 0f;
+        /// <summary>The turn as it is set now: the snap angle where the turn snaps, the turn speed where it is continuous (what the statistics take).</summary>
+        public float Turn => _city != null ? (_city.SnapTurn ? _city.SnapTurnDegrees : _city.turnDegreesPerSecond) : _plain != null ? _plain.SnapTurnDegrees : 0f;
+
+        /// <summary>The crowd's input's continuous turn speed, °/s (kept whichever way it turns); the plain input's snap angle without it.</summary>
+        public float TurnSpeed => _city != null ? _city.turnDegreesPerSecond : Turn;
+
+        /// <summary>Whether the crowd's input snap-turns (false without it).</summary>
+        public bool SnapTurn => _city != null && _city.SnapTurn;
+
+        public void SetSnapTurn(bool snap) => SetSnapTurn(snap, true);
+
+        private void SetSnapTurn(bool snap, bool save)
+        {
+            if (!_persist || _city == null)
+            {
+                return;
+            }
+
+            _city.SnapTurn = snap;   // a change waits for the stick's centre (MobPlanPlayerInput)
+            if (save)
+            {
+                PlayerPrefs.SetString(TurnModeKey, snap ? TurnModeSnap : TurnModeContinuous);
+            }
+        }
+
+        /// <summary>The crowd's input's snap angle, degrees (0 without it).</summary>
+        public float SnapAngle => _city != null ? _city.SnapTurnDegrees : 0f;
+
+        public void SetSnapAngle(float degrees) => SetSnapAngle(degrees, true);
+
+        private void SetSnapAngle(float degrees, bool save)
+        {
+            if (!_persist || _city == null)
+            {
+                return;
+            }
+
+            degrees = CityAngle(degrees);
+            _city.SnapTurnDegrees = degrees;
+            if (save)
+            {
+                Save(SnapTurnKey, degrees);
+            }
+        }
+
+        /// <summary>A snap angle for the crowd's input: 15, 30 or 45, the nearest (a plain scene's saved 60 or 90 is 45 here).</summary>
+        public static float CityAngle(float degrees)
+        {
+            if (float.IsNaN(degrees) || float.IsInfinity(degrees)) return CitySnapAngleDefault;
+            float clamped = Mathf.Clamp(degrees, CitySnapAngleMinimum, CitySnapAngleMaximum);
+            return Mathf.Round(clamped / CitySnapAngleStep) * CitySnapAngleStep;
+        }
 
         public void SetTurn(float value) => SetTurn(value, true);
 
@@ -673,6 +755,10 @@ namespace Zantetsu.Sandbox
             if (_state.Open && _view != null)
             {
                 _view.Drive(in input);
+                if (_rowsChanged)
+                {
+                    RebuildView();   // after the view's own frame, never inside it
+                }
             }
 
             bool resume = _view != null && _view.ConsumeResume();
@@ -893,20 +979,42 @@ namespace Zantetsu.Sandbox
             HoldGameInput(Holder.Menu);
             if (_view == null)
             {
-                _view = new PlayMenuView();
                 _settings.Bind();
-                var bunny = FindFirstObjectByType<BunnyDemo>();
-                _view.Build(Rows(), bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
-                    ? "play"
-                    : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null,
-                    Debug.isDebugBuild ? SwingsText : (System.Func<string>)null);
+                BuildView();
             }
 
             Vector3 position = _camera != null ? _camera.transform.position : Vector3.zero;
             Quaternion rotation = _camera != null ? _camera.transform.rotation : Quaternion.identity;
+            _shownFrom = new Pose(position, rotation);
             _view.Show(position, rotation);
             Debug.Log(Prefix + "opened (frame " + Time.frameCount + "); the game is paused; the menu is drawn "
                 + (_view.DrawnInFront ? "in front of everything" : "with uGUI's default material, depth tested (its own shader is not in this build)"));
+        }
+
+        // The head pose the menu was last shown before: a rebuilt view stands where the old one stood.
+        private Pose _shownFrom;
+
+        // The rows depend on a setting (the snap turn's angle or the continuous speed, 2026-10-20): set by its toggle,
+        // the view is built again after the frame it was pressed in.
+        private bool _rowsChanged;
+
+        private void BuildView()
+        {
+            _view = new PlayMenuView();
+            var bunny = FindFirstObjectByType<BunnyDemo>();
+            _view.Build(Rows(), bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
+                ? "play"
+                : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null,
+                Debug.isDebugBuild ? SwingsText : (System.Func<string>)null);
+        }
+
+        // The same menu with its rows as the settings now are, where it stood (a select held when it is shown again presses nothing).
+        private void RebuildView()
+        {
+            _rowsChanged = false;
+            _view.Destroy();
+            BuildView();
+            _view.Show(_shownFrom.position, _shownFrom.rotation);
         }
 
         internal void HoldLocomotionUntilRelease()
@@ -944,20 +1052,53 @@ namespace Zantetsu.Sandbox
                     step = PlaySettings.MoveSpeedStep, format = "F1", unit = " m/s", interactable = movement,
                     read = () => _settings.MoveSpeed, write = _settings.SetMoveSpeed,
                 },
-                _settings.TurnIsContinuous || !_settings.HasLocomotion
+            };
+            if (_settings.TurnModeChangeable)
+            {
+                // The crowd's input (2026-10-20): snap or continuous, then the way's own value -- the snap angle while
+                // it snaps, the turn speed while it is continuous (TL 2026-10-20, after the device). The speed is kept
+                // while it snaps. The toggle builds the rows again.
+                rows.Add(new PlayMenuView.Row
+                {
+                    label = "Snap turn", isToggle = true, interactable = movement,
+                    read = () => _settings.SnapTurn ? 1f : 0f,
+                    write = value =>
+                    {
+                        _settings.SetSnapTurn(value >= 0.5f);
+                        _rowsChanged = true;
+                    },
+                });
+                rows.Add(_settings.SnapTurn
                     ? new PlayMenuView.Row
+                    {
+                        label = "Snap angle", minimum = PlaySettings.CitySnapAngleMinimum, maximum = PlaySettings.CitySnapAngleMaximum,
+                        step = PlaySettings.CitySnapAngleStep, format = "F0", unit = " °", interactable = movement,
+                        read = () => _settings.SnapAngle, write = _settings.SetSnapAngle,
+                    }
+                    : new PlayMenuView.Row
                     {
                         label = "Turn", minimum = PlaySettings.TurnSpeedMinimum, maximum = PlaySettings.TurnSpeedMaximum,
                         step = PlaySettings.TurnSpeedStep, format = "F0", unit = " °/s", interactable = movement,
-                        read = () => _settings.Turn, write = _settings.SetTurn,
-                    }
-                    : new PlayMenuView.Row
+                        read = () => _settings.TurnSpeed, write = _settings.SetTurn,
+                    });
+            }
+            else
+            {
+                // As before: the plain input's snap angle; else the turn speed (the crowd's in a scripted run, shown unchangeable).
+                rows.Add(_settings.TurnIsPlainSnap
+                    ? new PlayMenuView.Row
                     {
                         label = "Snap turn", minimum = PlaySettings.SnapTurnMinimum, maximum = PlaySettings.SnapTurnMaximum,
                         step = PlaySettings.SnapTurnStep, format = "F0", unit = " °", interactable = movement,
                         read = () => _settings.Turn, write = _settings.SetTurn,
-                    },
-            };
+                    }
+                    : new PlayMenuView.Row
+                    {
+                        label = "Turn", minimum = PlaySettings.TurnSpeedMinimum, maximum = PlaySettings.TurnSpeedMaximum,
+                        step = PlaySettings.TurnSpeedStep, format = "F0", unit = " °/s", interactable = movement,
+                        read = () => _settings.TurnSpeed, write = _settings.SetTurn,
+                    });
+            }
             var bunny = FindFirstObjectByType<BunnyDemo>();
             if (bunny != null) rows.Add(new PlayMenuView.Row
             {

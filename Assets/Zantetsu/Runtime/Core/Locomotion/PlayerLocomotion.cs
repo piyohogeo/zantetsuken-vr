@@ -203,6 +203,39 @@ namespace Zantetsu.Core
         }
 
         /// <summary>
+        /// A request taken whole or not at all (2026-10-20, the snap turn about the head): the Root takes
+        /// <paramref name="candidateRoot"/> -- position and rotation -- only where it can stand exactly there; else
+        /// nothing moves or turns. On the crowd's walkable map <see cref="TryRequest(Pose)"/> turns the Root even where
+        /// the map stops its position short, which for a turn about the head would carry the head sideways; here such a
+        /// request is refused. Without a map it is <see cref="TryRequest(Pose)"/>, whose judgement is whole already.
+        /// </summary>
+        public LocomotionVerdict TryRequestWhole(Pose candidateRoot)
+        {
+            if (_map == null)
+            {
+                return TryRequest(candidateRoot);
+            }
+
+            Vector3 from = transform.position - _mapOffset;
+            Vector3 to = candidateRoot.position - _mapOffset;
+            var position = MobPlan.CircleLocomotion.Move(_map, _circleRadius, from.x, from.z, to.x, to.z);
+            if (Mathf.Abs(position.X - to.x) > WholeTolerance || Mathf.Abs(position.Z - to.z) > WholeTolerance)
+            {
+                LastVerdict = LocomotionVerdict.RejectedRoot;
+                RejectedCount++;
+                return LastVerdict;
+            }
+
+            transform.SetPositionAndRotation(new Vector3(position.X + _mapOffset.x, transform.position.y, position.Z + _mapOffset.z), candidateRoot.rotation);
+            LastVerdict = LocomotionVerdict.Allowed;
+            AllowedCount++;
+            return LastVerdict;
+        }
+
+        /// <summary>How far, in metres, a whole request's position may be stopped short on the map and still be taken whole.</summary>
+        public const float WholeTolerance = 1e-4f;
+
+        /// <summary>
         /// The judgement alone: whether the Root capsule on <paramref name="candidateRoot"/> and the HMD capsule on
         /// <paramref name="hmdInRoot"/> carried onto it overlap <paramref name="occupancy"/>.
         /// </summary>
