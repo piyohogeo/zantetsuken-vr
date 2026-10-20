@@ -67,10 +67,12 @@ namespace Zantetsu.Core.Statistics
         public float MoveSpeed;         // m/s
         public float TurnDegrees;       // degrees per second, or the snap angle
         public bool TurnIsContinuous;
+        public bool TurnOnRightStick;   // the sticks' layout: the turn on the right stick (the left moves and strafes), else on the left with the move
         public float BladeAngleDegrees;
 
         public bool Equals(PlayUiSettings o) => Known == o.Known && Volume.Equals(o.Volume) && MoveSpeed.Equals(o.MoveSpeed)
-            && TurnDegrees.Equals(o.TurnDegrees) && TurnIsContinuous == o.TurnIsContinuous && BladeAngleDegrees.Equals(o.BladeAngleDegrees);
+            && TurnDegrees.Equals(o.TurnDegrees) && TurnIsContinuous == o.TurnIsContinuous && TurnOnRightStick == o.TurnOnRightStick
+            && BladeAngleDegrees.Equals(o.BladeAngleDegrees);
         public override bool Equals(object obj) => obj is PlayUiSettings o && Equals(o);
         public override int GetHashCode() => Known ? 1 : 0;
     }
@@ -161,9 +163,10 @@ namespace Zantetsu.Core.Statistics
         /// names. 2 (2026-10-14): frames counted from where play begins (the start-up preparation and the head's
         /// tracking over) and, in XR, by the XR session's focus; "graphicsApi" apart from "gpuDriver" (the driver's
         /// version, or null); the OpenXR runtime's own name and version; the XR device null where only a generic name
-        /// is to be had.
+        /// is to be had. 3 (2026-10-20): the settings' "turnOnRightStick" (the sticks' layout); "turn" and
+        /// "turnContinuous" keep their meaning (the snap angle or the turn speed, and which).
         /// </summary>
-        public const int FormatVersion = 2;
+        public const int FormatVersion = 3;
 
         public const int MaxEpochs = 4;
 

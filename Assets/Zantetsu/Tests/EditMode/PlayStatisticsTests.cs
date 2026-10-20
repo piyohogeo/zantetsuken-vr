@@ -195,7 +195,7 @@ namespace Zantetsu.Core.Tests
             s.NoteTotals(98765, 87654);
             for (int k = 0; k < (int)PlayCapacityKind.Count; k++) s.NoteCapacity((PlayCapacityKind)k, 123456789, 987654321, 1000000000, 12, 34);
             for (int k = 0; k < (int)PlayFailureKind.Count; k++) s.NoteFailures((PlayFailureKind)k, 1000000 + k);
-            s.NoteSettings(new PlayUiSettings { Known = true, Volume = 0.8f, MoveSpeed = 1.5f, TurnDegrees = 90f, TurnIsContinuous = true, BladeAngleDegrees = 30f });
+            s.NoteSettings(new PlayUiSettings { Known = true, Volume = 0.8f, MoveSpeed = 1.5f, TurnDegrees = 90f, TurnIsContinuous = true, TurnOnRightStick = true, BladeAngleDegrees = 30f });
             return s;
         }
 
@@ -210,8 +210,8 @@ namespace Zantetsu.Core.Tests
             TestContext.Out.WriteLine("full snapshot: " + bytes + " bytes");
             Assert.That(bytes, Is.LessThan(PlayStatisticsSender.MaxBodyBytes * 3 / 4), "well under 16 KiB with four epochs full");
             Assert.That(json, Does.StartWith("{\"schema_version\":1,\"session_id\":\"11111111-2222-3333-4444-555555555555\",\"install_id\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"revision\":5,\"tester_role\":\"external\",\"stats\":{"));
-            Assert.That(PlayStatistics.FormatVersion, Is.EqualTo(2), "the counted frames and the environment fields changed their meaning: a new version");
-            Assert.That(json, Does.Contain("\"format\":2").And.Contain("\"histogram\":1").And.Contain("\"mainIncludesPresentWait\":true"));
+            Assert.That(PlayStatistics.FormatVersion, Is.EqualTo(3), "the settings took the sticks' layout (2026-10-20): a new version");
+            Assert.That(json, Does.Contain("\"format\":3").And.Contain("\"histogram\":1").And.Contain("\"mainIncludesPresentWait\":true"));
             // The environment: the graphics API apart from the driver's version; the runtime's own name and version; a device not obtained is null.
             Assert.That(json, Does.Contain("\"graphicsApi\":\"Direct3D 12 [level 12.2]\",\"gpuDriver\":\"32.0.15.9159\",\"xrDevice\":null,\"xrRuntime\":\"Oculus\",\"xrRuntimeVersion\":\"1.115.0\""));
             Assert.That(json, Does.Contain("\"gpu\":\"gpu \\\"x\\\"\""), "a quote in a string is escaped");
@@ -219,7 +219,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(json, Does.Contain("\"ringFull\":1000001"));
             Assert.That(json, Does.Contain("\"maxLiveFragments\":123456"));
             Assert.That(json, Does.Contain("\"gpuVertices\":{\"unit\":\"vertices\"").And.Contain("\"renderFragments\":{\"unit\":\"fragments\""));
-            Assert.That(json, Does.Contain("\"settings\":{\"volume\":0.8,\"moveSpeed\":1.5,\"turn\":90,\"turnContinuous\":true,\"bladeAngle\":30}"));
+            Assert.That(json, Does.Contain("\"settings\":{\"volume\":0.8,\"moveSpeed\":1.5,\"turn\":90,\"turnContinuous\":true,\"turnOnRightStick\":true,\"bladeAngle\":30}"));
             Assert.That(json, Does.Contain("\"unattributed\":0"));
             Assert.That(CountOf(json, "\"conditions\":"), Is.EqualTo(4));
             Assert.That(CountOf(json, "\"counts\":["), Is.EqualTo(20), "five histograms in each of four epochs");

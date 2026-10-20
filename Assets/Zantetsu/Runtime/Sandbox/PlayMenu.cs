@@ -119,6 +119,14 @@ namespace Zantetsu.Sandbox
         public const string TurnModeKey = "zantetsu.play.turnMode";
         public const string TurnModeSnap = "snap", TurnModeContinuous = "continuous";
 
+        /// <summary>
+        /// The crowd's input's sticks (2026-10-20): "dual" -- the left stick moves forward, back and sideways, the right
+        /// stick turns -- or "single" -- the left stick moves forward and back and turns, as before. Where none is
+        /// saved, dual; the turn's own settings (its way, angle and speed) are kept as they were saved.
+        /// </summary>
+        public const string ControlLayoutKey = "zantetsu.play.controlLayout";
+        public const string ControlLayoutDual = "dual", ControlLayoutSingle = "single";
+
         /// <summary>The crowd's input's snap angle: 15, 30 or 45 degrees, 30 where none is saved (the saved snap angle, <see cref="SnapTurnKey"/>, brought to the nearest).</summary>
         public const float CitySnapAngleMinimum = 15f, CitySnapAngleMaximum = 45f, CitySnapAngleStep = 15f, CitySnapAngleDefault = 30f;
 
@@ -246,13 +254,17 @@ namespace Zantetsu.Sandbox
 
             if (_city != null)
             {
+                bool layoutSaved = PlayerPrefs.HasKey(ControlLayoutKey);
+                SetDualStick(!layoutSaved || PlayerPrefs.GetString(ControlLayoutKey) != ControlLayoutSingle, false);
+                if (layoutSaved) applied++;
                 bool modeSaved = PlayerPrefs.HasKey(TurnModeKey);
                 SetSnapTurn(!modeSaved || PlayerPrefs.GetString(TurnModeKey) != TurnModeContinuous, false);
                 bool angleSaved = PlayerPrefs.HasKey(SnapTurnKey);
                 SetSnapAngle(angleSaved ? PlayerPrefs.GetFloat(SnapTurnKey) : CitySnapAngleDefault, false);
                 if (modeSaved) applied++;
                 if (angleSaved) applied++;
-                turn = "; turn " + (_city.SnapTurn ? "snap" : "continuous") + (modeSaved ? " (saved)" : " (default)")
+                turn = "; sticks " + (_city.DualStick ? "dual (left moves, right turns)" : "single (left moves and turns)") + (layoutSaved ? " (saved)" : " (default)")
+                    + "; turn " + (_city.SnapTurn ? "snap" : "continuous") + (modeSaved ? " (saved)" : " (default)")
                     + ", snap angle " + SnapAngle.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + (angleSaved ? " (saved)" : " (default)");
             }
 
@@ -411,6 +423,31 @@ namespace Zantetsu.Sandbox
 
         /// <summary>Whether the crowd's input snap-turns (false without it).</summary>
         public bool SnapTurn => _city != null && _city.SnapTurn;
+
+        /// <summary>
+        /// Whether the turn is on the right stick: the crowd's input in the dual layout, or the plain input (whose
+        /// right stick snap-turns). What the statistics take; false without an input.
+        /// </summary>
+        public bool TurnOnRightStick => _city != null ? _city.DualStick : _plain != null;
+
+        /// <summary>Whether the crowd's input is the dual layout (false without it).</summary>
+        public bool DualStick => _city != null && _city.DualStick;
+
+        public void SetDualStick(bool dual) => SetDualStick(dual, true);
+
+        private void SetDualStick(bool dual, bool save)
+        {
+            if (!_persist || _city == null)
+            {
+                return;
+            }
+
+            _city.DualStick = dual;   // a change holds the move and the turn until the sticks are at their centre
+            if (save)
+            {
+                PlayerPrefs.SetString(ControlLayoutKey, dual ? ControlLayoutDual : ControlLayoutSingle);
+            }
+        }
 
         public void SetSnapTurn(bool snap) => SetSnapTurn(snap, true);
 
@@ -808,7 +845,8 @@ namespace Zantetsu.Sandbox
 
             foreach (MobPlanPlayerInput city in _cityInputs)
             {
-                if (city != null && !MobPlanPlayerInput.IsNeutral(input.leftStick))
+                // The sticks its layout uses: the left, and in the dual layout the right's horizontal axis too.
+                if (city != null && !city.SticksNeutral(input.leftStick, input.rightStick))
                 {
                     return true;
                 }
@@ -1055,9 +1093,15 @@ namespace Zantetsu.Sandbox
             };
             if (_settings.TurnModeChangeable)
             {
-                // The crowd's input (2026-10-20): snap or continuous, then the way's own value -- the snap angle while
-                // it snaps, the turn speed while it is continuous (TL 2026-10-20, after the device). The speed is kept
-                // while it snaps. The toggle builds the rows again.
+                // The crowd's input (2026-10-20): its sticks' layout -- ON: the right stick turns, the left moves
+                // forward, back and sideways; OFF: the left moves and turns, as before --, then snap or continuous, then
+                // the way's own value -- the snap angle while it snaps, the turn speed while it is continuous (TL
+                // 2026-10-20, after the device). The speed is kept while it snaps. The way's toggle builds the rows again.
+                rows.Add(new PlayMenuView.Row
+                {
+                    label = "Right stick turn", isToggle = true, interactable = movement,
+                    read = () => _settings.DualStick ? 1f : 0f, write = value => _settings.SetDualStick(value >= 0.5f),
+                });
                 rows.Add(new PlayMenuView.Row
                 {
                     label = "Snap turn", isToggle = true, interactable = movement,

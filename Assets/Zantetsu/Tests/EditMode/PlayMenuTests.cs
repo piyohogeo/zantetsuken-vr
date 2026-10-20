@@ -150,7 +150,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(menu.IsOpen, Is.True);
             Assert.That(menu.View.DetailText, Is.Not.Null, "the development readout under the settings");
             Assert.That(menu.View.DetailText.text, Does.StartWith("Last swings").And.Contain("no swing yet"));
-            Assert.That(menu.View.Rows.Count, Is.EqualTo(8), "the rows are the settings alone (volume, speed, snap turn, snap angle -- or turn, continuous --, cut surface debug, depenetration, grip offset, blade angle)");
+            Assert.That(menu.View.Rows.Count, Is.EqualTo(9), "the rows are the settings alone (volume, speed, right stick turn, snap turn, snap angle -- or turn, continuous --, cut surface debug, depenetration, grip offset, blade angle)");
         }
 
         [Test]
@@ -204,7 +204,7 @@ namespace Zantetsu.Core.Tests
             Tick(menu, menuDown: true);
             Assert.That(menu.IsOpen, Is.True);
             IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-            Assert.That(rows.Count, Is.EqualTo(10), "the eight settings, the statistics row and its explanation (unit 9-B)");
+            Assert.That(rows.Count, Is.EqualTo(11), "the nine settings, the statistics row and its explanation (unit 9-B)");
             int statisticsRow = RowIndex(rows, "Send play statistics");
             Assert.That(statisticsRow, Is.EqualTo(rows.Count - 2), "after the settings");
             PlayMenuView.Row row = rows[statisticsRow];
@@ -635,8 +635,8 @@ namespace Zantetsu.Core.Tests
                 Tick(menu, menuDown: true);
                 Tick(menu);
                 IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
-                Assert.That(rows.Count, Is.EqualTo(8), "volume, speed, snap turn, snap angle, cut surface debug, depenetration, grip offset, blade angle");
-                Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label, rows[3].label }, Is.EqualTo(new[] { "Volume", "Speed", "Snap turn", "Snap angle" }));
+                Assert.That(rows.Count, Is.EqualTo(9), "volume, speed, right stick turn, snap turn, snap angle, cut surface debug, depenetration, grip offset, blade angle");
+                Assert.That(new[] { rows[0].label, rows[1].label, rows[2].label, rows[3].label, rows[4].label }, Is.EqualTo(new[] { "Volume", "Speed", "Right stick turn", "Snap turn", "Snap angle" }));
 
                 // Each slider is taken by a press on it and follows the ray until the select is let go.
                 RectTransform volume = (RectTransform)rows[0].slider.transform;
@@ -657,14 +657,14 @@ namespace Zantetsu.Core.Tests
                 Tick(menu);
 
                 // Continuous by its toggle: the turn speed's row takes the snap angle's place.
-                Tick(menu, select: true, pointAt: Centre(rows[2].background.rectTransform));
+                Tick(menu, select: true, pointAt: Centre(rows[3].background.rectTransform));
                 Tick(menu);
                 rows = menu.View.Rows;
-                Assert.That(new[] { rows[2].label, rows[3].label }, Is.EqualTo(new[] { "Snap turn", "Turn" }));
-                RectTransform turn = (RectTransform)rows[3].slider.transform;
+                Assert.That(new[] { rows[3].label, rows[4].label }, Is.EqualTo(new[] { "Snap turn", "Turn" }));
+                RectTransform turn = (RectTransform)rows[4].slider.transform;
                 Tick(menu, select: true, pointAt: Along(turn, 0.001f));
                 Assert.That(_city.turnDegreesPerSecond, Is.EqualTo(PlaySettings.TurnSpeedMinimum).Within(1e-4f));
-                Assert.That(rows[3].valueText.text, Is.EqualTo("30 °/s"));
+                Assert.That(rows[4].valueText.text, Is.EqualTo("30 °/s"));
                 Assert.That(_plain.SnapTurnDegrees, Is.EqualTo(30f), "the other input's turn is not this scene's and is not touched");
 
                 // Kept, for play: the next menu of play puts them back.
@@ -893,8 +893,13 @@ namespace Zantetsu.Core.Tests
                 PlayerPrefs.DeleteKey(key);
             }
 
-            string mode = PlayerPrefs.HasKey(PlaySettings.TurnModeKey) ? PlayerPrefs.GetString(PlaySettings.TurnModeKey) : null;
-            PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
+            var strings = new Dictionary<string, string>();
+            foreach (string key in new[] { PlaySettings.TurnModeKey, PlaySettings.ControlLayoutKey })
+            {
+                if (PlayerPrefs.HasKey(key)) strings[key] = PlayerPrefs.GetString(key);
+                PlayerPrefs.DeleteKey(key);
+            }
+
             return () =>
             {
                 foreach (string key in new[] { PlaySettings.TurnSpeedKey, PlaySettings.SnapTurnKey })
@@ -903,8 +908,12 @@ namespace Zantetsu.Core.Tests
                     if (floats.TryGetValue(key, out float value)) PlayerPrefs.SetFloat(key, value);
                 }
 
-                PlayerPrefs.DeleteKey(PlaySettings.TurnModeKey);
-                if (mode != null) PlayerPrefs.SetString(PlaySettings.TurnModeKey, mode);
+                foreach (string key in new[] { PlaySettings.TurnModeKey, PlaySettings.ControlLayoutKey })
+                {
+                    PlayerPrefs.DeleteKey(key);
+                    if (strings.TryGetValue(key, out string value)) PlayerPrefs.SetString(key, value);
+                }
+
                 PlayerPrefs.Save();
             };
         }
@@ -1037,6 +1046,90 @@ namespace Zantetsu.Core.Tests
                 Assert.That(scripted.Settings.TurnModeChangeable, Is.False);
                 scripted.Settings.SetSnapTurn(true);
                 Assert.That(_city.SnapTurn, Is.False, "and nothing changes it");
+            }
+            finally
+            {
+                restore();
+            }
+        }
+
+        [Test]
+        public void InPlay_TheSticksAreDualWhereNothingIsSaved_TheTurnsSavedSettingsKept_AndTheLayoutIsSavedAndPutBack()
+        {
+            System.Action restore = KeepTurnKeys();
+            try
+            {
+                // A player who saved a continuous turn at 90 degrees a second and a 45 degree snap, and no layout.
+                PlayerPrefs.SetString(PlaySettings.TurnModeKey, PlaySettings.TurnModeContinuous);
+                PlayerPrefs.SetFloat(PlaySettings.TurnSpeedKey, 90f);
+                PlayerPrefs.SetFloat(PlaySettings.SnapTurnKey, 45f);
+                PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.DualStick && menu.Settings.DualStick && menu.Settings.TurnOnRightStick, Is.True, "no layout saved: dual");
+                Assert.That(PlayerPrefs.HasKey(PlaySettings.ControlLayoutKey), Is.False, "the default is applied, not saved");
+                Assert.That(_city.SnapTurn, Is.False, "the saved way kept");
+                Assert.That(_city.turnDegreesPerSecond, Is.EqualTo(90f), "the saved speed kept");
+                Assert.That(_city.SnapTurnDegrees, Is.EqualTo(45f), "the saved angle kept");
+
+                // The menu's toggle: single, saved; the turn's saved settings untouched.
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                IReadOnlyList<PlayMenuView.Row> rows = menu.View.Rows;
+                PlayMenuView.Row layout = rows[RowIndex(rows, "Right stick turn")];
+                Assert.That(layout.isToggle, Is.True);
+                Assert.That(layout.valueText.text, Is.EqualTo("ON"));
+                Tick(menu, select: true, pointAt: Centre(layout.background.rectTransform));
+                Assert.That(_city.DualStick, Is.False, "single");
+                Assert.That(menu.Settings.TurnOnRightStick, Is.False);
+                Assert.That(PlayerPrefs.GetString(PlaySettings.ControlLayoutKey), Is.EqualTo(PlaySettings.ControlLayoutSingle), "saved");
+                Assert.That(PlayerPrefs.GetString(PlaySettings.TurnModeKey), Is.EqualTo(PlaySettings.TurnModeContinuous), "the way untouched");
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.TurnSpeedKey), Is.EqualTo(90f), "the speed untouched");
+                Assert.That(PlayerPrefs.GetFloat(PlaySettings.SnapTurnKey), Is.EqualTo(45f), "the angle untouched");
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+
+                // The next start of play puts it back.
+                _city.DualStick = true;
+                NewMenu(SandboxScenarioKind.Play);
+                Assert.That(_city.DualStick, Is.False, "single, as saved");
+                Assert.That(_city.turnDegreesPerSecond, Is.EqualTo(90f));
+
+                // A scripted run applies nothing saved and the layout is not the menu's.
+                PlayerPrefs.SetString(PlaySettings.ControlLayoutKey, PlaySettings.ControlLayoutDual);
+                _city.DualStick = false;
+                PlayMenu scripted = NewMenu(SandboxScenarioKind.CityWalk);
+                Assert.That(_city.DualStick, Is.False, "a script's scene keeps its sticks");
+                scripted.Settings.SetDualStick(true);
+                Assert.That(_city.DualStick, Is.False, "and nothing changes them");
+            }
+            finally
+            {
+                restore();
+            }
+        }
+
+        [Test]
+        public void InPlay_TheDualLayoutsInput_IsGivenBackAfterTheMenu_OnlyWithTheRightStickAtItsCentreToo()
+        {
+            System.Action restore = KeepTurnKeys();
+            try
+            {
+                PlayMenu menu = NewMenu(SandboxScenarioKind.Play);
+                Assume.That(_city.DualStick, Is.True);
+                Tick(menu);
+                Tick(menu, menuDown: true);
+                Tick(menu);
+                Tick(menu, menuDown: true, rightStick: new Vector2(0.8f, 0f));
+                Assert.That(menu.IsOpen, Is.False);
+                Tick(menu, rightStick: new Vector2(0.8f, 0f));
+                Assert.That(_city.liveInput, Is.False, "the right stick held over: a turn would start the moment the input came back");
+                Tick(menu, rightStick: new Vector2(0.36f, 0f));
+                Assert.That(_city.liveInput, Is.False, "not yet below the snap's release threshold");
+                Tick(menu, rightStick: new Vector2(0.2f, 0f));
+                Assert.That(_city.liveInput, Is.False, "below it but above the dead zone: a continuous turn would start (TL review 2026-10-20)");
+                Tick(menu, rightStick: new Vector2(0.14f, 0.9f));
+                Assert.That(_city.liveInput, Is.True, "its horizontal axis inside the dead zone (its vertical one does nothing): back");
             }
             finally
             {

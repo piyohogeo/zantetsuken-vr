@@ -528,7 +528,7 @@ namespace Zantetsu.Sandbox
 
             PlaySettings menu = PlayMenu.Instance != null ? PlayMenu.Instance.Settings : null;
             Collector.Settings(menu != null
-                ? new PlayUiSettings { Known = true, Volume = menu.Volume, MoveSpeed = menu.MoveSpeed, TurnDegrees = menu.Turn, TurnIsContinuous = menu.TurnIsContinuous, BladeAngleDegrees = menu.BladeAngle }
+                ? new PlayUiSettings { Known = true, Volume = menu.Volume, MoveSpeed = menu.MoveSpeed, TurnDegrees = menu.Turn, TurnIsContinuous = menu.TurnIsContinuous, TurnOnRightStick = menu.TurnOnRightStick, BladeAngleDegrees = menu.BladeAngle }
                 : default);
         }
 

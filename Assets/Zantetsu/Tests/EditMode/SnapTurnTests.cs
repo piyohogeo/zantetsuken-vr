@@ -386,6 +386,260 @@ namespace Zantetsu.Core.Tests
             AssertNear(free.Head.position, head, "on the map: the head where it was");
         }
 
+        // ---- the dual layout (2026-10-20): the left stick moves forward, back and sideways, the right stick turns ----
+
+        private static MobPlanPlayerInput.StickReading Stick(float x, float y, MobPlanPlayerInput.StickSource source = MobPlanPlayerInput.StickSource.Controller) =>
+            new MobPlanPlayerInput.StickReading(true, new Vector2(x, y), source);
+
+        private static MobPlanPlayerInput.StickReading Unread => MobPlanPlayerInput.StickReading.NotRead;
+
+        private static void Dual(Rig rig, MobPlanPlayerInput.StickReading left, MobPlanPlayerInput.StickReading right, float seconds = 0.1f) =>
+            rig.Input.Drive(in left, in right, seconds);
+
+        private Rig DualRig(bool snap, Vector3 origin = default, float yaw = 0f, Vector3? headLocal = null)
+        {
+            Rig rig = MakeRig(origin, yaw, headLocal);
+            rig.Input.DualStick = true;
+            rig.Input.SnapTurn = snap;
+            Dual(rig, Stick(0f, 0f), Stick(0f, 0f), 0.011f);   // the change of layout waits for both sticks' centre: given here
+            Assume.That(rig.Input.HeldUntilCentre, Is.False);
+            return rig;
+        }
+
+        [Test]
+        public void TheDualMove_IsForwardBackAndSideways_NoFasterOnADiagonal_TheReverseFactorOnTheBackwardPartAlone()
+        {
+            Vector3 facing = Vector3.forward, right = Vector3.right;
+            const float speed = 1.49f, reverse = 0.5f, seconds = 0.1f;
+            Vector3 M(float x, float y) => MobPlanPlayerInput.MoveDual(facing, new Vector2(x, y), speed, reverse, seconds);
+            AssertNear(M(0f, 1f), facing * speed * seconds, "forward at the speed");
+            AssertNear(M(0f, -1f), -facing * speed * reverse * seconds, "back at the reverse factor");
+            AssertNear(M(1f, 0f), right * speed * seconds, "sideways right at the speed");
+            AssertNear(M(-1f, 0f), -right * speed * seconds, "sideways left at the speed");
+            Assert.That(M(1f, 1f).magnitude, Is.EqualTo(speed * seconds).Within(1e-5f), "a full diagonal no faster than straight");
+            AssertNear(M(1f, 1f), (facing + right).normalized * speed * seconds, "and half way between");
+            AssertNear(M(0f, 0.4f), facing * 0.4f * speed * seconds, "a light deflection: as slow as it is light");
+            AssertNear(M(0.3f, 0.4f), (facing * 0.4f + right * 0.3f) * speed * seconds, "inside the unit circle: not stretched");
+            float k = 1f / Mathf.Sqrt(2f);
+            AssertNear(M(1f, -1f), (-facing * k * reverse + right * k) * speed * seconds, "back and right: the reverse factor on the backward part alone");
+            Assert.That(M(1f, 1f).y + M(0f, -1f).y, Is.EqualTo(0f), "never vertical");
+        }
+
+        [Test]
+        public void InTheDualLayout_TheLeftStickAloneTurnsNothing_AndTheRightStickAloneMovesNothing()
+        {
+            foreach (bool snap in new[] { true, false })
+            {
+                Rig rig = DualRig(snap);
+                Vector3 origin = rig.Origin.position;
+                Vector3 facing = MobPlanPlayerInput.HorizontalFacing(rig.Head.forward, rig.Origin.forward);
+                Vector3 right = new Vector3(facing.z, 0f, -facing.x);
+                Dual(rig, Stick(1f, 0f), Stick(0f, 0f));
+                Assert.That(Yaw(rig), Is.EqualTo(0f).Within(1e-3f), (snap ? "snap" : "continuous") + ": the left stick's sideways deflection turns nothing");
+                AssertNear(rig.Origin.position, origin + right * (rig.Input.speed * 0.1f), "it moves sideways, along the head's right");
+
+                Rig turning = DualRig(snap);
+                origin = turning.Origin.position;
+                Dual(turning, Stick(0f, 0f), Stick(1f, 0.8f));   // the right stick's vertical axis does nothing either
+                Assert.That(Mathf.DeltaAngle(0f, Yaw(turning)), Is.EqualTo(snap ? 30f : 12f).Within(1e-3f), (snap ? "snap" : "continuous") + ": the right stick turns");
+                if (!snap) AssertNear(turning.Origin.position, origin, "continuous, about the rig's origin, and no move");
+            }
+        }
+
+        [Test]
+        public void InTheDualLayout_TheMoveFollowsTheHeadsFacing_NotTheRigs_AndTheSnapTurnsAboutTheHead()
+        {
+            // The rig turned one way, the head (tracked) another: the move goes by the head.
+            Rig rig = DualRig(true, new Vector3(2f, 0f, -3f), 70f);
+            Vector3 facing = MobPlanPlayerInput.HorizontalFacing(rig.Head.forward, rig.Origin.forward);
+            Assume.That(Vector3.Angle(facing, Vector3.ProjectOnPlane(rig.Origin.forward, Vector3.up)), Is.GreaterThan(10f), "the head faces elsewhere than the rig");
+            Vector3 right = new Vector3(facing.z, 0f, -facing.x);
+            Vector3 origin = rig.Origin.position;
+            Dual(rig, Stick(0.6f, 0.8f), Stick(0f, 0f));
+            AssertNear(rig.Origin.position, origin + (facing * 0.8f + right * 0.6f) * (rig.Input.speed * 0.1f), "forward and sideways by the head");
+
+            Vector3 head = rig.Head.position;
+            float yaw = Yaw(rig);
+            Dual(rig, Stick(0f, 0f), Stick(-1f, 0f), 0.011f);
+            Assert.That(Mathf.DeltaAngle(yaw, Yaw(rig)), Is.EqualTo(-30f).Within(1e-3f));
+            AssertNear(rig.Head.position, head, "the snap about the head: the head where it was");
+        }
+
+        [Test]
+        public void InTheDualLayout_ASnapAndAMoveInOneFrame_TurnFirst_ThenMoveByTheHeadAsItNowStands()
+        {
+            Rig rig = DualRig(true);
+            Vector3 head = rig.Head.position;
+            Vector3 turnedFacing = MobPlanPlayerInput.HorizontalFacing(Quaternion.Euler(0f, 30f, 0f) * rig.Head.forward, Vector3.forward);
+            Vector3 turnedRight = new Vector3(turnedFacing.z, 0f, -turnedFacing.x);
+            Dual(rig, Stick(-0.6f, 0.8f), Stick(1f, 0f));
+            Assert.That(Mathf.DeltaAngle(0f, Yaw(rig)), Is.EqualTo(30f).Within(1e-3f));
+            AssertNear(rig.Head.position, head + (turnedFacing * 0.8f - turnedRight * 0.6f) * (rig.Input.speed * 0.1f), "turned about the head, then moved by the new facing");
+        }
+
+        [Test]
+        public void InTheDualLayout_AtAWall_TheSidewaysAndDiagonalMoveGoTheMapsWay_AndASnapIsMadeInPlace()
+        {
+            // Free where x <= 0.05: sideways to the right (+x) is refused, a diagonal forward-right keeps its forward part.
+            Rig rig = DualRig(true, Vector3.zero, 0f, new Vector3(0.5f, 1.6f, 0f));
+            rig.Head.localRotation = Quaternion.identity;   // facing +z: right is +x
+            rig.Locomotion.ConfigureMap(new EdgeMap { Edge = 0.05f }, Vector3.zero);
+            Vector3 origin = rig.Origin.position;
+            Dual(rig, Stick(1f, 0f), Stick(0f, 0f));
+            AssertNear(rig.Origin.position, origin, "sideways into the wall: no move (no way through it)");
+            Dual(rig, Stick(0.7071f, 0.7071f), Stick(0f, 0f));
+            Assert.That(rig.Origin.position.x, Is.LessThanOrEqualTo(0.05f + 1e-5f), "the diagonal does not go through the wall");
+            Assert.That(rig.Origin.position.z, Is.GreaterThan(origin.z + 0.05f), "its forward part goes on along the wall");
+            Dual(rig, Stick(-1f, 0f), Stick(0f, 0f));
+            Assert.That(rig.Origin.position.x, Is.LessThan(origin.x - 0.1f), "sideways away from the wall: free");
+
+            // At the wall, the snap about the head is refused and made in place, as in the single layout.
+            Rig wall = DualRig(true, Vector3.zero, 0f, new Vector3(0.5f, 1.6f, 0f));
+            wall.Locomotion.ConfigureMap(new EdgeMap { Edge = 0.05f }, Vector3.zero);
+            wall.Input.SnapTurnDegrees = 45f;
+            Dual(wall, Stick(0f, 0f), Stick(1f, 0f), 0.011f);
+            Assert.That(wall.Input.SnapTurnsInPlace, Is.EqualTo(1));
+            Assert.That(Mathf.DeltaAngle(0f, Yaw(wall)), Is.EqualTo(45f).Within(1e-3f));
+        }
+
+        [Test]
+        public void InTheDualLayout_TheRightStickNotRead_OrFromAnotherSource_TurnsNoMore_UntilItsOwnCentre_AndTheLeftNeverTakesTheTurn()
+        {
+            var keyboard = MobPlanPlayerInput.StickSource.Keyboard;
+            var gamepad = MobPlanPlayerInput.StickSource.Gamepad;
+            Rig rig = DualRig(true);
+            Dual(rig, Stick(0f, 0f), Stick(1f, 0f), 0.011f);
+            Assert.That(rig.Input.SnapTurnsMade, Is.EqualTo(1), "the right stick's deflection");
+
+            // Not read, then read again still deflected, the left stick at its centre throughout: no turn.
+            Dual(rig, Stick(0f, 0f), Unread, 0.011f);
+            for (int i = 0; i < 5; i++) Dual(rig, Stick(0f, 0f), Stick(1f, 0f), 0.011f);
+            Assert.That(rig.Input.SnapTurnsMade, Is.EqualTo(1), "the right stick back still deflected: no second turn (the left's centre is not its)");
+
+            // Another source's centre in between (the keyboard's, the gamepad's), the controller back still deflected: no turn.
+            foreach (var other in new[] { keyboard, gamepad })
+            {
+                for (int i = 0; i < 3; i++) Dual(rig, Stick(0f, 0f), Stick(0f, 0f, other), 0.011f);
+                for (int i = 0; i < 5; i++) Dual(rig, Stick(0f, 0f), Stick(1f, 0f), 0.011f);
+                Assert.That(rig.Input.SnapTurnsMade, Is.EqualTo(1), other + "'s centre is not the controller's");
+            }
+
+            // Its own centre, then the deflection: the next turn.
+            Dual(rig, Stick(0f, 0f), Stick(0.1f, 0f), 0.011f);
+            Dual(rig, Stick(0f, 0f), Stick(1f, 0f), 0.011f);
+            Assert.That(rig.Input.SnapTurnsMade, Is.EqualTo(2));
+
+            // The right stick missing: the left stick's sideways deflection moves sideways and never turns.
+            float yaw = Yaw(rig);
+            for (int i = 0; i < 5; i++) Dual(rig, Stick(1f, 0f), Unread, 0.011f);
+            Assert.That(Yaw(rig), Is.EqualTo(yaw).Within(1e-3f), "no turn moved to the left stick");
+
+            // Continuous: an unread right stick turns nothing.
+            Rig continuous = DualRig(false);
+            Dual(continuous, Stick(0f, 0f), Unread);
+            Assert.That(Yaw(continuous), Is.EqualTo(0f).Within(1e-3f));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void AfterTheLayoutChanged_TheMenu_TheFocus_OrThePause_ADeflectedStickMovesAndTurnsNothing_UntilBothSticksAreReadAtTheirCentre(bool snap)
+        {
+            string way = snap ? "snap" : "continuous";
+            void Expect(Rig rig, string what)
+            {
+                what = way + ", " + what;
+                Vector3 origin = rig.Origin.position;
+                float yaw = Yaw(rig);
+                Dual(rig, Stick(0f, 1f), Stick(0f, 0f));
+                Dual(rig, Stick(0f, 0f), Stick(1f, 0f));
+                Dual(rig, Stick(1f, 1f), Stick(1f, 0f));
+                Dual(rig, Stick(0f, 0f), Unread);   // the right not read: no centre
+                Dual(rig, Unread, Stick(0f, 0f));   // the left not read: no centre
+                // TL review 2026-10-20: the right stick held lightly (0.2) -- below the snap's release threshold, above
+                // the dead zone where the continuous turn starts -- is no centre: given back there, it would turn.
+                for (int i = 0; i < 5; i++) Dual(rig, Stick(0f, 0f), Stick(0.2f, 0f));
+                Dual(rig, Stick(0f, 0f), Stick(-0.16f, 0f));
+                AssertNear(rig.Origin.position, origin, what + ": nothing moved");
+                Assert.That(Yaw(rig), Is.EqualTo(yaw).Within(1e-3f), what + ": nothing turned");
+                Assert.That(rig.Input.HeldUntilCentre, Is.True, what + ": still held");
+                Dual(rig, Stick(0.1f, 0f), Stick(0.14f, 0f));   // both read, both inside the dead zone
+                Assert.That(rig.Input.HeldUntilCentre, Is.False, what + ": let go at both centres");
+                Assert.That(Yaw(rig), Is.EqualTo(yaw).Within(1e-3f), what + ": the centre itself turns nothing");
+                Dual(rig, Stick(0f, 1f), Stick(0f, 0f));
+                Assert.That(Vector3.Distance(rig.Origin.position, origin), Is.GreaterThan(0.1f), what + ": then it moves");
+                Dual(rig, Stick(0f, 0f), Stick(1f, 0f), snap ? 0.011f : 0.1f);
+                Assert.That(Mathf.DeltaAngle(yaw, Yaw(rig)), Is.EqualTo(snap ? 30f : 12f).Within(1e-3f), what + ": and turns");
+            }
+
+            // The layout changed (single to dual), the sticks still deflected.
+            Rig changed = MakeRig();
+            changed.Input.SnapTurn = snap;
+            changed.Input.Drive(Vector2.zero, 0.011f);
+            changed.Input.DualStick = true;
+            Expect(changed, "the layout changed");
+
+            // Given back after the menu.
+            Rig menu = DualRig(snap);
+            menu.Input.liveInput = false;
+            Dual(menu, Stick(0f, 1f), Stick(1f, 0f));
+            menu.Input.liveInput = true;
+            Expect(menu, "the menu");
+
+            // The focus back, and the application back.
+            foreach (string message in new[] { "OnApplicationFocus", "OnApplicationPause" })
+            {
+                Rig focus = DualRig(snap);
+                typeof(MobPlanPlayerInput).GetMethod(message, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(focus.Input, new object[] { message == "OnApplicationFocus" });
+                Expect(focus, message);
+            }
+
+            // The game's pause.
+            Rig paused = DualRig(snap);
+            GamePause.SetManual(true);
+            Dual(paused, Stick(0f, 1f), Stick(1f, 0f));
+            GamePause.SetManual(false);
+            Expect(paused, "the pause");
+
+            // And the single layout: one stick, read at its centre once.
+            Rig single = MakeRig();
+            single.Input.liveInput = false;
+            single.Input.Drive(new Vector2(0f, 1f), 0.1f);
+            single.Input.liveInput = true;
+            Vector3 at = single.Origin.position;
+            single.Input.Drive(new Vector2(0f, 1f), 0.1f);
+            AssertNear(single.Origin.position, at, "single, given back deflected: no move");
+            single.Input.Drive(Vector2.zero, 0.1f);
+            single.Input.Drive(new Vector2(0f, 1f), 0.1f);
+            Assert.That(Vector3.Distance(single.Origin.position, at), Is.GreaterThan(0.1f), "single: after its centre, it moves");
+        }
+
+        [Test]
+        public void TheMenuGivesTheDualLayoutsInputBack_OnlyWithTheRightStickAtItsCentreToo()
+        {
+            Rig rig = DualRig(true);
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, Vector2.zero), Is.True);
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(0.5f, 0f)), Is.False, "the right stick deflected");
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(0.2f, 0f)), Is.False, "lightly, above the dead zone (a continuous turn turns there)");
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(-0.15f, 0f)), Is.False, "the dead zone's edge turns");
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(0.14f, 0f)), Is.True, "inside the dead zone");
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(0f, 0.9f)), Is.True, "its vertical axis does nothing");
+            Assert.That(rig.Input.SticksNeutral(new Vector2(0f, 0.2f), Vector2.zero), Is.False, "the left stick deflected");
+            rig.Input.DualStick = false;
+            Assert.That(rig.Input.SticksNeutral(Vector2.zero, new Vector2(0.9f, 0f)), Is.True, "single: the right stick is not this input's");
+        }
+
+        [Test]
+        public void AScriptsStick_InTheDualLayout_TurnsContinuouslyAndNeverMovesSideways()
+        {
+            Rig rig = DualRig(true);
+            Vector3 origin = rig.Origin.position;
+            rig.Input.SubmitAlongRig(1f, 0f, 0.1f);
+            AssertNear(rig.Origin.position, origin + Vector3.forward * (rig.Input.speed * 0.1f), "forward along the rig, no sideways part");
+            rig.Input.SubmitAlongRig(0f, 1f, 0.1f);
+            Assert.That(Mathf.DeltaAngle(0f, Yaw(rig)), Is.EqualTo(12f).Within(1e-3f), "continuous, whatever the live layout and way");
+            Assert.That(rig.Input.SnapTurnsMade, Is.Zero);
+        }
+
         // ---- the katana --------------------------------------------------------------------------------------------
 
         private const double Interval = 0.011;
@@ -403,10 +657,17 @@ namespace Zantetsu.Core.Tests
             return new Vector3(0f, 1.4f, 0.3f) + (EdgeStep * steps);
         }
 
-        private (Rig rig, SandboxRightHandKatana katana, Transform shown) KatanaRig()
+        // The single layout (the left stick turns) or the dual one (the right stick turns, the katana's hand's stick).
+        private (Rig rig, SandboxRightHandKatana katana, Transform shown) KatanaRig(bool dual)
         {
             Rig rig = MakeRig(new Vector3(2f, 0f, -1f), 25f);
             rig.Input.SnapTurn = true;
+            if (dual)
+            {
+                rig.Input.DualStick = true;
+                Dual(rig, Stick(0f, 0f), Stick(0f, 0f), (float)Interval);
+            }
+
             var katanaObject = new GameObject("Sandbox Katana Rig");
             _made.Add(katanaObject);
             var shown = new GameObject("Katana");
@@ -423,18 +684,20 @@ namespace Zantetsu.Core.Tests
         // The live order: the crowd's input (-100) moves and turns the rig, then the katana judges the frame's pose.
         private static void Step(Rig rig, SandboxRightHandKatana katana, in BladePoseSample device, float stickX)
         {
-            rig.Input.Drive(new Vector2(stickX, 0f), (float)Interval);
+            if (rig.Input.DualStick) Dual(rig, Stick(0f, 0f), Stick(stickX, 0f), (float)Interval);
+            else rig.Input.Drive(new Vector2(stickX, 0f), (float)Interval);
             katana.TryRecordSample(device);
         }
 
-        [Test]
-        public void AStillHand_UnderSnapTurns_IsNeitherAcceptedNorLatched_ThoughTheKatanaShownJumps()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AStillHand_UnderSnapTurns_IsNeitherAcceptedNorLatched_ThoughTheKatanaShownJumps(bool dual)
         {
             var grips = new[] { Quaternion.Euler(0f, 0f, -90f) * Upright, Quaternion.Euler(0f, 0f, 90f) * Upright, Upright };
             foreach (float angle in new[] { 15f, 30f, 45f })
                 foreach (Quaternion grip in grips)
                 {
-                    var (rig, katana, shown) = KatanaRig();
+                    var (rig, katana, shown) = KatanaRig(dual);
                     rig.Input.SnapTurnDegrees = angle;
                     float largestJump = 0f;
                     Vector3 last = default;
@@ -455,12 +718,13 @@ namespace Zantetsu.Core.Tests
                 }
         }
 
-        [Test]
-        public void TheSameSwing_WithASnapTurnInIt_IsAcceptedAndLatchedAsWithout_AtTheSamePlaceInTrackingSpace()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TheSameSwing_WithASnapTurnInIt_IsAcceptedAndLatchedAsWithout_AtTheSamePlaceInTrackingSpace(bool dual)
         {
             (List<int> accepted, int latch, Pose space, Plane plane, Vector3 origin, int waves) Sweep(int snapAt)
             {
-                var (rig, katana, _) = KatanaRig();
+                var (rig, katana, _) = KatanaRig(dual);
                 var accepted = new List<int>();
                 int latch = -1;
                 Pose space = default;

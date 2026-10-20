@@ -18,6 +18,20 @@ namespace Zantetsu.Sandbox
     /// the walkable map refuses that, in place about the rig's origin (<see cref="TrySnapTurn"/>). The move is the same either way. A script's stick
     /// (<see cref="Submit"/>, <see cref="SubmitAlongRig"/>) always turns continuously.
     /// </para>
+    /// <para>
+    /// **The live sticks' layout (2026-10-20).** Single, as before: the left stick's vertical axis moves forward and
+    /// back, its horizontal axis turns. Dual (play's default): the left stick moves -- forward and back, and sideways --
+    /// along the head's horizontal facing and the horizontal at right angles to it, the stick's length at most 1 (a
+    /// diagonal is no faster), the reverse factor on the backward part alone; the right stick's horizontal axis turns
+    /// (its vertical axis does nothing). Each stick is read on its own, with whether it was read and from where; the
+    /// turn's centre counts only from the turn's own stick and source (<see cref="ReadStick"/>), never from the left
+    /// stick's or another device's, and an unread right stick never moves the turn to the left. After the input is
+    /// given back (the menu), the focus or the application back, the game's pause, or a change of layout, nothing
+    /// moves or turns until the sticks the layout uses have been read at their centre. Keys (development): single --
+    /// W/S or up/down forward and back, A/D or left/right turn; dual -- W/S forward and back, A/D sideways, left/right
+    /// turn. A gamepad: its left stick, as the controller's; dual -- the left stick moves, the right stick's horizontal
+    /// axis turns.
+    /// </para>
     /// </summary>
     [DefaultExecutionOrder(-100)]
     public sealed class MobPlanPlayerInput : MonoBehaviour
@@ -38,8 +52,49 @@ namespace Zantetsu.Sandbox
         [Tooltip("One snap turn, degrees.")]
         [SerializeField] private float snapTurnDegrees = 30f;
 
-        private readonly SnapTurnTrigger _snap = new SnapTurnTrigger();
-        private bool _wasLive;
+        [Tooltip("The live sticks' layout: dual (the left stick moves forward, back and sideways, the right stick's horizontal axis turns) or, off, single (the left stick moves forward and back and turns, as before). Play sets it from its settings (dual where none is saved).")]
+        [SerializeField] private bool dualStick;
+
+        private readonly SnapTurnTrigger _snap = new SnapTurnTrigger();   // waits for a centre from the start
+        private bool _wasLive = true;   // live from the start: the start moves as before (only a snap waits for a centre)
+
+        // Nothing moves or turns until the sticks the layout uses are read at their centre (the input given back, the
+        // focus or the application back, the game's pause, the layout changed).
+        private bool _heldUntilCentre;
+
+        /// <summary>Whether the live sticks are the dual layout (else the single one). A change holds the move and the turn until the sticks are at their centre.</summary>
+        public bool DualStick
+        {
+            get => dualStick;
+            set
+            {
+                if (dualStick != value) HoldUntilCentre();
+                dualStick = value;
+            }
+        }
+
+        /// <summary>Whether the move and the turn wait for the sticks' centre now.</summary>
+        public bool HeldUntilCentre => _heldUntilCentre;
+
+        private void HoldUntilCentre()
+        {
+            _heldUntilCentre = true;
+            _snap.RequireCentre();
+        }
+
+        /// <summary>
+        /// Whether these sticks are this input's neutral in its layout: the left stick inside the dead zone, and in the
+        /// dual layout the right stick's horizontal axis inside it too (<see cref="TurnNeutral"/>). The play menu gives
+        /// the live input back only then (DESIGN 4.6).
+        /// </summary>
+        public bool SticksNeutral(Vector2 left, Vector2 right) =>
+            IsNeutral(left) && (!dualStick || TurnNeutral(right));
+
+        /// <summary>
+        /// Whether the turn stick turns nothing whichever the way: its horizontal axis inside <see cref="DeadZone"/>,
+        /// where the continuous turn starts (and well below the snap's release threshold).
+        /// </summary>
+        public static bool TurnNeutral(Vector2 stick) => Mathf.Abs(stick.x) < DeadZone;
 
         /// <summary>Whether the live stick snap-turns (else it turns continuously). A change waits for the stick's centre.</summary>
         public bool SnapTurn
@@ -126,6 +181,12 @@ namespace Zantetsu.Sandbox
 
         private void SubmitAlong(float forward, float turn, float seconds, bool byHead)
         {
+            SubmitAlong(forward, turn, seconds, byHead, null);
+        }
+
+        // The move of the single layout (forward only), or of the dual one (stick: sideways and forward, MoveDual).
+        private void SubmitAlong(float forward, float turn, float seconds, bool byHead, Vector2? stick)
+        {
             if (player == null || crowd == null || !crowd.IsReady || GamePause.IsPaused) return; // (no move or turn while the game is paused, DESIGN 4.6)
             Transform rig = player.transform;
             Quaternion turned = Quaternion.Euler(0, Mathf.Clamp(turn, -1, 1) * turnDegreesPerSecond * seconds, 0);
@@ -133,8 +194,23 @@ namespace Zantetsu.Sandbox
             // the rig's own forward is only the fallback for a head looking straight up or down. A script's follows the rig's.
             Transform h = Head;
             Vector3 facing = FacingOf(byHead, h != null ? h.forward : rig.forward, rig.forward);
-            Vector3 move = turned * Move(facing, forward, speed, reverseFactor, seconds);
+            Vector3 move = turned * (stick.HasValue ? MoveDual(facing, stick.Value, speed, reverseFactor, seconds) : Move(facing, forward, speed, reverseFactor, seconds));
             player.TryRequest(new Pose(rig.position + move, turned * rig.rotation));
+        }
+
+        /// <summary>
+        /// The dual layout's move of one submission (2026-10-20): the stick (x sideways to the right, y forward) at most
+        /// 1 long -- a diagonal no faster than straight, a light deflection as slow as it is light -- along
+        /// <paramref name="facing"/> and the horizontal at right angles to it on its right; forward and sideways at the
+        /// speed, the backward part at the reverse factor of it. Never vertical.
+        /// </summary>
+        public static Vector3 MoveDual(Vector3 facing, Vector2 stick, float speed, float reverseFactor, float seconds)
+        {
+            Vector2 v = Vector2.ClampMagnitude(stick, 1f);
+            Vector3 right = new Vector3(facing.z, 0f, -facing.x);
+            float forward = v.y * speed * (v.y < 0f ? reverseFactor : 1f);
+            float sideways = v.x * speed;
+            return ((facing * forward) + (right * sideways)) * seconds;
         }
         /// <summary>
         /// One snap turn of <paramref name="steps"/> × the snap angle (positive to the right) about the vertical line
@@ -182,6 +258,18 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal void Drive(Vector2 command, float seconds, bool read = true, StickSource source = StickSource.Controller)
         {
+            // The single layout's one stick: the move and the turn are its.
+            var stick = new StickReading(read, command, source);
+            Drive(in stick, in stick, seconds);
+        }
+
+        /// <summary>
+        /// One frame of the live sticks: <paramref name="move"/> the stick that moves (the left), <paramref name="turn"/>
+        /// the one that turns (the left again in the single layout, the right in the dual one), each as read -- whether
+        /// it was, its value and its source (see the other overload for the turn's centre).
+        /// </summary>
+        internal void Drive(in StickReading move, in StickReading turn, float seconds)
+        {
             if (!liveInput)
             {
                 _wasLive = false;
@@ -190,40 +278,78 @@ namespace Zantetsu.Sandbox
 
             if (!_wasLive || GamePause.IsPaused)
             {
-                _snap.RequireCentre();   // given back, or paused: a stick still deflected turns nothing
+                HoldUntilCentre();   // given back, or paused: a stick still deflected moves and turns nothing
                 _wasLive = true;
             }
 
-            if (!read)
+            // The turn's own stick: not read is not let go, and another source's centre is not this one's -- the next
+            // snap waits for a centre read from the turn's stick and source (a change's first frame may be that centre;
+            // a deflection then turns nothing, the trigger being unarmed). The left stick's centre is never the right's.
+            if (!turn.Read)
             {
-                // Not read is not let go: the next turn waits for a centre that is read -- this frame's zero is no
-                // stick at all, so it is not given to the trigger -- and nothing moves, as an unread stick moved nothing before.
                 _snap.RequireCentre();
-                _source = StickSource.None;
-                Submit(0f, 0f, seconds);
+                _turnSource = StickSource.None;
+            }
+            else if (turn.Source != _turnSource)
+            {
+                _snap.RequireCentre();
+                _turnSource = turn.Source;
+            }
+
+            if (_heldUntilCentre)
+            {
+                // Both sticks of the layout read and at their centre (in the single layout one stick, read once): inside
+                // the dead zone, where nothing moves or turns whichever the way -- not the snap's release threshold
+                // (0.35), which a continuous turn passes from 0.15 (TL review 2026-10-20: given back at 0.2, it turned).
+                bool centred = move.Read && IsNeutral(move.Value) && turn.Read && TurnNeutral(turn.Value);
+                if (!centred)
+                {
+                    Submit(0f, 0f, seconds);
+                    return;
+                }
+
+                _heldUntilCentre = false;
+            }
+
+            Vector2 m = move.Read ? move.Value : Vector2.zero;   // an unread stick moves nothing
+            if (IsNeutral(m)) m = Vector2.zero;
+            if (!dualStick)
+            {
+                // As before: one stick, its vertical axis forward and back, its horizontal axis the turn.
+                if (!turn.Read)
+                {
+                    Submit(0f, 0f, seconds);
+                    return;
+                }
+
+                if (!snapTurn)
+                {
+                    Submit(m.y, m.x, seconds);
+                    return;
+                }
+
+                // The turn first, whole, about the head; then the move along the head's facing as it now stands.
+                int steps = _snap.Step(m.x);
+                if (steps != 0) TrySnapTurn(steps);
+                Submit(m.y, 0f, seconds);
                 return;
             }
 
-            // Another source's centre is not this one's: a change of source waits for a centre of the new one (its
-            // first frame may be that centre; a deflection then turns nothing, the trigger being unarmed).
-            if (source != _source)
-            {
-                _snap.RequireCentre();
-                _source = source;
-            }
-
-            if (IsNeutral(command)) command = Vector2.zero;
+            // Dual: the right stick's horizontal axis turns -- never the left's, however the right was read.
+            float axis = turn.Read ? turn.Value.x : 0f;
             if (!snapTurn)
             {
-                Submit(command.y, command.x, seconds);
+                SubmitAlong(0f, Mathf.Abs(axis) < DeadZone ? 0f : axis, seconds, true, m);
                 return;
             }
 
-            // The turn first, whole, about the head; then the move along the head's facing as it now stands.
-            int steps = _snap.Step(command.x);
-            if (steps != 0) TrySnapTurn(steps);
-            Submit(command.y, 0f, seconds);
+            int snaps = turn.Read ? _snap.Step(axis) : 0;
+            if (snaps != 0) TrySnapTurn(snaps);
+            SubmitAlong(0f, 0f, seconds, true, m);
         }
+
+        /// <summary>A turn axis inside this turns nothing continuously (the move's dead zone, √<see cref="DeadZoneSquared"/>).</summary>
+        public const float DeadZone = 0.15f;
 
         /// <summary>Where a frame's stick was read from.</summary>
         public enum StickSource
@@ -234,17 +360,34 @@ namespace Zantetsu.Sandbox
             Keyboard,
         }
 
-        private StickSource _source = StickSource.None;
+        /// <summary>One stick's frame as read: whether it was read at all, its value, and where it was read from.</summary>
+        public readonly struct StickReading
+        {
+            public readonly bool Read;
+            public readonly Vector2 Value;
+            public readonly StickSource Source;
+
+            public StickReading(bool read, Vector2 value, StickSource source)
+            {
+                Read = read && IsFinite(value);
+                Value = Read ? value : Vector2.zero;
+                Source = Read ? source : StickSource.None;
+            }
+
+            public static StickReading NotRead => new StickReading(false, Vector2.zero, StickSource.None);
+        }
+
+        private StickSource _turnSource = StickSource.None;
 
         // The application's focus back (the headset taken off and on, the system's menu): wait for the centre.
         private void OnApplicationFocus(bool focus)
         {
-            if (focus) _snap.RequireCentre();
+            if (focus) HoldUntilCentre();
         }
 
         private void OnApplicationPause(bool paused)
         {
-            if (!paused) _snap.RequireCentre();
+            if (!paused) HoldUntilCentre();
         }
 
         private void Update()
@@ -256,25 +399,44 @@ namespace Zantetsu.Sandbox
             }
 
             var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
-            Vector2 xr = Vector2.zero;
-            bool xrRead = left.isValid && left.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxis, out xr);
+            Vector2 leftStick = Vector2.zero;
+            bool leftRead = left.isValid && left.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxis, out leftStick);
             Gamepad pad = Gamepad.current;
-            Vector2 padStick = pad != null ? pad.leftStick.ReadValue() : Vector2.zero;
             var keyboard = Keyboard.current;
-            Vector2 keys = Vector2.zero;
-            if (keyboard != null)
+            bool Key(UnityEngine.InputSystem.Controls.KeyControl key) => key.isPressed;
+            if (!dualStick)
             {
-                keys = new Vector2((keyboard.rightArrowKey.isPressed || keyboard.dKey.isPressed ? 1 : 0) - (keyboard.leftArrowKey.isPressed || keyboard.aKey.isPressed ? 1 : 0),
-                    (keyboard.upArrowKey.isPressed || keyboard.wKey.isPressed ? 1 : 0) - (keyboard.downArrowKey.isPressed || keyboard.sKey.isPressed ? 1 : 0));
+                // Single, as before: the left stick (or the gamepad's left stick, or the keys) moves and turns.
+                Vector2 keys = keyboard == null ? Vector2.zero : new Vector2(
+                    (Key(keyboard.rightArrowKey) || Key(keyboard.dKey) ? 1 : 0) - (Key(keyboard.leftArrowKey) || Key(keyboard.aKey) ? 1 : 0),
+                    (Key(keyboard.upArrowKey) || Key(keyboard.wKey) ? 1 : 0) - (Key(keyboard.downArrowKey) || Key(keyboard.sKey) ? 1 : 0));
+                bool read = ReadStick(left.isValid, leftRead, leftStick, pad != null, pad != null ? pad.leftStick.ReadValue() : Vector2.zero, keyboard != null, keys,
+                    out Vector2 command, out StickSource source);
+                Drive(command, Time.deltaTime, read, source);
+                return;
             }
 
-            bool read = ReadStick(left.isValid, xrRead, xr, pad != null, padStick, keyboard != null, keys, out Vector2 command, out StickSource source);
-            Drive(command, Time.deltaTime, read, source);
+            // Dual: the left stick (W/A/S/D) moves, the right stick's horizontal axis (left/right) turns -- each read on its own.
+            var right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+            Vector2 rightStick = Vector2.zero;
+            bool rightRead = right.isValid && right.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxis, out rightStick);
+            Vector2 moveKeys = keyboard == null ? Vector2.zero : new Vector2(
+                (Key(keyboard.dKey) ? 1 : 0) - (Key(keyboard.aKey) ? 1 : 0), (Key(keyboard.wKey) ? 1 : 0) - (Key(keyboard.sKey) ? 1 : 0));
+            Vector2 turnKeys = keyboard == null ? Vector2.zero : new Vector2((Key(keyboard.rightArrowKey) ? 1 : 0) - (Key(keyboard.leftArrowKey) ? 1 : 0), 0f);
+            bool moveRead = ReadStick(left.isValid, leftRead, leftStick, pad != null, pad != null ? pad.leftStick.ReadValue() : Vector2.zero, keyboard != null, moveKeys,
+                out Vector2 moveValue, out StickSource moveSource);
+            bool turnRead = ReadStick(right.isValid, rightRead, rightStick, pad != null, pad != null ? pad.rightStick.ReadValue() : Vector2.zero, keyboard != null, turnKeys,
+                out Vector2 turnValue, out StickSource turnSource);
+            var move = new StickReading(moveRead, moveValue, moveSource);
+            var turn = new StickReading(turnRead, turnValue, turnSource);
+            Drive(in move, in turn, Time.deltaTime);
         }
 
         /// <summary>
-        /// This frame's stick, whether it was read at all, and from where (2026-10-20): keys pressed are read (the
-        /// keyboard); else the left controller's stick where there is a controller -- read only where its value came
+        /// This frame's stick, whether it was read at all, and from where (2026-10-20) -- one stick: the left (the
+        /// move, and in the single layout the turn too) or the right (the dual layout's turn), each with its own keys,
+        /// controller and gamepad stick: keys pressed are read (the
+        /// keyboard); else the controller's stick where there is a controller -- read only where its value came
         /// and is finite (a controller whose stick was not given this frame is not read, and is no centre); else the
         /// gamepad's stick; else a keyboard with nothing pressed is the centre (the keyboard). With none of them, nothing
         /// was read. Keys pressed while a controller is there are a change of source each way: a sideways key just

@@ -50,6 +50,7 @@ namespace Zantetsu.Core.Statistics
             {
                 b.Append("{\"volume\":").Append(u.Volume.ToString("0.##", Inv)).Append(",\"moveSpeed\":").Append(u.MoveSpeed.ToString("0.##", Inv))
                     .Append(",\"turn\":").Append(u.TurnDegrees.ToString("0.#", Inv)).Append(",\"turnContinuous\":").Append(u.TurnIsContinuous ? "true" : "false")
+                    .Append(",\"turnOnRightStick\":").Append(u.TurnOnRightStick ? "true" : "false")
                     .Append(",\"bladeAngle\":").Append(u.BladeAngleDegrees.ToString("0.#", Inv)).Append('}');
             }
 
