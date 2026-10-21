@@ -340,6 +340,14 @@ namespace Zantetsu.Sandbox
         /// <summary>For tests: the choice a session reads, in place of the launch's.</summary>
         internal static void SetForTest(SandboxScenarioChoice? choice) => s_choice = choice;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// The split capture's offline replay in a Development Player (SpatialSplitReplayPlayer) runs before the first
+        /// scene and ends the Player: nothing of a scenario is started beside it.
+        /// </summary>
+        internal static void HoldForDevelopmentReplay() => s_begun = true;
+#endif
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForSession()
         {

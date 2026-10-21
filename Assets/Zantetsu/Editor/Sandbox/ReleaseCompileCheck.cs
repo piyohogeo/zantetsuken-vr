@@ -82,6 +82,13 @@ namespace Zantetsu.Editor.Sandbox
                 if (ok)
                 {
                     report += "; " + FindVerificationTypes(output, out verificationTypes);
+                    if (!development)
+                    {
+                        // What only the Editor and a Development Player hold (the split's input capture and its replay,
+                        // DESIGN 7.9.8) is not in a Release Player at all: present, the check fails.
+                        report += "; " + FindTypes(output, DevelopmentOnlyTypeNames, "development-only types", out bool developmentTypes);
+                        ok &= !developmentTypes;
+                    }
                 }
 
                 return ok;
@@ -99,7 +106,16 @@ namespace Zantetsu.Editor.Sandbox
 
         // The compiled Zantetsu assemblies, searched for the verification types' names as metadata strings (the name
         // and its terminating zero, so that a longer name is not taken for it).
-        private static string FindVerificationTypes(string output, out bool present)
+        private static string FindVerificationTypes(string output, out bool present) => FindTypes(output, VerificationTypeNames, "verification types", out present);
+
+        /// <summary>The type names of the split's input capture and replay (development and the Editor only).</summary>
+        private static readonly string[] DevelopmentOnlyTypeNames =
+        {
+            "SpatialSplitCaptureSink", "SpatialSplitCaptureSession", "SpatialSplitCaptureSample", "SpatialSplitReplay", "SpatialSplitSample",
+            "SpatialSplitReplayPlayer",
+        };
+
+        private static string FindTypes(string output, string[] names, string what, out bool present)
         {
             present = false;
             int searched = 0;
@@ -108,7 +124,7 @@ namespace Zantetsu.Editor.Sandbox
             {
                 searched++;
                 byte[] bytes = File.ReadAllBytes(assembly);
-                foreach (string name in VerificationTypeNames)
+                foreach (string name in names)
                 {
                     byte[] pattern = System.Text.Encoding.UTF8.GetBytes(name + "\0");
                     if (IndexOf(bytes, pattern) >= 0)
@@ -120,8 +136,8 @@ namespace Zantetsu.Editor.Sandbox
             }
 
             return present
-                ? "verification types PRESENT in " + string.Join(", ", found) + " (of " + searched + " Zantetsu assemblies)"
-                : "verification types absent from " + searched + " Zantetsu assemblies";
+                ? what + " PRESENT in " + string.Join(", ", found) + " (of " + searched + " Zantetsu assemblies)"
+                : what + " absent from " + searched + " Zantetsu assemblies";
         }
 
         private static int IndexOf(byte[] bytes, byte[] pattern)

@@ -591,7 +591,7 @@ namespace Zantetsu.PhysicsCut
     /// under: other limits, another minimum or the branch switched on are another search.
     /// </para>
     /// </summary>
-    public sealed class CutSpatialSplit
+    public sealed partial class CutSpatialSplit
     {
 
         // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
@@ -658,6 +658,9 @@ namespace Zantetsu.PhysicsCut
             Subscribe();
             RemainingMainSeconds = () => CutPhysicsStep.FrameRemainingMainSeconds;
             LaterStepSeconds = () => CutPhysicsStep.ExpectedStepSecondsLaterThisFrame;
+#if ZANTETSU_OBSERVE
+            Capture = SpatialSplitCaptureSession.Sink;   // the launch's capture, or none
+#endif
         }
 
         /// <summary>The settings. Giving them again ends an idle wait: what a round found under others says nothing of these.</summary>
@@ -892,7 +895,7 @@ namespace Zantetsu.PhysicsCut
             if (_attempt != null && _attempt.collected && !on)
             {
                 // Switched off, or the world is ending: what arrived is given back unused. Not held, and nothing marked.
-                End(SpatialSplitEnd.NotRun, false);
+                End(SpatialSplitEnd.NotRun, false, "switched off or the world ending");
             }
 
             if (!on)
@@ -1125,6 +1128,22 @@ namespace Zantetsu.PhysicsCut
         internal void Release()
         {
             Unsubscribe();
+#if ZANTETSU_OBSERVE
+            // The capture keeps no hold on a split its world let go (what is still out hands its result just below).
+            SpatialSplitCaptureSink capture = _capture;
+            try
+            {
+                ReleaseAttempt();
+            }
+            finally
+            {
+                capture?.Detach(this);
+            }
+        }
+
+        private void ReleaseAttempt()
+        {
+#endif
             if (_attempt == null)
             {
                 return;
@@ -1132,12 +1151,27 @@ namespace Zantetsu.PhysicsCut
 
             Attempt attempt = _attempt;
             _attempt = null;
+#if ZANTETSU_OBSERVE
+            bool wasCollected = attempt.collected;
+            bool wasOffered = attempt.offered;
+#endif
             if (attempt.collected || !attempt.offered || (_world.Dispatcher != null && _world.Dispatcher.Cancel(attempt.ticket)))
             {
+#if ZANTETSU_OBSERVE
+                EndCapture(attempt, "WorldEnded",
+                    !wasCollected ? (!wasOffered ? "a bake waiting for a place in the queue" : "cancelled before it ran")
+                    : attempt.cancelled ? "collected as cancelled: it never ran"
+                    : attempt.failure != null ? "collected as failed: " + attempt.failure.GetType().Name
+                    : "collected and not yet applied");
+#endif
                 attempt.Free(_world.Storage);
             }
             else
             {
+#if ZANTETSU_OBSERVE
+                // Still out: what it found is never seen, and the attempt goes back when it is collected.
+                EndCapture(attempt, "Abandoned", "still out on a worker when the world ended: its outputs were never read");
+#endif
                 attempt.abandoned = true;
             }
         }
@@ -1410,17 +1444,16 @@ namespace Zantetsu.PhysicsCut
         private unsafe double TryIssue(LogicalFragmentId fragment, in Input input, in CutSpatialSplitSettings settings)
         {
             long begin = Stopwatch.GetTimestamp();
+#if ZANTETSU_OBSERVE
+            double copySeconds = 0.0;
+#endif
             using (s_issue.Auto())
             {
                 VpCpuGeometryStorage storage = _world.Storage;
                 CutWorldProfile profile = _world.Profile;
                 PhysicsOwnerShape shape = input.shape;
                 int convexCount = shape.ConvexCount;
-                int maxConvexVertices = 0;
-                for (int c = 0; c < convexCount; c++)
-                {
-                    maxConvexVertices = Math.Max(maxConvexVertices, shape.Convex(c).vertexCount);
-                }
+                int maxConvexVertices = Attempt.MaxConvexVertices(shape);
 
                 int classificationBytes = PhysicsCutClassification.RequiredBlockBytes(shape);
                 if (storage == null || profile == null || classificationBytes < 0
@@ -1459,6 +1492,9 @@ namespace Zantetsu.PhysicsCut
                     materials = new int[submeshes.Length],
                     issuedFrame = Time.frameCount,
                 };
+#if ZANTETSU_OBSERVE
+                SpatialSplitCaptureSample capture = null;
+#endif
                 try
                 {
                     shape.AcquireForWork();
@@ -1467,33 +1503,8 @@ namespace Zantetsu.PhysicsCut
                     attempt.vertices = (VpRenderVertex*)vertices.GetUnsafeReadOnlyPtr();
                     attempt.vertexViewLength = vertices.Length;
                     attempt.indices = (uint*)indexView.GetUnsafeReadOnlyPtr();
-
-                    // One native block for everything the worker writes or reads beside the geometry and the bank:
-                    // the output indices, the two sides' submesh tables and boxes, the convex table, the scratch.
+                    attempt.TakeBlock();
                     int s = submeshes.Length;
-                    long outputAt = 0;
-                    long submeshInAt = outputAt + Align16((long)attempt.indexCount * sizeof(uint));
-                    long submeshOutAt = submeshInAt + Align16(2L * s * sizeof(int));
-                    long boundsAt = submeshOutAt + Align16(4L * s * sizeof(int));
-                    long banksAt = boundsAt + Align16(4L * s * sizeof(float3));
-                    long rangesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
-                    long scratchAt = rangesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
-                    long bytes = scratchAt + Align16(Math.Max(Math.Max(
-                        CutSpatialSplitSearch.ScratchBytes(convexCount),
-                        settings.cutConvexes ? CutSpatialSplitSearch.MeshScratchBytes(convexCount, settings.limits) : 0),
-                        settings.bentSearch ? CutSpatialSplitBentSearch.ScratchBytes(convexCount, maxConvexVertices, attempt.indexCount / 3) : 0));
-                    attempt.block = PhysicsCutBlocks.Take<byte>(checked((int)bytes));
-                    byte* block = (byte*)attempt.block.GetUnsafePtr();
-                    attempt.output = (uint*)(block + outputAt);
-                    attempt.submeshOffsets = (int*)(block + submeshInAt);
-                    attempt.submeshCounts = attempt.submeshOffsets + s;
-                    attempt.outSubmeshOffsets = (int*)(block + submeshOutAt);
-                    attempt.outSubmeshCounts = attempt.outSubmeshOffsets + (2 * s);
-                    attempt.outBoundsMin = (float3*)(block + boundsAt);
-                    attempt.outBoundsMax = attempt.outBoundsMin + (2 * s);
-                    attempt.banks = (ConvexBrepBank*)(block + banksAt);
-                    attempt.ranges = (ConvexBrepRange*)(block + rangesAt);
-                    attempt.scratch = block + scratchAt;
                     for (int i = 0; i < s; i++)
                     {
                         attempt.submeshOffsets[i] = submeshes[i].indexOffset;
@@ -1512,17 +1523,29 @@ namespace Zantetsu.PhysicsCut
                     _anchorScratch.Clear();
                     _world.Ledger.TryGetAnchors(fragment, _anchorScratch);
                     attempt.anchors = _anchorScratch.Count == 0 ? null : _anchorScratch.ToArray();
+#if ZANTETSU_OBSERVE
+                    // The capture (development only, off without its argument): the input copied here, complete and
+                    // still leased, and handed on only once the work was taken (SpatialSplitCapture).
+                    capture = CaptureInput(attempt);
+                    copySeconds = attempt.captureCopySeconds;
+#endif
 
                     if (!_world.Dispatcher.TryEnqueue(WorkPurpose.Maintenance, attempt, out attempt.ticket))
                     {
                         // No place now: nothing was started. The fragment is looked at again in a later round.
                         QueueFull++;
+#if ZANTETSU_OBSERVE
+                        Capture?.Return(capture);
+#endif
                         attempt.Free(storage);
                         return Since(begin);
                     }
                 }
                 catch
                 {
+#if ZANTETSU_OBSERVE
+                    Capture?.Return(capture);
+#endif
                     attempt.Free(storage);
                     throw;
                 }
@@ -1530,13 +1553,22 @@ namespace Zantetsu.PhysicsCut
                 attempt.offered = true;
                 _attempt = attempt;
                 Issued++;
+#if ZANTETSU_OBSERVE
+                Capture?.NoteIssued(capture);
+                attempt.captured = capture != null;
+#endif
             }
 
             double spent = Since(begin);
 #if ZANTETSU_OBSERVE
-            IssueSeconds += spent;
-#endif
+            // The copy is the capture's, not the issue's: kept out of the issue's time and of what it is expected to
+            // cost. The frame paid it all the same -- the budget reads the clock -- and the walk's time leaves it out
+            // with the rest of the issue (the whole of it is returned).
+            IssueSeconds += spent - copySeconds;
+            _issueCosts.Add(spent - copySeconds);
+#else
             _issueCosts.Add(spent);
+#endif
             return spent;
         }
 
@@ -1552,6 +1584,7 @@ namespace Zantetsu.PhysicsCut
                 // Once an attempt: this is asked again on every frame the publication is held.
                 attempt.counted = true;
 #if ZANTETSU_OBSERVE
+                TakeCaptureResult(attempt);
                 WorkerSeconds += attempt.workerSeconds;
                 MaxWorkerSeconds = Math.Max(MaxWorkerSeconds, attempt.workerSeconds);
 #endif
@@ -1746,7 +1779,7 @@ namespace Zantetsu.PhysicsCut
 #if ZANTETSU_OBSERVE
                         BuildSeconds += Since(buildBegin);
 #endif
-                        End(SpatialSplitEnd.NotRun, false);
+                        End(SpatialSplitEnd.NotRun, false, "the placement or the motion was not finite");
                         return;
                     }
 
@@ -2023,7 +2056,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         // The attempt is over: counted, marked when it is a failure of a current input, and everything it held given back.
-        private void End(SpatialSplitEnd end, bool mark)
+        private void End(SpatialSplitEnd end, bool mark, string why = null)
         {
             Attempt attempt = _attempt;
             if (attempt == null)
@@ -2032,6 +2065,9 @@ namespace Zantetsu.PhysicsCut
             }
 
             _attempt = null;
+#if ZANTETSU_OBSERVE
+            EndCapture(attempt, end.ToString(), why);
+#endif
             _ends[(int)end]++;
             LastEnd = end;
             if (mark)
@@ -2488,7 +2524,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>What a fragment is made of, as far as a split reads it: an input is the same while all of it is.</summary>
-        private readonly struct Input : IEquatable<Input>
+        internal readonly struct Input : IEquatable<Input>
         {
             internal Input(PhysicsFragmentOwner owner, PhysicsOwnerShape shape, VpStoredGeometry geometry, int anchorCount, int epoch)
             {
@@ -2521,7 +2557,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>Which of its two runs on a worker an attempt is at: the numbers, or the bake of the meshes made from them.</summary>
-        private enum AttemptStage
+        internal enum AttemptStage
         {
             Numbers = 0,
             Baking,
@@ -2532,11 +2568,67 @@ namespace Zantetsu.PhysicsCut
         /// work itself; <see cref="Begin"/> runs on a background worker and touches nothing of Unity's scene. An
         /// attempt that cuts convexes is offered a second time, to bake the meshes the main thread made of its
         /// numbers: one Mesh is in one bake, and neither it nor the shape and blocks the numbers read is given back
-        /// before the work that uses it was collected.
+        /// before the work that uses it was collected. (Internal for the capture's offline replay, which runs
+        /// <see cref="Begin"/> on a saved input: SpatialSplitReplay.)
         /// </summary>
-        private sealed unsafe class Attempt : IDispatchWork
+        internal sealed unsafe class Attempt : IDispatchWork
         {
             internal long serial;   // the attempt's number in this world, from 1 (diagnosis: the hold streak's key)
+
+#if ZANTETSU_OBSERVE
+            // The capture (SpatialSplitCapture): whether this attempt's input was copied, what the copy took on Main,
+            // and the copy of what the numbers came to, taken where they are first read; handed on when it ends.
+            internal bool captured;
+            internal double captureCopySeconds;
+            internal long captureCopyBytes;
+            internal SpatialSplitCaptureResult captureResult;
+            internal string captureOutputsNotKept;
+#endif
+
+            /// <summary>The most vertices one convex of the shape has: the bent search's scratch is sized by it.</summary>
+            internal static int MaxConvexVertices(PhysicsOwnerShape shape)
+            {
+                int most = 0;
+                for (int c = 0; c < shape.ConvexCount; c++)
+                {
+                    most = Math.Max(most, shape.Convex(c).vertexCount);
+                }
+
+                return most;
+            }
+
+            /// <summary>
+            /// One native block for everything the worker writes or reads beside the geometry and the bank: the output
+            /// indices, the two sides' submesh tables and boxes, the convex table, the scratch -- laid out from the
+            /// attempt's counts and settings, which are set before. The issue's, and the replay's.
+            /// </summary>
+            internal void TakeBlock()
+            {
+                int s = submeshCount;
+                long outputAt = 0;
+                long submeshInAt = outputAt + Align16((long)indexCount * sizeof(uint));
+                long submeshOutAt = submeshInAt + Align16(2L * s * sizeof(int));
+                long boundsAt = submeshOutAt + Align16(4L * s * sizeof(int));
+                long banksAt = boundsAt + Align16(4L * s * sizeof(float3));
+                long rangesAt = banksAt + Align16((long)convexCount * sizeof(ConvexBrepBank));
+                long scratchAt = rangesAt + Align16((long)convexCount * sizeof(ConvexBrepRange));
+                long bytes = scratchAt + Align16(Math.Max(Math.Max(
+                    CutSpatialSplitSearch.ScratchBytes(convexCount),
+                    cutConvexes ? CutSpatialSplitSearch.MeshScratchBytes(convexCount, limits) : 0),
+                    bentSearch ? CutSpatialSplitBentSearch.ScratchBytes(convexCount, maxConvexVertices, indexCount / 3) : 0));
+                block = PhysicsCutBlocks.Take<byte>(checked((int)bytes));
+                byte* at = (byte*)block.GetUnsafePtr();
+                output = (uint*)(at + outputAt);
+                submeshOffsets = (int*)(at + submeshInAt);
+                submeshCounts = submeshOffsets + s;
+                outSubmeshOffsets = (int*)(at + submeshOutAt);
+                outSubmeshCounts = outSubmeshOffsets + (2 * s);
+                outBoundsMin = (float3*)(at + boundsAt);
+                outBoundsMax = outBoundsMin + (2 * s);
+                banks = (ConvexBrepBank*)(at + banksAt);
+                ranges = (ConvexBrepRange*)(at + rangesAt);
+                scratch = at + scratchAt;
+            }
 
             // The retry past the budget (unit 10-B, D-245): the budget-short comparisons at the stage it is held at
             // (holdStage; another stage's start over), the play time over them, and which stages were retried (once a
@@ -2998,6 +3090,16 @@ namespace Zantetsu.PhysicsCut
             /// <summary>Gives back everything the attempt holds, once. Main thread.</summary>
             internal void Free(VpCpuGeometryStorage storage)
             {
+#if ZANTETSU_OBSERVE
+                // A copy of the outputs that was never handed on (it is handed on where the attempt ends): its room back,
+                // and counted as not recorded.
+                if (captureResult != null)
+                {
+                    if (captureResult.sink != null) captureResult.sink.LoseResult(captureResult);
+                    else captureResult.Discard();
+                    captureResult = null;
+                }
+#endif
                 // Meshes made and not handed to products: the bake that read them was collected, or never began.
                 if (meshes != null)
                 {

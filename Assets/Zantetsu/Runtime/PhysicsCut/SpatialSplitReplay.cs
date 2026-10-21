@@ -1,0 +1,1027 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.IO.Compression;
+using System.Text;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Mathematics;
+using UnityEngine;
+using Zantetsu.ConvexCut;
+using Zantetsu.Rendering;
+
+namespace Zantetsu.PhysicsCut
+{
+    /// <summary>
+    /// One sample file of the capture, read back (SpatialSplitCaptureSink writes it): every value as its bits were, the
+    /// indices as issued (the issuing storage's vertex ids), the vertices they name with those ids ascending, and each
+    /// convex's range and arrays in the shape's order. The SHA-256 is of the content before compression.
+    /// </summary>
+    internal sealed class SpatialSplitSample
+    {
+        internal sealed class Convex
+        {
+            internal ConvexBrepRange range;
+            internal float3[] vertices;
+            internal int[] faceOffsets, faceIndices, faceEdges;
+            internal BrepEdge[] edges;
+        }
+
+        internal int formatVersion, vertexStructBytes;
+        internal string codeVersion, sessionId, objectName, sha256;
+        internal long world, attempt, rawBytes;
+        internal int issuedFrame, fragment, rootFragment, splitSource, generation, epoch;
+        internal float margin, supportEpsilon, anchorEpsilon;
+        internal int vertexLimit, minCutSideTriangles, maxConvexVertices, vertexViewLength;
+        internal double parentMass;
+        internal SpatialSplitSearchLimits limits;
+        internal bool cutConvexes, bentSearch;
+        internal SpatialSplitBentLimits bentLimits;
+        internal float4x4 geometryToOwner, shapeToOwner;
+        internal int[] submeshOffsets, submeshCounts, materials;
+        internal float3[] anchors;
+        internal uint[] indices, vertexIds;
+        internal byte[] vertexBytes;
+        internal Convex[] convexes;
+
+        internal static SpatialSplitSample Read(string path)
+        {
+            using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+            using (var r = new SpatialSplitHashReader(gzip))
+            {
+                var s = new SpatialSplitSample();
+                r.Expect(SpatialSplitCaptureSink.SampleMagic);
+                s.formatVersion = r.Int();
+                if (s.formatVersion != SpatialSplitCaptureSink.FormatVersion)
+                {
+                    throw new InvalidDataException("format " + s.formatVersion + ", this reads " + SpatialSplitCaptureSink.FormatVersion);
+                }
+
+                s.vertexStructBytes = r.Count("vertex size", 256);
+                s.codeVersion = r.String();
+                s.sessionId = r.String();
+                s.objectName = r.String();
+                s.world = r.Long();
+                s.attempt = r.Long();
+                s.issuedFrame = r.Int();
+                s.fragment = r.Int();
+                s.rootFragment = r.Int();
+                s.splitSource = r.Int();
+                s.generation = r.Int();
+                s.epoch = r.Int();
+                s.margin = r.Float();
+                s.supportEpsilon = r.Float();
+                s.anchorEpsilon = r.Float();
+                s.vertexLimit = r.Int();
+                s.parentMass = r.Double();
+                s.limits = new SpatialSplitSearchLimits(r.Int(), r.Int(), r.Int(), r.Int(), r.Int(), r.Int());
+                s.cutConvexes = r.Bool();
+                s.minCutSideTriangles = r.Int();
+                s.bentSearch = r.Bool();
+                s.bentLimits = new SpatialSplitBentLimits(r.Int(), r.Int(), r.Int(), r.Int(), r.Int());
+                s.maxConvexVertices = r.Int();
+                s.geometryToOwner = r.Matrix();
+                s.shapeToOwner = r.Matrix();
+                int submeshes = r.Count("submesh", 1 << 16);
+                s.submeshOffsets = new int[submeshes];
+                s.submeshCounts = new int[submeshes];
+                s.materials = new int[submeshes];
+                for (int i = 0; i < submeshes; i++)
+                {
+                    s.submeshOffsets[i] = r.Int();
+                    s.submeshCounts[i] = r.Int();
+                    s.materials[i] = r.Int();
+                }
+
+                int anchors = r.Int();
+                if (anchors < -1 || anchors > (1 << 20)) throw new InvalidDataException("the sample's anchor count " + anchors + " is not one");
+                s.anchors = anchors >= 0 ? r.Array<float3>(anchors) : null;
+                s.indices = r.Array<uint>(r.Count("index", 1 << 28));
+                s.vertexViewLength = r.Int();
+                int named = r.Count("vertex", 1 << 28);
+                s.vertexIds = r.Array<uint>(named);
+                s.vertexBytes = r.Array<byte>(checked(named * s.vertexStructBytes));
+                int convexes = r.Count("convex", 1 << 16);
+                s.convexes = new Convex[convexes];
+                for (int c = 0; c < convexes; c++)
+                {
+                    var range = new ConvexBrepRange
+                    {
+                        vertexBase = r.Int(), vertexCount = r.Int(), faceBase = r.Int(), faceCount = r.Int(),
+                        faceIndexBase = r.Int(), faceIndexCount = r.Int(), edgeBase = r.Int(), edgeCount = r.Int(), maxFaceLoop = r.Int(),
+                    };
+                    if (range.vertexCount < 0 || range.faceCount < 0 || range.faceIndexCount < 0 || range.edgeCount < 0
+                        || range.vertexCount > (1 << 20) || range.faceCount > (1 << 20) || range.faceIndexCount > (1 << 22) || range.edgeCount > (1 << 22))
+                    {
+                        throw new InvalidDataException("convex " + c + "'s counts are not ones");
+                    }
+
+                    s.convexes[c] = new Convex
+                    {
+                        range = range,
+                        vertices = r.Array<float3>(range.vertexCount),
+                        faceOffsets = r.Array<int>(range.faceCount + 1),
+                        faceIndices = r.Array<int>(range.faceIndexCount),
+                        faceEdges = r.Array<int>(range.faceIndexCount),
+                        edges = r.Array<BrepEdge>(range.edgeCount),
+                    };
+                }
+
+                r.Expect(SpatialSplitCaptureSink.SampleEnd);
+                s.sha256 = r.Finish();
+                s.rawBytes = r.Length;
+                return s;
+            }
+        }
+    }
+
+    /// <summary>One result line of results.jsonl, as JsonUtility reads it (the fields the replay compares and reports).</summary>
+    [Serializable]
+    public sealed class SpatialSplitResultLine
+    {
+        public long world, attempt;
+        public string file, end, detail, failure, outcome, kernelStatus;
+        public int issuedFrame, endFrame, bentPieces, positiveTriangles, negativeTriangles;
+        public bool searchObserved, ran, cancelled, meshLed, bent, distributed, classified, cut, applied, meshesBad;
+        public int meshes, hullsChecked, bentKnotCount;
+        public double workerMs, copyMs, resultCopyMs, bakeMs;
+        public long copyBytes;
+        public string outputsNotKept;
+        public string[] kernelNumbers;
+        public string[] sections;
+        public string[] planeGeometry, planeShape, bentHeight, bentAlong, bentKnotU, bentKnotH;
+    }
+
+    /// <summary>One line of samples.jsonl.</summary>
+    [Serializable]
+    public sealed class SpatialSplitSampleLine
+    {
+        public long world, attempt, rawBytes, fileBytes, copyBytes;
+        public string file, sha256, @object;
+        public int issuedFrame, fragment, rootFragment;
+    }
+
+    /// <summary>What one replay of one sample came to.</summary>
+    internal sealed class SpatialSplitReplayResult
+    {
+        internal long world, attempt;
+        internal string error, inputCheck, outcome;
+        internal bool meshLed, bent, found, distributed, classified, anchorsDistributed, cut;
+        internal string kernelStatus;
+        internal int positiveTriangles, negativeTriangles;
+        internal double seconds;
+        internal string[] sections;
+        internal double[] kernelNumbers;
+        internal SpatialSplitSearchResult search;
+        internal bool ran, failed;
+        internal byte kernelExecutedManaged;
+
+        // The checks of what the replay shared out (none where it found nothing to share out).
+        internal bool checkedSharing;
+        internal int trianglesMissing, trianglesExtra, triangleMarginShort, triangleWrongSide, convexWrongSide, convexMarginShort;
+
+        // A mesh-led plane's convexes on a side that reach across within the support epsilon (allowed, counted), and the
+        // farthest any convex on a side reaches across (0: none), in the shape's frame.
+        internal int convexAcrossWithinEpsilon;
+        internal float convexMostAcross;
+        internal string checkNote;
+
+        internal bool ChecksPass => trianglesMissing == 0 && trianglesExtra == 0 && triangleMarginShort == 0 && triangleWrongSide == 0
+            && convexWrongSide == 0 && convexMarginShort == 0;
+    }
+
+    /// <summary>
+    /// The offline replay of the capture (DESIGN 7.9.8): a sample rebuilt as the product's own attempt -- the vertices
+    /// the indices name (renumbered from 0 in their ids' order, which keeps every comparison of two ids), the indices in
+    /// their order, the shape made by <see cref="PhysicsOwnerShape.Authored"/> from the convexes in theirs -- and the
+    /// attempt's own numbers run on it (<see cref="CutSpatialSplit.Attempt.Begin"/>: the plane, the bent and the
+    /// mesh-led searches, the sharing out, the anchors, the classification, the kernel). Nothing of them is written
+    /// again here. What it came to is put in the capture's canonical bytes with the indices as the issuing storage's ids,
+    /// and compared section by section with what the live attempt came to; then checked for triangles lost or doubled,
+    /// a vertex short of the margin and a convex on the wrong side. Numbers only: nothing is cooked.
+    /// </summary>
+    public static unsafe class SpatialSplitReplay
+    {
+        /// <summary>The kernel's numbers count as the same within this relative difference, where their bits differ.</summary>
+        public const double KernelTolerance = 1e-9;
+
+        /// <summary>
+        /// Replays every sample samples.jsonl lists in <paramref name="sessionDirectory"/>, into a new
+        /// <paramref name="outputDirectory"/> (replay.jsonl, summary.txt); the summary. Main thread (meshes are made).
+        /// </summary>
+        public static string RunSession(string sessionDirectory, string outputDirectory, out bool allSame) =>
+            RunSession(sessionDirectory, outputDirectory, out allSame, out _);
+
+        /// <summary>As above; <paramref name="noSample"/>: the folder holds no sample at all (its own reason, never "the same").</summary>
+        public static string RunSession(string sessionDirectory, string outputDirectory, out bool allSame, out bool noSample)
+        {
+            if (Directory.Exists(outputDirectory) || File.Exists(outputDirectory))
+            {
+                throw new IOException("the replay's output exists already: " + outputDirectory);
+            }
+
+            // The index and the results, line by line: a line cut short or not read (a process that ended while writing it)
+            // is counted and passed over, and every line before and after it is still read.
+            List<SpatialSplitSampleLine> samples = Lines<SpatialSplitSampleLine>(Path.Combine(sessionDirectory, "samples.jsonl"), out int brokenIndexLines);
+            var results = new Dictionary<(long, long), SpatialSplitResultLine>();
+            List<SpatialSplitResultLine> resultList = Lines<SpatialSplitResultLine>(Path.Combine(sessionDirectory, "results.jsonl"), out int brokenResultLines);
+            foreach (SpatialSplitResultLine r in resultList) results[(r.world, r.attempt)] = r;
+            int resultLines = resultList.Count;
+
+            // A committed sample the index does not name (its line was not written, or was cut short): found by the folder,
+            // read whole and replayed; its hash cannot be checked against the index.
+            int listed = samples.Count;
+            var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (SpatialSplitSampleLine entry in samples) named.Add(entry.file);
+            int unindexed = 0;
+            foreach (string path in Directory.GetFiles(sessionDirectory, "*.zss.gz"))
+            {
+                string file = Path.GetFileName(path);
+                if (named.Contains(file) || !TryParseSampleName(file, out long w, out long a)) continue;
+                samples.Add(new SpatialSplitSampleLine { file = file, world = w, attempt = a, sha256 = null });
+                unindexed++;
+            }
+
+            string[] partials = Directory.GetFiles(sessionDirectory, "*.partial");
+            Directory.CreateDirectory(outputDirectory);
+            var outcomes = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var mismatchSections = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var notRecordedBy = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            int unreadable = 0, hashDiffers = 0, replayed = 0, same = 0, differ = 0, notRecorded = 0, checkFailures = 0, kernelWithin = 0, errors = 0, inputDiffers = 0;
+            var times = new List<double>();
+            using (var replayLines = new StreamWriter(Path.Combine(outputDirectory, "replay.jsonl"), false, new UTF8Encoding(false)))
+            {
+                foreach (SpatialSplitSampleLine entry in samples)
+                {
+                    var line = new StringBuilder();
+                    line.Append("{\"world\":").Append(entry.world).Append(",\"attempt\":").Append(entry.attempt).Append(",\"file\":").Append(SpatialSplitCaptureSink.Json(entry.file));
+                    SpatialSplitSample sample;
+                    try
+                    {
+                        sample = SpatialSplitSample.Read(Path.Combine(sessionDirectory, entry.file));
+                    }
+                    catch (Exception e)
+                    {
+                        unreadable++;
+                        line.Append(",\"verdict\":\"unreadable\",\"error\":").Append(SpatialSplitCaptureSink.Json(e.GetType().Name + ": " + e.Message)).Append('}');
+                        replayLines.WriteLine(line.ToString());
+                        continue;
+                    }
+
+                    if (entry.sha256 != null && !string.Equals(sample.sha256, entry.sha256, StringComparison.Ordinal))
+                    {
+                        hashDiffers++;
+                        line.Append(",\"verdict\":\"hash differs from the index\"}");
+                        replayLines.WriteLine(line.ToString());
+                        continue;
+                    }
+
+                    SpatialSplitReplayResult replay = Run(sample);
+                    replayed++;
+                    if (replay.error != null)
+                    {
+                        errors++;
+                    }
+                    else
+                    {
+                        times.Add(replay.seconds);
+                        string kind = replay.outcome + (replay.found ? replay.bent ? " (bent)" : replay.meshLed ? " (mesh-led)" : " (plane)" : "");
+                        outcomes[kind] = outcomes.TryGetValue(kind, out int n) ? n + 1 : 1;
+                    }
+
+                    if (replay.inputCheck != "same") inputDiffers++;
+                    if (replay.checkedSharing && !replay.ChecksPass) checkFailures++;
+
+                    string verdict;
+                    results.TryGetValue((entry.world, entry.attempt), out SpatialSplitResultLine live);
+                    var differing = new List<string>();
+                    bool kernelOnlyWithin = false;
+                    if (live == null)
+                    {
+                        verdict = "結果未記録";   // no line: never NotFound
+                        notRecorded++;
+                        Count(notRecordedBy, "no result line");
+                    }
+                    else if (!live.searchObserved || live.sections == null || live.sections.Length != SpatialSplitCanonical.SectionCount)
+                    {
+                        // Why there is nothing to compare: kept apart, so that an attempt still out at the quitting is not
+                        // read as a failure of the copy, nor either as a difference of the answer.
+                        string why = !string.IsNullOrEmpty(live.outputsNotKept) ? "the outputs' copy failed or had no room"
+                            : live.end == "AppQuit" ? "AppQuit before the numbers were read"
+                            : "the numbers did not run or were not read (" + live.end + ")";
+                        verdict = "結果未記録 (" + why + ")";
+                        notRecorded++;
+                        Count(notRecordedBy, why);
+                    }
+                    else if (replay.error != null)
+                    {
+                        verdict = "replay failed";
+                        differ++;
+                    }
+                    else
+                    {
+                        for (int i = 0; i < SpatialSplitCanonical.SectionCount; i++)
+                        {
+                            if (string.Equals(live.sections[i], replay.sections[i], StringComparison.Ordinal)) continue;
+                            if (i == SpatialSplitCanonical.SectionCount - 1 && KernelWithin(live.kernelNumbers, replay.kernelNumbers))
+                            {
+                                kernelOnlyWithin = true;
+                                continue;
+                            }
+
+                            differing.Add(SpatialSplitCanonical.SectionNames[i]);
+                        }
+
+                        if (differing.Count == 0)
+                        {
+                            verdict = kernelOnlyWithin ? "same (kernel numbers within " + KernelTolerance.ToString("R", CultureInfo.InvariantCulture) + ")" : "same";
+                            same++;
+                            if (kernelOnlyWithin) kernelWithin++;
+                        }
+                        else
+                        {
+                            verdict = "differs";
+                            differ++;
+                            foreach (string section in differing) mismatchSections[section] = mismatchSections.TryGetValue(section, out int m) ? m + 1 : 1;
+                        }
+                    }
+
+                    CultureInfo inv = CultureInfo.InvariantCulture;
+                    line.Append(",\"verdict\":").Append(SpatialSplitCaptureSink.Json(verdict))
+                        .Append(",\"indexed\":").Append(entry.sha256 != null ? "true" : "false")
+                        .Append(",\"liveEnd\":").Append(SpatialSplitCaptureSink.Json(live != null ? live.end : ""))
+                        .Append(",\"differing\":[");
+                    for (int i = 0; i < differing.Count; i++) line.Append(i > 0 ? "," : "").Append(SpatialSplitCaptureSink.Json(differing[i]));
+                    line.Append("],\"error\":").Append(SpatialSplitCaptureSink.Json(replay.error ?? ""))
+                        .Append(",\"input\":").Append(SpatialSplitCaptureSink.Json(replay.inputCheck ?? ""))
+                        .Append(",\"outcome\":").Append(SpatialSplitCaptureSink.Json(replay.outcome ?? ""))
+                        .Append(",\"meshLed\":").Append(replay.meshLed ? "true" : "false").Append(",\"bent\":").Append(replay.bent ? "true" : "false")
+                        .Append(",\"distributed\":").Append(replay.distributed ? "true" : "false").Append(",\"classified\":").Append(replay.classified ? "true" : "false")
+                        .Append(",\"kernelStatus\":").Append(SpatialSplitCaptureSink.Json(replay.kernelStatus ?? ""))
+                        .Append(",\"positiveTriangles\":").Append(replay.positiveTriangles).Append(",\"negativeTriangles\":").Append(replay.negativeTriangles)
+                        // The search's record as the live line has it, and the kernel's numbers: a difference told by its size.
+                        .Append(",\"gap\":").Append(SpatialSplitCaptureSink.Json(replay.search.gap.ToString("R", inv)))
+                        .Append(",\"directionsTried\":").Append(replay.search.directionsTried).Append(",\"planesTested\":").Append(replay.search.planesTested)
+                        .Append(",\"triangleVisits\":").Append(replay.search.triangleVisits)
+                        .Append(",\"meshDirectionsTried\":").Append(replay.search.meshDirectionsTried).Append(",\"meshPlanesTested\":").Append(replay.search.meshPlanesTested)
+                        .Append(",\"bentFramesTried\":").Append(replay.search.bentFramesTried).Append(",\"bentSeedsTried\":").Append(replay.search.bentSeedsTried)
+                        .Append(",\"bentCandidates\":").Append(replay.search.bentCandidates).Append(",\"bentIterations\":").Append(replay.search.bentIterations)
+                        .Append(",\"bentElementsVerified\":").Append(replay.search.bentElementsVerified).Append(",\"bentPieces\":").Append(replay.search.bentPieces)
+                        .Append(",\"kernelNumbers\":[").Append(string.Join(",", Array.ConvertAll(replay.kernelNumbers ?? new double[0], v => SpatialSplitCaptureSink.Json(v.ToString("R", inv))))).Append(']')
+                        .Append(",\"replayMs\":").Append((replay.seconds * 1000.0).ToString("R", inv))
+                        .Append(",\"liveWorkerMs\":").Append(live != null ? live.workerMs.ToString("R", inv) : "null")
+                        .Append(",\"checked\":").Append(replay.checkedSharing ? "true" : "false")
+                        .Append(",\"trianglesMissing\":").Append(replay.trianglesMissing).Append(",\"trianglesExtra\":").Append(replay.trianglesExtra)
+                        .Append(",\"triangleMarginShort\":").Append(replay.triangleMarginShort).Append(",\"triangleWrongSide\":").Append(replay.triangleWrongSide)
+                        .Append(",\"convexWrongSide\":").Append(replay.convexWrongSide).Append(",\"convexMarginShort\":").Append(replay.convexMarginShort)
+                        .Append(",\"convexAcrossWithinEpsilon\":").Append(replay.convexAcrossWithinEpsilon)
+                        .Append(",\"convexMostAcross\":").Append(SpatialSplitCaptureSink.Json(replay.convexMostAcross.ToString("R", inv)))
+                        .Append(",\"supportEpsilon\":").Append(SpatialSplitCaptureSink.Json(sample.supportEpsilon.ToString("R", inv)))
+                        .Append(",\"checkNote\":").Append(SpatialSplitCaptureSink.Json(replay.checkNote ?? ""))
+                        .Append(",\"object\":").Append(SpatialSplitCaptureSink.Json(sample.objectName))
+                        .Append(",\"code\":").Append(SpatialSplitCaptureSink.Json(sample.codeVersion));
+                    if (replay.error == null)
+                    {
+                        // What the replay adopted, as the live result line has its own: two answers that differ, told apart;
+                        // every field of the search section, and the input's margin beside the search's own.
+                        SpatialSplitCaptureSink.AppendAdopted(line, in replay.search);
+                        SpatialSplitCaptureSink.AppendSearchRecord(line, in replay.search, replay.ran, replay.failed, replay.kernelExecutedManaged);
+                        line.Append(",\"inputMargin\":").Append(SpatialSplitCaptureSink.Json(sample.margin.ToString("R", inv)));
+                    }
+
+                    line.Append('}');
+                    replayLines.WriteLine(line.ToString());
+                }
+            }
+
+            times.Sort();
+            var summary = new StringBuilder();
+            CultureInfo c = CultureInfo.InvariantCulture;
+#if ENABLE_IL2CPP
+            const string backend = "IL2CPP";
+#else
+            const string backend = "Mono";
+#endif
+            summary.AppendLine("spatial split replay of the session " + Path.GetFileName(Path.GetFullPath(sessionDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)))
+                .AppendLine("replayed by: Unity " + Application.unityVersion + ", " + backend + ", " + (Application.isEditor ? "Editor" : "Player") + ", " + Application.platform)
+                .AppendLine("samples listed " + listed + ", committed and not in the index (found by the folder) " + unindexed + ", result lines " + resultLines
+                    + ", lines not read (cut short or broken): index " + brokenIndexLines + ", results " + brokenResultLines + ", partial files (not samples) " + partials.Length)
+                .AppendLine("unreadable " + unreadable + ", hash differs from the index " + hashDiffers + ", replayed " + replayed + " (replay errors " + errors + ")")
+                .AppendLine("input rebuilt differently " + inputDiffers)
+                .AppendLine("compared with the live result " + (same + differ) + ": same " + same + " (of them kernel numbers only within " + KernelTolerance.ToString("R", c) + ": "
+                    + kernelWithin + "), differs " + differ + "; not compared, 結果未記録 " + notRecorded)
+                .AppendLine("結果未記録 by reason: " + Join(notRecordedBy))
+                .AppendLine("saving's failures: unreadable " + unreadable + ", hash differs " + hashDiffers + ", committed without an index line " + unindexed
+                    + ", lines not read " + (brokenIndexLines + brokenResultLines))
+                .AppendLine("differing sections: " + Join(mismatchSections))
+                .AppendLine("checks failed " + checkFailures + " (triangles lost or doubled, a vertex short of the margin or on the wrong side, a convex on the wrong side)")
+                .AppendLine("replay outcomes: " + Join(outcomes))
+                .AppendLine(times.Count == 0 ? "replay search time: none"
+                    : "replay search time (this machine, not the live one's): median " + (times[times.Count / 2] * 1000.0).ToString("F3", c) + " ms, p95 "
+                        + (times[Math.Min(times.Count - 1, (int)(times.Count * 0.95))] * 1000.0).ToString("F3", c) + " ms, max " + (times[times.Count - 1] * 1000.0).ToString("F3", c) + " ms");
+            // The same as it ran: every sample there is was read, replayed, compared with its live result and found the
+            // same, and passed the checks -- one that replayed without a live result to compare is not "the same".
+            // A session of no sample at all (nothing captured, an empty or wrong folder) is no evidence: never "the same".
+            bool none = samples.Count == 0;
+            noSample = none;
+            allSame = !none && same >= 1 && unreadable == 0 && hashDiffers == 0 && errors == 0 && differ == 0 && checkFailures == 0 && inputDiffers == 0
+                && notRecorded == 0 && same == samples.Count && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0;
+            if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
+            summary.AppendLine("every sample compared with its live result and the same, every check passed: " + (allSame ? "yes" : "NO"));
+            File.WriteAllText(Path.Combine(outputDirectory, "summary.txt"), summary.ToString(), new UTF8Encoding(false));
+            return summary.ToString();
+        }
+
+        // The lines of a .jsonl file that read whole; those that do not are counted (a line cut short by an ending process).
+        private static List<T> Lines<T>(string path, out int broken)
+        {
+            broken = 0;
+            var lines = new List<T>();
+            if (!File.Exists(path)) return lines;
+            foreach (string line in File.ReadAllLines(path))
+            {
+                string text = line.Trim();
+                if (text.Length == 0) continue;
+                T value = default;
+                bool read = false;
+                if (text.StartsWith("{", StringComparison.Ordinal) && text.EndsWith("}", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        value = JsonUtility.FromJson<T>(text);
+                        read = value != null;
+                    }
+                    catch (ArgumentException)
+                    {
+                    }
+                }
+
+                if (read) lines.Add(value);
+                else broken++;
+            }
+
+            return lines;
+        }
+
+        // w<world>-a<attempt>.zss.gz (SpatialSplitCaptureSink.SampleFileName).
+        private static bool TryParseSampleName(string file, out long world, out long attempt)
+        {
+            world = attempt = 0;
+            const string suffix = ".zss.gz";
+            if (!file.StartsWith("w", StringComparison.Ordinal) || !file.EndsWith(suffix, StringComparison.Ordinal)) return false;
+            string[] parts = file.Substring(1, file.Length - 1 - suffix.Length).Split(new[] { "-a" }, StringSplitOptions.None);
+            return parts.Length == 2
+                && long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out world)
+                && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out attempt);
+        }
+
+        private static void Count(SortedDictionary<string, int> counts, string key) => counts[key] = counts.TryGetValue(key, out int n) ? n + 1 : 1;
+
+        private static string Join(SortedDictionary<string, int> counts)
+        {
+            if (counts.Count == 0) return "none";
+            var parts = new List<string>();
+            foreach (KeyValuePair<string, int> kv in counts) parts.Add(kv.Key + " " + kv.Value);
+            return string.Join(", ", parts);
+        }
+
+        private static bool KernelWithin(string[] live, double[] replay)
+        {
+            if (live == null || replay == null || live.Length != replay.Length) return false;
+            for (int i = 0; i < live.Length; i++)
+            {
+                if (!double.TryParse(live[i], NumberStyles.Float, CultureInfo.InvariantCulture, out double a)) return false;
+                double b = replay[i];
+                if (a.Equals(b)) continue;   // NaN equals NaN here, as bits of the same kind
+                if (double.IsNaN(a) || double.IsNaN(b) || double.IsInfinity(a) || double.IsInfinity(b)) return false;
+                if (Math.Abs(a - b) > KernelTolerance * Math.Max(1.0, Math.Max(Math.Abs(a), Math.Abs(b)))) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Replays one sample (Main thread: the shape's mesh is made here).</summary>
+        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample)
+        {
+            var result = new SpatialSplitReplayResult { world = sample.world, attempt = sample.attempt };
+            int vertexBytes = UnsafeUtility.SizeOf<VpRenderVertex>();
+            if (sample.vertexStructBytes != vertexBytes)
+            {
+                result.error = "the sample's vertex is " + sample.vertexStructBytes + " bytes, this build's " + vertexBytes;
+                return result;
+            }
+
+            int named = sample.vertexIds.Length;
+            int n = sample.indices.Length;
+            int s = sample.submeshOffsets.Length;
+            int c = sample.convexes.Length;
+            var vertices = new NativeArray<VpRenderVertex>(Math.Max(1, named), Allocator.Persistent);
+            var indices = new NativeArray<uint>(Math.Max(1, n), Allocator.Persistent);
+            PhysicsOwnerShape shape = null;
+            Mesh mesh = null;
+            CutSpatialSplit.Attempt attempt = null;
+            byte* canonical = null;
+            try
+            {
+                fixed (byte* from = sample.vertexBytes)
+                {
+                    UnsafeUtility.MemCpy(vertices.GetUnsafePtr(), from, (long)named * vertexBytes);
+                }
+
+                // The storage's ids as the replay's own, from 0 in the same order; an index the storage's view did not
+                // reach stays past the vertices, so that it is refused as it was.
+                uint view = (uint)Math.Max(0, sample.vertexViewLength);
+                for (int i = 0; i < n; i++)
+                {
+                    uint v = sample.indices[i];
+                    if (v >= view)
+                    {
+                        indices[i] = (uint)named;
+                        continue;
+                    }
+
+                    int at = Array.BinarySearch(sample.vertexIds, v);
+                    if (at < 0) throw new InvalidDataException("index " + i + " names vertex " + v + ", which the sample did not keep");
+                    indices[i] = (uint)at;
+                }
+
+                try
+                {
+                    shape = BuildShape(sample, out mesh);
+                }
+                catch (Exception e)
+                {
+                    result.error = "the shape could not be made again: " + e.GetType().Name + ": " + e.Message;
+                    return result;
+                }
+
+                result.inputCheck = CompareShape(shape, sample);
+                attempt = new CutSpatialSplit.Attempt
+                {
+                    serial = sample.attempt,
+                    input = new CutSpatialSplit.Input(null, shape, default, sample.anchors != null ? sample.anchors.Length : 0, sample.epoch),
+                    parentMass = sample.parentMass,
+                    vertexLimit = sample.vertexLimit,
+                    supportEpsilon = sample.supportEpsilon,
+                    anchorEpsilon = sample.anchorEpsilon,
+                    margin = sample.margin,
+                    limits = sample.limits,
+                    cutConvexes = sample.cutConvexes,
+                    minCutSideTriangles = sample.minCutSideTriangles,
+                    bentSearch = sample.bentSearch,
+                    bentLimits = sample.bentLimits,
+                    maxConvexVertices = CutSpatialSplit.Attempt.MaxConvexVertices(shape),
+                    geometryToOwner = sample.geometryToOwner,
+                    shapeToOwner = shape.LocalToOwner,
+                    indexCount = n,
+                    submeshCount = s,
+                    convexCount = c,
+                    materials = (int[])sample.materials.Clone(),
+                    issuedFrame = sample.issuedFrame,
+                    anchors = sample.anchors != null ? (float3[])sample.anchors.Clone() : null,
+                    vertices = (VpRenderVertex*)vertices.GetUnsafePtr(),
+                    vertexViewLength = named,
+                    indices = (uint*)indices.GetUnsafePtr(),
+                };
+                if (attempt.maxConvexVertices != sample.maxConvexVertices && result.inputCheck == "same")
+                {
+                    result.inputCheck = "the most vertices of a convex is " + attempt.maxConvexVertices + ", the sample's " + sample.maxConvexVertices;
+                }
+
+                attempt.TakeBlock();
+                for (int i = 0; i < s; i++)
+                {
+                    attempt.submeshOffsets[i] = sample.submeshOffsets[i];
+                    attempt.submeshCounts[i] = sample.submeshCounts[i];
+                }
+
+                for (int k = 0; k < c; k++)
+                {
+                    attempt.banks[k] = shape.BankOf(k);
+                    attempt.ranges[k] = shape.Convex(k);
+                }
+
+                attempt.classificationBlock = PhysicsCutBlocks.Take<byte>(PhysicsCutClassification.RequiredBlockBytes(shape));
+                attempt.arena = new PhysicsCutArena(default, c);
+
+                long begin = Stopwatch.GetTimestamp();
+                attempt.Begin();
+                result.seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+
+                long capacity = SpatialSplitCanonical.MaxBytes(attempt);
+                canonical = (byte*)UnsafeUtility.Malloc(capacity, 16, Allocator.Persistent);
+                var w = new SpatialSplitRawWriter(canonical, capacity);
+                var ends = new long[SpatialSplitCanonical.SectionCount];
+                fixed (uint* ids = sample.vertexIds)
+                {
+                    SpatialSplitCanonical.Write(attempt, ids, named, ref w, ends);
+                }
+
+                result.sections = SpatialSplitCanonical.Hashes(canonical, ends, new byte[1 << 16]);
+                result.kernelNumbers = SpatialSplitCanonical.KernelNumbers(in attempt.kernel);
+                SpatialSplitSearchResult search = attempt.search;
+                result.search = search;
+                result.ran = attempt.ran;
+                result.failed = attempt.failure != null;
+                result.kernelExecutedManaged = attempt.kernel.executedManaged;
+                result.outcome = attempt.failure != null ? "Failed: " + attempt.failure.GetType().Name : search.outcome.ToString();
+                result.found = search.outcome == SpatialSplitSearchOutcome.Found;
+                result.meshLed = search.meshLed;
+                result.bent = CutSpatialSplit.IsBentResult(in search);
+                result.distributed = attempt.distributed;
+                result.classified = attempt.classified;
+                result.anchorsDistributed = attempt.anchorsDistributed;
+                result.cut = attempt.cut;
+                result.kernelStatus = attempt.classified ? attempt.kernel.status.ToString() : "";
+                result.positiveTriangles = search.positiveTriangles;
+                result.negativeTriangles = search.negativeTriangles;
+                Check(attempt, result);
+            }
+            catch (Exception e)
+            {
+                result.error = e.GetType().Name + ": " + e.Message;
+            }
+            finally
+            {
+                if (canonical != null) UnsafeUtility.Free(canonical, Allocator.Persistent);
+                attempt?.Free(null);
+                shape?.Dispose();
+                if (mesh != null)
+                {
+                    if (Application.isPlaying) UnityEngine.Object.Destroy(mesh);
+                    else UnityEngine.Object.DestroyImmediate(mesh);
+                }
+
+                vertices.Dispose();
+                indices.Dispose();
+            }
+
+            return result;
+        }
+
+        // The sample's convexes in their order, in one bank of the replay's own (each convex's arrays as they were, its
+        // bases from where it now begins), made a shape the product's way: Authored copies it, so the bank goes back here.
+        // One mesh for every convex, whose box holds them all: the shape asks a mesh of each, the numbers read none.
+        private static PhysicsOwnerShape BuildShape(SpatialSplitSample s, out Mesh mesh)
+        {
+            int vertices = 0, offsets = 0, faceIndices = 0, edges = 0;
+            foreach (SpatialSplitSample.Convex convex in s.convexes)
+            {
+                vertices += convex.range.vertexCount;
+                offsets += convex.range.faceCount + 1;
+                faceIndices += convex.range.faceIndexCount;
+                edges += convex.range.edgeCount;
+            }
+
+            long vAt = 0;
+            long oAt = vAt + Align((long)vertices * sizeof(float3));
+            long iAt = oAt + Align((long)offsets * sizeof(int));
+            long fAt = iAt + Align((long)faceIndices * sizeof(int));
+            long eAt = fAt + Align((long)faceIndices * sizeof(int));
+            long bytes = eAt + Align((long)edges * sizeof(BrepEdge));
+            var block = new NativeArray<byte>(checked((int)Math.Max(16, bytes)), Allocator.Persistent);
+            try
+            {
+                byte* at = (byte*)block.GetUnsafePtr();
+                var bank = new ConvexBrepBank
+                {
+                    vertices = (float3*)(at + vAt), faceOffsets = (int*)(at + oAt), faceIndices = (int*)(at + iAt),
+                    faceEdges = (int*)(at + fAt), edges = (BrepEdge*)(at + eAt),
+                };
+                var ranges = new ConvexBrepRange[s.convexes.Length];
+                int v = 0, o = 0, i = 0, e = 0;
+                var lo = new float3(float.PositiveInfinity);
+                var hi = new float3(float.NegativeInfinity);
+                for (int c = 0; c < s.convexes.Length; c++)
+                {
+                    SpatialSplitSample.Convex convex = s.convexes[c];
+                    ConvexBrepRange r = convex.range;
+                    ranges[c] = new ConvexBrepRange
+                    {
+                        vertexBase = v, vertexCount = r.vertexCount, faceBase = o, faceCount = r.faceCount,
+                        faceIndexBase = i, faceIndexCount = r.faceIndexCount, edgeBase = e, edgeCount = r.edgeCount, maxFaceLoop = r.maxFaceLoop,
+                    };
+                    fixed (float3* p = convex.vertices) UnsafeUtility.MemCpy(bank.vertices + v, p, (long)r.vertexCount * sizeof(float3));
+                    fixed (int* p = convex.faceOffsets) UnsafeUtility.MemCpy(bank.faceOffsets + o, p, (long)(r.faceCount + 1) * sizeof(int));
+                    fixed (int* p = convex.faceIndices) UnsafeUtility.MemCpy(bank.faceIndices + i, p, (long)r.faceIndexCount * sizeof(int));
+                    fixed (int* p = convex.faceEdges) UnsafeUtility.MemCpy(bank.faceEdges + i, p, (long)r.faceIndexCount * sizeof(int));
+                    fixed (BrepEdge* p = convex.edges) UnsafeUtility.MemCpy(bank.edges + e, p, (long)r.edgeCount * sizeof(BrepEdge));
+                    foreach (float3 point in convex.vertices)
+                    {
+                        if (!math.all(math.isfinite(point))) continue;
+                        lo = math.min(lo, point);
+                        hi = math.max(hi, point);
+                    }
+
+                    v += r.vertexCount;
+                    o += r.faceCount + 1;
+                    i += r.faceIndexCount;
+                    e += r.edgeCount;
+                }
+
+                mesh = new Mesh { name = "Zantetsu Spatial Split Replay", hideFlags = HideFlags.HideAndDontSave };
+                if (math.all(lo <= hi))
+                {
+                    mesh.vertices = new Vector3[] { lo, hi };
+                    mesh.RecalculateBounds();
+                }
+
+                var meshes = new Mesh[s.convexes.Length];
+                for (int c = 0; c < meshes.Length; c++) meshes[c] = mesh;
+                return PhysicsOwnerShape.Authored(bank, ranges, meshes, PhysicsShapeSource.External(), s.shapeToOwner);
+            }
+            finally
+            {
+                block.Dispose();
+            }
+        }
+
+        private static long Align(long bytes) => (bytes + 15) & ~15L;
+
+        /// <summary>Whether the shape the replay made reads the sample's convexes bit for bit (the input before and after the save, for the numbers).</summary>
+        internal static string CompareShape(PhysicsOwnerShape shape, SpatialSplitSample s)
+        {
+            if (shape.ConvexCount != s.convexes.Length) return "convexes " + shape.ConvexCount + ", the sample's " + s.convexes.Length;
+            if (!shape.LocalToOwner.Equals(s.shapeToOwner)) return "the shape's frame differs";
+            for (int c = 0; c < s.convexes.Length; c++)
+            {
+                ConvexBrepRange r = shape.Convex(c);
+                ConvexBrepBank b = shape.BankOf(c);
+                SpatialSplitSample.Convex x = s.convexes[c];
+                if (r.vertexCount != x.range.vertexCount || r.faceCount != x.range.faceCount || r.faceIndexCount != x.range.faceIndexCount
+                    || r.edgeCount != x.range.edgeCount || r.maxFaceLoop != x.range.maxFaceLoop)
+                {
+                    return "convex " + c + "'s counts differ";
+                }
+
+                fixed (float3* p = x.vertices)
+                fixed (int* fo = x.faceOffsets)
+                fixed (int* fi = x.faceIndices)
+                fixed (int* fe = x.faceEdges)
+                fixed (BrepEdge* ed = x.edges)
+                {
+                    if (UnsafeUtility.MemCmp(b.vertices + r.vertexBase, p, (long)r.vertexCount * sizeof(float3)) != 0
+                        || UnsafeUtility.MemCmp(b.faceOffsets + r.faceBase, fo, (long)(r.faceCount + 1) * sizeof(int)) != 0
+                        || UnsafeUtility.MemCmp(b.faceIndices + r.faceIndexBase, fi, (long)r.faceIndexCount * sizeof(int)) != 0
+                        || UnsafeUtility.MemCmp(b.faceEdges + r.faceIndexBase, fe, (long)r.faceIndexCount * sizeof(int)) != 0
+                        || UnsafeUtility.MemCmp(b.edges + r.edgeBase, ed, (long)r.edgeCount * sizeof(BrepEdge)) != 0)
+                    {
+                        return "convex " + c + "'s arrays differ";
+                    }
+                }
+            }
+
+            return "same";
+        }
+
+        /// <summary>
+        /// A bent surface read from its definition (DESIGN 7.9.2) -- knots (u, h), joined by straight pieces, flat beyond
+        /// the first and the last, carried along the third axis -- and an element (a triangle, a convex) tested against
+        /// it over its whole extent, written here apart from the search: the element is the convex polygon of its
+        /// vertices in the (u, h) plane. It is wholly on its side when every vertex is, and at every knot inside its u
+        /// range the polygon's nearest point on that vertical (its lower one for the side above) is too -- the difference
+        /// of two piecewise-linear functions keeps its sign on an interval where it does at every breakpoint of either --
+        /// and it keeps the margin when the least distance between the polygon and the polyline is the margin or more:
+        /// for two that do not cross, the least of every vertex's distance to the polyline and every knot's distance to
+        /// the polygon. Each segment between two of its vertices stands for the polygon's edges (an edge is one of them,
+        /// and every such segment lies inside the polygon).
+        /// </summary>
+        internal sealed class BentCheck
+        {
+            private readonly float3 _height, _along;
+            private readonly float2[] _knots;
+
+            internal BentCheck(in SpatialSplitBentSurface surface)
+            {
+                _height = surface.height;
+                _along = surface.along;
+                int n = math.clamp(surface.knotCount, 0, SpatialSplitBentSurface.MaxKnots);
+                _knots = new float2[n];
+                for (int k = 0; k < n; k++) _knots[k] = new float2(surface.KnotU(k), surface.KnotH(k));
+            }
+
+            internal float2 Project(float3 owner) => new float2(math.dot(_along, owner), math.dot(_height, owner));
+
+            internal float HeightAt(float u)
+            {
+                int last = _knots.Length - 1;
+                if (last < 0) return float.NaN;
+                if (u <= _knots[0].x) return _knots[0].y;
+                if (u >= _knots[last].x) return _knots[last].y;
+                for (int k = 0; k < last; k++)
+                {
+                    float2 a = _knots[k], b = _knots[k + 1];
+                    if (u > b.x) continue;
+                    float t = b.x > a.x ? (u - a.x) / (b.x - a.x) : 0f;
+                    return a.y + (t * (b.y - a.y));
+                }
+
+                return _knots[last].y;
+            }
+
+            // A point's distance to the polyline with its two flat ends (each a ray going outward from its end knot).
+            internal float Distance(float2 q)
+            {
+                int last = _knots.Length - 1;
+                if (last < 0) return float.NaN;
+                float best = q.x <= _knots[0].x ? math.abs(q.y - _knots[0].y) : math.distance(q, _knots[0]);
+                best = math.min(best, q.x >= _knots[last].x ? math.abs(q.y - _knots[last].y) : math.distance(q, _knots[last]));
+                for (int k = 0; k < last; k++) best = math.min(best, ToSegment(q, _knots[k], _knots[k + 1]));
+                return best;
+            }
+
+            private static float ToSegment(float2 q, float2 a, float2 b)
+            {
+                float2 e = b - a;
+                float l2 = math.lengthsq(e);
+                float t = l2 > 0f ? math.clamp(math.dot(q - a, e) / l2, 0f, 1f) : 0f;
+                return math.distance(q, a + (t * e));
+            }
+
+            /// <summary>0: wholly on its side, the margin kept; 1: not wholly on its side; 2: on its side, nearer than the margin.</summary>
+            internal int Verdict(List<float2> points, bool positive, float margin)
+            {
+                float sign = positive ? 1f : -1f;
+                float lo = float.PositiveInfinity, hi = float.NegativeInfinity;
+                foreach (float2 p in points)
+                {
+                    if (!(sign * (p.y - HeightAt(p.x)) > 0f)) return 1;
+                    lo = math.min(lo, p.x);
+                    hi = math.max(hi, p.x);
+                }
+
+                int n = points.Count;
+                foreach (float2 knot in _knots)
+                {
+                    if (knot.x < lo || knot.x > hi) continue;
+                    float extreme = positive ? float.PositiveInfinity : float.NegativeInfinity;
+                    for (int i = 0; i < n; i++)
+                    {
+                        for (int j = i; j < n; j++)
+                        {
+                            float2 a = points[i], b = points[j];
+                            if ((a.x - knot.x) * (b.x - knot.x) > 0f) continue;
+                            if (a.x == b.x)
+                            {
+                                extreme = positive ? math.min(extreme, math.min(a.y, b.y)) : math.max(extreme, math.max(a.y, b.y));
+                                continue;
+                            }
+
+                            float h = a.y + ((knot.x - a.x) / (b.x - a.x) * (b.y - a.y));
+                            extreme = positive ? math.min(extreme, h) : math.max(extreme, h);
+                        }
+                    }
+
+                    if (!(sign * (extreme - knot.y) > 0f)) return 1;
+                }
+
+                float least = float.PositiveInfinity;
+                foreach (float2 p in points) least = math.min(least, Distance(p));
+                foreach (float2 knot in _knots)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        for (int j = i; j < n; j++) least = math.min(least, ToSegment(knot, points[i], points[j]));
+                    }
+                }
+
+                return least < margin ? 2 : 0;
+            }
+        }
+
+        // The checks of what was shared out, independent of how it was found: every input triangle on exactly one side, in
+        // its submesh and order; each triangle and each convex the classification put on a side wholly on it with the
+        // margin -- against the plane vertex by vertex (a plane is linear), against a bent surface over the element's whole
+        // extent (BentCheck). Counted by element.
+        internal static void Check(CutSpatialSplit.Attempt a, SpatialSplitReplayResult result)
+        {
+            if (a.search.outcome != SpatialSplitSearchOutcome.Found || !a.distributed)
+            {
+                result.checkNote = "nothing shared out";
+                return;
+            }
+
+            result.checkedSharing = true;
+            bool bent = CutSpatialSplit.IsBentResult(in a.search);
+            int s = a.submeshCount;
+            int positiveTotal = a.distribution.positiveIndexCount;
+            float4 plane = a.search.planeGeometry;
+            BentCheck surface = bent ? new BentCheck(in a.search.bentSurface) : null;
+            var points = new List<float2>(128);
+            for (int sub = 0; sub < s; sub++)
+            {
+                int p = a.outSubmeshOffsets[sub];
+                int pEnd = p + a.outSubmeshCounts[sub];
+                int q = positiveTotal + a.outSubmeshOffsets[s + sub];
+                int qEnd = q + a.outSubmeshCounts[s + sub];
+                int end = a.submeshOffsets[sub] + a.submeshCounts[sub];
+                for (int i = a.submeshOffsets[sub]; i + 2 < end; i += 3)
+                {
+                    bool positive;
+                    if (p < pEnd && Same(a.output + p, a.indices + i))
+                    {
+                        positive = true;
+                        p += 3;
+                    }
+                    else if (q < qEnd && Same(a.output + q, a.indices + i))
+                    {
+                        positive = false;
+                        q += 3;
+                    }
+                    else
+                    {
+                        result.trianglesMissing++;
+                        continue;
+                    }
+
+                    int verdict = 0;
+                    if (bent)
+                    {
+                        points.Clear();
+                        for (int k = 0; k < 3; k++) points.Add(surface.Project(math.transform(a.geometryToOwner, a.vertices[a.indices[i + k]].position)));
+                        verdict = surface.Verdict(points, positive, a.margin);
+                    }
+                    else
+                    {
+                        for (int k = 0; k < 3; k++)
+                        {
+                            float d = math.dot(plane.xyz, a.vertices[a.indices[i + k]].position) + plane.w;
+                            if (positive ? d <= 0f : d >= 0f) verdict = 1;
+                            else if (math.abs(d) <= a.margin && verdict == 0) verdict = 2;
+                        }
+                    }
+
+                    if (verdict == 1) result.triangleWrongSide++;
+                    else if (verdict == 2) result.triangleMarginShort++;
+                }
+
+                result.trianglesExtra += ((pEnd - p) + (qEnd - q)) / 3;
+            }
+
+            PhysicsCutClassification classification = a.classification;
+            if (classification == null || classification.Sides == null)
+            {
+                result.checkNote = "no classification to check";
+                return;
+            }
+
+            float4 shapePlane = a.search.planeShape / math.length(a.search.planeShape.xyz);
+            float4 ownerPlane = a.search.planeOwner;
+            bool wholeConvexes = !bent && !a.search.meshLed;
+            for (int c = 0; c < a.convexCount; c++)
+            {
+                ConvexSide side = classification.Sides[c];
+                if (side != ConvexSide.Positive && side != ConvexSide.Negative) continue;
+                ConvexBrepRange r = a.ranges[c];
+                ConvexBrepBank b = a.banks[c];
+                bool positive = side == ConvexSide.Positive;
+                int verdict = 0;
+                if (bent)
+                {
+                    points.Clear();
+                    for (int k = 0; k < r.vertexCount; k++) points.Add(surface.Project(math.transform(a.shapeToOwner, b.vertices[r.vertexBase + k])));
+                    verdict = surface.Verdict(points, positive, a.margin);
+                }
+                else
+                {
+                    // How far the convex reaches onto the other side (0 where it does not), in the shape's frame as the
+                    // cut's scan measures it. A plane that leaves the convexes whole keeps every vertex beyond the margin:
+                    // any reach across is wrong. A mesh-led plane's sides are the cut's scan's (DESIGN 7.6): a vertex
+                    // within the support epsilon is no support of either side, so only a reach beyond it is wrong.
+                    float across = 0f;
+                    for (int k = 0; k < r.vertexCount; k++)
+                    {
+                        float3 point = b.vertices[r.vertexBase + k];
+                        float d = math.dot(shapePlane.xyz, point) + shapePlane.w;
+                        across = math.max(across, positive ? -d : d);
+                        if ((positive ? d <= 0f : d >= 0f) && wholeConvexes) verdict = 1;
+                        float owner = math.dot(ownerPlane.xyz, math.transform(a.shapeToOwner, point)) + ownerPlane.w;
+                        if (wholeConvexes && math.abs(owner) <= a.margin && verdict == 0) verdict = 2;
+                    }
+
+                    if (!wholeConvexes && across > 0f)
+                    {
+                        result.convexAcrossWithinEpsilon += across <= a.supportEpsilon ? 1 : 0;
+                        if (across > a.supportEpsilon) verdict = 1;
+                    }
+
+                    result.convexMostAcross = math.max(result.convexMostAcross, across);
+                }
+
+                if (verdict == 1) result.convexWrongSide++;
+                else if (verdict == 2) result.convexMarginShort++;
+            }
+
+            result.checkNote = bent ? "bent: every triangle and convex over its whole extent, with the margin"
+                : a.search.meshLed ? "mesh-led: a convex on a side may reach across within the cut's support epsilon (DESIGN 7.6); cut ones and those within it of the plane are not checked"
+                : "plane";
+        }
+
+        private static bool Same(uint* a, uint* b) => a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+    }
+}
+#endif
