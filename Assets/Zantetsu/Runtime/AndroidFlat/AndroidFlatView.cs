@@ -8,7 +8,8 @@ namespace Zantetsu.AndroidFlat
     {
         None, Menu, Resume, MoveDown, MoveUp, TurnDown, TurnUp, Fsr, Scale, Sharpness, Reset,
         StickPosition, Back, StickLeft, StickRight, StickDown, StickUp, StickReset,
-        MultiDrawIndirect, DrawIndirectCount, ApplyRendering
+        MultiDrawIndirect, DrawIndirectCount, ApplyRendering,
+        Statistics, StatisticsToggle, StatisticsAgree, StatisticsDecline
     }
     internal sealed class AndroidFlatView
     {
@@ -23,16 +24,16 @@ namespace Zantetsu.AndroidFlat
             public GameObject checkmark;
             public Image checkShort, checkLong;
         }
-        private readonly Control[] controls = new Control[20];
+        private readonly Control[] controls = new Control[24];
         private readonly PlayLoadingView loadingView = new PlayLoadingView();
         private GameObject root, panel;
         private Image stick, thumb;
-        private Text status, title, stickOrientation, stickHorizontal, stickVertical;
+        private Text status, title, stickOrientation, stickHorizontal, stickVertical, statisticsBody;
         private Sprite circle;
         private Texture2D circleTexture;
         private Font font;
         private Rect panelRect;
-        private bool menu, layoutPage, loading;
+        private bool menu, layoutPage, loading, statisticsPage, consentDialog, statisticsAgreed;
 
         public void Build(Transform persistentParent)
         {
@@ -63,13 +64,17 @@ namespace Zantetsu.AndroidFlat
                 FlatCommand.Fsr, FlatCommand.Scale, FlatCommand.Sharpness, FlatCommand.Reset,
                 FlatCommand.StickPosition, FlatCommand.Back, FlatCommand.StickLeft, FlatCommand.StickRight,
                 FlatCommand.StickDown, FlatCommand.StickUp, FlatCommand.StickReset,
-                FlatCommand.MultiDrawIndirect, FlatCommand.DrawIndirectCount, FlatCommand.ApplyRendering };
+                FlatCommand.MultiDrawIndirect, FlatCommand.DrawIndirectCount, FlatCommand.ApplyRendering,
+                FlatCommand.Statistics, FlatCommand.StatisticsToggle, FlatCommand.StatisticsAgree, FlatCommand.StatisticsDecline };
             for (int i = 0; i < commands.Length; i++)
-                controls[i + 1] = commands[i] == FlatCommand.MultiDrawIndirect || commands[i] == FlatCommand.DrawIndirectCount
+                controls[i + 1] = commands[i] == FlatCommand.MultiDrawIndirect || commands[i] == FlatCommand.DrawIndirectCount || commands[i] == FlatCommand.StatisticsToggle
                     ? NewCheckbox(commands[i], panel.transform) : NewControl(commands[i], panel.transform, "");
             stickOrientation = NewText("Joystick orientation", panel.transform, 24, TextAnchor.MiddleCenter);
             stickHorizontal = NewText("Joystick horizontal position", panel.transform, 24, TextAnchor.MiddleCenter);
             stickVertical = NewText("Joystick vertical position", panel.transform, 24, TextAnchor.MiddleCenter);
+            statisticsBody = NewText("Statistics explanation", panel.transform, 24, TextAnchor.UpperLeft);
+            statisticsBody.text = PlayStatisticsService.ConsentBodyForAndroid;
+            statisticsBody.gameObject.SetActive(false);
             panel.SetActive(false);
         }
 
@@ -174,18 +179,24 @@ namespace Zantetsu.AndroidFlat
         {
             if (root == null) return;
             panel.SetActive(!loading && menu);
-            controls[0].image.gameObject.SetActive(!loading);
+            controls[0].image.gameObject.SetActive(!loading && !consentDialog);
             status.gameObject.SetActive(!loading);
             stick.enabled = thumb.enabled = !loading && !menu;
         }
 
-        public void ShowStickPosition(bool open) { layoutPage = open; }
+        public void ShowStickPosition(bool open) { layoutPage = open; if (open) statisticsPage = false; }
+        public void SetStatisticsAgreed(bool agreed) { statisticsAgreed = agreed; }
+        public void ShowStatistics(bool open, bool consent = false)
+        {
+            statisticsPage = open; consentDialog = open && consent;
+            if (open) layoutPage = false;
+        }
 
         public void Layout(Rect safe, Vector2 centre, float radius, bool open, AndroidFlatSettings settings, bool portrait,
             AndroidFlatDrawCapabilities capabilities, bool renderingChangesPending)
         {
             menu = open;
-            if (!open) layoutPage = false;
+            if (!open) { layoutPage = false; statisticsPage = false; consentDialog = false; }
             float unit = Mathf.Min(safe.width, safe.height) / 900f;
             float pad = 24 * unit, row = 64 * unit;
             status.fontSize = status.resizeTextMaxSize = Mathf.RoundToInt(24 * unit);
@@ -200,20 +211,43 @@ namespace Zantetsu.AndroidFlat
             Place(stick.rectTransform, new Rect(centre - Vector2.one * radius, Vector2.one * radius * 2));
             Put(controls[0], new Rect(safe.xMax - pad - 150 * unit, safe.yMax - pad - row, 150 * unit, row));
             Place(status.rectTransform, new Rect(safe.x + pad, safe.yMax - pad - row, safe.width - 200 * unit - pad * 2, row));
-            float panelHeight = row * (layoutPage ? 9f : 12.9f);
+            float panelHeight = statisticsPage ? Mathf.Min(820f * unit, safe.height - pad * 2f) : row * (layoutPage ? 9f : 12.9f);
             panelRect = new Rect(safe.center.x - Mathf.Min(safe.width * .46f, 420 * unit), safe.center.y - panelHeight * .5f,
                 Mathf.Min(safe.width * .92f, 840 * unit), panelHeight);
             Place((RectTransform)panel.transform, panelRect);
             Place(title.rectTransform, new Rect(0, panelRect.height - row, panelRect.width, row));
-            title.text = layoutPage ? "Joystick position" : "Paused";
+            title.text = statisticsPage ? "Play statistics" : layoutPage ? "Joystick position" : "Paused";
+            statisticsBody.gameObject.SetActive(statisticsPage);
             for (int i = 1; i < controls.Length; i++)
             {
-                bool visible = i == 1 || (layoutPage ? i >= 11 && i <= 16 : i <= 10 || i >= 17);
+                bool visible = statisticsPage
+                    ? (consentDialog ? i == 22 || i == 23 : i == 11 || i == 21)
+                    : i == 1 || (layoutPage ? i >= 11 && i <= 16 : i <= 10 || i >= 17 && i <= 20);
                 controls[i].image.gameObject.SetActive(visible);
                 if (!visible) controls[i].rect = default;
             }
             float left = panelRect.x + pad, width = panelRect.width - pad * 2, top = panelRect.yMax - row * 2;
-            if (layoutPage)
+            if (statisticsPage)
+            {
+                statisticsBody.fontSize = statisticsBody.resizeTextMaxSize = Mathf.RoundToInt(24f * unit);
+                Place(statisticsBody.rectTransform, new Rect(pad, row * 1.6f,
+                    width, panelRect.height - row * 2.75f));
+                float bottom = panelRect.y + pad;
+                if (consentDialog)
+                {
+                    Put(controls[22], new Rect(left, bottom, width * .48f, row * .85f));
+                    controls[22].label.text = PlayStatisticsService.ConsentAgree;
+                    Put(controls[23], new Rect(left + width * .52f, bottom, width * .48f, row * .85f));
+                    controls[23].label.text = PlayStatisticsService.ConsentDecline;
+                }
+                else
+                {
+                    Put(controls[11], new Rect(left, bottom, width * .23f, row * .85f)); controls[11].label.text = "Back";
+                    Put(controls[21], new Rect(left + width * .27f, bottom, width * .73f, row * .85f));
+                    SetCheckbox(controls[21], true, statisticsAgreed, "Send play statistics");
+                }
+            }
+            else if (layoutPage)
             {
                 Vector2 position = settings.GetStickPosition(portrait);
                 stickOrientation.text = portrait ? "Portrait" : "Landscape";
@@ -267,7 +301,8 @@ namespace Zantetsu.AndroidFlat
                 controls[19].label.text = "Apply rendering (reset scene)";
                 SetEnabled(controls[19], renderingChangesPending);
                 top -= row;
-                Put(controls[10], new Rect(left, top, width, row * .85f)); controls[10].label.text = "Joystick position";
+                Put(controls[10], new Rect(left, top, width * .48f, row * .85f)); controls[10].label.text = "Joystick position";
+                Put(controls[20], new Rect(left + width * .52f, top, width * .48f, row * .85f)); controls[20].label.text = "Statistics";
                 top -= row;
                 Put(controls[9], new Rect(left, top, width, row * .85f)); controls[9].label.text = "Reset scene";
             }
@@ -279,11 +314,11 @@ namespace Zantetsu.AndroidFlat
             Place(thumb.rectTransform, new Rect(centre + value * radius * .62f - Vector2.one * knob, Vector2.one * knob * 2));
         }
         public void SetStatus(string value) { status.text = value; }
-        public bool IsUi(Vector2 point) => loading || (menu && panelRect.Contains(point)) || controls[0].rect.Contains(point);
+        public bool IsUi(Vector2 point) => loading || consentDialog || (menu && panelRect.Contains(point)) || controls[0].rect.Contains(point);
         public FlatCommand CommandAt(Vector2 point)
         {
             if (loading) return FlatCommand.None;
-            if (controls[0].rect.Contains(point)) return FlatCommand.Menu;
+            if (!consentDialog && controls[0].rect.Contains(point)) return FlatCommand.Menu;
             if (!menu) return FlatCommand.None;
             for (int i = 1; i < controls.Length; i++)
                 if (controls[i] != null && controls[i].interactable && controls[i].image.gameObject.activeInHierarchy

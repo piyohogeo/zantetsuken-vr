@@ -6,6 +6,7 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 using Zantetsu.Core;
+using Zantetsu.Core.Statistics;
 using Zantetsu.Core.Input;
 using Zantetsu.Core.Slash;
 using Zantetsu.PhysicsCut;
@@ -19,7 +20,7 @@ namespace Zantetsu.AndroidFlat
 {
     /// <summary>The phone's input/display boundary. All hits and cuts still use the shared world and slash detector.</summary>
     [DefaultExecutionOrder(-50)]
-    public sealed class AndroidFlatPlayer : MonoBehaviour
+    public sealed class AndroidFlatPlayer : MonoBehaviour, IPlayStatisticsFlatSource
     {
         private const string Prefix = "ANDROID FLAT: ";
         private readonly FlatTouchInput input = new FlatTouchInput();
@@ -31,6 +32,9 @@ namespace Zantetsu.AndroidFlat
         private static readonly int ColourId = Shader.PropertyToID("_Color");
         private Camera cameraView;
         private CutWorldRoot world;
+        private CutWorldCameraDrawing drawing;
+        private PlayStatisticsService statistics;
+        private bool consentOpen, consentFromMenu;
         private MobPlanPlayerInput move;
         private SlashHitDetector hits;
         private SlashWaveCore slash;
@@ -97,12 +101,31 @@ namespace Zantetsu.AndroidFlat
                 + "; availableMulti=" + drawCapabilities.MultiDrawIndirect + "; availableCount=" + drawCapabilities.DrawIndirectCount);
         }
 
+        public bool StatisticsReady => ready && !sceneChanging;
+
+        public void ReadStatisticsConditions(ref PlayConditions conditions)
+        {
+            conditions.ScreenWidth = Screen.width;
+            conditions.ScreenHeight = Screen.height;
+            conditions.RenderScale = pipeline != null ? pipeline.renderScale : 1f;
+            // URP does not upscale at native resolution, even if FSR is selected in the menu.
+            conditions.FsrEnabled = pipeline != null && pipeline.upscalingFilter == UpscalingFilterSelection.FSR
+                && conditions.RenderScale < 1f;
+            conditions.MsaaSamples = pipeline != null ? pipeline.msaaSampleCount : QualitySettings.antiAliasing;
+            // Saved preferences can be waiting for Apply, and a native route may itself have fallen back.
+            conditions.MultiDrawIndirect = appliedMultiDrawIndirect;
+            conditions.DrawIndirectCount = appliedDrawIndirectCount && drawing != null
+                && drawing.NativeRoute != null && drawing.NativeRoute.CommandCompactionActive;
+        }
+
         private void Start()
         {
             if (!EnhancedTouchSupport.enabled) { EnhancedTouchSupport.Enable(); enabledEnhancedTouch = true; }
             visualProperties = new MaterialPropertyBlock();
             view.Build(transform);
             UpdateLoading();
+            statistics = PlayStatisticsService.Install(SandboxScenarioKind.Play, SceneManager.GetActiveScene().name);
+            statistics.FlatSource = this;
             input.Cancel();
             GamePause.PausedChanged += OnPaused;
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -155,12 +178,15 @@ namespace Zantetsu.AndroidFlat
                 yield return null;
             }
             // Warm the same native/stencil paths as Quest, without requesting its XR motion pass.
-            prewarm = new QuestDrawPrewarm(cameraView, world, world.GetComponent<CutWorldCameraDrawing>(),
+            drawing = world.GetComponent<CutWorldCameraDrawing>();
+            prewarm = new QuestDrawPrewarm(cameraView, world, drawing,
                 world.BodyRoute == "VP3C-NATIVE", false, false);
             yield return prewarm.Run();
             if (!prewarm.Completed) { Fail("Drawing preparation failed: " + prewarm.Failure); yield break; }
             prepared = ready = true;
             UpdateLoading();
+            if (statistics != null && statistics.Consent.Decision == PlayStatisticsDecision.Undecided)
+                OpenStatisticsConsent(false);
             input.Cancel();
             reportStart = Time.realtimeSinceStartupAsDouble; nextReport = reportStart + .5; fpsFrames = 0;
             Debug.Log(Prefix + "ready; device=" + SystemInfo.deviceModel + "; GPU=" + SystemInfo.graphicsDeviceName
@@ -288,29 +314,70 @@ namespace Zantetsu.AndroidFlat
             input.StickCentre = new Vector2(safe.x + safe.width * position.x, safe.y + safe.height * position.y);
             input.MinimumFlickPixels = shortSide * .018f;
             input.MinimumFlickPixelsPerSecond = shortSide * .85f;
+            view.SetStatisticsAgreed(statistics != null && statistics.Consent.Agreed);
             view.Layout(safe, input.StickCentre, input.StickRadius, menu, settings, portrait, drawCapabilities, RenderingChangesPending);
             layoutDirty = false;
         }
 
         private void ToggleMenu()
         {
-            if (sceneChanging || (!ready && failure == null)) return;
+            if (consentOpen || sceneChanging || (!ready && failure == null)) return;
             menu = !menu;
             view.ShowStickPosition(false);
+            view.ShowStatistics(false);
             GamePause.SetManual(menu);
             input.Cancel(); layoutDirty = true;
             if (!menu) settings.Save();
         }
 
+        private void ShowStatisticsSettings()
+        {
+            view.ShowStatistics(true);
+            input.Cancel(); layoutDirty = true;
+        }
+
+        private void OpenStatisticsConsent(bool fromMenu)
+        {
+            consentOpen = true; consentFromMenu = fromMenu;
+            menu = true;
+            view.ShowStatistics(true, true);
+            GamePause.SetManual(true);
+            input.Cancel(); layoutDirty = true;
+        }
+
+        private void CloseStatisticsConsent(bool agree)
+        {
+            if (!consentOpen || statistics == null) return;
+            if (agree) statistics.Agree(); else statistics.Withdraw();
+            consentOpen = false;
+            menu = consentFromMenu;
+            view.ShowStatistics(consentFromMenu);
+            GamePause.SetManual(menu);
+            input.Cancel(); layoutDirty = true;
+        }
+
         private void Command(FlatCommand command)
         {
             if (sceneChanging) return;
+            if (consentOpen)
+            {
+                if (command == FlatCommand.StatisticsAgree) CloseStatisticsConsent(true);
+                else if (command == FlatCommand.StatisticsDecline) CloseStatisticsConsent(false);
+                return;
+            }
             switch (command)
             {
                 case FlatCommand.Menu: ToggleMenu(); return;
                 case FlatCommand.Resume: if (menu) ToggleMenu(); return;
                 case FlatCommand.StickPosition: view.ShowStickPosition(true); input.Cancel(); layoutDirty = true; return;
-                case FlatCommand.Back: view.ShowStickPosition(false); input.Cancel(); layoutDirty = true; return;
+                case FlatCommand.Back: view.ShowStickPosition(false); view.ShowStatistics(false); input.Cancel(); layoutDirty = true; return;
+                case FlatCommand.Statistics: ShowStatisticsSettings(); return;
+                case FlatCommand.StatisticsToggle:
+                    if (statistics == null) return;
+                    if (statistics.Consent.Agreed) statistics.Withdraw();
+                    else if (statistics.Consent.AgreementNeedsCurrentText) { OpenStatisticsConsent(true); return; }
+                    else statistics.Agree();
+                    input.Cancel(); layoutDirty = true; return;
                 case FlatCommand.StickLeft: ShiftStick(new Vector2(-.01f, 0)); return;
                 case FlatCommand.StickRight: ShiftStick(new Vector2(.01f, 0)); return;
                 case FlatCommand.StickDown: ShiftStick(new Vector2(0, -.01f)); return;
@@ -424,7 +491,11 @@ namespace Zantetsu.AndroidFlat
         }
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            if (sceneChanging) preparation = StartCoroutine(PrepareScene());
+            if (sceneChanging)
+            {
+                if (statistics != null) PlayStatisticsService.Install(SandboxScenarioKind.Play, scene.name);
+                preparation = StartCoroutine(PrepareScene());
+            }
         }
         private void OnPaused(bool paused) { input.Cancel(); if (paused) settings.Save(); }
         private void OnApplicationFocus(bool focus) { input.Cancel(); if (!Application.isEditor) GamePause.SetFocusLost(!focus); }
@@ -435,11 +506,12 @@ namespace Zantetsu.AndroidFlat
             if (pipeline != null) { if (QualitySettings.renderPipeline == pipeline) QualitySettings.renderPipeline = previousPipeline; Destroy(pipeline); pipeline = null; }
             if (visualRoot != null) Destroy(visualRoot);
             if (slashMaterial != null) Destroy(slashMaterial);
-            slash = null; hits = null;
+            slash = null; hits = null; drawing = null;
         }
         private void OnDestroy()
         {
             SceneManager.sceneLoaded -= OnSceneLoaded; GamePause.PausedChanged -= OnPaused;
+            if (statistics != null && ReferenceEquals(statistics.FlatSource, this)) statistics.FlatSource = null;
             if (enabledEnhancedTouch) EnhancedTouchSupport.Disable();
             ReleaseScene(); view.Destroy();
             Debug.Log(Prefix + "ended; accepted=" + accepted + "; capacityRejected=" + rejected + "; prepared=" + prepared);

@@ -34,6 +34,7 @@ namespace Zantetsu.Core.Statistics
             b.Append(",\"env\":{");
             Str(b, "\"platform\":", s.Platform);
             Str(b, ",\"os\":", s.OperatingSystem);
+            StrOrNull(b, ",\"deviceModel\":", s.DeviceModel);
             Str(b, ",\"cpu\":", s.Cpu);
             Str(b, ",\"gpu\":", s.Gpu);
             Str(b, ",\"graphicsApi\":", s.GraphicsApi);
@@ -103,6 +104,10 @@ namespace Zantetsu.Core.Statistics
             b.Append(",\"refreshHz\":").Append(c.RefreshRateHz.ToString("0.#", Inv));
             b.Append(",\"renderScale\":").Append(c.RenderScale.ToString("0.###", Inv));
             b.Append(",\"eye\":[").Append(c.EyeTextureWidth).Append(',').Append(c.EyeTextureHeight).Append(']');
+            b.Append(",\"screen\":[").Append(c.ScreenWidth).Append(',').Append(c.ScreenHeight).Append(']');
+            b.Append(",\"fsrEnabled\":").Append(c.FsrEnabled ? "true" : "false");
+            b.Append(",\"multiDrawIndirect\":").Append(c.MultiDrawIndirect ? "true" : "false");
+            b.Append(",\"drawIndirectCount\":").Append(c.DrawIndirectCount ? "true" : "false");
             b.Append(",\"msaa\":").Append(c.MsaaSamples);
             b.Append(",\"cutSurfaceDebug\":").Append(c.CutSurfaceDebug ? "true" : "false");
             b.Append("},\"frames\":").Append(e.Frames)

@@ -210,8 +210,10 @@ namespace Zantetsu.Core.Tests
             TestContext.Out.WriteLine("full snapshot: " + bytes + " bytes");
             Assert.That(bytes, Is.LessThan(PlayStatisticsSender.MaxBodyBytes * 3 / 4), "well under 16 KiB with four epochs full");
             Assert.That(json, Does.StartWith("{\"schema_version\":1,\"session_id\":\"11111111-2222-3333-4444-555555555555\",\"install_id\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"revision\":5,\"tester_role\":\"external\",\"stats\":{"));
-            Assert.That(PlayStatistics.FormatVersion, Is.EqualTo(3), "the settings took the sticks' layout (2026-10-20): a new version");
-            Assert.That(json, Does.Contain("\"format\":3").And.Contain("\"histogram\":1").And.Contain("\"mainIncludesPresentWait\":true"));
+            Assert.That(PlayStatistics.FormatVersion, Is.EqualTo(4), "device model and Android drawing conditions extend the record; the envelope stays version 1");
+            Assert.That(json, Does.Contain("\"format\":4").And.Contain("\"histogram\":1").And.Contain("\"mainIncludesPresentWait\":true"));
+            Assert.That(json, Does.Contain("\"deviceModel\":null"));
+            Assert.That(json, Does.Contain("\"renderScale\":1,\"eye\":[1680,1760],\"screen\":[0,0],\"fsrEnabled\":false,\"multiDrawIndirect\":false,\"drawIndirectCount\":false"), "VR fields keep their meaning; phone-only conditions are unspecified");
             // The environment: the graphics API apart from the driver's version; the runtime's own name and version; a device not obtained is null.
             Assert.That(json, Does.Contain("\"graphicsApi\":\"Direct3D 12 [level 12.2]\",\"gpuDriver\":\"32.0.15.9159\",\"xrDevice\":null,\"xrRuntime\":\"Oculus\",\"xrRuntimeVersion\":\"1.115.0\""));
             Assert.That(json, Does.Contain("\"gpu\":\"gpu \\\"x\\\"\""), "a quote in a string is escaped");
@@ -242,6 +244,34 @@ namespace Zantetsu.Core.Tests
             Assert.That(json, Does.Contain("\"epochs\":[]").And.Contain("\"settings\":null").And.Contain("\"limit\":null,\"maxEnd\":0,\"minHeadroomToCapacity\":null,\"minHeadroomToLimit\":null").And.Contain("\"gpuDriver\":null,\"xrDevice\":null").And.Contain("\"xrRuntimeVersion\":null").And.Contain("\"attributionLagFrames\":" + PlayStatisticsCollector.AttributionLagFrames));
             Assert.That(Balanced(json), Is.True);
             Assert.That(Encoding.UTF8.GetByteCount(json), Is.LessThan(2048), "an empty record: the envelope, the environment and seven capacities' fields");
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("Pixel \"6\"\\Pro\n\t\u0001_\u65e5\u672c")]
+        public void TheJson_RecordsAndroidDrawingConditions_AndTheModelAsNullOrEscapedText(string model)
+        {
+            var s = new PlayStatistics { Platform = "Android", DeviceModel = model };
+            var c = new PlayConditions
+            {
+                Scene = "WalkCity", Mode = "play", DrawRoute = "VP3C-NATIVE", XrRuntime = PlayEnvironment.NoXr,
+                RenderScale = .75f, ScreenWidth = 1080, ScreenHeight = 2400, FsrEnabled = true,
+                MultiDrawIndirect = true, DrawIndirectCount = true, MsaaSamples = 4
+            };
+            s.BeginEpoch(in c);
+            var b = new StringBuilder();
+            PlayStatisticsJson.Write(b, s, "s", "i", 0, "external");
+            string json = b.ToString();
+            Assert.That(json, Does.Contain("\"schema_version\":1").And.Contain("\"format\":4"));
+            Assert.That(json, Does.Contain("\"renderScale\":0.75,\"eye\":[0,0],\"screen\":[1080,2400],\"fsrEnabled\":true,\"multiDrawIndirect\":true,\"drawIndirectCount\":true"),
+                "phone pixels do not change the per-eye fields' meaning");
+            if (string.IsNullOrEmpty(model)) Assert.That(json, Does.Contain("\"deviceModel\":null"));
+            else
+            {
+                Assert.That(json, Does.Contain("\"deviceModel\":\"Pixel \\\"6\\\"\\\\Pro\\n\\t\\u0001_\u65e5\u672c\""));
+                Assert.That(json, Does.Not.Contain("\n").And.Not.Contain("\t").And.Not.Contain("\u0001"), "control characters are escaped on the wire");
+            }
+            Assert.That(Balanced(json), Is.True);
         }
 
         private static int CountOf(string text, string part)

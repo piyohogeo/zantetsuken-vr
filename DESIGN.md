@@ -211,6 +211,10 @@ Pixel 6 Pro（Mali-G78）では従来のFXC/HLSLccから生成したVPシェー�
 
 > **状態モデル** 生存LogicalFragmentごとの一回の物理置換は7.1の短寿命PhysicsSplitTransactionが所有する。正負Final PhysicsとLogical Publicationを一体で公開した後はTransactionを終了し、各子は一Final Physics Ownerを専有する。Pending CutはGeometry責務だけを残し、4.5.6の祖先順Geometry CommitまたはBranch退役で完了する。具体的GeometryとCutBoundaryRecordは後着でき、Work完了・CPU範囲Published・GPU転送はGeometry Pipeline内部で扱う。
 
+- Android版も既存のプレイ統計（21.18）を利用する。初回の読み込み完了後に同意画面を出し、未回答・拒否・撤回中は収集も送信もしない。Menu → Statisticsから切り替えられる。OS・CPU・GPU・API・描画経路は既存項目を使い、同意後に機種モデル（SystemInfo.deviceModel。ユーザー指定のdeviceNameは使わない）を読む。記録形式4では、アプリ表示領域の幅・高さ、FSRの実効状態、既存renderScaleへのAndroid実効倍率、MultiDrawIndirect・DrawIndirectCountの実効状態を条件に加える。Countは設定値だけでなく、実際のNativeRouteが圧縮パスを選択し停止していないことも確かめる。FSRは実効倍率1.0ではOFFとする。読み込み・シーン再構築・暖機中のフレームは収集しない。条件の切替では既存のエポック分離と遅延標本の帰属除外を使い、エポック数上限は4のままとする。画面方向の別項目や電池・温度・操作履歴は追加しない。送信は既存の同意とローカル送信設定に従い、設定を同梱しない検証APKは送信しない。
+
+Androidではフォーカス喪失に加え、OnApplicationPause(true)でも同じ送信処理へ現在の記録を提案する。両方の通知が届いても送信中・受理済みの同じrevisionを重複送信せず、拒否・撤回・終了要求後は送信しない。QuestとPCのpause時の処理は変えない。送信を有効にする検証ビルドは `Build-AndroidFlat.ps1 -Statistics required -StatisticsRole developer -StatisticsTokenVariable ZANTETSU_INGEST_TOKEN_ALPHA -StatisticsAside <プロジェクト外の退避先>` を使い、既存のQuest送信先へ送る設定を環境変数から一時生成する。既存の設定資産は上書きせず拒否し、今回生成した設定は成功・失敗ともビルド後に退避する。認証値はコマンドライン・ログ・リポジトリへ記録しない。
+
 ### 4.1 コンポーネント境界
 
 | サブシステム | 責務 |

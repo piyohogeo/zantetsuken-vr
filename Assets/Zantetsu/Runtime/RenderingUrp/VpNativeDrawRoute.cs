@@ -578,6 +578,9 @@ namespace Zantetsu.Rendering.Urp
         /// <summary>What this route chose between the compaction and the fixed draw, and why (DESIGN 4.5.10); null until its first frame.</summary>
         public string CommandCompactionChoice { get; private set; }
 
+        /// <summary>The route's already selected count path, without asking the device or changing the selection.</summary>
+        public bool CommandCompactionActive => _compactionChoiceMade && _compactionChosen && CompactionHalted == null;
+
         /// <summary>Experiment: zero events recorded (one a column of a set a frame), runs drawn fixed because their column's zeroing was not reserved, and zero events the plugin refused.</summary>
         public long IndirectCountZeroEvents { get; private set; }
         public long IndirectCountZeroMissed { get; private set; }
