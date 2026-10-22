@@ -813,6 +813,7 @@ namespace Zantetsu.Rendering.Urp
 
         private static bool AppendBlocks(StringBuilder text, string variant, uint[] words, List<(VpNativePipeline.BindingInfo binding, int offset, int size, int split)> blocks)
         {
+            variant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
             var asset = Resources.Load<TextAsset>((Plugin.Vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder) + "/" + variant);
             if (asset == null || !VpNativeShaderBinary.TryRead(asset.bytes, out VpNativeShaderBinary binary, out string _))
             {
@@ -1642,6 +1643,7 @@ namespace Zantetsu.Rendering.Urp
         private PipelineEntry PipelineFor(Material material, string variant, VpNativeRenderState state, out string failure)
         {
             failure = null;
+            variant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
             var key = new PipelineKey(material, variant, state);
             if (_pipelines.TryGetValue(key, out PipelineEntry entry))
             {
@@ -2282,7 +2284,7 @@ namespace Zantetsu.Rendering.Urp
                 string variant = _route.BodyVariantOverride ?? VariantName(BodyVariantFor(frameData.Get<UniversalLightData>(), frameData.Get<UniversalShadowData>()), stereo);
                 if (_motion) variant = "motion-plugin-stereo";
                 if (Plugin.Vulkan && (_motion ? Plugin.VulkanNoClipMotionShaders : Plugin.VulkanNoClipColourShaders)) variant += "-noclip";
-                if (!_motion) _route.LastBodyVariant = variant;
+                if (!_motion) _route.LastBodyVariant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
                 TextureHandle shadowMap = _motion ? TextureHandle.nullHandle : resourceData.mainShadowsTexture;
                 if (_motion)
                 {

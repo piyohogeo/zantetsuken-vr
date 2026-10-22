@@ -64,6 +64,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
             // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
             #pragma multi_compile_local _ VP_NO_CLIP
+            #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma multi_compile_local_vertex _ VP_CLIP_LIST_SLICES
             #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex ShadowVertex
@@ -105,6 +106,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
         #endif
         #endif
             #include "VpNativeDirectClip.hlsl"
+            #include "VpClipDistances.hlsl"
 
         #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             // The instances the compute pass kept as casters for this view, as the forward pass reads its own list.
@@ -156,30 +158,6 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             }
         #endif
 
-            // As in the forward pass: one clip distance per plane, the region kept is their intersection, and past
-            // the valid count the component is a positive constant so an unused plane clips nothing at any vertex.
-        #if !defined(VP_NO_CLIP)
-            float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
-            {
-                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
-            }
-
-            void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
-            {
-                uint count = (uint)clipState.planeCount;
-                first = float4(
-                    VpHalfSpace(clipState.planes[0], positionWS, 0, count),
-                    VpHalfSpace(clipState.planes[1], positionWS, 1, count),
-                    VpHalfSpace(clipState.planes[2], positionWS, 2, count),
-                    VpHalfSpace(clipState.planes[3], positionWS, 3, count));
-                second = float4(
-                    VpHalfSpace(clipState.planes[4], positionWS, 4, count),
-                    VpHalfSpace(clipState.planes[5], positionWS, 5, count),
-                    VpHalfSpace(clipState.planes[6], positionWS, 6, count),
-                    VpHalfSpace(clipState.planes[7], positionWS, 7, count));
-            }
-        #endif
-
             // Set by URP's shadow caster setup for the light being rendered.
             float3 _LightDirection;
             float3 _LightPosition;
@@ -200,8 +178,14 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
                 // One component per plane, the components past the record's count positive and finite (DESIGN 5.2).
             #if !defined(VP_NO_CLIP)
+            #if defined(VP_PIXEL_CLIP)
+                // Full-precision, perspective-correct distances; every plane remains independent until the fragment.
+                float4 clipDistance0 : TEXCOORD0;
+                float4 clipDistance1 : TEXCOORD1;
+            #else
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
             #endif
             };
 
@@ -285,6 +269,9 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
             half4 ShadowFragment(ShadowVaryings input) : SV_Target
             {
+            #if defined(VP_PIXEL_CLIP) && !defined(VP_NO_CLIP)
+                VpDiscardOutsideClip(input.clipDistance0, input.clipDistance1);
+            #endif
                 return 0;
             }
             ENDHLSL

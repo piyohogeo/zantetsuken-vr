@@ -3,6 +3,7 @@
 param(
     [switch]$Development,
     [switch]$SkipConfigure,
+    [switch]$ShaderAudit,
     [string]$Output,
     [string]$SourceScene,
     [string]$Unity = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe'
@@ -17,6 +18,7 @@ if (!(Test-Path -LiteralPath $Unity -PathType Leaf)) { throw "Unity not found: $
 $method = if ($SkipConfigure) { 'BuildApk' } else { 'ConfigureAndBuild' }
 $extra = ' -zantetsuAndroidFlat -zantetsuAndroidFlatOut "' + $Output + '"'
 if ($Development) { $extra += ' -zantetsuAndroidFlatDev' }
+if ($ShaderAudit) { $extra += ' -zantetsuAndroidFlatShaderAudit' }
 if ($SourceScene) { $extra += ' -zantetsuAndroidFlatSourceScene "' + $SourceScene + '"' }
 $log = Join-Path $logs 'build.log'
 $arguments = '-batchmode -quit -force-d3d11 -projectPath "' + $project + '" -buildTarget Android -executeMethod Zantetsu.EditorTools.AndroidFlat.AndroidFlatBuild.' + $method + ' -logFile "' + $log + '"' + $extra

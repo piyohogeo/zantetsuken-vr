@@ -52,6 +52,7 @@ Shader "Zantetsu/VP Stencil Volume"
             HLSLPROGRAM
             #pragma target 4.5
             #pragma multi_compile _ VP_DIAGNOSTIC_LEGACY32
+            #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
@@ -75,27 +76,7 @@ Shader "Zantetsu/VP Stencil Volume"
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
             uint _VpInstanceMultiplier;
 
-            // The same half-space evaluation the colour pass uses: an unused component is a positive constant, so it
-            // never clips, and there is no pixel-shader clip() path for a cut plane.
-            float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
-            {
-                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
-            }
-
-            void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
-            {
-                uint count = (uint)clipState.planeCount;
-                first = float4(
-                    VpHalfSpace(clipState.planes[0], positionWS, 0u, count),
-                    VpHalfSpace(clipState.planes[1], positionWS, 1u, count),
-                    VpHalfSpace(clipState.planes[2], positionWS, 2u, count),
-                    VpHalfSpace(clipState.planes[3], positionWS, 3u, count));
-                second = float4(
-                    VpHalfSpace(clipState.planes[4], positionWS, 4u, count),
-                    VpHalfSpace(clipState.planes[5], positionWS, 5u, count),
-                    VpHalfSpace(clipState.planes[6], positionWS, 6u, count),
-                    VpHalfSpace(clipState.planes[7], positionWS, 7u, count));
-            }
+            #include "VpClipDistances.hlsl"
 
             struct Attributes
             {
@@ -110,8 +91,14 @@ Shader "Zantetsu/VP Stencil Volume"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+            #if defined(VP_PIXEL_CLIP)
+                // Full-precision, perspective-correct distances; every plane remains independent until the fragment.
+                float4 clipDistance0 : TEXCOORD0;
+                float4 clipDistance1 : TEXCOORD1;
+            #else
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -162,6 +149,10 @@ Shader "Zantetsu/VP Stencil Volume"
 
             half4 Fragment(Varyings input) : SV_Target
             {
+            #if defined(VP_PIXEL_CLIP)
+                // A discarded fragment must not contribute to either face's stencil winding count.
+                VpDiscardOutsideClip(input.clipDistance0, input.clipDistance1);
+            #endif
                 return 0;
             }
             ENDHLSL

@@ -33,6 +33,9 @@ ZvnCounters counters{ZVN_CONTRACT_VERSION};
 std::atomic<uint64_t> currentFrame{0}, safeFrame{0};
 uint32_t regionCount = 8, regionBytes = 262144, regionDescriptors = 4096;
 bool available = false, featuresObserved = false, enabledMulti = false, enabledFirst = false, hold = false;
+// This optional observation also serves Unity's draw route when native multi-draw is unavailable.
+constexpr uint32_t ClipObserved = 1, ClipSupported = 2, ClipEnabled = 4;
+std::atomic<uint32_t> clipDistanceInfo{0};
 PFN_vkGetInstanceProcAddr originalGipa = nullptr;
 PFN_vkCreateDevice originalCreateDevice = nullptr;
 int DrawEvent = 1, SentinelEvent = 2, PrepareEvent = 3, PreparedDrawEvent = 4, GroupPrepareEvent = 5, GroupPreparedEvent = 6, WarmPipelineEvent = 7, ZeroEvent = 8, BarrierEvent = 9;
@@ -86,6 +89,7 @@ int Text(const std::string& value, char* out, int count) {
 // of pEnabledFeatures; an unfamiliar preceding chain is left intact and can only be accepted if already enabled.
 VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* input,
     const VkAllocationCallbacks* allocator, VkDevice* device) {
+    clipDistanceInfo.store(0);
     VkPhysicalDeviceFeatures supported{}; vkGetPhysicalDeviceFeatures(physical, &supported);
     VkDeviceCreateInfo info = *input;
     VkPhysicalDeviceFeatures core{};
@@ -147,14 +151,18 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkD
     }
     if (result == VK_SUCCESS) {
         featuresObserved = true; enabledMulti = core.multiDrawIndirect; enabledFirst = core.drawIndirectFirstInstance;
+        // Observe Unity's choice without enabling shaderClipDistance on its behalf.
+        clipDistanceInfo.store(ClipObserved | (supported.shaderClipDistance ? ClipSupported : 0)
+            | (core.shaderClipDistance ? ClipEnabled : 0));
         indirectCountEnabled = indirectCountAllowed && (indirectCountEnabledByUnity || vulkan12DrawIndirectCount || indirectCountAddedHere);
         VkPhysicalDeviceProperties physicalProperties{}; vkGetPhysicalDeviceProperties(physical,&physicalProperties);
         char text[512];
         std::snprintf(text,sizeof text,"indirectCount: supported=%d enabledByUnity(ext)=%d vk12chain=%d vk12.drawIndirectCount=%d addedHere=%d enabled=%d; "
-            "shaderDrawParameters(chain)=%d vk11chain=%d; device extensions asked=%u, chain sTypes=[%s], physical apiVersion=%u.%u.%u",
+            "shaderDrawParameters(chain)=%d vk11chain=%d; device extensions asked=%u, chain sTypes=[%s], physical apiVersion=%u.%u.%u; shaderClipDistance(supported=%d enabled=%d)",
             indirectCountSupported,indirectCountEnabledByUnity,vulkan12InChain,vulkan12DrawIndirectCount,indirectCountAddedHere,indirectCountEnabled,
             shaderDrawParameters,vulkan11InChain,input->enabledExtensionCount,chainTypes.c_str(),
-            VK_API_VERSION_MAJOR(physicalProperties.apiVersion),VK_API_VERSION_MINOR(physicalProperties.apiVersion),VK_API_VERSION_PATCH(physicalProperties.apiVersion));
+            VK_API_VERSION_MAJOR(physicalProperties.apiVersion),VK_API_VERSION_MINOR(physicalProperties.apiVersion),VK_API_VERSION_PATCH(physicalProperties.apiVersion),
+            supported.shaderClipDistance,core.shaderClipDistance);
         deviceNote=text;
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","device multiDrawIndirect=%d firstInstance=%d",enabledMulti,enabledFirst);
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","%s",text);
@@ -928,7 +936,7 @@ void UNITY_INTERFACE_API Device(UnityGfxDeviceEventType event) {
         unity->ConfigureEvent(SentinelEvent,&config);
         __android_log_print(ANDROID_LOG_INFO,"ZantetsuVpVulkan","ready=%d maxDrawIndirectCount=%u",available,properties.limits.maxDrawIndirectCount);
     }else if(event==kUnityGfxDeviceEventShutdown) {
-        available=false;preparedDraws.clear();preparedGroups.clear();
+        available=false;clipDistanceInfo.store(0);preparedDraws.clear();preparedGroups.clear();
         // Device shutdown follows Unity's rendering drain. No waits or queue submissions on the draw path.
         for(auto& p:pipelines)p.second->Destroy();pipelines.clear();for(auto& r:regions)r->Destroy();regions.clear();
         for(auto* d:held)__atomic_store_n(&d->consumed,1,__ATOMIC_RELEASE);held.clear();instance={};
@@ -952,6 +960,13 @@ void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload() {
 }
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnContractVersion(){return ZVN_CONTRACT_VERSION;}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnIsAvailable(){std::lock_guard<std::mutex> lock(gate);return available;}
+// Optional contract-1 query: independent of whether the native draw route can run on this device.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnReadClipDistanceInfo(uint32_t* supported,uint32_t* enabled) {
+    const uint32_t info=clipDistanceInfo.load();
+    if(supported)*supported=(info&ClipSupported)?1:0;
+    if(enabled)*enabled=(info&ClipEnabled)?1:0;
+    return (info&ClipObserved)?1:0;
+}
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ZvnDescribeState(char* out,int bytes) {
     std::lock_guard<std::mutex> lock(gate);
     return Text(std::string("Vulkan indexed multi-draw; available=")+(available?"true":"false")+"; maxDrawIndirectCount="+std::to_string(properties.limits.maxDrawIndirectCount)

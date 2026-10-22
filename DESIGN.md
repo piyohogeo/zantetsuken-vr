@@ -189,7 +189,9 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ### 3.6 非VR Android 検証版
 
-初期対象はGalaxy S25 Ultra向けの検証APKとする。描画品質・描画経路はQuest版を基本とし、SPIとAppSWを使用しない。縦画面と左右の横画面に対応し、操作UIはSafe Area内に置く。上下方向のカメラ角は固定する。FOVは画面長辺90°を基準とする。
+対象はGalaxy S25 UltraとPixel 6系（6／6 Pro／6a）とし、共通の非VR Android検証APKを使う。実機検証済みはGalaxy S25 UltraとPixel 6 Pro。Pixel 6系はUnityの既定Vulkan除外対象なので、検証APKのビルド中だけGoogleの`oriole`（Pixel 6）／`raven`（Pixel 6 Pro）／`bluejay`（Pixel 6a）に完全一致する許可設定を追加する。他端末の除外と既存設定を保持し、ビルド後に元の設定へ戻す。描画品質・描画経路はQuest版を基本とし、SPIとAppSWを使用しない。縦画面と左右の横画面に対応し、操作UIはSafe Area内に置く。上下方向のカメラ角は固定する。FOVは画面長辺90°を基準とする。
+
+Pixel 6 Pro（Mali-G78）では従来のFXC/HLSLccから生成したVPシェーダーが実行時に利用できなかったため、本体・影・Stencil Volume・MotionのUnity向けVulkanパスは非VR Android APKのビルド中だけ `#pragma use_dxc vulkan` を追加し、DXCを使う。成功・失敗の両方で元のソースをバイト単位で戻し、再インポートする。通常描画の `VP_NO_CLIP` はClip計算・discardを持たないままとする。既存のnative SPIR-V資産は変更しない。
 
 - 通常起動は `VP3C-NATIVE` を優先し、`multiDrawIndirect` 等の必須機能やプラグインを利用できない場合は、World／Displayの構築前にUnity用の20 byte引数で `VP3C` へ切り替える。GPUカリングとCPU側のCommand Compactionは維持し、切替理由を警告ログに記録する。構築後の動的切替は行わない。明示的なnative強制指定とUnity API指定は優先する。
 - 左下の固定中心の半透明円形ジョイスティックで前後移動と連続旋回を行う。円の中心の初期値はSafe Area内で左から15%、下から30%とする。設定画面で配置を1%ずつ調整でき、縦画面・横画面の値を別々に保存する。既存の移動・占有判定を使う。指は接触開始時のジョイスティック・UI・切断領域の担当を接触終了まで保持し、移動と切断を同時に受け付ける。
@@ -511,6 +513,8 @@ GPU選別が生成する引数は、Command番号と5個のIndexed Draw引数を
 
 GPU選別を行う表示（Stage 3C。Unity描画、Direct3D 12ネイティブ、Vulkanネイティブのいずれも）は、通常の描画コマンドと、Clip平面を持つインスタンス（即切断の表示中）を含む描画コマンドを別々の経路で描く。通常の経路の頂点シェーダーは、ClipのBufferを読まず、Clipの計算をせず、`SV_ClipDistance` を出力しない。平面数0として実行するのではなく、コンパイル時にその処理が無い変種（`VP_NO_CLIP`）を使う。選別（Compute）もClipのBufferを読まず、束縛もしない。
 
+Vulkanで`shaderClipDistance`が実際のDeviceで有効でない場合（有効化情報を取得できない場合を含む）は、Clipを持つ描画だけを`VP_PIXEL_CLIP`へ切り替える。物理Deviceの対応可否だけでは判定せず、UnityのDevice作成時の有効化値を使う。最大8面の符号付き距離をVSから通常の透視補間でPSへ渡し、PSの`clip()`で負の距離を持つfragmentを破棄する。Forward、Motion、ShadowCaster、StencilVolumeで同じ方式を使い、Unityのvp3c描画とVulkanネイティブ描画も一致させる。`VP_NO_CLIP`の通常描画には距離計算・Clip Buffer・discardを含めない。MSAAの境界coverageはRasterizerのClipDistanceと一致を求めない。CommandのCPU Compaction、GPU選別、IndirectCountの可否とは独立する。検証時は`-zantetsuVpPixelClip`でこの経路を強制できる。
+
 **分類（コマンド単位。2026-10-11）。** 経路は描画コマンドごとに決める。
 
 - 全インスタンスが平面を持たないコマンドは、通常の経路（選別の描画、Clipなしの変種）で描く。
@@ -740,7 +744,7 @@ Stencilは仮断面キャップのマスク生成に使い、表示と同じ6章
 
 候補は既存のPending Cut列とLogicalCutOperation公開列を受付の古い順に走査し、未Commit祖先制約を子孫制約より必ず先に置くstable順で選ぶ。Pending CutからOperation由来Recordへ移る際も同じ受付位置を保ち、同じ切断面を重複登録しない。選択結果は候補列の先頭から最大8面のdependency-closed prefixとし、ある子孫境界を選ぶために必要な未Commit祖先境界が選択外なら、その子孫も選ばない。通常の公開処理は祖先を子孫より先に列へ追加する不変条件を持ち、復元データがこの順序を満たさない場合は新しい順へ並べ替えず、違反境界以降をIgnoredとして背景Geometry完成へ委ねる。ID値によるsortや別の優先度Metadataを追加せず、左右眼、Color、Depth、ShadowCaster、Stencil Volumeの全Passで同じ選択結果を共有する。共有するのは選択結果であり、実際に適用するclip面は、Color・Depth・ShadowCasterが全Selected面、Stencil Volumeが通常Colorでは自身のCap面だけ、最後のColorではRenderFragmentの全Selected面とする（5.6、D-183、D-186）。カメラ距離、眼、Pass、毎フレームの可視性で順序を変えない。候補追加、LogicalCutOperation公開、Geometry Commit、RenderFragmentとCutBoundaryの対応関係変更のいずれかが候補資格または依存関係を変えた場合、状態変更を公開する同じ描画更新境界で再構築する。
 
-D3D11／Shader Model 5の即時切断は、RenderFragmentごとの`SelectedTemporaryClipPlaneSet`の上限を`TemporaryClipPlaneCapacity = 8`とし、選択した最大8面を`SV_ClipDistance`だけで評価する。Vertex Shaderから`SV_ClipDistance0/1`の合計8 componentへ出力し、未使用componentは全頂点で正の有限値とする。このShader Variantでは`SV_CullDistance`を使用しない。切断面評価用のPixel Shader `clip()`経路は設けない。面数や平面値によるMaterial、Keyword、Pass、Draw分割、可変長Buffer、動的Loop上限の増加は行わない。
+D3D11／Shader Model 5の即時切断は、RenderFragmentごとの`SelectedTemporaryClipPlaneSet`の上限を`TemporaryClipPlaneCapacity = 8`とし、選択した最大8面を`SV_ClipDistance`で評価する。Vertex Shaderから`SV_ClipDistance0/1`の合計8 componentへ出力し、未使用componentは全頂点で正の有限値とする。このShader Variantでは`SV_CullDistance`を使用しない。Vulkanの`shaderClipDistance`無効環境では4.5.9のPixel Shader `clip()`フォールバックを使う。面数や平面値によるMaterial、Keyword、Pass、Draw分割、可変長Buffer、動的Loop上限の増加は行わない。
 
 dependency-closed prefixへ入らない後発Pending Cut／境界は`IgnoredTemporaryClipBoundarySet`とし、`SelectedTemporaryClipPlaneSet`へ含めず、Color／Depth／Shadowのclip制約として使わず、対応Stencil Volumeをsubmitしない。Ignored境界からは、clip制約、対応Stencil Volume、描画用Cap板のいずれも生成しない（表示専用Offsetは5.1により存在しない）。Pending Cutまたは公開済みLogicalCutOperation、Geometry状態、Logical Fragment、切断履歴、世代、点Anchor配分と所有者単位の固定／動的、共用Geometry／Convex Work、物理Commit、優先度付けは変更・破棄せず、背景Geometry Commitで正しい形状へ収束させる。無視された新しい面は一時的に即時表示されず、影もその面より前の形状となり得るが、選択済み祖先の外側にGeometryを復活させずSiblingを重ねないbounded degradationとする。このためIgnored境界では表示を分岐させず、Ignored境界で分かれる論理枝は、同じ表示元Geometry・配置・反映済み境界・frame写像を引き継ぐ同じ表示登録の中でだけ、最初のIgnored境界より手前の形状を一つのRenderFragmentとして一度だけ描く。異なるGeometry、配置、反映済み境界、frame写像を持つ対象は、選択済みprefixが同じでもまとめない。ここで比べる「配置」は**表示登録が保持する配置**であり、別々の登録を新たにまとめることはしない。同じ登録の中の枝が現在それぞれ別のOwner配置にあることは、この条件が禁じるものではなく、D-187で許容する。この一つのRenderFragmentの**基準配置は、集約の根ではなく、そのグループの走査順で先頭の生存枝について既存の配置照会が返す基準配置**を使う（D-187）。すなわちその枝のOwnerのworld変換と、Geometry local→Owner localの対応（5.6）から作った値であり、**Owner配置をそのまま描画行列にはしない**。Geometryの原点とOwnerの原点が異なる場合もこの対応で保つ。取るのは基準配置だけであり、Ignored面をclip制約・描画用Capへ加えることは引き続きしない（表示専用Offsetは5.1により存在しない）。一つの形状を一つの配置で描く以上、この表示は近似である。**次を許容する**：Ignored面が残る間、先頭枝以外の物理部分と表示の位置・向き・形状が離れること（先頭枝についても、描くのはIgnored面で切る前の形状なので、その剛体が持たない体積を伴う）。その乖離による他物体への表示上のめり込み。Geometry CommitでSelectedの範囲が進む、集約の根やグループ構成や先頭枝が変わる、あるいは集約が解けるときの瞬間的な跳びと形状変化（**集約が完全に解ける前の変化を含む**）。これらに数値上限、品質Gate、人間確認は求めない。この許容はIgnored集約の基準配置に限る。通常のSelected表示の規則と、`MaxStencilColors`の最後のColorの取扱い（品質例外8、D-185・D-186）は、これで緩めない。Ignored面による新しい開口は作らず、Selectedの祖先境界の開口は従来どおりCapで描く。祖先境界のGeometryへの反映等により、未反映のIgnored境界が選択対象へ入った場合は、同じ描画更新境界で表示の分岐を反映する。当該境界自身がGeometryへ反映された場合は、そのGeometryによる表示へ移行する。Plane overflowを理由に既存Workをcancel、再発行、同期完了してはならない。
 

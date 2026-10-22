@@ -22,11 +22,15 @@ struct DeviceCall {
     VkBool32 drawIndirectCount = VK_FALSE;
 };
 bool probeCountSupported = false, probeRejectCountExtension = false;
+bool probeMultiSupported = true, probeClipSupported = false;
+VkResult probeCreateResult = VK_SUCCESS;
 std::vector<DeviceCall> deviceCalls;
 }
 static VKAPI_ATTR void VKAPI_CALL ProbeGetFeatures(VkPhysicalDevice, VkPhysicalDeviceFeatures* result) {
     *result = {};
-    result->multiDrawIndirect = result->drawIndirectFirstInstance = result->samplerAnisotropy = VK_TRUE;
+    result->multiDrawIndirect = probeMultiSupported ? VK_TRUE : VK_FALSE;
+    result->drawIndirectFirstInstance = result->samplerAnisotropy = VK_TRUE;
+    result->shaderClipDistance = probeClipSupported ? VK_TRUE : VK_FALSE;
 }
 static VKAPI_ATTR void VKAPI_CALL ProbeGetProperties(VkPhysicalDevice, VkPhysicalDeviceProperties* result) {
     *result = {};
@@ -61,6 +65,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL ProbeCreateDevice(VkPhysicalDevice physica
     deviceCalls.push_back(call);
     if (probeRejectCountExtension && std::find(call.extensions.begin(), call.extensions.end(),
         VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME) != call.extensions.end()) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if (probeCreateResult != VK_SUCCESS) return probeCreateResult;
     *device = reinterpret_cast<VkDevice>(uintptr_t(2));
     return VK_SUCCESS;
 }
@@ -119,7 +124,61 @@ static void CheckDeviceNegotiation() {
     }
     originalCreateDevice = previousCreate;
 }
+static void CheckClipDistanceObservation() {
+    const auto previousCreate = originalCreateDevice;
+    originalCreateDevice = ProbeCreateDevice;
+    probeCountSupported = probeRejectCountExtension = false;
+    available = false;
+    clipDistanceInfo.store(0);
+    uint32_t supported = 7, enabled = 7;
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    struct Case { bool supported, enabled, multi; int layout; };
+    const Case cases[] = {
+        {false, false, true, 0}, // Legacy pEnabledFeatures.
+        {true, false, true, 1},  // Hardware support does not enable the feature on Unity's device.
+        {true, true, false, 1},  // Native multi-draw unavailable; the observation still serves VP3C.
+        {true, true, false, 2},  // Features2 behind another structure is observed without modifying it.
+        {true, false, false, 3}, // No enabled core features supplied.
+    };
+    for (const auto& test : cases) {
+        probeMultiSupported = test.multi;
+        probeClipSupported = test.supported;
+        deviceCalls.clear();
+        VkPhysicalDeviceFeatures2 core{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        core.features.shaderClipDistance = test.enabled ? VK_TRUE : VK_FALSE;
+        VkPhysicalDeviceVulkan12Features preceding{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        preceding.pNext = &core;
+        VkDeviceCreateInfo input{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        if (test.layout == 0) input.pEnabledFeatures = &core.features;
+        else if (test.layout == 1) input.pNext = &core;
+        else if (test.layout == 2) input.pNext = &preceding;
+        VkDevice device = VK_NULL_HANDLE;
+        assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == VK_SUCCESS);
+        assert(deviceCalls.size() == 1 && bool(deviceCalls[0].core.shaderClipDistance) == test.enabled);
+        assert(bool(core.features.shaderClipDistance) == test.enabled); // Never enable or mutate Unity's choice.
+        assert(ZvnReadClipDistanceInfo(&supported, &enabled) == 1);
+        assert(bool(supported) == test.supported && bool(enabled) == test.enabled);
+        assert(!ZvnIsAvailable()); // The query does not depend on native draw availability.
+        if (!test.multi) assert(!enabledMulti && !deviceCalls[0].core.multiDrawIndirect);
+    }
+    // A failed creation must not report an earlier device's observation.
+    VkDeviceCreateInfo input{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    VkDevice device = VK_NULL_HANDLE;
+    probeCreateResult = VK_ERROR_INITIALIZATION_FAILED;
+    assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == probeCreateResult);
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    probeCreateResult = VK_SUCCESS;
+    assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == VK_SUCCESS);
+    assert(ZvnReadClipDistanceInfo(nullptr, nullptr) == 1);
+    Device(kUnityGfxDeviceEventShutdown);
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    probeMultiSupported = true;
+    probeClipSupported = false;
+    originalCreateDevice = previousCreate;
+    std::puts("ClipDistance observation: support, enablement, native unavailable, failure and shutdown passed");
+}
 int main(int argc, char** argv) {
+    CheckClipDistanceObservation();
     CheckDeviceNegotiation(); // With no arguments, the negotiation and ABI checks run; shader inputs are optional.
     for(int i=1;i<argc;i++) {
         std::ifstream stream(argv[i],std::ios::binary);

@@ -82,7 +82,7 @@ namespace Zantetsu.Rendering.Tests
             _objects.Clear();
         }
 
-        private T Track<T>(T tracked) where T : Object
+        protected T Track<T>(T tracked) where T : Object
         {
             _objects.Add(tracked);
             return tracked;
@@ -102,7 +102,7 @@ namespace Zantetsu.Rendering.Tests
             return texture;
         }
 
-        private Material ForwardMaterial(Color colour, Color textureColour)
+        protected Material ForwardMaterial(Color colour, Color textureColour)
         {
             Shader shader = Shader.Find(ShaderName);
             Assert.That(shader, Is.Not.Null, ShaderName);
@@ -119,7 +119,7 @@ namespace Zantetsu.Rendering.Tests
             return Track(new Material(shader));
         }
 
-        private Mesh QuadMesh(Vector3[] positions)
+        protected Mesh QuadMesh(Vector3[] positions)
         {
             Mesh mesh = Track(new Mesh());
             mesh.SetVertices(positions);
@@ -129,7 +129,7 @@ namespace Zantetsu.Rendering.Tests
             return mesh;
         }
 
-        private Camera TestCamera(string name, RenderTexture target)
+        protected Camera TestCamera(string name, RenderTexture target)
         {
             Camera camera = Track(new GameObject(name)).AddComponent<Camera>();
             camera.enabled = false;
@@ -861,7 +861,7 @@ namespace Zantetsu.Rendering.Tests
 
         // ----- the other passes ----------------------------------------------------------------------------------
 
-        private void InEmptyScene(Action body)
+        protected void InEmptyScene(Action body)
         {
             SceneSetup[] previousSetup = EditorSceneManager.GetSceneManagerSetup();
             try

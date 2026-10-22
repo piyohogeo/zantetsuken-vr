@@ -276,6 +276,10 @@ namespace Zantetsu.Rendering
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnIsAvailable();
 
+        // Optional Vulkan capability observation; available even when native drawing is not.
+        [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZvnReadClipDistanceInfo(uint* supported, uint* enabled);
+
         [DllImport(Library, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZvnDescribeState(byte* output, int outputSize);
 
@@ -482,6 +486,29 @@ namespace Zantetsu.Rendering
 
             failure = s_failure;
             return s_loaded;
+        }
+
+        /// <summary>
+        /// Observes the Vulkan device's ClipDistance support and actual enablement, independently of native drawing.
+        /// False (both outputs false) when not Vulkan, device creation was not observed, or the optional export is absent.
+        /// Does not cache an early unknown result or call TryLoad: Unity's VP3C route needs the same observation.
+        /// </summary>
+        public static bool TryReadClipDistanceInfo(out bool supported, out bool enabled)
+        {
+            supported = enabled = false;
+            if (!Vulkan) return false;
+            try
+            {
+                uint deviceSupported = 0, deviceEnabled = 0;
+                if (ZvnReadClipDistanceInfo(&deviceSupported, &deviceEnabled) == 0) return false;
+                supported = deviceSupported != 0;
+                enabled = deviceEnabled != 0;
+                return true;
+            }
+            catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                return false;
+            }
         }
 
         /// <summary>The plugin's state in words; "(not loaded)" with the reason when it is not.</summary>

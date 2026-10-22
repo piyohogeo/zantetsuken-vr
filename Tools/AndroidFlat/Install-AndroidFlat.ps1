@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Installs and launches the validation APK on a connected Galaxy S25 Ultra only.
+Installs and launches the validation APK on a connected Galaxy S25 Ultra or Pixel 6 / 6 Pro / 6a.
 .EXAMPLE
 .\tools\AndroidFlat\Install-AndroidFlat.ps1
 .EXAMPLE
@@ -23,10 +23,11 @@ if (!(Test-Path -LiteralPath $Adb -PathType Leaf)) {
     $Adb = $command.Source
 }
 
-function Test-S25UltraModel([string]$Model) {
+function Test-AndroidValidationModel([string]$Model) {
     # adb devices -l replaces punctuation/spaces with underscores; getprop keeps the original model string.
     $compact = ($Model -replace '[\s_-]', '').ToUpperInvariant()
-    return $compact -match '^SMS938[A-Z0-9]*$|^(SAMSUNG)?GALAXYS25ULTRA$'
+    return $compact -match '^SMS938[A-Z0-9]*$|^(SAMSUNG)?GALAXYS25ULTRA$' `
+        -or $compact -match '^PIXEL6(PRO|A)?$'
 }
 
 $listing = @(& $Adb devices -l)
@@ -47,16 +48,16 @@ if ($Device) {
     if ($selected.Count -ne 1 -or $selected[0].State -ne 'device') {
         throw "Device '$Device' is not connected and authorized. Nothing was installed or launched."
     }
-    if (!(Test-S25UltraModel $selected[0].Model)) {
-        throw "Device '$Device' reports model '$($selected[0].Model)', not a Galaxy S25 Ultra. Nothing was installed or launched."
+    if (!(Test-AndroidValidationModel $selected[0].Model)) {
+        throw "Device '$Device' reports model '$($selected[0].Model)', not a Galaxy S25 Ultra or Pixel 6 / 6 Pro / 6a. Nothing was installed or launched."
     }
 } else {
-    $selected = @($connected | Where-Object { $_.State -eq 'device' -and (Test-S25UltraModel $_.Model) })
+    $selected = @($connected | Where-Object { $_.State -eq 'device' -and (Test-AndroidValidationModel $_.Model) })
     if ($selected.Count -eq 0) {
-        throw 'Galaxy S25 Ultra is not connected and authorized. Connect an SM-S938* phone with USB debugging enabled. Nothing was installed or launched on any connected device.'
+        throw 'No Galaxy S25 Ultra or Pixel 6 / 6 Pro / 6a is connected and authorized. Connect an SM-S938* or Pixel 6 / 6 Pro / 6a phone with Android debugging enabled. Nothing was installed or launched on any connected device.'
     }
     if ($selected.Count -gt 1) {
-        throw "Multiple Galaxy S25 Ultra devices are connected. Choose one with -Device SERIAL: $($selected.Serial -join ', '). Nothing was installed or launched."
+        throw "Multiple supported Android phones (Galaxy S25 Ultra or Pixel 6 / 6 Pro / 6a) are connected. Choose one with -Device SERIAL: $($selected.Serial -join ', '). Nothing was installed or launched."
     }
 }
 $serial = $selected[0].Serial
@@ -64,8 +65,8 @@ $serial = $selected[0].Serial
 $modelLines = @(& $Adb -s $serial shell getprop ro.product.model)
 if ($LASTEXITCODE -ne 0) { throw "Could not verify model of '$serial'. Nothing was installed or launched." }
 $model = ($modelLines -join '').Trim()
-if (!(Test-S25UltraModel $model)) {
-    throw "Device '$serial' reports model '$model', not a Galaxy S25 Ultra. Nothing was installed or launched."
+if (!(Test-AndroidValidationModel $model)) {
+    throw "Device '$serial' reports model '$model', not a Galaxy S25 Ultra or Pixel 6 / 6 Pro / 6a. Nothing was installed or launched."
 }
 if (!$Apk) { $Apk = Join-Path $project 'Build\android-flat.apk' }
 $Apk = [IO.Path]::GetFullPath($Apk)

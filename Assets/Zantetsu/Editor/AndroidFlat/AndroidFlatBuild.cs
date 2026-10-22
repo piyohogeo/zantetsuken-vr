@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
@@ -172,9 +174,14 @@ namespace Zantetsu.EditorTools.AndroidFlat
         {
             private readonly List<(Object asset, string json)> _saved = new List<(Object, string)>();
             private readonly Dictionary<string, byte[]> _files = new Dictionary<string, byte[]>();
+            private readonly List<string> _shaderSourceImports = new List<string>();
             private readonly bool _bundle = EditorUserBuildSettings.buildAppBundle;
             private readonly bool _manifestSuppressed = QuestDistributionManifest.NonXrBuildInProgress;
             private readonly int _quality = QualitySettings.GetQualityLevel();
+            private readonly bool _shaderAudit = AndroidFlatShaderVariantAudit.Enabled;
+            private readonly VulkanDeviceFilterLists _originalVulkanFilters = PlayerSettings.Android.androidVulkanDeviceFilterListAsset;
+            private VulkanDeviceFilterLists _vulkanFilters;
+            private string _vulkanFilterPath;
             private bool _disposed;
 
             public BuildSettingsScope()
@@ -183,6 +190,7 @@ namespace Zantetsu.EditorTools.AndroidFlat
                 Save(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset")[0], "ProjectSettings/GraphicsSettings.asset");
                 Save(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/QualitySettings.asset")[0], "ProjectSettings/QualitySettings.asset");
                 Save(AssetDatabase.LoadMainAssetAtPath("Assets/Settings/UniversalRenderPipelineGlobalSettings.asset"));
+                Save(_originalVulkanFilters);
                 try
                 {
                     DisableXr();
@@ -190,6 +198,13 @@ namespace Zantetsu.EditorTools.AndroidFlat
                     PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, ApplicationIdentifier);
                     PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
                     PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan });
+#pragma warning disable CS0618 // Preserve existing legacy filters when building the temporary current-API asset.
+                    _vulkanFilters = CreatePhoneVulkanFilters(_originalVulkanFilters,
+                        PlayerSettings.Android.androidVulkanAllowFilterList, PlayerSettings.Android.androidVulkanDenyFilterList);
+#pragma warning restore CS0618
+                    _vulkanFilterPath = AssetDatabase.GenerateUniqueAssetPath("Assets/AndroidFlatBuild.vulkandevicefilter");
+                    AssetDatabase.CreateAsset(_vulkanFilters, _vulkanFilterPath);
+                    PlayerSettings.Android.androidVulkanDeviceFilterListAsset = _vulkanFilters;
                     PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
                     PlayerSettings.SetIl2CppCompilerConfiguration(NamedBuildTarget.Android, Il2CppCompilerConfiguration.Release);
                     PlayerSettings.SetManagedStrippingLevel(NamedBuildTarget.Android, ManagedStrippingLevel.Low);
@@ -213,7 +228,10 @@ namespace Zantetsu.EditorTools.AndroidFlat
                     for (int i = 0; i < QualitySettings.names.Length; i++)
                     { QualitySettings.SetQualityLevel(i, false); QualitySettings.renderPipeline = pipeline; QualitySettings.antiAliasing = 4; }
                     QualitySettings.SetQualityLevel(_quality, false);
+                    ApplyPhoneShaderCompiler();
                     EnsureShaders();
+                    AndroidFlatShaderVariantAudit.Enabled = HasArgument("-zantetsuAndroidFlatShaderAudit");
+                    if (AndroidFlatShaderVariantAudit.Enabled) PlayerSettings.strictShaderVariantMatching = true;
                     EditorUserBuildSettings.buildAppBundle = false;
                     AssetDatabase.SaveAssets();
                     Debug.Log("ANDROID FLAT BUILD: ARM64 IL2CPP Release Vulkan; XR loaders/features off; optimized frame pacing on; portrait + both landscapes; Quest settings restored afterward");
@@ -228,6 +246,66 @@ namespace Zantetsu.EditorTools.AndroidFlat
                 if (!string.IsNullOrEmpty(path) && File.Exists(path) && !_files.ContainsKey(path))
                     _files.Add(path, File.ReadAllBytes(path));
                 _saved.Add((asset, EditorJsonUtility.ToJson(asset)));
+            }
+
+            private void ApplyPhoneShaderCompiler()
+            {
+                string[] paths = {
+                    "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectUnlit.shader",
+                    "Assets/Zantetsu/Runtime/Rendering/VpIndexedIndirectShadowCaster.shader",
+                    "Assets/Zantetsu/Runtime/Rendering/VpStencilVolume.shader"
+                };
+                // Preserve every source before changing any. A failed write/import takes the constructor's
+                // normal Dispose rollback, including a synchronous reimport of the restored source.
+                foreach (string path in paths)
+                {
+                    if (!_files.ContainsKey(path)) _files.Add(path, File.ReadAllBytes(path));
+                    _shaderSourceImports.Add(path);
+                }
+                var encoding = new UTF8Encoding(false, true);
+                var target = new Regex(@"^([ \t]*)#pragma[ \t]+target[ \t]+4\.5[ \t]*(\r?\n)", RegexOptions.Multiline);
+                int passes = 0;
+                foreach (string path in paths)
+                {
+                    string source = encoding.GetString(_files[path]);
+                    int matches = target.Matches(source).Count;
+                    if (matches == 0) throw new BuildFailedException("Phone DXC scope found no target 4.5 pass in " + path);
+                    // DXC fixes the non-VR Mali path. Keep Quest multiview and native shader bakes on their
+                    // existing compiler outside this build scope; their OVR_multiview conversion differs.
+                    string patched = target.Replace(source, "$0$1#pragma use_dxc vulkan$2");
+                    File.WriteAllBytes(path, encoding.GetBytes(patched));
+                    passes += matches;
+                }
+                ImportShaderSources(_shaderSourceImports);
+                Debug.Log("ANDROID FLAT SHADERS: temporary Vulkan DXC for " + paths.Length + " sources / " + passes + " passes; original bytes and imports restored after build");
+            }
+
+            private static void ImportShaderSources(IEnumerable<string> paths)
+            {
+                List<Exception> failures = null;
+                foreach (string path in paths)
+                {
+                    try { AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate); }
+                    catch (Exception error)
+                    {
+                        failures ??= new List<Exception>();
+                        failures.Add(new InvalidOperationException("Shader source import failed: " + path, error));
+                    }
+                }
+                if (failures != null) throw new AggregateException("Phone shader source imports failed", failures);
+            }
+
+            private void RestoreFilesAndShaderImports()
+            {
+                foreach (var file in _files) File.WriteAllBytes(file.Key, file.Value);
+                try { ImportShaderSources(_shaderSourceImports); }
+                finally
+                {
+                    // Reimport normally leaves settings alone. Retain the byte-exact settings guarantee even
+                    // if an importer causes Unity to serialize settings while restoring its shader cache.
+                    foreach (var file in _files)
+                        if (file.Key.StartsWith("ProjectSettings/", StringComparison.Ordinal)) File.WriteAllBytes(file.Key, file.Value);
+                }
             }
 
             private void DisableXr()
@@ -257,7 +335,7 @@ namespace Zantetsu.EditorTools.AndroidFlat
             {
                 var settings = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset")[0]);
                 var shaders = settings.FindProperty("m_AlwaysIncludedShaders");
-                foreach (string name in new[] { "Zantetsu/VP Indexed Indirect Unlit", "Zantetsu/VP Indexed Indirect Shadow Caster", "Zantetsu/VP Stencil Init", "Zantetsu/VP Stencil Volume", "Zantetsu/VP Stencil Cap" })
+                foreach (string name in new[] { "Zantetsu/VP Indexed Indirect Unlit", "Zantetsu/VP Indexed Indirect Shadow Caster", "Zantetsu/VP Stencil Init", "Zantetsu/VP Stencil Volume", "Zantetsu/VP Stencil Cap", "Hidden/Zantetsu/Android Draw Probe" })
                 {
                     var shader = Shader.Find(name);
                     if (shader == null) throw new BuildFailedException("Shader missing: " + name);
@@ -280,6 +358,8 @@ namespace Zantetsu.EditorTools.AndroidFlat
                 }
                 finally
                 {
+                    AndroidFlatShaderVariantAudit.Enabled = _shaderAudit;
+                    PlayerSettings.Android.androidVulkanDeviceFilterListAsset = _originalVulkanFilters;
                     EditorUserBuildSettings.buildAppBundle = _bundle;
                     QuestDistributionManifest.NonXrBuildInProgress = _manifestSuppressed;
                     try { AssetDatabase.SaveAssets(); }
@@ -287,11 +367,74 @@ namespace Zantetsu.EditorTools.AndroidFlat
                     {
                         // EditorJsonUtility can omit inactive-platform quality levels. Preserve the complete source
                         // settings byte-for-byte after the final native serialization, on success and on build failure.
-                        foreach (var file in _files) File.WriteAllBytes(file.Key, file.Value);
+                        try { RestoreFilesAndShaderImports(); }
+                        finally
+                        {
+                            if (!string.IsNullOrEmpty(_vulkanFilterPath)) AssetDatabase.DeleteAsset(_vulkanFilterPath);
+                            if (_vulkanFilters != null && !EditorUtility.IsPersistent(_vulkanFilters))
+                                Object.DestroyImmediate(_vulkanFilters);
+                        }
                     }
                 }
             }
         }
+
+#pragma warning disable CS0618 // Compatibility conversion preserves legacy user settings; new settings use VulkanDeviceFilterLists.
+        private static VulkanDeviceFilterLists CreatePhoneVulkanFilters(VulkanDeviceFilterLists source,
+            AndroidDeviceFilterData[] legacyAllow, AndroidDeviceFilterData[] legacyDeny)
+        {
+            // The constructor produces empty lists. Preserve the effective custom rules, or the pinned
+            // engine defaults below, before adding the Pixel 6 family exception.
+            legacyAllow ??= Array.Empty<AndroidDeviceFilterData>();
+            legacyDeny ??= Array.Empty<AndroidDeviceFilterData>();
+            var filters = new VulkanDeviceFilterLists("Android phone Vulkan filters");
+            try
+            {
+                bool useDefaults = true;
+                if (source != null)
+                {
+                    filters.vulkanGraphicsJobsDeviceFilters = source.vulkanGraphicsJobsDeviceFilters;
+                    if (source.vulkanDeviceAllowFilters.Length + source.vulkanDeviceDenyFilters.Length > 0)
+                    {
+                        filters.vulkanDeviceAllowFilters = source.vulkanDeviceAllowFilters;
+                        filters.vulkanDeviceDenyFilters = source.vulkanDeviceDenyFilters;
+                        useDefaults = false;
+                    }
+                }
+                // An empty asset falls through to the legacy pair, then to engine defaults at runtime.
+                if (useDefaults && legacyAllow.Length + legacyDeny.Length > 0)
+                {
+                    filters.vulkanDeviceAllowFilters = legacyAllow.Select(ConvertVulkanFilter).ToArray();
+                    filters.vulkanDeviceDenyFilters = legacyDeny.Select(ConvertVulkanFilter).ToArray();
+                    useDefaults = false;
+                }
+                if (useDefaults)
+                {
+                    // Exact GetDefaultDeviceDenyList rule in this project's Android libunity.so.
+                    // Unity exposes no public default-list getter. Recheck this snapshot on an engine upgrade
+                    // so adding the Pixel 6 family never silently removes another device's default Deny.
+                    if (Application.unityVersion != "6000.3.22f1")
+                        throw new BuildFailedException("Revalidate Android phone Vulkan default Deny filters for Unity " + Application.unityVersion);
+                    filters.vulkanDeviceDenyFilters = new[] {
+                        new VulkanDeviceFilterData { brandName = "((G|g)oogle)", productName = "(oriole|raven|bluejay)" }
+                    };
+                }
+                var allow = filters.vulkanDeviceAllowFilters.ToList();
+                // Allow is evaluated before Deny. Match only Google Pixel 6 / 6 Pro / 6a.
+                allow.Add(new VulkanDeviceFilterData { brandName = "^[Gg]oogle$", productName = "^(oriole|raven|bluejay)$" });
+                filters.vulkanDeviceAllowFilters = allow.ToArray();
+                filters.EnsureValidOrThrow();
+                return filters;
+            }
+            catch { Object.DestroyImmediate(filters); throw; }
+        }
+
+        private static VulkanDeviceFilterData ConvertVulkanFilter(AndroidDeviceFilterData filter) => new VulkanDeviceFilterData {
+            vendorName = filter.vendorName, deviceName = filter.deviceName, brandName = filter.brandName,
+            productName = filter.productName, androidOsVersionString = filter.androidOsVersionString,
+            vulkanApiVersionString = filter.vulkanApiVersionString, driverVersionString = filter.driverVersionString
+        };
+#pragma warning restore CS0618
 
         private static bool HasArgument(string key) => Array.IndexOf(Environment.GetCommandLineArgs(), key) >= 0;
         private static string Argument(string key)

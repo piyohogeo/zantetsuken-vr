@@ -157,6 +157,7 @@ namespace Zantetsu.Rendering
                 throw new ArgumentOutOfRangeException(nameof(instanceCapacity), instanceCapacity, "Must be positive.");
             }
 
+            VpClipShaderPolicy.EnsureConfigured();
             VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> forwardStaging = null;
             VpNumericRoom<GraphicsBuffer.IndirectDrawIndexedArgs> shadowStaging = null;
             VpNumericRoom<VpCullCommand> cullStaging = null;
