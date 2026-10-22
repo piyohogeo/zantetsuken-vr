@@ -42,6 +42,28 @@ namespace Zantetsu.Editor.Sandbox
         /// <summary>Tests only: a hold (busy wait) inside the conclusion, after its entry check of the deadline, so that the
         /// deadline passes while the conclusion is being computed. 0 in use.</summary>
         internal double testHoldSecondsInConclude;
+
+        /// <summary>Tests only (the native port): the allocation with this ordinal (1-based) fails. -1 in use.</summary>
+        internal int testFailNativeAllocation = -1;
+
+        /// <summary>Tests only (the native port): the failing allocation throws OutOfMemoryException instead of the allocator's refusal.</summary>
+        internal bool testFailWithOutOfMemory;
+
+        /// <summary>The native port's measurement: 0 none (no clock read in the jobs), 1 the search's section times, 2 the diagnostic counts (not a timing run).</summary>
+        internal int measure;
+
+        /// <summary>The native port: the three nearest triangle-only soft components of a convex-only one by a linear selection (true, the
+        /// change under comparison) or by the full insertion sort (false, the baseline). Same gaps, same tie rule, same order of the three.</summary>
+        internal bool nearestSelection = true;
+
+        /// <summary>The native port: the minimum cut's maximum flow by Dinic (true, the change under comparison) or Edmonds-Karp (false, the baseline and the default).</summary>
+        internal bool flowDinic;
+
+        /// <summary>The native port: the candidate enumeration of stage A by a sweep along x (true, the change under comparison) or every pair (false, the baseline and the default).</summary>
+        internal bool pairsSweep;
+
+        /// <summary>The native port: hash the preparation's candidate list and gaps after the prepare job (a verification run, never a timing run).</summary>
+        internal bool hashPrepare;
     }
 
     internal sealed class CandidateResult

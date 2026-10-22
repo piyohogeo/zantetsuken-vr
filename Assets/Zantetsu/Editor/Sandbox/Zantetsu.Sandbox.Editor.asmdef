@@ -8,6 +8,8 @@
         "Zantetsu.MeshCut",
         "Zantetsu.Rendering",
         "Unity.Mathematics",
+        "Unity.Burst",
+        "Unity.Collections",
         "Unity.XR.Management",
         "Unity.XR.Management.Editor"
     ],
