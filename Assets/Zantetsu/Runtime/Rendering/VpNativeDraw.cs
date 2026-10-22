@@ -59,6 +59,12 @@ namespace Zantetsu.Rendering
         /// <summary>The Player argument that asks for Unity's calls (the Unity-API VP3C), whatever the default is.</summary>
         public const string UnityApiArgument = "-zantetsuVp3cUnityApi";
 
+        /// <summary>
+        /// Unity-API VP3C groups commands in one indirect call when true; false issues one call per command.
+        /// A host sets this before constructing a world. Native plugin draws have their own capability policy.
+        /// </summary>
+        public static bool UnityMultiDrawIndirect { get; set; } = true;
+
         /// <summary>What <see cref="Select(VpBodyRouteRequest, GraphicsDeviceType, bool, RuntimePlatform)"/> settled, and in which words.</summary>
         public readonly struct Selection
         {

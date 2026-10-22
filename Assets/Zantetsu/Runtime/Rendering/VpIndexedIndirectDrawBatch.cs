@@ -12,8 +12,9 @@ namespace Zantetsu.Rendering
     /// VP Stage 3 draw issue: the Stage 2 batch layout (<see cref="VpIndirectDrawBatch"/>) drawn with indexed indirect
     /// calls. It draws next to Unity mesh renderers in the same camera: depth-tested against them, casting URP main light
     /// shadows onto them and receiving theirs.
-    /// Per frame it issues two Graphics.RenderPrimitivesIndexedIndirect calls over the same hardware index buffer, vertex
-    /// buffer and instance buffer: the forward call uses the forward material, receives shadows and casts none; the
+    /// Per frame it issues forward and shadow draws over the same hardware index buffer, vertex buffer and instance
+    /// buffer. Each groups its commands in one Unity call unless <see cref="VpNativeDrawSetup.UnityMultiDrawIndirect"/>
+    /// is false, when it issues one call per command. The forward call uses the forward material, receives shadows and casts none; the
     /// shadow call uses the shadow-caster-only material, casts shadows and draws no colour. Each command is one
     /// GraphicsBuffer.IndirectDrawIndexedArgs entry in each call's argument buffer: indexCountPerInstance and startIndex
     /// are its range's index count and start, baseVertexIndex is 0 because the indices already hold global vertex
@@ -1013,7 +1014,7 @@ namespace Zantetsu.Rendering
                 lightProbeUsage = LightProbeUsage.Off,
                 reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
-            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.forward, entryCount, firstEntry);
+            IssueUnityIndirect(renderParams, buffers.IndexBuffer, slot.forward, entryCount, firstEntry);
         }
 
         /// <summary>
@@ -1042,7 +1043,7 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, slot.shadow, entryCount, firstEntry);
+            IssueUnityIndirect(renderParams, buffers.IndexBuffer, slot.shadow, entryCount, firstEntry);
         }
 
         /// <summary>
@@ -2262,8 +2263,9 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// Queues the commands [startCommand, startCommand + commandCount) as two Graphics.RenderPrimitivesIndexedIndirect
-        /// calls, in order: the forward call, receiving but not casting shadows, then the shadow call, casting shadows.
+        /// Queues the commands [startCommand, startCommand + commandCount) in order: the forward draw, receiving but
+        /// not casting shadows, then the shadow draw, casting shadows. Each groups its commands in one Unity call
+        /// unless <see cref="VpNativeDrawSetup.UnityMultiDrawIndirect"/> is false, when each command has its own call.
         /// Issues nothing when <paramref name="commandCount"/> is 0. Throws when the commands are not within the uploaded
         /// ones. <paramref name="properties"/> is reused by the two calls in turn.
         /// </summary>
@@ -2350,7 +2352,7 @@ namespace Zantetsu.Rendering
                 lightProbeUsage = LightProbeUsage.Off,
                 reflectionProbeUsage = ReflectionProbeUsage.Off,
             };
-            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            IssueUnityIndirect(renderParams, buffers.IndexBuffer, arguments, commandCount, startCommand);
         }
 
         /// <summary>
@@ -2421,7 +2423,24 @@ namespace Zantetsu.Rendering
                 shadowCastingMode = ShadowCastingMode.On,
                 receiveShadows = false,
             };
-            if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, arguments, commandCount, startCommand);
+            IssueUnityIndirect(renderParams, buffers.IndexBuffer, arguments, commandCount, startCommand);
+        }
+
+        private static void IssueUnityIndirect(
+            RenderParams renderParams, GraphicsBuffer indices, GraphicsBuffer arguments, int commandCount, int startCommand)
+        {
+            if (VpNativeDrawSetup.UnityMultiDrawIndirect)
+            {
+                if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, indices, arguments, commandCount, startCommand);
+                return;
+            }
+
+            // Keep the original argument buffer and absolute command index: Unity sets GetCommandID(0) from
+            // startCommand, which also selects the caster bounds and the entry's own firstInstance in the shader.
+            for (int command = startCommand; command < startCommand + commandCount; command++)
+            {
+                if (VpGpuStop.Draw()) Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, indices, arguments, 1, command);
+            }
         }
 
         public void Dispose()

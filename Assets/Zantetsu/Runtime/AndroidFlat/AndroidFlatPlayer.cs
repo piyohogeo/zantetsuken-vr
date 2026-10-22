@@ -47,27 +47,60 @@ namespace Zantetsu.AndroidFlat
         private int rejected, accepted, fpsFrames;
         private double nextReport, reportStart;
         private string failure;
+        private AndroidFlatDrawCapabilities drawCapabilities;
+        private VpBodyRouteRequest launchBodyRoute;
+        private bool appliedMultiDrawIndirect, appliedDrawIndirectCount;
+        private bool RequestedMultiDrawIndirect => drawCapabilities.MultiDrawIndirect && settings.MultiDrawIndirect;
+        private bool RequestedDrawIndirectCount => RequestedMultiDrawIndirect && drawCapabilities.DrawIndirectCount && settings.DrawIndirectCount;
+        private bool RenderingChangesPending => RequestedMultiDrawIndirect != appliedMultiDrawIndirect
+            || RequestedDrawIndirectCount != appliedDrawIndirectCount;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Install()
         {
             if (!PlayerPlatform.IsAndroidFlat) return;
-            // The body route must be chosen before any scene's CutWorldRoot.Awake.
-            if (!Application.isEditor && VpNativeDrawSetup.Request == VpBodyRouteRequest.Default)
-                VpNativeDrawSetup.Request = VpBodyRouteRequest.NativePreferred;
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 60;
             Application.runInBackground = false;
             var host = new GameObject("Android phone player");
             DontDestroyOnLoad(host);
-            host.AddComponent<AndroidFlatPlayer>();
+            var player = host.AddComponent<AndroidFlatPlayer>();
+            // Both preferences and the route must be settled before any scene's CutWorldRoot.Awake.
+            player.InitializeRenderingSettings();
+        }
+
+        private void InitializeRenderingSettings()
+        {
+            settings.Load();
+            launchBodyRoute = VpNativeDrawSetup.Request;
+            if (!Application.isEditor && launchBodyRoute == VpBodyRouteRequest.Default)
+                launchBodyRoute = VpBodyRouteRequest.NativePreferred;
+            var deviceCapabilities = AndroidFlatDrawCapabilities.Read();
+            // Explicit diagnostic arguments retain their route. Preferences never label a forced-off route as active.
+            drawCapabilities = new AndroidFlatDrawCapabilities(
+                deviceCapabilities.MultiDrawIndirect && launchBodyRoute != VpBodyRouteRequest.UnityApi,
+                deviceCapabilities.DrawIndirectCount && VpNativeDrawPlugin.VulkanIndirectCount);
+            ApplyRenderingSettings();
+        }
+
+        private void ApplyRenderingSettings()
+        {
+            appliedMultiDrawIndirect = RequestedMultiDrawIndirect;
+            appliedDrawIndirectCount = RequestedDrawIndirectCount;
+            VpNativeDrawSetup.UnityMultiDrawIndirect = appliedMultiDrawIndirect;
+            // NativePreferred keeps compatibility fallback; an explicit Native retains its strict failure contract.
+            VpNativeDrawSetup.Request = settings.MultiDrawIndirect ? launchBodyRoute : VpBodyRouteRequest.UnityApi;
+            VpNativeDrawPlugin.VulkanIndirectCount = appliedDrawIndirectCount;
+            layoutDirty = true;
+            Debug.Log(Prefix + "rendering applied: MultiDrawIndirect=" + appliedMultiDrawIndirect
+                + "; DrawIndirectCount=" + appliedDrawIndirectCount + "; routeRequest=" + VpNativeDrawSetup.Request
+                + "; availableMulti=" + drawCapabilities.MultiDrawIndirect + "; availableCount=" + drawCapabilities.DrawIndirectCount);
         }
 
         private void Start()
         {
             if (!EnhancedTouchSupport.enabled) { EnhancedTouchSupport.Enable(); enabledEnhancedTouch = true; }
             visualProperties = new MaterialPropertyBlock();
-            settings.Load();
             view.Build(transform);
             input.Cancel();
             GamePause.PausedChanged += OnPaused;
@@ -237,7 +270,7 @@ namespace Zantetsu.AndroidFlat
             input.StickCentre = new Vector2(safe.x + safe.width * position.x, safe.y + safe.height * position.y);
             input.MinimumFlickPixels = shortSide * .018f;
             input.MinimumFlickPixelsPerSecond = shortSide * .85f;
-            view.Layout(safe, input.StickCentre, input.StickRadius, menu, settings, portrait);
+            view.Layout(safe, input.StickCentre, input.StickRadius, menu, settings, portrait, drawCapabilities, RenderingChangesPending);
             layoutDirty = false;
         }
 
@@ -272,12 +305,25 @@ namespace Zantetsu.AndroidFlat
                 case FlatCommand.Fsr: settings.Fsr = !settings.Fsr; break;
                 case FlatCommand.Scale: settings.NextScale(); break;
                 case FlatCommand.Sharpness: settings.Sharpness = settings.Sharpness >= .99f ? 0f : settings.Sharpness + .25f; break;
+                case FlatCommand.MultiDrawIndirect:
+                    if (drawCapabilities.MultiDrawIndirect) { settings.MultiDrawIndirect = !settings.MultiDrawIndirect; SaveRenderingPreference(); }
+                    return;
+                case FlatCommand.DrawIndirectCount:
+                    if (drawCapabilities.DrawIndirectCount && settings.MultiDrawIndirect) { settings.DrawIndirectCount = !settings.DrawIndirectCount; SaveRenderingPreference(); }
+                    return;
+                case FlatCommand.ApplyRendering: if (RenderingChangesPending) ResetScene(); return;
                 case FlatCommand.Reset: ResetScene(); return;
                 default: return;
             }
             settings.Apply(pipeline); settings.Save(); input.Cancel(); layoutDirty = true;
             Debug.Log(Prefix + "quality: FSR1=" + settings.Fsr + "; scale=" + (settings.Fsr ? settings.RenderScale : 1f)
                 + "; sharpness=" + settings.Sharpness + "; screen=" + size.x + "x" + size.y);
+        }
+
+        private void SaveRenderingPreference()
+        {
+            // Buffer layouts and the native route belong to the current world until it has drained.
+            settings.Save(); input.Cancel(); layoutDirty = true;
         }
 
         private void ShiftStick(Vector2 delta)
@@ -353,6 +399,7 @@ namespace Zantetsu.AndroidFlat
                 yield return null;
             }
             ReleaseScene();
+            ApplyRenderingSettings();
             GamePause.SetManual(false);
             SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
         }

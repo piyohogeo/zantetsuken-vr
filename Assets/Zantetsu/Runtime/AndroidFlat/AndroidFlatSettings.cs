@@ -9,6 +9,8 @@ namespace Zantetsu.AndroidFlat
         public float MoveSpeed = 1.49f;
         public float TurnSpeed = 120f;
         public bool Fsr = true;
+        public bool MultiDrawIndirect = true;
+        public bool DrawIndirectCount = true;
         public float RenderScale = .75f;
         public float Sharpness = .5f;
         private static readonly Vector2 DefaultStickPosition = new Vector2(.15f, .30f);
@@ -20,6 +22,8 @@ namespace Zantetsu.AndroidFlat
             MoveSpeed = Mathf.Clamp(PlayerPrefs.GetFloat(Prefix + "move", MoveSpeed), .5f, 5f);
             TurnSpeed = Mathf.Clamp(PlayerPrefs.GetFloat(Prefix + "turn", TurnSpeed), 30f, 240f);
             Fsr = PlayerPrefs.GetInt(Prefix + "fsr", 1) != 0;
+            MultiDrawIndirect = PlayerPrefs.GetInt(Prefix + "multiDrawIndirect", 1) != 0;
+            DrawIndirectCount = PlayerPrefs.GetInt(Prefix + "drawIndirectCount", 1) != 0;
             RenderScale = Mathf.Clamp(PlayerPrefs.GetFloat(Prefix + "scale", RenderScale), .5f, 1f);
             Sharpness = Mathf.Clamp01(PlayerPrefs.GetFloat(Prefix + "sharpness", Sharpness));
             SetStickPosition(true, new Vector2(PlayerPrefs.GetFloat(Prefix + "stick.portrait.x", .15f),
@@ -32,6 +36,8 @@ namespace Zantetsu.AndroidFlat
             PlayerPrefs.SetFloat(Prefix + "move", MoveSpeed);
             PlayerPrefs.SetFloat(Prefix + "turn", TurnSpeed);
             PlayerPrefs.SetInt(Prefix + "fsr", Fsr ? 1 : 0);
+            PlayerPrefs.SetInt(Prefix + "multiDrawIndirect", MultiDrawIndirect ? 1 : 0);
+            PlayerPrefs.SetInt(Prefix + "drawIndirectCount", DrawIndirectCount ? 1 : 0);
             PlayerPrefs.SetFloat(Prefix + "scale", RenderScale);
             PlayerPrefs.SetFloat(Prefix + "sharpness", Sharpness);
             PlayerPrefs.SetFloat(Prefix + "stick.portrait.x", PortraitStickPosition.x);

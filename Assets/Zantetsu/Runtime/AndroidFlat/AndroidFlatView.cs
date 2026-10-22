@@ -6,7 +6,8 @@ namespace Zantetsu.AndroidFlat
     internal enum FlatCommand
     {
         None, Menu, Resume, MoveDown, MoveUp, TurnDown, TurnUp, Fsr, Scale, Sharpness, Reset,
-        StickPosition, Back, StickLeft, StickRight, StickDown, StickUp, StickReset
+        StickPosition, Back, StickLeft, StickRight, StickDown, StickUp, StickReset,
+        MultiDrawIndirect, DrawIndirectCount, ApplyRendering
     }
     internal sealed class AndroidFlatView
     {
@@ -16,8 +17,12 @@ namespace Zantetsu.AndroidFlat
             public Image image;
             public Text label;
             public Rect rect;
+            public bool interactable = true;
+            public Image checkbox;
+            public GameObject checkmark;
+            public Image checkShort, checkLong;
         }
-        private readonly Control[] controls = new Control[17];
+        private readonly Control[] controls = new Control[20];
         private GameObject root, panel;
         private Image stick, thumb;
         private Text status, title, stickOrientation, stickHorizontal, stickVertical;
@@ -55,8 +60,11 @@ namespace Zantetsu.AndroidFlat
             var commands = new[] { FlatCommand.Resume, FlatCommand.MoveDown, FlatCommand.MoveUp, FlatCommand.TurnDown, FlatCommand.TurnUp,
                 FlatCommand.Fsr, FlatCommand.Scale, FlatCommand.Sharpness, FlatCommand.Reset,
                 FlatCommand.StickPosition, FlatCommand.Back, FlatCommand.StickLeft, FlatCommand.StickRight,
-                FlatCommand.StickDown, FlatCommand.StickUp, FlatCommand.StickReset };
-            for (int i = 0; i < commands.Length; i++) controls[i + 1] = NewControl(commands[i], panel.transform, "");
+                FlatCommand.StickDown, FlatCommand.StickUp, FlatCommand.StickReset,
+                FlatCommand.MultiDrawIndirect, FlatCommand.DrawIndirectCount, FlatCommand.ApplyRendering };
+            for (int i = 0; i < commands.Length; i++)
+                controls[i + 1] = commands[i] == FlatCommand.MultiDrawIndirect || commands[i] == FlatCommand.DrawIndirectCount
+                    ? NewCheckbox(commands[i], panel.transform) : NewControl(commands[i], panel.transform, "");
             stickOrientation = NewText("Joystick orientation", panel.transform, 24, TextAnchor.MiddleCenter);
             stickHorizontal = NewText("Joystick horizontal position", panel.transform, 24, TextAnchor.MiddleCenter);
             stickVertical = NewText("Joystick vertical position", panel.transform, 24, TextAnchor.MiddleCenter);
@@ -72,6 +80,41 @@ namespace Zantetsu.AndroidFlat
             text.rectTransform.offsetMin = Vector2.zero; text.rectTransform.offsetMax = Vector2.zero;
             return new Control { command = command, image = image, label = text };
         }
+        private Control NewCheckbox(FlatCommand command, Transform parent)
+        {
+            Control control = NewControl(command, parent, "");
+            control.label.alignment = TextAnchor.MiddleLeft;
+            control.checkbox = NewImage("Checkbox", control.image.transform, new Color(.4f, .5f, .6f));
+            Image inset = NewImage("Inset", control.checkbox.transform, new Color(.06f, .09f, .12f));
+            inset.rectTransform.anchorMin = Vector2.one * .1f;
+            inset.rectTransform.anchorMax = Vector2.one * .9f;
+            inset.rectTransform.offsetMin = inset.rectTransform.offsetMax = Vector2.zero;
+            control.checkmark = new GameObject("Checkmark", typeof(RectTransform));
+            var mark = (RectTransform)control.checkmark.transform;
+            mark.SetParent(control.checkbox.transform, false);
+            mark.anchorMin = Vector2.zero; mark.anchorMax = Vector2.one;
+            mark.offsetMin = mark.offsetMax = Vector2.zero;
+            control.checkShort = NewImage("Short stroke", mark, Color.white);
+            control.checkLong = NewImage("Long stroke", mark, Color.white);
+            return control;
+        }
+
+        private static void SetEnabled(Control control, bool enabled)
+        {
+            control.interactable = enabled;
+            control.image.color = enabled ? new Color(.13f, .19f, .25f, .96f) : new Color(.075f, .09f, .105f, .96f);
+            control.label.color = enabled ? new Color(.93f, .97f, 1f) : new Color(.43f, .46f, .49f);
+            if (control.checkbox != null)
+                control.checkbox.color = enabled ? new Color(.4f, .5f, .6f) : new Color(.23f, .26f, .29f);
+        }
+
+        private static void SetCheckbox(Control control, bool enabled, bool selected, string label)
+        {
+            SetEnabled(control, enabled);
+            control.checkmark.SetActive(selected);
+            control.label.text = label;
+        }
+
         private static Image NewImage(string name, Transform parent, Color colour)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -99,11 +142,23 @@ namespace Zantetsu.AndroidFlat
             Rect rect = screenRect;
             if (control.image.transform.parent == panel.transform) rect.position -= panelRect.position;
             Place(control.image.rectTransform, rect);
+            if (control.checkbox != null)
+            {
+                float side = screenRect.height * .54f;
+                Place(control.checkbox.rectTransform, new Rect(screenRect.height * .25f,
+                    (screenRect.height - side) * .5f, side, side));
+                control.label.rectTransform.offsetMin = new Vector2(screenRect.height * 1.08f, 0);
+                Place(control.checkShort.rectTransform, new Rect(side * .125f, side * .37f, side * .35f, side * .12f));
+                control.checkShort.rectTransform.localRotation = Quaternion.Euler(0, 0, -45);
+                Place(control.checkLong.rectTransform, new Rect(side * .255f, side * .46f, side * .65f, side * .12f));
+                control.checkLong.rectTransform.localRotation = Quaternion.Euler(0, 0, 45);
+            }
         }
 
         public void ShowStickPosition(bool open) { layoutPage = open; }
 
-        public void Layout(Rect safe, Vector2 centre, float radius, bool open, AndroidFlatSettings settings, bool portrait)
+        public void Layout(Rect safe, Vector2 centre, float radius, bool open, AndroidFlatSettings settings, bool portrait,
+            AndroidFlatDrawCapabilities capabilities, bool renderingChangesPending)
         {
             menu = open;
             if (!open) layoutPage = false;
@@ -121,7 +176,7 @@ namespace Zantetsu.AndroidFlat
             Place(stick.rectTransform, new Rect(centre - Vector2.one * radius, Vector2.one * radius * 2));
             Put(controls[0], new Rect(safe.xMax - pad - 150 * unit, safe.yMax - pad - row, 150 * unit, row));
             Place(status.rectTransform, new Rect(safe.x + pad, safe.yMax - pad - row, safe.width - 200 * unit - pad * 2, row));
-            float panelHeight = row * (layoutPage ? 9f : 9.9f);
+            float panelHeight = row * (layoutPage ? 9f : 12.9f);
             panelRect = new Rect(safe.center.x - Mathf.Min(safe.width * .46f, 420 * unit), safe.center.y - panelHeight * .5f,
                 Mathf.Min(safe.width * .92f, 840 * unit), panelHeight);
             Place((RectTransform)panel.transform, panelRect);
@@ -129,7 +184,7 @@ namespace Zantetsu.AndroidFlat
             title.text = layoutPage ? "Joystick position" : "Paused";
             for (int i = 1; i < controls.Length; i++)
             {
-                bool visible = i == 1 || (layoutPage ? i >= 11 : i <= 10);
+                bool visible = i == 1 || (layoutPage ? i >= 11 && i <= 16 : i <= 10 || i >= 17);
                 controls[i].image.gameObject.SetActive(visible);
                 if (!visible) controls[i].rect = default;
             }
@@ -173,6 +228,21 @@ namespace Zantetsu.AndroidFlat
                 top -= row;
                 Put(controls[8], new Rect(left, top, width, row * .85f)); controls[8].label.text = "Sharpness: " + settings.Sharpness.ToString("F2");
                 top -= row;
+                bool multi = capabilities.MultiDrawIndirect && settings.MultiDrawIndirect;
+                Put(controls[17], new Rect(left, top, width, row * .85f));
+                SetCheckbox(controls[17], capabilities.MultiDrawIndirect, multi,
+                    capabilities.MultiDrawIndirect ? "MultiDrawIndirect" : "MultiDrawIndirect (unavailable)");
+                top -= row;
+                Put(controls[18], new Rect(left, top, width, row * .85f));
+                SetCheckbox(controls[18], capabilities.DrawIndirectCount && multi,
+                    capabilities.DrawIndirectCount && multi && settings.DrawIndirectCount,
+                    !capabilities.DrawIndirectCount ? "DrawIndirectCount (unavailable)"
+                    : !multi ? "DrawIndirectCount (MDI off)" : "DrawIndirectCount");
+                top -= row;
+                Put(controls[19], new Rect(left, top, width, row * .85f));
+                controls[19].label.text = "Apply rendering (reset scene)";
+                SetEnabled(controls[19], renderingChangesPending);
+                top -= row;
                 Put(controls[10], new Rect(left, top, width, row * .85f)); controls[10].label.text = "Joystick position";
                 top -= row;
                 Put(controls[9], new Rect(left, top, width, row * .85f)); controls[9].label.text = "Reset scene";
@@ -192,7 +262,8 @@ namespace Zantetsu.AndroidFlat
             if (controls[0].rect.Contains(point)) return FlatCommand.Menu;
             if (!menu) return FlatCommand.None;
             for (int i = 1; i < controls.Length; i++)
-                if (controls[i] != null && controls[i].image.gameObject.activeInHierarchy && controls[i].rect.Contains(point)) return controls[i].command;
+                if (controls[i] != null && controls[i].interactable && controls[i].image.gameObject.activeInHierarchy
+                    && controls[i].rect.Contains(point)) return controls[i].command;
             return FlatCommand.None;
         }
         public void Destroy()

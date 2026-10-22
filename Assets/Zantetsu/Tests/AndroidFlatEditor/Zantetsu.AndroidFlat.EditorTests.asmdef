@@ -1,6 +1,6 @@
 {
     "name": "Zantetsu.AndroidFlat.EditorTests",
-    "references": ["Zantetsu.AndroidFlat.Editor"],
+    "references": ["Zantetsu.AndroidFlat.Editor", "Zantetsu.AndroidFlat", "Zantetsu.Rendering", "UnityEngine.UI"],
     "includePlatforms": ["Editor"],
     "optionalUnityReferences": ["TestAssemblies"]
 }
