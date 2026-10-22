@@ -102,6 +102,7 @@ namespace Zantetsu.AndroidFlat
             if (!EnhancedTouchSupport.enabled) { EnhancedTouchSupport.Enable(); enabledEnhancedTouch = true; }
             visualProperties = new MaterialPropertyBlock();
             view.Build(transform);
+            UpdateLoading();
             input.Cancel();
             GamePause.PausedChanged += OnPaused;
             SceneManager.sceneLoaded += OnSceneLoaded;
@@ -111,6 +112,7 @@ namespace Zantetsu.AndroidFlat
         private IEnumerator PrepareScene()
         {
             ready = false; failure = null; sceneChanging = false;
+            UpdateLoading();
             while ((cameraView = Camera.main) == null || (world = FindAnyObjectByType<CutWorldRoot>()) == null) yield return null;
             foreach (var katana in FindObjectsByType<SandboxRightHandKatana>(FindObjectsInactive.Include, FindObjectsSortMode.None)) katana.enabled = false;
             foreach (var other in FindObjectsByType<SandboxLocomotionInput>(FindObjectsInactive.Include, FindObjectsSortMode.None)) other.enabled = false;
@@ -158,6 +160,7 @@ namespace Zantetsu.AndroidFlat
             yield return prewarm.Run();
             if (!prewarm.Completed) { Fail("Drawing preparation failed: " + prewarm.Failure); yield break; }
             prepared = ready = true;
+            UpdateLoading();
             input.Cancel();
             reportStart = Time.realtimeSinceStartupAsDouble; nextReport = reportStart + .5; fpsFrames = 0;
             Debug.Log(Prefix + "ready; device=" + SystemInfo.deviceModel + "; GPU=" + SystemInfo.graphicsDeviceName
@@ -167,15 +170,30 @@ namespace Zantetsu.AndroidFlat
         private void Fail(string reason)
         {
             failure = reason; ready = false;
+            UpdateLoading();
             input.Cancel();
             Debug.LogError(Prefix + reason);
         }
 
+        private void UpdateLoading()
+        {
+            Rect area = Screen.safeArea;
+            if (area.width <= 0 || area.height <= 0) area = new Rect(0, 0, Screen.width, Screen.height);
+            view.SetLoading(failure == null && (!ready || sceneChanging), area, Time.unscaledTime);
+        }
+
         private void Update()
         {
+            // The overlay also animates while no camera exists, and during paused shutdown/preparation frames.
+            UpdateLoading();
             if (cameraView == null) return;
             UpdateLayout();
-            if (sceneChanging) { input.Cancel(); view.SetStatus("Loading..."); return; }
+            if (sceneChanging)
+            {
+                input.Cancel();
+                if (failure != null) view.SetStatus("Unable to start - see Player log");
+                return;
+            }
             bool paused = GamePause.IsPaused;
             if (paused && !pausedLastFrame) input.Cancel();
             pausedLastFrame = paused;
@@ -195,7 +213,7 @@ namespace Zantetsu.AndroidFlat
             }
             view.SetStick(input.StickCentre, input.Stick, input.StickRadius);
             if (!ready)
-                view.SetStatus(failure == null ? "Loading..." : "Unable to start - see Player log");
+                view.SetStatus(failure == null ? "" : "Unable to start - see Player log");
             else if (Time.realtimeSinceStartupAsDouble >= nextReport)
             {
                 double elapsed = Time.realtimeSinceStartupAsDouble - reportStart;
@@ -276,7 +294,7 @@ namespace Zantetsu.AndroidFlat
 
         private void ToggleMenu()
         {
-            if (sceneChanging) return;
+            if (sceneChanging || (!ready && failure == null)) return;
             menu = !menu;
             view.ShowStickPosition(false);
             GamePause.SetManual(menu);
@@ -381,7 +399,8 @@ namespace Zantetsu.AndroidFlat
         private void ResetScene()
         {
             if (sceneChanging) return;
-            sceneChanging = true; ready = false; prepared = false;
+            sceneChanging = true; ready = false; prepared = false; failure = null;
+            UpdateLoading();
             settings.Save(); input.Cancel(); menu = false; GamePause.SetManual(false);
             if (preparation != null) { StopCoroutine(preparation); preparation = null; }
             layoutDirty = true;

@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using Zantetsu.Sandbox;
 
 namespace Zantetsu.AndroidFlat
 {
@@ -23,6 +24,7 @@ namespace Zantetsu.AndroidFlat
             public Image checkShort, checkLong;
         }
         private readonly Control[] controls = new Control[20];
+        private readonly PlayLoadingView loadingView = new PlayLoadingView();
         private GameObject root, panel;
         private Image stick, thumb;
         private Text status, title, stickOrientation, stickHorizontal, stickVertical;
@@ -30,7 +32,7 @@ namespace Zantetsu.AndroidFlat
         private Texture2D circleTexture;
         private Font font;
         private Rect panelRect;
-        private bool menu, layoutPage;
+        private bool menu, layoutPage, loading;
 
         public void Build(Transform persistentParent)
         {
@@ -155,6 +157,28 @@ namespace Zantetsu.AndroidFlat
             }
         }
 
+        public void SetLoading(bool visible, Rect safeArea, float unscaledSeconds)
+        {
+            loading = visible;
+            if (visible)
+            {
+                loadingView.BuildOverlay(root.transform.parent);
+                loadingView.PlaceOverlay(safeArea);
+                loadingView.Animate(unscaledSeconds);
+            }
+            else loadingView.Hide();
+            ApplyVisibility();
+        }
+
+        private void ApplyVisibility()
+        {
+            if (root == null) return;
+            panel.SetActive(!loading && menu);
+            controls[0].image.gameObject.SetActive(!loading);
+            status.gameObject.SetActive(!loading);
+            stick.enabled = thumb.enabled = !loading && !menu;
+        }
+
         public void ShowStickPosition(bool open) { layoutPage = open; }
 
         public void Layout(Rect safe, Vector2 centre, float radius, bool open, AndroidFlatSettings settings, bool portrait,
@@ -247,8 +271,7 @@ namespace Zantetsu.AndroidFlat
                 top -= row;
                 Put(controls[9], new Rect(left, top, width, row * .85f)); controls[9].label.text = "Reset scene";
             }
-            panel.SetActive(open);
-            stick.enabled = thumb.enabled = !open;
+            ApplyVisibility();
         }
         public void SetStick(Vector2 centre, Vector2 value, float radius)
         {
@@ -256,9 +279,10 @@ namespace Zantetsu.AndroidFlat
             Place(thumb.rectTransform, new Rect(centre + value * radius * .62f - Vector2.one * knob, Vector2.one * knob * 2));
         }
         public void SetStatus(string value) { status.text = value; }
-        public bool IsUi(Vector2 point) => (menu && panelRect.Contains(point)) || controls[0].rect.Contains(point);
+        public bool IsUi(Vector2 point) => loading || (menu && panelRect.Contains(point)) || controls[0].rect.Contains(point);
         public FlatCommand CommandAt(Vector2 point)
         {
+            if (loading) return FlatCommand.None;
             if (controls[0].rect.Contains(point)) return FlatCommand.Menu;
             if (!menu) return FlatCommand.None;
             for (int i = 1; i < controls.Length; i++)
@@ -268,6 +292,7 @@ namespace Zantetsu.AndroidFlat
         }
         public void Destroy()
         {
+            loadingView.Destroy();
             if (root != null) Object.Destroy(root);
             if (circle != null) Object.Destroy(circle);
             if (circleTexture != null) Object.Destroy(circleTexture);
