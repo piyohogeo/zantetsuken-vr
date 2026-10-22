@@ -5,3 +5,6 @@ using System.Runtime.CompilerServices;
 
 // The sandbox's Player check gives the Slash hit detector a trace lane of its own run (SlashHitDetector.AttachTrace).
 [assembly: InternalsVisibleTo("Zantetsu.Sandbox")]
+
+// The split capture's offline reference decider (Editor only) reads the saved samples (SpatialSplitSample).
+[assembly: InternalsVisibleTo("Zantetsu.Sandbox.Editor")]
