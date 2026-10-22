@@ -663,6 +663,63 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
         }
 
+#if UNITY_EDITOR
+        [UnityTest]
+        public IEnumerator NativeDraw_PreferredButUnavailable_ConstructsUnityVp3c_AndKeepsThatRouteAfterTheFailureIsCleared()
+        {
+            const string unavailable = "native availability refused by the preferred-route test";
+            VpBodyRouteRequest requestBefore = VpNativeDrawSetup.Request;
+            VpNativeDrawSetup.Selection? selectionBefore = VpNativeDrawSetup.SelectionForTest;
+            bool cullingBefore = VpGpuCullSetup.Requested;
+            string failureBefore = Zantetsu.Rendering.Urp.VpNativeDrawRoute.EnvironmentFailureForTest;
+            VpNativeDrawSetup.Request = VpBodyRouteRequest.NativePreferred;
+            VpNativeDrawSetup.SelectionForTest = null;
+            VpGpuCullSetup.Requested = true;
+            Zantetsu.Rendering.Urp.VpNativeDrawRoute.EnvironmentFailureForTest = unavailable;
+            try
+            {
+                VpNativeDrawSetup.Selection selected = VpNativeDrawSetup.Select();
+                Assert.That(selected.Native, Is.True, "the real selection first prefers the plugin");
+                Assert.That(selected.FallbackExpected, Is.True, "this request permits the construction-time fallback");
+                LogAssert.Expect(LogType.Warning, new Regex("VP BODY ROUTE: VP3C -- .*" + Regex.Escape(unavailable)));
+                CutWorldRoot root = NewDrawCompareScene().root;
+                yield return null;
+
+                Assert.That(root.TerminationRequested, Is.False, "native unavailability does not end a preferred-route world");
+                Assert.That(root.NativeDrawFailure, Is.Null, "this is not a refused strict native request");
+                Assert.That(root.NativeDefaultUnavailable, Is.EqualTo(unavailable), "the original availability failure is retained");
+                Assert.That(root.GpuCullFallback, Is.Null, "only native drawing is unavailable; GPU selection remains active");
+                Assert.That(root.BodyRoute, Is.EqualTo("VP3C"));
+                Assert.That(root.BodyRouteReason, Is.EqualTo(selected.Reason));
+                Assert.That(root.Display, Is.Not.Null);
+                var display = root.Display;
+                Assert.That(display.CullsOnGpu, Is.True);
+                Assert.That(display.NativeArguments, Is.False, "the display was constructed for Unity's calls");
+                using (VpIndexedIndirectDrawBatch.CullOutput output = display.BodyBatchForTest.CreateCullOutput())
+                {
+                    Assert.That(output.ForwardArguments.stride, Is.EqualTo(20), "the actual batch creates Unity's five-word indexed arguments");
+                }
+
+                Zantetsu.Rendering.Urp.VpNativeDrawRoute.EnvironmentFailureForTest = null;
+                for (int frame = 0; frame < 3; frame++) yield return null;
+                Assert.That(root.Display, Is.SameAs(display), "clearing the availability failure does not rebuild the world");
+                Assert.That(root.BodyRoute, Is.EqualTo("VP3C"), "the route is fixed at construction");
+                Assert.That(display.CullsOnGpu, Is.True);
+                Assert.That(display.NativeArguments, Is.False);
+                Assert.That(root.NativeDefaultUnavailable, Is.EqualTo(unavailable));
+                Assert.That(root.TerminationRequested, Is.False);
+                yield return EndWorld(root);
+            }
+            finally
+            {
+                Zantetsu.Rendering.Urp.VpNativeDrawRoute.EnvironmentFailureForTest = failureBefore;
+                VpGpuCullSetup.Requested = cullingBefore;
+                VpNativeDrawSetup.SelectionForTest = selectionBefore;
+                VpNativeDrawSetup.Request = requestBefore;
+            }
+        }
+#endif
+
         // Named to run after the picture case: a world ended by contract is kept uncollected by the fixture, which
         // holds back whatever case of the fixture follows it in the same run.
         /// <summary>

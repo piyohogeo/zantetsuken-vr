@@ -365,7 +365,7 @@ namespace Zantetsu.Sandbox
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Begin()
         {
-            if (Application.isEditor || s_begun)
+            if (Application.isEditor || s_begun || Zantetsu.Core.PlayerPlatform.IsAndroidFlat)
             {
                 return;
             }

@@ -879,12 +879,20 @@ namespace Zantetsu.Rendering.Urp
             return true;
         }
 
+#if UNITY_EDITOR
+        /// <summary>Tests may simulate an unavailable native device without changing route selection or Unity rendering.</summary>
+        public static string EnvironmentFailureForTest;
+#endif
+
         /// <summary>
         /// Whether the route can draw at all: URP recording through the render graph, Direct3D 12, the plugin
         /// loaded and of this contract, its compute shader in the build. Null when it can; otherwise why not.
         /// </summary>
         public static string CheckEnvironment()
         {
+#if UNITY_EDITOR
+            if (EnvironmentFailureForTest != null) return EnvironmentFailureForTest;
+#endif
             string failure = VpGpuCullCameraRoute.CheckEnvironment();
             if (failure != null)
             {

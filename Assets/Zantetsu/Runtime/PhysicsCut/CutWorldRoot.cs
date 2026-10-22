@@ -164,10 +164,9 @@ namespace Zantetsu.PhysicsCut
         public string NativeDrawFailure { get; private set; }
 
         /// <summary>
-        /// Why the plugin's route, the default of this configuration (D-215: a Windows Direct3D 12 Player), was not
-        /// taken although nothing asked for another -- in which case this world draws by Unity's calls and has said so
-        /// as an error: a failure of the default that is recorded, not a success by another route. Null where the
-        /// plugin's route was taken, was not the default, or another route was asked for.
+        /// Why the preferred or platform-default plugin could not be used. The world draws by Unity's calls:
+        /// NativePreferred records a compatibility warning; the Windows platform default keeps its error-level
+        /// failure record (D-215). Null when native drawing was used or no native preference/default was selected.
         /// </summary>
         public string NativeDefaultUnavailable { get; private set; }
 
@@ -572,9 +571,16 @@ namespace Zantetsu.PhysicsCut
             else if (VpGpuCullSetup.Requested)
             {
                 BodyRoute = culling != null ? "VP3C" : "VP3";
-                if (culling != null && NativeDefaultUnavailable != null)
+                if (culling != null && NativeDefaultUnavailable != null && routeSelection.FallbackExpected)
                 {
-                    // Not a silent change of route: the default was the plugin, it is not to be had, and the run says so.
+                    UnityEngine.Debug.LogWarning(
+                        "VP BODY ROUTE: VP3C -- fallback from preferred native drawing: " + NativeDefaultUnavailable
+                        + "; GPU selection and CPU command compaction retained; Unity argument entries; selected: " + BodyRouteReason,
+                        this);
+                }
+                else if (culling != null && NativeDefaultUnavailable != null)
+                {
+                    // A platform-default failure retains its original error-level record.
                     UnityEngine.Debug.LogError(
                         "VP BODY ROUTE: VP3C -- GPU selection (compute frustum culling, GPU-written indirect arguments), "
                         + profile.StencilSettings.cameraCapacity + " views; shadow slice selection "

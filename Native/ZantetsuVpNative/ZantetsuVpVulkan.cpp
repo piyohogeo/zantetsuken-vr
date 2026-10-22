@@ -125,10 +125,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkD
             shaderDrawParameters=reinterpret_cast<const VkPhysicalDeviceShaderDrawParametersFeatures*>(item)->shaderDrawParameters;
         }
     }
-    indirectCountEnabled = indirectCountEnabledByUnity || vulkan12DrawIndirectCount;
+    // VUID-VkDeviceCreateInfo-ppEnabledExtensionNames-02831: a Vulkan 1.2 feature chain with
+    // drawIndirectCount=false forbids adding KHR alone. Keep Unity's feature choice and draw fixed.
+    bool indirectCountAllowed = !vulkan12InChain || vulkan12DrawIndirectCount;
+    indirectCountEnabled = indirectCountAllowed && (indirectCountEnabledByUnity || vulkan12DrawIndirectCount);
     indirectCountAddedHere=false;
-    if (indirectCountSupported && !indirectCountEnabled) {
-        extendedExtensionNames.assign(input->ppEnabledExtensionNames, input->ppEnabledExtensionNames + input->enabledExtensionCount);
+    if (indirectCountSupported && !indirectCountEnabled && indirectCountAllowed) {
+        extendedExtensionNames.clear();
+        if (input->enabledExtensionCount)
+            extendedExtensionNames.assign(input->ppEnabledExtensionNames, input->ppEnabledExtensionNames + input->enabledExtensionCount);
         extendedExtensionNames.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
         info.enabledExtensionCount=uint32_t(extendedExtensionNames.size()); info.ppEnabledExtensionNames=extendedExtensionNames.data();
         indirectCountAddedHere=true;
@@ -142,7 +147,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, const VkD
     }
     if (result == VK_SUCCESS) {
         featuresObserved = true; enabledMulti = core.multiDrawIndirect; enabledFirst = core.drawIndirectFirstInstance;
-        indirectCountEnabled = indirectCountEnabledByUnity || vulkan12DrawIndirectCount || indirectCountAddedHere;
+        indirectCountEnabled = indirectCountAllowed && (indirectCountEnabledByUnity || vulkan12DrawIndirectCount || indirectCountAddedHere);
         VkPhysicalDeviceProperties physicalProperties{}; vkGetPhysicalDeviceProperties(physical,&physicalProperties);
         char text[512];
         std::snprintf(text,sizeof text,"indirectCount: supported=%d enabledByUnity(ext)=%d vk12chain=%d vk12.drawIndirectCount=%d addedHere=%d enabled=%d; "

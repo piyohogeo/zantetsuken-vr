@@ -187,6 +187,20 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 **未確認。** Meta Developer Dashboard でアプリに登録された Package Name（App ID とは別の識別子）が `com.zantetsuken.quest` か（配布担当が確認）。配布鍵での検証。
 
+### 3.6 非VR Android 検証版
+
+初期対象はGalaxy S25 Ultra向けの検証APKとする。描画品質・描画経路はQuest版を基本とし、SPIとAppSWを使用しない。縦画面と左右の横画面に対応し、操作UIはSafe Area内に置く。上下方向のカメラ角は固定する。FOVは画面長辺90°を基準とする。
+
+- 通常起動は `VP3C-NATIVE` を優先し、`multiDrawIndirect` 等の必須機能やプラグインを利用できない場合は、World／Displayの構築前にUnity用の20 byte引数で `VP3C` へ切り替える。GPUカリングとCPU側のCommand Compactionは維持し、切替理由を警告ログに記録する。構築後の動的切替は行わない。明示的なnative強制指定とUnity API指定は優先する。
+- 左下の固定中心の半透明円形ジョイスティックで前後移動と連続旋回を行う。円の中心の初期値はSafe Area内で左から15%、下から30%とする。設定画面で配置を1%ずつ調整でき、縦画面・横画面の値を別々に保存する。既存の移動・占有判定を使う。指は接触開始時のジョイスティック・UI・切断領域の担当を接触終了まで保持し、移動と切断を同時に受け付ける。
+- 切断は画面上のフリックの位置と方向を使い、認識した瞬間にLatchedとして発射する。フリックの変位は認識にだけ使用し、Slashの長さを決めない。フリックの位置を通る直線をその方向へ画面端まで延長し、視点中心から両端へ向かう視線で切断面と広がりを決める。
+- 飛翔方向は認識時のフリック位置への視線とし、速度と寿命はVR版を踏襲する。認識時のカメラ姿勢と投影を固定し、飛翔に伴い両端の固定視線に沿ってSpanを拡大する。認識後の指の動き、人工旋回、端末の画面回転には追従しない。各画面方向の見える範囲に切断範囲を合わせる。
+- VFXだけを切断面から少し傾け、傾斜は発射時に固定する。実際の切断面・SweepをVFXの傾斜で変更しない。
+- 非VR版の同時Slash上限をVR版より増やす。容量・感度・旋回速度・FOV・VFXの傾斜角等の調整値は実機で決める。
+- 描画は60FPSを基本とする。手動物理更新は通常1/60秒、追いつきには単一の1/30秒ステップを使う。追いつきのフレームも描画側の時間予算は1/60秒とする。長い負荷超過時の方針は実機の結果から決める。
+- FSR1を画質オプションとして用意し、内部描画倍率とシャープネスを変更できるようにする。初期品質・自動調整の採否は実機で決める。
+- メニュー・画面回転・フォーカス喪失・バックグラウンド移行では操作中の接触を取り消す。復帰時はすべての指が離れてから新しい接触を受け付け、中断中の時間を飛翔・物理の追いつきへ含めない。
+
 ## 4. システムアーキテクチャ
 
 共通Player終了出口へ送るのは、共用Geometry切断またはFragment／Boundary／Operation構築で既存境界から表面化した予期しない内部エラー、4.5.4で定めるCPU backing容量の不成立、同節のGPU backing容量の不成立、5.6の必須Stencil構成の不成立の4条件とする。製品PlayerのComposition Root上の共通Player lifecycle境界が、Renderer初期化より前からPlayer寿命を通じて単一の非永続終了要求latchを所有する。Renderer初期化処理と切断Coordinatorはこの境界へ報告し、切断受付・Commitも同じlatchを参照する。外部Poolを含むWorkerの異常は既存の通知・回収境界でMainへ渡し、Workerはlatchや終了APIを直接操作しない。Mainが最初に扱った原因でlatchを一方向に確定し、同じMain Threadで直列に処理する新規切断受付と未公開切断成果物のCommitを閉じてから、既存ログへbest effortで一度記録し、製品Playerの終了APIを一度呼ぶ。「終了要求後」はAPI呼出し後ではなくlatch確定後を指す。エラーに関わる未公開成果物を公開せず、初期化中はGameplayを開始しない。同一sessionでのrollback・整合回復、全Work／資源回収、ログ永続化、Trace／Captureのトリガー・post-roll・freeze・保存・Publication・CaptureComplete・durable flush完了、終了所要時間は保証しない。ログが使えなくても終了を妨げず、回収・保存を待たない。任意の保存は非待機のbest effortに限る。内部エラーの全検出は保証せず、このためのValidator・詳細Reason・永続schema・復旧基盤を追加しない。通常の世代失効・出力予約不足、7.1の個別物理退役、Capture-only Fail Fast／Poison、Tool／Benchmark／Trace・Capture Run単位の失敗は既存境界を維持する。
@@ -582,6 +596,8 @@ Direct3D 12／Unity描画で直接描画（Vulkanの方式）を採らなかっ�
 **位置づけ。** Quest 3SのVulkanネイティブ経路で、GPU選別（4.5.7）が書いた描画引数のうちInstance個数が0でないCommandだけをGPUで前詰めし、その個数をGPUが数え、`vkCmdDrawIndexedIndirectCount` で描く経路である。**Quest 3SのVulkanネイティブ経路の既定とする（D-217）。** 下の選択条件を満たさない場合と、`-zantetsuVpFixedCommands` または起動設定で固定を指定した場合は、選別後の全Commandを固定回数で描く（残らなかったCommandはInstance個数0で描かれる）。`-zantetsuVpCompactCommands` は受け付けるが、既定と同じで何も変えない。両方があれば固定を優先する。選別そのもの、Commandの並び、Material区分、Clipの分離（4.5.9）は変えない。
 
 **選択条件。** 経路は最初の描画で一度だけ決め、理由を `VP COMMAND COMPACTION:` の1行に出す。圧縮を取るのは、Vulkanであり、固定の指定がなく、プラグインがcount付き描画を記録でき、プラグインにカウンタの初期化イベントとCompute Barrierイベントがあり、圧縮のCompute Shader（wave演算）がビルドにあって対応している場合だけである。一つでも欠ければ固定で描く。装置がcount付き描画に対応していること（`VK_KHR_draw_indirect_count`）と、Unityが作ったデバイスでそれが有効であることは別である。Unity 6000.3.22f1はこの拡張を有効にしないので、プラグインがデバイス作成に割り込んで拡張名を足す（失敗したら足さずに作り直す）。対応と有効化は別々に記録する。
+
+IndirectCountを使えないVulkanではGPU圧縮とそのカウンタ初期化を行わず、通常の `vkCmdDrawIndexedIndirect` で固定長を描く。CPU側のCommand Compaction（D-216、恒久的な空きCommand枠の回収）は独立して継続する。Vulkan 1.2のfeature chainで `drawIndirectCount` がfalseなら、KHR拡張だけを追加せず固定長へ戻す。
 
 **圧縮。** 描画単位（1つのMaterial区分のCommandの連なり。以下「連なり」）ごとに1回のDispatchで行う。1グループ64スレッドとし、wave内の順位付けで書込み先を決め、waveごとに原子加算を1回だけ行う。24 byteのRecord全体（元のCommand番号と開始Instanceを含む）を写すので、頂点シェーダーは変えない。出力は本体・影・Motion Vectorで別の列を持つ（同じ入力を2つのPassが同じ列へ詰めると個数が倍になる）。カウンタは列ごとに256個で、Passの中の連なりへ先頭から割り当てる。足りない連なりは固定で描く。
 

@@ -221,6 +221,7 @@ namespace Zantetsu.Quest
         private static void SelectNativeRoute()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            if (Zantetsu.Core.PlayerPlatform.IsAndroidFlat) return;
             // The launch's scenario selects the initial route before any scene's world is made (DESIGN 3.4): play, the city
             // walk and the NPC slash read it here; the static scene keeps its own (QuestStaticDemo). It was the package
             // that selected it while each scenario had a package of its own.

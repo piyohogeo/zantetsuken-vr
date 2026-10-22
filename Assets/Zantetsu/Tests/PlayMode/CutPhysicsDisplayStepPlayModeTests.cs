@@ -31,6 +31,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
         {
             CutPhysicsStep.SetPaused(false);
             CutPhysicsStep.UseClockForTest(_before, PhysicsStepMode.Fixed);
+            CutPhysicsStep.SettleFramePeriod();
             CutPhysicsStep.InjectExpectedCostForTest(0.0);
             foreach (GameObject go in _objects)
             {
@@ -134,6 +135,83 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(CutPhysicsStep.MainBudgetSeconds, Is.EqualTo(CutPhysicsStep.BudgetFor(CutPhysicsStep.ApplicationFrameSeconds)), "the budget is the period's, the double step adds nothing");
             Assert.That(CutPhysicsStep.MaxDoubleSimulateSeconds, Is.GreaterThan(0.0), "the double steps were measured apart");
             TestContext.Out.WriteLine("double steps " + doubles + ", time taken " + taken.ToString("R") + " s; " + CutPhysicsStep.DescribeStepCounts());
+        }
+
+        [UnityTest]
+        public IEnumerator AndroidFlat60Hz_LongFramesSimulateOne30HzStep_MovingTheBodyByItsActualDuration()
+        {
+            CutPhysicsStep.UseClockForTest(new ManualPhysicsClock(60, Stopwatch.Frequency, doubleStep: true), PhysicsStepMode.AndroidFlat);
+            CutPhysicsStep.SettleFramePeriod();
+            CutPhysicsStep.InjectExpectedCostForTest(0.0001);
+            Reader reader = Setup(40);
+            const double h = 1.0 / 60.0;
+            Assert.That(Physics.simulationMode, Is.EqualTo(SimulationMode.Script));
+            Assert.That(CutPhysicsStep.StepMode, Is.EqualTo(PhysicsStepMode.AndroidFlat));
+            for (int i = 0; i < 12; i++) yield return null;
+
+            int doubles = 0;
+            for (int i = 1; i < reader.seen.Count; i++)
+            {
+                var previous = reader.seen[i - 1];
+                var current = reader.seen[i];
+                long simulations = current.step - previous.step;
+                Assert.That(simulations, Is.InRange(0L, 1L), "one simulation at most, including a 1/30 s catch-up (frame " + current.frame + ")");
+                if (simulations == 0)
+                {
+                    Assert.That(current.x, Is.EqualTo(previous.x), "without a simulation the body stays still");
+                    continue;
+                }
+
+                Assert.That(current.taken, Is.EqualTo(h).Within(1e-12).Or.EqualTo(2.0 * h).Within(1e-12));
+                Assert.That(current.physics - previous.physics, Is.EqualTo(current.taken).Within(1e-9));
+                Assert.That(current.x - previous.x, Is.EqualTo((float)(Speed * current.taken)).Within(1e-4f),
+                    "the real Rigidbody integrates the one chosen 1/60 or 1/30 s Physics.Simulate");
+                if (current.taken > 1.5 * h) doubles++;
+            }
+
+            Assert.That(doubles, Is.GreaterThanOrEqualTo(5), "40 ms frames owe at least two 60 Hz steps");
+            Assert.That(CutPhysicsStep.Clock.DoubleSteps, Is.GreaterThanOrEqualTo(doubles));
+            Assert.That(CutPhysicsStep.ApplicationFrameSeconds, Is.EqualTo(h).Within(1e-12), "catch-up does not enlarge the 60 fps render period");
+            Assert.That(CutPhysicsStep.MainBudgetSeconds, Is.EqualTo(CutPhysicsStep.BudgetFor(h)).Within(1e-12));
+            Assert.That(CutPhysicsStep.Clock.UnsimulatedSeconds, Is.LessThanOrEqualTo(2.0 * h + 1e-9), "the post-decision carry-over stays bounded");
+        }
+
+        [UnityTest]
+        public IEnumerator AndroidFlat60Hz_Expensive30HzStepFallsBackToOne60HzSimulation()
+        {
+            CutPhysicsStep.UseClockForTest(new ManualPhysicsClock(60, Stopwatch.Frequency, doubleStep: true), PhysicsStepMode.AndroidFlat);
+            CutPhysicsStep.SettleFramePeriod();
+            Reader reader = Setup(40);
+            yield return null;
+            yield return null;
+            // A 30 ms double estimate exceeds the phone's ~15 ms main budget; a 1 ms normal one fits.
+            CutPhysicsStep.InjectExpectedCostForTest(0.001);
+            CutPhysicsStep.InjectExpectedDoubleCostForTest(0.030);
+            long doubles = CutPhysicsStep.Clock.DoubleSteps;
+            long fellBack = CutPhysicsStep.DoubleFellBackToNormal;
+            int from = reader.seen.Count;
+            for (int i = 0; i < 4; i++) yield return null;
+
+            Assert.That(CutPhysicsStep.DoubleFellBackToNormal, Is.GreaterThan(fellBack));
+            Assert.That(CutPhysicsStep.Clock.DoubleSteps, Is.EqualTo(doubles), "the over-budget 1/30 s simulation was never taken");
+            Assert.That(CutPhysicsStep.LastDecisionCandidateSeconds, Is.EqualTo(1.0 / 30.0).Within(1e-12), "two normal steps were owed");
+            int normals = 0;
+            for (int i = from + 1; i < reader.seen.Count; i++)
+            {
+                var previous = reader.seen[i - 1];
+                var current = reader.seen[i];
+                long simulations = current.step - previous.step;
+                Assert.That(simulations, Is.InRange(0L, 1L));
+                if (simulations == 0) continue;
+                normals++;
+                Assert.That(current.taken, Is.EqualTo(1.0 / 60.0).Within(1e-12));
+                Assert.That(current.physics - previous.physics, Is.EqualTo(1.0 / 60.0).Within(1e-9));
+                Assert.That(current.x - previous.x, Is.EqualTo(Speed / 60f).Within(1e-4f), "the actual Rigidbody moved by the normal step only");
+            }
+
+            Assert.That(normals, Is.GreaterThanOrEqualTo(1));
+            Assert.That(CutPhysicsStep.ApplicationFrameSeconds, Is.EqualTo(1.0 / 60.0).Within(1e-12));
+            Assert.That(CutPhysicsStep.MainBudgetSeconds, Is.EqualTo(CutPhysicsStep.BudgetFor(1.0 / 60.0)).Within(1e-12));
         }
 
         [UnityTest]

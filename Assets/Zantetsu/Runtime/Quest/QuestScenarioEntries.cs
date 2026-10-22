@@ -14,6 +14,7 @@ namespace Zantetsu.Quest
         private static void Register()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            if (Zantetsu.Core.PlayerPlatform.IsAndroidFlat) return;
             SandboxScenario.PlatformEntry = Start;
             SandboxScenario.PlatformPlay = () => Start(SandboxScenarioKind.Play);
 #endif

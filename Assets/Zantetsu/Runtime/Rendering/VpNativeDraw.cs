@@ -19,6 +19,9 @@ namespace Zantetsu.Rendering
 
         /// <summary>Unity's calls, asked for by <see cref="VpNativeDrawSetup.UnityApiArgument"/>: for comparison, on any device.</summary>
         UnityApi,
+
+        /// <summary>Prefer the plugin when GPU selection is used; build the Unity-API VP3C route if unavailable.</summary>
+        NativePreferred,
     }
 
     /// <summary>
@@ -42,6 +45,11 @@ namespace Zantetsu.Rendering
     /// error, keeping the reason: it is a failure of the default that is recorded, not a success by another route.
     /// Once a world draws through the plugin, a refusal or a failed issue is never made up for by Unity's calls.
     /// </para>
+    /// <para>
+    /// **Native preferred.** The non-VR Android host selects NativePreferred when no explicit route was requested.
+    /// It tries the plugin with GPU selection, then builds Unity-API VP3C if the plugin cannot be used. This is an
+    /// expected compatibility fallback and is logged as a warning. Explicit Native keeps its strict failure contract.
+    /// </para>
     /// </summary>
     public static class VpNativeDrawSetup
     {
@@ -54,21 +62,25 @@ namespace Zantetsu.Rendering
         /// <summary>What <see cref="Select(VpBodyRouteRequest, GraphicsDeviceType, bool, RuntimePlatform)"/> settled, and in which words.</summary>
         public readonly struct Selection
         {
-            public Selection(bool native, bool asked, string reason)
+            public Selection(bool native, bool asked, string reason, bool fallbackExpected = false)
             {
                 Native = native;
                 Asked = asked;
                 Reason = reason;
+                FallbackExpected = fallbackExpected;
             }
 
             /// <summary>The plugin's route is to be taken.</summary>
             public bool Native { get; }
 
-            /// <summary>The route was asked for by an argument (or a caller); false when it is the configuration's default.</summary>
+            /// <summary>A strict Native or explicit Unity-API request; false for default and native-preferred policies.</summary>
             public bool Asked { get; }
 
             /// <summary>Why this route, for the launch's record.</summary>
             public string Reason { get; }
+
+            /// <summary>A missing preferred plugin is expected compatibility fallback, logged as a warning.</summary>
+            public bool FallbackExpected { get; }
         }
 
         private static bool s_read;
@@ -139,6 +151,8 @@ namespace Zantetsu.Rendering
                     return new Selection(true, true, "asked for by " + Argument);
                 case VpBodyRouteRequest.UnityApi:
                     return new Selection(false, true, "asked for by " + UnityApiArgument);
+                case VpBodyRouteRequest.NativePreferred:
+                    return new Selection(true, false, "native preferred with Unity-API VP3C fallback", fallbackExpected: true);
             }
 
             if (editor)

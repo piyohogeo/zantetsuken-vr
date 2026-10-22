@@ -1,0 +1,19 @@
+{
+    "name": "Zantetsu.AndroidFlat.Editor",
+    "references": [
+        "Zantetsu.Core",
+        "Zantetsu.Sandbox",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.Rendering",
+        "Zantetsu.Quest.Editor",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.XR.Management",
+        "Unity.XR.Management.Editor",
+        "Unity.XR.OpenXR",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ]
+}

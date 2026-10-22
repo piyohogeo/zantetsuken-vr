@@ -52,6 +52,7 @@ namespace Zantetsu.Quest
         private static void SelectNativeRoute()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            if (Zantetsu.Core.PlayerPlatform.IsAndroidFlat) return;
             // The static scene's own route, where the launch's scenario is the static one (DESIGN 3.4): the other
             // scenarios read theirs in QuestNpcSlashDemo. It was read here whatever ran while each had its own package.
             SandboxScenarioChoice choice = SandboxScenario.Current;

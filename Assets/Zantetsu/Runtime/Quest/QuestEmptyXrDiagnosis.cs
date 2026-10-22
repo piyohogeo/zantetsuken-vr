@@ -49,6 +49,7 @@ namespace Zantetsu.Quest
         private static void MarkLaunch()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            if (Zantetsu.Core.PlayerPlatform.IsAndroidFlat) return;
             SandboxScenarioChoice choice = SandboxScenario.Current;
             if (choice.Failure == null && choice.Kind == SandboxScenarioKind.EmptyXr)
             {

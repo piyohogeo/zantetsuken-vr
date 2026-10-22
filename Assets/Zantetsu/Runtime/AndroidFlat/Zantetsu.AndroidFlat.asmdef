@@ -1,0 +1,16 @@
+{
+    "name": "Zantetsu.AndroidFlat",
+    "rootNamespace": "Zantetsu.AndroidFlat",
+    "references": [
+        "Zantetsu.Core",
+        "Zantetsu.Sandbox",
+        "Zantetsu.PhysicsCut",
+        "Zantetsu.Rendering",
+        "Zantetsu.Rendering.Urp",
+        "Zantetsu.Quest",
+        "Unity.InputSystem",
+        "UnityEngine.UI",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "autoReferenced": true
+}

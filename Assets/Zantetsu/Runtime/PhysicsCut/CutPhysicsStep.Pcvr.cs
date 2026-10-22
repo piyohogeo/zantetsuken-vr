@@ -29,6 +29,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The PCVR display's rate, settled once at the session's start.</summary>
         PcvrDisplay = 2,
+
+        /// <summary>Non-VR Android's fixed 60 Hz render target, independent of XR and measured frame times.</summary>
+        AndroidFlat = 3,
     }
 
     /// <summary>The physics step's mode in effect for the session.</summary>
@@ -39,6 +42,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>PCVR: the display's step (72 or 90 Hz), and one double step when two are owed.</summary>
         Display = 1,
+
+        /// <summary>Non-VR Android: 60 Hz with a single 1/30 s simulation when two normal steps are owed.</summary>
+        AndroidFlat = 2,
     }
 
     // The PCVR display step and its target period (DESIGN 4.4, 2026-10-20). Quest (Android) is not concerned: its step,
@@ -185,7 +191,7 @@ namespace Zantetsu.PhysicsCut
         /// The step's mode once the PCVR reading is settled (pure). The explicit frequency first
         /// (<see cref="FrequencyArgument"/>: the fixed step at it), then <see cref="StepModeArgument"/> (fixed, or display
         /// on PC), then automatically: the display step on PCVR, the fixed 45 Hz step on a desktop and on Quest. The
-        /// display step's frequency is the PCVR rate taken (72 or 90).
+        /// display step's frequency is the PCVR rate taken (72 or 90). Non-VR Android uses its own 60/30 Hz mode.
         /// </summary>
         internal static PhysicsStepMode ModeFor(bool pc, int explicitHz, PhysicsStepRequest request, PcvrRateState pcvr)
         {
@@ -230,22 +236,22 @@ namespace Zantetsu.PhysicsCut
         }
 
         // At the session's reset: the fixed step is settled now when it is the one (Quest, an explicit frequency, the fixed
-        // mode asked for); otherwise the PCVR reading at the first frame decides, and nothing is stepped before.
-        private static void ChooseStepAtSessionStart(bool pc, int explicitHz, PhysicsStepRequest request)
+        // mode asked for), or non-VR Android's 60/30 Hz step; otherwise the PCVR reading at the first frame decides.
+        internal static void ChooseStepAtSessionStart(bool pc, int explicitHz, PhysicsStepRequest request, bool androidFlat = false)
         {
-            if (!pc && request == PhysicsStepRequest.Display)
+            if (!pc && !androidFlat && request == PhysicsStepRequest.Display)
             {
                 UnityEngine.Debug.LogWarning(StepModeArgument + " display is for PCVR; Quest keeps its fixed step.");
                 request = PhysicsStepRequest.Fixed;
             }
 
-            if (explicitHz != 0 && request == PhysicsStepRequest.Display)
+            if (!androidFlat && explicitHz != 0 && request == PhysicsStepRequest.Display)
             {
                 UnityEngine.Debug.LogWarning(FrequencyArgument + " " + explicitHz + " is given: it comes first, and " + StepModeArgument + " display is not taken.");
             }
 
             s_stepRequest = request;
-            s_pcvrState = pc ? PcvrRateState.Pending : PcvrRateState.None;
+            s_pcvrState = pc && !androidFlat ? PcvrRateState.Pending : PcvrRateState.None;
             s_pcvrHz = 0;
             s_pcvrReportedHz = float.NaN;
             s_pcvrFirstAt = 0;
@@ -261,11 +267,12 @@ namespace Zantetsu.PhysicsCut
             XrStartedAfterSettling = false;
             s_pcvrSettledUnsaid = false;
             s_explicitHz = explicitHz;
-            s_stepMode = PhysicsStepMode.Fixed;
-            s_clock = new ManualPhysicsClock(explicitHz != 0 ? explicitHz : DefaultFrequencyHz, Stopwatch.Frequency);
-            bool fixedNow = !pc || explicitHz != 0 || request == PhysicsStepRequest.Fixed;
+            s_stepMode = androidFlat ? PhysicsStepMode.AndroidFlat : PhysicsStepMode.Fixed;
+            s_clock = new ManualPhysicsClock(androidFlat ? AndroidFlatFrequencyHz : explicitHz != 0 ? explicitHz : DefaultFrequencyHz, Stopwatch.Frequency, doubleStep: androidFlat);
+            bool fixedNow = androidFlat || !pc || explicitHz != 0 || request == PhysicsStepRequest.Fixed;
             s_stepSettled = fixedNow;
-            s_stepChoice = !pc ? "fixed (Quest: unchanged)"
+            s_stepChoice = androidFlat ? "Android non-VR target: 60 Hz normal, 30 Hz catch-up"
+                : !pc ? "fixed (Quest: unchanged)"
                 : explicitHz != 0 ? "fixed (" + FrequencyArgument + " " + explicitHz + ")"
                 : request == PhysicsStepRequest.Fixed ? "fixed (" + StepModeArgument + " fixed)"
                 : request == PhysicsStepRequest.Display ? "display (" + StepModeArgument + " display)"
@@ -437,6 +444,7 @@ namespace Zantetsu.PhysicsCut
 
         private static string DescribeRate()
         {
+            if (s_stepMode == PhysicsStepMode.AndroidFlat) return "Android non-VR target 60 Hz";
             CultureInfo c = CultureInfo.InvariantCulture;
             string reported = float.IsNaN(s_pcvrReportedHz) ? "none" : s_pcvrReportedHz.ToString("R", c) + " Hz";
             switch (s_pcvrState)
