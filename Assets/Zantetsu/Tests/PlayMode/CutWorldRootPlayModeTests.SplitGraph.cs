@@ -201,6 +201,12 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(split.GraphSeparable, Is.EqualTo(1));
             Assert.That(split.GraphUnfinished, Is.Zero);
             Assert.That(split.DeferredNow, Is.Zero);
+            // the graph stage's time is clocked and summed in an observing build (the Editor is one), and said as measured
+            Assert.That(CutSpatialSplit.GraphTimeMeasured, Is.True, "the Editor observes");
+            Assert.That(split.GraphSeconds, Is.GreaterThan(0.0), "the one engine run's time was summed");
+            Assert.That(split.MaxGraphSeconds, Is.EqualTo(split.GraphSeconds), "one run: the longest is the sum");
+            StringAssert.Contains("; worker ms " + (split.GraphSeconds * 1000.0).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) + " (longest ", split.DescribeGraph());
+            StringAssert.DoesNotContain("not measured", split.DescribeGraph());
             SpatialSplitGraphRecord g = split.LastGraph;
             Assert.That(g.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Separable));
             Assert.That(g.positiveConvexes + g.negativeConvexes, Is.EqualTo(6));
@@ -967,6 +973,20 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             }
             split.Settings = default;
             yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **The graph time's words tell a build that does not clock it from a measured zero** (GRAPH-CONNECT-7 §7: the Link
+        /// check's Player said "worker ms 0.000" while the sum was never compiled in): not measured is said as such, a measured
+        /// sum is printed with its longest.
+        /// </summary>
+        [Test]
+        public void SpatialSplitGraph_DescribeGraphTime_SaysNotMeasured_ApartFromAMeasuredZero()
+        {
+            Assert.That(CutSpatialSplit.DescribeGraphTime(false, 0.0, 0.0), Is.EqualTo("worker ms not measured (observation off in this build)"));
+            Assert.That(CutSpatialSplit.DescribeGraphTime(false, 0.5, 0.25), Is.EqualTo("worker ms not measured (observation off in this build)"), "a number without a clock is not printed");
+            Assert.That(CutSpatialSplit.DescribeGraphTime(true, 0.0, 0.0), Is.EqualTo("worker ms 0.000 (longest 0.000)"));
+            Assert.That(CutSpatialSplit.DescribeGraphTime(true, 0.00125, 0.0005), Is.EqualTo("worker ms 1.250 (longest 0.500)"));
         }
 
         /// <summary>

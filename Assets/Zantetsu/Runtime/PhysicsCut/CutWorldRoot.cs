@@ -257,13 +257,15 @@ namespace Zantetsu.PhysicsCut
             }
 #endif
             // The spatial split's tallies, in every build (unit 10-B, 2026-10-18: on the device, where the split was
-            // seen not to work once, a Release Player wrote nothing of it at the end). Three lines, each short enough
-            // for a device's log; a reading only.
+            // seen not to work once, a Release Player wrote nothing of it at the end). Four lines, each short enough
+            // for a device's log; a reading only. The graph partition's line was added after the Link check of
+            // GRAPH-CONNECT-7 (2026-10-23), where only the readout carried it.
             if (SpatialSplit != null)
             {
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.Describe(false), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBent(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeGraph(), this);
             }
         }
 

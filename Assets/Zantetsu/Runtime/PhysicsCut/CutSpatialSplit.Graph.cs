@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -169,8 +172,31 @@ namespace Zantetsu.PhysicsCut
         public int GraphBodiesNotRun { get; private set; }
         public long GraphWorkMax { get; private set; }
         public long GraphNativeBytesMax { get; private set; }
+        /// <summary>The graph stage's time, summed over the engine runs, and the longest; meaningful only when <see cref="GraphTimeMeasured"/> (an observation of the Editor and the Development Player: a Release build does not clock it, and says so).</summary>
         public double GraphSeconds { get; private set; }
         public double MaxGraphSeconds { get; private set; }
+
+        /// <summary>Whether this build clocks the graph stage (the observation define, per file): false in a Release build, where the time stays 0 without having been measured.</summary>
+        public static bool GraphTimeMeasured
+        {
+            get
+            {
+#if ZANTETSU_OBSERVE
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
+
+        /// <summary>The time's words in <see cref="DescribeGraph"/>: a measured sum and longest, or "not measured" when the build does not observe (never a 0.000 that was not clocked).</summary>
+        internal static string DescribeGraphTime(bool measured, double seconds, double maxSeconds)
+        {
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            return measured
+                ? "worker ms " + (seconds * 1000.0).ToString("F3", inv) + " (longest " + (maxSeconds * 1000.0).ToString("F3", inv) + ")"
+                : "worker ms not measured (observation off in this build)";
+        }
         private readonly int[] _graphStops = new int[(int)SpatialSplitGraphStop.Count];
 
         /// <summary>How many attempts the graph stage ended short of a conclusion for this reason.</summary>
@@ -484,7 +510,7 @@ namespace Zantetsu.PhysicsCut
                 .Append(", most work ").Append(GraphWorkMax).Append(" units, most native bytes ").Append(GraphNativeBytesMax)
                 .Append("; limit reached now ").Append(LimitReachedNow).Append(" (").Append(LimitsReached).Append(" in all)")
                 .Append("; deferred now ").Append(DeferredNow).Append(" (waits made ").Append(DeferralsMade).Append(", wake frame ").Append(_deferredWake == long.MaxValue ? "-" : _deferredWake.ToString(inv)).Append(_deferredDue ? ", a retry due" : "").Append(')')
-                .Append("; worker ms ").Append((GraphSeconds * 1000.0).ToString("F3", inv)).Append(" (longest ").Append((MaxGraphSeconds * 1000.0).ToString("F3", inv)).Append(')');
+                .Append("; ").Append(DescribeGraphTime(GraphTimeMeasured, GraphSeconds, MaxGraphSeconds));
             return text.ToString();
         }
     }
