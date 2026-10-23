@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Mathematics;
 using UnityEngine;
@@ -105,6 +106,15 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
                 + ", triangles +" + g.positiveTriangles + " -" + g.negativeTriangles + "; " + g.reason;
         }
 
+        /// <summary>The engine's placement (bool arrays) hashed as the replay hashes its normalised sides (1 positive, 0 negative; the convexes then the triangles).</summary>
+        private static string EngineSidesHash(bool[] convexPositive, bool[] trianglePositive)
+        {
+            var bytes = new byte[convexPositive.Length + trianglePositive.Length];
+            for (int c = 0; c < convexPositive.Length; c++) bytes[c] = convexPositive[c] ? (byte)1 : (byte)0;
+            for (int k = 0; k < trianglePositive.Length; k++) bytes[convexPositive.Length + k] = trianglePositive[k] ? (byte)1 : (byte)0;
+            fixed (byte* b = bytes) return SpatialSplitReplay.SidesHash(b, bytes.Length);
+        }
+
         private static void ResetGraphTestHooks()
         {
             CutSpatialSplit.TestGraphFailAllocation = -1;
@@ -113,6 +123,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutSpatialSplit.TestRefuseIssue = false;
             CutSpatialSplit.TestGraphPrepareFailAllocation = -1;
             CutSpatialSplit.TestGraphShortSides = false;
+            CutSpatialSplit.TestGraphRefuseDistribution = false;
         }
 
         private IEnumerator CombsBelowTheWaist(CutWorldRoot root, Vector3 at, LogicalFragmentId[] lowerOut, IReadOnlyList<float3> anchors = null, float toothTiltDegrees = 0f)
@@ -817,6 +828,145 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             remaining2[0] = 0.0;
             split2.Settings = default;
             yield return EndWorld(second);
+        }
+
+        /// <summary>
+        /// **The replay of a captured session with the graph stage on the span input is the engine's product path** (GRAPH-CONNECT-6
+        /// §2): the combs captured (the graph off: the capture excludes it), every sample replayed with span + graph gives the verdict,
+        /// the span and referenced counts, the work and the sides (hashed in the engine's form) that the engine's own product path
+        /// (DecideAsProduct) gives the same saved sample; the graph's sharing checks pass; the compact input refuses the graph.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheReplayOfACapturedSession_WithTheGraphOnTheSpanInput_IsTheEnginesProductPath()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            CutSpatialSplitSettings settings = SplitOn();
+            settings.bentSearch = false;
+            split.Settings = settings;
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            var lowers = new LogicalFragmentId[1];
+            yield return CombsBelowTheWaist(root, new Vector3(0f, 0f, 0f), lowers);
+            remaining[0] = 1.0;
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.NotFound) == 1 && !split.HasAttempt, "the planes alone ran, the input captured");
+            remaining[0] = 0.0;
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            Assert.That(sink.ResultsWritten, Is.EqualTo(1));
+
+            var spanGraph = new SpatialSplitReplayOptions { spanInput = true, graph = true };
+            Assert.Throws<ArgumentException>(() => SpatialSplitReplay.RunSession(session, Path.Combine(folder, "compact-graph"), new SpatialSplitReplayOptions { graph = true }, out _, out _), "the graph needs the span input");
+            string summary = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph"), spanGraph, out bool allGood, out bool noSample);
+            TestContext.Out.WriteLine(summary);
+            Assert.That(noSample, Is.False);
+            Assert.That(allGood, Is.True, "every listed sample replayed, the graph's sharing checks passed");
+            StringAssert.Contains("graph stage: entered 1 (verdicts: Separable 1); led 1, distributed 1, classified 1, kernel Ok 1", summary);
+            StringAssert.Contains("bodies through Burst " + (Unity.Burst.BurstCompiler.IsEnabled ? "1, managed 0, not run 0" : "0, managed 1, not run 0"), summary);
+            StringAssert.Contains("Separable but incomplete 0", summary);
+            StringAssert.Contains("graph sharing checks failed 0", summary);
+
+            // the same sample through the engine's own product path: the same record
+            string file = Directory.GetFiles(session, "*.zss.gz").Single();
+            SpatialSplitSample sample = SpatialSplitSample.Read(file);
+            SpatialSplitReplayResult r = SpatialSplitReplay.Run(sample, spanGraph);
+            Assert.That(r.error, Is.Null, r.error);
+            Assert.That(r.graphEntered && r.graphLed, Is.True);
+            Assert.That(r.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Separable));
+            Assert.That(r.GraphComplete, Is.True, "shared out, anchors, classified, kernel Ok, checked");
+            Assert.That(r.graph.bodiesRan, Is.True);
+            Assert.That(r.GraphChecksPass, Is.True, "triangles " + r.graphTrianglesMissing + "/" + r.graphTrianglesExtra + "/" + r.graphTriangleWrongSide + "/" + r.graphTriangleOrderBroken + ", convexes " + r.graphConvexWrongSide + "/" + r.graphConvexNotSided);
+            SpatialSplitGraphLimits l = SpatialSplitGraphLimits.Default;
+            var engineSettings = new SpatialSplitGraph.GraphSettings
+            {
+                secondsLimit = 0.0, nearestSelection = true, flowDinic = true, pairsSweep = false, hashPrepare = false, requirePrepared = true,
+                maxTriangles = l.maxTriangles, maxConvexes = l.maxConvexes, maxVertexSpan = l.maxVertexSpan, maxNodes = l.maxNodes, maxCandidates = l.maxCandidates, maxGraphBytes = l.maxGraphBytes, workBudget = l.workBudget,
+            };
+            SpatialSplitGraph.GraphOutcome o = SpatialSplitGraph.DecideAsProduct(sample, engineSettings, true, out SpatialSplitGraph.NativeRun run);
+            Assert.That(o.verdict, Is.EqualTo(SpatialSplitGraph.GraphVerdict.Separable), o.reason);
+            Assert.That(r.graph.vertexSpan, Is.EqualTo(o.vertexSpan), "the span input reproduces the product's span");
+            Assert.That(r.graph.referencedVertices, Is.EqualTo(o.referencedVertices));
+            Assert.That(r.graph.workPrepare, Is.EqualTo(o.workPrepare), "work 3, the compaction included");
+            Assert.That(r.graph.workSearch, Is.EqualTo(o.workSearch));
+            Assert.That(r.graph.candidates, Is.EqualTo(o.candidatesA));
+            Assert.That(r.graph.nodes, Is.EqualTo(o.convexCount + o.meshComponents));
+            Assert.That(r.graph.positiveConvexes == o.positiveConvexes && r.graph.negativeConvexes == o.negativeConvexes && r.graph.positiveTriangles == o.positiveTriangles && r.graph.negativeTriangles == o.negativeTriangles, Is.True);
+            Assert.That(r.graph.burstRan, Is.EqualTo(run.burstRan));
+            Assert.That(r.graphSidesHash, Is.EqualTo(EngineSidesHash(o.convexPositive, o.trianglePositive)), "the sides, normalised to the engine's form, hash the same");
+            TestContext.Out.WriteLine("replay graph: " + SpatialSplitReplay.GraphJson(in r.graph, r.graphSidesHash, System.Globalization.CultureInfo.InvariantCulture));
+
+            // the span input without the graph: the planes' result as the live one (a captured session of one NotFound)
+            string summaryOff = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-off"), new SpatialSplitReplayOptions { spanInput = true }, out bool sameOff, out _);
+            TestContext.Out.WriteLine(summaryOff);
+            Assert.That(sameOff, Is.True, "the span input reproduces the live planes' result");
+            string summaryCompact = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "compact-off"), null, out bool sameCompact, out _);
+            Assert.That(sameCompact, Is.True, "the compact input (the existing contract) too");
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **A Separable whose sharing out refused is incomplete: counted apart, never a success** (GRAPH-CONNECT-7 review 1, item 2):
+        /// the same captured comb replayed with the graph on while the test refuses the distribution by the engine's sides -- the
+        /// engine's verdict stays Separable, the stages after it are not done, the line says complete false / incomplete true, the
+        /// summary counts it as "Separable but incomplete 1" and the session is not all good (not a sharing check failure either).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheReplayOfASeparable_WhoseSharingOutRefused_IsIncomplete_NotASuccess()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            CutSpatialSplitSettings settings = SplitOn();
+            settings.bentSearch = false;
+            split.Settings = settings;
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            var lowers = new LogicalFragmentId[1];
+            yield return CombsBelowTheWaist(root, new Vector3(0f, 0f, 0f), lowers);
+            remaining[0] = 1.0;
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.NotFound) == 1 && !split.HasAttempt, "the planes alone ran, the input captured");
+            remaining[0] = 0.0;
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            try
+            {
+                CutSpatialSplit.TestGraphRefuseDistribution = true;
+                var spanGraph = new SpatialSplitReplayOptions { spanInput = true, graph = true };
+                string summary = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-refused"), spanGraph, out bool allGood, out bool noSample);
+                TestContext.Out.WriteLine(summary);
+                Assert.That(noSample, Is.False);
+                Assert.That(allGood, Is.False, "an incomplete Separable is not a success");
+                StringAssert.Contains("graph stage: entered 1 (verdicts: Separable 1); led 1, distributed 0, classified 0, kernel Ok 0, Separable but incomplete 1", summary);
+                StringAssert.Contains("graph sharing checks failed 0", summary);
+                StringAssert.Contains("(the live comparison is not the criterion here): NO", summary);
+                string file = Directory.GetFiles(session, "*.zss.gz").Single();
+                SpatialSplitReplayResult r = SpatialSplitReplay.Run(SpatialSplitSample.Read(file), spanGraph);
+                Assert.That(r.error, Is.Null, r.error);
+                Assert.That(r.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Separable));
+                Assert.That(r.graphLed && !r.distributed, Is.True, "led, nothing shared out");
+                Assert.That(r.GraphComplete, Is.False);
+                Assert.That(r.GraphIncomplete, Is.True);
+                StringAssert.Contains("INCOMPLETE", r.checkNote);
+                string lines = File.ReadAllText(Path.Combine(folder, "span-graph-refused", "replay.jsonl"));
+                StringAssert.Contains("\"complete\":false,\"incomplete\":true", lines);
+                StringAssert.Contains("\"inputMode\":\"span\",\"graphOn\":true", lines);
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+            }
+            split.Settings = default;
+            yield return EndWorld(root);
         }
 
         /// <summary>

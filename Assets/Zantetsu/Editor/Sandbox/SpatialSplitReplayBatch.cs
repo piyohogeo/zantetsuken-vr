@@ -28,7 +28,14 @@ namespace Zantetsu.Editor.Sandbox
                     throw new ArgumentException("-splitReplaySession and -splitReplayOut take absolute folders");
                 }
 
-                string summary = SpatialSplitReplay.RunSession(session, output, out bool allSame, out bool noSample);
+                // the options (GRAPH-CONNECT-6 §2), read as the Player reads its own: a named argument without its value, an unknown
+                // value, a relative list or the graph without the span input is refused before anything runs (never "no list")
+                if (!SpatialSplitReplayOptions.TryRead(Environment.GetCommandLineArgs(), "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", out SpatialSplitReplayOptions options, out string refusal))
+                {
+                    throw new ArgumentException(refusal);
+                }
+
+                string summary = SpatialSplitReplay.RunSession(session, output, options, out bool allSame, out bool noSample);
                 Debug.Log("SPLIT REPLAY:\n" + summary);
                 code = allSame ? 0 : noSample ? 4 : 3;
             }

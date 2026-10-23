@@ -130,6 +130,8 @@ namespace Zantetsu.PhysicsCut
         internal sealed class NativeRun
         {
             public bool burstRequested, burstRan, burstEnabled;
+            /// <summary>Whether a numeric body ran at all, recorded right after each body call and before any growth allocation (false when the decision ended before the first body: the preparation contract, an invalid input, an allocation before it).</summary>
+            public bool bodiesRan;
             public double secondsConvert, secondsPrepare, secondsAllocate, secondsSearch, secondsFinish, secondsTotal;
             public long nativeBytes, candidateCapacity;
 
@@ -852,6 +854,10 @@ namespace Zantetsu.PhysicsCut
                 while (true)
                 {
                     if (burst) RunPrepare(ref prepare); else prepare.Execute();
+                    // the body ran: recorded right here, before any growth allocation, so a growth that fails returns the execution state
+                    // (ran; through Burst when the body left no managed marker) along with the work and the time below
+                    run.bodiesRan = true;
+                    run.burstRan = burst && stats[StatManagedMarker] == 0;
                     // the work spent and the time so far, recorded before any growth allocation: an allocation that fails returns them
                     r.workPrepare = stats[StatWorkPrepare];
                     r.work = r.workPrepare;
@@ -893,7 +899,6 @@ namespace Zantetsu.PhysicsCut
                 if (settings.pairsSweep) { run.sweepBytes = ((long)order.Length * 16) + ((long)keyGaps.Capacity * 16); run.keyGapsCapacity = keyGaps.Capacity; }
                 r.workPrepare = stats[StatWorkPrepare];
                 r.work = r.workPrepare;
-                run.burstRan = burst && stats[StatManagedMarker] == 0;
                 if (stats[StatError] != 0)
                 {
                     throw new ArgumentException(stats[StatError] == 1 ? "an index names a vertex which the sample does not hold" : "the preparation failed (" + stats[StatError] + ")");
@@ -981,6 +986,9 @@ namespace Zantetsu.PhysicsCut
                 run.nearestSelection = settings.nearestSelection;
                 run.flowDinic = settings.flowDinic;
                 if (burst) RunSearch(ref search); else search.Execute();
+                // the search body ran: recorded before the guard checks and the read-back, which may throw
+                run.bodiesRan = true;
+                run.burstRan = burst && stats[StatManagedMarker] == 0;
                 run.secondsSearch = Since(t3);
                 CheckGuard(nodeSide, mLen, 1, guard, "nodeSide"); CheckGuard(work, workLen, 4, guard, "work"); CheckGuard(work3, work3Len, 24, guard, "work3"); CheckGuard(workD, workDLen, 8, guard, "workD"); CheckGuard(workB, workBLen, 1, guard, "workB");
                 r.workSearch = stats[StatWorkSearch];
@@ -1016,7 +1024,6 @@ namespace Zantetsu.PhysicsCut
 
                 // ---- 4. The result read back.
                 long t4 = Stopwatch.GetTimestamp();
-                run.burstRan = burst && stats[StatManagedMarker] == 0;
                 r.definiteComponents = (int)stats[StatDefiniteComponents];
                 r.triedB = stats[StatTriedB];
                 r.refutedB = stats[StatRefutedB];

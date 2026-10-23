@@ -190,6 +190,18 @@ namespace Zantetsu.PhysicsCut
         internal float convexMostAcross;
         internal string checkNote;
 
+        // The graph stage (GRAPH-CONNECT-6): whether the attempt entered it, led by it, its record, the sides it gave in the
+        // engine's form hashed (Separable only), and the checks of its sharing out (combinatorial: no plane stands for it).
+        internal bool graphEntered, graphLed;
+        internal SpatialSplitGraphRecord graph;
+        internal string graphSidesHash = "";
+        internal int graphTrianglesMissing, graphTrianglesExtra, graphTriangleWrongSide, graphTriangleOrderBroken, graphConvexWrongSide, graphConvexNotSided;
+        internal bool GraphChecksPass => graphTrianglesMissing == 0 && graphTrianglesExtra == 0 && graphTriangleWrongSide == 0 && graphTriangleOrderBroken == 0 && graphConvexWrongSide == 0 && graphConvexNotSided == 0;
+
+        /// <summary>A Separable graph result is complete when the sharing out, the anchors, the classification and the kernel all succeeded and the sharing was checked; a Separable short of that is incomplete (counted apart, never a success).</summary>
+        internal bool GraphComplete => graphLed && distributed && anchorsDistributed && classified && kernelStatus == "Ok" && checkedSharing;
+        internal bool GraphIncomplete => graphEntered && graph.verdict == SpatialSplitGraphVerdict.Separable && !GraphComplete;
+
         internal bool ChecksPass => trianglesMissing == 0 && trianglesExtra == 0 && triangleMarginShort == 0 && triangleWrongSide == 0
             && convexWrongSide == 0 && convexMarginShort == 0;
     }
@@ -204,6 +216,73 @@ namespace Zantetsu.PhysicsCut
     /// and compared section by section with what the live attempt came to; then checked for triangles lost or doubled,
     /// a vertex short of the margin and a convex on the wrong side. Numbers only: nothing is cooked.
     /// </summary>
+    /// <summary>
+    /// How a session is replayed (GRAPH-CONNECT-6 §2): the input's shape -- compact (the saved referenced vertices renumbered 0..V-1:
+    /// the live reproduction's contract) or span (the vertices at their original ids in a view as long as the greatest id + 1, the
+    /// unreferenced slots NaN: the product's shape, with its compaction cost) -- whether the graph stage runs (span only), its
+    /// limits, and a list of the samples to replay (the fixed tuning list: the reference decider's lines; every listed sample must
+    /// be present once with its SHA-256, and nothing else is replayed).
+    /// </summary>
+    public sealed class SpatialSplitReplayOptions
+    {
+        public bool spanInput;
+        public bool graph;
+        public SpatialSplitGraphLimits graphLimits = SpatialSplitGraphLimits.Default;
+        public string listPath;
+
+        public static SpatialSplitReplayOptions Default => new SpatialSplitReplayOptions();
+
+        public string InputName => spanInput ? "span" : "compact";
+
+        /// <summary>
+        /// Reads the options from launch arguments named by the caller (the Player's and the Editor batch's names differ): the input
+        /// argument's value compact or span, the graph flag's presence, the list argument's absolute file. False with
+        /// <paramref name="refusal"/> when a value is missing or unknown, the list is not absolute, or the graph is asked for without the span input.
+        /// </summary>
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, out SpatialSplitReplayOptions options, out string refusal)
+        {
+            options = new SpatialSplitReplayOptions();
+            refusal = null;
+            arguments = arguments ?? Array.Empty<string>();
+            string ValueAt(int at) => at >= 0 && at + 1 < arguments.Length && !arguments[at + 1].StartsWith("-", StringComparison.Ordinal) ? arguments[at + 1] : null;
+            int inputAt = Array.FindIndex(arguments, a => string.Equals(a, inputArgument, StringComparison.OrdinalIgnoreCase));
+            if (inputAt >= 0)
+            {
+                string value = ValueAt(inputAt);
+                if (value == null) { refusal = inputArgument + " has no value"; return false; }
+                if (string.Equals(value, "span", StringComparison.OrdinalIgnoreCase)) options.spanInput = true;
+                else if (!string.Equals(value, "compact", StringComparison.OrdinalIgnoreCase)) { refusal = inputArgument + " takes compact or span, not '" + value + "'"; return false; }
+            }
+
+            options.graph = Array.FindIndex(arguments, a => string.Equals(a, graphArgument, StringComparison.OrdinalIgnoreCase)) >= 0;
+            if (options.graph && !options.spanInput) { refusal = graphArgument + " needs " + inputArgument + " span (the product's compaction cost is the span's)"; return false; }
+            int listAt = Array.FindIndex(arguments, a => string.Equals(a, listArgument, StringComparison.OrdinalIgnoreCase));
+            if (listAt >= 0)
+            {
+                string value = ValueAt(listAt);
+                if (value == null) { refusal = listArgument + " has no value"; return false; }
+                if (!Path.IsPathRooted(value)) { refusal = listArgument + " takes an absolute file"; return false; }
+                options.listPath = value;
+            }
+
+            return true;
+        }
+    }
+
+    [Serializable]
+    internal sealed class SpatialSplitReplayListLine
+    {
+        public string session;
+        public long world, attempt;
+        public string sha256;
+    }
+
+    [Serializable]
+    internal sealed class SpatialSplitSessionIdLine
+    {
+        public string sessionId;
+    }
+
     public static unsafe class SpatialSplitReplay
     {
         /// <summary>The kernel's numbers count as the same within this relative difference, where their bits differ.</summary>
@@ -217,8 +296,18 @@ namespace Zantetsu.PhysicsCut
             RunSession(sessionDirectory, outputDirectory, out allSame, out _);
 
         /// <summary>As above; <paramref name="noSample"/>: the folder holds no sample at all (its own reason, never "the same").</summary>
-        public static string RunSession(string sessionDirectory, string outputDirectory, out bool allSame, out bool noSample)
+        public static string RunSession(string sessionDirectory, string outputDirectory, out bool allSame, out bool noSample) =>
+            RunSession(sessionDirectory, outputDirectory, null, out allSame, out noSample);
+
+        /// <summary>As above, with the replay's options (null: compact input, no graph, every sample).</summary>
+        public static string RunSession(string sessionDirectory, string outputDirectory, SpatialSplitReplayOptions options, out bool allSame, out bool noSample)
         {
+            options = options ?? SpatialSplitReplayOptions.Default;
+            if (options.graph && !options.spanInput)
+            {
+                throw new ArgumentException("the graph stage replays on the span input only (the compact input has not the product's compaction cost)");
+            }
+
             if (Directory.Exists(outputDirectory) || File.Exists(outputDirectory))
             {
                 throw new IOException("the replay's output exists already: " + outputDirectory);
@@ -234,6 +323,45 @@ namespace Zantetsu.PhysicsCut
 
             // A committed sample the index does not name (its line was not written, or was cut short): found by the folder,
             // read whole and replayed; its hash cannot be checked against the index.
+            // The tuning list (GRAPH-CONNECT-6 §2): the samples to replay are those the list names for this session, each present
+            // once with the list's SHA-256; a listed sample missing, listed twice, or with another hash is the list check's failure,
+            // and the files the list does not name are left out (counted). Applied before any sample is read.
+            string sessionId = ReadSessionId(sessionDirectory);
+            int listEntries = 0, listMissing = 0, listDuplicates = 0, listHashDiffers = 0, listLeftOut = 0;
+            bool listOk = true;
+            var indexed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // the index's files, listed or not: never "found by the folder"
+            foreach (SpatialSplitSampleLine entry in samples) indexed.Add(entry.file);
+            if (options.listPath != null)
+            {
+                var wanted = new Dictionary<(long, long), string>();
+                foreach (string line in File.ReadAllLines(options.listPath))
+                {
+                    string text = line.Trim();
+                    if (text.Length == 0 || !text.StartsWith("{", StringComparison.Ordinal)) continue;
+                    SpatialSplitReplayListLine l;
+                    try { l = JsonUtility.FromJson<SpatialSplitReplayListLine>(text); }
+                    catch (ArgumentException) { continue; }
+                    if (l == null || !string.Equals(l.session, sessionId, StringComparison.Ordinal)) continue;
+                    listEntries++;
+                    if (wanted.ContainsKey((l.world, l.attempt))) { listDuplicates++; continue; }
+                    wanted[(l.world, l.attempt)] = l.sha256 ?? "";
+                }
+
+                var kept = new List<SpatialSplitSampleLine>();
+                var seen = new HashSet<(long, long)>();
+                foreach (SpatialSplitSampleLine entry in samples)
+                {
+                    if (!wanted.TryGetValue((entry.world, entry.attempt), out string sha)) { listLeftOut++; continue; }
+                    if (!seen.Add((entry.world, entry.attempt))) { listDuplicates++; continue; }
+                    if (sha.Length > 0 && !string.Equals(sha, entry.sha256, StringComparison.Ordinal)) { listHashDiffers++; continue; }
+                    kept.Add(entry);
+                }
+
+                listMissing = wanted.Count - seen.Count;
+                samples = kept;
+                listOk = listMissing == 0 && listDuplicates == 0 && listHashDiffers == 0 && listEntries > 0;
+            }
+
             int listed = samples.Count;
             var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (SpatialSplitSampleLine entry in samples) named.Add(entry.file);
@@ -241,10 +369,24 @@ namespace Zantetsu.PhysicsCut
             foreach (string path in Directory.GetFiles(sessionDirectory, "*.zss.gz"))
             {
                 string file = Path.GetFileName(path);
-                if (named.Contains(file) || !TryParseSampleName(file, out long w, out long a)) continue;
+                if (named.Contains(file) || indexed.Contains(file) || !TryParseSampleName(file, out long w, out long a)) continue;
+                if (options.listPath != null) { listLeftOut++; continue; }   // a file the list does not name is not replayed
                 samples.Add(new SpatialSplitSampleLine { file = file, world = w, attempt = a, sha256 = null });
                 unindexed++;
             }
+
+            // The graph stage's main-thread preparation (the product's contract), and a warm-up outside every timed sample.
+            bool graphPrepared = false;
+            if (options.graph) graphPrepared = SpatialSplitGraph.IsPrepared || SpatialSplitGraph.Prepare();
+            if (options.spanInput && samples.Count > 0)
+            {
+                try { Run(SpatialSplitSample.Read(Path.Combine(sessionDirectory, samples[0].file)), options); }
+                catch (Exception) { /* the warm-up's failure is the sample's own, met again below */ }
+            }
+
+            int graphEntered = 0, graphLedCount = 0, graphDistributed = 0, graphClassified = 0, graphKernelOk = 0, graphBurstRan = 0, graphManaged = 0, graphBodiesNotRun = 0, graphCheckFailures = 0, graphIncomplete = 0;
+            var graphVerdicts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var graphTimes = new List<double>();
 
             string[] partials = Directory.GetFiles(sessionDirectory, "*.partial");
             Directory.CreateDirectory(outputDirectory);
@@ -280,8 +422,21 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    SpatialSplitReplayResult replay = Run(sample);
+                    SpatialSplitReplayResult replay = Run(sample, options);
                     replayed++;
+                    if (replay.graphEntered)
+                    {
+                        graphEntered++;
+                        Count(graphVerdicts, replay.graph.verdict + (replay.graph.verdict == SpatialSplitGraphVerdict.Unfinished ? " (" + replay.graph.stop + ")" : ""));
+                        if (replay.graphLed) graphLedCount++;
+                        if (replay.graphLed && replay.distributed) graphDistributed++;
+                        if (replay.graphLed && replay.classified) graphClassified++;
+                        if (replay.graphLed && replay.kernelStatus == "Ok") graphKernelOk++;
+                        if (replay.graphLed && !replay.GraphChecksPass) graphCheckFailures++;
+                        if (replay.GraphIncomplete) graphIncomplete++;
+                        if (replay.graph.bodiesRan) { if (replay.graph.burstRan) graphBurstRan++; else graphManaged++; } else graphBodiesNotRun++;
+                        graphTimes.Add(replay.graph.seconds);
+                    }
                     if (replay.error != null)
                     {
                         errors++;
@@ -382,6 +537,18 @@ namespace Zantetsu.PhysicsCut
                         .Append(",\"convexMostAcross\":").Append(SpatialSplitCaptureSink.Json(replay.convexMostAcross.ToString("R", inv)))
                         .Append(",\"supportEpsilon\":").Append(SpatialSplitCaptureSink.Json(sample.supportEpsilon.ToString("R", inv)))
                         .Append(",\"checkNote\":").Append(SpatialSplitCaptureSink.Json(replay.checkNote ?? ""))
+                        .Append(",\"inputMode\":").Append(SpatialSplitCaptureSink.Json(options.InputName)).Append(",\"graphOn\":").Append(options.graph ? "true" : "false")
+                        .Append(",\"sessionId\":").Append(SpatialSplitCaptureSink.Json(sample.sessionId ?? "")).Append(",\"sha256\":").Append(SpatialSplitCaptureSink.Json(sample.sha256 ?? ""))
+                        .Append(",\"anchorCount\":").Append(sample.anchors != null ? sample.anchors.Length : 0).Append(",\"convexCount\":").Append(sample.convexes != null ? sample.convexes.Length : 0)
+                        .Append(",\"graphStages\":{\"entered\":").Append(replay.graphEntered ? "true" : "false").Append(",\"led\":").Append(replay.graphLed ? "true" : "false")
+                        .Append(",\"distributed\":").Append(replay.graphLed && replay.distributed ? "true" : "false").Append(",\"anchorsDistributed\":").Append(replay.graphLed && replay.anchorsDistributed ? "true" : "false")
+                        .Append(",\"classified\":").Append(replay.graphLed && replay.classified ? "true" : "false")
+                        .Append(",\"kernelOk\":").Append(replay.graphLed && replay.kernelStatus == "Ok" ? "true" : "false").Append(",\"checked\":").Append(replay.graphLed && replay.checkedSharing ? "true" : "false")
+                        .Append(",\"complete\":").Append(replay.GraphComplete ? "true" : "false").Append(",\"incomplete\":").Append(replay.GraphIncomplete ? "true" : "false").Append('}')
+                        .Append(",\"graph\":").Append(replay.graphEntered ? GraphJson(in replay.graph, replay.graphSidesHash, inv) : "null")
+                        .Append(",\"graphTrianglesMissing\":").Append(replay.graphTrianglesMissing).Append(",\"graphTrianglesExtra\":").Append(replay.graphTrianglesExtra)
+                        .Append(",\"graphTriangleWrongSide\":").Append(replay.graphTriangleWrongSide).Append(",\"graphTriangleOrderBroken\":").Append(replay.graphTriangleOrderBroken)
+                        .Append(",\"graphConvexWrongSide\":").Append(replay.graphConvexWrongSide).Append(",\"graphConvexNotSided\":").Append(replay.graphConvexNotSided)
                         .Append(",\"object\":").Append(SpatialSplitCaptureSink.Json(sample.objectName))
                         .Append(",\"code\":").Append(SpatialSplitCaptureSink.Json(sample.codeVersion));
                     if (replay.error == null)
@@ -420,6 +587,16 @@ namespace Zantetsu.PhysicsCut
                 .AppendLine("differing sections: " + Join(mismatchSections))
                 .AppendLine("checks failed " + checkFailures + " (triangles lost or doubled, a vertex short of the margin or on the wrong side, a convex on the wrong side)")
                 .AppendLine("replay outcomes: " + Join(outcomes))
+                .AppendLine("options: inputMode " + options.InputName + ", graph " + (options.graph ? "on (prepared " + (graphPrepared ? "yes" : "NO") + "; limits: triangles " + options.graphLimits.maxTriangles + ", convexes " + options.graphLimits.maxConvexes
+                        + ", span " + options.graphLimits.maxVertexSpan + ", nodes " + options.graphLimits.maxNodes + ", candidates " + options.graphLimits.maxCandidates + ", bytes " + options.graphLimits.maxGraphBytes + ", work " + options.graphLimits.workBudget + ")" : "off")
+                    + ", list " + (options.listPath ?? "none"))
+                .AppendLine(options.listPath == null ? "tuning list: none (every sample of the folder)"
+                    : "tuning list for session " + sessionId + ": entries " + listEntries + ", replayed " + listed + ", missing " + listMissing + ", duplicate " + listDuplicates + ", hash differs from the list " + listHashDiffers
+                        + ", files left out (not listed) " + listLeftOut + "; list check " + (listOk ? "passed" : "FAILED"))
+                .AppendLine(!options.graph ? "graph stage: off"
+                    : "graph stage: entered " + graphEntered + " (verdicts: " + Join(graphVerdicts) + "); led " + graphLedCount + ", distributed " + graphDistributed + ", classified " + graphClassified + ", kernel Ok " + graphKernelOk
+                        + ", Separable but incomplete " + graphIncomplete + "; bodies through Burst " + graphBurstRan + ", managed " + graphManaged + ", not run " + graphBodiesNotRun + "; graph sharing checks failed " + graphCheckFailures
+                        + (graphTimes.Count == 0 ? "" : "; graph stage time (this machine): median " + Ms(graphTimes, 0.5, c) + " ms, p95 " + Ms(graphTimes, 0.95, c) + " ms, p99 " + Ms(graphTimes, 0.99, c) + " ms, max " + Ms(graphTimes, 1.0, c) + " ms"))
                 .AppendLine(times.Count == 0 ? "replay search time: none"
                     : "replay search time (this machine, not the live one's): median " + (times[times.Count / 2] * 1000.0).ToString("F3", c) + " ms, p95 "
                         + (times[Math.Min(times.Count - 1, (int)(times.Count * 0.95))] * 1000.0).ToString("F3", c) + " ms, max " + (times[times.Count - 1] * 1000.0).ToString("F3", c) + " ms");
@@ -428,12 +605,61 @@ namespace Zantetsu.PhysicsCut
             // A session of no sample at all (nothing captured, an empty or wrong folder) is no evidence: never "the same".
             bool none = samples.Count == 0;
             noSample = none;
-            allSame = !none && same >= 1 && unreadable == 0 && hashDiffers == 0 && errors == 0 && differ == 0 && checkFailures == 0 && inputDiffers == 0
-                && notRecorded == 0 && same == samples.Count && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0;
-            if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
-            summary.AppendLine("every sample compared with its live result and the same, every check passed: " + (allSame ? "yes" : "NO"));
+            if (!options.graph)
+            {
+                allSame = !none && same >= 1 && unreadable == 0 && hashDiffers == 0 && errors == 0 && differ == 0 && checkFailures == 0 && inputDiffers == 0
+                    && notRecorded == 0 && same == samples.Count && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk;
+                if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
+                summary.AppendLine("every sample compared with its live result and the same, every check passed" + (options.listPath != null ? ", the list check passed" : "") + ": " + (allSame ? "yes" : "NO"));
+            }
+            else
+            {
+                // With the graph stage on, the live result is not what the replay must equal (the live search had no graph stage): the
+                // outcome is what the list, the replay and the graph's own checks say; the comparison with other replays is offline.
+                allSame = !none && replayed == samples.Count && unreadable == 0 && hashDiffers == 0 && errors == 0 && inputDiffers == 0 && graphCheckFailures == 0 && graphIncomplete == 0
+                    && checkFailures == 0 && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk && graphPrepared;
+                if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
+                summary.AppendLine("graph on: every listed sample replayed without error, the list check passed, every Separable complete (shared out, anchors, classified, kernel Ok, checked), every graph and existing sharing check passed (the live comparison is not the criterion here): " + (allSame ? "yes" : "NO"));
+            }
             File.WriteAllText(Path.Combine(outputDirectory, "summary.txt"), summary.ToString(), new UTF8Encoding(false));
             return summary.ToString();
+        }
+
+        private static string ReadSessionId(string sessionDirectory)
+        {
+            string path = Path.Combine(sessionDirectory, "session.json");
+            if (!File.Exists(path)) return "";
+            try { return JsonUtility.FromJson<SpatialSplitSessionIdLine>(File.ReadAllText(path))?.sessionId ?? ""; }
+            catch (ArgumentException) { return ""; }
+        }
+
+        private static string Ms(List<double> values, double quantile, CultureInfo c)
+        {
+            if (values.Count == 0) return "-";
+            var copy = new List<double>(values);
+            copy.Sort();
+            int at = quantile >= 1.0 ? copy.Count - 1 : Math.Min(copy.Count - 1, (int)(copy.Count * quantile));
+            return (copy[at] * 1000.0).ToString("F3", c);
+        }
+
+        /// <summary>The graph record as JSON (the time is for the record; the comparison leaves it out).</summary>
+        internal static string GraphJson(in SpatialSplitGraphRecord g, string sidesHash, CultureInfo inv)
+        {
+            return "{\"verdict\":" + SpatialSplitCaptureSink.Json(g.verdict.ToString()) + ",\"stop\":" + SpatialSplitCaptureSink.Json(g.stop.ToString()) + ",\"unfinished\":" + (g.unfinished ? "true" : "false")
+                + ",\"nodes\":" + g.nodes + ",\"meshComponents\":" + g.meshComponents + ",\"candidates\":" + g.candidates + ",\"cutAttempts\":" + g.cutAttempts + ",\"gjkLimitHit\":" + g.gjkLimitHit
+                + ",\"work\":" + g.work + ",\"workPrepare\":" + g.workPrepare + ",\"workSearch\":" + g.workSearch + ",\"nativeBytes\":" + g.nativeBytes + ",\"listGrowths\":" + g.listGrowths
+                + ",\"vertexSpan\":" + g.vertexSpan + ",\"referencedVertices\":" + g.referencedVertices
+                + ",\"positiveConvexes\":" + g.positiveConvexes + ",\"negativeConvexes\":" + g.negativeConvexes + ",\"positiveTriangles\":" + g.positiveTriangles + ",\"negativeTriangles\":" + g.negativeTriangles
+                + ",\"sidesHash\":" + SpatialSplitCaptureSink.Json(sidesHash ?? "") + ",\"bodiesRan\":" + (g.bodiesRan ? "true" : "false") + ",\"burstRan\":" + (g.burstRan ? "true" : "false")
+                + ",\"seconds\":" + g.seconds.ToString("R", inv) + ",\"reason\":" + SpatialSplitCaptureSink.Json(g.reason ?? "") + "}";
+        }
+
+        /// <summary>FNV-1a 64 of the sides in the engine's form (1 positive, 0 negative; the convexes then the triangles), as the batch hashes its own.</summary>
+        internal static string SidesHash(byte* sides, int count)
+        {
+            ulong h = 14695981039346656037UL;
+            for (int i = 0; i < count; i++) { h ^= sides[i]; h *= 1099511628211UL; }
+            return h.ToString("x16");
         }
 
         // The lines of a .jsonl file that read whole; those that do not are counted (a line cut short by an ending process).
@@ -504,9 +730,13 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
-        /// <summary>Replays one sample (Main thread: the shape's mesh is made here).</summary>
-        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample)
+        /// <summary>Replays one sample (Main thread: the shape's mesh is made here), the compact input and no graph stage.</summary>
+        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample) => Run(sample, SpatialSplitReplayOptions.Default);
+
+        /// <summary>Replays one sample with the options (Main thread: the shape's mesh is made here).</summary>
+        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample, SpatialSplitReplayOptions options)
         {
+            options = options ?? SpatialSplitReplayOptions.Default;
             var result = new SpatialSplitReplayResult { world = sample.world, attempt = sample.attempt };
             int vertexBytes = UnsafeUtility.SizeOf<VpRenderVertex>();
             if (sample.vertexStructBytes != vertexBytes)
@@ -519,7 +749,20 @@ namespace Zantetsu.PhysicsCut
             int n = sample.indices.Length;
             int s = sample.submeshOffsets.Length;
             int c = sample.convexes.Length;
-            var vertices = new NativeArray<VpRenderVertex>(Math.Max(1, named), Allocator.Persistent);
+            // The span input (GRAPH-CONNECT-6 §2, the product's shape): a view as long as the greatest id + 1, the referenced vertices
+            // at their original ids, every other slot's position NaN, the indices as saved. The compact input (the live reproduction):
+            // the referenced vertices renumbered 0..V-1 and the indices mapped.
+            long viewLength = named;
+            if (options.spanInput)
+            {
+                uint greatest = 0;
+                foreach (uint id in sample.vertexIds) greatest = Math.Max(greatest, id);
+                foreach (uint id in sample.indices) greatest = Math.Max(greatest, id);
+                viewLength = (long)greatest + 1;
+                if (viewLength > int.MaxValue / Math.Max(1, vertexBytes)) { result.error = "the span view would be too long: " + viewLength; return result; }
+            }
+
+            var vertices = new NativeArray<VpRenderVertex>((int)Math.Max(1, viewLength), Allocator.Persistent, options.spanInput ? NativeArrayOptions.ClearMemory : NativeArrayOptions.UninitializedMemory);
             var indices = new NativeArray<uint>(Math.Max(1, n), Allocator.Persistent);
             PhysicsOwnerShape shape = null;
             Mesh mesh = null;
@@ -527,26 +770,41 @@ namespace Zantetsu.PhysicsCut
             byte* canonical = null;
             try
             {
-                fixed (byte* from = sample.vertexBytes)
+                if (options.spanInput)
                 {
-                    UnsafeUtility.MemCpy(vertices.GetUnsafePtr(), from, (long)named * vertexBytes);
-                }
-
-                // The storage's ids as the replay's own, from 0 in the same order; an index the storage's view did not
-                // reach stays past the vertices, so that it is refused as it was.
-                uint view = (uint)Math.Max(0, sample.vertexViewLength);
-                for (int i = 0; i < n; i++)
-                {
-                    uint v = sample.indices[i];
-                    if (v >= view)
+                    byte* raw = (byte*)vertices.GetUnsafePtr();
+                    int at0 = UnsafeUtility.GetFieldOffset(typeof(VpRenderVertex).GetField(nameof(VpRenderVertex.position)));
+                    for (long k = 0; k < viewLength; k++) *(float3*)(raw + (k * vertexBytes) + at0) = new float3(float.NaN);
+                    fixed (byte* from = sample.vertexBytes)
                     {
-                        indices[i] = (uint)named;
-                        continue;
+                        for (int i = 0; i < named; i++) UnsafeUtility.MemCpy(raw + ((long)sample.vertexIds[i] * vertexBytes), from + ((long)i * vertexBytes), vertexBytes);
                     }
 
-                    int at = Array.BinarySearch(sample.vertexIds, v);
-                    if (at < 0) throw new InvalidDataException("index " + i + " names vertex " + v + ", which the sample did not keep");
-                    indices[i] = (uint)at;
+                    for (int i = 0; i < n; i++) indices[i] = sample.indices[i];
+                }
+                else
+                {
+                    fixed (byte* from = sample.vertexBytes)
+                    {
+                        UnsafeUtility.MemCpy(vertices.GetUnsafePtr(), from, (long)named * vertexBytes);
+                    }
+
+                    // The storage's ids as the replay's own, from 0 in the same order; an index the storage's view did not
+                    // reach stays past the vertices, so that it is refused as it was.
+                    uint view = (uint)Math.Max(0, sample.vertexViewLength);
+                    for (int i = 0; i < n; i++)
+                    {
+                        uint v = sample.indices[i];
+                        if (v >= view)
+                        {
+                            indices[i] = (uint)named;
+                            continue;
+                        }
+
+                        int at = Array.BinarySearch(sample.vertexIds, v);
+                        if (at < 0) throw new InvalidDataException("index " + i + " names vertex " + v + ", which the sample did not keep");
+                        indices[i] = (uint)at;
+                    }
                 }
 
                 try
@@ -584,7 +842,7 @@ namespace Zantetsu.PhysicsCut
                     issuedFrame = sample.issuedFrame,
                     anchors = sample.anchors != null ? (float3[])sample.anchors.Clone() : null,
                     vertices = (VpRenderVertex*)vertices.GetUnsafePtr(),
-                    vertexViewLength = named,
+                    vertexViewLength = (int)viewLength,
                     indices = (uint*)indices.GetUnsafePtr(),
                 };
                 if (attempt.maxConvexVertices != sample.maxConvexVertices && result.inputCheck == "same")
@@ -607,18 +865,50 @@ namespace Zantetsu.PhysicsCut
 
                 attempt.classificationBlock = PhysicsCutBlocks.Take<byte>(PhysicsCutClassification.RequiredBlockBytes(shape));
                 attempt.arena = new PhysicsCutArena(default, c);
+                if (options.graph && (sample.anchors == null || sample.anchors.Length == 0) && c >= 2)
+                {
+                    // The graph stage as the product issues it (GRAPH-CONNECT-4 §3-2, §3-4): an owner without anchors and with two convexes
+                    // or more; the sides' bytes allocated here as the main thread does.
+                    attempt.graphSearch = true;
+                    attempt.graphLimits = options.graphLimits;
+                    attempt.testGraphRefuseDistribution = CutSpatialSplit.TestGraphRefuseDistribution;
+                    attempt.graphSides = PhysicsCutBlocks.Take<byte>(c + (n / 3));
+                }
 
                 long begin = Stopwatch.GetTimestamp();
                 attempt.Begin();
                 result.seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+                result.graphEntered = attempt.graph.Entered;
+                result.graphLed = attempt.graphLed;
+                result.graph = attempt.graph;
+                if (attempt.graphLed && attempt.graphSides.IsCreated)
+                {
+                    // The sides in the engine's form: BeginGraph recoded the convexes' bytes to ConvexSide (Positive 0, Negative 1);
+                    // the triangles' bytes are the engine's (1 positive). Normalised so that the batch's placement hashes the same.
+                    byte* sides = (byte*)attempt.graphSides.GetUnsafePtr();
+                    int count = c + (n / 3);
+                    var normal = new NativeArray<byte>(Math.Max(1, count), Allocator.Temp);
+                    byte* np = (byte*)normal.GetUnsafePtr();
+                    for (int i = 0; i < c; i++) np[i] = sides[i] == (byte)ConvexSide.Positive ? (byte)1 : (byte)0;
+                    for (int i = c; i < count; i++) np[i] = sides[i] != 0 ? (byte)1 : (byte)0;
+                    result.graphSidesHash = SidesHash(np, count);
+                    normal.Dispose();
+                }
 
                 long capacity = SpatialSplitCanonical.MaxBytes(attempt);
                 canonical = (byte*)UnsafeUtility.Malloc(capacity, 16, Allocator.Persistent);
                 var w = new SpatialSplitRawWriter(canonical, capacity);
                 var ends = new long[SpatialSplitCanonical.SectionCount];
-                fixed (uint* ids = sample.vertexIds)
+                if (options.spanInput)
                 {
-                    SpatialSplitCanonical.Write(attempt, ids, named, ref w, ends);
+                    SpatialSplitCanonical.Write(attempt, null, 0, ref w, ends);   // the indices are the original ids already
+                }
+                else
+                {
+                    fixed (uint* ids = sample.vertexIds)
+                    {
+                        SpatialSplitCanonical.Write(attempt, ids, named, ref w, ends);
+                    }
                 }
 
                 result.sections = SpatialSplitCanonical.Hashes(canonical, ends, new byte[1 << 16]);
@@ -637,9 +927,9 @@ namespace Zantetsu.PhysicsCut
                 result.anchorsDistributed = attempt.anchorsDistributed;
                 result.cut = attempt.cut;
                 result.kernelStatus = attempt.classified ? attempt.kernel.status.ToString() : "";
-                result.positiveTriangles = search.positiveTriangles;
-                result.negativeTriangles = search.negativeTriangles;
-                Check(attempt, result);
+                result.positiveTriangles = attempt.graphLed ? attempt.graph.positiveTriangles : search.positiveTriangles;
+                result.negativeTriangles = attempt.graphLed ? attempt.graph.negativeTriangles : search.negativeTriangles;
+                if (attempt.graphLed) CheckGraph(attempt, result); else Check(attempt, result);
             }
             catch (Exception e)
             {
@@ -1022,6 +1312,75 @@ namespace Zantetsu.PhysicsCut
         }
 
         private static bool Same(uint* a, uint* b) => a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+
+        // The graph placement's sharing out (GRAPH-CONNECT-6 §2 P1-3): no plane or surface stands for it, so the checks are the
+        // combinatorial ones -- every input triangle once, on the side the engine gave its component, in its submesh and order;
+        // every convex classified on the side the engine gave it -- and nothing geometric; the placement's geometry is judged
+        // offline against the exact-checked placements (or by the reference decider's VerifyPlacement).
+        internal static void CheckGraph(CutSpatialSplit.Attempt a, SpatialSplitReplayResult result)
+        {
+            if (!a.graphLed || !a.graphSides.IsCreated)
+            {
+                result.checkNote = "graph: not led by the graph stage";
+                return;
+            }
+
+            if (!a.distributed)
+            {
+                result.checkNote = "graph: INCOMPLETE -- nothing shared out (the distribution by the given sides refused)";
+                return;
+            }
+
+            result.checkedSharing = true;
+            byte* sides = (byte*)a.graphSides.GetUnsafePtr();
+            int s = a.submeshCount;
+            int positiveTotal = a.distribution.positiveIndexCount;
+            for (int sub = 0; sub < s; sub++)
+            {
+                int p = a.outSubmeshOffsets[sub];
+                int pEnd = p + a.outSubmeshCounts[sub];
+                int q = positiveTotal + a.outSubmeshOffsets[s + sub];
+                int qEnd = q + a.outSubmeshCounts[s + sub];
+                int end = a.submeshOffsets[sub] + a.submeshCounts[sub];
+                for (int i = a.submeshOffsets[sub]; i + 2 < end; i += 3)
+                {
+                    bool positive;
+                    if (p < pEnd && Same(a.output + p, a.indices + i)) { positive = true; p += 3; }
+                    else if (q < qEnd && Same(a.output + q, a.indices + i)) { positive = false; q += 3; }
+                    else
+                    {
+                        // not next on either side: lost, or out of its order (told apart by a search of the whole side)
+                        bool anywhere = false;
+                        for (int k = a.outSubmeshOffsets[sub]; k < pEnd && !anywhere; k += 3) anywhere = Same(a.output + k, a.indices + i);
+                        for (int k = positiveTotal + a.outSubmeshOffsets[s + sub]; k < qEnd && !anywhere; k += 3) anywhere = Same(a.output + k, a.indices + i);
+                        if (anywhere) result.graphTriangleOrderBroken++; else result.graphTrianglesMissing++;
+                        continue;
+                    }
+
+                    bool given = sides[a.convexCount + (i / 3)] != 0;
+                    if (given != positive) result.graphTriangleWrongSide++;
+                }
+
+                result.graphTrianglesExtra += ((pEnd - p) + (qEnd - q)) / 3;
+            }
+
+            PhysicsCutClassification classification = a.classification;
+            if (classification == null || classification.Sides == null)
+            {
+                result.checkNote = "graph: INCOMPLETE -- triangles checked; no classification (the anchors or the classification refused)";
+                return;
+            }
+
+            for (int cv = 0; cv < a.convexCount; cv++)
+            {
+                ConvexSide side = classification.Sides[cv];
+                if (side != ConvexSide.Positive && side != ConvexSide.Negative) { result.graphConvexNotSided++; continue; }
+                // the sides' bytes hold ConvexSide for the convexes after BeginGraph
+                if ((byte)side != sides[cv]) result.graphConvexWrongSide++;
+            }
+
+            result.checkNote = "graph: every triangle once on the side the engine gave its component, in its submesh and order; every convex on the side the engine gave it; no plane or surface stands for the placement (its geometry is judged offline)";
+        }
     }
 }
 #endif

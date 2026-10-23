@@ -22,6 +22,15 @@ namespace Zantetsu.Sandbox
         public const string Argument = "-zantetsuSplitReplay";
         public const string OutArgument = "-zantetsuSplitReplayOut";
 
+        /// <summary>The replay's options (GRAPH-CONNECT-6 §2): the input's shape (compact, the default, or span), the graph stage (span only), the tuning list (an absolute file).</summary>
+        public const string InputArgument = "-zantetsuSplitReplayInput";
+        public const string GraphArgument = "-zantetsuSplitReplayGraph";
+        public const string ListArgument = "-zantetsuSplitReplayList";
+
+        /// <summary>Reads the options (<see cref="SpatialSplitReplayOptions.TryRead"/> with this entry's argument names).</summary>
+        internal static bool TryReadOptions(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
+            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, out options, out refusal);
+
         /// <summary>
         /// Whether the launch asks for a replay at all (either argument named), and -- when it does -- its two folders,
         /// or why the request cannot be run (a value missing, another switch in its place, a folder not absolute).
@@ -67,11 +76,15 @@ namespace Zantetsu.Sandbox
             {
                 Debug.LogError("SPLIT REPLAY (Player) refused: " + refusal + "; the Player ends without starting the game");
             }
+            else if (!TryReadOptions(Environment.GetCommandLineArgs(), out SpatialSplitReplayOptions options, out string optionsRefusal))
+            {
+                Debug.LogError("SPLIT REPLAY (Player) refused: " + optionsRefusal + "; the Player ends without starting the game");
+            }
             else
             {
                 try
                 {
-                    string summary = SpatialSplitReplay.RunSession(session, output, out bool allSame, out bool noSample);
+                    string summary = SpatialSplitReplay.RunSession(session, output, options, out bool allSame, out bool noSample);
                     Debug.Log("SPLIT REPLAY (Player):\n" + summary);
                     code = allSame ? 0 : noSample ? 4 : 3;
                 }

@@ -128,6 +128,10 @@ namespace Zantetsu.PhysicsCut
         public int positiveConvexes, negativeConvexes, positiveTriangles, negativeTriangles;
         public double seconds;
         public string reason;
+        /// <summary>Whether the engine's numeric bodies ran at all (false: the decision ended before them -- a cap, an allocation, the preparation contract, an invalid input).</summary>
+        public bool bodiesRan;
+        /// <summary>Whether the bodies ran through Burst (the direct call's own mark; false with bodiesRan: the managed fallback). Meaningful only with bodiesRan.</summary>
+        public bool burstRan;
 
         public bool Entered => verdict != SpatialSplitGraphVerdict.None;
     }
@@ -158,6 +162,11 @@ namespace Zantetsu.PhysicsCut
         public int GraphInvalid { get; private set; }
         public int PublishedGraph { get; private set; }
         public long GraphGjkLimitHits { get; private set; }
+
+        /// <summary>Of the attempts that entered the graph stage: how many ran the engine's bodies through Burst, as managed code, or not at all (ended before them).</summary>
+        public int GraphBurstRan { get; private set; }
+        public int GraphManagedRan { get; private set; }
+        public int GraphBodiesNotRun { get; private set; }
         public long GraphWorkMax { get; private set; }
         public long GraphNativeBytesMax { get; private set; }
         public double GraphSeconds { get; private set; }
@@ -277,6 +286,9 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Tests: the sides buffer handed to the engine is declared too short while set: an invalid input, as a malformed one.</summary>
         internal static bool TestGraphShortSides;
+
+        /// <summary>Tests: the sharing out by the engine's sides is refused while set (as a malformed sides buffer would be): a Separable left incomplete.</summary>
+        internal static bool TestGraphRefuseDistribution;
 
         // ---- a fixed limit reached (GRAPH-CONNECT-5 reviews 1 and 2) ---------------------------------------------------------
         // The graph stage ended by a limit the same input meets at the same place under the same search -- the cut-attempt or
@@ -427,6 +439,8 @@ namespace Zantetsu.PhysicsCut
             }
 
             GraphGjkLimitHits += g.gjkLimitHit;
+            // the bodies' execution, as the engine says it (not inferred from the work: a compaction scan spends work before the bodies)
+            if (!g.bodiesRan) GraphBodiesNotRun++; else if (g.burstRan) GraphBurstRan++; else GraphManagedRan++;
             GraphWorkMax = Math.Max(GraphWorkMax, g.work);
             GraphNativeBytesMax = Math.Max(GraphNativeBytesMax, g.nativeBytes);
 #if ZANTETSU_OBSERVE
@@ -465,6 +479,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             text.Append(", invalid ").Append(GraphInvalid)
+                .Append("; bodies through Burst ").Append(GraphBurstRan).Append(", managed ").Append(GraphManagedRan).Append(", not run ").Append(GraphBodiesNotRun)
                 .Append("; GJK limit hits ").Append(GraphGjkLimitHits)
                 .Append(", most work ").Append(GraphWorkMax).Append(" units, most native bytes ").Append(GraphNativeBytesMax)
                 .Append("; limit reached now ").Append(LimitReachedNow).Append(" (").Append(LimitsReached).Append(" in all)")

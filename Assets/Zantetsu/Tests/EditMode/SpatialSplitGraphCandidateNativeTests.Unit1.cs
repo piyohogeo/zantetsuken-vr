@@ -513,6 +513,10 @@ namespace Zantetsu.Core.Tests
                 {
                     // the failure landed on a growth's allocation: the preparation had run that many times, and its work and time are returned
                     growthFailures++;
+                    // ... and so is the execution state, recorded right after the body ran and before the growth: ran, through Burst in the
+                    // Burst runs (when Burst is enabled) and as managed code in the others (GRAPH-CONNECT-7 review 2)
+                    Assert.That(rx.bodiesRan, Is.True, "allocation " + (failAt + 1) + ": the body had run before the failed growth");
+                    Assert.That(rx.burstRan, Is.EqualTo(failAt % 2 == 0 && BurstCompiler.IsEnabled), "allocation " + (failAt + 1) + ": the mode the body ran in");
                     Assert.That(x.workPrepare, Is.GreaterThan(0), "allocation " + (failAt + 1) + ": the work of the runs before the failed growth");
                     Assert.That(x.work, Is.EqualTo(x.workPrepare));
                     Assert.That(x.work, Is.LessThan(free.work));
@@ -523,6 +527,8 @@ namespace Zantetsu.Core.Tests
                 else
                 {
                     Assert.That(x.work, Is.Zero, "allocation " + (failAt + 1) + ": before the first run, no work");
+                    Assert.That(rx.bodiesRan, Is.False, "allocation " + (failAt + 1) + ": no body had run");
+                    Assert.That(rx.burstRan, Is.False);
                 }
             }
 
@@ -540,6 +546,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(z.unfinished && z.stop == "capacity", Is.True, z.reason);
             Assert.That(rz.candidateCapacity, Is.EqualTo(rf.candidateCapacityInitial));
             Assert.That(rz.listGrowths, Is.Zero);
+            Assert.That(rz.bodiesRan && rz.burstRan == BurstCompiler.IsEnabled, Is.True, "the body ran up to the cap; its mode is recorded");
             // the body stopped at the same point for the cap as for the first growth: the same work, now returned by both endings
             Assert.That(z.workPrepare, Is.EqualTo(workAtFirstGrowth), "the capacity stop and the failed first growth report the same work");
         }

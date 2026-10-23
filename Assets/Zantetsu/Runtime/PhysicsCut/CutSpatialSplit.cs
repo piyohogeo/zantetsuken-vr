@@ -1575,6 +1575,7 @@ namespace Zantetsu.PhysicsCut
                         attempt.testGraphFailAllocation = TestGraphFailAllocation;
                         attempt.testGraphGjkMaxIterations = TestGraphGjkMaxIterations;
                         attempt.testGraphShortSides = TestGraphShortSides;
+                        attempt.testGraphRefuseDistribution = TestGraphRefuseDistribution;
                         try
                         {
                             if (TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");
@@ -2820,6 +2821,7 @@ namespace Zantetsu.PhysicsCut
             internal int deferralCount;             // how many waits this fragment's unfinished attempts had before this one
             internal int testGraphFailAllocation = -1, testGraphGjkMaxIterations;
             internal bool testGraphShortSides;      // tests: the sides buffer handed to the engine too short (an invalid input)
+            internal bool testGraphRefuseDistribution; // tests: the sharing out by the engine's sides refused (a Separable left incomplete)
 
             // The convex-cut branch. Set by the worker's numbers: whether a convex is cut. Then the main thread's:
             // the meshes it made of the produced convexes (positive then negative, a cut convex after another), their
@@ -3041,7 +3043,7 @@ namespace Zantetsu.PhysicsCut
                     gjkLimitHit = (int)Math.Min(o.gjkLimitHit, int.MaxValue), listGrowths = run.listGrowths, vertexSpan = o.vertexSpan, referencedVertices = o.referencedVertices,
                     work = o.work, workPrepare = o.workPrepare, workSearch = o.workSearch, nativeBytes = run.nativeBytes,
                     positiveConvexes = o.positiveConvexes, negativeConvexes = o.negativeConvexes, positiveTriangles = o.positiveTriangles, negativeTriangles = o.negativeTriangles,
-                    reason = o.reason,
+                    reason = o.reason, bodiesRan = run.bodiesRan, burstRan = run.burstRan,
                 };
                 switch (o.verdict)
                 {
@@ -3084,6 +3086,12 @@ namespace Zantetsu.PhysicsCut
             private void BeginGraph()
             {
                 graphLed = true;
+                if (testGraphRefuseDistribution)
+                {
+                    // tests: the sharing out refused as a malformed sides buffer would refuse it -- the Separable stays incomplete
+                    distributed = false;
+                    return;
+                }
                 byte* sides = (byte*)graphSides.GetUnsafePtr();
                 distributed = CutSpatialSplitSearch.DistributeBySides(
                     vertices, vertexViewLength, indices, indexCount, submeshOffsets, submeshCounts, submeshCount, sides + convexCount,
