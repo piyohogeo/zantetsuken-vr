@@ -6,6 +6,7 @@
         "Zantetsu.PhysicsCut",
         "Zantetsu.Rendering",
         "Zantetsu.Quest.Editor",
+        "Zantetsu.Sandbox.Editor",
         "Unity.RenderPipelines.Universal.Runtime",
         "Unity.RenderPipelines.Core.Runtime",
         "Unity.XR.Management",

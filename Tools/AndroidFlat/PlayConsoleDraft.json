@@ -1,0 +1,127 @@
+{
+  "status": "superseded by GitHub APK distribution; retained as a historical Play preparation draft",
+  "applicationId": "com.zantetsuken.androidflat",
+  "identity": {
+    "developerName": null,
+    "publicSupportEmail": null,
+    "privacyPolicyUrl": null
+  },
+  "listing": {
+    "defaultLanguage": "ja-JP",
+    "title": "WORLD CUTTER -斬鉄剣-",
+    "shortDescription": "フリックで街を斬る、自由な切断アクション。",
+    "fullDescription": "画面をフリックして、街のオブジェクトを切断するアクションゲームです。\n\n左下の仮想ジョイスティックで前後移動と旋回、画面上のフリックで切断します。縦画面・横画面の両方に対応し、ジョイスティックの配置を画面方向ごとに調整できます。設定からFSRによるアップスケールも選べます。\n\n現在はクローズドテスト版です。端末ごとの動作、操作性、画質、安定性を確認しています。プレイ統計の送信は任意で、同意しなくてもプレイできます。",
+    "releaseNotes": "Android版クローズドテストの初期候補です。縦横画面、フリック切断、仮想ジョイスティック、描画設定、任意のプレイ統計に対応しました。",
+    "iconSource": "Assets/Zantetsu/Branding/world_cutter_icon_512.png",
+    "featureGraphic": null,
+    "phoneScreenshots": [],
+    "feedbackUrl": null
+  },
+  "privacyPolicyDraft": {
+    "publishable": false,
+    "title": "WORLD CUTTER -斬鉄剣- Android版 プライバシーポリシー（草案）",
+    "operator": null,
+    "contact": null,
+    "body": [
+      "本アプリは、性能と安定性の改善を目的として、利用者がゲーム内で同意した場合に限り、プレイ統計を収集・送信します。同意しなくてもゲームを利用できます。",
+      "送信する情報は、アプリのバージョン、OS・端末モデル・CPU・GPU・グラフィックスAPIとドライバーの情報、画面の表示解像度と描画・操作設定、シーン、プレイ時間とフレーム時間の集計、切断・破片・内部エラーの件数、バッファ使用量の集計、ランダムに生成したインストールIDとセッションID、テスター区分です。個々のフレームや操作の履歴は送信しません。",
+      "氏名、メールアドレス、ユーザーが付けた端末名、ハードウェア固有ID、タッチ位置、移動経路、画像は統計に含めません。インストールIDは同意時に生成する乱数であり、ハードウェアIDではありません。",
+      "同意後の統計は、アプリがバックグラウンドへ移った時やフォーカスを失った時にHTTPSで開発者のCloudflare Workerへ送られ、Cloudflare R2に保存されます。クラッシュによる終了では送信を保証しません。Cloudflareは通信・保存基盤として利用します。",
+      "保存した統計は保存から90日経過後に自動削除の対象になります。実際の削除まで追加の時間がかかる場合があります。",
+      "Menu > Statisticsからいつでも同意を撤回できます。撤回後は新たな収集・送信を停止し、端末内の統計用インストールIDを削除します。送信済みの記録は撤回だけでは直ちに削除されず、保存期間に従って削除されます。再同意した場合は新しいインストールIDを作ります。",
+      "通信元IPアドレスは通信基盤で処理されます。現在の受信実装は、短時間の不正送信制限にIPアドレスから作ったハッシュを使い、生のIPアドレスを統計データや制限用の保存先へ保存しません。通信事業者側の処理やアクセスログの取扱いを確認してから、この部分を公開文として確定します。"
+    ],
+    "remainingReview": [
+      "開発者名・公開問い合わせ先・公開URL・施行日",
+      "Cloudflare利用条件とログ設定を含む第三者処理の説明",
+      "削除の問い合わせ対応方針",
+      "対象年齢と子ども向け方針",
+      "Unityを含むSDKの送信・ログを最終配布構成で再確認"
+    ]
+  },
+  "dataSafetyDraft": {
+    "finalAnswersRequireReview": true,
+    "collectionOptional": true,
+    "purpose": [
+      "Analytics"
+    ],
+    "encryptedInTransit": true,
+    "ephemeralProcessingOnly": false,
+    "categoriesToDeclare": [
+      {
+        "type": "App info and performance / Diagnostics",
+        "examples": "端末・OS・GPU・描画条件、フレーム時間、バッファ使用量、内部失敗の集計"
+      },
+      {
+        "type": "App activity / App interactions",
+        "examples": "プレイ時間、シーン・設定、切断件数などの集計"
+      },
+      {
+        "type": "Device or other IDs",
+        "examples": "乱数のインストールIDとセッションID。広告ID・ハードウェアIDは使わない"
+      }
+    ],
+    "sharingAnswer": null,
+    "sharingReview": "Cloudflareをサービス提供者として扱える条件と実際の利用を確認して決定。第三者へ一切送らないとは回答しない。",
+    "deletionRequestAvailable": null,
+    "deletionReview": "同意撤回と既送信データの削除は別。公開窓口と削除対応方針を決めて回答。",
+    "containsAds": false,
+    "createsAccounts": false,
+    "ageRating": null,
+    "targetAudience": null,
+    "audienceReview": "人型キャラクターの切断・欠損表現を実際に確認し、IARCと対象年齢の設問へ回答。年齢を推定して入力しない。"
+  },
+  "testerGuide": [
+    "左下の半透明円を前後へ動かすと前後移動、左右へ動かすと旋回します。視点の上下角は固定です。",
+    "操作UI以外の画面をフリックすると、その位置と方向に沿って切断します。ジョイスティック操作と同時に使えます。",
+    "右上のMenuから描画倍率・FSR・移動や旋回の速さを調整できます。Joystick設定は縦横で別々に保存されます。",
+    "MultiDrawIndirect / DrawIndirectCountの変更はApply renderingで反映します。その際にシーンがリセットされます。非対応項目はグレー表示です。",
+    "統計送信は任意です。Menu > Statisticsで変更できます。",
+    "不具合の連絡には端末モデル、OS、アプリ版、画面方向、再現手順、描画設定を添えてください。個人情報は送らないでください。"
+  ],
+  "releaseChecks": [
+    {
+      "check": "署名付きRelease AAB、API36、ARM64、Manifest、16KB整列、禁止語検査",
+      "status": "passed for 0.1.0-closed.1 / code 2"
+    },
+    {
+      "check": "AABから生成したAPKをS25 Ultra / Pixel 6 Proで更新・起動・切断・設定反映・中断復帰",
+      "status": "update/launch/cuts/resume passed on S25 Ultra and Pixel 6 Pro; rendering-setting switches were verified on the prior APK"
+    },
+    {
+      "check": "実際の端末回転で縦横UIとカメラ・ジョイスティック設定・同意UI・ロード画面を確認",
+      "status": "pending physical rotation"
+    },
+    {
+      "check": "16KB環境で起動・切断・描画・復帰",
+      "status": "pending runtime environment; ELF alignment alone is not a runtime test"
+    },
+    {
+      "check": "初回拒否・同意・撤回・再起動と外部テスター区分での送信",
+      "status": "external-role delivery confirmed in R2 on both devices; Pixel isolated check mode verified first consent, decline, agreement, withdrawal and persisted refusal without loading a send config"
+    },
+    {
+      "check": "長時間連続プレイ、温度・電力、メモリ推移、ネットワーク断",
+      "status": "pending"
+    },
+    {
+      "check": "公開用情報、ポリシーURLとアプリ内導線、説明文・画像・年齢区分・データセーフティ",
+      "status": "pending identity and policy decisions"
+    },
+    {
+      "check": "Play Consoleアプリ作成、Play App Signing、署名証明書の記録、テスター・国・参加リンク",
+      "status": "pending console work"
+    },
+    {
+      "check": "Play経由のインストールと更新、pre-launch report、実配布署名の確認",
+      "status": "pending Play upload"
+    }
+  ],
+  "candidate": {
+    "versionName": "0.1.0-closed.1",
+    "versionCode": 2,
+    "bundle": "Build/android-play-0.1.0-closed.1-2.aab",
+    "localValidationRecord": "Build/android-play-0.1.0-closed.1-2.aab.record/device-validation.json",
+    "playUploaded": false
+  }
+}

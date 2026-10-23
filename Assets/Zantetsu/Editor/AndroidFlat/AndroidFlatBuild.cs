@@ -135,7 +135,9 @@ namespace Zantetsu.EditorTools.AndroidFlat
         }
 
         [MenuItem("Zantetsu/Android phone/Build validation APK")]
-        public static void BuildApk()
+        public static void BuildApk() => BuildPlayer(null);
+
+        internal static void BuildPlayer(AndroidFlatDistributionBuild.Request distribution)
         {
             try
             {
@@ -144,18 +146,20 @@ namespace Zantetsu.EditorTools.AndroidFlat
                 var native = AssetImporter.GetAtPath(NativePath) as PluginImporter;
                 if (native == null || !native.GetCompatibleWithPlatform(BuildTarget.Android) || !native.isPreloaded)
                     throw new BuildFailedException("The Android Vulkan plugin must be Android-compatible and preloaded before device creation");
-                string output = Path.GetFullPath(Argument("-zantetsuAndroidFlatOut") ?? "Build/android-flat.apk");
+                string output = Path.GetFullPath(distribution != null ? distribution.output : Argument("-zantetsuAndroidFlatOut") ?? "Build/android-flat.apk");
                 Directory.CreateDirectory(Path.GetDirectoryName(output));
                 using (var scope = new BuildSettingsScope())
+                using (var signing = distribution != null ? new AndroidFlatDistributionBuild.SettingsScope(distribution) : null)
                 {
+                    EditorUserBuildSettings.buildAppBundle = distribution != null && distribution.IsBundle;
                     var result = BuildPipeline.BuildPlayer(new BuildPlayerOptions {
                         scenes = new[] { ScenePath }, target = BuildTarget.Android, locationPathName = output,
                         extraScriptingDefines = new[] { Define },
-                        options = HasArgument("-zantetsuAndroidFlatDev") ? BuildOptions.Development : BuildOptions.None
+                        options = distribution == null && HasArgument("-zantetsuAndroidFlatDev") ? BuildOptions.Development : BuildOptions.None
                     });
                     if (result.summary.result != BuildResult.Succeeded)
                         throw new BuildFailedException("Android phone build " + result.summary.result + "; errors=" + result.summary.totalErrors);
-                    Debug.Log("ANDROID FLAT APK: " + output + "; bytes=" + result.summary.totalSize + "; define=" + Define);
+                    Debug.Log("ANDROID FLAT ARTIFACT: " + output + "; bytes=" + result.summary.totalSize + "; define=" + Define);
                 }
             }
             catch (Exception error)
@@ -211,10 +215,11 @@ namespace Zantetsu.EditorTools.AndroidFlat
                     PlayerSettings.SetMobileMTRendering(NamedBuildTarget.Android, true);
                     PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
                     PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel32;
-                    PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel35;
+                    PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel36;
                     PlayerSettings.Android.applicationEntry = AndroidApplicationEntry.GameActivity;
                     PlayerSettings.Android.optimizedFramePacing = true;
-                    PlayerSettings.Android.useCustomKeystore = false; // Local validation APK uses the Android debug signer.
+                    PlayerSettings.Android.useCustomKeystore = false; // The distribution signing scope overrides this for an AAB.
+                    PlayerSettings.Android.preferredInstallLocation = AndroidPreferredInstallLocation.Auto;
                     PlayerSettings.Android.splitApplicationBinary = false;
                     PlayerSettings.colorSpace = ColorSpace.Linear;
                     PlayerSettings.enableFrameTimingStats = true;

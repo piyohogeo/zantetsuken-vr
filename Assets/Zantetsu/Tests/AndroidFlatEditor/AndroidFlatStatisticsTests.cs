@@ -126,6 +126,35 @@ namespace Zantetsu.AndroidFlat.Tests
             Assert.That(CommandAt(view, Centre(view, "Back")), Is.EqualTo("Back"));
         }
 
+        [TestCase(900f, 1600f)]
+        [TestCase(1600f, 900f)]
+        public void BundledPrivacyPages_AreReadableOfflineAndDoNotChangeConsent(float width, float height)
+        {
+            AndroidFlatPlayer player = NewPlayer(out PlayStatisticsService service, out _, out object view);
+            var safe = new Rect(23, 31, width - 52, height - 69);
+            Set(player, "menu", true);
+            Invoke(player, "ShowStatisticsSettings");
+            Layout(view, safe);
+            Assert.That(CommandAt(view, Centre(view, "Privacy")), Is.EqualTo("Privacy"));
+            Command(player, "Privacy");
+            for (int i = 0; i < AndroidFlatPrivacy.Pages.Length; i++)
+            {
+                Layout(view, safe);
+                AssertVisibleControlsFit(view, safe);
+                Text body = (Text)Field(view, "statisticsBody");
+                Assert.That(body.text, Is.EqualTo(AndroidFlatPrivacy.Pages[i]));
+                Assert.That(body.preferredHeight, Is.LessThanOrEqualTo(body.rectTransform.rect.height + .5f));
+                Assert.That(service.Consent.Decision, Is.EqualTo(PlayStatisticsDecision.Undecided));
+                Command(player, "PrivacyNext");
+            }
+            Layout(view, safe);
+            Assert.That(CommandAt(view, Centre(view, "PrivacyNext")), Is.EqualTo("None"));
+            Command(player, "Statistics");
+            Layout(view, safe);
+            Assert.That(CommandAt(view, Centre(view, "Privacy")), Is.EqualTo("Privacy"));
+            Assert.That(service.Consent.Decision, Is.EqualTo(PlayStatisticsDecision.Undecided));
+        }
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]

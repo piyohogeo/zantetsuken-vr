@@ -9,7 +9,7 @@ namespace Zantetsu.AndroidFlat
         None, Menu, Resume, MoveDown, MoveUp, TurnDown, TurnUp, Fsr, Scale, Sharpness, Reset,
         StickPosition, Back, StickLeft, StickRight, StickDown, StickUp, StickReset,
         MultiDrawIndirect, DrawIndirectCount, ApplyRendering,
-        Statistics, StatisticsToggle, StatisticsAgree, StatisticsDecline
+        Statistics, StatisticsToggle, StatisticsAgree, StatisticsDecline, Privacy, PrivacyPrevious, PrivacyNext
     }
     internal sealed class AndroidFlatView
     {
@@ -24,7 +24,7 @@ namespace Zantetsu.AndroidFlat
             public GameObject checkmark;
             public Image checkShort, checkLong;
         }
-        private readonly Control[] controls = new Control[24];
+        private readonly Control[] controls = new Control[27];
         private readonly PlayLoadingView loadingView = new PlayLoadingView();
         private GameObject root, panel;
         private Image stick, thumb;
@@ -34,6 +34,7 @@ namespace Zantetsu.AndroidFlat
         private Font font;
         private Rect panelRect;
         private bool menu, layoutPage, loading, statisticsPage, consentDialog, statisticsAgreed;
+        private int privacyPage = -1;
 
         public void Build(Transform persistentParent)
         {
@@ -65,7 +66,8 @@ namespace Zantetsu.AndroidFlat
                 FlatCommand.StickPosition, FlatCommand.Back, FlatCommand.StickLeft, FlatCommand.StickRight,
                 FlatCommand.StickDown, FlatCommand.StickUp, FlatCommand.StickReset,
                 FlatCommand.MultiDrawIndirect, FlatCommand.DrawIndirectCount, FlatCommand.ApplyRendering,
-                FlatCommand.Statistics, FlatCommand.StatisticsToggle, FlatCommand.StatisticsAgree, FlatCommand.StatisticsDecline };
+                FlatCommand.Statistics, FlatCommand.StatisticsToggle, FlatCommand.StatisticsAgree, FlatCommand.StatisticsDecline,
+                FlatCommand.Privacy, FlatCommand.PrivacyPrevious, FlatCommand.PrivacyNext };
             for (int i = 0; i < commands.Length; i++)
                 controls[i + 1] = commands[i] == FlatCommand.MultiDrawIndirect || commands[i] == FlatCommand.DrawIndirectCount || commands[i] == FlatCommand.StatisticsToggle
                     ? NewCheckbox(commands[i], panel.transform) : NewControl(commands[i], panel.transform, "");
@@ -188,15 +190,18 @@ namespace Zantetsu.AndroidFlat
         public void SetStatisticsAgreed(bool agreed) { statisticsAgreed = agreed; }
         public void ShowStatistics(bool open, bool consent = false)
         {
-            statisticsPage = open; consentDialog = open && consent;
+            statisticsPage = open; consentDialog = open && consent; privacyPage = -1;
             if (open) layoutPage = false;
         }
+
+        public void ShowPrivacy() { statisticsPage = true; consentDialog = false; layoutPage = false; privacyPage = 0; }
+        public void ShiftPrivacyPage(int direction) => privacyPage = Mathf.Clamp(privacyPage + direction, 0, AndroidFlatPrivacy.Pages.Length - 1);
 
         public void Layout(Rect safe, Vector2 centre, float radius, bool open, AndroidFlatSettings settings, bool portrait,
             AndroidFlatDrawCapabilities capabilities, bool renderingChangesPending)
         {
             menu = open;
-            if (!open) { layoutPage = false; statisticsPage = false; consentDialog = false; }
+            if (!open) { layoutPage = false; statisticsPage = false; consentDialog = false; privacyPage = -1; }
             float unit = Mathf.Min(safe.width, safe.height) / 900f;
             float pad = 24 * unit, row = 64 * unit;
             status.fontSize = status.resizeTextMaxSize = Mathf.RoundToInt(24 * unit);
@@ -216,12 +221,12 @@ namespace Zantetsu.AndroidFlat
                 Mathf.Min(safe.width * .92f, 840 * unit), panelHeight);
             Place((RectTransform)panel.transform, panelRect);
             Place(title.rectTransform, new Rect(0, panelRect.height - row, panelRect.width, row));
-            title.text = statisticsPage ? "Play statistics" : layoutPage ? "Joystick position" : "Paused";
+            title.text = privacyPage >= 0 ? "Privacy policy (" + (privacyPage + 1) + "/" + AndroidFlatPrivacy.Pages.Length + ")" : statisticsPage ? "Play statistics" : layoutPage ? "Joystick position" : "Paused";
             statisticsBody.gameObject.SetActive(statisticsPage);
             for (int i = 1; i < controls.Length; i++)
             {
                 bool visible = statisticsPage
-                    ? (consentDialog ? i == 22 || i == 23 : i == 11 || i == 21)
+                    ? (consentDialog ? i == 22 || i == 23 : privacyPage >= 0 ? i == 20 || i == 25 || i == 26 : i == 11 || i == 21 || i == 24)
                     : i == 1 || (layoutPage ? i >= 11 && i <= 16 : i <= 10 || i >= 17 && i <= 20);
                 controls[i].image.gameObject.SetActive(visible);
                 if (!visible) controls[i].rect = default;
@@ -229,9 +234,12 @@ namespace Zantetsu.AndroidFlat
             float left = panelRect.x + pad, width = panelRect.width - pad * 2, top = panelRect.yMax - row * 2;
             if (statisticsPage)
             {
+                statisticsBody.text = consentDialog ? PlayStatisticsService.ConsentBodyForAndroid
+                    : privacyPage >= 0 ? AndroidFlatPrivacy.Pages[privacyPage] : PlayStatisticsService.MenuExplanationForAndroid;
                 statisticsBody.fontSize = statisticsBody.resizeTextMaxSize = Mathf.RoundToInt(24f * unit);
-                Place(statisticsBody.rectTransform, new Rect(pad, row * 1.6f,
-                    width, panelRect.height - row * 2.75f));
+                bool twoRows = !consentDialog && privacyPage < 0;
+                Place(statisticsBody.rectTransform, new Rect(pad, row * (twoRows ? 2.6f : 1.6f),
+                    width, panelRect.height - row * (twoRows ? 3.75f : 2.75f)));
                 float bottom = panelRect.y + pad;
                 if (consentDialog)
                 {
@@ -240,8 +248,17 @@ namespace Zantetsu.AndroidFlat
                     Put(controls[23], new Rect(left + width * .52f, bottom, width * .48f, row * .85f));
                     controls[23].label.text = PlayStatisticsService.ConsentDecline;
                 }
+                else if (privacyPage >= 0)
+                {
+                    Put(controls[20], new Rect(left, bottom, width * .24f, row * .85f)); controls[20].label.text = "Back";
+                    Put(controls[25], new Rect(left + width * .27f, bottom, width * .35f, row * .85f)); controls[25].label.text = "Previous";
+                    Put(controls[26], new Rect(left + width * .65f, bottom, width * .35f, row * .85f)); controls[26].label.text = "Next";
+                    SetEnabled(controls[25], privacyPage > 0);
+                    SetEnabled(controls[26], privacyPage < AndroidFlatPrivacy.Pages.Length - 1);
+                }
                 else
                 {
+                    Put(controls[24], new Rect(left, bottom + row, width, row * .85f)); controls[24].label.text = "Privacy policy";
                     Put(controls[11], new Rect(left, bottom, width * .23f, row * .85f)); controls[11].label.text = "Back";
                     Put(controls[21], new Rect(left + width * .27f, bottom, width * .73f, row * .85f));
                     SetCheckbox(controls[21], true, statisticsAgreed, "Send play statistics");

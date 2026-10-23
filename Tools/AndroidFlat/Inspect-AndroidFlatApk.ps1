@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Apk,
     [string]$ExpectedPackage = 'com.zantetsuken.androidflat',
     [string]$Record,
+    [int]$ExpectedMinSdk = 32,
+    [int]$ExpectedTargetSdk = 36,
     [string]$AndroidPlayer = 'C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Data\PlaybackEngines\AndroidPlayer'
 )
 $ErrorActionPreference = 'Stop'
@@ -22,6 +24,8 @@ $roots = @($tree | Where-Object Name -CEQ 'manifest')
 $checks = [ordered]@{}
 $checks['aapt2 reads the APK and manifest'] = $manifestExit -eq 0 -and $badgingExit -eq 0 -and $roots.Count -eq 1
 $checks['separate phone application id'] = $roots.Count -eq 1 -and (Get-AttributeValue $roots[0] 'package') -ceq $ExpectedPackage
+$checks['minimum SDK matches'] = @($badging | Where-Object { $_ -ceq "minSdkVersion:'$ExpectedMinSdk'" }).Count -eq 1
+$checks['target SDK matches'] = @($badging | Where-Object { $_ -ceq "targetSdkVersion:'$ExpectedTargetSdk'" }).Count -eq 1
 $checks['ARM64 only'] = @($badging | Where-Object { $_ -ceq "native-code: 'arm64-v8a'" }).Count -eq 1
 $forbidden = @($manifest | Where-Object { $_ -match 'com\.oculus\.|com\.meta\.openxr\.|android\.hardware\.vr\.|android\.software\.vr\.mode' })
 $checks['no Quest or VR requirements in final merged manifest'] = $forbidden.Count -eq 0

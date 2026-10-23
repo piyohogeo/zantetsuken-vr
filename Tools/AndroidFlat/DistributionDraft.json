@@ -1,0 +1,50 @@
+{
+    "status":  "local preparation only; no GitHub release, draft, tag or upload",
+    "repository":  "https://github.com/piyohogeo/zantetsuken-vr",
+    "applicationId":  "com.zantetsuken.androidflat",
+    "identity":  {
+                     "developerName":  null,
+                     "publicSupportEmail":  null,
+                     "privacyPolicyUrl":  null
+                 },
+    "candidate":  {
+                      "versionName":  "0.1.0-alpha.1",
+                      "versionCode":  4,
+                      "apk":  "Build/android-github-0.1.0-alpha.1-4.apk",
+                      "published":  false
+                  },
+    "privacyDocument":  "docs/android-privacy-policy.md",
+    "distributionGuide":  "docs/android-distribution.md",
+    "releaseNameDraft":  "WORLD CUTTER Android 0.1.0-alpha.1",
+    "tagDraft":  "android-v0.1.0-alpha.1",
+    "prereleaseSuggested":  true,
+    "checks":  {
+                   "formalApkInspection":  "passed: v2 signature, dedicated certificate, SDK32/36, ARM64, non-VR, non-debuggable, ELF/ZIP16KB alignment, forbidden text",
+                   "formalApkBrowserInstall":  "passed on Pixel: Edge download, matching hash, normal package installer (code 3)",
+                   "formalApkUpdate":  "passed on Pixel: Edge download and normal package-installer update from code 3 to 4; MoveSpeed 1.74 and declined consent persisted; installed APK SHA-256 matches",
+                   "physicalRotation":  "passed on Pixel after user physical rotation: portrait 1440x3120 to landscape 3120x1440, safe area 2975x1440, vertical FOV 49.55028; camera, movement, turning, flick cuts, settings and animated loading window verified",
+                   "16kRuntime":  "pending; alignment is checked separately",
+                   "longPlayAndOffline":  "basic cut/resume and offline policy verified; sustained-load and failed-send recovery pending",
+                   "publisherAndContact":  "user explicitly kept undecided on 2026-10-23",
+                   "portableKeyBackup":  "disposable-key export/reopen/certificate/old-password rejection passed; production independent backup/recovery remains pending",
+                   "thirdPartyNotices":  "pending review of actual bundled assets",
+                   "sourceCommit":  "distribution source committed with this file; exact commit/APK binding is kept in local device-validation.json and publication-plan.json",
+                   "bundledPrivacy":  "133 EditMode tests passed; all four policy pages and Next/Previous/Back checked on Pixel in portrait and physical landscape; no network dependency",
+                   "pixelRuntime":  "code 4: visible cuts, same PID across background/resume, no statistics sends after refusal; MoveSpeed reset to 1.49 after persistence test",
+                   "s25CurrentCandidate":  "not updated: prior Wi-Fi port refused; existing app data preserved",
+                   "githubDownload":  "pending explicit release instruction; browser workflow verified only using local HTTP through Wi-Fi ADB reverse",
+                   "firstRunLandscapeConsent":  "not re-prompted on device to preserve current Declined state; EditMode layout tested"
+               },
+    "playOnlyTasksRemoved":  [
+                                 "Play Console",
+                                 "AAB submission",
+                                 "Play App Signing",
+                                 "Data safety form",
+                                 "IARC",
+                                 "store artwork",
+                                 "tester registration",
+                                 "pre-launch report"
+                             ],
+    "ApkContentType":  "application/vnd.android.package-archive",
+    "localStaging":  "Build/github-distribution-0.1.0-alpha.1"
+}

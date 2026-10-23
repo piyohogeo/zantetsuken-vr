@@ -372,6 +372,9 @@ namespace Zantetsu.AndroidFlat
                 case FlatCommand.StickPosition: view.ShowStickPosition(true); input.Cancel(); layoutDirty = true; return;
                 case FlatCommand.Back: view.ShowStickPosition(false); view.ShowStatistics(false); input.Cancel(); layoutDirty = true; return;
                 case FlatCommand.Statistics: ShowStatisticsSettings(); return;
+                case FlatCommand.Privacy: view.ShowPrivacy(); input.Cancel(); layoutDirty = true; return;
+                case FlatCommand.PrivacyPrevious: view.ShiftPrivacyPage(-1); input.Cancel(); layoutDirty = true; return;
+                case FlatCommand.PrivacyNext: view.ShiftPrivacyPage(1); input.Cancel(); layoutDirty = true; return;
                 case FlatCommand.StatisticsToggle:
                     if (statistics == null) return;
                     if (statistics.Consent.Agreed) statistics.Withdraw();

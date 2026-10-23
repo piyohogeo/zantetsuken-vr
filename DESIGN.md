@@ -205,6 +205,22 @@ Pixel 6 Pro（Mali-G78）では従来のFXC/HLSLccから生成したVPシェー�
 - 起動とシーンリセットの準備中は、Quest版共通の暗いウィンドウ・「Now loading...」・青い8点の回転アニメーションをSafe Area中央に表示する。縦横の短辺に応じて拡縮し、カメラ未取得時や停止中もエンジンのunscaled時刻でアニメーションを進める。World・群衆・描画ウォームアップの完了まで操作UIを隠し、準備が終わると通常表示へ戻す。失敗時はLoadingを終了して既存のエラー表示へ切り替える。
 - メニュー・画面回転・フォーカス喪失・バックグラウンド移行では操作中の接触を取り消す。復帰時はすべての指が離れてから新しい接触を受け付け、中断中の時間を飛翔・物理の追いつきへ含めない。
 
+#### 3.6.1 GitHub ReleasesによるAndroid APK配布（2026-10-23）
+
+Android版の配布先をGoogle PlayからGitHub Releasesへ変更する。公開対象は正式署名APKとSHA-256・公開証明書指紋であり、Release・タグ・GitHub上のDraftの作成とアップロードはユーザーの明示指示まで行わない。現在は `feature/android-non-vr` のローカル準備とする。Play Console・AAB提出・Play App Signing・Data safetyフォーム・IARC・ストア画像・テスター登録・pre-launch reportを今回の工程から外す。API 36は維持する。
+
+`Tools/AndroidFlat/Build-Distribution.ps1` は、API 36・min API 32・ARM64・Vulkan・IL2CPP ReleaseのAPKを作る。明示したversionName／versionCode（1〜2100000000）・鍵・aliasを必須とし、Developmentやcommercial以外の指定を拒否する。統計は既存送信先・external区分でビルド中だけ一時設定を生成し、同意後にのみ送信する。入力JSONのsource絶対パスはビルド中だけ空にし、原本・統計設定をプロジェクト外へ退避し、成功・失敗とも共有設定・シェーダー・原本を復元する。署名パスワードは環境変数かWindowsで保護した資格情報から渡し、コマンドラインへ出さない。
+
+`Inspect-DistributionApk.ps1` は最終APKのManifest・版・非debuggable・正式証明書とv2署名・ELFとAPK配置の16KB整列・展開したファイル名と内容の禁止語を確認する。`.record` に開発用の検査記録、APK隣に配布用の `.sha256` を置く。`Prepare-ReleaseAssets.ps1` は検査済みAPK・SHA-256・公開証明書指紋だけをBuild下へコピーし、配布文面の草案と未解決項目をローカルでまとめる。GitHubへ書き込む機能は持たない。
+
+ユーザーが作成を指示したAndroid専用鍵（alias `android-play-upload`）を正式APKの署名にも使用する。applicationId `com.zantetsuken.androidflat` と鍵を維持し、versionCodeを増やして更新する。現在のdebug署名APKからの上書きはできない。2026-10-23にユーザーはPixel 6 Proの検証アプリ削除と設定・同意状態の初期化を承認した。S25 Ultraのデータ削除は承認されていない。正式署名の導入・更新はPixelで確認する。
+
+鍵はリポジトリ外に保存する。既存のDPAPI資格情報は同じWindowsユーザー・PCに依存する。`Backup-SigningKey.ps1` は別のパスフレーズで暗号化した可搬PKCS12（`.jks`）を外部パスへ作り、元と同じ証明書であることを検査する。パスフレーズはコマンドラインではなく指定したプロセス環境変数から読む。独立した保管先・復旧用パスフレーズは未指定で、実際のバックアップは残件である。
+
+Menu > Statistics > Privacy policyに、通信せず読める4ページの本文を用意する。表示は統計の同意を変更しない。初回同意は既存の明示したAgree／Don't sendを維持する。公開名・問い合わせ先はユーザーの回答により未定を維持し、アプリと公開文書の本文も未公開の草案である。詳細な配布手順は `docs/android-distribution.md`、ポリシー草案は `docs/android-privacy-policy.md`、現在の残件は `Tools/AndroidFlat/DistributionDraft.json` に置く。
+
+先行して作成したPlay向けAAB `0.1.0-closed.1`／code 2の検査・実機記録は保持するが、今回の配布物にはしない。`Build-PlayBundle.ps1` は共通の署名・復元処理に対するAAB用の薄い入口として残す。APKの署名と実行内容は別々に検証し、16KB整列の合格を16KB端末の実行確認に代用しない。実際の端末回転・連続切断・中断復帰・通信断・第三者ライセンス表記を確認し、DexFile.finalize警告は原因未確定として記録する。
+
 ## 4. システムアーキテクチャ
 
 共通Player終了出口へ送るのは、共用Geometry切断またはFragment／Boundary／Operation構築で既存境界から表面化した予期しない内部エラー、4.5.4で定めるCPU backing容量の不成立、同節のGPU backing容量の不成立、5.6の必須Stencil構成の不成立の4条件とする。製品PlayerのComposition Root上の共通Player lifecycle境界が、Renderer初期化より前からPlayer寿命を通じて単一の非永続終了要求latchを所有する。Renderer初期化処理と切断Coordinatorはこの境界へ報告し、切断受付・Commitも同じlatchを参照する。外部Poolを含むWorkerの異常は既存の通知・回収境界でMainへ渡し、Workerはlatchや終了APIを直接操作しない。Mainが最初に扱った原因でlatchを一方向に確定し、同じMain Threadで直列に処理する新規切断受付と未公開切断成果物のCommitを閉じてから、既存ログへbest effortで一度記録し、製品Playerの終了APIを一度呼ぶ。「終了要求後」はAPI呼出し後ではなくlatch確定後を指す。エラーに関わる未公開成果物を公開せず、初期化中はGameplayを開始しない。同一sessionでのrollback・整合回復、全Work／資源回収、ログ永続化、Trace／Captureのトリガー・post-roll・freeze・保存・Publication・CaptureComplete・durable flush完了、終了所要時間は保証しない。ログが使えなくても終了を妨げず、回収・保存を待たない。任意の保存は非待機のbest effortに限る。内部エラーの全検出は保証せず、このためのValidator・詳細Reason・永続schema・復旧基盤を追加しない。通常の世代失効・出力予約不足、7.1の個別物理退役、Capture-only Fail Fast／Poison、Tool／Benchmark／Trace・Capture Run単位の失敗は既存境界を維持する。
