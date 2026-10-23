@@ -37,6 +37,16 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The Player argument that switches the bent partition off for a run (on in the profile's default since 2026-10-16, D-237): the comparison's control.</summary>
         public const string SpatialSplitBentOffArgument = "-zantetsuSpatialSplitBentOff";
 
+        /// <summary>
+        /// The Player argument that switches the graph stage on for a run (GRAPH-CONNECT-4; off in the profile's default of
+        /// 2026-10-23), with the profile's own limits where they are valid and the provisional ones otherwise. Nothing
+        /// without the split itself on; nothing with the capture on (the split says why).
+        /// </summary>
+        public const string SpatialSplitGraphArgument = "-zantetsuSpatialSplitGraph";
+
+        /// <summary>The Player argument that switches the graph stage off for a run: the comparison's control.</summary>
+        public const string SpatialSplitGraphOffArgument = "-zantetsuSpatialSplitGraphOff";
+
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
@@ -130,6 +140,13 @@ namespace Zantetsu.PhysicsCut
             return on || (arguments != null && Array.IndexOf(arguments, SpatialSplitBentOffArgument) >= 0);
         }
 
+        /// <summary>Reads <see cref="SpatialSplitGraphArgument"/> and <see cref="SpatialSplitGraphOffArgument"/> as <see cref="TryReadBentSwitch"/> reads the bent partition's.</summary>
+        internal static bool TryReadGraphSwitch(string[] arguments, out bool on)
+        {
+            on = arguments != null && Array.IndexOf(arguments, SpatialSplitGraphArgument) >= 0;
+            return on || (arguments != null && Array.IndexOf(arguments, SpatialSplitGraphOffArgument) >= 0);
+        }
+
         // The profile's settings, or -- asked for by the arguments -- the same with the split on and with the
         // convex cut's triangle minimum given for the run.
         private CutSpatialSplitSettings SplitSettings(CutWorldProfile profile)
@@ -164,6 +181,25 @@ namespace Zantetsu.PhysicsCut
                     UnityEngine.Debug.Log(
                         "SPATIAL SPLIT BENT: off -- asked for by " + SpatialSplitBentOffArgument + " (the profile's own setting is " + (settings.bentSearch ? "on" : "off") + ")", this);
                     settings.bentSearch = false;
+                }
+            }
+
+            if (TryReadGraphSwitch(arguments, out bool graphOn))
+            {
+                if (graphOn)
+                {
+                    bool valid = settings.graphLimits.IsValid;
+                    UnityEngine.Debug.Log(
+                        "SPATIAL SPLIT GRAPH: on -- asked for by " + SpatialSplitGraphArgument + " (the profile's own setting is " + (settings.graphSearch ? "on" : "off")
+                        + "), the " + (valid ? "profile's" : "provisional") + " limits", this);
+                    settings.graphSearch = true;
+                    if (!valid) settings.graphLimits = SpatialSplitGraphLimits.Default;
+                }
+                else
+                {
+                    UnityEngine.Debug.Log(
+                        "SPATIAL SPLIT GRAPH: off -- asked for by " + SpatialSplitGraphOffArgument + " (the profile's own setting is " + (settings.graphSearch ? "on" : "off") + ")", this);
+                    settings.graphSearch = false;
                 }
             }
 

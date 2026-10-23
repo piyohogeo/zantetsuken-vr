@@ -82,9 +82,9 @@ namespace Zantetsu.Editor.Sandbox
                 settings.maxGraphBytes = long.Parse(Argument("-candidateMaxGraphBytes") ?? "0", CultureInfo.InvariantCulture);
                 settings.workBudget = long.Parse(Argument("-candidateWorkBudget") ?? "0", CultureInfo.InvariantCulture);
                 string input = Argument("-candidateInput") ?? "sample";
-                if (input != "sample" && input != "span") throw new ArgumentException("-candidateInput takes sample or span");
-                settings.inputSpan = input == "span";
-                if (settings.inputSpan && engine == CandidateEngine.M0) throw new ArgumentException("-candidateInput span needs a native engine (N0 or N1)");
+                if (input != "sample" && input != "span" && input != "product") throw new ArgumentException("-candidateInput takes sample, span or product");
+                settings.input = input == "product" ? CandidateInput.Product : input == "span" ? CandidateInput.Span : CandidateInput.Sample;
+                if (settings.input != CandidateInput.Sample && engine == CandidateEngine.M0) throw new ArgumentException("-candidateInput " + input + " needs a native engine (N0 or N1)");
                 if (settings.measure < 0 || settings.measure > 2) throw new ArgumentException("-candidateMeasure takes 0, 1 or 2");
                 if (settings.measure != 0 && engine == CandidateEngine.M0) throw new ArgumentException("-candidateMeasure needs a native engine (N0 or N1)");
                 string summary = RunSession(session, output, Argument("-candidateExclude"), Argument("-candidateOnly"), settings, limit, verify, out bool allGood, exact, engine);
@@ -254,7 +254,7 @@ namespace Zantetsu.Editor.Sandbox
                     + (engine == CandidateEngine.N1 && burstRan != nativeSamples ? " -- NOT ALL THROUGH BURST" : engine == CandidateEngine.N0 && burstRan != 0 ? " -- N0 RAN THROUGH BURST" : ""))
                     + "; warmed up once on the first sample taken (" + warmedUpOn + ") before its timed decision" + (engine != CandidateEngine.M0 ? ", after the jobs' warm-up on a tiny input" : "")
                     + "; Burst safety checks: " + (Unity.Burst.BurstCompiler.Options.EnableBurstSafetyChecks ? "on" : "off") + ", Burst compilation: " + (Unity.Burst.BurstCompiler.Options.EnableBurstCompilation ? "on" : "off")
-                    + (engine == CandidateEngine.M0 ? "" : "; input " + (settings.inputSpan ? "span (the product's shape rebuilt from the sample: a view with the referenced vertices at their ids, NaN elsewhere)" : "sample (the compact vertices)")
+                    + (engine == CandidateEngine.M0 ? "" : "; input " + (settings.input == CandidateInput.Product ? "product (the span view as for span, the convexes by bank and range pointers, the sides written to bytes; the compaction metered)" : settings.input == CandidateInput.Span ? "span (the product's shape rebuilt from the sample: a view with the referenced vertices at their ids, NaN elsewhere)" : "sample (the compact vertices)")
                         + "; caps maxTriangles " + settings.maxTriangles + ", maxConvexes " + settings.maxConvexes + ", maxVertexSpan " + settings.maxVertexSpan + ", maxNodes " + settings.maxNodes + ", maxCandidates " + settings.maxCandidates
                         + ", maxGraphBytes " + settings.maxGraphBytes + " (0 = none); work budget " + settings.workBudget + " (0 = none); " + SpatialSplitGraph.WorkDefinition)
                     + (engine == CandidateEngine.M0 ? "" : "; nearest " + (settings.nearestSelection ? "select (the top-3 selection)" : "sort (the full insertion sort, the baseline)") + "; flow " + (settings.flowDinic ? "dinic" : "ek (Edmonds-Karp, the baseline)") + "; pairs " + (settings.pairsSweep ? "sweep (along x)" : "all (every pair, the baseline)") + (settings.hashPrepare ? "; prepare hash ON (a verification run: its times are not a measurement)" : "") + "; measure " + settings.measure + (settings.measure == 0 ? " (no clock read in the jobs)" : settings.measure == 1 ? " (section times: " + SpatialSplitGraphCandidateNative.ClockDescription() + ")" : " (diagnostic counts; not a timing run)")))

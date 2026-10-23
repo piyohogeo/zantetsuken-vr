@@ -72,6 +72,16 @@ namespace Zantetsu.PhysicsCut
         public SpatialSplitBentLimits bentLimits;
 
         /// <summary>
+        /// With the split on: where neither a plane nor the bent partition leaves the convexes and the triangles whole, ask
+        /// the graph engine for a placement of the convexes and the mesh components into two groups apart by the margin
+        /// (GRAPH-CONNECT-1; the graph stage), before the convex cut below is tried. Owners without anchors only. Off by
+        /// default (2026-10-23): the connection is verified, the stage is not adopted. The order plane, bent, graph, mesh-led
+        /// is the verification's baseline configuration, not the settled order: the bent partition and the graph are switched apart.
+        /// </summary>
+        public bool graphSearch;
+        public SpatialSplitGraphLimits graphLimits;
+
+        /// <summary>
         /// The triangle minimum of a split that cuts a convex: 50, the TL's choice of 2026-10-11 after city walks at
         /// 200, 100 and 50. The expected costs beside it are provisional, from no performance measurement.
         /// </summary>
@@ -105,6 +115,8 @@ namespace Zantetsu.PhysicsCut
             this.seedCutPublishSeconds = seedCutPublishSeconds;
             bentSearch = false;   // the bent partition is set apart (the profile's reading, a test's): off here
             bentLimits = default;
+            graphSearch = false;  // the graph stage likewise
+            graphLimits = default;
         }
 
         public bool IsValid => examinePerFrame >= 1 && reserveSeconds >= 0.0 && !double.IsNaN(reserveSeconds)
@@ -114,7 +126,7 @@ namespace Zantetsu.PhysicsCut
             && seedCutApplySeconds >= 0.0 && !double.IsNaN(seedCutApplySeconds)
             && seedHullCheckSeconds >= 0.0 && !double.IsNaN(seedHullCheckSeconds)
             && seedCutPublishSeconds >= 0.0 && !double.IsNaN(seedCutPublishSeconds)
-            && limits.IsValid && (!bentSearch || bentLimits.IsValid);
+            && limits.IsValid && (!bentSearch || bentLimits.IsValid) && (!graphSearch || graphLimits.IsValid);
 
         /// <summary>Whether two settings look for the same thing: a mark made under one says nothing under another.</summary>
         internal bool SearchesAs(in CutSpatialSplitSettings other)
@@ -123,7 +135,8 @@ namespace Zantetsu.PhysicsCut
                 && limits.maxConvexes == other.limits.maxConvexes && limits.maxCentreDirections == other.limits.maxCentreDirections
                 && limits.maxPlaneTests == other.limits.maxPlaneTests && limits.maxTriangles == other.limits.maxTriangles
                 && limits.maxMeshDirections == other.limits.maxMeshDirections && limits.meshBins == other.limits.meshBins
-                && bentSearch == other.bentSearch && (!bentSearch || bentLimits.Equals(in other.bentLimits));
+                && bentSearch == other.bentSearch && (!bentSearch || bentLimits.Equals(in other.bentLimits))
+                && graphSearch == other.graphSearch && (!graphSearch || graphLimits.Equals(in other.graphLimits));
         }
     }
 
@@ -475,6 +488,12 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The display has no draw slots or references left for two registrations in its place.</summary>
         NoDisplayRoom,
 
+        /// <summary>Waiting for the retry of an unfinished attempt (GRAPH-CONNECT-4 §3-5): the deadline has not come.</summary>
+        Deferred,
+
+        /// <summary>The graph stage reached a fixed search limit on this input under this search (GRAPH-CONNECT-5 review 1): not tried again until either changes.</summary>
+        LimitReached,
+
         Count,
     }
 
@@ -504,6 +523,13 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>Room was short at the publication (index room, draw slots, the reference table, the GPU copy): nothing is recorded.</summary>
         RoomShort,
+
+        /// <summary>
+        /// The graph stage ended short of a conclusion (its caps, its budget, an allocation, its fixed search limits, the
+        /// preparation contract) and no other stage found a split: nothing is recorded about the input, and the fragment
+        /// is tried again after a wait (GRAPH-CONNECT-4 §3-5).
+        /// </summary>
+        Unfinished,
 
         Count,
     }
@@ -677,6 +703,7 @@ namespace Zantetsu.PhysicsCut
 
                 _settings = value;
                 _idle = false;
+                ReevaluateGraph();
             }
         }
 
@@ -971,10 +998,10 @@ namespace Zantetsu.PhysicsCut
 
             if (_attempt == null && _idle)
             {
-                if (_idleSignals.Equals(SignalsNow()))
+                // Idle until something the look reads changes -- or a deferred retry's deadline comes (GRAPH-CONNECT-4 §3-5):
+                // never idle on a future deadline while a retry whose deadline passed is still unissued.
+                if (_idleSignals.Equals(SignalsNow()) && !_deferredDue && Time.frameCount < _deferredWake)
                 {
-                    // The last round left nothing to try and nothing it read has changed: nothing is looked at, and
-                    // nothing is asked of the frame.
                     IdleTurns++;
                     return;
                 }
@@ -1205,6 +1232,8 @@ namespace Zantetsu.PhysicsCut
                     _world.Owners.CopyFragmentsTo(_round);
                     _cursor = 0;
                     ForgetGoneSuppressions();
+                    ForgetGoneDeferrals();
+                    ForgetGoneLimits();
                     roundSpent = Since(roundBegin);
 #if ZANTETSU_OBSERVE
                     RoundSeconds += roundSpent;
@@ -1236,6 +1265,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 SpatialSplitPass pass = Examine(fragment, in settings, out Input input);
+                if (_deferred.Count != 0) NoteChosen(fragment, in input, pass);
                 if (pass != SpatialSplitPass.Candidate)
                 {
                     _passes[(int)pass]++;
@@ -1344,6 +1374,16 @@ namespace Zantetsu.PhysicsCut
             if (_suppressed.TryGetValue(fragment, out Input tried) && tried.Equals(input))
             {
                 return SpatialSplitPass.Suppressed;
+            }
+
+            if (_deferred.Count != 0 && _deferred.TryGetValue(fragment, out Deferral deferral) && deferral.input.Equals(input) && Time.frameCount < deferral.until)
+            {
+                return SpatialSplitPass.Deferred;   // read only: the wait's bookkeeping is the walk's (NoteChosen), not this look's
+            }
+
+            if (_limitReached.Count != 0 && _limitReached.TryGetValue(fragment, out Input limited) && limited.Equals(input))
+            {
+                return SpatialSplitPass.LimitReached;   // the graph stage reached a fixed search limit on this very input: the same again until it changes
             }
 
             if (!(MarginOf(_world.Profile) > 0f))
@@ -1523,6 +1563,33 @@ namespace Zantetsu.PhysicsCut
                     _anchorScratch.Clear();
                     _world.Ledger.TryGetAnchors(fragment, _anchorScratch);
                     attempt.anchors = _anchorScratch.Count == 0 ? null : _anchorScratch.ToArray();
+                    if (GraphEffective && attempt.anchors == null && convexCount >= 2)
+                    {
+                        // The graph stage (GRAPH-CONNECT-4 §3-2, §3-4): wanted, prepared, not refused, an owner without anchors.
+                        // Its one allocation on the main thread -- the sides, C + T bytes -- in a boundary of its own: a failure
+                        // there is the graph stage's alone (Unfinished(allocation), the stage skipped), and the attempt is issued
+                        // with the plane, bent and mesh-led searches as before. Everything else here is the existing path's, and
+                        // its exceptions are rethrown below as before.
+                        attempt.graphSearch = true;
+                        attempt.graphLimits = settings.graphLimits;
+                        attempt.testGraphFailAllocation = TestGraphFailAllocation;
+                        attempt.testGraphGjkMaxIterations = TestGraphGjkMaxIterations;
+                        attempt.testGraphShortSides = TestGraphShortSides;
+                        try
+                        {
+                            if (TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");
+                            attempt.graphSides = PhysicsCutBlocks.Take<byte>(convexCount + (attempt.indexCount / 3));
+                        }
+                        catch (Exception e)
+                        {
+                            attempt.graphSides = default;
+                            attempt.graph = new SpatialSplitGraphRecord
+                            {
+                                verdict = SpatialSplitGraphVerdict.Unfinished, stop = SpatialSplitGraphStop.Allocation, unfinished = true,
+                                reason = "the sides' allocation on the main thread failed: " + e.GetType().Name + ": " + e.Message,
+                            };
+                        }
+                    }
 #if ZANTETSU_OBSERVE
                     // The capture (development only, off without its argument): the input copied here, complete and
                     // still leased, and handed on only once the work was taken (SpatialSplitCapture).
@@ -1530,7 +1597,7 @@ namespace Zantetsu.PhysicsCut
                     copySeconds = attempt.captureCopySeconds;
 #endif
 
-                    if (!_world.Dispatcher.TryEnqueue(WorkPurpose.Maintenance, attempt, out attempt.ticket))
+                    if (TestRefuseIssue || !_world.Dispatcher.TryEnqueue(WorkPurpose.Maintenance, attempt, out attempt.ticket))
                     {
                         // No place now: nothing was started. The fragment is looked at again in a later round.
                         QueueFull++;
@@ -1553,6 +1620,7 @@ namespace Zantetsu.PhysicsCut
                 attempt.offered = true;
                 _attempt = attempt;
                 Issued++;
+                if (_deferred.Count != 0) TakeDeferral(fragment, attempt);   // the wait ends with the issue; its count goes on with the attempt
 #if ZANTETSU_OBSERVE
                 Capture?.NoteIssued(capture);
                 attempt.captured = capture != null;
@@ -1628,11 +1696,33 @@ namespace Zantetsu.PhysicsCut
             }
 
             mark = true;
-            switch (attempt.search.outcome)
+            if (attempt.graph.verdict == SpatialSplitGraphVerdict.Invalid)
+            {
+                // The graph engine refused the input as malformed (GRAPH-CONNECT-4 §3-2): as an invalid input ends the search,
+                // not as a plane not found -- apart from the not-found counts, and marked.
+                end = SpatialSplitEnd.NotClassified;
+                return false;
+            }
+
+            if (attempt.graphLed)
+            {
+                // The graph stage's placement (GRAPH-CONNECT-4 §3-5): the searches found no plane, by design; the distribution,
+                // the classification and the kernel below decide, as for a bent partition.
+            }
+            else switch (attempt.search.outcome)
             {
                 case SpatialSplitSearchOutcome.Found:
                     break;
                 case SpatialSplitSearchOutcome.NotFound:
+                    if (attempt.graph.unfinished)
+                    {
+                        // No stage found a split and the graph stage ended short of a conclusion: nothing is recorded about
+                        // the input, and the fragment is tried again after a wait.
+                        end = SpatialSplitEnd.Unfinished;
+                        mark = false;
+                        return false;
+                    }
+
                     end = SpatialSplitEnd.NotFound;
                     return false;
                 case SpatialSplitSearchOutcome.OverTheLimits:
@@ -1806,9 +1896,17 @@ namespace Zantetsu.PhysicsCut
                         displayFrame, candidate.ChildLineage, candidate.Negative.BuildingWorld);
                     owners.Reserve(2);
 
-                    // Where the source is now and how it moves now; no impulse, no offset. Then into the scene.
-                    float3 normalWorld = math.mul(placement.rotation, attempt.search.planeOwner.xyz);
-                    candidate.Reposition(placement, in motion, normalWorld, 0f, 0f);
+                    // Where the source is now and how it moves now; no impulse, no offset. Then into the scene. A graph
+                    // placement has no plane: the entry without one (no normal is made up for it).
+                    if (attempt.graphLed)
+                    {
+                        candidate.Reposition(placement, in motion);
+                    }
+                    else
+                    {
+                        float3 normalWorld = math.mul(placement.rotation, attempt.search.planeOwner.xyz);
+                        candidate.Reposition(placement, in motion, normalWorld, 0f, 0f);
+                    }
                     if (!Establish(candidate))
                     {
                         Withdraw(candidate);
@@ -1872,6 +1970,7 @@ namespace Zantetsu.PhysicsCut
                     }
 
                     if (IsBentResult(in attempt.search)) PublishedBent++;
+                    if (attempt.graphLed) PublishedGraph++;
 
                     ActorsAdded += 1;          // two actors where one stood
                     RegistrationsAdded += 1;   // two registrations where one stood (the old one goes at the next adoption)
@@ -1955,7 +2054,7 @@ namespace Zantetsu.PhysicsCut
         // frame of a publication would be part of what that frame cost.
         private struct SplitEvent
         {
-            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut, bentPieces;
+            internal int frame, source, positive, negative, root, indices, positiveTriangles, negativeTriangles, positiveConvexes, negativeConvexes, convexesCut, bentPieces, graph;
             internal float3 at, normal;
             internal float gap;
             internal double workerSeconds, turnSeconds;
@@ -1982,11 +2081,14 @@ namespace Zantetsu.PhysicsCut
             {
                 frame = LastPublishedFrame, source = LastSource.value, positive = LastPositive.value, negative = LastNegative.value, root = root.value,
                 indices = attempt.indexCount,
-                positiveTriangles = attempt.search.positiveTriangles, negativeTriangles = attempt.search.negativeTriangles,
-                positiveConvexes = attempt.search.positiveConvexes, negativeConvexes = attempt.search.negativeConvexes,
+                positiveTriangles = attempt.graphLed ? attempt.graph.positiveTriangles : attempt.search.positiveTriangles,
+                negativeTriangles = attempt.graphLed ? attempt.graph.negativeTriangles : attempt.search.negativeTriangles,
+                positiveConvexes = attempt.graphLed ? attempt.graph.positiveConvexes : attempt.search.positiveConvexes,
+                negativeConvexes = attempt.graphLed ? attempt.graph.negativeConvexes : attempt.search.negativeConvexes,
                 convexesCut = attempt.cut ? attempt.meshCount / 2 : 0,
                 bentPieces = IsBentResult(in attempt.search) ? attempt.search.bentPieces : 0,
-                at = _publishedAt, normal = attempt.search.planeOwner.xyz, gap = attempt.search.gap,
+                graph = attempt.graphLed ? 1 : 0,
+                at = _publishedAt, normal = attempt.graphLed ? float3.zero : attempt.search.planeOwner.xyz, gap = attempt.graphLed ? 0f : attempt.search.gap,
                 workerSeconds = attempt.workerSeconds, turnSeconds = turnSeconds,
             });
         }
@@ -2011,7 +2113,8 @@ namespace Zantetsu.PhysicsCut
                     + e.normal.z.ToString("F3", inv) + "), the gap " + e.gap.ToString("F4", inv) + " m; worker " + (e.workerSeconds * 1000.0).ToString("F3", inv)
                     + " ms, the publishing turn " + (e.turnSeconds * 1000.0).ToString("F3", inv) + " ms"
                     + (e.convexesCut > 0 ? "; convexes cut by the plane " + e.convexesCut : "")
-                    + (e.bentPieces > 0 ? "; a bent partition of " + e.bentPieces + " pieces (the normal is its height axis, the gap its least clearance)" : ""));
+                    + (e.bentPieces > 0 ? "; a bent partition of " + e.bentPieces + " pieces (the normal is its height axis, the gap its least clearance)" : "")
+                    + (e.graph > 0 ? "; a graph placement (no plane: the normal and the gap are zero)" : ""));
             }
 
             if (EventsNotKept > 0)
@@ -2070,9 +2173,20 @@ namespace Zantetsu.PhysicsCut
 #endif
             _ends[(int)end]++;
             LastEnd = end;
+            CountGraph(attempt);
             if (mark)
             {
                 _suppressed[attempt.fragment] = attempt.input;
+            }
+
+            if (end == SpatialSplitEnd.Unfinished)
+            {
+                // Unfinished for a fixed limit (cut attempts, GJK iterations, the work budget, a capacity cap): the same input
+                // under the same search stops at the same place, so it is recorded as reached -- apart from the marks, never a
+                // verdict -- and not tried again until the input or the search changes. Unfinished for a passing cause (an
+                // allocation refused, the preparation contract, the clock): tried again after a wait (GRAPH-CONNECT-4 §3-5).
+                // Never a mark.
+                if (IsFixedLimit(attempt.graph.stop)) NoteLimitReached(attempt); else Defer(attempt);
             }
 
             if (end == SpatialSplitEnd.RoomShort || end == SpatialSplitEnd.NotRun || end == SpatialSplitEnd.Stale)
@@ -2085,6 +2199,20 @@ namespace Zantetsu.PhysicsCut
             }
 
             attempt.Free(_world.Storage);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (_capturePending)
+            {
+                // The capture switch that waited for this collection (the attempt's result went to the sink of its issue, above).
+                _capturePending = false;
+                SpatialSplitCaptureSink next = _pendingCapture;
+                _pendingCapture = null;
+                Capture = next;   // the setter re-evaluates the graph
+            }
+#endif
+            if (_graphReevaluatePending)
+            {
+                ReevaluateGraph();   // a change of the settings or the capture that waited for this collection
+            }
         }
 
         // The collection that followed a publication, read a turn later (it ran after that turn, in the same frame).
@@ -2452,7 +2580,7 @@ namespace Zantetsu.PhysicsCut
                 .Append("; last publication at frame ").Append(LastPublishedFrame == int.MinValue ? "-" : LastPublishedFrame.ToString(inv));
             if (withParts)
             {
-                text.Append("; ").Append(DescribeConvexCut()).Append("; ").Append(DescribeBent());
+                text.Append("; ").Append(DescribeConvexCut()).Append("; ").Append(DescribeBent()).Append("; ").Append(DescribeGraph());
             }
 
             return text.ToString();
@@ -2682,6 +2810,17 @@ namespace Zantetsu.PhysicsCut
             internal int maxConvexVertices;
             internal double bentSeconds;
 
+            // The graph stage (GRAPH-CONNECT-4): whether to ask the graph engine after the bent partition, its limits, and
+            // its record, kept apart from the plane search's result (which the mesh-led search resets).
+            internal bool graphSearch;
+            internal SpatialSplitGraphLimits graphLimits;
+            internal SpatialSplitGraphRecord graph;
+            internal bool graphLed;                 // the graph stage's placement is what is distributed, classified and published
+            internal NativeArray<byte> graphSides;  // C + T bytes the engine writes the sides to (the main thread's, in its own boundary)
+            internal int deferralCount;             // how many waits this fragment's unfinished attempts had before this one
+            internal int testGraphFailAllocation = -1, testGraphGjkMaxIterations;
+            internal bool testGraphShortSides;      // tests: the sides buffer handed to the engine too short (an invalid input)
+
             // The convex-cut branch. Set by the worker's numbers: whether a convex is cut. Then the main thread's:
             // the meshes it made of the produced convexes (positive then negative, a cut convex after another), their
             // ids and boxes, the cooking they are baked by, and how far the reading of the cooked hulls has come.
@@ -2743,6 +2882,27 @@ namespace Zantetsu.PhysicsCut
 #if ZANTETSU_OBSERVE
                         bentSeconds = Since(bentBegin);
 #endif
+                    }
+
+                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && graphSearch && anchors == null && convexCount >= 2
+                        && graph.verdict == SpatialSplitGraphVerdict.None)
+                    {
+                        // Neither a plane nor a bent partition: the graph engine's placement of the convexes and the mesh components
+                        // into two groups apart by the margin (GRAPH-CONNECT-4 §3-2; the stage's record is kept apart from the plane
+                        // search's result, which the mesh-led search below resets). A record already written says the sides'
+                        // allocation failed on the main thread: the stage is skipped. Separable: the graph's sharing out, below.
+                        // Not separable, not found, unfinished: on to the mesh-led plane as before. Invalid: as an invalid input ends.
+                        RunGraph();
+                        if (graph.verdict == SpatialSplitGraphVerdict.Separable)
+                        {
+                            BeginGraph();
+                            return;
+                        }
+
+                        if (graph.verdict == SpatialSplitGraphVerdict.Invalid)
+                        {
+                            return;
+                        }
                     }
 
                     if (search.outcome == SpatialSplitSearchOutcome.NotFound && cutConvexes)
@@ -2849,6 +3009,116 @@ namespace Zantetsu.PhysicsCut
 #endif
                     Volatile.Write(ref _done, 1);
                 }
+            }
+
+            // The graph stage (GRAPH-CONNECT-4 §3-2): the engine over the attempt's own pointers -- the vertex view, the
+            // indices, the convexes by bank and range -- with the sides written to the attempt's bytes; the span compaction, the
+            // caps and the work budget are the engine's (Unfinished, never an exception, for any of them, for an allocation that
+            // failed or for the preparation contract). The record tells a fixed search limit reached (cut attempts, GJK
+            // iterations) from a conclusion.
+            private void RunGraph()
+            {
+                long graphBegin = Began();
+                var settings = new SpatialSplitGraph.GraphSettings
+                {
+                    secondsLimit = 0.0, measure = 0, nearestSelection = true, flowDinic = true, pairsSweep = false, hashPrepare = false, requirePrepared = true,
+                    maxTriangles = graphLimits.maxTriangles, maxConvexes = graphLimits.maxConvexes, maxVertexSpan = graphLimits.maxVertexSpan, maxNodes = graphLimits.maxNodes,
+                    maxCandidates = graphLimits.maxCandidates, maxGraphBytes = graphLimits.maxGraphBytes, workBudget = graphLimits.workBudget,
+                    testFailNativeAllocation = testGraphFailAllocation,
+                };
+                if (testGraphGjkMaxIterations > 0) settings.gjkMaxIterations = testGraphGjkMaxIterations;
+                var span = new SpatialSplitGraph.SpanInput
+                {
+                    vertices = vertices, vertexViewLength = vertexViewLength, indices = indices, indexCount = indexCount,
+                    convexVertices = null, banks = banks, ranges = ranges, convexCount = convexCount,
+                    geometryToOwner = geometryToOwner, shapeToOwner = shapeToOwner, margin = margin,
+                    sidesOut = (byte*)graphSides.GetUnsafePtr(), sidesOutLength = testGraphShortSides ? 0 : graphSides.Length,
+                };
+                SpatialSplitGraph.GraphOutcome o = SpatialSplitGraph.DecideSpan(span, settings, true, out SpatialSplitGraph.NativeRun run);
+                var g = new SpatialSplitGraphRecord
+                {
+                    nodes = o.convexCount + o.meshComponents, meshComponents = o.meshComponents, candidates = o.candidatesA, cutAttempts = o.cutAttempts,
+                    gjkLimitHit = (int)Math.Min(o.gjkLimitHit, int.MaxValue), listGrowths = run.listGrowths, vertexSpan = o.vertexSpan, referencedVertices = o.referencedVertices,
+                    work = o.work, workPrepare = o.workPrepare, workSearch = o.workSearch, nativeBytes = run.nativeBytes,
+                    positiveConvexes = o.positiveConvexes, negativeConvexes = o.negativeConvexes, positiveTriangles = o.positiveTriangles, negativeTriangles = o.negativeTriangles,
+                    reason = o.reason,
+                };
+                switch (o.verdict)
+                {
+                    case SpatialSplitGraph.GraphVerdict.Separable:
+                        g.verdict = SpatialSplitGraphVerdict.Separable;
+                        break;
+                    case SpatialSplitGraph.GraphVerdict.NotSeparable:
+                        g.verdict = SpatialSplitGraphVerdict.NotSeparable;
+                        break;
+                    case SpatialSplitGraph.GraphVerdict.NotFound:
+                        // A NotFound reached by a fixed search limit is not a conclusion (GRAPH-CONNECT-4 §3-2): the cut limit
+                        // first (the search ended by it), else the GJK iteration limit among the pairs left ambiguous.
+                        if (o.cutLimitHit) { g.verdict = SpatialSplitGraphVerdict.Unfinished; g.stop = SpatialSplitGraphStop.CutAttempts; }
+                        else if (o.gjkLimitHit > 0) { g.verdict = SpatialSplitGraphVerdict.Unfinished; g.stop = SpatialSplitGraphStop.GjkIterations; }
+                        else g.verdict = SpatialSplitGraphVerdict.NotFound;
+                        break;
+                    case SpatialSplitGraph.GraphVerdict.InvalidInput:
+                        g.verdict = SpatialSplitGraphVerdict.Invalid;
+                        g.stop = SpatialSplitGraphStop.Invalid;
+                        break;
+                    default:
+                        g.verdict = SpatialSplitGraphVerdict.Unfinished;
+                        g.stop = o.stop == "work" ? SpatialSplitGraphStop.Work : o.stop == "capacity" ? SpatialSplitGraphStop.Capacity
+                            : o.stop == "allocation" ? SpatialSplitGraphStop.Allocation : o.stop == "notPrepared" ? SpatialSplitGraphStop.NotPrepared
+                            : o.stop == "time" ? SpatialSplitGraphStop.Time : SpatialSplitGraphStop.Work;
+                        break;
+                }
+
+                g.unfinished = g.verdict == SpatialSplitGraphVerdict.Unfinished;
+#if ZANTETSU_OBSERVE
+                g.seconds = Since(graphBegin);
+#endif
+                graph = g;
+            }
+
+            // The graph's sharing out, anchors and classification (GRAPH-CONNECT-4 §3-4), on the bent partition's pattern: the
+            // triangles by the side the engine gave their mesh component, the anchors none (the stage takes owners without
+            // anchors only: the empty distribution is Ok), the convexes by the sides the engine gave them -- recoded to the
+            // classification's bytes -- and no plane stands for the placement anywhere. Nothing is cut.
+            private void BeginGraph()
+            {
+                graphLed = true;
+                byte* sides = (byte*)graphSides.GetUnsafePtr();
+                distributed = CutSpatialSplitSearch.DistributeBySides(
+                    vertices, vertexViewLength, indices, indexCount, submeshOffsets, submeshCounts, submeshCount, sides + convexCount,
+                    output, outSubmeshOffsets, outSubmeshCounts, outBoundsMin, outBoundsMax, ref distribution);
+                if (!distributed)
+                {
+                    return;
+                }
+
+                positiveAnchors = new List<float3>();
+                negativeAnchors = new List<float3>();
+                anchorsDistributed = FixedSupportAnchors.TryDistribute(anchors, null, anchorEpsilon, positiveAnchors, negativeAnchors, out anchorResult);
+                if (!anchorsDistributed)
+                {
+                    return;
+                }
+
+                // The engine's byte is 1 positive, 0 negative; the classification reads ConvexSide (Positive 0, Negative 1).
+                for (int c = 0; c < convexCount; c++)
+                {
+                    sides[c] = (byte)(sides[c] != 0 ? ConvexSide.Positive : ConvexSide.Negative);
+                }
+
+                NativeArray<byte> given = classificationBlock;
+                classificationBlock = default;   // the classification's from here, on every answer
+                if (!PhysicsCutClassification.TryClassifyWithSides(input.shape, sides, convexCount, parentMass, vertexLimit, given, out classification)
+                    || !classification.SplitsBothSides)
+                {
+                    return;
+                }
+
+                classified = true;
+                ConvexCutOwnerInput kernelInput = classification.Input;
+                ConvexCutOwnerOutput kernelOutput = arena.Output;
+                ConvexCutOwnerKernel.Execute(in kernelInput, in kernelOutput, ref kernel);
             }
 
             // The bent partition's sharing out, anchors and classification (DESIGN 7.9.2): every side is what the
@@ -3119,6 +3389,8 @@ namespace Zantetsu.PhysicsCut
                 arena = null;
                 if (block.IsCreated) block.Dispose();
                 block = default;
+                if (graphSides.IsCreated) graphSides.Dispose();   // the graph's own allocation, once
+                graphSides = default;
                 vertices = null;
                 indices = null;
                 output = null;

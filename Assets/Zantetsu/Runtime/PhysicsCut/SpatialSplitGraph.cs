@@ -6,6 +6,7 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Unity.Profiling.LowLevel.Unsafe;
+using Zantetsu.ConvexCut;
 using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
@@ -19,7 +20,7 @@ namespace Zantetsu.PhysicsCut
     /// </summary>
     internal static unsafe partial class SpatialSplitGraph
     {
-        public const string Version = "graph-candidate-native 9 (2026-10-23, the numeric body in the Runtime PhysicsCut assembly as Burst direct calls over pointer bodies; the same numbers as graph-candidate-native 8 of 7928569e; a work meter, capacity caps and a span input added, all off by default): AB of graph-candidate 3; N0 = the bodies as managed code, N1 = the Burst direct call (FloatMode.Strict); every area released on any failure, out of memory a failure result; optional section times (measure 1) and diagnostic counts (measure 2); the nearest triangle-only seeds by a top-3 selection or the full sort; the minimum cut by Edmonds-Karp (flow ek) or Dinic (flow dinic); the candidate enumeration by every pair or a sweep along x";
+        public const string Version = "graph-candidate-native 10 (2026-10-23, the numeric body in the Runtime PhysicsCut assembly as Burst direct calls over pointer bodies; the same numbers as graph-candidate-native 8 of 7928569e and 9 of d326b460; a work meter, capacity caps and a span input added, all off by default; the product's convexes by pointer, the sides written to the caller's bytes, the span compaction in native areas and metered, the GJK iteration-limit count): AB of graph-candidate 3; N0 = the bodies as managed code, N1 = the Burst direct call (FloatMode.Strict); every area released on any failure, out of memory a failure result; optional section times (measure 1) and diagnostic counts (measure 2); the nearest triangle-only seeds by a top-3 selection or the full sort; the minimum cut by Edmonds-Karp (flow ek) or Dinic (flow dinic); the candidate enumeration by every pair or a sweep along x";
 
         internal static readonly string[] SectionNames = { "regroup", "seeds", "sortNearest", "cutBuild", "cutFlow", "cutExtract", "collect", "sortToRefute", "gjk", "projection", "conclude" };
         internal static readonly string[] CounterNames = { "projectionCalls", "gjkCalls", "minCutCalls", "arcsBuilt", "bfsDequeues", "augmentations", "nearestCompares", "nearestMoves", "refuteSorted", "refuteMoves", "nearestGaps", "levelBuilds", "arcChecks", "pushes" };
@@ -114,6 +115,10 @@ namespace Zantetsu.PhysicsCut
             public long triedB, refutedB, ambiguousB, gjkIterations, supportQueries, vertexScans;
             public int cutAttempts;
             public bool cutLimitHit, timedOut;
+            /// <summary>Stage B pairs whose GJK reached the iteration limit without settling (GRAPH-CONNECT-4 §3-2): a NotFound with any is not a conclusion.</summary>
+            public long gjkLimitHit;
+            /// <summary>True when the placement's sides went to the span input's sidesOut (the bool arrays are then null).</summary>
+            public bool sidesWritten;
             /// <summary>The work meter's units (<see cref="WorkDefinition"/>): both bodies, the preparation's and the search's.</summary>
             public long work, workPrepare, workSearch;
             /// <summary>The span input: the slots between the least and the greatest referenced id, and the referenced vertices (0 for a compact input).</summary>
@@ -176,9 +181,19 @@ namespace Zantetsu.PhysicsCut
             public int vertexViewLength;
             public uint* indices;
             public int indexCount;
+            /// <summary>The convexes as vertex arrays (the Editor's), or null: then the product's banks and ranges below, <see cref="convexCount"/> of them.</summary>
             public float3[][] convexVertices;
+            public ConvexBrepBank* banks;
+            public ConvexBrepRange* ranges;
+            public int convexCount;
             public float4x4 geometryToOwner, shapeToOwner;
             public float margin;
+            /// <summary>
+            /// Where a Separable placement's sides are written (the convexes' C bytes, then the triangles' T bytes; 1 positive, 0 negative),
+            /// instead of the bool arrays, when not null: the product's buffer. At least C + T bytes long, or the input is invalid.
+            /// </summary>
+            public byte* sidesOut;
+            public int sidesOutLength;
         }
 
         /// <summary>
@@ -225,7 +240,7 @@ namespace Zantetsu.PhysicsCut
         private static bool PrepareWith(int failAllocation)
         {
             bool ok = Warmup(0, true, true, false, failAllocation);
-            IsPrepared = ok;
+            if (ok) IsPrepared = true;   // a later failure (another world's) does not revoke a preparation that succeeded (GRAPH-CONNECT-4 §3-10)
             return ok;
         }
 
@@ -445,27 +460,52 @@ namespace Zantetsu.PhysicsCut
         private static void DecideInto(CompactInput compact, SpanInput span, GraphSettings settings, bool burst, GraphOutcome r, NativeRun run, long begin, PrepareSnapshot snapshot)
         {
             var areas = new Areas { failAt = settings.testFailNativeAllocation, failAsOutOfMemory = settings.testFailWithOutOfMemory };
+            var nc = new NativeCompact();
             try
             {
                 // ---- 0. The caps known from the counts alone, before anything is scanned or allocated (Unfinished(capacity), never Invalid).
                 int indexCount, convexCount;
-                if (compact != null) { if (compact.indices == null || compact.convexes == null) throw new ArgumentException("the compact input is missing its indices or convexes"); indexCount = compact.indices.Length; convexCount = compact.convexes.Length; }
-                else if (span != null) { if (span.indices == null || span.convexVertices == null) throw new ArgumentException("the span input is missing its indices or convexes"); indexCount = span.indexCount; convexCount = span.convexVertices.Length; }
+                ConvexSource convexes;
+                byte* sidesOut = null;
+                if (compact != null)
+                {
+                    if (compact.indices == null || compact.convexes == null) throw new ArgumentException("the compact input is missing its indices or convexes");
+                    indexCount = compact.indices.Length; convexCount = compact.convexes.Length;
+                    convexes = new ConvexSource(compact.convexes, null, null, convexCount);
+                }
+                else if (span != null)
+                {
+                    if (span.indices == null) throw new ArgumentException("the span input is missing its indices");
+                    if (span.convexVertices == null && (span.banks == null || span.ranges == null || span.convexCount < 0)) throw new ArgumentException("the span input is missing its convexes");
+                    indexCount = span.indexCount; convexCount = span.convexVertices != null ? span.convexVertices.Length : span.convexCount;
+                    convexes = new ConvexSource(span.convexVertices, span.banks, span.ranges, convexCount);
+                    if (span.sidesOut != null)
+                    {
+                        if (indexCount < 0 || span.sidesOutLength < convexCount + (indexCount / 3)) throw new ArgumentException("the sides buffer of " + span.sidesOutLength + " bytes is shorter than the convexes and triangles (" + convexCount + " + " + (indexCount / 3) + ")");
+                        sidesOut = span.sidesOut;
+                    }
+                }
                 else throw new ArgumentException("no compact and no span input");
                 if (indexCount < 0 || indexCount % 3 != 0) throw new ArgumentException("the index count is not a multiple of three");
                 int triangleCount = indexCount / 3;
                 if (settings.maxTriangles > 0 && triangleCount > settings.maxTriangles) { Unfinish(r, "capacity", "the triangle count " + triangleCount + " exceeds maxTriangles " + settings.maxTriangles); return; }
                 if (settings.maxConvexes > 0 && convexCount > settings.maxConvexes) { Unfinish(r, "capacity", "the convex count " + convexCount + " exceeds maxConvexes " + settings.maxConvexes); return; }
+                for (int c = 0; c < convexCount; c++)
+                {
+                    if (convexes.VertexCount(c) < 4) throw new ArgumentException("convex " + c + " has fewer than four vertices");
+                }
 
-                // ---- 1. The input checked and reduced to the compact arrays: the referenced vertices only, in ascending id order.
-                CompactInput input;
-                if (compact != null) input = CheckCompact(compact);
-                else if (!FromSpan(span, settings, r, run, ref areas, out input)) return;
+                // ---- 1. The input checked and reduced to the compact native arrays: the referenced vertices only, in ascending id order.
+                // The Editor's compact input is copied (unmetered: not the product's path); the span input is scanned and compacted
+                // here, on the deciding thread, with the scans and copies on the work meter (work 3), into areas counted like the engine's.
+                if (compact != null) { if (!FromCompact(compact, settings, r, ref areas, ref nc)) return; }
+                else if (!FromSpan(span, settings, r, run, ref areas, ref nc)) return;
 
-                DecideCore(input, settings, burst, r, run, begin, snapshot, ref areas);
+                DecideCore(in nc, in convexes, settings, burst, r, run, begin, snapshot, ref areas, sidesOut);
             }
             finally
             {
+                Free(ref nc.local); Free(ref nc.ids); Free(ref nc.indices);
                 run.nativeBytes = areas.bytes;
                 run.allocations = areas.allocations;
             }
@@ -483,41 +523,91 @@ namespace Zantetsu.PhysicsCut
                 if (i > 0 && c.ids[i] <= c.ids[i - 1]) throw new ArgumentException("the ids are not strictly ascending at " + i);
             }
 
-            for (int k = 0; k < c.convexes.Length; k++)
-            {
-                if (c.convexes[k] == null || c.convexes[k].Length < 4) throw new ArgumentException("convex " + k + " has fewer than four vertices");
-            }
-
             return c;
         }
 
-        // The product's shape (GRAPH-CONNECT-1 §4.1, in four steps): (1) the indices scanned for the range check and the span;
-        // (2) the span cap, then the marks allocated; (3) the indices scanned again to mark the referenced slots; (4) the marked
-        // slots in ascending order give the compact ids and positions. Only referenced vertices are read: an unreferenced slot's
-        // contents never reach a number. Invalid: a malformed input. Unfinished(capacity): a span over the cap. False: the
-        // decision ended here (r says how). The marks are the span's only area and are released here whatever happens.
-        private static bool FromSpan(SpanInput span, GraphSettings settings, GraphOutcome r, NativeRun run, ref Areas areas, out CompactInput input)
+        /// <summary>The compact arrays the bodies read, in native areas counted like the engine's, and the compaction's work (a span input's).</summary>
+        private struct NativeCompact
         {
-            input = null;
+            public NativeArray<float3> local;
+            public NativeArray<uint> ids, indices;
+            public int named, indexCount, vertexViewLength;
+            public float4x4 geometryToOwner, shapeToOwner;
+            public float margin;
+            public long work;
+        }
+
+        /// <summary>The convexes' vertices, from the Editor's arrays or the product's banks and ranges (read the way the plane search reads them).</summary>
+        private readonly struct ConvexSource
+        {
+            private readonly float3[][] _arrays;
+            private readonly ConvexBrepBank* _banks;
+            private readonly ConvexBrepRange* _ranges;
+            public readonly int count;
+
+            public ConvexSource(float3[][] arrays, ConvexBrepBank* banks, ConvexBrepRange* ranges, int count)
+            {
+                _arrays = arrays; _banks = banks; _ranges = ranges; this.count = count;
+            }
+
+            public int VertexCount(int c) => _arrays != null ? (_arrays[c] != null ? _arrays[c].Length : 0) : (_banks[c].vertices != null ? _ranges[c].vertexCount : 0);
+
+            public float3 Vertex(int c, int v) => _arrays != null ? _arrays[c][v] : _banks[c].vertices[_ranges[c].vertexBase + v];
+        }
+
+        // The Editor's compact input into the native arrays: a copy (not the product's path: unmetered), within the byte cap.
+        private static bool FromCompact(CompactInput compact, GraphSettings settings, GraphOutcome r, ref Areas areas, ref NativeCompact nc)
+        {
+            CompactInput c = CheckCompact(compact);
+            int named = c.local.Length;
+            long bytes = ((long)Math.Max(1, named) * 16) + ((long)Math.Max(1, c.indices.Length) * 4);
+            if (settings.maxGraphBytes > 0 && areas.bytes + bytes > settings.maxGraphBytes)
+            {
+                Unfinish(r, "capacity", "the compact arrays of " + bytes + " B would exceed maxGraphBytes " + settings.maxGraphBytes);
+                return false;
+            }
+
+            nc.local = NewArray<float3>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 12);
+            nc.ids = NewArray<uint>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+            nc.indices = NewArray<uint>(Math.Max(1, c.indices.Length), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+            for (int i = 0; i < named; i++) { nc.local[i] = c.local[i]; nc.ids[i] = c.ids[i]; }
+            for (int i = 0; i < c.indices.Length; i++) nc.indices[i] = c.indices[i];
+            nc.named = named;
+            nc.indexCount = c.indices.Length;
+            nc.vertexViewLength = c.vertexViewLength; nc.geometryToOwner = c.geometryToOwner; nc.shapeToOwner = c.shapeToOwner; nc.margin = c.margin;
+            nc.work = 0;
+            return true;
+        }
+
+        // The product's shape (GRAPH-CONNECT-1 §4.1, in four steps; GRAPH-CONNECT-4 §3-8): (1) the indices scanned for the range check
+        // and the span; (2) the span cap (the span is known only now), then the marks allocated; (3) the indices scanned again to
+        // mark the referenced slots; (4) the marked slots in ascending order give the compact ids and positions, into native areas
+        // counted like the engine's, and the indices are copied. Only referenced vertices are read: an unreferenced slot's contents
+        // never reach a number. Every scan and copy is on the work meter (work 3: an index three units over its scans and copy, a
+        // slot of the span one), checked against the budget: Unfinished(work). Invalid: a malformed input. Unfinished(capacity): a
+        // span or an area over a cap. False: the decision ended here (r says how). The marks are released here whatever happens;
+        // the compact arrays are the caller's to release.
+        private static bool FromSpan(SpanInput span, GraphSettings settings, GraphOutcome r, NativeRun run, ref Areas areas, ref NativeCompact nc)
+        {
             if (span.vertices == null) throw new ArgumentException("the span input is missing its vertices");
             if (!math.isfinite(span.margin) || span.margin <= 0f) throw new ArgumentException("the margin is " + span.margin.ToString("R", CultureInfo.InvariantCulture));
             if (!Finite(in span.geometryToOwner) || !Finite(in span.shapeToOwner)) throw new ArgumentException("a transform is not finite");
             if (span.vertexViewLength <= 0) throw new ArgumentException("the vertex view is empty");
-            for (int c = 0; c < span.convexVertices.Length; c++)
-            {
-                if (span.convexVertices[c] == null || span.convexVertices[c].Length < 4) throw new ArgumentException("convex " + c + " has fewer than four vertices");
-            }
+            var meter = WorkMeter.Of(settings.workBudget);
 
             // (1) the range and the span
             uint lo = uint.MaxValue, hi = 0;
-            for (int i = 0; i < span.indexCount; i++)
+            for (int i = 0; i < span.indexCount && !meter.Stopped; i++)
             {
                 uint id = span.indices[i];
                 if (id >= (uint)span.vertexViewLength) throw new ArgumentException("index " + i + " names vertex " + id + " outside the view of " + span.vertexViewLength);
                 if (id < lo) lo = id;
                 if (id > hi) hi = id;
+                meter.Spend(1);
             }
 
+            r.workPrepare = r.work = nc.work = meter.work;   // the work so far, kept whatever ends the decision next (a cap, an allocation)
+            if (meter.Stopped) return StoppedInCompaction(r, settings, meter, nc.work = meter.work, "the index scan");
             long spanLength = span.indexCount == 0 ? 0 : (long)hi - lo + 1;
             r.vertexSpan = (int)math.min(spanLength, int.MaxValue);
             run.vertexSpan = r.vertexSpan;
@@ -541,38 +631,53 @@ namespace Zantetsu.PhysicsCut
                 marks = NewArray<byte>((int)markBytes, NativeArrayOptions.ClearMemory, ref areas, 1);
                 // (3) the referenced slots
                 int referenced = 0;
-                for (int i = 0; i < span.indexCount; i++)
+                for (int i = 0; i < span.indexCount && !meter.Stopped; i++)
                 {
                     int slot = (int)(span.indices[i] - lo);
                     if (marks[slot] == 0) { marks[slot] = 1; referenced++; }
+                    meter.Spend(1);
                 }
 
-                // (4) the compact arrays in ascending id order: the engine's slot lookup (a binary search of the sorted ids) is
-                // unchanged, and a saved sample's referenced vertices come out in the same order.
-                var local = new float3[referenced];
-                var ids = new uint[referenced];
+                r.workPrepare = r.work = nc.work = meter.work;   // the work so far, kept whatever ends the decision next (a cap, an allocation)
+                if (meter.Stopped) return StoppedInCompaction(r, settings, meter, nc.work = meter.work, "the marking scan");
+                r.referencedVertices = referenced;
+                run.referencedVertices = referenced;
+
+                // (4) the compact arrays, within the byte cap, in ascending id order: the engine's slot lookup (a binary search of
+                // the sorted ids) is unchanged, and a saved sample's referenced vertices come out in the same order
+                long compactBytes = ((long)Math.Max(1, referenced) * 16) + ((long)Math.Max(1, span.indexCount) * 4);
+                if (settings.maxGraphBytes > 0 && areas.bytes + compactBytes > settings.maxGraphBytes)
+                {
+                    Unfinish(r, "capacity", "the compact arrays of " + compactBytes + " B (" + referenced + " vertices, " + span.indexCount + " indices) would exceed maxGraphBytes " + settings.maxGraphBytes);
+                    return false;
+                }
+
+                nc.local = NewArray<float3>(Math.Max(1, referenced), NativeArrayOptions.UninitializedMemory, ref areas, 12);
+                nc.ids = NewArray<uint>(Math.Max(1, referenced), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                nc.indices = NewArray<uint>(Math.Max(1, span.indexCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
                 int at0 = UnsafeUtility.GetFieldOffset(typeof(VpRenderVertex).GetField(nameof(VpRenderVertex.position)));
                 int v = 0;
-                for (int s = 0; s < spanLength; s++)
+                for (long s = 0; s < spanLength && !meter.Stopped; s++)
                 {
-                    if (marks[s] == 0) continue;
+                    meter.Spend(1);
+                    if (marks[(int)s] == 0) continue;
                     uint id = lo + (uint)s;
                     float3 p = *(float3*)((byte*)(span.vertices + id) + at0);
                     if (!math.all(math.isfinite(p))) throw new ArgumentException("vertex " + id + " is not finite");
-                    local[v] = p;
-                    ids[v] = id;
+                    nc.local[v] = p;
+                    nc.ids[v] = id;
                     v++;
                 }
 
-                r.referencedVertices = referenced;
-                run.referencedVertices = referenced;
-                var indices = new uint[span.indexCount];
-                for (int i = 0; i < span.indexCount; i++) indices[i] = span.indices[i];
-                input = new CompactInput
-                {
-                    local = local, ids = ids, indices = indices, convexes = span.convexVertices,
-                    geometryToOwner = span.geometryToOwner, shapeToOwner = span.shapeToOwner, margin = span.margin, vertexViewLength = span.vertexViewLength,
-                };
+                r.workPrepare = r.work = nc.work = meter.work;   // the work so far, kept whatever ends the decision next (a cap, an allocation)
+                if (meter.Stopped) return StoppedInCompaction(r, settings, meter, nc.work = meter.work, "the span scan");
+                for (int i = 0; i < span.indexCount && !meter.Stopped; i++) { nc.indices[i] = span.indices[i]; meter.Spend(1); }
+                r.workPrepare = r.work = nc.work = meter.work;   // the work so far, kept whatever ends the decision next (a cap, an allocation)
+                if (meter.Stopped) return StoppedInCompaction(r, settings, meter, nc.work = meter.work, "the index copy");
+                nc.named = referenced;
+                nc.indexCount = span.indexCount;
+                nc.vertexViewLength = span.vertexViewLength; nc.geometryToOwner = span.geometryToOwner; nc.shapeToOwner = span.shapeToOwner; nc.margin = span.margin;
+                nc.work = meter.work;
                 return true;
             }
             finally
@@ -580,6 +685,14 @@ namespace Zantetsu.PhysicsCut
                 // the marks go here whatever happened; their bytes stay counted (they were held during the compaction)
                 Free(ref marks);
             }
+        }
+
+        private static bool StoppedInCompaction(GraphOutcome r, GraphSettings settings, in WorkMeter meter, long work, string where)
+        {
+            r.workPrepare = work;
+            r.work = work;
+            Unfinish(r, "work", "the work budget " + settings.workBudget + " passed in the span compaction at " + where + " (" + work + " units)");
+            return false;
         }
 
         private const byte Guard = 0x7E;
@@ -601,17 +714,19 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        private static void DecideCore(CompactInput input, GraphSettings settings, bool burst, GraphOutcome r, NativeRun run, long begin, PrepareSnapshot snapshot, ref Areas areas)
+        private static void DecideCore(in NativeCompact nc, in ConvexSource convexes, GraphSettings settings, bool burst, GraphOutcome r, NativeRun run, long begin, PrepareSnapshot snapshot, ref Areas areas, byte* sidesOut)
         {
-            int named = input.local.Length;
-            int triangleCount = input.indices.Length / 3;
-            int convexCount = input.convexes.Length;
+            int named = nc.named;
+            int triangleCount = nc.indexCount / 3;
+            int convexCount = convexes.count;
             int convexVertexTotal = 0;
-            for (int c = 0; c < convexCount; c++) convexVertexTotal += input.convexes[c].Length;
+            for (int c = 0; c < convexCount; c++) convexVertexTotal += convexes.VertexCount(c);
             r.convexCount = convexCount;
             r.triangleCount = triangleCount;
-            NativeArray<float3> local = default, convexLocal = default;
-            NativeArray<uint> ids = default, indices = default;
+            r.workPrepare = nc.work;   // the compaction's work, returned whatever ends the decision before the bodies run (a cap, an allocation)
+            r.work = nc.work;
+            NativeArray<float3> local = nc.local, convexLocal = default;
+            NativeArray<uint> ids = nc.ids, indices = nc.indices;
             NativeArray<int> convexStart = default, cornerSlot = default, triComponent = default, nodeHullStart = default, nodeTriangleCount = default, scratchInt = default, work = default;
             NativeArray<double3> owner = default, nodeLo = default, nodeHi = default, hull = default, work3 = default;
             NativeArray<double> bounds = default, workD = default;
@@ -631,7 +746,7 @@ namespace Zantetsu.PhysicsCut
                 // The fixed areas, their sizes known from the input, and the sweep's node order: the byte cap is checked over their sum
                 // before the first one.
                 int orderLength = settings.pairsSweep ? Math.Max(1, nodeCapacity) : 1;
-                long fixedBytes = ((long)Math.Max(1, named) * (12 + 4 + 24)) + ((long)Math.Max(1, input.indices.Length) * (4 + 4)) + ((long)Math.Max(1, convexVertexTotal) * 12) + ((long)(convexCount + 1) * 4)
+                long fixedBytes = ((long)Math.Max(1, named) * 24) + ((long)Math.Max(1, nc.indexCount) * 4) + ((long)Math.Max(1, convexVertexTotal) * 12) + ((long)(convexCount + 1) * 4)
                     + ((long)Math.Max(1, triangleCount) * 4) + ((long)Math.Max(1, nodeCapacity) * (24 + 24 + 4)) + ((long)Math.Max(1, nodeCapacity + 1) * 4) + ((long)Math.Max(1, hullCapacity) * 24)
                     + ((long)Math.Max(1, Math.Max(named, triangleCount) * 2 + nodeCapacity) * 4) + (4 * 8) + (StatCount * 8) + (SectionCount * 8) + ((long)orderLength * 16);
                 if (maxBytes > 0 && areas.bytes + fixedBytes > maxBytes)
@@ -640,13 +755,10 @@ namespace Zantetsu.PhysicsCut
                     return;
                 }
 
-                local = NewArray<float3>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 12);
-                ids = NewArray<uint>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 4);
-                indices = NewArray<uint>(Math.Max(1, input.indices.Length), NativeArrayOptions.UninitializedMemory, ref areas, 4);
                 convexLocal = NewArray<float3>(Math.Max(1, convexVertexTotal), NativeArrayOptions.UninitializedMemory, ref areas, 12);
                 convexStart = NewArray<int>(convexCount + 1, NativeArrayOptions.ClearMemory, ref areas, 4);
                 owner = NewArray<double3>(Math.Max(1, named), NativeArrayOptions.UninitializedMemory, ref areas, 24);
-                cornerSlot = NewArray<int>(Math.Max(1, input.indices.Length), NativeArrayOptions.UninitializedMemory, ref areas, 4);
+                cornerSlot = NewArray<int>(Math.Max(1, nc.indexCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
                 triComponent = NewArray<int>(Math.Max(1, triangleCount), NativeArrayOptions.UninitializedMemory, ref areas, 4);
                 nodeLo = NewArray<double3>(Math.Max(1, nodeCapacity), NativeArrayOptions.UninitializedMemory, ref areas, 24);
                 nodeHi = NewArray<double3>(Math.Max(1, nodeCapacity), NativeArrayOptions.UninitializedMemory, ref areas, 24);
@@ -698,19 +810,14 @@ namespace Zantetsu.PhysicsCut
                 long listBytesHeld = ((long)candidates.Capacity * 8) + ((long)gaps.Capacity * 8) + ((long)keyGaps.Capacity * 16);
                 areas.bytes += listBytesHeld;
 
-                for (int i = 0; i < named; i++)
-                {
-                    local[i] = input.local[i];
-                    ids[i] = input.ids[i];
-                }
-
-                for (int i = 0; i < input.indices.Length; i++) indices[i] = input.indices[i];
                 int fill = 0;
                 for (int c = 0; c < convexCount; c++)
                 {
                     convexStart[c] = fill;
-                    foreach (float3 p in input.convexes[c])
+                    int vertexCount = convexes.VertexCount(c);
+                    for (int k = 0; k < vertexCount; k++)
                     {
+                        float3 p = convexes.Vertex(c, k);
                         if (!math.all(math.isfinite(p))) throw new ArgumentException("a convex vertex is not finite");
                         convexLocal[fill++] = p;
                     }
@@ -726,14 +833,14 @@ namespace Zantetsu.PhysicsCut
                 var prepare = new PrepareBody
                 {
                     local = (float3*)local.GetUnsafePtr(), ids = (uint*)ids.GetUnsafePtr(), indices = (uint*)indices.GetUnsafePtr(), convexLocal = (float3*)convexLocal.GetUnsafePtr(), convexStart = (int*)convexStart.GetUnsafePtr(),
-                    geometryToOwner = input.geometryToOwner, shapeToOwner = input.shapeToOwner,
-                    margin = input.margin, vertexViewLength = input.vertexViewLength, named = named, triangleCount = triangleCount, convexCount = convexCount,
+                    geometryToOwner = nc.geometryToOwner, shapeToOwner = nc.shapeToOwner,
+                    margin = nc.margin, vertexViewLength = nc.vertexViewLength, named = named, triangleCount = triangleCount, convexCount = convexCount,
                     owner = (double3*)owner.GetUnsafePtr(), cornerSlot = (int*)cornerSlot.GetUnsafePtr(), triComponent = (int*)triComponent.GetUnsafePtr(),
                     nodeLo = (double3*)nodeLo.GetUnsafePtr(), nodeHi = (double3*)nodeHi.GetUnsafePtr(), nodeHullStart = (int*)nodeHullStart.GetUnsafePtr(), nodeTriangleCount = (int*)nodeTriangleCount.GetUnsafePtr(),
                     hull = (double3*)hull.GetUnsafePtr(), scratch = (int*)scratchInt.GetUnsafePtr(), bounds = (double*)bounds.GetUnsafePtr(), stats = (long*)stats.GetUnsafePtr(),
                     candidates = candidates.GetUnsafeList(), gaps = gaps.GetUnsafeList(), measure = settings.measure, sections = (long*)sections.GetUnsafePtr(),
                     pairs = settings.pairsSweep ? 1 : 0, order = (NodeKey*)order.GetUnsafePtr(), keyGaps = keyGaps.GetUnsafeList(),
-                    workBudget = settings.workBudget, maxNodes = settings.maxNodes, candidateCapEnabled = capped ? 1 : 0, candidateCap = capped ? (int)Math.Min(cap, int.MaxValue) : 0,
+                    workBudget = settings.workBudget, workBefore = nc.work, maxNodes = settings.maxNodes, candidateCapEnabled = capped ? 1 : 0, candidateCap = capped ? (int)Math.Min(cap, int.MaxValue) : 0,
                 };
                 run.pairsSweep = settings.pairsSweep;
                 // The body never reallocates a list: a full list ends it with StopGrow and the next capacity. The driver -- the one
@@ -919,6 +1026,7 @@ namespace Zantetsu.PhysicsCut
                 r.vertexScans = stats[StatVertexScans];
                 r.cutAttempts = (int)stats[StatCutAttempts];
                 r.cutLimitHit = stats[StatCutLimitHit] != 0;
+                r.gjkLimitHit = stats[StatGjkLimitHit];
                 r.stage = stats[StatStage] == 0 ? "A" : "B";
                 if (stats[StatUnfinished] != 0)
                 {
@@ -931,6 +1039,27 @@ namespace Zantetsu.PhysicsCut
                 {
                     case VerdictSeparable:
                         r.verdict = GraphVerdict.Separable;
+                        if (sidesOut != null)
+                        {
+                            // The product's buffer: the convexes' sides, then the triangles' (a triangle's side is its component's node's).
+                            for (int c = 0; c < convexCount; c++)
+                            {
+                                bool positive = nodeSide[c] != 0;
+                                sidesOut[c] = positive ? (byte)1 : (byte)0;
+                                if (positive) r.positiveConvexes++; else r.negativeConvexes++;
+                            }
+
+                            for (int k = 0; k < triangleCount; k++)
+                            {
+                                bool positive = nodeSide[convexCount + triComponent[k]] != 0;
+                                sidesOut[convexCount + k] = positive ? (byte)1 : (byte)0;
+                                if (positive) r.positiveTriangles++; else r.negativeTriangles++;
+                            }
+
+                            r.sidesWritten = true;
+                            break;
+                        }
+
                         r.convexPositive = new bool[convexCount];
                         r.trianglePositive = new bool[triangleCount];
                         for (int c = 0; c < convexCount; c++)
@@ -967,7 +1096,7 @@ namespace Zantetsu.PhysicsCut
             {
                 // Whatever happened -- an input refused after the first allocation, an allocation failed, a body threw -- every
                 // native area that was created is released here; the live count proves it in the tests.
-                Free(ref local); Free(ref ids); Free(ref indices); Free(ref convexLocal); Free(ref convexStart);
+                Free(ref convexLocal); Free(ref convexStart);   // (local, ids and indices are the caller's: freed in DecideInto)
                 Free(ref owner); Free(ref cornerSlot); Free(ref triComponent); Free(ref nodeLo); Free(ref nodeHi); Free(ref nodeHullStart); Free(ref nodeTriangleCount);
                 Free(ref hull); Free(ref scratchInt); Free(ref bounds); Free(ref stats); Free(ref sections); Free(ref candidates); Free(ref gaps);
                 Free(ref nodeSide); Free(ref work); Free(ref work3); Free(ref workD); Free(ref workB);

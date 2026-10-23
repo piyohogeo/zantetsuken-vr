@@ -234,6 +234,20 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int spatialSplitBentMaxIterations = SpatialSplitBentLimits.DefaultIterations;
         [SerializeField] private int spatialSplitBentMaxPieces = SpatialSplitBentLimits.DefaultPieces;
 
+        [Tooltip("With the split on: where neither a plane nor the bent partition leaves the convexes and the triangles whole, ask the graph engine for a placement of the convexes and the mesh components into two groups apart by the margin (GRAPH-CONNECT-1), before the convex cut is tried; owners without anchors only. Off by default (2026-10-23): the connection is verified, the stage is not adopted.")]
+        [SerializeField] private bool spatialSplitGraphSearch = false;
+
+        [Tooltip("The graph stage's limits: triangles, convexes, the referenced vertex span, nodes, candidate pairs, native bytes held at once, work units (the engine stops at any of them: unfinished, tried again later), and the wait in frames before such a retry (first, then doubled up to the greatest). Provisional (2026-10-23), from the tuning set's maxima.")]
+        [SerializeField] private int spatialSplitGraphMaxTriangles = SpatialSplitGraphLimits.DefaultTriangles;
+        [SerializeField] private int spatialSplitGraphMaxConvexes = SpatialSplitGraphLimits.DefaultConvexes;
+        [SerializeField] private int spatialSplitGraphMaxVertexSpan = SpatialSplitGraphLimits.DefaultVertexSpan;
+        [SerializeField] private int spatialSplitGraphMaxNodes = SpatialSplitGraphLimits.DefaultNodes;
+        [SerializeField] private int spatialSplitGraphMaxCandidates = SpatialSplitGraphLimits.DefaultCandidates;
+        [SerializeField] private long spatialSplitGraphMaxBytes = SpatialSplitGraphLimits.DefaultGraphBytes;
+        [SerializeField] private long spatialSplitGraphWorkBudget = SpatialSplitGraphLimits.DefaultWorkBudget;
+        [SerializeField] private int spatialSplitGraphDeferFirstFrames = SpatialSplitGraphLimits.DefaultDeferFirstFrames;
+        [SerializeField] private int spatialSplitGraphDeferMaxFrames = SpatialSplitGraphLimits.DefaultDeferMaxFrames;
+
         [Header("Building rest (trial, 2026-09-29)")]
         [Tooltip("Put supported building pieces to sleep explicitly after a timeout (a game rule; off by default). Off: nothing is tracked.")]
         [SerializeField] private bool buildingRestEnabled = false;
@@ -489,6 +503,10 @@ namespace Zantetsu.PhysicsCut
                 settings.bentSearch = spatialSplitBentSearch;
                 settings.bentLimits = new SpatialSplitBentLimits(
                     spatialSplitBentMaxFrames, spatialSplitBentMaxSeeds, spatialSplitBentMaxCandidates, spatialSplitBentMaxIterations, spatialSplitBentMaxPieces);
+                settings.graphSearch = spatialSplitGraphSearch;
+                settings.graphLimits = new SpatialSplitGraphLimits(
+                    spatialSplitGraphMaxTriangles, spatialSplitGraphMaxConvexes, spatialSplitGraphMaxVertexSpan, spatialSplitGraphMaxNodes, spatialSplitGraphMaxCandidates,
+                    spatialSplitGraphMaxBytes, spatialSplitGraphWorkBudget, spatialSplitGraphDeferFirstFrames, spatialSplitGraphDeferMaxFrames);
                 return settings;
             }
         }

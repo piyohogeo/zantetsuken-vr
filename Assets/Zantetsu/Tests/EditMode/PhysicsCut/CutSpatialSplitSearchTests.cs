@@ -597,5 +597,84 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(math.abs(found.planeOwner.x) > 0.3f && math.abs(found.planeOwner.y) > 0.3f, Is.True, "a plane across the diagonal: " + found.planeOwner);
             Assert.That(Distribute(scene, found.planeGeometry).ok, Is.True);
         }
+
+        private static Shared DistributeBySides(Scene scene, byte[] sides)
+        {
+            VpRenderVertex[] vertices = scene.vertices.ToArray();
+            uint[] indices = scene.Indices;
+            int[] offsets = scene.SubmeshOffsets;
+            int[] counts = scene.SubmeshCounts;
+            int s = offsets.Length;
+            var shared = new Shared
+            {
+                output = new uint[indices.Length], offsets = new int[2 * s], counts = new int[2 * s],
+                boundsMin = new float3[2 * s], boundsMax = new float3[2 * s],
+            };
+            fixed (VpRenderVertex* v = vertices)
+            fixed (uint* i = indices)
+            fixed (int* so = offsets)
+            fixed (int* sc = counts)
+            fixed (byte* ts = sides)
+            fixed (uint* o = shared.output)
+            fixed (int* oo = shared.offsets)
+            fixed (int* oc = shared.counts)
+            fixed (float3* bmin = shared.boundsMin)
+            fixed (float3* bmax = shared.boundsMax)
+            {
+                shared.ok = CutSpatialSplitSearch.DistributeBySides(
+                    v, vertices.Length, i, indices.Length, so, sc, s, ts, o, oo, oc, bmin, bmax, ref shared.distribution);
+            }
+
+            return shared;
+        }
+
+        /// <summary>
+        /// **The distribution by given sides is the plane's distribution, byte for byte** (GRAPH-CONNECT-4 §3-4): with every
+        /// triangle's side read off the plane the search found, the output, the submesh table, the boxes and the referenced
+        /// ranges are those of <see cref="CutSpatialSplitSearch.Distribute"/>; sides swapped swap the halves; a side byte that
+        /// is neither 0 nor 1, or every triangle on one side, refuses the distribution.
+        /// </summary>
+        [Test]
+        public void TheDistributionByGivenSides_IsThePlanesDistribution_AndRefusesOtherBytesOrOneSide()
+        {
+            Scene scene = BodyAndHand();
+            Assert.That(Find(scene, out SpatialSplitSearchResult found), Is.EqualTo(SpatialSplitSearchOutcome.Found));
+            Shared byPlane = Distribute(scene, found.planeGeometry);
+            Assert.That(byPlane.ok, Is.True);
+            uint[] indices = scene.Indices;
+            var sides = new byte[indices.Length / 3];
+            float3 n = found.planeGeometry.xyz;
+            float w = found.planeGeometry.w;
+            for (int t = 0; t < sides.Length; t++)
+            {
+                float d = math.dot(n, scene.vertices[(int)indices[3 * t]].position) + w;
+                sides[t] = d > 0f ? (byte)1 : (byte)0;
+            }
+
+            Shared bySides = DistributeBySides(scene, sides);
+            Assert.That(bySides.ok, Is.True);
+            Assert.That(bySides.output, Is.EqualTo(byPlane.output), "the same triangles, in the same order, on the same sides");
+            Assert.That(bySides.offsets, Is.EqualTo(byPlane.offsets));
+            Assert.That(bySides.counts, Is.EqualTo(byPlane.counts));
+            Assert.That(bySides.boundsMin, Is.EqualTo(byPlane.boundsMin));
+            Assert.That(bySides.boundsMax, Is.EqualTo(byPlane.boundsMax));
+            Assert.That(bySides.distribution, Is.EqualTo(byPlane.distribution));
+
+            var swapped = new byte[sides.Length];
+            for (int t = 0; t < sides.Length; t++) swapped[t] = (byte)(1 - sides[t]);
+            Shared bySwapped = DistributeBySides(scene, swapped);
+            Assert.That(bySwapped.ok, Is.True);
+            Assert.That(bySwapped.distribution.positiveIndexCount, Is.EqualTo(byPlane.distribution.negativeIndexCount), "the halves swap");
+            Assert.That(bySwapped.distribution.positiveReferencedLo, Is.EqualTo(byPlane.distribution.negativeReferencedLo));
+            Assert.That(Triangles(bySwapped.output, 0, bySwapped.distribution.positiveIndexCount), Is.EqualTo(Triangles(byPlane.output, byPlane.distribution.positiveIndexCount, byPlane.distribution.negativeIndexCount)));
+
+            var other = (byte[])sides.Clone();
+            other[5] = 2;
+            Assert.That(DistributeBySides(scene, other).ok, Is.False, "a side byte that is neither 0 nor 1");
+            var oneSide = new byte[sides.Length];
+            Assert.That(DistributeBySides(scene, oneSide).ok, Is.False, "every triangle on one side");
+            for (int t = 0; t < sides.Length; t++) oneSide[t] = 1;
+            Assert.That(DistributeBySides(scene, oneSide).ok, Is.False);
+        }
     }
 }

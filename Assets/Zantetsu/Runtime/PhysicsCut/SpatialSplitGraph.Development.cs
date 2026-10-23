@@ -3,6 +3,7 @@ using System;
 using System.Globalization;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
+using Zantetsu.ConvexCut;
 using Zantetsu.Rendering;
 
 namespace Zantetsu.PhysicsCut
@@ -147,6 +148,72 @@ namespace Zantetsu.PhysicsCut
                     geometryToOwner = sample.geometryToOwner, shapeToOwner = sample.shapeToOwner, margin = sample.margin,
                 };
                 return DecideSpan(span, graph, burst, out run, snapshot);
+            }
+        }
+
+        /// <summary>
+        /// A saved sample through the product's path (GRAPH-CONNECT-4 §3-8-4): the span view as <see cref="DecideAsSpan"/>, the
+        /// convexes as one bank with a range each, and the sides written to a byte buffer; the bool arrays are rebuilt from
+        /// those bytes afterwards, so the result reads as the other inputs' do (and the batch's placement fields are the bytes').
+        /// </summary>
+        internal static GraphOutcome DecideAsProduct(SpatialSplitSample sample, GraphSettings graph, bool burst, out NativeRun run, PrepareSnapshot snapshot = null, float3? unreferencedFill = null)
+        {
+            int size = UnsafeUtility.SizeOf<VpRenderVertex>();
+            if (sample.vertexStructBytes != size) throw new ArgumentException("the vertex is " + sample.vertexStructBytes + " bytes, this build's " + size);
+            uint greatest = 0;
+            for (int i = 0; i < sample.vertexIds.Length; i++) greatest = Math.Max(greatest, sample.vertexIds[i]);
+            for (int i = 0; i < sample.indices.Length; i++) greatest = Math.Max(greatest, sample.indices[i]);
+            long length = Math.Max(1L, (long)greatest + 1);
+            if (length > int.MaxValue / size) throw new ArgumentException("the view would be too long");
+            if (s_view == null || s_view.Length < length) s_view = new VpRenderVertex[Math.Max(length, s_view == null ? 0L : 2L * s_view.Length)];
+            float3 fill = unreferencedFill ?? new float3(float.NaN);
+            int at0 = UnsafeUtility.GetFieldOffset(typeof(VpRenderVertex).GetField(nameof(VpRenderVertex.position)));
+            int convexCount = sample.convexes.Length;
+            int total = 0;
+            for (int c = 0; c < convexCount; c++) total += sample.convexes[c].vertices.Length;
+            var all = new float3[Math.Max(1, total)];
+            var ranges = new ConvexBrepRange[Math.Max(1, convexCount)];
+            var banks = new ConvexBrepBank[Math.Max(1, convexCount)];
+            int at = 0;
+            for (int c = 0; c < convexCount; c++)
+            {
+                float3[] vs = sample.convexes[c].vertices;
+                ranges[c] = new ConvexBrepRange { vertexBase = at, vertexCount = vs.Length };
+                Array.Copy(vs, 0, all, at, vs.Length);
+                at += vs.Length;
+            }
+
+            int triangleCount = sample.indices.Length / 3;
+            var sides = new byte[Math.Max(1, convexCount + triangleCount)];
+            fixed (VpRenderVertex* view = s_view)
+            fixed (byte* bytes = sample.vertexBytes)
+            fixed (uint* indices = sample.indices)
+            fixed (float3* vertices = all)
+            fixed (ConvexBrepRange* rangePtr = ranges)
+            fixed (ConvexBrepBank* bankPtr = banks)
+            fixed (byte* sidesPtr = sides)
+            {
+                var raw = (byte*)view;
+                for (long k = 0; k < length; k++) *(float3*)(raw + (k * size) + at0) = fill;
+                for (int i = 0; i < sample.vertexIds.Length; i++) UnsafeUtility.MemCpy(raw + ((long)sample.vertexIds[i] * size), bytes + ((long)i * size), size);
+                for (int c = 0; c < convexCount; c++) bankPtr[c] = new ConvexBrepBank { vertices = vertices };
+                var span = new SpanInput
+                {
+                    vertices = view, vertexViewLength = (int)length, indices = indices, indexCount = sample.indices.Length,
+                    convexVertices = null, banks = bankPtr, ranges = rangePtr, convexCount = convexCount,
+                    geometryToOwner = sample.geometryToOwner, shapeToOwner = sample.shapeToOwner, margin = sample.margin,
+                    sidesOut = sidesPtr, sidesOutLength = convexCount + triangleCount,
+                };
+                GraphOutcome o = DecideSpan(span, graph, burst, out run, snapshot);
+                if (o.sidesWritten)
+                {
+                    o.convexPositive = new bool[convexCount];
+                    o.trianglePositive = new bool[triangleCount];
+                    for (int c = 0; c < convexCount; c++) o.convexPositive[c] = sides[c] != 0;
+                    for (int k = 0; k < triangleCount; k++) o.trianglePositive[k] = sides[convexCount + k] != 0;
+                }
+
+                return o;
             }
         }
 

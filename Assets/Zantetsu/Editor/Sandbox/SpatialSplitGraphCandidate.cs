@@ -70,7 +70,7 @@ namespace Zantetsu.Editor.Sandbox
         internal long maxGraphBytes, workBudget;
 
         /// <summary>The native engine's input: the sample's compact vertices (false, the default) or the product's shape rebuilt from the sample -- a vertex view with the referenced vertices at their ids and garbage elsewhere -- through the span adapter (true).</summary>
-        internal bool inputSpan;
+        internal CandidateInput input;
 
         /// <summary>The native engine's worker contract: refuse to run unless the main thread prepared it (tests).</summary>
         internal bool requirePrepared;
@@ -95,6 +95,7 @@ namespace Zantetsu.Editor.Sandbox
         public long triedC, refutedC, confirmedC, ambiguousC, limitC, bvhBuiltTriangles, bvhNodesVisited, leafTests, leafAmbiguous;
         public int cutAttempts;
         public bool cutLimitHit, timedOut;
+        public long gjkLimitHit;
 
         /// <summary>The native engine (unit 1): a cap, the budget, an allocation or the preparation contract ended it (Undecided; stop says which); the work meter's units; the span input's sizes.</summary>
         public bool unfinished;
@@ -1535,7 +1536,7 @@ namespace Zantetsu.Editor.Sandbox
                 .Append(",\"candidate\":").Append(SpatialSplitCaptureSink.Json(Version))
                 .Append(",\"verdict\":").Append(SpatialSplitCaptureSink.Json(r.verdict.ToString())).Append(",\"reason\":").Append(SpatialSplitCaptureSink.Json(r.reason))
                 .Append(",\"stage\":").Append(SpatialSplitCaptureSink.Json(r.stage)).Append(",\"stop\":").Append(SpatialSplitCaptureSink.Json(r.stop))
-                .Append(",\"cutLimitHit\":").Append(r.cutLimitHit ? "true" : "false").Append(",\"timedOut\":").Append(r.timedOut ? "true" : "false").Append(",\"limitC\":").Append(r.limitC)
+                .Append(",\"cutLimitHit\":").Append(r.cutLimitHit ? "true" : "false").Append(",\"gjkLimitHit\":").Append(r.gjkLimitHit).Append(",\"timedOut\":").Append(r.timedOut ? "true" : "false").Append(",\"limitC\":").Append(r.limitC)
                 .Append(",\"convexes\":").Append(r.convexCount).Append(",\"triangles\":").Append(r.triangleCount)
                 .Append(",\"meshComponents\":").Append(r.meshComponents).Append(",\"definiteComponents\":").Append(r.definiteComponents)
                 .Append(",\"positiveConvexes\":").Append(r.positiveConvexes).Append(",\"positiveTriangles\":").Append(r.positiveTriangles)

@@ -108,7 +108,8 @@ namespace Zantetsu.Core.Tests
                         Assert.That(b.trianglePositive, Is.EqualTo(a.trianglePositive), sample.objectName + ": the triangle sides");
                     }
 
-                    Assert.That(b.work, Is.EqualTo(a.work), sample.objectName + ": the same work (the compaction is the main thread's, outside the meter)");
+                    // the span's compaction is on the meter (work 3): an index three units over its scans and copy, a slot of the span one
+                    Assert.That(b.work, Is.EqualTo(a.work + (3L * sample.indices.Length) + rb.vertexSpan), sample.objectName + ": the same work plus the compaction's (3 I + S)");
                 }
             }
 
@@ -423,7 +424,7 @@ namespace Zantetsu.Core.Tests
             // no room left by the byte cap for the lists (the fixed areas just fit): a computed room of 0 is 'no room', not 'no cap'
             long fixedOnly = rf.nativeBytes;   // the whole run's bytes; find the fixed areas' size by a cap that refuses the lists
             SpatialSplitGraph.GraphOutcome probe = SpatialSplitGraph.Decide(sample, Graph(maxGraphBytes: 1), true, out SpatialSplitGraph.NativeRun rp);
-            Assert.That(probe.reason, Does.Contain("fixed areas"));
+            Assert.That(probe.reason, Does.Contain("would exceed maxGraphBytes"), "the first area refused (the compact arrays, since the compaction allocates them)");
             // step the byte cap up until the fixed areas fit: the next refusal must be the lists (room 0..7 pairs), never a run without a cap
             long bytesCap = 1;
             string lastReason = probe.reason;
@@ -617,7 +618,8 @@ namespace Zantetsu.Core.Tests
         {
             try
             {
-                // the preparation's own allocation fails: not prepared, and the flag says so
+                // the preparation's own allocation fails: not prepared, and the flag says so (from an unprepared process)
+                SpatialSplitGraph.ResetPreparedForTests();
                 Assert.That(SpatialSplitGraph.PrepareForTests(2), Is.False, "a preparation whose allocation failed is not a preparation");
                 Assert.That(SpatialSplitGraph.IsPrepared, Is.False);
                 using (var pool = new WorkerPoolExecutor(WorkDestination.BackgroundPool, 1, ThreadPriority.Lowest, 1))
@@ -638,6 +640,9 @@ namespace Zantetsu.Core.Tests
                 // a preparation that succeeds: both bodies reached the verdict
                 Assert.That(SpatialSplitGraph.Prepare(), Is.True);
                 Assert.That(SpatialSplitGraph.IsPrepared, Is.True);
+                // a later failure (another world's preparation) does not revoke it (GRAPH-CONNECT-4 §3-10)
+                Assert.That(SpatialSplitGraph.PrepareForTests(2), Is.False);
+                Assert.That(SpatialSplitGraph.IsPrepared, Is.True, "a preparation that succeeded stands");
             }
             finally
             {

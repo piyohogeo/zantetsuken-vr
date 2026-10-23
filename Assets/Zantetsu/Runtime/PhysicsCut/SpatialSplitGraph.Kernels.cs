@@ -38,7 +38,7 @@ namespace Zantetsu.PhysicsCut
         internal const int StatNodePairs = 0, StatApartByBoxes = 1, StatCandidatesA = 2, StatTriedB = 3, StatRefutedB = 4, StatAmbiguousB = 5, StatGjkIterations = 6,
             StatSupportQueries = 7, StatVertexScans = 8, StatCutAttempts = 9, StatCutLimitHit = 10, StatMeshComponents = 11, StatDefiniteComponents = 12, StatVerdict = 13,
             StatStop = 14, StatStage = 15, StatError = 16, StatManagedMarker = 17, StatNodes = 18,
-            StatWorkPrepare = 19, StatWorkSearch = 20, StatUnfinished = 21, StatNeededCapacity = 22, StatCount = 23;
+            StatWorkPrepare = 19, StatWorkSearch = 20, StatUnfinished = 21, StatNeededCapacity = 22, StatGjkLimitHit = 23, StatCount = 24;
 
         internal const int VerdictUndecided = 0, VerdictSeparable = 1, VerdictNotSeparable = 2, VerdictNotFound = 3;
 
@@ -60,7 +60,7 @@ namespace Zantetsu.PhysicsCut
         internal const int ReasonAllConvexesOne = 1, ReasonAllTrianglesOne = 2, ReasonFewerThanTwo = 3;
 
         /// <summary>The counting definition the work meter implements (recorded with every run that carries work counts).</summary>
-        public const string WorkDefinition = "work 2 (2026-10-23): one unit an iteration of every input-length loop of both bodies (a heap-sort sift step, with its compares and move, is one; a union-find walk spends one a parent reference and one for the final read, none once stopped), checked against the budget every 4096 units; past a stop at most one unit more is spent";
+        public const string WorkDefinition = "work 3 (2026-10-23): work 2 and, for a span input, the compaction's scans and copies on the deciding thread (an index scanned, marked and copied: three units; a slot of the span read: one) -- one unit an iteration of every input-length loop of both bodies (a heap-sort sift step, with its compares and move, is one; a union-find walk spends one a parent reference and one for the final read, none once stopped), checked against the budget every 4096 units; past a stop at most one unit more is spent";
 
         /// <summary>A node's sweep key: its box's least x, ties by the node's index (a fixed, deterministic order).</summary>
         internal struct NodeKey
@@ -1633,6 +1633,9 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
 
+                // The iteration limit, not a conclusion: counted apart (GRAPH-CONNECT-4 §3-2), so that a NotFound reached with such
+                // pairs among the ambiguous ones is an unfinished search, not a verdict. (A stop by the meter is the meter's.)
+                if (!meter.Stopped) stats[StatGjkLimitHit]++;
                 return false;
             }
 

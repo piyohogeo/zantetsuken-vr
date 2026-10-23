@@ -979,6 +979,125 @@ namespace Zantetsu.PhysicsCut
             return true;
         }
 
+        /// <summary>
+        /// <see cref="Distribute"/> with the side of every triangle given instead of taken from a plane (GRAPH-CONNECT-4 §3-4: the
+        /// graph stage's placement, a triangle's side being its mesh component's node's). <paramref name="triangleSides"/> holds one
+        /// byte a triangle, in the order of the index buffer (triangle t = indices 3t..3t+2): 1 the positive side, 0 the negative;
+        /// any other value refuses the distribution. The same contract otherwise: the submesh table checked, every triangle written
+        /// once to its side with its corner order kept, each side's submeshes in the parent's order with the box of what they hold
+        /// and the vertices they refer to, both sides non-empty.
+        /// </summary>
+        public static bool DistributeBySides(
+            VpRenderVertex* vertices, int vertexViewLength, uint* indices, int indexCount,
+            int* submeshOffsets, int* submeshCounts, int submeshCount, byte* triangleSides,
+            uint* output, int* outSubmeshOffsets, int* outSubmeshCounts, float3* outBoundsMin, float3* outBoundsMax,
+            ref Distribution distribution)
+        {
+            distribution = default;
+            if (vertices == null || indices == null || output == null || submeshOffsets == null || submeshCounts == null || triangleSides == null
+                || outSubmeshOffsets == null || outSubmeshCounts == null || outBoundsMin == null || outBoundsMax == null
+                || submeshCount <= 0 || indexCount <= 0 || indexCount % 3 != 0)
+            {
+                return false;
+            }
+
+            int covered = 0;
+            for (int s = 0; s < submeshCount; s++)
+            {
+                if (submeshOffsets[s] != covered || submeshCounts[s] < 0 || submeshCounts[s] % 3 != 0)
+                {
+                    return false;
+                }
+
+                covered += submeshCounts[s];
+                outSubmeshCounts[s] = 0;
+                outSubmeshCounts[submeshCount + s] = 0;
+            }
+
+            if (covered != indexCount)
+            {
+                return false;
+            }
+
+            for (int s = 0; s < submeshCount; s++)
+            {
+                int end = submeshOffsets[s] + submeshCounts[s];
+                for (int i = submeshOffsets[s]; i < end; i += 3)
+                {
+                    uint i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                    if (i0 >= (uint)vertexViewLength || i1 >= (uint)vertexViewLength || i2 >= (uint)vertexViewLength)
+                    {
+                        return false;
+                    }
+
+                    byte side = triangleSides[i / 3];
+                    if (side == 1) outSubmeshCounts[s] += 3;
+                    else if (side == 0) outSubmeshCounts[submeshCount + s] += 3;
+                    else return false;
+                }
+            }
+
+            int positiveTotal = 0;
+            int negativeTotal = 0;
+            for (int s = 0; s < submeshCount; s++)
+            {
+                outSubmeshOffsets[s] = positiveTotal;
+                positiveTotal += outSubmeshCounts[s];
+                outSubmeshOffsets[submeshCount + s] = negativeTotal;
+                negativeTotal += outSubmeshCounts[submeshCount + s];
+                outBoundsMin[s] = new float3(float.PositiveInfinity);
+                outBoundsMax[s] = new float3(float.NegativeInfinity);
+                outBoundsMin[submeshCount + s] = new float3(float.PositiveInfinity);
+                outBoundsMax[submeshCount + s] = new float3(float.NegativeInfinity);
+            }
+
+            if (positiveTotal == 0 || negativeTotal == 0 || positiveTotal + negativeTotal != indexCount)
+            {
+                return false;
+            }
+
+            uint positiveLo = uint.MaxValue, positiveHi = 0u, negativeLo = uint.MaxValue, negativeHi = 0u;
+            for (int s = 0; s < submeshCount; s++)
+            {
+                int positiveAt = outSubmeshOffsets[s];
+                int negativeAt = positiveTotal + outSubmeshOffsets[submeshCount + s];
+                int end = submeshOffsets[s] + submeshCounts[s];
+                for (int i = submeshOffsets[s]; i < end; i += 3)
+                {
+                    uint i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+                    float3 p0 = vertices[i0].position, p1 = vertices[i1].position, p2 = vertices[i2].position;
+                    uint low = math.min(i0, math.min(i1, i2));
+                    uint high = math.max(i0, math.max(i1, i2));
+                    if (triangleSides[i / 3] == 1)
+                    {
+                        output[positiveAt] = i0; output[positiveAt + 1] = i1; output[positiveAt + 2] = i2;
+                        positiveAt += 3;
+                        outBoundsMin[s] = math.min(outBoundsMin[s], math.min(p0, math.min(p1, p2)));
+                        outBoundsMax[s] = math.max(outBoundsMax[s], math.max(p0, math.max(p1, p2)));
+                        positiveLo = math.min(positiveLo, low);
+                        positiveHi = math.max(positiveHi, high);
+                    }
+                    else
+                    {
+                        output[negativeAt] = i0; output[negativeAt + 1] = i1; output[negativeAt + 2] = i2;
+                        negativeAt += 3;
+                        outBoundsMin[submeshCount + s] = math.min(outBoundsMin[submeshCount + s], math.min(p0, math.min(p1, p2)));
+                        outBoundsMax[submeshCount + s] = math.max(outBoundsMax[submeshCount + s], math.max(p0, math.max(p1, p2)));
+                        negativeLo = math.min(negativeLo, low);
+                        negativeHi = math.max(negativeHi, high);
+                    }
+                }
+            }
+
+            distribution.positiveIndexCount = positiveTotal;
+            distribution.negativeIndexCount = negativeTotal;
+            distribution.positiveReferencedLo = positiveLo;
+            distribution.positiveReferencedHi = positiveHi;
+            distribution.negativeReferencedLo = negativeLo;
+            distribution.negativeReferencedHi = negativeHi;
+            return true;
+        }
+
         private static bool IsFinite(in float4x4 m)
         {
             return math.all(math.isfinite(m.c0)) && math.all(math.isfinite(m.c1))

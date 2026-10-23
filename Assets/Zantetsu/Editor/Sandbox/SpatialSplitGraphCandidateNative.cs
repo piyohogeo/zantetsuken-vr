@@ -6,6 +6,9 @@ namespace Zantetsu.Editor.Sandbox
     /// port run as managed code, N1 the same port run through Burst.</summary>
     internal enum CandidateEngine { M0 = 0, N0 = 1, N1 = 2 }
 
+    /// <summary>How a saved sample reaches the native engine: its compact arrays, the span view, or the product's path (span view, convexes by pointer, sides to bytes).</summary>
+    internal enum CandidateInput { Sample = 0, Span = 1, Product = 2 }
+
     /// <summary>
     /// The Editor's thin layer over the Runtime engine <see cref="SpatialSplitGraph"/> (GRAPH-CONNECT-2, unit 1): the batch's
     /// and the tests' <see cref="CandidateSettings"/> / <see cref="CandidateResult"/> mapped onto the engine's settings and
@@ -37,7 +40,8 @@ namespace Zantetsu.Editor.Sandbox
                 maxTriangles = settings.maxTriangles, maxConvexes = settings.maxConvexes, maxVertexSpan = settings.maxVertexSpan, maxNodes = settings.maxNodes, maxCandidates = settings.maxCandidates,
                 maxGraphBytes = settings.maxGraphBytes, workBudget = settings.workBudget, requirePrepared = settings.requirePrepared,
             };
-            SpatialSplitGraph.GraphOutcome o = settings.inputSpan ? SpatialSplitGraph.DecideAsSpan(sample, graph, burst, out run, snapshot) : SpatialSplitGraph.Decide(sample, graph, burst, out run, snapshot);
+            SpatialSplitGraph.GraphOutcome o = settings.input == CandidateInput.Product ? SpatialSplitGraph.DecideAsProduct(sample, graph, burst, out run, snapshot)
+                : settings.input == CandidateInput.Span ? SpatialSplitGraph.DecideAsSpan(sample, graph, burst, out run, snapshot) : SpatialSplitGraph.Decide(sample, graph, burst, out run, snapshot);
             return new CandidateResult
             {
                 unfinished = o.unfinished, work = o.work, workPrepare = o.workPrepare, workSearch = o.workSearch, vertexSpan = o.vertexSpan, referencedVertices = o.referencedVertices,
@@ -47,7 +51,7 @@ namespace Zantetsu.Editor.Sandbox
                 positiveConvexes = o.positiveConvexes, positiveTriangles = o.positiveTriangles, negativeConvexes = o.negativeConvexes, negativeTriangles = o.negativeTriangles,
                 nodePairs = o.nodePairs, pairsApartByBoxes = o.pairsApartByBoxes, candidatesA = o.candidatesA,
                 triedB = o.triedB, refutedB = o.refutedB, ambiguousB = o.ambiguousB, gjkIterations = o.gjkIterations, supportQueries = o.supportQueries, vertexScans = o.vertexScans,
-                cutAttempts = o.cutAttempts, cutLimitHit = o.cutLimitHit, timedOut = o.timedOut, seconds = o.seconds,
+                cutAttempts = o.cutAttempts, cutLimitHit = o.cutLimitHit, gjkLimitHit = o.gjkLimitHit, timedOut = o.timedOut, seconds = o.seconds,
             };
         }
 

@@ -458,6 +458,15 @@ namespace Zantetsu.PhysicsCut
         /// side, its first velocity. <see cref="TryApplyToBody"/> still has to be called once the owner is in the scene.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// The same without a plane: no separation impulse, so no normal is read (GRAPH-CONNECT-4 §3-6: a placement that came
+        /// from the graph stage has no plane to give, and none is made up for it).
+        /// </summary>
+        internal void Reposition(PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion)
+        {
+            Reposition(placement, in motion, float3.zero, 0f);
+        }
+
         internal void Reposition(
             PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
         {
@@ -796,6 +805,13 @@ namespace Zantetsu.PhysicsCut
         {
             Positive.Reposition(placement, in motion, planeNormalWorld, positiveSeparationImpulse);
             Negative.Reposition(placement, in motion, planeNormalWorld, negativeSeparationImpulse);
+        }
+
+        /// <summary>Both owners where the source is now, with the motion they inherit and no separation impulse: no plane is given or read (GRAPH-CONNECT-4 §3-6).</summary>
+        internal void Reposition(PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion)
+        {
+            Positive.Reposition(placement, in motion);
+            Negative.Reposition(placement, in motion);
         }
 
         /// <summary>Destroys the two owners. The meshes they used are not this call's and are left as they were.</summary>

@@ -23,14 +23,28 @@ namespace Zantetsu.PhysicsCut
             get => _capture;
             set
             {
+                if (_attempt != null)
+                {
+                    // An attempt is out whose input went to the sink of its issue: its result goes to the same sink. The switch
+                    // waits for that attempt's collection and is applied at its end (GRAPH-CONNECT-5 review 1).
+                    _pendingCapture = value;
+                    _capturePending = true;
+                    return;
+                }
+
                 if (ReferenceEquals(_capture, value)) return;
                 _capture?.Detach(this);
                 _capture = value;
                 _capture?.Attach(this);
+                ReevaluateGraph();   // the graph stage does not run with the capture on (GRAPH-CONNECT-4 §3-11)
             }
         }
 
-        private SpatialSplitCaptureSink _capture;
+        private SpatialSplitCaptureSink _capture, _pendingCapture;
+        private bool _capturePending;
+
+        /// <summary>A capture switch asked for while an attempt was out: applied when that attempt is collected.</summary>
+        internal bool CapturePending => _capturePending;
 
         /// <summary>This split's world, as the capture numbers worlds.</summary>
         internal long CaptureWorld { get; } = SpatialSplitCaptureSession.NextWorld();
