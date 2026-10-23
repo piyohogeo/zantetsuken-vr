@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Burst;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using Zantetsu.Editor.Sandbox;
@@ -14,7 +15,7 @@ namespace Zantetsu.Core.Tests
     /// (M0): the same verdict, placement, counters and stop reason on every fixture; the limits; an invalid input; the
     /// proof that N1 ran through Burst (when Burst is enabled in this Editor) and N0 did not.
     /// </summary>
-    public class SpatialSplitGraphCandidateNativeTests
+    public unsafe partial class SpatialSplitGraphCandidateNativeTests
     {
         private const float M = 1f / 4096f;
         private const float Hair = 1f / (1 << 20);
@@ -88,24 +89,24 @@ namespace Zantetsu.Core.Tests
         {
             (float3[] p, int[] i) = Mesh(Tri(-1f, -1f, -1f, 5f, -1f, 5f, 5f, 5f, 5f), Tri(2.2f, 0.2f, 0.5f, 2.8f, 0.2f, 0.5f, 2.5f, 0.8f, 0.5f));
             SpatialSplitSample sample = Fixture(new[] { Unit, Box(2f, 0f, 0f, 3f, 1f, 1f) }, p, i, name: "slanted, failing allocations");
-            long before = SpatialSplitGraphCandidateNative.LiveNativeAllocations;
+            long before = SpatialSplitGraph.LiveNativeAllocations;
             // the sweep's two added areas are released on any failure as well
             for (int failAt = 0; failAt < 64; failAt++)
             {
                 CandidateResult s = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, pairsSweep = true, testFailNativeAllocation = failAt }, failAt % 2 == 0, out _);
-                Assert.That(SpatialSplitGraphCandidateNative.LiveNativeAllocations, Is.EqualTo(before), "sweep: after the allocation " + (failAt + 1) + " failed, nothing is left behind");
+                Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "sweep: after the allocation " + (failAt + 1) + " failed, nothing is left behind");
                 if (s.verdict == CandidateVerdict.Separable) break;
                 Assert.That(s.stop, Is.EqualTo("allocation"));
             }
 
             CandidateResult whole = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB }, false, out _);
             Assert.That(whole.verdict, Is.EqualTo(CandidateVerdict.Separable));
-            Assert.That(SpatialSplitGraphCandidateNative.LiveNativeAllocations, Is.EqualTo(before), "a whole decision releases everything");
+            Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "a whole decision releases everything");
             int failures = 0;
             for (int failAt = 0; failAt < 64; failAt++)
             {
                 CandidateResult x = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, testFailNativeAllocation = failAt }, failAt % 2 == 1, out _);
-                Assert.That(SpatialSplitGraphCandidateNative.LiveNativeAllocations, Is.EqualTo(before), "after the allocation " + (failAt + 1) + " failed, nothing is left behind");
+                Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "after the allocation " + (failAt + 1) + " failed, nothing is left behind");
                 if (x.verdict == CandidateVerdict.Separable) break;   // more allocations than the decision makes: the hook did not fire
                 Assert.That(x.verdict, Is.EqualTo(CandidateVerdict.Undecided), "a failed allocation says nothing: " + x.reason);
                 Assert.That(x.stop, Is.EqualTo("allocation"));
@@ -124,13 +125,13 @@ namespace Zantetsu.Core.Tests
                 Assert.That(x.verdict, Is.EqualTo(CandidateVerdict.Undecided), "out of memory says nothing: " + x.reason);
                 Assert.That(x.stop, Is.EqualTo("allocation"));
                 Assert.That(x.reason, Does.StartWith("out of memory"));
-                Assert.That(SpatialSplitGraphCandidateNative.LiveNativeAllocations, Is.EqualTo(before), "after memory ran out at the allocation " + (failAt + 1) + ", nothing is left behind");
+                Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "after memory ran out at the allocation " + (failAt + 1) + ", nothing is left behind");
             }
             // The input refused after the first allocations (a bad index is found inside the preparation job).
             sample.indices[1] = 99;
             CandidateResult refused = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB }, false, out _);
             Assert.That(refused.verdict, Is.EqualTo(CandidateVerdict.InvalidInput));
-            Assert.That(SpatialSplitGraphCandidateNative.LiveNativeAllocations, Is.EqualTo(before), "an input refused inside releases everything");
+            Assert.That(SpatialSplitGraph.LiveNativeAllocations, Is.EqualTo(before), "an input refused inside releases everything");
         }
 
         private static void AssertSame(string name, CandidateResult expected, CandidateResult actual, string engine)
@@ -162,8 +163,8 @@ namespace Zantetsu.Core.Tests
                 fixtures++;
                 var settings = new CandidateSettings { stages = CandidateStages.AB, secondsLimit = 120.0 };
                 CandidateResult m0 = SpatialSplitGraphCandidate.Decide(sample, settings);
-                CandidateResult n0 = SpatialSplitGraphCandidateNative.Decide(sample, settings, false, out SpatialSplitGraphCandidateNative.NativeRun run0);
-                CandidateResult n1 = SpatialSplitGraphCandidateNative.Decide(sample, settings, true, out SpatialSplitGraphCandidateNative.NativeRun run1);
+                CandidateResult n0 = SpatialSplitGraphCandidateNative.Decide(sample, settings, false, out SpatialSplitGraph.NativeRun run0);
+                CandidateResult n1 = SpatialSplitGraphCandidateNative.Decide(sample, settings, true, out SpatialSplitGraph.NativeRun run1);
                 TestContext.Out.WriteLine(sample.objectName + ": M0 " + m0.verdict + " at " + m0.stage + " (" + m0.stop + "; A " + m0.candidatesA + ", B " + m0.triedB + "/" + m0.refutedB + ", cuts " + m0.cutAttempts
                     + "); N0 " + n0.verdict + " (" + (run0.secondsTotal * 1000.0).ToString("F2") + " ms, native " + run0.nativeBytes + " B); N1 " + n1.verdict + " (" + (run1.secondsTotal * 1000.0).ToString("F2")
                     + " ms, Burst ran " + run1.burstRan + ")");
@@ -221,7 +222,7 @@ namespace Zantetsu.Core.Tests
             double stopwatchMs = (System.Diagnostics.Stopwatch.GetTimestamp() - begin) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             var ratio = Unity.Profiling.LowLevel.Unsafe.ProfilerUnsafeUtility.TimestampToNanosecondsConversionRatio;
             double clockMs = (double)(b - a) * ratio.Numerator / ratio.Denominator / 1e6;
-            TestContext.Out.WriteLine(SpatialSplitGraphCandidateNative.ClockDescription() + "; a 20 ms busy wait: Stopwatch " + stopwatchMs.ToString("F3") + " ms, the clock " + clockMs.ToString("F3") + " ms");
+            TestContext.Out.WriteLine(SpatialSplitGraph.ClockDescription() + "; a 20 ms busy wait: Stopwatch " + stopwatchMs.ToString("F3") + " ms, the clock " + clockMs.ToString("F3") + " ms");
             Assert.That(b, Is.GreaterThan(a), "monotonic");
             Assert.That(clockMs, Is.InRange(stopwatchMs * 0.7, stopwatchMs * 1.3), "the conversion to nanoseconds agrees roughly with the Stopwatch");
 
@@ -233,9 +234,9 @@ namespace Zantetsu.Core.Tests
             (float3[] p, int[] i) = Mesh(several.ToArray());
             SpatialSplitSample sample = Fixture(new[] { Unit, Box(2f, 0f, 0f, 3f, 1f, 1f) }, p, i, name: "several, measured");
             foreach (int mode in new[] { 0, 1, 2 }) SpatialSplitGraphCandidateNative.Warmup(mode);
-            CandidateResult off = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 0 }, true, out SpatialSplitGraphCandidateNative.NativeRun runOff);
-            CandidateResult timed = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 1 }, true, out SpatialSplitGraphCandidateNative.NativeRun runTimed);
-            CandidateResult counted = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 2 }, true, out SpatialSplitGraphCandidateNative.NativeRun runCounted);
+            CandidateResult off = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 0 }, true, out SpatialSplitGraph.NativeRun runOff);
+            CandidateResult timed = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 1 }, true, out SpatialSplitGraph.NativeRun runTimed);
+            CandidateResult counted = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, measure = 2 }, true, out SpatialSplitGraph.NativeRun runCounted);
             Assert.That(off.verdict, Is.EqualTo(CandidateVerdict.Separable));
             Assert.That(off.stage, Is.EqualTo("B"), "the fixture reaches B: GJK and projections run");
             AssertSame("measured", off, timed, "N1 measure 1");
@@ -245,26 +246,26 @@ namespace Zantetsu.Core.Tests
             Assert.That(runTimed.measure, Is.EqualTo(1));
             Assert.That(runCounted.measure, Is.EqualTo(2));
             double sum = 0.0;
-            for (int s = 0; s < SpatialSplitGraphCandidateNative.SectionTimes; s++)
+            for (int s = 0; s < SpatialSplitGraph.SectionTimes; s++)
             {
-                Assert.That(runTimed.sectionMs[s], Is.GreaterThanOrEqualTo(0.0), SpatialSplitGraphCandidateNative.SectionNames[s]);
+                Assert.That(runTimed.sectionMs[s], Is.GreaterThanOrEqualTo(0.0), SpatialSplitGraph.SectionNames[s]);
                 sum += runTimed.sectionMs[s];
             }
 
             TestContext.Out.WriteLine("sections (ms): " + string.Join(", ", System.Array.ConvertAll(runTimed.sectionMs, v => v.ToString("F4"))) + "; sum " + sum.ToString("F4") + ", search " + (runTimed.secondsSearch * 1000.0).ToString("F4")
-                + ", residual " + runTimed.residualMs.ToString("F4") + "; projection calls " + runTimed.counters[SpatialSplitGraphCandidateNative.CntProjectionCalls - SpatialSplitGraphCandidateNative.SectionTimes]);
+                + ", residual " + runTimed.residualMs.ToString("F4") + "; projection calls " + runTimed.counters[SpatialSplitGraph.CntProjectionCalls - SpatialSplitGraph.SectionTimes]);
             Assert.That(sum, Is.LessThanOrEqualTo(runTimed.secondsSearch * 1000.0 * 1.05 + 0.01), "the sections do not exceed the search's own time");
-            Assert.That(runTimed.sectionMs[SpatialSplitGraphCandidateNative.SecGjk], Is.GreaterThan(0.0), "GJK was timed");
-            Assert.That(runTimed.counters[SpatialSplitGraphCandidateNative.CntProjectionCalls - SpatialSplitGraphCandidateNative.SectionTimes], Is.EqualTo(off.refutedB).Or.GreaterThan(off.refutedB), "a projection per refutation at least");
-            Assert.That(runCounted.counters[SpatialSplitGraphCandidateNative.CntGjkCalls - SpatialSplitGraphCandidateNative.SectionTimes], Is.EqualTo(off.triedB), "a GJK call per B trial");
-            Assert.That(runCounted.counters[SpatialSplitGraphCandidateNative.CntMinCutCalls - SpatialSplitGraphCandidateNative.SectionTimes], Is.EqualTo(off.cutAttempts), "a minimum cut per cut attempt");
+            Assert.That(runTimed.sectionMs[SpatialSplitGraph.SecGjk], Is.GreaterThan(0.0), "GJK was timed");
+            Assert.That(runTimed.counters[SpatialSplitGraph.CntProjectionCalls - SpatialSplitGraph.SectionTimes], Is.EqualTo(off.refutedB).Or.GreaterThan(off.refutedB), "a projection per refutation at least");
+            Assert.That(runCounted.counters[SpatialSplitGraph.CntGjkCalls - SpatialSplitGraph.SectionTimes], Is.EqualTo(off.triedB), "a GJK call per B trial");
+            Assert.That(runCounted.counters[SpatialSplitGraph.CntMinCutCalls - SpatialSplitGraph.SectionTimes], Is.EqualTo(off.cutAttempts), "a minimum cut per cut attempt");
             TestContext.Out.WriteLine("counts: " + string.Join(", ", System.Array.ConvertAll(runCounted.counters, v => v.ToString())));
         }
 
         private static void AssertTop3(string name, double[] gaps, int[] reps)
         {
-            int[] sorted = SpatialSplitGraphCandidateNative.SortAllReference(gaps, reps);
-            int[] top = SpatialSplitGraphCandidateNative.SelectTop3Reference(gaps, reps, out long compares, out long moves);
+            int[] sorted = SpatialSplitGraph.SortAllReference(gaps, reps);
+            int[] top = SpatialSplitGraph.SelectTop3Reference(gaps, reps, out long compares, out long moves);
             int want = System.Math.Min(3, gaps.Length);
             Assert.That(top.Length, Is.EqualTo(want), name + ": count");
             for (int i = 0; i < want; i++) Assert.That(top[i], Is.EqualTo(sorted[i]), name + ": item " + i + " (the order of the three)");
@@ -318,18 +319,18 @@ namespace Zantetsu.Core.Tests
                 fixtures++;
                 var sort = new CandidateSettings { stages = CandidateStages.AB, nearestSelection = false };
                 var select = new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true };
-                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, sort, true, out SpatialSplitGraphCandidateNative.NativeRun ra);
-                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, select, true, out SpatialSplitGraphCandidateNative.NativeRun rb);
+                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, sort, true, out SpatialSplitGraph.NativeRun ra);
+                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, select, true, out SpatialSplitGraph.NativeRun rb);
                 AssertSame(sample.objectName, a, b, "N1 select vs sort");
                 Assert.That(ra.nearestSelection, Is.False);
                 Assert.That(rb.nearestSelection, Is.True);
                 // The diagnostic counts: the selection's gaps are one per item, its compares at most three per item.
                 var diagSort = new CandidateSettings { stages = CandidateStages.AB, nearestSelection = false, measure = 2 };
                 var diagSelect = new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, measure = 2 };
-                SpatialSplitGraphCandidateNative.Decide(sample, diagSort, true, out SpatialSplitGraphCandidateNative.NativeRun da);
-                SpatialSplitGraphCandidateNative.Decide(sample, diagSelect, true, out SpatialSplitGraphCandidateNative.NativeRun db);
-                int gi = SpatialSplitGraphCandidateNative.CntNearestGaps - SpatialSplitGraphCandidateNative.SectionTimes;
-                int ci = SpatialSplitGraphCandidateNative.CntNearestCompares - SpatialSplitGraphCandidateNative.SectionTimes;
+                SpatialSplitGraphCandidateNative.Decide(sample, diagSort, true, out SpatialSplitGraph.NativeRun da);
+                SpatialSplitGraphCandidateNative.Decide(sample, diagSelect, true, out SpatialSplitGraph.NativeRun db);
+                int gi = SpatialSplitGraph.CntNearestGaps - SpatialSplitGraph.SectionTimes;
+                int ci = SpatialSplitGraph.CntNearestCompares - SpatialSplitGraph.SectionTimes;
                 if (db.counters[gi] > 0)
                 {
                     withSeeds++;
@@ -347,7 +348,7 @@ namespace Zantetsu.Core.Tests
 
         // ---- the flow kernel: Edmonds-Karp against Dinic against an exhaustive check on small graphs --------------------------------
 
-        private const int Inf = SpatialSplitGraphCandidateNative.FlowKernel.Inf;
+        private const int Inf = SpatialSplitGraph.FlowKernel.Inf;
 
         private sealed class SmallGraph
         {
@@ -419,20 +420,21 @@ namespace Zantetsu.Core.Tests
         private static void CheckGraph(string name, SmallGraph g)
         {
             (long least, bool[] minimalSide, bool finite) = Exhaustive(g);
-            var results = new List<(int flow, bool[] side, List<int> cut, SpatialSplitGraphCandidateNative.FlowCounts counts)>();
+            var results = new List<(int flow, bool[] side, List<int> cut, SpatialSplitGraph.FlowCounts counts)>();
             foreach (bool dinic in new[] { false, true })
             {
                 var b = Build(g);
-                var counts = new SpatialSplitGraphCandidateNative.FlowCounts();
+                var counts = new SpatialSplitGraph.FlowCounts();
+                var meter = SpatialSplitGraph.WorkMeter.Of(0);
                 int flow = dinic
-                    ? SpatialSplitGraphCandidateNative.FlowKernel.Dinic(b.work, b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.level, b.cur, b.pathNode, b.pathArc, b.nodes, g.m, g.m + 1, true, ref counts)
-                    : SpatialSplitGraphCandidateNative.FlowKernel.EdmondsKarp(b.work, b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.parent, b.nodes, g.m, g.m + 1, true, ref counts);
+                    ? SpatialSplitGraph.FlowKernel.Dinic((int*)b.work.GetUnsafePtr(), b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.level, b.cur, b.pathNode, b.pathArc, b.nodes, g.m, g.m + 1, true, ref counts, ref meter)
+                    : SpatialSplitGraph.FlowKernel.EdmondsKarp((int*)b.work.GetUnsafePtr(), b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.parent, b.nodes, g.m, g.m + 1, true, ref counts, ref meter);
                 bool[] side = null;
                 var cut = new List<int>();
                 if (flow >= 0)
                 {
                     var reach = new Unity.Collections.NativeArray<byte>(b.nodes, Unity.Collections.Allocator.Temp);
-                    SpatialSplitGraphCandidateNative.FlowKernel.ReachFromSource(b.work, b.adjStart, b.arcTo, b.arcCap, b.queue, b.nodes, g.m, reach, 0);
+                    SpatialSplitGraph.FlowKernel.ReachFromSource((int*)b.work.GetUnsafePtr(), b.adjStart, b.arcTo, b.arcCap, b.queue, b.nodes, g.m, (byte*)reach.GetUnsafePtr(), 0, ref meter);
                     side = new bool[b.nodes];
                     for (int v = 0; v < b.nodes; v++) side[v] = reach[v] != 0;
                     for (int i = 0; i < g.groups.Count; i++) if (side[g.groups[i].a] != side[g.groups[i].b]) cut.Add(i);
@@ -443,7 +445,7 @@ namespace Zantetsu.Core.Tests
                 results.Add((flow, side, cut, counts));
             }
 
-            foreach ((int flow, bool[] side, List<int> cut, SpatialSplitGraphCandidateNative.FlowCounts counts) in results)
+            foreach ((int flow, bool[] side, List<int> cut, SpatialSplitGraph.FlowCounts counts) in results)
             {
                 if (!finite) { Assert.That(flow, Is.EqualTo(-1), name + ": no finite cut"); continue; }
                 Assert.That(flow, Is.EqualTo((int)least), name + ": the least capacity");
@@ -477,10 +479,11 @@ namespace Zantetsu.Core.Tests
             foreach (bool dinic in new[] { false, true })
             {
                 var b = Build(reroute);
-                var counts = new SpatialSplitGraphCandidateNative.FlowCounts();
+                var counts = new SpatialSplitGraph.FlowCounts();
+                var meter = SpatialSplitGraph.WorkMeter.Of(0);
                 int flow = dinic
-                    ? SpatialSplitGraphCandidateNative.FlowKernel.Dinic(b.work, b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.level, b.cur, b.pathNode, b.pathArc, b.nodes, 6, 7, true, ref counts)
-                    : SpatialSplitGraphCandidateNative.FlowKernel.EdmondsKarp(b.work, b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.parent, b.nodes, 6, 7, true, ref counts);
+                    ? SpatialSplitGraph.FlowKernel.Dinic((int*)b.work.GetUnsafePtr(), b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.level, b.cur, b.pathNode, b.pathArc, b.nodes, 6, 7, true, ref counts, ref meter)
+                    : SpatialSplitGraph.FlowKernel.EdmondsKarp((int*)b.work.GetUnsafePtr(), b.adjStart, b.arcTo, b.arcRev, b.arcCap, b.queue, b.parent, b.nodes, 6, 7, true, ref counts, ref meter);
                 Assert.That(flow, Is.EqualTo(2), (dinic ? "Dinic" : "Edmonds-Karp") + ": the flow of the reroute fixture");
                 Assert.That(counts.pushes, Is.EqualTo(2), (dinic ? "Dinic" : "Edmonds-Karp") + ": two unit pushes");
                 int e13 = -1, e31 = -1;
@@ -550,17 +553,17 @@ namespace Zantetsu.Core.Tests
                 fixtures++;
                 var ek = new CandidateSettings { stages = CandidateStages.AB, flowDinic = false };
                 var dinic = new CandidateSettings { stages = CandidateStages.AB, flowDinic = true };
-                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, ek, true, out SpatialSplitGraphCandidateNative.NativeRun ra);
-                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, dinic, true, out SpatialSplitGraphCandidateNative.NativeRun rb);
+                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, ek, true, out SpatialSplitGraph.NativeRun ra);
+                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, dinic, true, out SpatialSplitGraph.NativeRun rb);
                 AssertSame(sample.objectName, a, b, "N1 dinic vs ek");
                 Assert.That(ra.flowDinic, Is.False);
                 Assert.That(rb.flowDinic, Is.True);
                 Assert.That(rb.burstRan, Is.EqualTo(BurstCompiler.IsEnabled));
                 if (a.cutAttempts > 0) withCuts++;
                 var diag = new CandidateSettings { stages = CandidateStages.AB, flowDinic = true, measure = 2 };
-                SpatialSplitGraphCandidateNative.Decide(sample, diag, true, out SpatialSplitGraphCandidateNative.NativeRun rd);
-                int li = SpatialSplitGraphCandidateNative.CntLevelBuilds - SpatialSplitGraphCandidateNative.SectionTimes;
-                int mi = SpatialSplitGraphCandidateNative.CntMinCutCalls - SpatialSplitGraphCandidateNative.SectionTimes;
+                SpatialSplitGraphCandidateNative.Decide(sample, diag, true, out SpatialSplitGraph.NativeRun rd);
+                int li = SpatialSplitGraph.CntLevelBuilds - SpatialSplitGraph.SectionTimes;
+                int mi = SpatialSplitGraph.CntMinCutCalls - SpatialSplitGraph.SectionTimes;
                 if (a.cutAttempts > 0) Assert.That(rd.counters[li], Is.GreaterThanOrEqualTo(rd.counters[mi]), sample.objectName + ": at least one level graph a minimum cut");
             }
 
@@ -585,7 +588,7 @@ namespace Zantetsu.Core.Tests
             for (int i = 0; i < a.Length; i++) Assert.That(System.BitConverter.DoubleToInt64Bits(b[i]), Is.EqualTo(System.BitConverter.DoubleToInt64Bits(a[i])), name + "[" + i + "] bits");
         }
 
-        private static void AssertSnapshot(string name, SpatialSplitGraphCandidateNative.PrepareSnapshot a, SpatialSplitGraphCandidateNative.PrepareSnapshot b)
+        private static void AssertSnapshot(string name, SpatialSplitGraph.PrepareSnapshot a, SpatialSplitGraph.PrepareSnapshot b)
         {
             Assert.That(b.nodes, Is.EqualTo(a.nodes), name + ": nodes");
             AssertBits(name + ": owner", a.owner, b.owner);
@@ -609,13 +612,13 @@ namespace Zantetsu.Core.Tests
             foreach (SpatialSplitSample sample in Fixtures())
             {
                 fixtures++;
-                var snaps = new List<SpatialSplitGraphCandidateNative.PrepareSnapshot>();
-                var runs = new List<SpatialSplitGraphCandidateNative.NativeRun>();
+                var snaps = new List<SpatialSplitGraph.PrepareSnapshot>();
+                var runs = new List<SpatialSplitGraph.NativeRun>();
                 var results = new List<CandidateResult>();
                 foreach ((bool burst, int measure) in new[] { (true, 0), (true, 1), (true, 2), (false, 0) })
                 {
-                    var snap = new SpatialSplitGraphCandidateNative.PrepareSnapshot();
-                    CandidateResult c = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, measure = measure }, burst, out SpatialSplitGraphCandidateNative.NativeRun run, snap);
+                    var snap = new SpatialSplitGraph.PrepareSnapshot();
+                    CandidateResult c = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, measure = measure }, burst, out SpatialSplitGraph.NativeRun run, snap);
                     Assert.That(c.verdict, Is.Not.EqualTo(CandidateVerdict.InvalidInput), sample.objectName + ": " + c.reason);
                     snaps.Add(snap); runs.Add(run); results.Add(c);
                 }
@@ -633,14 +636,14 @@ namespace Zantetsu.Core.Tests
                 Assert.That(sum, Is.LessThanOrEqualTo(runs[1].secondsPrepare * 1000.0 * 1.05 + 0.01), sample.objectName + ": the prepare sections do not exceed the job's time");
                 // the counts: the named vertices, the triangles, the components, the nodes and the pairs match the snapshot and the result
                 long[] pc = runs[2].prepareCounters;
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcTriangles - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].triangleCount), sample.objectName + ": triangles counted");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcComponents - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].meshComponents), sample.objectName + ": components counted");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcNodes - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(snaps[0].nodes), sample.objectName + ": nodes counted");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcPairsTotal - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": the theoretical pairs");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcGapEvals - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": every pair's gap evaluated once (no sweep yet)");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcCandidates - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].candidatesA), sample.objectName + ": candidates counted");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcApart - SpatialSplitGraphCandidateNative.PcNamed] + pc[SpatialSplitGraphCandidateNative.PcCandidates - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": apart + candidates = pairs");
-                Assert.That(pc[SpatialSplitGraphCandidateNative.PcHullStored - SpatialSplitGraphCandidateNative.PcNamed], Is.EqualTo(snaps[0].hull.Length), sample.objectName + ": stored hull vertices");
+                Assert.That(pc[SpatialSplitGraph.PcTriangles - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].triangleCount), sample.objectName + ": triangles counted");
+                Assert.That(pc[SpatialSplitGraph.PcComponents - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].meshComponents), sample.objectName + ": components counted");
+                Assert.That(pc[SpatialSplitGraph.PcNodes - SpatialSplitGraph.PcNamed], Is.EqualTo(snaps[0].nodes), sample.objectName + ": nodes counted");
+                Assert.That(pc[SpatialSplitGraph.PcPairsTotal - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": the theoretical pairs");
+                Assert.That(pc[SpatialSplitGraph.PcGapEvals - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": every pair's gap evaluated once (no sweep yet)");
+                Assert.That(pc[SpatialSplitGraph.PcCandidates - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].candidatesA), sample.objectName + ": candidates counted");
+                Assert.That(pc[SpatialSplitGraph.PcApart - SpatialSplitGraph.PcNamed] + pc[SpatialSplitGraph.PcCandidates - SpatialSplitGraph.PcNamed], Is.EqualTo(results[0].nodePairs), sample.objectName + ": apart + candidates = pairs");
+                Assert.That(pc[SpatialSplitGraph.PcHullStored - SpatialSplitGraph.PcNamed], Is.EqualTo(snaps[0].hull.Length), sample.objectName + ": stored hull vertices");
             }
 
             TestContext.Out.WriteLine(fixtures + " fixtures: the preparation's outputs bit-identical across measure 0/1/2 and N0/N1");
@@ -648,27 +651,31 @@ namespace Zantetsu.Core.Tests
 
         // ---- the candidate enumeration: every pair against the sweep on box sets ----------------------------------------------
 
-        private static (int2[] pairs, double[] gaps, SpatialSplitGraphCandidateNative.EnumerateCounts counts) Enumerate(double3[] lo, double3[] hi, double far, bool sweep)
+        private static (int2[] pairs, double[] gaps, SpatialSplitGraph.EnumerateCounts counts) Enumerate(double3[] lo, double3[] hi, double far, bool sweep)
         {
             int n = lo.Length;
             var nlo = new Unity.Collections.NativeArray<double3>(System.Math.Max(1, n), Unity.Collections.Allocator.Temp);
             var nhi = new Unity.Collections.NativeArray<double3>(System.Math.Max(1, n), Unity.Collections.Allocator.Temp);
             for (int i = 0; i < n; i++) { nlo[i] = lo[i]; nhi[i] = hi[i]; }
-            var candidates = new Unity.Collections.NativeList<int2>(4, Unity.Collections.Allocator.Temp);
-            var gaps = new Unity.Collections.NativeList<double>(4, Unity.Collections.Allocator.Temp);
-            var counts = new SpatialSplitGraphCandidateNative.EnumerateCounts();
+            // the kernels never grow a list (a full list stops them for the driver): room for every pair
+            int room = System.Math.Max(8, (n * (n - 1) / 2) + 1);
+            var candidates = new Unity.Collections.NativeList<int2>(room, Unity.Collections.Allocator.Temp);
+            var gaps = new Unity.Collections.NativeList<double>(room, Unity.Collections.Allocator.Temp);
+            var counts = new SpatialSplitGraph.EnumerateCounts();
+            var meter = SpatialSplitGraph.WorkMeter.Of(0);
             if (sweep)
             {
-                var order = new Unity.Collections.NativeArray<SpatialSplitGraphCandidateNative.NodeKey>(System.Math.Max(1, n), Unity.Collections.Allocator.Temp);
-                var keyGaps = new Unity.Collections.NativeList<SpatialSplitGraphCandidateNative.KeyGap>(4, Unity.Collections.Allocator.Temp);
-                SpatialSplitGraphCandidateNative.PairKernel.Sweep(nlo, nhi, n, far, order, keyGaps, candidates, gaps, true, ref counts);
+                var order = new Unity.Collections.NativeArray<SpatialSplitGraph.NodeKey>(System.Math.Max(1, n), Unity.Collections.Allocator.Temp);
+                var keyGaps = new Unity.Collections.NativeList<SpatialSplitGraph.KeyGap>(room, Unity.Collections.Allocator.Temp);
+                SpatialSplitGraph.PairKernel.Sweep((double3*)nlo.GetUnsafePtr(), (double3*)nhi.GetUnsafePtr(), n, far, (SpatialSplitGraph.NodeKey*)order.GetUnsafePtr(), keyGaps.GetUnsafeList(), candidates.GetUnsafeList(), gaps.GetUnsafeList(), true, ref counts, ref meter, -1);
                 order.Dispose(); keyGaps.Dispose();
             }
             else
             {
-                SpatialSplitGraphCandidateNative.PairKernel.AllPairs(nlo, nhi, n, far, candidates, gaps, true, ref counts);
+                SpatialSplitGraph.PairKernel.AllPairs((double3*)nlo.GetUnsafePtr(), (double3*)nhi.GetUnsafePtr(), n, far, candidates.GetUnsafeList(), gaps.GetUnsafeList(), true, ref counts, ref meter, -1);
             }
 
+            Assert.That(meter.Stopped, Is.False, "with room for every pair the kernel never stops");
             var pairs = candidates.AsArray().ToArray();
             var g = gaps.AsArray().ToArray();
             nlo.Dispose(); nhi.Dispose(); candidates.Dispose(); gaps.Dispose();
@@ -677,8 +684,8 @@ namespace Zantetsu.Core.Tests
 
         private static void AssertSweepAgrees(string name, double3[] lo, double3[] hi, double far)
         {
-            (int2[] p0, double[] g0, SpatialSplitGraphCandidateNative.EnumerateCounts c0) = Enumerate(lo, hi, far, false);
-            (int2[] p1, double[] g1, SpatialSplitGraphCandidateNative.EnumerateCounts c1) = Enumerate(lo, hi, far, true);
+            (int2[] p0, double[] g0, SpatialSplitGraph.EnumerateCounts c0) = Enumerate(lo, hi, far, false);
+            (int2[] p1, double[] g1, SpatialSplitGraph.EnumerateCounts c1) = Enumerate(lo, hi, far, true);
             Assert.That(p1, Is.EqualTo(p0), name + ": the candidate pairs, in the (i, j) order");
             for (int k = 1; k < p1.Length; k++) Assert.That(((long)p1[k].x * lo.Length) + p1[k].y, Is.GreaterThan(((long)p1[k - 1].x * lo.Length) + p1[k - 1].y), name + ": strictly increasing keys (no duplicate)");
             AssertBits(name + ": gaps", g0, g1);
@@ -766,8 +773,8 @@ namespace Zantetsu.Core.Tests
             public int n;
             public double far;
             public int sweep;
-            public Unity.Collections.NativeArray<SpatialSplitGraphCandidateNative.NodeKey> order;
-            public Unity.Collections.NativeList<SpatialSplitGraphCandidateNative.KeyGap> keyGaps;
+            public Unity.Collections.NativeArray<SpatialSplitGraph.NodeKey> order;
+            public Unity.Collections.NativeList<SpatialSplitGraph.KeyGap> keyGaps;
             public Unity.Collections.NativeList<int2> candidates;
             public Unity.Collections.NativeList<double> gaps;
             public Unity.Collections.NativeArray<long> marker;
@@ -775,9 +782,10 @@ namespace Zantetsu.Core.Tests
             public void Execute()
             {
                 Managed(marker);
-                var c = new SpatialSplitGraphCandidateNative.EnumerateCounts();
-                if (sweep != 0) SpatialSplitGraphCandidateNative.PairKernel.Sweep(lo, hi, n, far, order, keyGaps, candidates, gaps, false, ref c);
-                else SpatialSplitGraphCandidateNative.PairKernel.AllPairs(lo, hi, n, far, candidates, gaps, false, ref c);
+                var c = new SpatialSplitGraph.EnumerateCounts();
+                var meter = SpatialSplitGraph.WorkMeter.Of(0);
+                if (sweep != 0) SpatialSplitGraph.PairKernel.Sweep((double3*)lo.GetUnsafeReadOnlyPtr(), (double3*)hi.GetUnsafeReadOnlyPtr(), n, far, (SpatialSplitGraph.NodeKey*)order.GetUnsafePtr(), keyGaps.GetUnsafeList(), candidates.GetUnsafeList(), gaps.GetUnsafeList(), false, ref c, ref meter, -1);
+                else SpatialSplitGraph.PairKernel.AllPairs((double3*)lo.GetUnsafeReadOnlyPtr(), (double3*)hi.GetUnsafeReadOnlyPtr(), n, far, candidates.GetUnsafeList(), gaps.GetUnsafeList(), false, ref c, ref meter, -1);
             }
 
             [BurstDiscard]
@@ -791,8 +799,8 @@ namespace Zantetsu.Core.Tests
             {
                 lo = new Unity.Collections.NativeArray<double3>(System.Math.Max(1, n), Unity.Collections.Allocator.TempJob), hi = new Unity.Collections.NativeArray<double3>(System.Math.Max(1, n), Unity.Collections.Allocator.TempJob),
                 n = n, far = far, sweep = sweep ? 1 : 0,
-                order = new Unity.Collections.NativeArray<SpatialSplitGraphCandidateNative.NodeKey>(System.Math.Max(1, n), Unity.Collections.Allocator.TempJob),
-                keyGaps = new Unity.Collections.NativeList<SpatialSplitGraphCandidateNative.KeyGap>(4, Unity.Collections.Allocator.TempJob),
+                order = new Unity.Collections.NativeArray<SpatialSplitGraph.NodeKey>(System.Math.Max(1, n), Unity.Collections.Allocator.TempJob),
+                keyGaps = new Unity.Collections.NativeList<SpatialSplitGraph.KeyGap>(4, Unity.Collections.Allocator.TempJob),
                 candidates = new Unity.Collections.NativeList<int2>(4, Unity.Collections.Allocator.TempJob), gaps = new Unity.Collections.NativeList<double>(4, Unity.Collections.Allocator.TempJob),
                 marker = new Unity.Collections.NativeArray<long>(1, Unity.Collections.Allocator.TempJob),
             };
@@ -816,7 +824,7 @@ namespace Zantetsu.Core.Tests
             // Expected by the rule gap > far excludes: (A, at) kept with gap == far; (A-at-y5, down) kept; (A-at-y10, up) excluded.
             foreach (bool sweep in new[] { false, true })
             {
-                (int2[] p, double[] g, SpatialSplitGraphCandidateNative.EnumerateCounts c) = Enumerate(lo, hi, far, sweep);
+                (int2[] p, double[] g, SpatialSplitGraph.EnumerateCounts c) = Enumerate(lo, hi, far, sweep);
                 (int2[] pb, double[] gb, bool burst) = EnumerateThroughBurst(lo, hi, far, sweep);
                 string name = sweep ? "sweep" : "all";
                 Assert.That(burst, Is.EqualTo(BurstCompiler.IsEnabled), name + ": the kernel ran through Burst iff enabled");
@@ -835,7 +843,7 @@ namespace Zantetsu.Core.Tests
             // The same boundary along y (every box overlapping on x, the sweep cannot skip): at, under, over.
             (lo, hi) = Boxes((0, -1, 0, 1, 0, 1), (0, far, 0, 1, far + 1, 1), (0, farDown, 5, 1, farDown + 1, 6), (0, farUp, 10, 1, farUp + 1, 11), (0, -1, 5, 1, 0, 6), (0, -1, 10, 1, 0, 11));
             AssertSweepAgrees("at far and its neighbours along y", lo, hi, far);
-            (int2[] py, double[] gy, SpatialSplitGraphCandidateNative.EnumerateCounts cy) = Enumerate(lo, hi, far, true);
+            (int2[] py, double[] gy, SpatialSplitGraph.EnumerateCounts cy) = Enumerate(lo, hi, far, true);
             var sy = new HashSet<(int, int)>();
             foreach (int2 q in py) sy.Add((q.x, q.y));
             Assert.That(sy.Contains((0, 1)) && sy.Contains((2, 4)) && !sy.Contains((3, 5)), Is.True, "along y: at and under kept, over excluded");
@@ -852,12 +860,12 @@ namespace Zantetsu.Core.Tests
             foreach (SpatialSplitSample sample in Fixtures())
             {
                 fixtures++;
-                var snapAll = new SpatialSplitGraphCandidateNative.PrepareSnapshot();
-                var snapSweep = new SpatialSplitGraphCandidateNative.PrepareSnapshot();
-                var snapSweepN0 = new SpatialSplitGraphCandidateNative.PrepareSnapshot();
-                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = false }, true, out SpatialSplitGraphCandidateNative.NativeRun ra, snapAll);
-                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true }, true, out SpatialSplitGraphCandidateNative.NativeRun rb, snapSweep);
-                CandidateResult b0 = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true }, false, out SpatialSplitGraphCandidateNative.NativeRun rb0, snapSweepN0);
+                var snapAll = new SpatialSplitGraph.PrepareSnapshot();
+                var snapSweep = new SpatialSplitGraph.PrepareSnapshot();
+                var snapSweepN0 = new SpatialSplitGraph.PrepareSnapshot();
+                CandidateResult a = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = false }, true, out SpatialSplitGraph.NativeRun ra, snapAll);
+                CandidateResult b = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true }, true, out SpatialSplitGraph.NativeRun rb, snapSweep);
+                CandidateResult b0 = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true }, false, out SpatialSplitGraph.NativeRun rb0, snapSweepN0);
                 AssertSnapshot(sample.objectName + " [sweep vs all]", snapAll, snapSweep);
                 AssertSnapshot(sample.objectName + " [sweep N0 vs N1]", snapSweep, snapSweepN0);
                 if (sample.objectName == FarExactly)
@@ -879,24 +887,24 @@ namespace Zantetsu.Core.Tests
                 Assert.That(rb.sweepBytes, Is.GreaterThan(0), "the sweep's added areas are accounted");
                 Assert.That(ra.sweepBytes, Is.Zero);
                 // the verification hash of the candidate list and gaps agrees between all and sweep
-                SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = false, hashPrepare = true }, true, out SpatialSplitGraphCandidateNative.NativeRun ha);
-                SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true, hashPrepare = true }, true, out SpatialSplitGraphCandidateNative.NativeRun hb);
+                SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = false, hashPrepare = true }, true, out SpatialSplitGraph.NativeRun ha);
+                SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true, hashPrepare = true }, true, out SpatialSplitGraph.NativeRun hb);
                 Assert.That(ha.prepareHash.Length, Is.EqualTo(16));
                 Assert.That(hb.prepareHash, Is.EqualTo(ha.prepareHash), sample.objectName + ": the prepare hash agrees");
                 Assert.That(ra.prepareHash, Is.Empty, "no hash in a run that did not ask for it");
                 foreach (int mode in new[] { 1, 2 })
                 {
-                    var snapMode = new SpatialSplitGraphCandidateNative.PrepareSnapshot();
-                    CandidateResult m = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true, measure = mode }, true, out SpatialSplitGraphCandidateNative.NativeRun rm, snapMode);
+                    var snapMode = new SpatialSplitGraph.PrepareSnapshot();
+                    CandidateResult m = SpatialSplitGraphCandidateNative.Decide(sample, new CandidateSettings { stages = CandidateStages.AB, nearestSelection = true, flowDinic = true, pairsSweep = true, measure = mode }, true, out SpatialSplitGraph.NativeRun rm, snapMode);
                     AssertSnapshot(sample.objectName + " [sweep measure " + mode + "]", snapSweep, snapMode);
                     AssertSame(sample.objectName, a, m, "N1 sweep measure " + mode);
                     if (mode == 2)
                     {
                         long[] pc = rm.prepareCounters;
-                        int at(int c) => c - SpatialSplitGraphCandidateNative.PcNamed;
-                        Assert.That(pc[at(SpatialSplitGraphCandidateNative.PcGapEvals)] + pc[at(SpatialSplitGraphCandidateNative.PcSweepSkipped)], Is.EqualTo(a.nodePairs), sample.objectName + ": evaluated + skipped = every pair");
-                        Assert.That(pc[at(SpatialSplitGraphCandidateNative.PcApart)], Is.EqualTo(a.pairsApartByBoxes), sample.objectName + ": apart counted as before");
-                        Assert.That(pc[at(SpatialSplitGraphCandidateNative.PcKeysSorted)], Is.EqualTo(a.candidatesA), sample.objectName + ": keys sorted = candidates");
+                        int at(int c) => c - SpatialSplitGraph.PcNamed;
+                        Assert.That(pc[at(SpatialSplitGraph.PcGapEvals)] + pc[at(SpatialSplitGraph.PcSweepSkipped)], Is.EqualTo(a.nodePairs), sample.objectName + ": evaluated + skipped = every pair");
+                        Assert.That(pc[at(SpatialSplitGraph.PcApart)], Is.EqualTo(a.pairsApartByBoxes), sample.objectName + ": apart counted as before");
+                        Assert.That(pc[at(SpatialSplitGraph.PcKeysSorted)], Is.EqualTo(a.candidatesA), sample.objectName + ": keys sorted = candidates");
                     }
                 }
             }

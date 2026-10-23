@@ -64,6 +64,16 @@ namespace Zantetsu.Editor.Sandbox
 
         /// <summary>The native port: hash the preparation's candidate list and gaps after the prepare job (a verification run, never a timing run).</summary>
         internal bool hashPrepare;
+
+        /// <summary>The native engine's caps and work budget (GRAPH-CONNECT-2 unit 1; 0 = none, the default): exceeding one is Undecided with stop capacity / work, never InvalidInput.</summary>
+        internal int maxTriangles, maxConvexes, maxVertexSpan, maxNodes, maxCandidates;
+        internal long maxGraphBytes, workBudget;
+
+        /// <summary>The native engine's input: the sample's compact vertices (false, the default) or the product's shape rebuilt from the sample -- a vertex view with the referenced vertices at their ids and garbage elsewhere -- through the span adapter (true).</summary>
+        internal bool inputSpan;
+
+        /// <summary>The native engine's worker contract: refuse to run unless the main thread prepared it (tests).</summary>
+        internal bool requirePrepared;
     }
 
     internal sealed class CandidateResult
@@ -85,6 +95,11 @@ namespace Zantetsu.Editor.Sandbox
         public long triedC, refutedC, confirmedC, ambiguousC, limitC, bvhBuiltTriangles, bvhNodesVisited, leafTests, leafAmbiguous;
         public int cutAttempts;
         public bool cutLimitHit, timedOut;
+
+        /// <summary>The native engine (unit 1): a cap, the budget, an allocation or the preparation contract ended it (Undecided; stop says which); the work meter's units; the span input's sizes.</summary>
+        public bool unfinished;
+        public long work, workPrepare, workSearch;
+        public int vertexSpan, referencedVertices;
 
         /// <summary>Why a NotFound or Undecided stopped: "time", "cut-limit", "leaf-limit" (a limit; the first that applies),
         /// "ambiguous" (candidates left that no certificate settled: the approximation's limit), "hulls" (stage B ended with

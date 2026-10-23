@@ -73,6 +73,18 @@ namespace Zantetsu.Editor.Sandbox
                 if (pairs != "all" && pairs != "sweep") throw new ArgumentException("-candidatePairs takes all or sweep");
                 settings.pairsSweep = pairs == "sweep";
                 settings.hashPrepare = Array.FindIndex(Environment.GetCommandLineArgs(), a => string.Equals(a, "-candidateHashPrepare", StringComparison.OrdinalIgnoreCase)) >= 0;
+                // Unit 1 (GRAPH-CONNECT-2): the caps and the work budget (0 = none, the default: an identity run), the input mode.
+                settings.maxTriangles = int.Parse(Argument("-candidateMaxTriangles") ?? "0", CultureInfo.InvariantCulture);
+                settings.maxConvexes = int.Parse(Argument("-candidateMaxConvexes") ?? "0", CultureInfo.InvariantCulture);
+                settings.maxVertexSpan = int.Parse(Argument("-candidateMaxVertexSpan") ?? "0", CultureInfo.InvariantCulture);
+                settings.maxNodes = int.Parse(Argument("-candidateMaxNodes") ?? "0", CultureInfo.InvariantCulture);
+                settings.maxCandidates = int.Parse(Argument("-candidateMaxCandidates") ?? "0", CultureInfo.InvariantCulture);
+                settings.maxGraphBytes = long.Parse(Argument("-candidateMaxGraphBytes") ?? "0", CultureInfo.InvariantCulture);
+                settings.workBudget = long.Parse(Argument("-candidateWorkBudget") ?? "0", CultureInfo.InvariantCulture);
+                string input = Argument("-candidateInput") ?? "sample";
+                if (input != "sample" && input != "span") throw new ArgumentException("-candidateInput takes sample or span");
+                settings.inputSpan = input == "span";
+                if (settings.inputSpan && engine == CandidateEngine.M0) throw new ArgumentException("-candidateInput span needs a native engine (N0 or N1)");
                 if (settings.measure < 0 || settings.measure > 2) throw new ArgumentException("-candidateMeasure takes 0, 1 or 2");
                 if (settings.measure != 0 && engine == CandidateEngine.M0) throw new ArgumentException("-candidateMeasure needs a native engine (N0 or N1)");
                 string summary = RunSession(session, output, Argument("-candidateExclude"), Argument("-candidateOnly"), settings, limit, verify, out bool allGood, exact, engine);
@@ -181,7 +193,7 @@ namespace Zantetsu.Editor.Sandbox
                         warmedUpOn = entry.world + "/" + entry.attempt;
                     }
 
-                    SpatialSplitGraphCandidateNative.NativeRun nativeRun = null;
+                    SpatialSplitGraph.NativeRun nativeRun = null;
                     CandidateResult c = engine == CandidateEngine.M0 ? SpatialSplitGraphCandidate.Decide(sample, settings)
                         : SpatialSplitGraphCandidateNative.Decide(sample, settings, engine == CandidateEngine.N1, out nativeRun);
                     if (nativeRun != null)
@@ -242,6 +254,9 @@ namespace Zantetsu.Editor.Sandbox
                     + (engine == CandidateEngine.N1 && burstRan != nativeSamples ? " -- NOT ALL THROUGH BURST" : engine == CandidateEngine.N0 && burstRan != 0 ? " -- N0 RAN THROUGH BURST" : ""))
                     + "; warmed up once on the first sample taken (" + warmedUpOn + ") before its timed decision" + (engine != CandidateEngine.M0 ? ", after the jobs' warm-up on a tiny input" : "")
                     + "; Burst safety checks: " + (Unity.Burst.BurstCompiler.Options.EnableBurstSafetyChecks ? "on" : "off") + ", Burst compilation: " + (Unity.Burst.BurstCompiler.Options.EnableBurstCompilation ? "on" : "off")
+                    + (engine == CandidateEngine.M0 ? "" : "; input " + (settings.inputSpan ? "span (the product's shape rebuilt from the sample: a view with the referenced vertices at their ids, NaN elsewhere)" : "sample (the compact vertices)")
+                        + "; caps maxTriangles " + settings.maxTriangles + ", maxConvexes " + settings.maxConvexes + ", maxVertexSpan " + settings.maxVertexSpan + ", maxNodes " + settings.maxNodes + ", maxCandidates " + settings.maxCandidates
+                        + ", maxGraphBytes " + settings.maxGraphBytes + " (0 = none); work budget " + settings.workBudget + " (0 = none); " + SpatialSplitGraph.WorkDefinition)
                     + (engine == CandidateEngine.M0 ? "" : "; nearest " + (settings.nearestSelection ? "select (the top-3 selection)" : "sort (the full insertion sort, the baseline)") + "; flow " + (settings.flowDinic ? "dinic" : "ek (Edmonds-Karp, the baseline)") + "; pairs " + (settings.pairsSweep ? "sweep (along x)" : "all (every pair, the baseline)") + (settings.hashPrepare ? "; prepare hash ON (a verification run: its times are not a measurement)" : "") + "; measure " + settings.measure + (settings.measure == 0 ? " (no clock read in the jobs)" : settings.measure == 1 ? " (section times: " + SpatialSplitGraphCandidateNative.ClockDescription() + ")" : " (diagnostic counts; not a timing run)")))
                 .AppendLine("samples listed " + samples.Count + ", skipped (holdout lineages, or not in the list) " + skipped + ", taken " + taken + (limit > 0 ? " (limit " + limit + ")" : ""))
                 .AppendLine("unreadable " + unreadable + ", hash differs " + hashDiffers + ", identity differs " + identityDiffers)
