@@ -68,7 +68,8 @@ namespace Zantetsu.PhysicsCut
     {
         public CutFragmentGroupSettings(
             bool enabled, int maxLiveCutFragments, int examinePerFrame, double reserveSeconds,
-            double seedSecondsPerFragment, double seedSecondsPerGroup)
+            double seedSecondsPerFragment, double seedSecondsPerGroup,
+            bool safetyEnabled = false, int safetyVertexBlockThreshold = 0)
         {
             this.enabled = enabled;
             this.maxLiveCutFragments = maxLiveCutFragments;
@@ -76,6 +77,8 @@ namespace Zantetsu.PhysicsCut
             this.reserveSeconds = reserveSeconds;
             this.seedSecondsPerFragment = seedSecondsPerFragment;
             this.seedSecondsPerGroup = seedSecondsPerGroup;
+            this.safetyEnabled = safetyEnabled;
+            this.safetyVertexBlockThreshold = safetyVertexBlockThreshold;
         }
 
         /// <summary>Off: no group is looked at and no retirement is started. What was started goes on regardless.</summary>
@@ -86,7 +89,7 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>
         /// Groups looked at per frame, at most. One retirement a frame at most: of the groups a frame looked at and
-        /// could end, the farthest.
+        /// could end, the oldest registration.
         /// </summary>
         public readonly int examinePerFrame;
 
@@ -97,8 +100,14 @@ namespace Zantetsu.PhysicsCut
         public readonly double seedSecondsPerFragment;
         public readonly double seedSecondsPerGroup;
 
+        /// <summary>Enables count-driven safety collection; no active state or lower exit threshold is retained.</summary>
+        public readonly bool safetyEnabled;
+        public readonly int safetyVertexBlockThreshold;
+        public int SafetyFragmentThreshold => maxLiveCutFragments > int.MaxValue / 2 ? int.MaxValue : maxLiveCutFragments * 2;
+
         public bool IsValid =>
-            maxLiveCutFragments >= 0
+            (!safetyEnabled || safetyVertexBlockThreshold > 0)
+            && maxLiveCutFragments >= 0
             && examinePerFrame > 0 && reserveSeconds >= 0.0 && !double.IsInfinity(reserveSeconds)
             && seedSecondsPerFragment >= 0.0 && !double.IsInfinity(seedSecondsPerFragment)
             && seedSecondsPerGroup >= 0.0 && !double.IsInfinity(seedSecondsPerGroup);
@@ -191,7 +200,7 @@ namespace Zantetsu.PhysicsCut
     /// <summary>
     /// DESIGN 7.10's lifetime of live logical fragments by the object they came from (Phase 7.1): once more cut
     /// fragments stand than the setting, a whole group -- every piece of one building, one prop or one NPC individual --
-    /// that is outside both eyes is ended at one boundary, the farther of those looked at first, and a building or a
+    /// that is outside both eyes is ended at one boundary, the oldest of those looked at first, and a building or a
     /// prop is given back its own instance, to be cut again as an uncut one.
     /// <para>
     /// **A group** is one registered fragment and everything cut from it: the ledger's family. The live cut fragments
@@ -210,16 +219,14 @@ namespace Zantetsu.PhysicsCut
     /// a building whose hull is in view. Without a camera, or with nothing of a group to judge, nothing is chosen.
     /// </para>
     /// <para>
-    /// **The farther first -- of those looked at.** A turn looks at the next few groups of its walk, as many as the
-    /// setting and the budget allow and no more than before, and of those it could end it ends the one that is
-    /// farthest: by <see cref="CutGroupCandidate.NearestDistance"/>, the distance to the group's nearest bounds, so
-    /// that one piece flown far does not put a group lying at the viewer's feet first. It is the farthest of the
-    /// groups THIS TURN LOOKED AT, not of all groups: no turn reads every group, and nothing is sorted. The one
-    /// chosen is ended in the same turn, after everything is asked of it again; nothing was simulated, cut or
-    /// collected in between. No choice is kept from one turn to another: a group that could have been ended and was
-    /// left for a farther one is looked at again, whole and with the view as it then is, when the walk comes round to
-    /// it. The walk does not go back to it at once -- the next turn looks at the groups that follow, so that the
-    /// near groups a turn left do not fill the next turn's looking.
+    /// **The oldest first -- of those looked at.** A turn looks at the next few groups of its walk, as many as the
+    /// setting and budget allow. Of those it can end, it chooses the earliest first-cut registration. Repeated
+    /// registration and cuts of descendants do not refresh that age; a restored original's next cut starts a new
+    /// group and gets a new age. This is the oldest of the candidates THIS TURN LOOKED AT, not of all groups:
+    /// nothing is sorted and the walk retains its count limit. The choice is revalidated and ended in the same
+    /// turn. No choice is kept between turns; a group left for an older one is read again with its current view
+    /// and lifetime conditions when the walk comes round. The budget-limited partial fallback also prefers the
+    /// oldest of the oversized groups examined this turn. Distance remains diagnostic, not a ranking input.
     /// </para>
     /// <para>
     /// **Looking costs too.** A group is read only when the frame's budget has the reserve and twice what reading and
@@ -239,6 +246,13 @@ namespace Zantetsu.PhysicsCut
     /// in a later frame that has room, through the uncut entrance: its next hit gives it a new fragment.
     /// </para>
     /// <para>
+    /// **Safety.** The profile enables a count-only branch while live fragments exceed twice the normal threshold
+    /// OR vertex block allocator usage reaches its safety threshold. This branch ignores view and global frame/time
+    /// budget gates, keeps each piece's in-flight/owner/shared-origin checks, and samples older registrations across
+    /// the whole group list. It retains no active flag, selected family or draining marker; each turn reads the counts
+    /// again. It keeps the final piece for the existing whole-group completion and original-return path.
+    /// </para>
+    /// <para>
     /// **When.** One turn a frame BEFORE the frame's collection (in the world's LateUpdate, where the per-piece
     /// lifetime steps when this one is off), by the gates the empty owners' turn uses: a retirement is reflected by the
     /// collection of the very frame the gate chose -- the structural collection it causes is part of what that frame
@@ -247,7 +261,7 @@ namespace Zantetsu.PhysicsCut
     /// measured cost a piece times its pieces, a group's own, and the structural collection that follows.
     /// </para>
     /// </summary>
-    public sealed class CutFragmentGroupCollection
+    public sealed partial class CutFragmentGroupCollection
     {
 
         // The clock reading that begins an observed span: nothing in a Release Player (DESIGN 21.18).
@@ -268,6 +282,7 @@ namespace Zantetsu.PhysicsCut
             internal ICutGroupOrigin origin;
             internal CutGroupKind kind;
             internal int listIndex;
+            internal long registrationOrder;
             internal bool ended;          // its pieces were retired here; the original is on its way back
             internal bool returned;       // the original stands again, not yet a cut target
             internal long adoptedAtEnd;   // the display's adopted collections when the pieces were retired
@@ -278,6 +293,7 @@ namespace Zantetsu.PhysicsCut
         private readonly Dictionary<LogicalFragmentId, Group> _byRoot = new Dictionary<LogicalFragmentId, Group>();
         private readonly List<Group> _groups = new List<Group>();
         private readonly List<Group> _comingBack = new List<Group>();
+        private readonly List<Group> _partialCandidates = new List<Group>(8);
         private readonly List<LogicalFragmentId> _pieces = new List<LogicalFragmentId>(64);
         private readonly Plane[] _eyePlanes = new Plane[2 * VpInstanceCulling.EyePlaneCount];
         private readonly SimulateCostHistory _perFragment = new SimulateCostHistory();
@@ -291,6 +307,7 @@ namespace Zantetsu.PhysicsCut
         private readonly int[] _passes = new int[(int)CutGroupPass.Count];
         private readonly int[] _refusals = new int[(int)CutGroupPass.Count];
         private int _cursor;
+        private long _registrationOrder;
         private long _revisionSeen = -1;
         private long _roomSeen = -1;
         private int _collectAfterFrame = int.MinValue;
@@ -416,6 +433,7 @@ namespace Zantetsu.PhysicsCut
             }
 
             var group = new Group { root = root, origin = origin, kind = origin != null ? origin.Kind : CutGroupKind.Npc, listIndex = _groups.Count };
+            group.registrationOrder = ++_registrationOrder;
             _byRoot.Add(root, group);
             _groups.Add(group);
         }
@@ -675,6 +693,14 @@ namespace Zantetsu.PhysicsCut
             }
 
             Turns++;
+            SafetyCollectionReason safety = starting ? ReadSafetyReason(in settings) : SafetyCollectionReason.None;
+            if (safety != SafetyCollectionReason.None)
+            {
+                StepSafety(in settings, safety);
+                LastHold = CutGroupHold.None;
+                Remember();
+                return;
+            }
             CutGroupHold hold = HoldNow(in settings, starting, finishing);
             LastHold = hold;
             if (hold != CutGroupHold.None)
@@ -701,7 +727,8 @@ namespace Zantetsu.PhysicsCut
             Vector3 viewer = camera != null ? camera.transform.position : default;
             int examined = 0, found = 0;
             CutGroupCandidate best = default;
-            Group tooLarge = null;
+            long bestOrder = long.MaxValue;
+            _partialCandidates.Clear();
             while (examined < settings.examinePerFrame && examined < _groups.Count)
             {
                 // Looking at a group costs too: the walk begins, and goes on, only while the budget has the reserve and
@@ -732,20 +759,21 @@ namespace Zantetsu.PhysicsCut
                 if (pass != CutGroupPass.Candidate)
                 {
                     _passes[(int)pass]++;
-                    if (pass == CutGroupPass.BudgetShort && tooLarge == null)
+                    if (pass == CutGroupPass.BudgetShort)
                     {
-                        tooLarge = group;   // its whole does not fit what is left of this frame: its pieces may
+                        _partialCandidates.Add(group);   // its whole does not fit: its pieces may
                     }
 
                     continue;
                 }
 
-                // One that could be ended. The farthest of this turn's is the one ended; the others are left.
+                // One that could be ended. The oldest registration examined this turn is ended; the others are left.
                 Candidates++;
                 found++;
-                if (!best.IsSet || candidate.NearestDistance > best.NearestDistance)
+                if (!best.IsSet || group.registrationOrder < bestOrder)
                 {
                     best = candidate;
+                    bestOrder = group.registrationOrder;
                 }
             }
 
@@ -756,16 +784,25 @@ namespace Zantetsu.PhysicsCut
 #endif
             if (!best.IsSet)
             {
-                // No group to end whole this turn: of one passed over because its whole does not fit the frame, the
-                // pieces outside the view are ended instead, as many as the budget carries (TryRetirePieces).
-                if (tooLarge != null)
+                // Try only oversized groups already examined this turn, oldest first. A protected/visible old
+                // group must not block a younger eligible one. Each attempt rechecks the remaining budget; stop
+                // after one successful batch. No world-wide sort, extra group walk or second retirement occurs.
+                while (_partialCandidates.Count > 0)
                 {
-                    TryRetirePieces(tooLarge, viewer, eyes, in settings);
+                    if (RemainingMainSeconds() < settings.reserveSeconds + (2.0 * ExpectedTurnSeconds) + (2.0 * ExpectedPieceSeconds)) break;
+                    int oldest = 0;
+                    for (int i = 1; i < _partialCandidates.Count; i++)
+                        if (_partialCandidates[i].registrationOrder < _partialCandidates[oldest].registrationOrder) oldest = i;
+                    Group group = _partialCandidates[oldest];
+                    _partialCandidates.RemoveAt(oldest);
+                    if (TryRetirePieces(group, viewer, eyes, in settings)) break;
                 }
 
+                _partialCandidates.Clear();
                 return;
             }
 
+            _partialCandidates.Clear();
             // The one chosen is ended now, in this same turn: nothing was simulated, cut or collected since it was
             // looked at, and TryApply asks everything of it again. What ending it needs is asked of what is left of
             // the budget now, after the looking. The others are left where they are: the walk goes on from here, and
@@ -784,7 +821,7 @@ namespace Zantetsu.PhysicsCut
         }
 
         /// <summary>
-        /// Groups a turn could have ended and did not: it ended a farther one of those it looked at, or what was left
+        /// Groups a turn could have ended and did not: it ended an older one of those it looked at, or what was left
         /// of the budget after the looking did not carry the one chosen. Each is looked at again when the walk comes
         /// round to it.
         /// </summary>
@@ -927,11 +964,11 @@ namespace Zantetsu.PhysicsCut
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             var text = new System.Text.StringBuilder(768);
             text.Append("fragment group collection ").Append(Settings.enabled ? "on" : "off")
-                .Append(" (more than ").Append(Settings.maxLiveCutFragments).Append(" live cut fragments; outside both eyes at any distance, the farthest of the ")
+                .Append(" (more than ").Append(Settings.maxLiveCutFragments).Append(" live cut fragments; outside both eyes at any distance, the oldest registration of the ")
                 .Append(Settings.examinePerFrame).Append(" looked at a turn first): live cut fragments now ").Append(_world.Ledger != null ? _world.Ledger.LiveCutFragmentCount : 0)
                 .Append(", groups known ").Append(_groups.Count)
                 .Append("; turns ").Append(Turns).Append(" (walked ").Append(WalkedTurns).Append("), groups looked at ").Append(Examined)
-                .Append(", candidates ").Append(Candidates).Append(" (left for a farther one or for the budget ").Append(CandidatesLeft)
+                .Append(", candidates ").Append(Candidates).Append(" (left for an older one or for the budget ").Append(CandidatesLeft)
                 .Append("), groups retired ").Append(GroupsRetired).Append(" (NPC ").Append(NpcsRetired)
                 .Append(", prop ").Append(PropsRetired).Append(", building ").Append(BuildingsRetired).Append(") with ").Append(FragmentsRetired)
                 .Append(" fragments, candidates not applied ").Append(Refused)
@@ -959,6 +996,10 @@ namespace Zantetsu.PhysicsCut
                 }
             }
 
+            text.Append("; count-driven safety ").Append(Settings.safetyEnabled ? "on" : "off")
+                .Append(" (fragments > ").Append(Settings.SafetyFragmentThreshold).Append(" or used vertex blocks >= ").Append(Settings.safetyVertexBlockThreshold)
+                .Append("); safety turns ").Append(SafetyTurns).Append(", blocked ").Append(SafetyBlockedTurns)
+                .Append(", groups completed ").Append(SafetyGroupsCompleted).Append(", pieces retired ").Append(SafetyPiecesRetired);
             text.Append("; time: choosing ").Append((SelectSeconds * 1000.0).ToString("F3", inv)).Append(" ms (longest in a turn ")
                 .Append((MaxSelectSeconds * 1000.0).ToString("F3", inv)).Append(", expected a group of one ")
                 .Append((ExpectedExamineSeconds(1) * 1000.0).ToString("F3", inv)).Append(", expected collection after ")
@@ -1044,7 +1085,8 @@ namespace Zantetsu.PhysicsCut
             PhysicsOwnerRegistry owners = _world.Owners;
             CutDag dag = _world.Geometry;
             int count = ledger.LiveCutCountOf(group.root);
-            if (group.ended || count == 0)
+            bool nothing = group.ended || count == 0;
+            if (nothing)
             {
                 return CutGroupPass.NothingToEnd;
             }
@@ -1333,7 +1375,7 @@ namespace Zantetsu.PhysicsCut
 
         // A returned original made a cut target again: the uncut entrance's own preparation, in a frame the gates
         // allow and whose budget has the reserve left. The group is forgotten then: its next cut is a new one.
-        private bool TryRearmOne()
+        private bool TryRearmOne(bool ignoreBudget = false)
         {
             for (int i = 0; i < _comingBack.Count; i++)
             {
@@ -1343,7 +1385,7 @@ namespace Zantetsu.PhysicsCut
                     continue;
                 }
 
-                if (RemainingMainSeconds() < Settings.reserveSeconds + RearmAskSeconds)
+                if (!ignoreBudget && RemainingMainSeconds() < Settings.reserveSeconds + RearmAskSeconds)
                 {
                     return false;
                 }
