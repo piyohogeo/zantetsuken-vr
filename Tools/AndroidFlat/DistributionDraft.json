@@ -3,15 +3,18 @@
     "repository":  "https://github.com/piyohogeo/zantetsuken-vr",
     "applicationId":  "com.zantetsuken.androidflat",
     "identity":  {
-                     "developerName":  null,
+                     "developerName":  "hogehogeo",
                      "publicSupportEmail":  null,
-                     "privacyPolicyUrl":  null
+                     "publicSupportUrl":  "https://github.com/piyohogeo/zantetsuken-vr/issues",
+                     "privacyPolicyUrl":  null,
+                     "policyEffectiveDate":  "first public release"
                  },
     "candidate":  {
                       "versionName":  "0.1.0-alpha.1",
-                      "versionCode":  4,
-                      "apk":  "Build/android-github-0.1.0-alpha.1-4.apk",
-                      "published":  false
+                      "versionCode":  6,
+                      "apk":  "Build/android-github-0.1.0-alpha.1-6.apk",
+                      "published":  false,
+                      "sha256":  "5A7502FCF9996E97856C3232E0D9BCD353C70960C9858164C4C9932550CACFC5"
                   },
     "privacyDocument":  "docs/android-privacy-policy.md",
     "distributionGuide":  "docs/android-distribution.md",
@@ -19,21 +22,22 @@
     "tagDraft":  "android-v0.1.0-alpha.1",
     "prereleaseSuggested":  true,
     "checks":  {
-                   "formalApkInspection":  "passed: v2 signature, dedicated certificate, SDK32/36, ARM64, non-VR, non-debuggable, ELF/ZIP16KB alignment, forbidden text",
+                   "formalApkInspection":  "code 6 passed: v2 signature, dedicated certificate, SDK32/36, ARM64, non-VR, non-debuggable, ELF/ZIP16KB alignment, forbidden text; bundled notices exactly match reviewed text (435739 bytes)",
                    "formalApkBrowserInstall":  "passed on Pixel: Edge download, matching hash, normal package installer (code 3)",
-                   "formalApkUpdate":  "passed on Pixel: Edge download and normal package-installer update from code 3 to 4; MoveSpeed 1.74 and declined consent persisted; installed APK SHA-256 matches",
-                   "physicalRotation":  "passed on Pixel after user physical rotation: portrait 1440x3120 to landscape 3120x1440, safe area 2975x1440, vertical FOV 49.55028; camera, movement, turning, flick cuts, settings and animated loading window verified",
-                   "16kRuntime":  "pending; alignment is checked separately",
-                   "longPlayAndOffline":  "basic cut/resume and offline policy verified; sustained-load and failed-send recovery pending",
-                   "publisherAndContact":  "user explicitly kept undecided on 2026-10-23",
-                   "portableKeyBackup":  "disposable-key export/reopen/certificate/old-password rejection passed; production independent backup/recovery remains pending",
-                   "thirdPartyNotices":  "pending review of actual bundled assets",
-                   "sourceCommit":  "distribution source committed with this file; exact commit/APK binding is kept in local device-validation.json and publication-plan.json",
-                   "bundledPrivacy":  "133 EditMode tests passed; all four policy pages and Next/Previous/Back checked on Pixel in portrait and physical landscape; no network dependency",
-                   "pixelRuntime":  "code 4: visible cuts, same PID across background/resume, no statistics sends after refusal; MoveSpeed reset to 1.49 after persistence test",
-                   "s25CurrentCandidate":  "not updated: prior Wi-Fi port refused; existing app data preserved",
+                   "formalApkUpdate":  "passed: Pixel code 4 to 6 via Wi-Fi ADB install -r, no data deletion; previous and new APK hashes match verified candidates, MoveSpeed 1.49, Turn 120, FSR1/75%/0.50 and Declined consent preserved; browser installer code 3 to 4 tested previously",
+                   "physicalRotation":  "S25 code 6 passed after user physically rotated both ways: landscape 2340x1080, safe 2244x1080, vertical FOV 49.55028; portrait 1080x2340, safe 1080x2244, vertical FOV 90; previous Pixel code 4 both orientations passed",
+                   "16kRuntime":  "passed on official Android 16 x86_64 16KB userspace emulator with ARM64 translation: PAGE_SIZE=16384, exact installed code 6 APK hash, startup, slash/separated fragments, joystick, menu and same-process home resume. Physical ARM64 16KB device not tested; not a performance result.",
+                   "longPlayAndOffline":  "basic cuts and same-process home resume passed on both code 6 devices; sustained-load deferred by user on 2026-10-24. S25 separate-package probe using production sender/Unity transport passed refused connection, HTTP503, timeout recovery, identical snapshot/bytes, duplicate suppression and withdrawal abort; synthetic loopback only, not a full-game physical radio-outage test.",
+                   "publisherAndContact":  "public name hogehogeo, GitHub Issues and audited Cloudflare log explanation bundled in code 6; all 5 policy pages checked on S25 in both physical orientations; effective date is first public release",
+                   "portableKeyBackup":  "completed: production encrypted PKCS12 backup stored outside the repository in OneDrive, random passphrase saved; user reported recovery OK after the browser-download and keytool -certreq procedure using only the saved passphrase; original DPAPI credential not used for recovery; secrets not read by agent",
+                   "thirdPartyNotices":  "bundled in code 6 and exact-text hash passed; 17 packages and 29 upstream sources; CGTrader Royalty Free and Fab public Standard License verified; Fab purchased Personal/Professional tier unconfirmed, both grant same rights",
+                   "sourceCommit":  "distribution preparation and isolated recovery-check tools committed together; code 6 built from changes based on 6919f90, packaged runtime/notices hashes preserved; exact final commit and diagnostic-only additions recorded with the local APK evidence and publication plan",
+                   "bundledPrivacy":  "133 EditMode tests passed; all 5 code 6 pages displayed on S25 in physical portrait/landscape and Pixel in landscape; Next/Previous/Back checked on S25; updated log/publisher pages visually checked on both",
+                   "pixelRuntime":  "code 6 passed visible cuts/fragments, VP3C fallback and same-process home resume; no statistics counting/sending after refusal; MoveSpeed 1.49, Turn120 and FSR1/75%/0.50 preserved",
+                   "s25CurrentCandidate":  "passed code 6: Wi-Fi ADB installation after user-approved old debug-app removal; installed APK hash matches; physical portrait/landscape, landscape first consent, cuts, joystick forward/turn, menu and same-process home resume; consent remains Declined",
                    "githubDownload":  "pending explicit release instruction; browser workflow verified only using local HTTP through Wi-Fi ADB reverse",
-                   "firstRunLandscapeConsent":  "not re-prompted on device to preserve current Declined state; EditMode layout tested"
+                   "firstRunLandscapeConsent":  "passed on S25 code 6 after user physical rotation: complete text and both buttons visible; Dont send selected; game playable",
+                   "pixelCurrentCandidate":  "passed code 6: Android 17/API37, VP3C fallback with unsupported indirect controls greyed, cuts/separated fragments, 5 policy pages in landscape, same-process home resume, no counting/sending after refusal; portrait last checked in code 4"
                },
     "playOnlyTasksRemoved":  [
                                  "Play Console",
@@ -46,5 +50,5 @@
                                  "pre-launch report"
                              ],
     "ApkContentType":  "application/vnd.android.package-archive",
-    "localStaging":  "Build/github-distribution-0.1.0-alpha.1"
+    "localStaging":  "Build/github-distribution-0.1.0-alpha.1-6"
 }

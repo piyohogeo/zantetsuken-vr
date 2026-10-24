@@ -44,6 +44,14 @@ $alignment | Set-Content -Encoding utf8 (Join-Path $record 'native-alignment.jso
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive=[IO.Compression.ZipFile]::OpenRead($Apk);$count=0
 try {
+    $noticeEntry=$archive.GetEntry('assets/ThirdPartyNotices.txt')
+    if(!$noticeEntry -or $noticeEntry.Length -eq 0){throw 'The APK must contain ThirdPartyNotices.txt'}
+    $noticeStream=$noticeEntry.Open();$noticeMemory=New-Object IO.MemoryStream
+    try {$noticeStream.CopyTo($noticeMemory);$noticeBytes=$noticeMemory.ToArray()} finally {$noticeStream.Dispose();$noticeMemory.Dispose()}
+    $hasher=[Security.Cryptography.SHA256]::Create()
+    try {$noticeHash=([BitConverter]::ToString($hasher.ComputeHash($noticeBytes))).Replace('-','')} finally {$hasher.Dispose()}
+    $noticeSource=Join-Path $PSScriptRoot '../../Assets/StreamingAssets/ThirdPartyNotices.txt'
+    if($noticeHash -cne (Get-FileHash -LiteralPath $noticeSource -Algorithm SHA256).Hash){throw 'Bundled third-party notices differ from the reviewed source'}
     foreach($entry in $archive.Entries){
         if((Get-ForbiddenCount -Matcher $matcher -Bytes ([Text.Encoding]::UTF8.GetBytes($entry.FullName))) -gt 0){throw 'Forbidden text in APK entry name (name suppressed)'}
         $stream=$entry.Open();$memory=New-Object IO.MemoryStream
@@ -54,6 +62,6 @@ try {
 } finally {$archive.Dispose()}
 $hash=(Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
 [IO.File]::WriteAllText($Apk+'.sha256',($hash.ToLowerInvariant()+'  '+[IO.Path]::GetFileName($Apk)+"`n"),[Text.UTF8Encoding]::new($false))
-$summary=[ordered]@{Apk=$Apk;Sha256=$hash;VersionName=$VersionName;VersionCode=$VersionCode;Package='com.zantetsuken.androidflat';MinSdk=32;TargetSdk=36;CertificateSha256=$signers[0].ToUpperInvariant();SignatureV2=$true;Debuggable=$false;Native16kAlignment=$true;ForbiddenEntriesScanned=$count;ForbiddenText='passed';Published=$false}
+$summary=[ordered]@{Apk=$Apk;Sha256=$hash;VersionName=$VersionName;VersionCode=$VersionCode;Package='com.zantetsuken.androidflat';MinSdk=32;TargetSdk=36;CertificateSha256=$signers[0].ToUpperInvariant();SignatureV2=$true;Debuggable=$false;Native16kAlignment=$true;ThirdPartyNoticesSha256=$noticeHash;ThirdPartyNoticesBytes=$noticeBytes.Length;ForbiddenEntriesScanned=$count;ForbiddenText='passed';Published=$false}
 $summary | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $record 'inspection.json')
 $summary | ConvertTo-Json

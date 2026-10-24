@@ -12,6 +12,7 @@ namespace Zantetsu.EditorTools.AndroidFlat
     /// <summary>A versioned, custom-signed Release APK or AAB with external statistics.</summary>
     public static class AndroidFlatDistributionBuild
     {
+        public const string NoticesPath = "Assets/StreamingAssets/ThirdPartyNotices.txt";
         public const string StorePasswordVariable = "ZANTETSU_KEYSTORE_PASSWORD";
         public const string KeyPasswordVariable = "ZANTETSU_KEY_PASSWORD";
         public sealed class Request
@@ -108,6 +109,8 @@ namespace Zantetsu.EditorTools.AndroidFlat
             if (failure == null && !request.output.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) failure = "this entry requires " + extension;
             failure ??= Validate(request, request != null && File.Exists(request.keystore),
                 Environment.GetEnvironmentVariable(StorePasswordVariable), Environment.GetEnvironmentVariable(KeyPasswordVariable));
+            if (failure == null && (!File.Exists(NoticesPath) || new FileInfo(NoticesPath).Length == 0))
+                failure = "prepare the bundled third-party notices before building a distribution";
             if (failure == null) failure = QuestDistributionBuild.CheckStatisticsConfig(
                 new QuestDistributionBuild.Request { statistics = QuestDistributionBuild.StatisticsRequired }, out _);
             string[] args = Environment.GetCommandLineArgs();

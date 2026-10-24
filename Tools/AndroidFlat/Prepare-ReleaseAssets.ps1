@@ -12,7 +12,19 @@ $Destination=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
 if(!$Destination.StartsWith($project+'\Build\',[StringComparison]::OrdinalIgnoreCase)){throw 'Local staging must stay below this repository Build directory'}
 if(Test-Path -LiteralPath $Destination){throw 'Local staging already exists; nothing is overwritten'}
 $draft=Get-Content -Raw -Encoding utf8 (Join-Path $PSScriptRoot 'DistributionDraft.json') | ConvertFrom-Json
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip=[IO.Compression.ZipFile]::OpenRead($Apk)
+try {
+    $noticeEntry=$zip.GetEntry('assets/ThirdPartyNotices.txt')
+    if(!$noticeEntry){throw 'The APK has no bundled third-party notices'}
+    $noticeStream=$noticeEntry.Open();$noticeMemory=New-Object IO.MemoryStream
+    try {$noticeStream.CopyTo($noticeMemory);$noticeBytes=$noticeMemory.ToArray()} finally {$noticeStream.Dispose();$noticeMemory.Dispose()}
+} finally {$zip.Dispose()}
+$hasher=[Security.Cryptography.SHA256]::Create()
+try {$noticeHash=([BitConverter]::ToString($hasher.ComputeHash($noticeBytes))).Replace('-','')} finally {$hasher.Dispose()}
+if($noticeHash -cne $inspection.ThirdPartyNoticesSha256){throw 'The bundled third-party notices have not passed inspection'}
 $assets=Join-Path $Destination 'assets';[IO.Directory]::CreateDirectory($assets) | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $assets 'ThirdPartyNotices.txt'),$noticeBytes)
 $fileName=[IO.Path]::GetFileName($Apk)
 Copy-Item -LiteralPath $Apk -Destination (Join-Path $assets $fileName)
 [IO.File]::WriteAllText((Join-Path $assets ($fileName+'.sha256')),($hash.ToLowerInvariant()+'  '+$fileName+"`n"),[Text.UTF8Encoding]::new($false))
@@ -33,10 +45,10 @@ APK: @APK@
 SHA-256: @HASH@
 署名証明書SHA-256: @CERT@
 
-16KB環境の実行は未確認です。両端末のDexFile.finalize警告は、ゲーム継続を確認していますが原因未確定です。
+公式16KBエミュレーター（x86_64上のARM64変換実行）で起動・切断・中断復帰を確認しました。ARM64の16KB実機は未確認です。両端末のDexFile.finalize警告は、ゲーム継続を確認していますが原因未確定です。
 '@
 $notes=$notes.Replace('@VERSION@',$inspection.VersionName).Replace('@CODE@',[string]$inspection.VersionCode).Replace('@APK@',$fileName).Replace('@HASH@',$hash.ToLowerInvariant()).Replace('@CERT@',$inspection.CertificateSha256)
 [IO.File]::WriteAllText((Join-Path $Destination 'release-notes.draft.md'),$notes.Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
-$plan=[ordered]@{Status='local staging only';Published=$false;TagCreated=$false;GitHubDraftCreated=$false;VersionName=$inspection.VersionName;VersionCode=$inspection.VersionCode;Assets=@($fileName,"$fileName.sha256",'signing-certificate-sha256.txt');SourceCommit=(git -C $project rev-parse HEAD);SourceDirty=([bool](git -C $project status --porcelain));Remaining=$draft.checks}
+$plan=[ordered]@{Status='local staging only';Published=$false;TagCreated=$false;GitHubDraftCreated=$false;VersionName=$inspection.VersionName;VersionCode=$inspection.VersionCode;Assets=@($fileName,"$fileName.sha256",'signing-certificate-sha256.txt','ThirdPartyNotices.txt');ApkContentType='application/vnd.android.package-archive';SourceCommit=(git -C $project rev-parse HEAD);SourceDirty=([bool](git -C $project status --porcelain));Remaining=$draft.checks}
 $plan | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $Destination 'publication-plan.json')
 "Local assets prepared: $Destination (no upload, release, draft or tag created)"

@@ -174,7 +174,7 @@ namespace Zantetsu.EditorTools.AndroidFlat
 
         // Snapshot serialized project settings and XR assets before applying build-only changes. The define is supplied
         // only to BuildPlayer, never to the project's scripting-define list. Restoration runs before batch failure exits.
-        private sealed class BuildSettingsScope : IDisposable
+        internal sealed class BuildSettingsScope : IDisposable
         {
             private readonly List<(Object asset, string json)> _saved = new List<(Object, string)>();
             private readonly Dictionary<string, byte[]> _files = new Dictionary<string, byte[]>();
