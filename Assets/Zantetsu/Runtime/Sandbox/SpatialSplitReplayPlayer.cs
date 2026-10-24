@@ -30,10 +30,13 @@ namespace Zantetsu.Sandbox
         public const string BentArgument = "-zantetsuSplitReplayBent";
         /// <summary>GRAPH-CONNECT-10: current (the default) or graph-first -- the graph stage before the bent partition, the bent partition on an unfinished graph; only with the graph on the span input, not with bent off.</summary>
         public const string OrderArgument = "-zantetsuSplitReplayOrder";
+        /// <summary>GRAPH-CONNECT-14: the pool replay (L0 | L1 | L2: the competitor level) and the competitor's fixed amount of steps.</summary>
+        public const string PoolArgument = "-zantetsuSplitReplayPool";
+        public const string CompetitorWorkArgument = "-zantetsuSplitReplayCompetitorWork";
 
         /// <summary>Reads the options (<see cref="SpatialSplitReplayOptions.TryRead"/> with this entry's argument names).</summary>
         internal static bool TryReadOptions(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
-            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, BentArgument, OrderArgument, out options, out refusal);
+            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, BentArgument, OrderArgument, PoolArgument, CompetitorWorkArgument, out options, out refusal);
 
         /// <summary>
         /// Whether the launch asks for a replay at all (either argument named), and -- when it does -- its two folders,
@@ -75,6 +78,13 @@ namespace Zantetsu.Sandbox
 
             // A replay was asked for: whatever follows, nothing of a scenario is started.
             SandboxScenario.HoldForDevelopmentReplay();
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), CutWorldRoot.SplitTimelineOffArgument) >= 0)
+            {
+                // GRAPH-CONNECT-14 §7: the timeline's new clock readings off for this replay (the existing clocks stand)
+                CutSpatialSplit.TimelineObserve = false;
+                Zantetsu.MeshCut.DispatchObservation.Enabled = false;
+                Debug.Log("SPLIT REPLAY (Player): timeline off -- asked for by " + CutWorldRoot.SplitTimelineOffArgument);
+            }
             int code = 1;
             if (refusal != null)
             {

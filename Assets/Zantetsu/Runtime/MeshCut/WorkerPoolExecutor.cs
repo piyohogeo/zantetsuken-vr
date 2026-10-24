@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -85,6 +88,16 @@ namespace Zantetsu.MeshCut
 
             /// <summary>How many works this worker has begun and finished, successfully or not.</summary>
             public int Executed => Volatile.Read(ref _executed);
+
+            /// <summary>
+            /// The seconds this worker spent inside works' Begin over its life (GRAPH-CONNECT-14 §2: the pool's occupancy; development
+            /// builds with <see cref="DispatchObservation.Enabled"/> on, else 0).
+            /// </summary>
+            public double BusySeconds => Volatile.Read(ref _busyTicks) / (double)Stopwatch.Frequency;
+
+            private long _busyTicks;
+
+            internal void NoteBusy(long ticks) => Interlocked.Add(ref _busyTicks, ticks);
 
             /// <summary>The last exception a work of this worker threw, if any. The work carries its own copy.</summary>
             public Exception LastWorkFailure => _lastWorkFailure;
@@ -421,6 +434,15 @@ namespace Zantetsu.MeshCut
                     return false;
                 }
 
+#if ZANTETSU_OBSERVE
+                if (DispatchObservation.Enabled && work is IDispatchObserved observed)
+                {
+                    // The acceptance stamp (GRAPH-CONNECT-14 §2, t1): told inside this lock and before the queue has the work, so no
+                    // worker can begin it earlier than the stamp. The implementer stores it and does nothing else (the contract of
+                    // IDispatchObserved): nothing here waits, allocates or re-enters.
+                    observed.NoteAccepted(Stopwatch.GetTimestamp());
+                }
+#endif
                 _queue.Enqueue(work);
                 _held++;
                 Monitor.Pulse(_queueGate);
@@ -610,6 +632,9 @@ namespace Zantetsu.MeshCut
                     WorkCompletion completion;
                     Exception failure = null;
                     Interlocked.Increment(ref _running);
+#if ZANTETSU_OBSERVE
+                    long busyFrom = DispatchObservation.Enabled ? Stopwatch.GetTimestamp() : 0;   // the worker's busy time (GRAPH-CONNECT-14)
+#endif
                     try
                     {
                         work.Begin();
@@ -624,6 +649,9 @@ namespace Zantetsu.MeshCut
                     finally
                     {
                         Interlocked.Decrement(ref _running);
+#if ZANTETSU_OBSERVE
+                        if (busyFrom != 0) observation.NoteBusy(Stopwatch.GetTimestamp() - busyFrom);
+#endif
                     }
 
                     observation.NoteExecuted(failure);

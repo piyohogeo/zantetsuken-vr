@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
@@ -177,6 +178,10 @@ namespace Zantetsu.PhysicsCut
         // the convexes the mesh-led plane crossed; the ids for the series (sessionId/world/rootFragment).
         internal bool bentRan, meshLedRan, bentSaved, bentEffective;
         internal bool graphFirstEffective;   // GRAPH-CONNECT-10: the graph-first order applied to this attempt
+        // GRAPH-CONNECT-14: what this line ran with (the options, or the pool replay's condition D / C), and the pool record (null on this thread)
+        internal bool graphOn;
+        internal string orderName = "current", bentName = "saved", condition = "";
+        internal SpatialSplitPoolRecord pool;
         internal double bentSeconds;
         internal int crossingConvexes, fragment, rootFragment;
         internal string kernelStatus;
@@ -244,7 +249,21 @@ namespace Zantetsu.PhysicsCut
         /// partition on an unfinished graph. Only with the graph on the span input, and not together with bentOff. Default false: the order as before.</summary>
         public bool graphFirst;
 
+        /// <summary>
+        /// GRAPH-CONNECT-14 §3-1: the pool replay -- every sample run in BOTH conditions, D (graph off, the saved bent setting, the order as
+        /// before) and C (graph on, graph-first), through the product's dispatcher and a real Background pool, the first condition
+        /// alternating by the sample's position (even: D first). Needs the span input; the graph, order and bent arguments are
+        /// refused with it (the conditions are the mode's own). The competitor level is L0, L1 or L2 (§3-1-1).
+        /// </summary>
+        public bool pool;
+        public int competitorLevel;
+        public long competitorWork = DefaultCompetitorWork;
+
+        /// <summary>The competitor's fixed amount of steps (about 2 ms on the development machine of 2026-10; the amount is what is fixed, not the time).</summary>
+        public const long DefaultCompetitorWork = 2000000;
+
         public static SpatialSplitReplayOptions Default => new SpatialSplitReplayOptions();
+        public string PoolName => pool ? "L" + competitorLevel.ToString(System.Globalization.CultureInfo.InvariantCulture) : "off";
 
         public string InputName => spanInput ? "span" : "compact";
         public string BentName => bentOff ? "off" : "saved";
@@ -263,7 +282,15 @@ namespace Zantetsu.PhysicsCut
             TryRead(arguments, inputArgument, graphArgument, listArgument, bentArgument, null, out options, out refusal);
 
         /// <summary>As above, with the order argument (current | graph-first): graph-first is refused without the graph on the span input, and together with bent off.</summary>
-        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument, out SpatialSplitReplayOptions options, out string refusal)
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument, out SpatialSplitReplayOptions options, out string refusal) =>
+            TryRead(arguments, inputArgument, graphArgument, listArgument, bentArgument, orderArgument, null, null, out options, out refusal);
+
+        /// <summary>
+        /// As above, with the pool replay's arguments (GRAPH-CONNECT-14): the pool argument takes L0, L1 or L2 and needs the span input,
+        /// and is refused together with the graph, order or bent arguments; the competitor work argument takes a positive count.
+        /// </summary>
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument,
+            string poolArgument, string competitorWorkArgument, out SpatialSplitReplayOptions options, out string refusal)
         {
             options = new SpatialSplitReplayOptions();
             refusal = null;
@@ -308,6 +335,26 @@ namespace Zantetsu.PhysicsCut
                 else if (!string.Equals(value, "current", StringComparison.OrdinalIgnoreCase)) { refusal = orderArgument + " takes current or graph-first, not '" + value + "'"; return false; }
                 if (options.graphFirst && !(options.graph && options.spanInput)) { refusal = orderArgument + " graph-first needs " + graphArgument + " and " + inputArgument + " span (the comparison's C condition)"; return false; }
                 if (options.graphFirst && options.bentOff) { refusal = orderArgument + " graph-first and " + bentArgument + " off are different conditions (C and B): not together"; return false; }
+            }
+            int poolAt = poolArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, poolArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (poolAt >= 0)
+            {
+                string value = ValueAt(poolAt);
+                if (value == null) { refusal = poolArgument + " has no value (L0, L1 or L2)"; return false; }
+                if (value.Length != 2 || (value[0] != 'L' && value[0] != 'l') || value[1] < '0' || value[1] > '2') { refusal = poolArgument + " takes L0, L1 or L2, not '" + value + "'"; return false; }
+                options.pool = true;
+                options.competitorLevel = value[1] - '0';
+                if (!options.spanInput) { refusal = poolArgument + " needs " + inputArgument + " span (the product's shape)"; return false; }
+                if (options.graph || orderAt >= 0 || bentAt >= 0) { refusal = poolArgument + " runs its own conditions D and C: not together with " + graphArgument + ", " + (orderArgument ?? "the order argument") + " or " + (bentArgument ?? "the bent argument"); return false; }
+            }
+            int workAt = competitorWorkArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, competitorWorkArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (workAt >= 0)
+            {
+                string value = ValueAt(workAt);
+                if (value == null) { refusal = competitorWorkArgument + " has no value"; return false; }
+                if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long steps) || steps <= 0) { refusal = competitorWorkArgument + " takes a positive count of steps, not '" + value + "'"; return false; }
+                if (!options.pool) { refusal = competitorWorkArgument + " needs " + poolArgument; return false; }
+                options.competitorWork = steps;
             }
 
             return true;
@@ -422,8 +469,29 @@ namespace Zantetsu.PhysicsCut
 
             // The graph stage's main-thread preparation (the product's contract), and a warm-up outside every timed sample.
             bool graphPrepared = false;
-            if (options.graph) graphPrepared = SpatialSplitGraph.IsPrepared || SpatialSplitGraph.Prepare();
-            if (options.spanInput && samples.Count > 0)
+            if (options.graph || options.pool) graphPrepared = SpatialSplitGraph.IsPrepared || SpatialSplitGraph.Prepare();
+            // GRAPH-CONNECT-14 §3-1: the pool replay's dispatcher and real Background pool, for the whole session (disposed at its end)
+            using (SpatialSplitReplayPool pool = options.pool ? new SpatialSplitReplayPool(options.competitorLevel, options.competitorWork, TestPoolAttemptTicks, TestPoolStopMilliseconds) : null)
+            {
+            if (pool != null) pool.TestBeginGate = TestPoolBeginGate;   // tests: a worker holds the attempt's input at the gate (TL P1)
+            if (pool != null)
+            {
+                // the warm-up: the first samples (up to 5) in both conditions, counted apart in the pool's record and written to no line
+                pool.Warmup = true;
+                for (int i = 0; i < Math.Min(5, samples.Count); i++)
+                {
+                    try
+                    {
+                        SpatialSplitSample warm = SpatialSplitSample.Read(Path.Combine(sessionDirectory, samples[i].file));
+                        Run(warm, options, pool, "D");
+                        Run(warm, options, pool, "C");
+                    }
+                    catch (SpatialSplitReplayPoolStopException) { throw; }   // a work that did not come back ends the session, warm-up or not (TL P1)
+                    catch (Exception) { /* the warm-up's failure is the sample's own, met again below */ }
+                }
+                pool.Warmup = false;
+            }
+            else if (options.spanInput && samples.Count > 0)
             {
                 try { Run(SpatialSplitSample.Read(Path.Combine(sessionDirectory, samples[0].file)), options); }
                 catch (Exception) { /* the warm-up's failure is the sample's own, met again below */ }
@@ -444,6 +512,7 @@ namespace Zantetsu.PhysicsCut
             var times = new List<double>();
             using (var replayLines = new StreamWriter(Path.Combine(outputDirectory, "replay.jsonl"), false, new UTF8Encoding(false)))
             {
+                int samplePosition = 0;   // GRAPH-CONNECT-14: the sample's position decides the first condition of the pool replay
                 foreach (SpatialSplitSampleLine entry in samples)
                 {
                     var line = new StringBuilder();
@@ -469,7 +538,14 @@ namespace Zantetsu.PhysicsCut
                         continue;
                     }
 
-                    SpatialSplitReplayResult replay = Run(sample, options);
+                    // GRAPH-CONNECT-14: the pool replay runs the sample in both conditions, D first on even positions, C first on odd; one line each
+                    string prefix = line.ToString();
+                    int position = samplePosition++;
+                    string[] conditions = pool == null ? new string[] { null } : (position % 2 == 0 ? new[] { "D", "C" } : new[] { "C", "D" });
+                    foreach (string condition in conditions)
+                    {
+                    line = new StringBuilder(prefix);
+                    SpatialSplitReplayResult replay = Run(sample, options, pool, condition);
                     replayed++;
                     // the bent stage's counts on every replayed line (not only where the graph stage was entered)
                     if (replay.bentEffective) bentEffectiveCount++;
@@ -600,12 +676,12 @@ namespace Zantetsu.PhysicsCut
                         .Append(",\"convexMostAcross\":").Append(SpatialSplitCaptureSink.Json(replay.convexMostAcross.ToString("R", inv)))
                         .Append(",\"supportEpsilon\":").Append(SpatialSplitCaptureSink.Json(sample.supportEpsilon.ToString("R", inv)))
                         .Append(",\"checkNote\":").Append(SpatialSplitCaptureSink.Json(replay.checkNote ?? ""))
-                        .Append(",\"inputMode\":").Append(SpatialSplitCaptureSink.Json(options.InputName)).Append(",\"graphOn\":").Append(options.graph ? "true" : "false")
+                        .Append(",\"inputMode\":").Append(SpatialSplitCaptureSink.Json(options.InputName)).Append(",\"graphOn\":").Append(replay.graphOn ? "true" : "false")
                         .Append(",\"sessionId\":").Append(SpatialSplitCaptureSink.Json(sample.sessionId ?? "")).Append(",\"sha256\":").Append(SpatialSplitCaptureSink.Json(sample.sha256 ?? ""))
                         .Append(",\"fragment\":").Append(replay.fragment).Append(",\"rootFragment\":").Append(replay.rootFragment)
-                        .Append(",\"bentRequested\":").Append(SpatialSplitCaptureSink.Json(options.BentName)).Append(",\"bentSaved\":").Append(replay.bentSaved ? "true" : "false")
+                        .Append(",\"bentRequested\":").Append(SpatialSplitCaptureSink.Json(replay.bentName)).Append(",\"bentSaved\":").Append(replay.bentSaved ? "true" : "false")
                         .Append(",\"bentEffective\":").Append(replay.bentEffective ? "true" : "false")
-                        .Append(",\"orderRequested\":").Append(SpatialSplitCaptureSink.Json(options.OrderName)).Append(",\"graphFirstEffective\":").Append(replay.graphFirstEffective ? "true" : "false")
+                        .Append(",\"orderRequested\":").Append(SpatialSplitCaptureSink.Json(replay.orderName)).Append(",\"graphFirstEffective\":").Append(replay.graphFirstEffective ? "true" : "false")
                         .Append(",\"anchorCount\":").Append(sample.anchors != null ? sample.anchors.Length : 0).Append(",\"convexCount\":").Append(sample.convexes != null ? sample.convexes.Length : 0)
                         .Append(",\"graphStages\":{\"entered\":").Append(replay.graphEntered ? "true" : "false").Append(",\"led\":").Append(replay.graphLed ? "true" : "false")
                         .Append(",\"distributed\":").Append(replay.graphLed && replay.distributed ? "true" : "false").Append(",\"anchorsDistributed\":").Append(replay.graphLed && replay.anchorsDistributed ? "true" : "false")
@@ -618,6 +694,12 @@ namespace Zantetsu.PhysicsCut
                         .Append(",\"graphConvexWrongSide\":").Append(replay.graphConvexWrongSide).Append(",\"graphConvexNotSided\":").Append(replay.graphConvexNotSided)
                         .Append(",\"object\":").Append(SpatialSplitCaptureSink.Json(sample.objectName))
                         .Append(",\"code\":").Append(SpatialSplitCaptureSink.Json(sample.codeVersion));
+                    if (pool != null)
+                    {
+                        // GRAPH-CONNECT-14: the condition and the pool record (the stamps as ms from the run's origin; null where absent)
+                        line.Append(",\"condition\":").Append(SpatialSplitCaptureSink.Json(replay.condition))
+                            .Append(",\"pool\":").Append(replay.pool != null ? replay.pool.Json(pool.Origin, inv) : "null");
+                    }
                     if (replay.error == null)
                     {
                         // What the replay adopted, as the live result line has its own: two answers that differ, told apart;
@@ -629,9 +711,15 @@ namespace Zantetsu.PhysicsCut
 
                     line.Append('}');
                     replayLines.WriteLine(line.ToString());
+                    }   // the conditions
                 }
             }
 
+            if (pool != null)
+            {
+                // GRAPH-CONNECT-14 (TL P2-4): one line a competitor, with its condition, sample, warm-up flag and stamps
+                File.WriteAllLines(Path.Combine(outputDirectory, "competitors.jsonl"), pool.CompetitorLines(), new UTF8Encoding(false));
+            }
             times.Sort();
             var summary = new StringBuilder();
             CultureInfo c = CultureInfo.InvariantCulture;
@@ -656,7 +744,7 @@ namespace Zantetsu.PhysicsCut
                 .AppendLine("replay outcomes: " + Join(outcomes))
                 .AppendLine("options: inputMode " + options.InputName + ", graph " + (options.graph ? "on (prepared " + (graphPrepared ? "yes" : "NO") + "; limits: triangles " + options.graphLimits.maxTriangles + ", convexes " + options.graphLimits.maxConvexes
                         + ", span " + options.graphLimits.maxVertexSpan + ", nodes " + options.graphLimits.maxNodes + ", candidates " + options.graphLimits.maxCandidates + ", bytes " + options.graphLimits.maxGraphBytes + ", work " + options.graphLimits.workBudget + ")" : "off")
-                    + ", bent " + options.BentName + ", order " + options.OrderName + ", list " + (options.listPath ?? "none"))
+                    + ", bent " + options.BentName + ", order " + options.OrderName + ", list " + (options.listPath ?? "none") + ", pool " + options.PoolName)
                 .AppendLine(options.listPath == null ? "tuning list: none (every sample of the folder)"
                     : "tuning list for session " + sessionId + ": entries " + listEntries + ", replayed " + listed + ", missing " + listMissing + ", duplicate " + listDuplicates + ", hash differs from the list " + listHashDiffers
                         + ", files left out (not listed) " + listLeftOut + "; list check " + (listOk ? "passed" : "FAILED"))
@@ -669,14 +757,16 @@ namespace Zantetsu.PhysicsCut
                 .AppendLine(!options.graphFirst ? "order: current (the bent partition before the graph stage)"
                     : "order: graph-first applied to " + graphFirstCount + " samples; bent fallback after an unfinished graph: ran " + fallbackRan + ", found " + fallbackFound)
                 .AppendLine(times.Count == 0 ? "replay search time: none"
-                    : "replay search time (this machine, not the live one's): median " + (times[times.Count / 2] * 1000.0).ToString("F3", c) + " ms, p95 "
+                    : "replay search time (this machine, not the live one's" + (pool != null ? "; the worker's run" : "") + "): median " + (times[times.Count / 2] * 1000.0).ToString("F3", c) + " ms, p95 "
                         + (times[Math.Min(times.Count - 1, (int)(times.Count * 0.95))] * 1000.0).ToString("F3", c) + " ms, max " + (times[times.Count - 1] * 1000.0).ToString("F3", c) + " ms");
+            summary.AppendLine(pool != null ? pool.Describe() + "; timeline " + (CutSpatialSplit.TimelineObserve ? "on" : "off (the new stamps are not taken: t0, t1, t4 and the waits are null; t2, t3 and X are the existing clock's)")
+                : "pool replay: off (every attempt ran on this thread)");
             // The same as it ran: every sample there is was read, replayed, compared with its live result and found the
             // same, and passed the checks -- one that replayed without a live result to compare is not "the same".
             // A session of no sample at all (nothing captured, an empty or wrong folder) is no evidence: never "the same".
             bool none = samples.Count == 0;
             noSample = none;
-            if (!options.graph)
+            if (!options.graph && !options.pool)
             {
                 allSame = !none && same >= 1 && unreadable == 0 && hashDiffers == 0 && errors == 0 && differ == 0 && checkFailures == 0 && inputDiffers == 0
                     && notRecorded == 0 && same == samples.Count && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk;
@@ -687,14 +777,18 @@ namespace Zantetsu.PhysicsCut
             {
                 // With the graph stage on, the live result is not what the replay must equal (the live search had no graph stage): the
                 // outcome is what the list, the replay and the graph's own checks say; the comparison with other replays is offline.
-                allSame = !none && replayed == samples.Count && unreadable == 0 && hashDiffers == 0 && errors == 0 && inputDiffers == 0 && graphCheckFailures == 0 && graphIncomplete == 0
+                // GRAPH-CONNECT-14: the pool replay writes two lines a sample (the conditions D and C): every sample must have replayed twice
+                int expectedReplays = samples.Count * (options.pool ? 2 : 1);
+                allSame = !none && replayed == expectedReplays && unreadable == 0 && hashDiffers == 0 && errors == 0 && inputDiffers == 0 && graphCheckFailures == 0 && graphIncomplete == 0
                     && checkFailures == 0 && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk && graphPrepared
                     && (!options.bentOff || (bentEffectiveCount == 0 && bentRanCount == 0));   // B: the bent partition neither effective nor entered anywhere
                 if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
-                summary.AppendLine("graph on: every listed sample replayed without error, the list check passed, every Separable complete (shared out, anchors, classified, kernel Ok, checked), every graph and existing sharing check passed (the live comparison is not the criterion here): " + (allSame ? "yes" : "NO"));
+                summary.AppendLine((options.pool ? "pool on: every listed sample replayed in both conditions (D and C) without error" : "graph on: every listed sample replayed without error")
+                    + ", the list check passed, every Separable complete (shared out, anchors, classified, kernel Ok, checked), every graph and existing sharing check passed (the live comparison is not the criterion here): " + (allSame ? "yes" : "NO"));
             }
             File.WriteAllText(Path.Combine(outputDirectory, "summary.txt"), summary.ToString(), new UTF8Encoding(false));
             return summary.ToString();
+            }   // the pool
         }
 
         private static string ReadSessionId(string sessionDirectory)
@@ -805,11 +899,33 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Replays one sample (Main thread: the shape's mesh is made here), the compact input and no graph stage.</summary>
         internal static SpatialSplitReplayResult Run(SpatialSplitSample sample) => Run(sample, SpatialSplitReplayOptions.Default);
 
+        private static int s_resourcesHeld;
+
+        /// <summary>Tests (TL P1): the pool replay's gate before every attempt's Begin, and its timeouts; null and the defaults in a run.</summary>
+        internal static System.Threading.ManualResetEventSlim TestPoolBeginGate;
+        internal static int TestPoolAttemptTicks = SpatialSplitReplayPool.DefaultAttemptTicks;
+        internal static int TestPoolStopMilliseconds = SpatialSplitReplayPool.DefaultStopMilliseconds;
+
+        /// <summary>How many samples' inputs are held unfreed because their work did not come back from the pool (GRAPH-CONNECT-14, TL P1).</summary>
+        internal static int ResourcesHeld => Volatile.Read(ref s_resourcesHeld);
+
         /// <summary>Replays one sample with the options (Main thread: the shape's mesh is made here).</summary>
-        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample, SpatialSplitReplayOptions options)
+        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample, SpatialSplitReplayOptions options) => Run(sample, options, null, null);
+
+        /// <summary>
+        /// As above; with a pool (GRAPH-CONNECT-14 §3-1) the attempt's numbers run on the pool's worker under the condition -- "D" (graph off,
+        /// the saved bent setting, the order as before) or "C" (graph on, graph-first) -- instead of the options' settings on this thread.
+        /// </summary>
+        internal static SpatialSplitReplayResult Run(SpatialSplitSample sample, SpatialSplitReplayOptions options, SpatialSplitReplayPool pool, string condition)
         {
             options = options ?? SpatialSplitReplayOptions.Default;
-            var result = new SpatialSplitReplayResult { world = sample.world, attempt = sample.attempt };
+            bool graphOn = condition != null ? condition == "C" : options.graph;
+            bool graphFirst = condition != null ? condition == "C" : options.graphFirst;
+            bool bentOff = condition == null && options.bentOff;
+            var result = new SpatialSplitReplayResult
+            {
+                world = sample.world, attempt = sample.attempt, graphOn = graphOn, orderName = graphFirst ? "graph-first" : "current", bentName = bentOff ? "off" : "saved", condition = condition ?? "",
+            };
             int vertexBytes = UnsafeUtility.SizeOf<VpRenderVertex>();
             if (sample.vertexStructBytes != vertexBytes)
             {
@@ -840,6 +956,9 @@ namespace Zantetsu.PhysicsCut
             Mesh mesh = null;
             CutSpatialSplit.Attempt attempt = null;
             byte* canonical = null;
+            // GRAPH-CONNECT-14 (TL P1): a work out on a pool that did not come back keeps everything it may still read -- the attempt, the
+            // shape, the vertices and the indices are freed below only when nothing is out, or when the stop says the work was collected
+            bool holdResources = false;
             try
             {
                 if (options.spanInput)
@@ -902,8 +1021,8 @@ namespace Zantetsu.PhysicsCut
                     limits = sample.limits,
                     cutConvexes = sample.cutConvexes,
                     minCutSideTriangles = sample.minCutSideTriangles,
-                    bentSearch = options.bentOff ? false : sample.bentSearch,   // GRAPH-CONNECT-8: the B condition leaves the bent partition out
-                    graphFirst = options.graphFirst,                            // GRAPH-CONNECT-10: the C condition's order
+                    bentSearch = bentOff ? false : sample.bentSearch,   // GRAPH-CONNECT-8: the B condition leaves the bent partition out
+                    graphFirst = graphFirst,                            // GRAPH-CONNECT-10: the C condition's order
                     bentLimits = sample.bentLimits,
                     maxConvexVertices = CutSpatialSplit.Attempt.MaxConvexVertices(shape),
                     geometryToOwner = sample.geometryToOwner,
@@ -938,7 +1057,7 @@ namespace Zantetsu.PhysicsCut
 
                 attempt.classificationBlock = PhysicsCutBlocks.Take<byte>(PhysicsCutClassification.RequiredBlockBytes(shape));
                 attempt.arena = new PhysicsCutArena(default, c);
-                if (options.graph && (sample.anchors == null || sample.anchors.Length == 0) && c >= 2)
+                if (graphOn && (sample.anchors == null || sample.anchors.Length == 0) && c >= 2)
                 {
                     // The graph stage as the product issues it (GRAPH-CONNECT-4 §3-2, §3-4): an owner without anchors and with two convexes
                     // or more; the sides' bytes allocated here as the main thread does.
@@ -959,9 +1078,28 @@ namespace Zantetsu.PhysicsCut
                     }
                 }
 
-                long begin = Stopwatch.GetTimestamp();
-                attempt.Begin();
-                result.seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+                if (pool != null)
+                {
+                    // GRAPH-CONNECT-14 §3-1: through the dispatcher and the real Background pool; the time is the worker's run (the existing clock)
+                    holdResources = true;   // out on the pool from here
+                    try
+                    {
+                        pool.RunAttempt(attempt, result, condition);
+                        holdResources = false;   // collected: the input is this thread's again
+                    }
+                    catch (SpatialSplitReplayPoolStopException stop)
+                    {
+                        holdResources = !stop.WorkCollected;
+                        throw;   // never an error line: the session ends (RunSession lets it through)
+                    }
+                    result.seconds = attempt.workerSeconds;
+                }
+                else
+                {
+                    long begin = Stopwatch.GetTimestamp();
+                    attempt.Begin();
+                    result.seconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+                }
                 result.graphEntered = attempt.graph.Entered;
                 result.graphLed = attempt.graphLed;
                 result.graph = attempt.graph;
@@ -1024,6 +1162,10 @@ namespace Zantetsu.PhysicsCut
                 result.negativeTriangles = attempt.graphLed ? attempt.graph.negativeTriangles : search.negativeTriangles;
                 if (attempt.graphLed) CheckGraph(attempt, result); else Check(attempt, result);
             }
+            catch (SpatialSplitReplayPoolStopException)
+            {
+                throw;   // the pool replay's stop: not a sample's error
+            }
             catch (Exception e)
             {
                 result.error = e.GetType().Name + ": " + e.Message;
@@ -1031,16 +1173,25 @@ namespace Zantetsu.PhysicsCut
             finally
             {
                 if (canonical != null) UnsafeUtility.Free(canonical, Allocator.Persistent);
-                attempt?.Free(null);
-                shape?.Dispose();
-                if (mesh != null)
+                if (holdResources)
                 {
-                    if (Application.isPlaying) UnityEngine.Object.Destroy(mesh);
-                    else UnityEngine.Object.DestroyImmediate(mesh);
+                    // The work may still be on a worker: nothing it can read is freed (the attempt, the shape, the vertices, the indices
+                    // stay allocated for the process's life; the session ends with the exception). Counted for the record.
+                    Interlocked.Increment(ref s_resourcesHeld);
                 }
+                else
+                {
+                    attempt?.Free(null);
+                    shape?.Dispose();
+                    if (mesh != null)
+                    {
+                        if (Application.isPlaying) UnityEngine.Object.Destroy(mesh);
+                        else UnityEngine.Object.DestroyImmediate(mesh);
+                    }
 
-                vertices.Dispose();
-                indices.Dispose();
+                    vertices.Dispose();
+                    indices.Dispose();
+                }
             }
 
             return result;

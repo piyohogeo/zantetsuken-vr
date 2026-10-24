@@ -266,6 +266,12 @@ namespace Zantetsu.PhysicsCut
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeBent(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeConvexCut(), this);
                 UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeGraph(), this);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // The timeline (GRAPH-CONNECT-14): a 5th line in development builds, and the attempts' rows where a file was named.
+                UnityEngine.Debug.Log("CUT WORLD " + name + " at its end: " + SpatialSplit.DescribeTimeline(), this);
+                try { SpatialSplit.WriteTimelineCsv(); }
+                catch (Exception e) { UnityEngine.Debug.LogError("CUT WORLD " + name + ": the timeline's rows could not be written: " + e.GetType().Name + ": " + e.Message, this); }
+#endif
             }
         }
 

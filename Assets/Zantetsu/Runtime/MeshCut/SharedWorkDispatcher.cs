@@ -1,3 +1,6 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define ZANTETSU_OBSERVE
+#endif
 using System;
 using System.Collections.Generic;
 
@@ -442,6 +445,14 @@ namespace Zantetsu.MeshCut
         private readonly List<Entry> _waiting = new List<Entry>();
         private readonly List<Entry> _submitted = new List<Entry>();
         private readonly IWorkExecutor[] _executors = new IWorkExecutor[4];
+#if ZANTETSU_OBSERVE
+        // Counts for the observation (GRAPH-CONNECT-14 §2; development builds, and only while DispatchObservation.Enabled): submissions
+        // and collections by purpose, and the dispatch opportunities at which waiting work for a destination could not be submitted for
+        // want of its room. Nothing of them in a Release Player; off, nothing is counted or scanned for them.
+        private readonly int[] _submittedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
+        private readonly int[] _collectedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
+        private readonly int[] _capacityBlocked = new int[4];
+#endif
 
         private int _lastTicket;
         private int _lastSequence;
@@ -545,6 +556,43 @@ namespace Zantetsu.MeshCut
         /// <summary>How many works have been submitted, and collected, over the dispatcher's life.</summary>
         public int TotalSubmitted { get; private set; }
         public int TotalCollected { get; private set; }
+
+        /// <summary>
+        /// How many works of this purpose have been submitted, and collected, over the dispatcher's life while the observation was on
+        /// (GRAPH-CONNECT-14; development builds). 0 in a Release Player, and nothing is counted while <see cref="DispatchObservation.Enabled"/> is off.
+        /// </summary>
+        public int SubmittedByPurpose(WorkPurpose purpose)
+        {
+#if ZANTETSU_OBSERVE
+            return WorkPurposes.IsDefined(purpose) ? _submittedByPurpose[(int)purpose] : 0;
+#else
+            return 0;
+#endif
+        }
+
+        public int CollectedByPurpose(WorkPurpose purpose)
+        {
+#if ZANTETSU_OBSERVE
+            return WorkPurposes.IsDefined(purpose) ? _collectedByPurpose[(int)purpose] : 0;
+#else
+            return 0;
+#endif
+        }
+
+        /// <summary>
+        /// How many dispatch opportunities found waiting work for this destination and could not submit it because the destination had
+        /// no room (it would not accept, or refused one): the capacity's wait, as it was met (GRAPH-CONNECT-14 §3-1-1). A count of
+        /// occasions, not of works; development builds, while the observation is on (the question costs a scan of the waiting queue).
+        /// </summary>
+        public int CapacityBlockedOpportunities(WorkDestination destination)
+        {
+#if ZANTETSU_OBSERVE
+            int index = (int)destination;
+            return index >= 0 && index < _capacityBlocked.Length ? _capacityBlocked[index] : 0;
+#else
+            return 0;
+#endif
+        }
 
         /// <summary>The destination, as the dispatcher holds it. For reading its capacity and load.</summary>
         public IWorkExecutor Executor(WorkDestination destination)
@@ -789,7 +837,10 @@ namespace Zantetsu.MeshCut
                     {
                         // Taken out and paid for before the callback runs: a Collect that throws is not collected
                         // again and not re-run, and the work is the caller's from that moment.
-                        Forget(work);
+                        WorkPurpose collectedPurpose = Forget(work);
+#if ZANTETSU_OBSERVE
+                        if (DispatchObservation.Enabled && WorkPurposes.IsDefined(collectedPurpose)) _collectedByPurpose[(int)collectedPurpose]++;
+#endif
                         RemainingBudget--;
                         collected++;
                         TotalCollected++;
@@ -808,6 +859,14 @@ namespace Zantetsu.MeshCut
                     WorkDestination destination = Order[d];
                     IWorkExecutor executor = _executors[(int)destination];
                     if (executor == null) continue;
+#if ZANTETSU_OBSERVE
+                    if (DispatchObservation.Enabled && RemainingBudget > 0 && !executor.CanAccept && WaitingCountFor(destination) > 0)
+                    {
+                        // GRAPH-CONNECT-14 §3-1-1: waiting work for this destination that this opportunity cannot submit for want of room.
+                        // Counted (the scan of the queue is the observation's own cost); nothing else changes (the work waits as it always did).
+                        _capacityBlocked[(int)destination]++;
+                    }
+#endif
                     while (RemainingBudget > 0 && executor.CanAccept && TryTakeNextWaiting(destination, out Entry next))
                     {
                         // Acceptance first, and nothing is charged or moved until it is decided. A destination that
@@ -817,6 +876,9 @@ namespace Zantetsu.MeshCut
                         if (!executor.TryAccept(next.work))
                         {
                             _waiting.Add(next);
+#if ZANTETSU_OBSERVE
+                            if (DispatchObservation.Enabled) _capacityBlocked[(int)destination]++;   // refused between the question and the answer: the same want of room
+#endif
                             break;
                         }
 
@@ -829,6 +891,9 @@ namespace Zantetsu.MeshCut
                         RemainingBudget--;
                         submitted++;
                         TotalSubmitted++;
+#if ZANTETSU_OBSERVE
+                        if (DispatchObservation.Enabled) _submittedByPurpose[(int)next.purpose]++;
+#endif
                         _submitted.Add(next);
                         executor.BeginAccepted(next.work);
                     }
@@ -906,7 +971,12 @@ namespace Zantetsu.MeshCut
                     if (executor == null) continue;
                     while (executor.TryTakeFinished(out IDispatchWork work, out WorkCompletion completion))
                     {
-                        Forget(work);
+                        // GRAPH-CONNECT-14: the stop's collection counts by purpose as the frame's does (a work that ended during the
+                        // stop is collected here and nowhere else); the cancelled were never submitted and are not collections
+                        WorkPurpose collectedPurpose = Forget(work);
+#if ZANTETSU_OBSERVE
+                        if (DispatchObservation.Enabled && WorkPurposes.IsDefined(collectedPurpose)) _collectedByPurpose[(int)collectedPurpose]++;
+#endif
                         collected++;
                         TotalCollected++;
                         work.Collect(completion);
@@ -934,16 +1004,19 @@ namespace Zantetsu.MeshCut
             return -1;
         }
 
-        private void Forget(IDispatchWork work)
+        // Takes the work's entry out of the submitted record and returns its purpose ((WorkPurpose)(-1) when it was not there).
+        private WorkPurpose Forget(IDispatchWork work)
         {
             for (int i = 0; i < _submitted.Count; i++)
             {
                 if (ReferenceEquals(_submitted[i].work, work))
                 {
+                    WorkPurpose purpose = _submitted[i].purpose;
                     _submitted.RemoveAt(i);
-                    return;
+                    return purpose;
                 }
             }
+            return (WorkPurpose)(-1);
         }
 
         // The next waiting work for one destination. Which one that is within a destination is this queue's own

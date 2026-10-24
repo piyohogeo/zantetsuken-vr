@@ -242,5 +242,61 @@ namespace Zantetsu.Core.Tests
             StringAssert.Contains("absolute", refusal);
             Assert.That(Read(new[] { "-zantetsuSplitReplayList", "-zantetsuSplitReplayGraph" }, out _, out refusal), Is.False, "another switch in the value's place");
         }
+
+        private static string Field(string line, string name)
+        {
+            // the JSON field's raw text (a number, null, true/false or a quoted string) by its name, or null when absent
+            var m = System.Text.RegularExpressions.Regex.Match(line, "\"" + System.Text.RegularExpressions.Regex.Escape(name) + "\":(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\]]+)");
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        /// <summary>
+        /// **The pool option is read with its refusals, and the pool replay writes a line a condition** (GRAPH-CONNECT-14 §3-1): L0..L2
+        /// with the span input only, never with the graph, order or bent arguments; the competitor's work a positive count. On the
+        /// synthetic session (its samples have no convex and do not replay: an error before any attempt runs) every sample still gives a
+        /// D line and a C line, the first condition alternating by position, each saying its own graph and order, the pool record null
+        /// (nothing ran on the pool: never a 0). The pool replay on real bodies is the PlayMode case's (SplitTimeline).
+        /// </summary>
+        [Test]
+        public void ThePoolOption_IsReadWithItsRefusals_AndThePoolReplay_WritesALineAConditionWithTheRecordNullWhereNothingRan()
+        {
+            string[] names = { "-i", "-g", "-l", "-b", "-o", "-p", "-w" };
+            bool Read(string[] args, out SpatialSplitReplayOptions o, out string r) => SpatialSplitReplayOptions.TryRead(args, names[0], names[1], names[2], names[3], names[4], names[5], names[6], out o, out r);
+            Assert.That(Read(new[] { "-i", "span", "-p", "L1" }, out SpatialSplitReplayOptions o1, out string r1), Is.True, r1);
+            Assert.That(o1.pool, Is.True); Assert.That(o1.competitorLevel, Is.EqualTo(1)); Assert.That(o1.competitorWork, Is.EqualTo(SpatialSplitReplayOptions.DefaultCompetitorWork)); Assert.That(o1.PoolName, Is.EqualTo("L1"));
+            Assert.That(Read(new[] { "-i", "span", "-p" }, out _, out string r2), Is.False); StringAssert.Contains("L0, L1 or L2", r2);
+            Assert.That(Read(new[] { "-i", "span", "-p", "L3" }, out _, out string r3), Is.False); StringAssert.Contains("takes L0, L1 or L2", r3);
+            Assert.That(Read(new[] { "-p", "L0" }, out _, out string r4), Is.False); StringAssert.Contains("needs -i span", r4);
+            Assert.That(Read(new[] { "-i", "span", "-g", "-p", "L0" }, out _, out string r5), Is.False); StringAssert.Contains("runs its own conditions D and C", r5);
+            Assert.That(Read(new[] { "-i", "span", "-o", "current", "-p", "L0" }, out _, out string r6), Is.False); StringAssert.Contains("runs its own conditions", r6);
+            Assert.That(Read(new[] { "-i", "span", "-w", "5" }, out _, out string r7), Is.False); StringAssert.Contains("needs -p", r7);
+            Assert.That(Read(new[] { "-i", "span", "-p", "L0", "-w", "0" }, out _, out string r8), Is.False); StringAssert.Contains("positive count", r8);
+            Assert.That(Read(new[] { "-i", "span", "-p", "l2", "-w", "1000" }, out SpatialSplitReplayOptions o9, out string r9), Is.True, r9);
+            Assert.That(o9.competitorLevel, Is.EqualTo(2)); Assert.That(o9.competitorWork, Is.EqualTo(1000));
+            Assert.That(Read(new[] { "-i", "span" }, out SpatialSplitReplayOptions o10, out _), Is.True); Assert.That(o10.pool, Is.False); Assert.That(o10.PoolName, Is.EqualTo("off"));
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span" }, out SpatialSplitReplayOptions o11, out _), Is.True, "the six-name reader leaves the pool off"); Assert.That(o11.pool, Is.False);
+
+            // the plumbing on the synthetic session: a line a condition, the first alternating, the record null where nothing ran
+            string session = ThreeSamples(out _, out _);
+            var pool = new SpatialSplitReplayOptions { spanInput = true, pool = true, competitorLevel = 0, competitorWork = 1000 };
+            string summary = SpatialSplitReplay.RunSession(session, NewDirectory("pool"), pool, out bool allSame, out bool noSample);
+            TestContext.Out.WriteLine(summary);
+            Assert.That(noSample, Is.False);
+            Assert.That(allSame, Is.False, "errors are never 'the same'");
+            StringAssert.Contains("pool replay: level L0 (competitor work 1000 steps", summary);
+            StringAssert.Contains("options: inputMode span, graph off, bent saved, order current, list none, pool L0", summary);
+            string[] lines = File.ReadAllLines(Path.Combine(NewDirectory("pool"), "replay.jsonl"));
+            Assert.That(lines.Length, Is.EqualTo(6), "one line a sample a condition");
+            string[] expected = { "D", "C", "C", "D", "D", "C" };
+            for (int i = 0; i < 6; i++)
+            {
+                Assert.That(Field(lines[i], "condition"), Is.EqualTo("\"" + expected[i] + "\""), "line " + i + ": the first condition alternates by the sample's position");
+                bool c = expected[i] == "C";
+                Assert.That(Field(lines[i], "graphOn"), Is.EqualTo(c ? "true" : "false"), "the line says the condition's graph");
+                Assert.That(Field(lines[i], "orderRequested"), Is.EqualTo(c ? "\"graph-first\"" : "\"current\""), "and the condition's order");
+                Assert.That(Field(lines[i], "error"), Is.Not.EqualTo("\"\""), "the synthetic sample does not replay (no convex)");
+                Assert.That(Field(lines[i], "pool"), Is.EqualTo("null"), "nothing ran on the pool: the record is null, not 0");
+            }
+        }
     }
 }

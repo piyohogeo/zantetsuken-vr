@@ -931,6 +931,9 @@ namespace Zantetsu.PhysicsCut
 
             CutSpatialSplitSettings settings = Settings;
             bool on = settings.enabled && settings.IsValid && _world.IsReady && !_world.IsEnding && !_world.TerminationRequested;
+#if ZANTETSU_OBSERVE
+            if (on) SampleQueue();   // the queue's dwell as this turn sees it (GRAPH-CONNECT-14)
+#endif
             if (_attempt != null && _attempt.collected && !on)
             {
                 // Switched off, or the world is ending: what arrived is given back unused. Not held, and nothing marked.
@@ -1518,6 +1521,7 @@ namespace Zantetsu.PhysicsCut
                     return Since(begin);
                 }
 
+                long enqueuedAt = 0;   // t0 of the timeline (GRAPH-CONNECT-14), taken right before the enqueue
                 var attempt = new Attempt
                 {
                     serial = ++_attemptSerial,
@@ -1611,6 +1615,7 @@ namespace Zantetsu.PhysicsCut
                     copySeconds = attempt.captureCopySeconds;
 #endif
 
+                    enqueuedAt = TimelineClock();   // t0 (GRAPH-CONNECT-14)
                     if (TestRefuseIssue || !_world.Dispatcher.TryEnqueue(WorkPurpose.Maintenance, attempt, out attempt.ticket))
                     {
                         // No place now: nothing was started. The fragment is looked at again in a later round.
@@ -1632,6 +1637,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 attempt.offered = true;
+                attempt.enqueuedAt = enqueuedAt;
                 _attempt = attempt;
                 Issued++;
                 if (_deferred.Count != 0) TakeDeferral(fragment, attempt);   // the wait ends with the issue; its count goes on with the attempt
@@ -1665,6 +1671,7 @@ namespace Zantetsu.PhysicsCut
             {
                 // Once an attempt: this is asked again on every frame the publication is held.
                 attempt.counted = true;
+                attempt.handledAt = TimelineClock();   // t5: the result first read on Main
 #if ZANTETSU_OBSERVE
                 TakeCaptureResult(attempt);
                 WorkerSeconds += attempt.workerSeconds;
@@ -2184,6 +2191,8 @@ namespace Zantetsu.PhysicsCut
             _attempt = null;
 #if ZANTETSU_OBSERVE
             EndCapture(attempt, end.ToString(), why);
+            attempt.handledEndAt = TimelineClock();   // t6
+            NoteTimeline(attempt, end);
 #endif
             _ends[(int)end]++;
             LastEnd = end;
@@ -2713,7 +2722,10 @@ namespace Zantetsu.PhysicsCut
         /// before the work that uses it was collected. (Internal for the capture's offline replay, which runs
         /// <see cref="Begin"/> on a saved input: SpatialSplitReplay.)
         /// </summary>
-        internal sealed unsafe class Attempt : IDispatchWork
+        internal sealed unsafe class Attempt : IDispatchWork, IDispatchObserved
+#if ZANTETSU_OBSERVE
+            , SpatialSplitReplayPool.IRunStamped   // the run stamps for the pool replay (development builds only)
+#endif
         {
             internal long serial;   // the attempt's number in this world, from 1 (diagnosis: the hold streak's key)
 
@@ -2875,6 +2887,22 @@ namespace Zantetsu.PhysicsCut
             internal AnchorDistributionResult anchorResult;
             internal List<float3> positiveAnchors, negativeAnchors;
             internal double workerSeconds;
+            // The timeline (GRAPH-CONNECT-14 §2): the clock at the issue's enqueue (t0), the pool's acceptance (t1, told by the pool
+            // inside its accept lock), the worker's Begin (t2) and end (t3), the Main collection (t4), the first Main handling (t5)
+            // and the end on Main (t6). Stopwatch ticks; 0 where not taken (the timeline off, or the attempt not there yet). The
+            // bake pass (a second acceptance, a second Begin) leaves the search pass's stamps.
+            internal long enqueuedAt, acceptedAt, beganAt, endedAt, collectedAt, handledAt, handledEndAt;
+
+            /// <summary>The pool's acceptance stamp (<see cref="IDispatchObserved"/>): a store, nothing else.</summary>
+            public void NoteAccepted(long timestamp)
+            {
+                if (stage == AttemptStage.Numbers && acceptedAt == 0) acceptedAt = timestamp;
+            }
+
+#if ZANTETSU_OBSERVE
+            long SpatialSplitReplayPool.IRunStamped.BeganAt => beganAt;
+            long SpatialSplitReplayPool.IRunStamped.EndedAt => endedAt;
+#endif
             private int _done;
 
             public bool IsComplete => Volatile.Read(ref _done) == 1;
@@ -2888,6 +2916,7 @@ namespace Zantetsu.PhysicsCut
                 }
 
                 long begin = Began();
+                if (beganAt == 0) beganAt = begin;   // t2 (the existing clock reading: not a new one)
                 try
                 {
                     CutSpatialSplitSearch.FindPlane(
@@ -3036,7 +3065,9 @@ namespace Zantetsu.PhysicsCut
                 finally
                 {
 #if ZANTETSU_OBSERVE
-                    workerSeconds = (Stopwatch.GetTimestamp() - begin) / (double)Stopwatch.Frequency;
+                    long ended = Stopwatch.GetTimestamp();
+                    workerSeconds = (ended - begin) / (double)Stopwatch.Frequency;
+                    endedAt = ended;   // t3 (the same reading as the worker's run)
 #endif
                     Volatile.Write(ref _done, 1);
                 }
@@ -3348,6 +3379,7 @@ namespace Zantetsu.PhysicsCut
             public void Collect(WorkCompletion completion)
             {
                 collected = true;
+                if (stage == AttemptStage.Numbers && collectedAt == 0) collectedAt = TimelineClock();   // t4
                 cancelled = completion.outcome == WorkOutcome.Cancelled;
                 if (completion.outcome == WorkOutcome.Failed && failure == null)
                 {

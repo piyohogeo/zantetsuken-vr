@@ -1,5 +1,6 @@
 using System;
 using Unity.Profiling;
+using Zantetsu.MeshCut;
 
 namespace Zantetsu.PhysicsCut
 {
@@ -56,6 +57,14 @@ namespace Zantetsu.PhysicsCut
 
         /// <summary>The Player argument that keeps the order as before for a run (the trial's control).</summary>
         public const string SpatialSplitGraphFirstOffArgument = "-zantetsuSpatialSplitGraphFirstOff";
+
+        /// <summary>
+        /// GRAPH-CONNECT-14: the Player argument that turns the timeline's new clock readings and tallies off for a run (development builds;
+        /// the existing clocks stand), and the one that names the file the per-attempt rows go to at the world's end.
+        /// </summary>
+        public const string SplitTimelineOffArgument = "-zantetsuSplitTimelineOff";
+
+        public const string SplitTimelineArgument = "-zantetsuSplitTimeline";
 
         /// <summary>Reads <see cref="SpatialSplitGraphFirstArgument"/> and <see cref="SpatialSplitGraphFirstOffArgument"/> as the other switches are read; both given = on.</summary>
         internal static bool TryReadGraphFirstSwitch(string[] arguments, out bool on)
@@ -228,6 +237,25 @@ namespace Zantetsu.PhysicsCut
                     + " (the profile's own setting is " + (settings.graphFirst ? "graph-first" : "as before") + "); the graph stage is " + (settings.graphSearch ? "on" : "OFF: the order cannot apply") , this);
                 settings.graphFirst = graphFirstOn;
             }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (Array.IndexOf(arguments, SplitTimelineOffArgument) >= 0)
+            {
+                CutSpatialSplit.TimelineObserve = false;
+                DispatchObservation.Enabled = false;
+                UnityEngine.Debug.Log("SPATIAL SPLIT TIMELINE: off -- asked for by " + SplitTimelineOffArgument + " (the new stamps and tallies are not taken; the existing clocks stand)", this);
+            }
+            int timelineAt = Array.IndexOf(arguments, SplitTimelineArgument);
+            if (timelineAt >= 0 && timelineAt + 1 < arguments.Length && !arguments[timelineAt + 1].StartsWith("-", StringComparison.Ordinal))
+            {
+                CutSpatialSplit.TimelineCsvPath = arguments[timelineAt + 1];
+                UnityEngine.Debug.Log("SPATIAL SPLIT TIMELINE: the attempts' rows go to " + CutSpatialSplit.TimelineCsvPath + " at the world's end (asked for by " + SplitTimelineArgument + ")", this);
+            }
+            else if (timelineAt >= 0)
+            {
+                UnityEngine.Debug.LogError("SPATIAL SPLIT TIMELINE: " + SplitTimelineArgument + " has no file: no rows are kept", this);
+            }
+#endif
 
             if (Array.IndexOf(arguments, SpatialSplitOffArgument) >= 0)
             {
