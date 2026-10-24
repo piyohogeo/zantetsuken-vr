@@ -295,6 +295,25 @@ namespace Zantetsu.PhysicsCut
 
         public int DeferralsMade { get; private set; }
 
+        /// <summary>Tests: the wait count a fragment's deferral carries now (0: no deferral), to see that a new search starts its waits afresh.</summary>
+        internal int DeferralCountOf(LogicalFragmentId fragment) => _deferred.TryGetValue(fragment, out Deferral d) ? d.count : 0;
+
+        // ---- the order (GRAPH-CONNECT-12): what was asked for, and what the attempts did ----------------------------------------
+        /// <summary>Whether the settings ask for the graph-first order: the request as made, whether or not it can apply here.</summary>
+        public bool GraphFirstRequested => Settings.graphFirst;
+        /// <summary>
+        /// Whether the request can apply in this world: the graph stage is effective (on, prepared, no capture). Even then the order
+        /// applies attempt by attempt, only where the graph stage applies (anchor-less, two convexes or more): <see cref="GraphFirstApplied"/>.
+        /// </summary>
+        public bool GraphFirstApplicable => Settings.graphFirst && GraphEffective;
+        /// <summary>Attempts that ran in the graph-first order (the graph stage before the bent partition): the order as APPLIED.</summary>
+        public int GraphFirstApplied { get; private set; }
+        /// <summary>Of those, attempts whose graph stage ended Unfinished and whose bent partition ran after it (the fallback), and of those the ones the bent partition found.</summary>
+        public int BentFallbackRan { get; private set; }
+        public int BentFallbackFound { get; private set; }
+        /// <summary>Attempts whose bent partition ran before the graph stage (the order as before: the default, an anchored owner, the graph off).</summary>
+        public int BentRanBeforeGraph { get; private set; }
+
         /// <summary>Tests: the engine's allocation of this ordinal fails in every attempt issued while set (-1: none).</summary>
         internal static int TestGraphFailAllocation = -1;
 
@@ -412,11 +431,16 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        /// <summary>The issue succeeded: the wait ends, its count goes on with the attempt (an unfinished end doubles from it).</summary>
+        /// <summary>
+        /// The issue succeeded: the wait ends, and its count goes on with the attempt (an unfinished end doubles from it) only when the
+        /// wait was this very search's (the same input: the same owner, settings and epoch). A wait of another search -- the order or
+        /// another setting changed, the owner's cut changed -- is void (Examine already reads it as no wait) and lends no count: the new
+        /// search starts its waits afresh (GRAPH-CONNECT-12, changing the order is changing the search).
+        /// </summary>
         private void TakeDeferral(LogicalFragmentId fragment, Attempt attempt)
         {
             if (!_deferred.TryGetValue(fragment, out Deferral d)) return;
-            attempt.deferralCount = d.count;
+            attempt.deferralCount = d.input.Equals(attempt.input) ? d.count : 0;
             _deferred.Remove(fragment);
             RebuildDeferredWake();
         }
@@ -452,6 +476,24 @@ namespace Zantetsu.PhysicsCut
         {
             SpatialSplitGraphRecord g = attempt.graph;
             LastGraph = g;
+            // the order, for every attempt that ran (the history marks of the search: the bent partition's entry, the graph's record)
+            if (attempt.ran)
+            {
+                if (attempt.graphFirstEffective)
+                {
+                    GraphFirstApplied++;
+                    if (g.Entered && g.verdict == SpatialSplitGraphVerdict.Unfinished && attempt.search.bent)
+                    {
+                        BentFallbackRan++;
+                        if (IsBentResult(in attempt.search)) BentFallbackFound++;
+                    }
+                }
+                else if (attempt.search.bent)
+                {
+                    BentRanBeforeGraph++;
+                }
+            }
+
             if (!g.Entered)
             {
                 return;
@@ -511,6 +553,9 @@ namespace Zantetsu.PhysicsCut
                 .Append("; bodies through Burst ").Append(GraphBurstRan).Append(", managed ").Append(GraphManagedRan).Append(", not run ").Append(GraphBodiesNotRun)
                 .Append("; GJK limit hits ").Append(GraphGjkLimitHits)
                 .Append(", most work ").Append(GraphWorkMax).Append(" units, most native bytes ").Append(GraphNativeBytesMax)
+                .Append("; order: graph-first ").Append(!GraphFirstRequested ? "not requested" : GraphFirstApplicable ? "requested" : "requested, cannot apply (the graph stage is not effective)")
+                .Append(", applied to ").Append(GraphFirstApplied).Append(" attempts")
+                .Append(", bent fallback ran ").Append(BentFallbackRan).Append(" found ").Append(BentFallbackFound).Append(", bent before the graph ").Append(BentRanBeforeGraph)
                 .Append("; limit reached now ").Append(LimitReachedNow).Append(" (").Append(LimitsReached).Append(" in all)")
                 .Append("; deferred now ").Append(DeferredNow).Append(" (waits made ").Append(DeferralsMade).Append(", wake frame ").Append(_deferredWake == long.MaxValue ? "-" : _deferredWake.ToString(inv)).Append(_deferredDue ? ", a retry due" : "").Append(')')
                 .Append("; ").Append(DescribeGraphTime(GraphTimeMeasured, GraphSeconds, MaxGraphSeconds));

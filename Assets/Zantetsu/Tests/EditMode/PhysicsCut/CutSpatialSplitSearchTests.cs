@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 using Unity.Mathematics;
 using Zantetsu.ConvexCut;
@@ -676,5 +677,65 @@ namespace Zantetsu.PhysicsCut.Tests
             for (int t = 0; t < sides.Length; t++) oneSide[t] = 1;
             Assert.That(DistributeBySides(scene, oneSide).ok, Is.False);
         }
-    }
+    
+        /// <summary>GRAPH-CONNECT-12: the graph-first order is part of what a search looks for -- two settings that differ only in it are
+        /// not the same search while the graph stage is on (the marks, the limit records and the waits of one say nothing under the
+        /// other); with the graph stage off the order cannot apply, so it does not tell the searches apart.</summary>
+        [Test]
+        public void SpatialSplitSettings_TheGraphFirstOrder_IsPartOfTheSearch_WhileTheGraphIsOn()
+        {
+            var a = new CutSpatialSplitSettings(true, 64, 0.001, 0.0002, 0.0015, new SpatialSplitSearchLimits(64, 8, 16, 131072));
+            a.graphSearch = true;
+            a.graphLimits = SpatialSplitGraphLimits.Default;
+            CutSpatialSplitSettings c = a;
+            c.graphFirst = true;
+            Assert.That(a.graphFirst, Is.False, "the default order");
+            Assert.That(a.SearchesAs(in a), Is.True);
+            Assert.That(a.SearchesAs(in c), Is.False, "another order, the graph on: another search");
+            Assert.That(c.SearchesAs(in a), Is.False);
+            Assert.That(a.IsValid && c.IsValid, Is.True, "the order has no limit of its own");
+            CutSpatialSplitSettings offA = a; offA.graphSearch = false;
+            CutSpatialSplitSettings offC = c; offC.graphSearch = false;
+            Assert.That(offA.SearchesAs(in offC), Is.True, "the graph off: the order cannot apply, the searches are the same");
+        }
+
+        /// <summary>GRAPH-CONNECT-12: the Player's order switch -- absent (no change), on, off, both (on).</summary>
+        [Test]
+        public void SpatialSplitSettings_ThePlayersOrderSwitch_IsRead()
+        {
+            Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(new string[0], out bool on), Is.False); Assert.That(on, Is.False);
+            Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(new[] { "-x", CutWorldRoot.SpatialSplitGraphFirstArgument }, out on), Is.True); Assert.That(on, Is.True);
+            Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(new[] { CutWorldRoot.SpatialSplitGraphFirstOffArgument }, out on), Is.True); Assert.That(on, Is.False);
+            Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(new[] { CutWorldRoot.SpatialSplitGraphFirstOffArgument, CutWorldRoot.SpatialSplitGraphFirstArgument }, out on), Is.True); Assert.That(on, Is.True, "both given: on");
+            Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(null, out on), Is.False);
+        }
+        /// <summary>
+        /// **The profile's spatialSplitGraphFirst is copied into the settings** (GRAPH-CONNECT-12 §1-1, TL review 1 P2-3): off in the
+        /// code's defaults; set on the profile, it arrives as settings.graphFirst, and graphSearch is not touched by it.
+        /// </summary>
+        [Test]
+        public void CutWorldProfile_SpatialSplitGraphFirst_IsCopiedIntoTheSettings_AndIsOffByDefault()
+        {
+            var profile = UnityEngine.ScriptableObject.CreateInstance<CutWorldProfile>();
+            try
+            {
+                FieldInfo first = typeof(CutWorldProfile).GetField("spatialSplitGraphFirst", BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo graph = typeof(CutWorldProfile).GetField("spatialSplitGraphSearch", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(first, Is.Not.Null); Assert.That(graph, Is.Not.Null);
+                Assert.That((bool)first.GetValue(profile), Is.False, "the code's default: off");
+                Assert.That(profile.SpatialSplit.graphFirst, Is.False, "and so the settings");
+                first.SetValue(profile, true);
+                Assert.That(profile.SpatialSplit.graphFirst, Is.True, "the profile's value arrives in the settings");
+                Assert.That(profile.SpatialSplit.graphSearch, Is.EqualTo((bool)graph.GetValue(profile)), "graphSearch is the profile's own, untouched by the order");
+                graph.SetValue(profile, true);
+                CutSpatialSplitSettings both = profile.SpatialSplit;
+                Assert.That(both.graphSearch, Is.True); Assert.That(both.graphFirst, Is.True);
+                Assert.That(both.IsValid, Is.True, "the order has no limit of its own: validity unchanged");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(profile);
+            }
+        }
+}
 }

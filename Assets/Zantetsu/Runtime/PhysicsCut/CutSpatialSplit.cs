@@ -82,6 +82,16 @@ namespace Zantetsu.PhysicsCut
         public SpatialSplitGraphLimits graphLimits;
 
         /// <summary>
+        /// With the graph stage on: run it before the bent partition where it applies (anchor-less, two convexes or more), and run the
+        /// bent partition only after a graph stage that ended Unfinished (GRAPH-CONNECT-10, the configuration C: the comparison kept
+        /// every result of the order as before and was faster on the tuning set, GRAPH-CONNECT-11). Off by default (2026-10-24): the
+        /// product trial selects it explicitly; the default order stays plane, bent, graph, mesh-led. Nothing without graphSearch.
+        /// The order is part of what a search looks for (SearchesAs): changing it makes the marks, the limit records and the waits of
+        /// the other order say nothing.
+        /// </summary>
+        public bool graphFirst;
+
+        /// <summary>
         /// The triangle minimum of a split that cuts a convex: 50, the TL's choice of 2026-10-11 after city walks at
         /// 200, 100 and 50. The expected costs beside it are provisional, from no performance measurement.
         /// </summary>
@@ -117,6 +127,7 @@ namespace Zantetsu.PhysicsCut
             bentLimits = default;
             graphSearch = false;  // the graph stage likewise
             graphLimits = default;
+            graphFirst = false;   // the order as before (GRAPH-CONNECT-12: the trial selects graph-first explicitly)
         }
 
         public bool IsValid => examinePerFrame >= 1 && reserveSeconds >= 0.0 && !double.IsNaN(reserveSeconds)
@@ -136,7 +147,8 @@ namespace Zantetsu.PhysicsCut
                 && limits.maxPlaneTests == other.limits.maxPlaneTests && limits.maxTriangles == other.limits.maxTriangles
                 && limits.maxMeshDirections == other.limits.maxMeshDirections && limits.meshBins == other.limits.meshBins
                 && bentSearch == other.bentSearch && (!bentSearch || bentLimits.Equals(in other.bentLimits))
-                && graphSearch == other.graphSearch && (!graphSearch || graphLimits.Equals(in other.graphLimits));
+                && graphSearch == other.graphSearch && (!graphSearch || graphLimits.Equals(in other.graphLimits))
+                && (!graphSearch || graphFirst == other.graphFirst);   // the order matters only where the graph stage can run
         }
     }
 
@@ -1576,7 +1588,7 @@ namespace Zantetsu.PhysicsCut
                         attempt.testGraphGjkMaxIterations = TestGraphGjkMaxIterations;
                         attempt.testGraphShortSides = TestGraphShortSides;
                         attempt.testGraphRefuseDistribution = TestGraphRefuseDistribution;
-                        attempt.graphFirst = TestGraphFirst;   // tests only: the product's issue leaves the order as before
+                        attempt.graphFirst = settings.graphFirst || TestGraphFirst;   // the setting (default off), or the test hook
                         try
                         {
                             if (TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");

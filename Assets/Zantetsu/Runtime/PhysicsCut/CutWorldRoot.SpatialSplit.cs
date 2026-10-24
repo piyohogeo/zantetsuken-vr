@@ -47,6 +47,23 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The Player argument that switches the graph stage off for a run: the comparison's control.</summary>
         public const string SpatialSplitGraphOffArgument = "-zantetsuSpatialSplitGraphOff";
 
+        /// <summary>
+        /// The Player argument that asks for the graph-first order for a run (GRAPH-CONNECT-12: the graph stage before the bent
+        /// partition, the bent partition only after an unfinished graph; off in the profile's default): applied only where the
+        /// graph stage is on and effective -- without it the request is logged and the order stays as before.
+        /// </summary>
+        public const string SpatialSplitGraphFirstArgument = "-zantetsuSpatialSplitGraphFirst";
+
+        /// <summary>The Player argument that keeps the order as before for a run (the trial's control).</summary>
+        public const string SpatialSplitGraphFirstOffArgument = "-zantetsuSpatialSplitGraphFirstOff";
+
+        /// <summary>Reads <see cref="SpatialSplitGraphFirstArgument"/> and <see cref="SpatialSplitGraphFirstOffArgument"/> as the other switches are read; both given = on.</summary>
+        internal static bool TryReadGraphFirstSwitch(string[] arguments, out bool on)
+        {
+            on = arguments != null && Array.IndexOf(arguments, SpatialSplitGraphFirstArgument) >= 0;
+            return on || (arguments != null && Array.IndexOf(arguments, SpatialSplitGraphFirstOffArgument) >= 0);
+        }
+
         private void MakeSpatialSplit(CutWorldProfile profile)
         {
             SpatialSplit = new CutSpatialSplit(this, SplitSettings(profile));
@@ -201,6 +218,15 @@ namespace Zantetsu.PhysicsCut
                         "SPATIAL SPLIT GRAPH: off -- asked for by " + SpatialSplitGraphOffArgument + " (the profile's own setting is " + (settings.graphSearch ? "on" : "off") + ")", this);
                     settings.graphSearch = false;
                 }
+            }
+
+            if (TryReadGraphFirstSwitch(arguments, out bool graphFirstOn))
+            {
+                // the order's request is logged with whether it can apply: the graph stage must be on (the setting or its switch)
+                UnityEngine.Debug.Log(
+                    "SPATIAL SPLIT ORDER: " + (graphFirstOn ? "graph-first" : "as before") + " -- asked for by " + (graphFirstOn ? SpatialSplitGraphFirstArgument : SpatialSplitGraphFirstOffArgument)
+                    + " (the profile's own setting is " + (settings.graphFirst ? "graph-first" : "as before") + "); the graph stage is " + (settings.graphSearch ? "on" : "OFF: the order cannot apply") , this);
+                settings.graphFirst = graphFirstOn;
             }
 
             if (Array.IndexOf(arguments, SpatialSplitOffArgument) >= 0)

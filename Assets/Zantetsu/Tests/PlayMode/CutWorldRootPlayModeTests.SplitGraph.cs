@@ -1357,6 +1357,456 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             yield return EndWorld(second);
         }
 
+        private static CutSpatialSplitSettings SplitOnGraphFirst(bool cutConvexes = true, int minCutSideTriangles = CutSpatialSplitSettings.DefaultMinCutSideTriangles, long workBudget = SpatialSplitGraphLimits.DefaultWorkBudget)
+        {
+            CutSpatialSplitSettings settings = SplitOnWithGraph(cutConvexes: cutConvexes, minCutSideTriangles: minCutSideTriangles, deferFirstFrames: 600, deferMaxFrames: 600, workBudget: workBudget);   // a wait that outlasts the test: the count is read, not re-issued
+            settings.bentSearch = true;
+            settings.bentLimits = SpatialSplitBentLimits.Default;
+            settings.graphFirst = true;   // GRAPH-CONNECT-12: the setting, not the test hook
+            return settings;
+        }
+
+        /// <summary>A world with one U (a part inside; a mesh bridge joins them when asked) cut at the waist: the lower side is the candidate.</summary>
+        private IEnumerator OneU(CutSpatialSplitSettings settings, bool meshBridge, CutWorldRoot[] rootOut, CutSpatialSplit[] splitOut, double[] remaining, LogicalFragmentId[] lowerOut, Vector3 at = default)
+        {
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = settings;
+            LogicalFragmentId body = AddUWithAPartInside(root, at, meshBridge: meshBridge);
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides, lowerConvexes: 5);
+            rootOut[0] = root; splitOut[0] = split; lowerOut[0] = sides[1];
+        }
+
+        /// <summary>The lower side's attempt has ended: it is no longer a candidate (published, marked, recorded or waiting) and nothing runs.</summary>
+        private static bool LowerDone(CutSpatialSplit split, LogicalFragmentId lower)
+        {
+            SpatialSplitPass pass = split.Examine(lower);
+            return !split.HasAttempt && pass != SpatialSplitPass.Candidate && pass != SpatialSplitPass.NotLive;
+        }
+
+        /// <summary>
+        /// **The graph-first SETTING selects the order live, and a fallback that finds publishes without a wait or a record**
+        /// (GRAPH-CONNECT-12 §1-1, §1-2): the U with a part inside under the setting -- the graph stage is Separable and publishes
+        /// (the bent partition not run); in another world with the work budget 1 the graph is Unfinished(Work), the bent partition runs
+        /// after it and publishes (fallback ran 1, found 1), and because the attempt did not end Unfinished there is no limit record
+        /// and no wait. The description says what was requested and what applied.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_TheSetting_SelectsTheOrder_AndAFallbackThatFinds_PublishesWithoutAWaitOrARecord()
+        {
+            ResetGraphTestHooks();
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var remaining = new double[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(SplitOnGraphFirst(), false, roots, splits, remaining, lowers);
+            CutSpatialSplit split = splits[0];
+            Assert.That(split.GraphEffective, Is.True, split.GraphRefusal);
+            Assert.That(split.GraphFirstRequested, Is.True); Assert.That(split.GraphFirstApplicable, Is.True);
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || LowerDone(split, lowers[0]), "the attempt on the lower side ended");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(split.DescribeGraph());
+            Assert.That(split.Published, Is.EqualTo(1), "a graph placement: " + split.LastEnd);
+            Assert.That(split.PublishedGraph, Is.EqualTo(1));
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1), "the order applied to the lower side (the one-convex upper side is not the stage's)");
+            Assert.That(split.BentFallbackRan, Is.Zero); Assert.That(split.BentRanBeforeGraph, Is.Zero, "the bent partition did not run anywhere");
+            StringAssert.Contains("order: graph-first requested, applied to 1 attempts, bent fallback ran 0 found 0, bent before the graph 0", split.DescribeGraph());
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+
+            // another world, the work budget 1: the graph Unfinished(Work), the bent partition after it finds and publishes; no record, no wait
+            yield return OneU(SplitOnGraphFirst(workBudget: 1), false, roots, splits, remaining, lowers);
+            split = splits[0];
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || LowerDone(split, lowers[0]), "the attempt on the lower side ended (budget 1)");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(split.DescribeGraph());
+            Assert.That(split.Published, Is.EqualTo(1), "published by the bent fallback: " + split.LastEnd + " / " + split.LastRefusal);
+            Assert.That(split.PublishedBent, Is.EqualTo(1));
+            Assert.That(split.LastGraph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(split.LastGraph.stop, Is.EqualTo(SpatialSplitGraphStop.Work));
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1));
+            Assert.That(split.BentFallbackRan, Is.EqualTo(1)); Assert.That(split.BentFallbackFound, Is.EqualTo(1));
+            Assert.That(split.LimitReachedNow, Is.Zero, "the attempt ended Published, not Unfinished: no limit record");
+            Assert.That(split.DeferredNow, Is.Zero, "and no wait");
+            Assert.That(split.EndedAs(SpatialSplitEnd.Unfinished), Is.Zero);
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+        }
+
+        /// <summary>
+        /// **A fallback that fails hands on to the mesh-led plane as before, and only the FINAL Unfinished records or defers**
+        /// (GRAPH-CONNECT-12 §1-2, End() unchanged): the U with a mesh bridge (neither the bent partition nor the mesh-led plane can
+        /// split it), the graph-first setting with the work budget 1 -> graph Unfinished(Work), the bent partition after it fails, the
+        /// mesh-led plane fails, the attempt ends Unfinished -> the limit is recorded (no wait); in another world with the sides'
+        /// allocation refused -> the pre-recorded Unfinished(Allocation), the same path, the attempt ends Unfinished -> a wait with a
+        /// deadline whose count is 1 (no record).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_AFallbackThatFails_HandsOnToTheMeshLedPlane_AndOnlyTheFinalUnfinished_RecordsOrDefers()
+        {
+            ResetGraphTestHooks();
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var remaining = new double[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(SplitOnGraphFirst(workBudget: 1), true, roots, splits, remaining, lowers);
+            CutSpatialSplit split = splits[0];
+            Assert.That(split.GraphEffective, Is.True, split.GraphRefusal);
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lowers[0]), "the attempt on the bridged lower side ended");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(split.DescribeGraph());
+            Assert.That(split.Published, Is.Zero, "nothing splits the bridged U: " + split.LastEnd);
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1));
+            Assert.That(split.LastGraph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(split.LastGraph.stop, Is.EqualTo(SpatialSplitGraphStop.Work));
+            Assert.That(split.BentFallbackRan, Is.EqualTo(1), "the bent partition ran after the unfinished graph"); Assert.That(split.BentFallbackFound, Is.Zero);
+            Assert.That(split.MeshLedSearches, Is.GreaterThanOrEqualTo(1), "and the mesh-led plane after it, as before");
+            Assert.That(split.EndedAs(SpatialSplitEnd.Unfinished), Is.EqualTo(1), "the FINAL end is Unfinished");
+            Assert.That(split.LimitReachedNow, Is.EqualTo(1), "a fixed limit: recorded"); Assert.That(split.DeferredNow, Is.Zero, "not deferred");
+            Assert.That(split.Examine(lowers[0]), Is.EqualTo(SpatialSplitPass.LimitReached));
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+
+            // another world, the sides' allocation refused: the pre-recorded Unfinished(Allocation), the same path, the final Unfinished defers
+            try
+            {
+                CutSpatialSplit.TestFailGraphSidesAllocation = true;
+                yield return OneU(SplitOnGraphFirst(), true, roots, splits, remaining, lowers);
+                split = splits[0];
+                remaining[0] = 1.0;
+                yield return Until(() => LowerDone(split, lowers[0]), "the attempt on the bridged lower side ended (sides refused)");
+                remaining[0] = 0.0;
+                TestContext.Out.WriteLine(split.DescribeGraph());
+                Assert.That(split.Published, Is.Zero);
+                Assert.That(split.LastGraph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(split.LastGraph.stop, Is.EqualTo(SpatialSplitGraphStop.Allocation));
+                Assert.That(split.LastGraph.bodiesRan, Is.False, "the pre-recorded stage: no bodies");
+                Assert.That(split.BentFallbackRan, Is.EqualTo(1), "the bent partition after the pre-recorded unfinished graph"); Assert.That(split.BentFallbackFound, Is.Zero);
+                Assert.That(split.DeferredNow, Is.EqualTo(1), "a passing cause: a wait with a deadline"); Assert.That(split.LimitReachedNow, Is.Zero, "no record");
+                Assert.That(split.DeferralCountOf(lowers[0]), Is.EqualTo(1), "the first wait");
+                Assert.That(split.Examine(lowers[0]), Is.EqualTo(SpatialSplitPass.Deferred));
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+            }
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+        }
+
+        /// <summary>
+        /// **Changing the order is changing the search** (GRAPH-CONNECT-12 §1-1, TL points 1-2): on a mesh-bridged U (the bent
+        /// partition cannot split it) the order as before leaves a limit record (the graph at its work budget) on one owner and a wait
+        /// (the sides refused) on another; switching the setting to graph-first moves the epoch on, so both are candidates again (not
+        /// held by the old record or wait), the new attempts run in the new order and start their waits afresh (count 1, not carried on from
+        /// the old wait's 2: the walk cancels a wait of another input when it looks at the fragment, NoteChosen; the issue's TakeDeferral
+        /// lends a count only to the same input, a defensive check behind it). The
+        /// record counts need not drop at once (the old records are void by their input). In a world of one body: an attempt issued
+        /// under one order and collected after the switch is Stale -- not published, no mark, no record, no wait -- and the next
+        /// issue runs in the new order.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_ChangingTheOrder_IsChangingTheSearch_OldMarksRecordsAndWaitsSayNothing_AndAnIssuedAttemptIsStale()
+        {
+            ResetGraphTestHooks();
+            CutSpatialSplitSettings before = SplitOnWithGraph(cutConvexes: false, deferFirstFrames: 20, deferMaxFrames: 20, workBudget: 1);   // a short wait: the old wait is re-issued once to reach count 2
+            before.bentSearch = true; before.bentLimits = SpatialSplitBentLimits.Default;
+            CutSpatialSplitSettings after = before; after.graphFirst = true;
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = before;
+            Assert.That(split.GraphFirstRequested, Is.False);
+            // the first bridged U: the order as before -- the bent partition fails, the graph at its work budget -> recorded
+            LogicalFragmentId body = AddUWithAPartInside(root, new Vector3(0f, 0f, 0f), meshBridge: true);
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides, lowerConvexes: 5);
+            LogicalFragmentId recorded = sides[1];
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, recorded), "the first bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(recorded), Is.EqualTo(SpatialSplitPass.LimitReached), split.LastEnd.ToString());
+            Assert.That(split.BentRanBeforeGraph, Is.GreaterThanOrEqualTo(1), "the order as before: the bent partition before the graph");
+            // the second bridged U, the sides refused: deferred (count 1)
+            LogicalFragmentId deferred;
+            try
+            {
+                CutSpatialSplit.TestFailGraphSidesAllocation = true;
+                LogicalFragmentId body2 = AddUWithAPartInside(root, new Vector3(8f, 0f, 0f), meshBridge: true);
+                yield return null;
+                var sides2 = new LogicalFragmentId[2];
+                yield return CutAtTheWaist(root, body2, sides2, lowerConvexes: 5);
+                deferred = sides2[1];
+                remaining[0] = 1.0;
+                yield return Until(() => LowerDone(split, deferred), "the second bridged side ended (sides refused)");
+                // the wait runs out and the side is re-issued under the same search: the count goes on (2) -- the old search's wait
+                yield return Until(() => split.DeferralCountOf(deferred) == 2 && !split.HasAttempt, "the second bridged side waited twice under the order as before");
+                remaining[0] = 0.0;
+            }
+            finally
+            {
+                CutSpatialSplit.TestFailGraphSidesAllocation = false;
+            }
+            Assert.That(split.Examine(deferred), Is.EqualTo(SpatialSplitPass.Deferred), split.LastEnd.ToString());
+            Assert.That(split.DeferralCountOf(deferred), Is.EqualTo(2), "the old search's wait count, to be left behind by the switch");
+            Assert.That(split.LimitReachedNow, Is.EqualTo(1)); Assert.That(split.DeferredNow, Is.EqualTo(1));
+
+            // the switch: the order is another search -- the mark, the record and the wait say nothing; both are candidates again
+            split.Settings = after;
+            Assert.That(split.GraphFirstRequested, Is.True);
+            Assert.That(split.Examine(recorded), Is.EqualTo(SpatialSplitPass.Candidate), "not held by the old limit record");
+            Assert.That(split.Examine(deferred), Is.EqualTo(SpatialSplitPass.Candidate), "not held by the old wait");
+            // the new attempts run in the new order; with the sides refused again both wait, each with a count of 1 (afresh, not 2)
+            try
+            {
+                CutSpatialSplit.TestFailGraphSidesAllocation = true;
+                remaining[0] = 1.0;
+                yield return Until(() => split.GraphFirstApplied >= 2 && !split.HasAttempt, "both bridged sides attempted in the new order");
+                remaining[0] = 0.0;
+            }
+            finally
+            {
+                CutSpatialSplit.TestFailGraphSidesAllocation = false;
+            }
+            TestContext.Out.WriteLine(split.DescribeGraph());
+            Assert.That(split.Published, Is.Zero);
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(2), "both ran in the new order");
+            Assert.That(split.BentFallbackRan, Is.EqualTo(2), "the fallback ran after the pre-recorded unfinished graph in both");
+            Assert.That(split.DeferralCountOf(deferred), Is.EqualTo(1), "the wait count starts afresh under the new search (the old wait's 2 is not carried on)");
+            Assert.That(split.DeferralCountOf(recorded), Is.EqualTo(1), "the formerly recorded owner now waits (a passing cause under the new order)");
+            split.Settings = default;
+            yield return EndWorld(root);
+
+            // a world of one bridged U: an attempt issued under the order as before, the switch while it runs -> Stale, nothing kept; the next issue in the new order
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(before, true, roots, splits, remaining, lowers);
+            split = splits[0];
+            remaining[0] = 1.0;
+            yield return Until(() => split.HasAttempt, "an attempt issued under the order as before");
+            split.Settings = after;   // the switch while it runs
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.Stale) == 1, "the attempt collected as Stale");
+            Assert.That(split.Published, Is.Zero, "a stale result is not published");
+            Assert.That(split.SuppressedNow, Is.Zero, "no mark from a stale result");
+            Assert.That(split.LimitReachedNow, Is.Zero, "no record from a stale result");
+            Assert.That(split.DeferredNow, Is.Zero, "no wait from a stale result");
+            Assert.That(split.GraphFirstApplied, Is.Zero, "the stale attempt ran in the order as before");
+            yield return Until(() => LowerDone(split, lowers[0]), "the next attempt, in the new order, ended");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(split.DescribeGraph());
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1), "the next issue ran in the new order");
+            Assert.That(split.Examine(lowers[0]), Is.EqualTo(SpatialSplitPass.LimitReached), "and ended at the work budget as before: recorded under the new search");
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+        }
+
+        /// <summary>
+        /// **The graph-first request applies to nothing while the graph stage is off** (GRAPH-CONNECT-12 §1-1; TL review 1): the setting
+        /// asks for the order (GraphFirstRequested true: the request as made) but the graph is off -> it cannot apply (GraphFirstApplicable
+        /// false), the description says so, the order as before runs (the bent partition first), nothing is applied.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_WithoutTheGraph_TheRequestAppliesToNothing()
+        {
+            ResetGraphTestHooks();
+            CutSpatialSplitSettings settings = SplitOnWithBent(cutConvexes: true);
+            settings.graphFirst = true;   // asked for, but graphSearch is false
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var remaining = new double[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(settings, false, roots, splits, remaining, lowers);
+            CutSpatialSplit split = splits[0];
+            Assert.That(split.GraphEffective, Is.False);
+            Assert.That(split.GraphFirstRequested, Is.True, "the request as made, whether or not it can apply");
+            Assert.That(split.GraphFirstApplicable, Is.False, "without the graph stage it cannot apply");
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || LowerDone(split, lowers[0]), "the attempt on the lower side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Published, Is.EqualTo(1)); Assert.That(split.PublishedBent, Is.EqualTo(1), "the order as before: the bent partition");
+            Assert.That(split.GraphFirstApplied, Is.Zero); Assert.That(split.GraphSearches, Is.Zero);
+            Assert.That(split.BentRanBeforeGraph, Is.GreaterThanOrEqualTo(1));
+            StringAssert.Contains("order: graph-first requested, cannot apply (the graph stage is not effective), applied to 0 attempts", split.DescribeGraph());
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+        }
+
+        /// <summary>
+        /// **The arrangement of chain 54, as a reproduction under both orders** (GRAPH-CONNECT-12 §7-3 (3), TL review 1 P2-2): a U with a
+        /// part inside at the origin is published under the full budget; the settings move to the work budget 1 in the same world; the
+        /// publication's remainder (the U with its head, the part gone: nothing splits it) is attempted under the new budget and ends
+        /// at the graph's fixed limit -- its bent search reads NO candidate with triangles (the "candidates 0, elements 180" of chain 54
+        /// was this fragment's search, not the second U's); then a second U at x = 8 is published by the bent partition with the very
+        /// search numbers of a U alone at x = 8. The same under the order as before (A) and under graph-first (C): position and the
+        /// preceding owner change nothing, and the two orders publish alike.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_TheChain54Arrangement_TwoUsInOneWorld_PublishAlikeUnderBothOrders_AndTheRemainder_RecordsItsLimit()
+        {
+            ResetGraphTestHooks();
+            Vector3 x8 = new Vector3(8f, 0f, 0f);
+            // a U alone at x = 8 under C with the budget 1: the bent fallback's search numbers to compare with
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var remaining = new double[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(SplitOnGraphFirst(workBudget: 1), false, roots, splits, remaining, lowers, x8);
+            CutSpatialSplit split = splits[0];
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || LowerDone(split, lowers[0]), "the U alone at x = 8 ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Published, Is.EqualTo(1)); Assert.That(split.PublishedBent, Is.EqualTo(1), "a U alone at x = 8: the bent fallback publishes: " + split.LastEnd);
+            SpatialSplitSearchResult alone = split.LastSearch;
+            Assert.That(alone.bent, Is.True); Assert.That(alone.bentCandidates, Is.GreaterThan(0), "a candidate with triangles was read");
+            TestContext.Out.WriteLine("alone at x = 8: " + DescribeBentSearch(alone));
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+
+            foreach (bool graphFirst in new[] { true, false })
+            {
+                string order = graphFirst ? "C (graph-first)" : "A (the order as before)";
+                CutSpatialSplitSettings full = SplitOnWithGraph(cutConvexes: true); full.bentSearch = true; full.bentLimits = SpatialSplitBentLimits.Default; full.graphFirst = graphFirst;
+                CutSpatialSplitSettings budget1 = SplitOnWithGraph(cutConvexes: true, workBudget: 1); budget1.bentSearch = true; budget1.bentLimits = SpatialSplitBentLimits.Default; budget1.graphFirst = graphFirst;
+                yield return OneU(full, false, roots, splits, remaining, lowers, Vector3.zero);
+                split = splits[0];
+                remaining[0] = 1.0;
+                yield return Until(() => split.Published == 1 || LowerDone(split, lowers[0]), order + ": the first U ended");
+                remaining[0] = 0.0;
+                Assert.That(split.Published, Is.EqualTo(1), order + ": the first U is published: " + split.LastEnd);
+                Assert.That(graphFirst ? split.PublishedGraph : split.PublishedBent, Is.EqualTo(1), order + ": by the graph under C, by the bent partition under A");
+                // the budget 1 in the same world: the remainder (4 convexes, nothing splits it) ends at the graph's fixed limit; its bent search reads no candidate
+                split.Settings = budget1;
+                remaining[0] = 1.0;
+                yield return Until(() => split.LimitReachedNow == 1, order + ": the remainder of the first publication recorded its limit");
+                SpatialSplitSearchResult remainder = split.LastSearch;
+                remaining[0] = 0.0;
+                TestContext.Out.WriteLine(order + " remainder: " + DescribeBentSearch(remainder));
+                Assert.That(split.Published, Is.EqualTo(1), order + ": nothing else was published");
+                Assert.That(remainder.bent, Is.True, order + ": the remainder's bent partition ran"); Assert.That(remainder.bentCandidates, Is.Zero, order + ": and read no candidate with triangles");
+                Assert.That(remainder.bentElementsVerified, Is.EqualTo(180), order + ": the figure of chain 54");
+                Assert.That(remainder.outcome, Is.EqualTo(SpatialSplitSearchOutcome.NotFound));
+                Assert.That(split.LastGraph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(split.LastGraph.stop, Is.EqualTo(SpatialSplitGraphStop.Work));
+                // the second U at x = 8: published by the bent partition with the search numbers of a U alone there
+                LogicalFragmentId second = AddUWithAPartInside(roots[0], x8);
+                yield return null;
+                var sides = new LogicalFragmentId[2];
+                yield return CutAtTheWaist(roots[0], second, sides, lowerConvexes: 5);
+                remaining[0] = 1.0;
+                yield return Until(() => split.Published == 2 || LowerDone(split, sides[1]), order + ": the second U ended");
+                SpatialSplitSearchResult secondSearch = split.LastSearch;
+                remaining[0] = 0.0;
+                TestContext.Out.WriteLine(order + " second U at x = 8: " + DescribeBentSearch(secondSearch) + " | " + split.DescribeGraph());
+                Assert.That(split.Published, Is.EqualTo(2), order + ": the second U is published: " + split.LastEnd + " / " + split.LastRefusal);
+                Assert.That(split.PublishedBent, Is.EqualTo(graphFirst ? 1 : 2), order + ": by the bent partition");
+                Assert.That(secondSearch.bent, Is.True);
+                Assert.That(secondSearch.bentCandidates, Is.EqualTo(alone.bentCandidates), order + ": candidates as alone");
+                Assert.That(secondSearch.bentPieces, Is.EqualTo(alone.bentPieces), order + ": pieces as alone");
+                Assert.That(secondSearch.bentElementsVerified, Is.EqualTo(alone.bentElementsVerified), order + ": elements verified as alone");
+                Assert.That(secondSearch.bentIterations, Is.EqualTo(alone.bentIterations), order + ": iterations as alone");
+                Assert.That(secondSearch.positiveTriangles, Is.EqualTo(alone.positiveTriangles)); Assert.That(secondSearch.negativeTriangles, Is.EqualTo(alone.negativeTriangles));
+                Assert.That(secondSearch.positiveConvexes, Is.EqualTo(alone.positiveConvexes)); Assert.That(secondSearch.negativeConvexes, Is.EqualTo(alone.negativeConvexes));
+                if (graphFirst) Assert.That(split.BentFallbackFound, Is.EqualTo(1), "C: the second U's publication is the fallback's find");
+                else Assert.That(split.BentRanBeforeGraph, Is.GreaterThanOrEqualTo(3), "A: the bent partition ran before the graph on the first U, the remainder and the second U");
+                split.Settings = default;
+                yield return EndWorld(roots[0]);
+            }
+        }
+
+        /// <summary>
+        /// **Under graph-first, a bent fallback that fails hands on to the mesh-led plane, which publishes** (GRAPH-CONNECT-12 §1-2, TL
+        /// review 1 P2-3): the trunk with a hand and a convex across (the planes leave nothing whole; the bent partition finds no
+        /// candidate; the mesh-led plane cuts the convex across), the work budget 1 -> the graph Unfinished(Work), the bent fallback
+        /// ran and found nothing, the mesh-led plane followed and its find is published with a cut -- not the graph's, not the bent
+        /// partition's; no record, no wait, no Unfinished end.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_AFallbackThatFails_HandsOnToTheMeshLedPlane_WhichPublishes()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = SplitOnGraphFirst(cutConvexes: true, minCutSideTriangles: 12, workBudget: 1);
+            LogicalFragmentId body = AddBodyWithAHand(root, new Vector3(0f, 0f, 0f), convexAcross: true);
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides, lowerConvexes: 3);
+            LogicalFragmentId lower = sides[1];
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || LowerDone(split, lower), "the lower side ended");
+            remaining[0] = 0.0;
+            TestContext.Out.WriteLine(DescribeBentSearch(split.LastSearch) + " | " + split.DescribeGraph());
+            Assert.That(split.Published, Is.EqualTo(1), "published as mesh-led: " + split.LastEnd + " / " + split.LastRefusal);
+            Assert.That(split.PublishedWithCut, Is.EqualTo(1)); Assert.That(split.PublishedGraph, Is.Zero); Assert.That(split.PublishedBent, Is.Zero);
+            Assert.That(split.LastSource, Is.EqualTo(lower));
+            Assert.That(split.LastGraph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(split.LastGraph.stop, Is.EqualTo(SpatialSplitGraphStop.Work));
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1));
+            Assert.That(split.BentFallbackRan, Is.EqualTo(1), "the bent fallback ran after the unfinished graph"); Assert.That(split.BentFallbackFound, Is.Zero, "and found nothing");
+            Assert.That(split.LastSearch.bent, Is.True); Assert.That(split.LastSearch.meshLed, Is.True, "the mesh-led plane followed");
+            Assert.That(split.LimitReachedNow, Is.Zero, "no record"); Assert.That(split.DeferredNow, Is.Zero, "no wait"); Assert.That(split.EndedAs(SpatialSplitEnd.Unfinished), Is.Zero);
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **Switching the order either way voids the old mark and the old record** (GRAPH-CONNECT-12 §2 (d), TL review 1 P2-3): on a
+        /// mesh-bridged U (nothing splits it) with the convex cut off, the order as before ends NotFound and marks the lower side; the
+        /// switch to graph-first makes it a candidate again (the mark is of another search), the new attempt runs graph-first and marks
+        /// it anew; the switch back (C -> A) makes it a candidate once more and the attempt runs in the order as before. In another
+        /// world: graph-first with the work budget 1 records the limit; the switch to the order as before makes the side a candidate,
+        /// and the attempt in the old order records its own limit.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraphFirst_SwitchingTheOrderEitherWay_VoidsTheOldMark_AndTheOldRecord()
+        {
+            ResetGraphTestHooks();
+            CutSpatialSplitSettings a = SplitOnWithGraph(cutConvexes: false); a.bentSearch = true; a.bentLimits = SpatialSplitBentLimits.Default;
+            CutSpatialSplitSettings c = a; c.graphFirst = true;
+            var roots = new CutWorldRoot[1]; var splits = new CutSpatialSplit[1]; var remaining = new double[1]; var lowers = new LogicalFragmentId[1];
+            yield return OneU(a, true, roots, splits, remaining, lowers);
+            CutSpatialSplit split = splits[0]; LogicalFragmentId lower = lowers[0];
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lower), "A: the bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Suppressed), "A: NotFound, marked: " + split.LastEnd);
+            Assert.That(split.BentRanBeforeGraph, Is.EqualTo(1)); Assert.That(split.GraphFirstApplied, Is.Zero);
+            // A -> C: the mark is of another search
+            split.Settings = c;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Candidate), "A -> C: not held by the old mark");
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lower), "C: the bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Suppressed), "C: NotFound, marked anew: " + split.LastEnd);
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1), "the attempt ran graph-first"); Assert.That(split.BentRanBeforeGraph, Is.EqualTo(1), "and not bent-first");
+            Assert.That(split.BentFallbackRan, Is.Zero, "the graph ended NotFound, not Unfinished: no fallback");
+            // C -> A: the same the other way
+            split.Settings = a;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Candidate), "C -> A: not held by the mark of the graph-first search");
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lower), "A again: the bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Suppressed), "A again: NotFound, marked anew: " + split.LastEnd);
+            Assert.That(split.BentRanBeforeGraph, Is.EqualTo(2), "the attempt ran in the order as before"); Assert.That(split.GraphFirstApplied, Is.EqualTo(1));
+            Assert.That(split.Published, Is.Zero);
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+
+            // another world: the record under C, the switch to A
+            CutSpatialSplitSettings a1 = SplitOnWithGraph(cutConvexes: false, workBudget: 1); a1.bentSearch = true; a1.bentLimits = SpatialSplitBentLimits.Default;
+            CutSpatialSplitSettings c1 = a1; c1.graphFirst = true;
+            yield return OneU(c1, true, roots, splits, remaining, lowers);
+            split = splits[0]; lower = lowers[0];
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lower), "C1: the bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.LimitReached), "C1: the graph's work limit, recorded: " + split.LastEnd);
+            Assert.That(split.GraphFirstApplied, Is.EqualTo(1)); Assert.That(split.BentFallbackRan, Is.EqualTo(1)); Assert.That(split.BentFallbackFound, Is.Zero);
+            split.Settings = a1;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Candidate), "C -> A: not held by the old record");
+            remaining[0] = 1.0;
+            yield return Until(() => LowerDone(split, lower), "A1: the bridged side ended");
+            remaining[0] = 0.0;
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.LimitReached), "A1: the limit of the search in the old order, recorded: " + split.LastEnd);
+            Assert.That(split.BentRanBeforeGraph, Is.EqualTo(1), "the attempt ran in the order as before"); Assert.That(split.GraphFirstApplied, Is.EqualTo(1));
+            Assert.That(split.LimitsReached, Is.EqualTo(2), "two records in all (the old one void by its input)");
+            Assert.That(split.Published, Is.Zero);
+            split.Settings = default;
+            yield return EndWorld(roots[0]);
+        }
+
         /// <summary>
         /// **An unfinished graph stage hands on to the mesh-led plane, whose find is published as mesh-led with the graph
         /// history kept** (GRAPH-CONNECT-4 §5-3): a body whose hand is reached only by cutting a convex across; the graph
