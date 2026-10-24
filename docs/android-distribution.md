@@ -16,7 +16,7 @@ Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode
 
 ## 初回導入と更新
 
-配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。実機検証済みはGalaxy S25 UltraとPixel 6 Proです。他端末の動作保証はまだありません。
+配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。実機検証済みはGalaxy S25 UltraとPixel 6 Proです。16KB互換性はRemote Test LabのGalaxy A56 5Gでも縦画面の基本動作を確認しました。他端末やA56の横画面・長時間性能の動作保証はまだありません。
 
 APKのContent-Typeは `application/vnd.android.package-archive` として配布し、実際のダウンロード応答でも確認します。ローカル検証では汎用のContent-TypeだとEdgeがパッケージインストーラーへ渡さず、正しいAPK形式の応答で導入・更新できました。GitHubからの実ダウンロードは、公開指示を受けた後の確認とします。[GitHub Release Assets API](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)
 
@@ -30,7 +30,7 @@ APKのContent-Typeは `application/vnd.android.package-archive` として配布�
 
 ## 公開前の残件
 
-- 長時間の連続切断・負荷は、2026-10-24のユーザー指定により後回しとする。通信失敗の制御試験と16KBエミュレーター実行は下記の範囲で完了。ARM64の16KB実機は未確認として区別する。
+- 長時間の連続切断・負荷は、2026-10-24のユーザー指定により後回しとする。通信失敗の制御試験と16KB環境の確認は下記の範囲で完了。ARM64実機ではGalaxy A56 5Gの縦画面で基本動作を確認し、A56の横画面はラボで確認できなかった項目として残す。
 - タグとReleaseの作成は別の明示指示を受けてから行う。公開後にGitHubの実ダウンロード応答と導入を確認する。配布対応のコミットとAPKの対応はローカル検証記録へ残す。
 
 両端末で記録した `DexFile.finalize` のAssertionErrorは、ゲームが継続していたことと原因未確定を既知事項として残します。Play Console・AAB提出・Data safetyフォーム・IARC・ストア画像・テスター登録・pre-launch reportは今回の配布工程から外します。API 36は維持します。
@@ -112,6 +112,16 @@ S25 UltraのWi-Fi ADB接続で、製品と同じ `PlayStatisticsSender` と `Pla
 
 初回同意画面からDon't sendを選び、街の描画・ジョイスティック前進・Slash・切断後の分離した破片・設定メニュー・同じPIDでのホーム中断復帰を確認しました。VP3C-NATIVEの固定長パスで、MultiDrawIndirectは有効、非対応のDrawIndirectCountはグレー表示です。ゲームプロセスにUnityエラー・Fatal exception/signalは記録されず、拒否中の中断では未集計・未送信のログを確認しました。
 
-これは[公式の16KBユーザー空間シミュレーション](https://developer.android.com/guide/practices/page-sizes)を使うx86_64環境で、ARM64コードを変換実行しています。ARM64の16KBカーネルを持つ実機の確認や、端末のFPS・長時間安定性の検証には代用しません。実機確認は別項目として未確認を残します。画像・ログ・結果は `Logs/android-flat/github-emulator16k-code6-*`、APKに対応する記録は `.record/device-validation.json` に保持します。
+これは[公式の16KBユーザー空間シミュレーション](https://developer.android.com/guide/practices/page-sizes)を使うx86_64環境で、ARM64コードを変換実行しています。ARM64の16KBカーネルを持つ実機の確認や、端末のFPS・長時間安定性の検証には代用しません。この時点ではARM64実機は未確認でした。続くRemote Test Labの結果は次節へ記載します。画像・ログ・結果は `Logs/android-flat/github-emulator16k-code6-*`、APKに対応する記録は `.record/device-validation.json` に保持します。
 
 長時間負荷はユーザーの指定で後回しです。配布資料と検証ツールはコミットし、実際のコミットSHA・配布APKのハッシュ・診断専用の追加分をローカルの検証記録へ対応づけます。Release・タグ・GitHub上のDraft・アップロードは行いません。
+
+## 16KBのARM64実機での確認（2026-10-24）
+
+ユーザーがSamsung Remote Test Labへの候補APKのアップロードを承認し、Edgeでログイン・16KB端末の予約・RDB接続を行いました。対象はGalaxy A56 5G（SM-A566B、Android 16／API 36）です。`PAGE_SIZE=16384`、`uname -m=aarch64`、ABIはarm64-v8a、native bridgeは0を確認しました。エミュレーターのARM64変換実行とは別の、ネイティブARM64実機の結果です。code 6をそのまま導入し、導入済みbase APKのSHA-256一致を確認しました。
+
+縦画面1080×2340／Safe Area 1080×2248／垂直FOV 90度で、初回同意のDon't send、街の描画、ジョイスティック前進と旋回、Slashと分離した切断片、設定メニュー、ポリシー全5ページと戻る操作を確認しました。ホームから同じPIDで復帰し、Statistics OFFの表示と未集計・未送信のログを確認しました。GPUはSamsung Xclipse 540、VP3C-NATIVEの圧縮パス、MultiDrawIndirectとDrawIndirectCountが有効、subgroupは64です。確認プロセスにUnityエラー・Fatal exception/signal・DexFile.finalizeのAssertionErrorはありませんでした。長時間の安定性やFPS測定の結果ではありません。
+
+A56の横画面は未確認です。ラボでの回転操作中にContent blocked／FLAG_SECUREの保護表示が出ました。確認時点のゲームのウィンドウにはFLAG_SECUREがなく、APKにもDevice Adminの要求はありませんでしたが、保護表示の発生源は確定していません。保護は変更せず通常起動へ戻し、ユーザーがラボの表示枠を横にした後もAndroid内容とアプリの実描画は縦のままでした。確認中にはDevice Adminの制限トースト、テストAPK撤去後のユーザー画像にはOneDriveの停止ダイアログも見えました。これらはゲームのクラッシュと混同せず、ラボ環境の観測事項として区別します。S25とPixelの縦横確認は前節の別の記録です。
+
+テストAPKはこの専用リモート端末から削除し、一時的な向きの指定を戻し、RDBを切断・停止しました。ユーザーにはWeb Clientの予約終了を案内しています。証拠は `Logs/android-flat/github-a56-16k-*` とAPK隣の `.record/device-validation.json` へ保存します。生ログ・端末画像は公開ファイルへ含めません。配布APKは変更しておらず、Release・タグ・GitHub上のDraft・アップロードは行っていません。

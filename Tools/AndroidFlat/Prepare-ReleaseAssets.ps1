@@ -45,7 +45,7 @@ APK: @APK@
 SHA-256: @HASH@
 署名証明書SHA-256: @CERT@
 
-公式16KBエミュレーター（x86_64上のARM64変換実行）で起動・切断・中断復帰を確認しました。ARM64の16KB実機は未確認です。両端末のDexFile.finalize警告は、ゲーム継続を確認していますが原因未確定です。
+16KB環境では公式エミュレーターとGalaxy A56 5G実機で起動・切断・中断復帰を確認しました。A56は縦画面のみの確認で、横画面はRemote Test Labの保護表示・表示回転の制約により未確認です。S25 UltraとPixel 6 ProのDexFile.finalize警告は、ゲーム継続を確認していますが原因未確定です。
 '@
 $notes=$notes.Replace('@VERSION@',$inspection.VersionName).Replace('@CODE@',[string]$inspection.VersionCode).Replace('@APK@',$fileName).Replace('@HASH@',$hash.ToLowerInvariant()).Replace('@CERT@',$inspection.CertificateSha256)
 [IO.File]::WriteAllText((Join-Path $Destination 'release-notes.draft.md'),$notes.Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
