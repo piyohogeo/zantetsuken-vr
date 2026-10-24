@@ -124,6 +124,7 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             CutSpatialSplit.TestGraphPrepareFailAllocation = -1;
             CutSpatialSplit.TestGraphShortSides = false;
             CutSpatialSplit.TestGraphRefuseDistribution = false;
+            CutSpatialSplit.TestGraphFirst = false;
         }
 
         private IEnumerator CombsBelowTheWaist(CutWorldRoot root, Vector3 at, LogicalFragmentId[] lowerOut, IReadOnlyList<float3> anchors = null, float toothTiltDegrees = 0f)
@@ -987,6 +988,373 @@ namespace Zantetsu.PhysicsCut.PlayModeTests
             Assert.That(CutSpatialSplit.DescribeGraphTime(false, 0.5, 0.25), Is.EqualTo("worker ms not measured (observation off in this build)"), "a number without a clock is not printed");
             Assert.That(CutSpatialSplit.DescribeGraphTime(true, 0.0, 0.0), Is.EqualTo("worker ms 0.000 (longest 0.000)"));
             Assert.That(CutSpatialSplit.DescribeGraphTime(true, 0.00125, 0.0005), Is.EqualTo("worker ms 1.250 (longest 0.500)"));
+        }
+
+        /// <summary>
+        /// **A captured bent-found sample replayed with the bent partition left out goes to the graph, or hands on to the mesh-led
+        /// plane** (GRAPH-CONNECT-8, the comparison's B condition): the U with a part inside is captured under the bent partition (a
+        /// bent result live); replayed with the saved setting the bent stage runs and finds (the history mark and the result both say
+        /// so); replayed with bent off the bent stage is neither effective nor entered, the graph stage is entered, and the attempt ends
+        /// as a complete graph placement or as a mesh-led plane; with the GJK iteration limit forced the graph is unfinished and the
+        /// mesh-led plane is entered. The line carries the requested, saved and effective bent setting and the stages' marks.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheReplayOfABentFoundSample_WithTheBentOff_GoesToTheGraph_OrHandsOnToTheMeshLedPlane()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = SplitOnWithBent(cutConvexes: true);
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            LogicalFragmentId body = AddUWithAPartInside(root, new Vector3(0f, 0f, 0f));
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides, lowerConvexes: 5);
+            LogicalFragmentId lower = sides[1];
+            Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Candidate), "the side with the U and the part");
+            remaining[0] = 1.0;
+            // the lower side (the U with the part) is the sample wanted; the upper side (one convex) may be examined first and end NotFound
+            // through the mesh-led plane -- so the wait is for the lower side: published, or marked after a NotFound of its own
+            yield return Until(() => split.Published == 1 || split.Examine(lower) == SpatialSplitPass.Suppressed, "the bent partition ran live on the lower side");
+            remaining[0] = 0.0;
+            Assert.That(split.Published, Is.EqualTo(1), "the live attempt published by the bent partition: " + split.LastEnd);
+            SpatialSplitSearchResult lastLive = split.LastSearch;
+            Assert.That(CutSpatialSplit.IsBentResult(in lastLive), Is.True);
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            Assert.That(sink.ResultsWritten, Is.GreaterThan(0));
+            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            SpatialSplitSample sample = SpatialSplitSample.Read(file);
+            Assert.That(sample.bentSearch, Is.True, "the saved setting");
+            Assert.That(sample.anchors == null || sample.anchors.Length == 0, Is.True, "anchor-less: the graph stage applies");
+            try
+            {
+                // the saved setting with the graph on: the bent stage runs and finds; the graph is not entered
+                var saved = new SpatialSplitReplayOptions { spanInput = true, graph = true };
+                SpatialSplitReplayResult rs = SpatialSplitReplay.Run(sample, saved);
+                Assert.That(rs.error, Is.Null, rs.error);
+                Assert.That(rs.bentEffective && rs.bentRan && rs.bent, Is.True, "effective, entered, found");
+                Assert.That(rs.graphEntered, Is.False);
+                // bent off: neither effective nor entered; the graph stage entered; a complete graph placement or the mesh-led plane
+                var off = new SpatialSplitReplayOptions { spanInput = true, graph = true, bentOff = true };
+                SpatialSplitReplayResult ro = SpatialSplitReplay.Run(sample, off);
+                Assert.That(ro.error, Is.Null, ro.error);
+                Assert.That(ro.bentSaved, Is.True); Assert.That(ro.bentEffective, Is.False); Assert.That(ro.bentRan, Is.False); Assert.That(ro.bent, Is.False);
+                Assert.That(ro.search.bentFramesTried, Is.Zero);
+                Assert.That(ro.graphEntered, Is.True, "anchor-less with convexes: the graph stage is entered when the bent partition is left out");
+                TestContext.Out.WriteLine("bent off: graph " + ro.graph.verdict + "/" + ro.graph.stop + ", meshLed " + ro.meshLedRan + ", outcome " + ro.outcome + ", cut " + ro.cut);
+                Assert.That(ro.GraphComplete || ro.meshLedRan, Is.True, "a complete graph placement, or the mesh-led plane entered");
+                if (ro.GraphComplete) Assert.That(ro.meshLedRan, Is.False, "the graph placement leaves the mesh-led plane out");
+                // the session, both ways: the lines and the summaries
+                string summarySaved = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-saved"), saved, out bool allSaved, out _);
+                string summaryOff = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-bent-off"), off, out bool allOff, out _);
+                TestContext.Out.WriteLine(summarySaved); TestContext.Out.WriteLine(summaryOff);
+                Assert.That(allSaved, Is.True, "saved: every listed sample replayed, every check passed");
+                Assert.That(allOff, Is.True, "off: the same, and the bent partition neither effective nor entered");
+                StringAssert.Contains("options: inputMode span, graph on", summarySaved); StringAssert.Contains(", bent saved, order current, list", summarySaved);
+                StringAssert.Contains(", bent off, order current, list", summaryOff);
+                StringAssert.Contains("bent stage (off, asked for: the saved setting not followed): effective in 0 samples, ran 0, found 0", summaryOff);
+                int samplesInSession = Directory.GetFiles(session, "*.zss.gz").Length;
+                StringAssert.Contains("bent stage (the saved setting): effective in " + samplesInSession + " samples, ran 1, found 1", summarySaved, "the bent stage effective on every sample of the session, entered and found on the lower side");
+                string linesSaved = File.ReadAllText(Path.Combine(folder, "span-graph-saved", "replay.jsonl"));
+                string linesOff = File.ReadAllText(Path.Combine(folder, "span-graph-bent-off", "replay.jsonl"));
+                StringAssert.Contains("\"bentRequested\":\"saved\",\"bentSaved\":true,\"bentEffective\":true", linesSaved);
+                StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":true,\"graph\":false,\"meshLed\":false}", linesSaved);
+                StringAssert.Contains("\"bentRequested\":\"off\",\"bentSaved\":true,\"bentEffective\":false", linesOff);
+                StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":false,\"graph\":true,\"meshLed\":" + (ro.meshLedRan ? "true" : "false") + "}", linesOff);
+                StringAssert.Contains(",\"anchorsDistributed\":" + (ro.anchorsDistributed ? "true" : "false") + ",\"cut\":" + (ro.cut ? "true" : "false"), linesOff);
+                // the graph left unfinished by a work budget of 1 (a fixed limit; this input needs no GJK, so the iteration hook would not
+                // bite): the mesh-led plane is entered; not a graph placement
+                SpatialSplitGraphLimits l = SpatialSplitGraphLimits.Default;
+                var tight = new SpatialSplitReplayOptions { spanInput = true, graph = true, bentOff = true, graphLimits = new SpatialSplitGraphLimits(l.maxTriangles, l.maxConvexes, l.maxVertexSpan, l.maxNodes, l.maxCandidates, l.maxGraphBytes, 1, l.deferFirstFrames, l.deferMaxFrames) };
+                SpatialSplitReplayResult ru = SpatialSplitReplay.Run(sample, tight);
+                Assert.That(ru.error, Is.Null, ru.error);
+                Assert.That(ru.graphEntered, Is.True);
+                Assert.That(ru.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished), ru.graph.reason);
+                Assert.That(ru.graphLed, Is.False); Assert.That(ru.GraphComplete, Is.False); Assert.That(ru.GraphIncomplete, Is.False, "unfinished is not an incomplete Separable");
+                Assert.That(ru.meshLedRan, Is.True, "the mesh-led plane follows an unfinished graph stage (cutConvexes on)");
+                Assert.That(ru.bentRan, Is.False);
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+            }
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **An anchored sample replayed with the bent partition left out does not enter the graph stage** (GRAPH-CONNECT-8): the
+        /// graph's conditions (no anchors, two convexes or more) are the product's and are not bypassed by the comparison's switch;
+        /// the line says so (anchorCount, the graph not entered, the all-path anchors flag written).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheReplayOfAnAnchoredSample_WithTheBentOff_DoesNotEnterTheGraph()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = SplitOn();
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            var lowers = new LogicalFragmentId[1];
+            yield return CombsBelowTheWaist(root, new Vector3(0f, 0f, 0f), lowers, anchors: new[] { new float3(3f, -1.5f, 0f) });
+            remaining[0] = 1.0;
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.NotFound) + split.Published > 0 && !split.HasAttempt, "the live attempt ended");
+            remaining[0] = 0.0;
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            SpatialSplitSample sample = SpatialSplitSample.Read(file);
+            Assert.That(sample.anchors != null && sample.anchors.Length > 0, Is.True, "an anchored sample");
+            var off = new SpatialSplitReplayOptions { spanInput = true, graph = true, bentOff = true };
+            SpatialSplitReplayResult r = SpatialSplitReplay.Run(sample, off);
+            Assert.That(r.error, Is.Null, r.error);
+            Assert.That(r.graphEntered, Is.False, "anchored: the graph stage does not apply, bent off or not");
+            Assert.That(r.bentRan, Is.False);
+            string summary = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-bent-off"), off, out bool all, out _);
+            TestContext.Out.WriteLine(summary);
+            Assert.That(all, Is.True, summary);
+            StringAssert.Contains("graph stage: entered 0", summary);
+            string lines = File.ReadAllText(Path.Combine(folder, "span-graph-bent-off", "replay.jsonl"));
+            StringAssert.Contains("\"anchorCount\":" + sample.anchors.Length, lines);
+            StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":false,\"graph\":false,\"meshLed\":", lines);
+            StringAssert.Contains(",\"anchorsDistributed\":", lines);
+            StringAssert.Contains("\"graphStages\":{\"entered\":false", lines);
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **The graph-first order (the configuration C under comparison) runs the bent partition only after an unfinished graph stage**
+        /// (GRAPH-CONNECT-10 §1): on the U with a part inside (a bent result under the order as before) the graph is Separable and the
+        /// bent partition is not run; with a work budget of 1 the graph is Unfinished(Work) and the bent partition runs after it and
+        /// finds; with the sides' allocation refused the pre-recorded Unfinished(Allocation) sends the attempt to the bent partition
+        /// without the engine's bodies; an Invalid graph ends the attempt without the bent partition. The line says the order asked for
+        /// and whether it applied; the summary counts the fallbacks.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheGraphFirstOrder_RunsTheBentPartition_OnlyAfterAnUnfinishedGraph()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            split.Settings = SplitOnWithBent(cutConvexes: true);
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            LogicalFragmentId body = AddUWithAPartInside(root, new Vector3(0f, 0f, 0f));
+            yield return null;
+            var sides = new LogicalFragmentId[2];
+            yield return CutAtTheWaist(root, body, sides, lowerConvexes: 5);
+            LogicalFragmentId lower = sides[1];
+            remaining[0] = 1.0;
+            yield return Until(() => split.Published == 1 || split.Examine(lower) == SpatialSplitPass.Suppressed, "the bent partition ran live on the lower side");
+            remaining[0] = 0.0;
+            Assert.That(split.Published, Is.EqualTo(1), "the live attempt published by the bent partition: " + split.LastEnd);
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            string file = Directory.GetFiles(session, "*.zss.gz").OrderBy(f => f).Last();
+            SpatialSplitSample sample = SpatialSplitSample.Read(file);
+            Assert.That(sample.bentSearch, Is.True, "the saved setting: on");
+            try
+            {
+                var c = new SpatialSplitReplayOptions { spanInput = true, graph = true, graphFirst = true };
+                // Separable first: no bent partition, no mesh-led plane
+                SpatialSplitReplayResult rs = SpatialSplitReplay.Run(sample, c);
+                Assert.That(rs.error, Is.Null, rs.error);
+                Assert.That(rs.graphFirstEffective, Is.True, "anchor-less with convexes, the graph on: the order applied");
+                Assert.That(rs.graphEntered && rs.graph.verdict == SpatialSplitGraphVerdict.Separable && rs.GraphComplete, Is.True, "a complete graph placement");
+                Assert.That(rs.bentEffective, Is.True, "the saved setting is followed"); Assert.That(rs.bentRan, Is.False, "not run before the graph, not after a Separable"); Assert.That(rs.meshLedRan, Is.False);
+                // Unfinished(Work) by a budget of 1: the bent partition after the graph, and it finds
+                SpatialSplitGraphLimits l = SpatialSplitGraphLimits.Default;
+                var tight = new SpatialSplitReplayOptions { spanInput = true, graph = true, graphFirst = true, graphLimits = new SpatialSplitGraphLimits(l.maxTriangles, l.maxConvexes, l.maxVertexSpan, l.maxNodes, l.maxCandidates, l.maxGraphBytes, 1, l.deferFirstFrames, l.deferMaxFrames) };
+                SpatialSplitReplayResult ru = SpatialSplitReplay.Run(sample, tight);
+                Assert.That(ru.error, Is.Null, ru.error);
+                Assert.That(ru.graphEntered && ru.graph.verdict == SpatialSplitGraphVerdict.Unfinished, Is.True, "unfinished: " + ru.graph.verdict + "/" + ru.graph.stop);
+                Assert.That(ru.bentRan, Is.True, "the bent partition after the unfinished graph");
+                Assert.That(ru.bent, Is.True, "and it finds what it found live");
+                Assert.That(ru.meshLedRan, Is.False, "the bent result leaves the mesh-led plane out");
+                Assert.That(ru.distributed && ru.anchorsDistributed && ru.classified && ru.kernelStatus == "Ok" && ru.checkedSharing && ru.ChecksPass, Is.True, "the bent result complete and checked");
+                // the pre-recorded Unfinished(Allocation): no bodies, the bent partition still
+                CutSpatialSplit.TestFailGraphSidesAllocation = true;
+                SpatialSplitReplayResult ra = SpatialSplitReplay.Run(sample, c);
+                CutSpatialSplit.TestFailGraphSidesAllocation = false;
+                Assert.That(ra.error, Is.Null, ra.error);
+                Assert.That(ra.graphEntered, Is.True, "the record counts as the stage's");
+                Assert.That(ra.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished)); Assert.That(ra.graph.stop, Is.EqualTo(SpatialSplitGraphStop.Allocation));
+                Assert.That(ra.graph.bodiesRan, Is.False, "the engine's bodies were not called");
+                Assert.That(ra.bentRan && ra.bent, Is.True, "the bent partition after the pre-recorded unfinished stage");
+                // Invalid: the attempt ends, no bent partition, no mesh-led plane
+                CutSpatialSplit.TestGraphShortSides = true;
+                SpatialSplitReplayResult ri = SpatialSplitReplay.Run(sample, c);
+                CutSpatialSplit.TestGraphShortSides = false;
+                Assert.That(ri.error, Is.Null, ri.error);
+                Assert.That(ri.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Invalid));
+                Assert.That(ri.bentRan, Is.False, "an invalid input is not hidden by a fallback"); Assert.That(ri.meshLedRan, Is.False); Assert.That(ri.found, Is.False);
+                // the session: the line's order fields and the summary's fallback counts
+                string summaryC = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-first"), c, out bool allC, out _);
+                TestContext.Out.WriteLine(summaryC);
+                Assert.That(allC, Is.True, summaryC);
+                StringAssert.Contains(", bent saved, order graph-first, list", summaryC);
+                StringAssert.Contains("order: graph-first applied to 1 samples; bent fallback after an unfinished graph: ran 0, found 0", summaryC);
+                string lines = File.ReadAllText(Path.Combine(folder, "span-graph-first", "replay.jsonl"));
+                StringAssert.Contains("\"bentRequested\":\"saved\",\"bentSaved\":true,\"bentEffective\":true,\"orderRequested\":\"graph-first\",\"graphFirstEffective\":true", lines);
+                StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":false,\"graph\":true,\"meshLed\":false}", lines);
+                string summaryT = SpatialSplitReplay.RunSession(session, Path.Combine(folder, "span-graph-first-tight"), tight, out bool allT, out _);
+                TestContext.Out.WriteLine(summaryT);
+                Assert.That(allT, Is.True, summaryT);
+                StringAssert.Contains("bent fallback after an unfinished graph: ran 1, found 1", summaryT);
+                string linesT = File.ReadAllText(Path.Combine(folder, "span-graph-first-tight", "replay.jsonl"));
+                StringAssert.Contains("\"stagesRan\":{\"plane\":true,\"bent\":true,\"graph\":true,\"meshLed\":false}", linesT);
+                // the order as before on the same sample: the bent partition first, the graph not entered (A unchanged)
+                SpatialSplitReplayResult rA = SpatialSplitReplay.Run(sample, new SpatialSplitReplayOptions { spanInput = true, graph = true });
+                Assert.That(rA.graphFirstEffective, Is.False); Assert.That(rA.bentRan && rA.bent, Is.True); Assert.That(rA.graphEntered, Is.False);
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+            }
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **In the graph-first order a sample whose saved setting has the bent partition off gets no fallback** (GRAPH-CONNECT-10 §2-3 f):
+        /// the combs captured with the bent partition off, replayed graph-first with a work budget of 1: the graph is Unfinished, the bent
+        /// partition is not run (the saved setting is respected), the mesh-led plane is not entered either (cutConvexes off).
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheGraphFirstOrder_RespectsASavedBentOff_NoFallback()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            CutSpatialSplitSettings settings = SplitOn();
+            settings.bentSearch = false;
+            split.Settings = settings;
+            string folder = NewCaptureFolder();
+            string session = Path.Combine(folder, "session");
+            var sink = new SpatialSplitCaptureSink(session, SpatialSplitCaptureLimits.Default, "PlayMode case", null);
+            split.Capture = sink;
+            var lowers = new LogicalFragmentId[1];
+            yield return CombsBelowTheWaist(root, new Vector3(0f, 0f, 0f), lowers);
+            remaining[0] = 1.0;
+            yield return Until(() => split.EndedAs(SpatialSplitEnd.NotFound) == 1 && !split.HasAttempt, "the planes alone ran, the input captured");
+            remaining[0] = 0.0;
+            split.Capture = null;
+            Assert.That(sink.Close(20.0), Is.True, "the session wrote everything");
+            SpatialSplitSample sample = SpatialSplitSample.Read(Directory.GetFiles(session, "*.zss.gz").Single());
+            Assert.That(sample.bentSearch, Is.False, "the saved setting: off");
+            SpatialSplitGraphLimits l = SpatialSplitGraphLimits.Default;
+            var tight = new SpatialSplitReplayOptions { spanInput = true, graph = true, graphFirst = true, graphLimits = new SpatialSplitGraphLimits(l.maxTriangles, l.maxConvexes, l.maxVertexSpan, l.maxNodes, l.maxCandidates, l.maxGraphBytes, 1, l.deferFirstFrames, l.deferMaxFrames) };
+            SpatialSplitReplayResult r = SpatialSplitReplay.Run(sample, tight);
+            Assert.That(r.error, Is.Null, r.error);
+            Assert.That(r.graphFirstEffective, Is.True);
+            Assert.That(r.graph.verdict, Is.EqualTo(SpatialSplitGraphVerdict.Unfinished), r.graph.reason);
+            Assert.That(r.bentEffective, Is.False); Assert.That(r.bentRan, Is.False, "no fallback: the saved setting has the bent partition off");
+            Assert.That(r.meshLedRan, Is.False); Assert.That(r.found, Is.False);
+            split.Settings = default;
+            yield return EndWorld(root);
+        }
+
+        /// <summary>
+        /// **Live, the graph-first order falls back to the bent partition when the engine is not prepared, and keeps the order as before
+        /// when the graph is off for the world** (GRAPH-CONNECT-10 §2-3 c, d): the test hook puts every issued attempt in the C order; the
+        /// U with a part inside, the graph and the bent partition on; the engine's preparation revoked before the attempt -> the graph
+        /// stage ends Unfinished(NotPrepared) and the bent partition publishes; then a preparation that fails leaves the world without
+        /// the graph -> the next attempt runs the bent partition first, the graph stage not entered.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SpatialSplitGraph_TheGraphFirstOrderLive_FallsBackOnNotPrepared_AndKeepsTheOrderAsBefore_WhenTheGraphIsOff()
+        {
+            ResetGraphTestHooks();
+            CutWorldRoot root = NewWorld(out Shader _);
+            root.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining = new double[1];
+            CutSpatialSplit split = SplitClosed(root, remaining, theProductsOwnStepEstimate: true);
+            try
+            {
+                CutSpatialSplit.TestGraphFirst = true;
+                CutSpatialSplitSettings settings = SplitOnWithGraph(cutConvexes: true);
+                settings.bentSearch = true;
+                settings.bentLimits = SpatialSplitBentLimits.Default;
+                split.Settings = settings;
+                Assert.That(split.GraphEffective, Is.True, split.GraphRefusal);
+                LogicalFragmentId body = AddUWithAPartInside(root, new Vector3(0f, 0f, 0f));
+                yield return null;
+                var sides = new LogicalFragmentId[2];
+                yield return CutAtTheWaist(root, body, sides, lowerConvexes: 5);
+                LogicalFragmentId lower = sides[1];
+                Assert.That(split.Examine(lower), Is.EqualTo(SpatialSplitPass.Candidate));
+                // the preparation revoked: the worker's contract refuses the bodies -> Unfinished(NotPrepared) -> the bent partition
+                SpatialSplitGraph.ResetPreparedForTests();
+                remaining[0] = 1.0;
+                yield return Until(() => split.Published == 1 || split.Examine(lower) == SpatialSplitPass.Suppressed, "the attempt on the lower side ended");
+                remaining[0] = 0.0;
+                TestContext.Out.WriteLine(split.Describe());
+                Assert.That(split.Published, Is.EqualTo(1), "published by the bent fallback: " + split.LastEnd + " / " + split.LastRefusal);
+                Assert.That(split.PublishedBent, Is.EqualTo(1));
+                Assert.That(split.GraphSearches, Is.GreaterThanOrEqualTo(1), "the graph stage was entered first");
+                Assert.That(split.GraphUnfinishedAs(SpatialSplitGraphStop.NotPrepared), Is.GreaterThanOrEqualTo(1), "and ended unfinished for the preparation contract");
+                Assert.That(split.PublishedGraph, Is.Zero);
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+            }
+            split.Settings = default;
+            yield return EndWorld(root);
+
+            // a preparation that fails leaves a NEW world without the graph (a world's own successful preparation is never revoked):
+            // the order as before there -- the bent partition first, the graph stage not entered -- the C hook notwithstanding
+            SpatialSplitGraph.ResetPreparedForTests();
+            CutWorldRoot second = NewWorld(out Shader _);
+            second.Driver.RemainingMainSeconds = () => 1.0;
+            var remaining2 = new double[1];
+            CutSpatialSplit split2 = SplitClosed(second, remaining2, theProductsOwnStepEstimate: true);
+            try
+            {
+                CutSpatialSplit.TestGraphPrepareFailAllocation = 2;
+                CutSpatialSplit.TestGraphFirst = true;
+                CutSpatialSplitSettings settings2 = SplitOnWithGraph(cutConvexes: true);
+                settings2.bentSearch = true;
+                settings2.bentLimits = SpatialSplitBentLimits.Default;
+                split2.Settings = settings2;
+                Assert.That(split2.GraphEffective, Is.False, "the graph is off for this world: " + split2.GraphRefusal);
+                LogicalFragmentId body2 = AddUWithAPartInside(second, new Vector3(0f, 0f, 0f));
+                yield return null;
+                var sides2 = new LogicalFragmentId[2];
+                yield return CutAtTheWaist(second, body2, sides2, lowerConvexes: 5);
+                LogicalFragmentId lower2 = sides2[1];
+                remaining2[0] = 1.0;
+                yield return Until(() => split2.Published == 1 || split2.Examine(lower2) == SpatialSplitPass.Suppressed, "the attempt on the lower side ended (graph off)");
+                remaining2[0] = 0.0;
+                Assert.That(split2.Published, Is.EqualTo(1), "published by the bent partition in the order as before: " + split2.LastEnd);
+                Assert.That(split2.PublishedBent, Is.EqualTo(1));
+                Assert.That(split2.GraphSearches, Is.Zero, "the graph stage was not entered: the graph is off for the world");
+            }
+            finally
+            {
+                ResetGraphTestHooks();
+                SpatialSplitGraph.Prepare();   // leave the engine prepared for the cases that follow
+            }
+            split2.Settings = default;
+            yield return EndWorld(second);
         }
 
         /// <summary>

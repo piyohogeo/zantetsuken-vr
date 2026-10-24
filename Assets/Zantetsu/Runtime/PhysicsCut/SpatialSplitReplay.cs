@@ -171,6 +171,14 @@ namespace Zantetsu.PhysicsCut
         internal long world, attempt;
         internal string error, inputCheck, outcome;
         internal bool meshLed, bent, found, distributed, classified, anchorsDistributed, cut;
+        // The stages' history marks (GRAPH-CONNECT-8): the bent search was entered (search.bent, kept when the mesh-led plane follows;
+        // not the bent RESULT, which is 'bent' above), the mesh-led plane was entered (search.meshLed); the bent setting as saved in the
+        // sample and as the attempt ran it; the bent search's own clock (the FindBentSurface call; 0 in a build that does not observe);
+        // the convexes the mesh-led plane crossed; the ids for the series (sessionId/world/rootFragment).
+        internal bool bentRan, meshLedRan, bentSaved, bentEffective;
+        internal bool graphFirstEffective;   // GRAPH-CONNECT-10: the graph-first order applied to this attempt
+        internal double bentSeconds;
+        internal int crossingConvexes, fragment, rootFragment;
         internal string kernelStatus;
         internal int positiveTriangles, negativeTriangles;
         internal double seconds;
@@ -229,17 +237,33 @@ namespace Zantetsu.PhysicsCut
         public bool graph;
         public SpatialSplitGraphLimits graphLimits = SpatialSplitGraphLimits.Default;
         public string listPath;
+        /// <summary>The bent partition left out of every attempt (GRAPH-CONNECT-8, the comparison's B condition): the sample's saved
+        /// bentSearch is not followed. Only with the graph on the span input. Default false: the saved setting, as before.</summary>
+        public bool bentOff;
+        /// <summary>The configuration C order (GRAPH-CONNECT-10): the graph stage before the bent partition where it applies, the bent
+        /// partition on an unfinished graph. Only with the graph on the span input, and not together with bentOff. Default false: the order as before.</summary>
+        public bool graphFirst;
 
         public static SpatialSplitReplayOptions Default => new SpatialSplitReplayOptions();
 
         public string InputName => spanInput ? "span" : "compact";
+        public string BentName => bentOff ? "off" : "saved";
+        public string OrderName => graphFirst ? "graph-first" : "current";
 
         /// <summary>
         /// Reads the options from launch arguments named by the caller (the Player's and the Editor batch's names differ): the input
         /// argument's value compact or span, the graph flag's presence, the list argument's absolute file. False with
         /// <paramref name="refusal"/> when a value is missing or unknown, the list is not absolute, or the graph is asked for without the span input.
         /// </summary>
-        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, out SpatialSplitReplayOptions options, out string refusal)
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, out SpatialSplitReplayOptions options, out string refusal) =>
+            TryRead(arguments, inputArgument, graphArgument, listArgument, null, out options, out refusal);
+
+        /// <summary>As above, with the bent argument (saved | off): off is refused without the graph on the span input; a missing or unknown value is refused.</summary>
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, out SpatialSplitReplayOptions options, out string refusal) =>
+            TryRead(arguments, inputArgument, graphArgument, listArgument, bentArgument, null, out options, out refusal);
+
+        /// <summary>As above, with the order argument (current | graph-first): graph-first is refused without the graph on the span input, and together with bent off.</summary>
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument, out SpatialSplitReplayOptions options, out string refusal)
         {
             options = new SpatialSplitReplayOptions();
             refusal = null;
@@ -263,6 +287,27 @@ namespace Zantetsu.PhysicsCut
                 if (value == null) { refusal = listArgument + " has no value"; return false; }
                 if (!Path.IsPathRooted(value)) { refusal = listArgument + " takes an absolute file"; return false; }
                 options.listPath = value;
+            }
+
+            int bentAt = bentArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, bentArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (bentAt >= 0)
+            {
+                string value = ValueAt(bentAt);
+                if (value == null) { refusal = bentArgument + " has no value"; return false; }
+                if (string.Equals(value, "off", StringComparison.OrdinalIgnoreCase)) options.bentOff = true;
+                else if (!string.Equals(value, "saved", StringComparison.OrdinalIgnoreCase)) { refusal = bentArgument + " takes saved or off, not '" + value + "'"; return false; }
+                if (options.bentOff && !(options.graph && options.spanInput)) { refusal = bentArgument + " off needs " + graphArgument + " and " + inputArgument + " span (the comparison's B condition: plane, graph, mesh-led)"; return false; }
+            }
+
+            int orderAt = orderArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, orderArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (orderAt >= 0)
+            {
+                string value = ValueAt(orderAt);
+                if (value == null) { refusal = orderArgument + " has no value"; return false; }
+                if (string.Equals(value, "graph-first", StringComparison.OrdinalIgnoreCase)) options.graphFirst = true;
+                else if (!string.Equals(value, "current", StringComparison.OrdinalIgnoreCase)) { refusal = orderArgument + " takes current or graph-first, not '" + value + "'"; return false; }
+                if (options.graphFirst && !(options.graph && options.spanInput)) { refusal = orderArgument + " graph-first needs " + graphArgument + " and " + inputArgument + " span (the comparison's C condition)"; return false; }
+                if (options.graphFirst && options.bentOff) { refusal = orderArgument + " graph-first and " + bentArgument + " off are different conditions (C and B): not together"; return false; }
             }
 
             return true;
@@ -385,6 +430,8 @@ namespace Zantetsu.PhysicsCut
             }
 
             int graphEntered = 0, graphLedCount = 0, graphDistributed = 0, graphClassified = 0, graphKernelOk = 0, graphBurstRan = 0, graphManaged = 0, graphBodiesNotRun = 0, graphCheckFailures = 0, graphIncomplete = 0;
+            int bentRanCount = 0, bentFoundCount = 0, bentEffectiveCount = 0, graphFirstCount = 0, fallbackRan = 0, fallbackFound = 0;
+            var bentTimes = new List<double>();
             var graphVerdicts = new SortedDictionary<string, int>(StringComparer.Ordinal);
             var graphTimes = new List<double>();
 
@@ -424,6 +471,16 @@ namespace Zantetsu.PhysicsCut
 
                     SpatialSplitReplayResult replay = Run(sample, options);
                     replayed++;
+                    // the bent stage's counts on every replayed line (not only where the graph stage was entered)
+                    if (replay.bentEffective) bentEffectiveCount++;
+                    if (replay.bentRan) { bentRanCount++; bentTimes.Add(replay.bentSeconds); }
+                    if (replay.bent) bentFoundCount++;
+                    if (replay.graphFirstEffective)
+                    {
+                        graphFirstCount++;
+                        // the bent fallback of the C order: the graph stage ended Unfinished and the bent partition ran after it
+                        if (replay.graphEntered && replay.graph.verdict == SpatialSplitGraphVerdict.Unfinished && replay.bentRan) { fallbackRan++; if (replay.bent) fallbackFound++; }
+                    }
                     if (replay.graphEntered)
                     {
                         graphEntered++;
@@ -515,6 +572,12 @@ namespace Zantetsu.PhysicsCut
                         .Append(",\"input\":").Append(SpatialSplitCaptureSink.Json(replay.inputCheck ?? ""))
                         .Append(",\"outcome\":").Append(SpatialSplitCaptureSink.Json(replay.outcome ?? ""))
                         .Append(",\"meshLed\":").Append(replay.meshLed ? "true" : "false").Append(",\"bent\":").Append(replay.bent ? "true" : "false")
+                        // GRAPH-CONNECT-8: which stages ran (the history marks, not the result), the anchors of every path, the cut, the bent clock
+                        .Append(",\"stagesRan\":{\"plane\":").Append(replay.ran ? "true" : "false").Append(",\"bent\":").Append(replay.bentRan ? "true" : "false")
+                        .Append(",\"graph\":").Append(replay.graphEntered ? "true" : "false").Append(",\"meshLed\":").Append(replay.meshLedRan ? "true" : "false").Append('}')
+                        .Append(",\"anchorsDistributed\":").Append(replay.anchorsDistributed ? "true" : "false")
+                        .Append(",\"cut\":").Append(replay.cut ? "true" : "false").Append(",\"crossingConvexes\":").Append(replay.crossingConvexes)
+                        .Append(",\"bentMs\":").Append((replay.bentSeconds * 1000.0).ToString("R", inv))
                         .Append(",\"distributed\":").Append(replay.distributed ? "true" : "false").Append(",\"classified\":").Append(replay.classified ? "true" : "false")
                         .Append(",\"kernelStatus\":").Append(SpatialSplitCaptureSink.Json(replay.kernelStatus ?? ""))
                         .Append(",\"positiveTriangles\":").Append(replay.positiveTriangles).Append(",\"negativeTriangles\":").Append(replay.negativeTriangles)
@@ -539,6 +602,10 @@ namespace Zantetsu.PhysicsCut
                         .Append(",\"checkNote\":").Append(SpatialSplitCaptureSink.Json(replay.checkNote ?? ""))
                         .Append(",\"inputMode\":").Append(SpatialSplitCaptureSink.Json(options.InputName)).Append(",\"graphOn\":").Append(options.graph ? "true" : "false")
                         .Append(",\"sessionId\":").Append(SpatialSplitCaptureSink.Json(sample.sessionId ?? "")).Append(",\"sha256\":").Append(SpatialSplitCaptureSink.Json(sample.sha256 ?? ""))
+                        .Append(",\"fragment\":").Append(replay.fragment).Append(",\"rootFragment\":").Append(replay.rootFragment)
+                        .Append(",\"bentRequested\":").Append(SpatialSplitCaptureSink.Json(options.BentName)).Append(",\"bentSaved\":").Append(replay.bentSaved ? "true" : "false")
+                        .Append(",\"bentEffective\":").Append(replay.bentEffective ? "true" : "false")
+                        .Append(",\"orderRequested\":").Append(SpatialSplitCaptureSink.Json(options.OrderName)).Append(",\"graphFirstEffective\":").Append(replay.graphFirstEffective ? "true" : "false")
                         .Append(",\"anchorCount\":").Append(sample.anchors != null ? sample.anchors.Length : 0).Append(",\"convexCount\":").Append(sample.convexes != null ? sample.convexes.Length : 0)
                         .Append(",\"graphStages\":{\"entered\":").Append(replay.graphEntered ? "true" : "false").Append(",\"led\":").Append(replay.graphLed ? "true" : "false")
                         .Append(",\"distributed\":").Append(replay.graphLed && replay.distributed ? "true" : "false").Append(",\"anchorsDistributed\":").Append(replay.graphLed && replay.anchorsDistributed ? "true" : "false")
@@ -589,7 +656,7 @@ namespace Zantetsu.PhysicsCut
                 .AppendLine("replay outcomes: " + Join(outcomes))
                 .AppendLine("options: inputMode " + options.InputName + ", graph " + (options.graph ? "on (prepared " + (graphPrepared ? "yes" : "NO") + "; limits: triangles " + options.graphLimits.maxTriangles + ", convexes " + options.graphLimits.maxConvexes
                         + ", span " + options.graphLimits.maxVertexSpan + ", nodes " + options.graphLimits.maxNodes + ", candidates " + options.graphLimits.maxCandidates + ", bytes " + options.graphLimits.maxGraphBytes + ", work " + options.graphLimits.workBudget + ")" : "off")
-                    + ", list " + (options.listPath ?? "none"))
+                    + ", bent " + options.BentName + ", order " + options.OrderName + ", list " + (options.listPath ?? "none"))
                 .AppendLine(options.listPath == null ? "tuning list: none (every sample of the folder)"
                     : "tuning list for session " + sessionId + ": entries " + listEntries + ", replayed " + listed + ", missing " + listMissing + ", duplicate " + listDuplicates + ", hash differs from the list " + listHashDiffers
                         + ", files left out (not listed) " + listLeftOut + "; list check " + (listOk ? "passed" : "FAILED"))
@@ -597,6 +664,10 @@ namespace Zantetsu.PhysicsCut
                     : "graph stage: entered " + graphEntered + " (verdicts: " + Join(graphVerdicts) + "); led " + graphLedCount + ", distributed " + graphDistributed + ", classified " + graphClassified + ", kernel Ok " + graphKernelOk
                         + ", Separable but incomplete " + graphIncomplete + "; bodies through Burst " + graphBurstRan + ", managed " + graphManaged + ", not run " + graphBodiesNotRun + "; graph sharing checks failed " + graphCheckFailures
                         + (graphTimes.Count == 0 ? "" : "; graph stage time (this machine): median " + Ms(graphTimes, 0.5, c) + " ms, p95 " + Ms(graphTimes, 0.95, c) + " ms, p99 " + Ms(graphTimes, 0.99, c) + " ms, max " + Ms(graphTimes, 1.0, c) + " ms"))
+                .AppendLine("bent stage (" + (options.bentOff ? "off, asked for: the saved setting not followed" : "the saved setting") + "): effective in " + bentEffectiveCount + " samples, ran " + bentRanCount + ", found " + bentFoundCount
+                    + (bentTimes.Count == 0 ? "" : "; bent stage time (this machine, the FindBentSurface call): median " + Ms(bentTimes, 0.5, c) + " ms, p95 " + Ms(bentTimes, 0.95, c) + " ms, p99 " + Ms(bentTimes, 0.99, c) + " ms, max " + Ms(bentTimes, 1.0, c) + " ms"))
+                .AppendLine(!options.graphFirst ? "order: current (the bent partition before the graph stage)"
+                    : "order: graph-first applied to " + graphFirstCount + " samples; bent fallback after an unfinished graph: ran " + fallbackRan + ", found " + fallbackFound)
                 .AppendLine(times.Count == 0 ? "replay search time: none"
                     : "replay search time (this machine, not the live one's): median " + (times[times.Count / 2] * 1000.0).ToString("F3", c) + " ms, p95 "
                         + (times[Math.Min(times.Count - 1, (int)(times.Count * 0.95))] * 1000.0).ToString("F3", c) + " ms, max " + (times[times.Count - 1] * 1000.0).ToString("F3", c) + " ms");
@@ -617,7 +688,8 @@ namespace Zantetsu.PhysicsCut
                 // With the graph stage on, the live result is not what the replay must equal (the live search had no graph stage): the
                 // outcome is what the list, the replay and the graph's own checks say; the comparison with other replays is offline.
                 allSame = !none && replayed == samples.Count && unreadable == 0 && hashDiffers == 0 && errors == 0 && inputDiffers == 0 && graphCheckFailures == 0 && graphIncomplete == 0
-                    && checkFailures == 0 && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk && graphPrepared;
+                    && checkFailures == 0 && unindexed == 0 && brokenIndexLines == 0 && brokenResultLines == 0 && listOk && graphPrepared
+                    && (!options.bentOff || (bentEffectiveCount == 0 && bentRanCount == 0));   // B: the bent partition neither effective nor entered anywhere
                 if (none) summary.AppendLine("NO SAMPLE: nothing to replay in this folder (no index line and no sample file)");
                 summary.AppendLine("graph on: every listed sample replayed without error, the list check passed, every Separable complete (shared out, anchors, classified, kernel Ok, checked), every graph and existing sharing check passed (the live comparison is not the criterion here): " + (allSame ? "yes" : "NO"));
             }
@@ -830,7 +902,8 @@ namespace Zantetsu.PhysicsCut
                     limits = sample.limits,
                     cutConvexes = sample.cutConvexes,
                     minCutSideTriangles = sample.minCutSideTriangles,
-                    bentSearch = sample.bentSearch,
+                    bentSearch = options.bentOff ? false : sample.bentSearch,   // GRAPH-CONNECT-8: the B condition leaves the bent partition out
+                    graphFirst = options.graphFirst,                            // GRAPH-CONNECT-10: the C condition's order
                     bentLimits = sample.bentLimits,
                     maxConvexVertices = CutSpatialSplit.Attempt.MaxConvexVertices(shape),
                     geometryToOwner = sample.geometryToOwner,
@@ -872,7 +945,18 @@ namespace Zantetsu.PhysicsCut
                     attempt.graphSearch = true;
                     attempt.graphLimits = options.graphLimits;
                     attempt.testGraphRefuseDistribution = CutSpatialSplit.TestGraphRefuseDistribution;
-                    attempt.graphSides = PhysicsCutBlocks.Take<byte>(c + (n / 3));
+                    attempt.testGraphGjkMaxIterations = CutSpatialSplit.TestGraphGjkMaxIterations;
+                    attempt.testGraphShortSides = CutSpatialSplit.TestGraphShortSides;
+                    if (CutSpatialSplit.TestFailGraphSidesAllocation)
+                    {
+                        // tests: the product's issue records Unfinished(Allocation) in advance when the sides' allocation on the main thread fails
+                        attempt.graphSides = default;
+                        attempt.graph = new SpatialSplitGraphRecord { verdict = SpatialSplitGraphVerdict.Unfinished, stop = SpatialSplitGraphStop.Allocation, unfinished = true, reason = "the test refused the sides' allocation (recorded before the attempt)" };
+                    }
+                    else
+                    {
+                        attempt.graphSides = PhysicsCutBlocks.Take<byte>(c + (n / 3));
+                    }
                 }
 
                 long begin = Stopwatch.GetTimestamp();
@@ -922,6 +1006,15 @@ namespace Zantetsu.PhysicsCut
                 result.found = search.outcome == SpatialSplitSearchOutcome.Found;
                 result.meshLed = search.meshLed;
                 result.bent = CutSpatialSplit.IsBentResult(in search);
+                result.bentRan = search.bent;
+                result.meshLedRan = search.meshLed;
+                result.bentSaved = sample.bentSearch;
+                result.bentEffective = attempt.bentSearch;
+                result.graphFirstEffective = attempt.graphFirstEffective;
+                result.bentSeconds = attempt.bentSeconds;
+                result.crossingConvexes = search.crossingConvexes;
+                result.fragment = sample.fragment;
+                result.rootFragment = sample.rootFragment;
                 result.distributed = attempt.distributed;
                 result.classified = attempt.classified;
                 result.anchorsDistributed = attempt.anchorsDistributed;

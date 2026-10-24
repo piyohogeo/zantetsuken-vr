@@ -30,7 +30,7 @@ namespace Zantetsu.Editor.Sandbox
 
                 // the options (GRAPH-CONNECT-6 §2), read as the Player reads its own: a named argument without its value, an unknown
                 // value, a relative list or the graph without the span input is refused before anything runs (never "no list")
-                if (!SpatialSplitReplayOptions.TryRead(Environment.GetCommandLineArgs(), "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", out SpatialSplitReplayOptions options, out string refusal))
+                if (!SpatialSplitReplayOptions.TryRead(Environment.GetCommandLineArgs(), "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", "-splitReplayOrder", out SpatialSplitReplayOptions options, out string refusal))
                 {
                     throw new ArgumentException(refusal);
                 }

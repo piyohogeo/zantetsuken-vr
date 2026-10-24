@@ -26,10 +26,14 @@ namespace Zantetsu.Sandbox
         public const string InputArgument = "-zantetsuSplitReplayInput";
         public const string GraphArgument = "-zantetsuSplitReplayGraph";
         public const string ListArgument = "-zantetsuSplitReplayList";
+        /// <summary>GRAPH-CONNECT-8: saved (the default) or off -- the bent partition left out, only with the graph on the span input.</summary>
+        public const string BentArgument = "-zantetsuSplitReplayBent";
+        /// <summary>GRAPH-CONNECT-10: current (the default) or graph-first -- the graph stage before the bent partition, the bent partition on an unfinished graph; only with the graph on the span input, not with bent off.</summary>
+        public const string OrderArgument = "-zantetsuSplitReplayOrder";
 
         /// <summary>Reads the options (<see cref="SpatialSplitReplayOptions.TryRead"/> with this entry's argument names).</summary>
         internal static bool TryReadOptions(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
-            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, out options, out refusal);
+            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, BentArgument, OrderArgument, out options, out refusal);
 
         /// <summary>
         /// Whether the launch asks for a replay at all (either argument named), and -- when it does -- its two folders,

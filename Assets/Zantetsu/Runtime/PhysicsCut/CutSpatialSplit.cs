@@ -1576,6 +1576,7 @@ namespace Zantetsu.PhysicsCut
                         attempt.testGraphGjkMaxIterations = TestGraphGjkMaxIterations;
                         attempt.testGraphShortSides = TestGraphShortSides;
                         attempt.testGraphRefuseDistribution = TestGraphRefuseDistribution;
+                        attempt.graphFirst = TestGraphFirst;   // tests only: the product's issue leaves the order as before
                         try
                         {
                             if (TestFailGraphSidesAllocation) throw new InvalidOperationException("the test refused the sides' allocation");
@@ -2822,6 +2823,16 @@ namespace Zantetsu.PhysicsCut
             internal int testGraphFailAllocation = -1, testGraphGjkMaxIterations;
             internal bool testGraphShortSides;      // tests: the sides buffer handed to the engine too short (an invalid input)
             internal bool testGraphRefuseDistribution; // tests: the sharing out by the engine's sides refused (a Separable left incomplete)
+            /// <summary>
+            /// GRAPH-CONNECT-10, the configuration C under comparison: the graph stage before the bent partition where the stage applies
+            /// (anchor-less, two convexes or more, the graph effective), the bent partition run only when the graph stage ended
+            /// Unfinished (any stop, a pre-recorded one too), never after Separable, Invalid, NotFound or NotSeparable. False (the
+            /// default and the product's issue): the order as before. Set by the replay's option or the test hook only; the product's
+            /// settings and profile do not set it.
+            /// </summary>
+            internal bool graphFirst;
+            /// <summary>Whether the graph-first order applied to this attempt (graphFirst and the stage's conditions held after the plane).</summary>
+            internal bool graphFirstEffective;
 
             // The convex-cut branch. Set by the worker's numbers: whether a convex is cut. Then the main thread's:
             // the meshes it made of the produced convexes (positive then negative, a cut convex after another), their
@@ -2871,30 +2882,31 @@ namespace Zantetsu.PhysicsCut
                         vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
                         banks, ranges, convexCount, in shapeToOwner, margin, in limits, scratch, ref search);
                     ran = true;
-                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && bentSearch && convexCount >= 2)
+                    // Where the graph stage applies (GRAPH-CONNECT-4 §3-2): anchor-less, two convexes or more, the graph effective.
+                    // The configuration C under comparison (GRAPH-CONNECT-10) puts it before the bent partition there; the order as
+                    // before (the product's) runs the bent partition first. The two are the same code with the bent search moved.
+                    bool graphApplies = graphSearch && anchors == null && convexCount >= 2;
+                    graphFirstEffective = graphFirst && graphApplies && search.outcome == SpatialSplitSearchOutcome.NotFound;
+                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && bentSearch && convexCount >= 2 && !graphFirstEffective)
                     {
                         // No plane leaves the convexes and the triangles whole: a surface of a few plane pieces that
                         // does (DESIGN 7.9.2, the bent partition), before any convex is cut. An input that is invalid,
                         // not finite or over the limits is no reason to look further, and an owner of one convex has
                         // nothing for the other side.
-                        long bentBegin = Began();
-                        CutSpatialSplitBentSearch.FindBentSurface(
-                            vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
-                            banks, ranges, convexCount, in shapeToOwner, margin, in limits, in bentLimits, scratch, ref search);
-#if ZANTETSU_OBSERVE
-                        bentSeconds = Since(bentBegin);
-#endif
+                        FindBent();
                     }
 
-                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && graphSearch && anchors == null && convexCount >= 2
-                        && graph.verdict == SpatialSplitGraphVerdict.None)
+                    if (search.outcome == SpatialSplitSearchOutcome.NotFound && graphApplies)
                     {
-                        // Neither a plane nor a bent partition: the graph engine's placement of the convexes and the mesh components
-                        // into two groups apart by the margin (GRAPH-CONNECT-4 §3-2; the stage's record is kept apart from the plane
-                        // search's result, which the mesh-led search below resets). A record already written says the sides'
-                        // allocation failed on the main thread: the stage is skipped. Separable: the graph's sharing out, below.
-                        // Not separable, not found, unfinished: on to the mesh-led plane as before. Invalid: as an invalid input ends.
-                        RunGraph();
+                        // Neither a plane nor (in the order as before) a bent partition: the graph engine's placement of the convexes
+                        // and the mesh components into two groups apart by the margin (the stage's record is kept apart from the plane
+                        // search's result, which the mesh-led search below resets). The body runs only where no record was written
+                        // yet: a record already there says the sides' allocation failed on the main thread (Unfinished(Allocation)).
+                        // Separable: the graph's sharing out, below. Invalid: as an invalid input ends, in either order. Not separable,
+                        // not found: on to the mesh-led plane. Unfinished: on to the mesh-led plane in the order as before; in the
+                        // graph-first order the bent partition is tried first (any stop: a cap, a limit, an allocation, the preparation
+                        // contract, the clock, the pre-recorded one), when the sample's setting has it.
+                        if (graph.verdict == SpatialSplitGraphVerdict.None) RunGraph();
                         if (graph.verdict == SpatialSplitGraphVerdict.Separable)
                         {
                             BeginGraph();
@@ -2904,6 +2916,11 @@ namespace Zantetsu.PhysicsCut
                         if (graph.verdict == SpatialSplitGraphVerdict.Invalid)
                         {
                             return;
+                        }
+
+                        if (graphFirstEffective && graph.verdict == SpatialSplitGraphVerdict.Unfinished && bentSearch)
+                        {
+                            FindBent();
                         }
                     }
 
@@ -3077,6 +3094,18 @@ namespace Zantetsu.PhysicsCut
                 g.seconds = Since(graphBegin);
 #endif
                 graph = g;
+            }
+
+            /// <summary>The bent partition's search on the plane search's NotFound (the same call in either order), with its clock.</summary>
+            private void FindBent()
+            {
+                long bentBegin = Began();
+                CutSpatialSplitBentSearch.FindBentSurface(
+                    vertices, vertexViewLength, indices, indexCount, in geometryToOwner,
+                    banks, ranges, convexCount, in shapeToOwner, margin, in limits, in bentLimits, scratch, ref search);
+#if ZANTETSU_OBSERVE
+                bentSeconds = Since(bentBegin);
+#endif
             }
 
             // The graph's sharing out, anchors and classification (GRAPH-CONNECT-4 §3-4), on the bent partition's pattern: the

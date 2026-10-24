@@ -316,6 +316,9 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Tests: the sharing out by the engine's sides is refused while set (as a malformed sides buffer would be): a Separable left incomplete.</summary>
         internal static bool TestGraphRefuseDistribution;
 
+        /// <summary>Tests: every attempt issued while set runs the configuration C order (GRAPH-CONNECT-10: the graph stage before the bent partition, the bent partition on an unfinished graph). The product's settings never set it.</summary>
+        internal static bool TestGraphFirst;
+
         // ---- a fixed limit reached (GRAPH-CONNECT-5 reviews 1 and 2) ---------------------------------------------------------
         // The graph stage ended by a limit the same input meets at the same place under the same search -- the cut-attempt or
         // GJK-iteration limit, the work budget, a capacity cap (span, nodes, candidates, bytes): not a conclusion (never a mark),

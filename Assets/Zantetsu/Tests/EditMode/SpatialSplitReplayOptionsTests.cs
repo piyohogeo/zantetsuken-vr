@@ -150,6 +150,75 @@ namespace Zantetsu.Core.Tests
             string lines = File.ReadAllText(Path.Combine(NewDirectory("span"), "replay.jsonl"));
             StringAssert.Contains("\"inputMode\":\"span\",\"graphOn\":false", lines);
             StringAssert.Contains("\"graphStages\":{\"entered\":false,\"led\":false", lines);
+            // GRAPH-CONNECT-8: the bent setting as requested, saved and run, the stages' marks, the all-path anchors flag, the ids
+            StringAssert.Contains("\"bentRequested\":\"saved\",\"bentSaved\":", lines);
+            StringAssert.Contains("\"stagesRan\":{\"plane\":false,\"bent\":false,\"graph\":false,\"meshLed\":false}", lines, "the synthetic sample has no convexes and is not rebuilt: no stage ran, and the marks say so (false), not nothing");
+            StringAssert.Contains(",\"anchorsDistributed\":", lines);
+            StringAssert.Contains(",\"cut\":false,\"crossingConvexes\":0,\"bentMs\":", lines);
+            StringAssert.Contains(",\"fragment\":", lines); StringAssert.Contains(",\"rootFragment\":", lines);
+            StringAssert.Contains("options: inputMode span, graph off, bent saved", summary);
+            StringAssert.Contains("bent stage (the saved setting): effective in ", summary);
+        }
+
+        private static bool Read6(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
+            SpatialSplitReplayOptions.TryRead(arguments, "-zantetsuSplitReplayInput", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayList", "-zantetsuSplitReplayBent", "-zantetsuSplitReplayOrder", out options, out refusal);
+
+        /// <summary>GRAPH-CONNECT-10: the order argument is current (the default) or graph-first; graph-first needs the graph on the span input
+        /// and is refused together with bent off (B and C are different conditions); a missing or unknown value is refused; the Editor's
+        /// names read the same; the five-name reader leaves the order current.</summary>
+        [Test]
+        public void TheOrderOption_IsReadWithItsRefusals_AndGraphFirstIsNotBentOff()
+        {
+            Assert.That(Read6(new string[0], out SpatialSplitReplayOptions o, out string refusal), Is.True, refusal);
+            Assert.That(o.graphFirst, Is.False); Assert.That(o.OrderName, Is.EqualTo("current"));
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayOrder", "current" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.graphFirst, Is.False);
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayOrder", "graph-first" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.graphFirst, Is.True); Assert.That(o.OrderName, Is.EqualTo("graph-first")); Assert.That(o.bentOff, Is.False);
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayOrder", "graph-first" }, out _, out refusal), Is.False, "graph-first without the graph");
+            StringAssert.Contains("graph-first needs", refusal);
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayBent", "off", "-zantetsuSplitReplayOrder", "graph-first" }, out _, out refusal), Is.False, "B and C together");
+            StringAssert.Contains("not together", refusal);
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayOrder" }, out _, out refusal), Is.False, "a value is missing");
+            StringAssert.Contains("has no value", refusal);
+            Assert.That(Read6(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayOrder", "bent-first" }, out _, out refusal), Is.False);
+            StringAssert.Contains("current or graph-first", refusal);
+            Assert.That(SpatialSplitReplayOptions.TryRead(new[] { "-splitReplayInput", "span", "-splitReplayGraph", "-splitReplayOrder", "graph-first" }, "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", "-splitReplayOrder", out o, out refusal), Is.True, refusal);
+            Assert.That(o.graphFirst, Is.True);
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayOrder", "graph-first" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.graphFirst, Is.False, "not read by the five-name reader");
+        }
+
+        private static bool Read5(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
+            SpatialSplitReplayOptions.TryRead(arguments, "-zantetsuSplitReplayInput", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayList", "-zantetsuSplitReplayBent", out options, out refusal);
+
+        /// <summary>GRAPH-CONNECT-8: the bent argument is saved (the default and the only value without the comparison) or off; off needs
+        /// the graph on the span input; a missing or unknown value is refused; the Editor's names read the same; the four-name reader
+        /// leaves the bent setting saved.</summary>
+        [Test]
+        public void TheBentOption_IsReadWithItsRefusals_AndOffNeedsTheGraphOnTheSpanInput()
+        {
+            Assert.That(Read5(new string[0], out SpatialSplitReplayOptions o, out string refusal), Is.True, refusal);
+            Assert.That(o.bentOff, Is.False); Assert.That(o.BentName, Is.EqualTo("saved"));
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayBent", "saved" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.bentOff, Is.False);
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayBent", "off" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.bentOff, Is.True); Assert.That(o.BentName, Is.EqualTo("off"));
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayBent", "off" }, out _, out refusal), Is.False, "off without the graph");
+            StringAssert.Contains("off needs", refusal);
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "compact", "-zantetsuSplitReplayBent", "off" }, out _, out refusal), Is.False, "off without the graph and the span input");
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayBent" }, out _, out refusal), Is.False, "a value is missing");
+            StringAssert.Contains("has no value", refusal);
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayBent", "maybe" }, out _, out refusal), Is.False);
+            StringAssert.Contains("saved or off", refusal);
+            Assert.That(Read5(new[] { "-zantetsuSplitReplayBent", "-zantetsuSplitReplayGraph" }, out _, out refusal), Is.False, "another switch in the value's place");
+            // the Editor's names, the same reader
+            Assert.That(SpatialSplitReplayOptions.TryRead(new[] { "-splitReplayInput", "span", "-splitReplayGraph", "-splitReplayBent", "off" }, "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", out o, out refusal), Is.True, refusal);
+            Assert.That(o.bentOff, Is.True);
+            Assert.That(SpatialSplitReplayOptions.TryRead(new[] { "-splitReplayBent" }, "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", out _, out refusal), Is.False);
+            // the four-name reader (the Player before this unit, the tests): the bent argument is not read, the setting stays saved
+            Assert.That(Read(new[] { "-zantetsuSplitReplayInput", "span", "-zantetsuSplitReplayGraph", "-zantetsuSplitReplayBent", "off" }, out o, out refusal), Is.True, refusal);
+            Assert.That(o.bentOff, Is.False, "not read by the four-name reader");
         }
 
         private static bool Read(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
