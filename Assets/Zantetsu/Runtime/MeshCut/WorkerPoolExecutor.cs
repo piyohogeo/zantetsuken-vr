@@ -160,7 +160,86 @@ namespace Zantetsu.MeshCut
         {
             public IDispatchWork work;
             public WorkCompletion completion;
+#if ZANTETSU_OBSERVE
+            // GRAPH-CONNECT-17 §3-E4: the worker's begin and end clocks and the worker's index (0 / -1 where not taken: a work a
+            // stop cancelled before any worker began it, or the work log off)
+            public long began, endedAt;
+            public int worker;
+#endif
         }
+
+#if ZANTETSU_OBSERVE
+        // GRAPH-CONNECT-17 §3-E4 (development builds, while DispatchObservation.WorkLog): the work each worker is inside and since
+        // when, for a reading of the works still held when a log is read; and the stamps of the work TryTakeFinished last handed out.
+        private IDispatchWork[] _runningWork;
+        private long[] _runningSince;
+        private long _lastTakenBegan, _lastTakenEnded;
+        private int _lastTakenWorker = -1;
+        private long _lastAcceptedAt;
+
+        /// <summary>
+        /// The acceptance stamp of the work <see cref="TryAccept"/> accepted last (main thread, right after it returned true): taken
+        /// inside the queue's lock before the queue has the work -- the same moment <see cref="IDispatchObserved.NoteAccepted"/> is
+        /// told, so the work log's t1 and the observed works' acceptedAt are one boundary. 0 when neither the log nor the observation
+        /// was on for it.
+        /// </summary>
+        internal long LastAcceptedAt => _lastAcceptedAt;
+
+        /// <summary>
+        /// The worker's clocks of the work <see cref="TryTakeFinished"/> handed out last (main thread, right after it): begin, end
+        /// (Stopwatch ticks, 0 when not taken) and the worker's index (-1). False when the log was off for it.
+        /// </summary>
+        internal bool LastTaken(out long began, out long ended, out int worker)
+        {
+            began = _lastTakenBegan;
+            ended = _lastTakenEnded;
+            worker = _lastTakenWorker;
+            return began != 0 || ended != 0 || worker >= 0;
+        }
+
+        /// <summary>
+        /// Where a work this pool still holds stands, for a log read before it was collected: running on a worker (its begin and the
+        /// worker), or finished and waiting to be taken (its begin, end and worker), or neither (still in the queue, or not held).
+        /// A reading under the pool's locks; development builds only.
+        /// </summary>
+        internal bool TryObserveHeld(IDispatchWork work, out long began, out long ended, out int worker)
+        {
+            began = ended = 0;
+            worker = -1;
+            // Both locks, the queue's then the ended queue's (nowhere else are the two held together, so the order cannot meet
+            // another): a worker publishes the end under the second and clears its running slot under the first, so while both are
+            // held neither can move and the reading is of one moment -- the ended queue first, as the later of the two states.
+            lock (_queueGate)
+            {
+                lock (_endedGate)
+                {
+                    foreach (Ended e in _ended)
+                    {
+                        if (ReferenceEquals(e.work, work))
+                        {
+                            began = e.began;
+                            ended = e.endedAt;
+                            worker = e.worker;
+                            return true;
+                        }
+                    }
+                    if (_runningWork != null)
+                    {
+                        for (int i = 0; i < _runningWork.Length; i++)
+                        {
+                            if (ReferenceEquals(_runningWork[i], work))
+                            {
+                                began = _runningSince[i];
+                                worker = i;
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+#endif
 
         private readonly object _queueGate = new object();
         private readonly object _endedGate = new object();
@@ -249,6 +328,10 @@ namespace Zantetsu.MeshCut
 
             _workers = new WorkerObservation[workerCount];
             _threads = new Thread[workerCount];
+#if ZANTETSU_OBSERVE
+            _runningWork = new IDispatchWork[workerCount];
+            _runningSince = new long[workerCount];
+#endif
             try
             {
                 for (int i = 0; i < workerCount; i++)
@@ -324,6 +407,20 @@ namespace Zantetsu.MeshCut
             return new WorkerPoolExecutor(
                 WorkDestination.BackgroundPool,
                 DefaultBackgroundWorkerCount,
+                ThreadPriority.Lowest,
+                capacity,
+                prepareOnThisThread);
+        }
+
+        /// <summary>
+        /// A Background pool of a given worker count, for the pool replay's shapes only (GRAPH-CONNECT-17 §3-E2: the Quest's one
+        /// worker and room for one on a PC). The product's <see cref="BackgroundPool"/> is not this and is unchanged.
+        /// </summary>
+        public static WorkerPoolExecutor BackgroundPoolForReplay(int capacity, int workerCount, Action prepareOnThisThread = null)
+        {
+            return new WorkerPoolExecutor(
+                WorkDestination.BackgroundPool,
+                workerCount,
                 ThreadPriority.Lowest,
                 capacity,
                 prepareOnThisThread);
@@ -435,12 +532,15 @@ namespace Zantetsu.MeshCut
                 }
 
 #if ZANTETSU_OBSERVE
-                if (DispatchObservation.Enabled && work is IDispatchObserved observed)
+                bool tellObserved = DispatchObservation.Enabled && work is IDispatchObserved;
+                long accepted = tellObserved || DispatchObservation.WorkLog ? Stopwatch.GetTimestamp() : 0;
+                _lastAcceptedAt = accepted;   // GRAPH-CONNECT-17 §3-E4: the work log's t1, the same stamp as the observed works'
+                if (tellObserved)
                 {
                     // The acceptance stamp (GRAPH-CONNECT-14 §2, t1): told inside this lock and before the queue has the work, so no
                     // worker can begin it earlier than the stamp. The implementer stores it and does nothing else (the contract of
                     // IDispatchObserved): nothing here waits, allocates or re-enters.
-                    observed.NoteAccepted(Stopwatch.GetTimestamp());
+                    ((IDispatchObserved)work).NoteAccepted(accepted);
                 }
 #endif
                 _queue.Enqueue(work);
@@ -477,6 +577,11 @@ namespace Zantetsu.MeshCut
                 Ended ended = _ended.Dequeue();
                 work = ended.work;
                 completion = ended.completion;
+#if ZANTETSU_OBSERVE
+                _lastTakenBegan = ended.began;
+                _lastTakenEnded = ended.endedAt;
+                _lastTakenWorker = ended.worker;
+#endif
             }
 
             // Only now does this pool hold one less, which is what frees room for new work.
@@ -532,7 +637,11 @@ namespace Zantetsu.MeshCut
                 {
                     for (int i = 0; i < unstarted.Count; i++)
                     {
+#if ZANTETSU_OBSERVE
+                        _ended.Enqueue(new Ended { work = unstarted[i], completion = WorkCompletion.Cancelled, worker = -1 });
+#else
                         _ended.Enqueue(new Ended { work = unstarted[i], completion = WorkCompletion.Cancelled });
+#endif
                     }
                 }
             }
@@ -613,6 +722,9 @@ namespace Zantetsu.MeshCut
                 while (true)
                 {
                     IDispatchWork work;
+#if ZANTETSU_OBSERVE
+                    long logBegan = 0;   // GRAPH-CONNECT-17 §3-E4: this work's begin, taken under the lock that hands it out (0: not logged)
+#endif
                     lock (_queueGate)
                     {
                         // Empty means wait, not spin. A stop wakes this the same way new work does.
@@ -627,6 +739,15 @@ namespace Zantetsu.MeshCut
                         }
 
                         work = _queue.Dequeue();
+#if ZANTETSU_OBSERVE
+                        // GRAPH-CONNECT-17 §3-E4: the work this worker is now inside, under the queue's lock (a log read sees it held)
+                        if (DispatchObservation.WorkLog)
+                        {
+                            logBegan = Stopwatch.GetTimestamp();
+                            _runningWork[index] = work;
+                            _runningSince[index] = logBegan;
+                        }
+#endif
                     }
 
                     WorkCompletion completion;
@@ -658,10 +779,25 @@ namespace Zantetsu.MeshCut
 
                     // Published only here, after the work's own writes are over: the main thread cannot see this
                     // work as ended any earlier, and the lock is what carries those writes across.
+#if ZANTETSU_OBSERVE
+                    long logEnded = logBegan != 0 ? Stopwatch.GetTimestamp() : 0;
+                    lock (_endedGate)
+                    {
+                        _ended.Enqueue(new Ended { work = work, completion = completion, began = logBegan, endedAt = logEnded, worker = logBegan != 0 ? index : -1 });
+                    }
+                    if (logBegan != 0)
+                    {
+                        lock (_queueGate)
+                        {
+                            if (ReferenceEquals(_runningWork[index], work)) _runningWork[index] = null;
+                        }
+                    }
+#else
                     lock (_endedGate)
                     {
                         _ended.Enqueue(new Ended { work = work, completion = completion });
                     }
+#endif
                 }
             }
             catch (Exception fatal)

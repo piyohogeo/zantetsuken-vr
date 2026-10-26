@@ -40,6 +40,18 @@ namespace Zantetsu.PhysicsCut
     /// scratch only when the work was collected; otherwise it holds them (a worker may still be reading them) and the session ends.
     /// </para>
     /// </summary>
+    /// <summary>The pool's shape in the pool replay (GRAPH-CONNECT-17 §3-E2): the PC's (2 workers, room for 2) or the Quest's (1 worker, room for 1).</summary>
+    public enum SpatialSplitReplayPoolShape { Pc, Quest }
+
+    /// <summary>
+    /// The load beside the attempt (GRAPH-CONNECT-17 §3-E2): the competitors kept up to a level (GRAPH-CONNECT-14), the forward block
+    /// (blockers of a long fixed amount issued at the tick before the attempt, as many as the pool has room for, so that the attempt
+    /// meets a full pool -- whether it was refused while a blocker RAN is read from the stamps afterwards, never assumed), or the
+    /// backward load (a competitor issued right after the dispatch that accepted the attempt, replaced at the same tick when it is
+    /// collected while the attempt is still out: how long the attempt holds the pool shows in the competitors' waits).
+    /// </summary>
+    public enum SpatialSplitReplayPoolLoad { Level, Forward, Backward }
+
     internal sealed class SpatialSplitReplayPool : IDisposable
     {
         public const double TickSeconds = 1.0 / 90.0;
@@ -47,6 +59,10 @@ namespace Zantetsu.PhysicsCut
         public const int DefaultAttemptTicks = 90 * 60; // 1 min
         public const int DefaultStopMilliseconds = 10000;
         public const int PoolCapacity = 2;             // the profile's Background pool capacity on the PC (BackgroundWorkerCount)
+        public const int QuestPoolCapacity = 1;        // the Quest city walk profile's (QuestCityWalkBuild: backgroundWorkerCount 1), one worker
+
+        /// <summary>The forward blocker's fixed amount: about 40 ms on the development machine of 2026-10 (the amount is what is fixed).</summary>
+        public const long DefaultBlockerWork = 28000000;
 
         private readonly SharedWorkDispatcher _dispatcher;
         private readonly WorkerPoolExecutor _background;
@@ -54,6 +70,11 @@ namespace Zantetsu.PhysicsCut
         private readonly IdleExecutor _geometry;
         private readonly int _level;
         private readonly long _competitorWork;
+        private readonly SpatialSplitReplayPoolShape _shape;
+        private readonly SpatialSplitReplayPoolLoad _load;
+        private readonly long _blockerWork;
+        private readonly int _capacity;
+        private readonly bool _workLogBefore;
         private readonly long _tickTicks;
         private readonly int _attemptTicks, _stopMilliseconds, _drainTicks;
         private readonly List<double> _intervals = new List<double>();
@@ -87,23 +108,48 @@ namespace Zantetsu.PhysicsCut
         public SharedWorkDispatcher Dispatcher => _dispatcher;
         public WorkerPoolExecutor Background => _background;
         public IReadOnlyList<CompetitorWork> Competitors => _competitors;
+        public SpatialSplitReplayPoolShape Shape => _shape;
+        public SpatialSplitReplayPoolLoad Load => _load;
+        public int Capacity => _capacity;
+        public long BlockerWorkSteps => _blockerWork;
+
+        /// <summary>The load's name in the lines and the summary: L0, L1, L2 (the level), F (the forward block) or B (the backward load).</summary>
+        public string LoadName => _load == SpatialSplitReplayPoolLoad.Forward ? "F" : _load == SpatialSplitReplayPoolLoad.Backward ? "B" : "L" + _level.ToString(CultureInfo.InvariantCulture);
 
         public SpatialSplitReplayPool(int level, long competitorWork, int attemptTicks = DefaultAttemptTicks, int stopMilliseconds = DefaultStopMilliseconds, int drainTicks = DefaultDrainTicks)
+            : this(SpatialSplitReplayPoolShape.Pc, SpatialSplitReplayPoolLoad.Level, level, competitorWork, DefaultBlockerWork, attemptTicks, stopMilliseconds, drainTicks)
+        {
+        }
+
+        public SpatialSplitReplayPool(SpatialSplitReplayPoolShape shape, SpatialSplitReplayPoolLoad load, int level, long competitorWork, long blockerWork,
+            int attemptTicks = DefaultAttemptTicks, int stopMilliseconds = DefaultStopMilliseconds, int drainTicks = DefaultDrainTicks)
         {
             if (drainTicks <= 0) throw new ArgumentOutOfRangeException(nameof(drainTicks));
             _drainTicks = drainTicks;
-            if (level < 0 || level > PoolCapacity) throw new ArgumentOutOfRangeException(nameof(level), level, "the competitor level is L0, L1 or L2 (the pool's capacity)");
+            _shape = shape;
+            _load = load;
+            _capacity = shape == SpatialSplitReplayPoolShape.Quest ? QuestPoolCapacity : PoolCapacity;
+            if (load != SpatialSplitReplayPoolLoad.Level && level != 0) throw new ArgumentOutOfRangeException(nameof(level), level, "a forward or backward load has no level");
+            if (level < 0 || level > _capacity) throw new ArgumentOutOfRangeException(nameof(level), level, "the competitor level is L0 to the pool's capacity (" + _capacity + ")");
             if (competitorWork <= 0) throw new ArgumentOutOfRangeException(nameof(competitorWork), "the competitor's work is a positive count of steps");
+            if (blockerWork <= 0) throw new ArgumentOutOfRangeException(nameof(blockerWork), "the blocker's work is a positive count of steps");
             if (attemptTicks <= 0) throw new ArgumentOutOfRangeException(nameof(attemptTicks));
             if (stopMilliseconds < 0) throw new ArgumentOutOfRangeException(nameof(stopMilliseconds));
             _level = level;
             _competitorWork = competitorWork;
+            _blockerWork = blockerWork;
             _attemptTicks = attemptTicks;
             _stopMilliseconds = stopMilliseconds;
             _tickTicks = (long)(TickSeconds * Stopwatch.Frequency);
             _unityJob = new UnityJobWorkExecutor(1);
             _geometry = new IdleExecutor(WorkDestination.GeometryPool);
-            _background = WorkerPoolExecutor.BackgroundPool(PoolCapacity);
+            // the PC's shape is the product's own Background pool as before (GRAPH-CONNECT-14); the Quest's has one worker and room for one
+            _background = shape == SpatialSplitReplayPoolShape.Quest
+                ? WorkerPoolExecutor.BackgroundPoolForReplay(QuestPoolCapacity, QuestPoolCapacity)
+                : WorkerPoolExecutor.BackgroundPool(PoolCapacity);
+            // GRAPH-CONNECT-17 §3-E2: the dispatcher's work log names whose work was refused and when (kept off by -zantetsuDispatchObserveOff)
+            _workLogBefore = DispatchObservation.WorkLog;
+            DispatchObservation.WorkLog = !DispatchRecord.Off;
             _dispatcher = new SharedWorkDispatcher(32, 8, 64, _unityJob, _geometry, _background);
             if (!_background.WaitUntilStartupFinished(5000))
             {
@@ -127,6 +173,8 @@ namespace Zantetsu.PhysicsCut
                 t0 = attempt.enqueuedAt, t1 = attempt.acceptedAt, t2 = attempt.beganAt, t3 = attempt.endedAt, t4 = attempt.collectedAt,
                 ticks = run.ticks, blocked = run.blocked, heldBefore = run.heldBefore, drained = run.drained, wallSeconds = run.wallSeconds,
                 competitorsDuring = run.competitorsDuring, overlapSeconds = run.overlapSeconds, workerBusyDeltaSeconds = run.workerBusyDelta,
+                shape = _shape == SpatialSplitReplayPoolShape.Quest ? "quest" : "pc", load = LoadName, capacity = _capacity, blockerWork = _blockerWork,
+                ownRefused = run.ownRefused, firstRefusal = run.firstRefusal, lastRefusal = run.lastRefusal, blockers = run.blockers, backward = run.backward,
             };
         }
 
@@ -139,6 +187,11 @@ namespace Zantetsu.PhysicsCut
             public double wallSeconds;
             public double? overlapSeconds;
             public double[] workerBusyDelta;   // null when the observation is off
+            // GRAPH-CONNECT-17 §3-E2, from the dispatcher's work log (null / 0: the log off): how often the work ITSELF was refused for
+            // want of room and when (the first and the last such opportunity), and the competitors of the load (indices in competitors.jsonl)
+            public int? ownRefused;
+            public long firstRefusal, lastRefusal;
+            public int[] blockers, backward;
         }
 
         /// <summary>
@@ -161,23 +214,27 @@ namespace Zantetsu.PhysicsCut
             bool stamping = CutSpatialSplit.TimelineObserve;      // the competitors' and the work's stamps are the timeline's
             double[] busyBefore = observing ? BusyNow() : null;
             int competitorsBefore = _competitors.Count;   // every competitor from here on (the level's own included) is this run's
-            // 1. the level: the competitors first, at a tick of their own, so that the room is theirs when the work comes
+            // 1. the load: the level's competitors, or the forward blockers, first, at a tick of their own, so that the room is
+            // theirs when the work comes
             Tick();
-            TopUp();
+            if (_load == SpatialSplitReplayPoolLoad.Forward) IssueBlockers();
+            else if (_load == SpatialSplitReplayPoolLoad.Level) TopUp();
             Pump();
+            int blockersEnd = _competitors.Count;
             // 2. the work at the next tick: enqueued, then this tick's dispatch (submission in the same opportunity where there is room)
             Tick();
             int blockedBefore = _dispatcher.CapacityBlockedOpportunities(WorkDestination.BackgroundPool);
             int heldBefore = _background.Held;
             long t0 = CutSpatialSplit.TimelineClock();
-            if (!_dispatcher.TryEnqueue(WorkPurpose.Maintenance, work, out WorkTicket _))
+            if (!_dispatcher.TryEnqueue(WorkPurpose.Maintenance, work, out WorkTicket ticket))
             {
                 throw new InvalidOperationException("the dispatcher refused the work (waiting " + _dispatcher.WaitingCount + ")");
             }
             noteEnqueued?.Invoke(t0);
             if (_origin == 0 && t0 != 0) _origin = t0;
             int ticks = 0;
-            PumpAndTopUp();
+            _backwardOut = null;
+            PumpWithLoad(ticket, isCollected);
             while (!isCollected())
             {
                 Tick();
@@ -186,9 +243,25 @@ namespace Zantetsu.PhysicsCut
                 {
                     Stop(work, isCollected, ticks);   // throws; nothing of the work is freed by this
                 }
-                PumpAndTopUp();
+                PumpWithLoad(ticket, isCollected);
             }
             int? blocked = observing ? _dispatcher.CapacityBlockedOpportunities(WorkDestination.BackgroundPool) - blockedBefore : (int?)null;
+            // GRAPH-CONNECT-17 §3-E2: the work's own refusals, from the dispatcher's work log (null: the log off)
+            int? ownRefused = null;
+            long firstRefusal = 0, lastRefusal = 0;
+            if (DispatchObservation.WorkLog && _dispatcher.TryFindWorkLog(ticket, out DispatchWorkRecord own))
+            {
+                ownRefused = own.refused;
+                firstRefusal = own.firstRefusal;
+                lastRefusal = own.lastRefusal;
+            }
+            var blockers = new List<int>();
+            var backward = new List<int>();
+            for (int i = competitorsBefore; i < _competitors.Count; i++)
+            {
+                if (_competitors[i].role == "blocker" && i < blockersEnd) blockers.Add(i);
+                else if (_competitors[i].role == "backward") backward.Add(i);
+            }
             // 3. the drain: no new competitor; ticks until nothing is held, so that the next run starts from an empty pool. A drain that
             // does not empty the pool within its ticks ends the session (TL P2): the work IS collected (its input may be freed), but a
             // competitor is still out on a worker, so the next condition would not start from the same state and the workers' time
@@ -234,7 +307,63 @@ namespace Zantetsu.PhysicsCut
                 during = d;
                 overlap = o;
             }
-            return new RunRecord { ticks = ticks, blocked = blocked, heldBefore = heldBefore, drained = drained, wallSeconds = wall, competitorsDuring = during, overlapSeconds = overlap, workerBusyDelta = delta };
+            return new RunRecord
+            {
+                ticks = ticks, blocked = blocked, heldBefore = heldBefore, drained = drained, wallSeconds = wall, competitorsDuring = during, overlapSeconds = overlap, workerBusyDelta = delta,
+                ownRefused = ownRefused, firstRefusal = firstRefusal, lastRefusal = lastRefusal, blockers = blockers.ToArray(), backward = backward.ToArray(),
+            };
+        }
+
+        private CompetitorWork _backwardOut;   // the backward load's competitor out now (null: none)
+
+        // One tick's dispatch with the load: the level's top-up at the same tick (GRAPH-CONNECT-14); nothing more for the forward block
+        // (its blockers were issued before the work); the backward load's competitor issued right after the dispatch that took the work
+        // in (and again, at the same tick, after the one that collected it while the work is still out), then a second dispatch of the
+        // tick -- where the pool is full that second opportunity is the competitor's first refusal, and is recorded as such.
+        private void PumpWithLoad(WorkTicket ticket, Func<bool> isCollected)
+        {
+            if (_load == SpatialSplitReplayPoolLoad.Level)
+            {
+                PumpAndTopUp();
+                return;
+            }
+            Pump();
+            if (_load != SpatialSplitReplayPoolLoad.Backward) return;
+            if (_backwardOut == null && !isCollected() && !_dispatcher.IsWaiting(ticket))
+            {
+                var competitor = new CompetitorWork(_competitorWork, this, _condition, _sample, Warmup, "backward");
+                if (!_dispatcher.TryEnqueue(WorkPurpose.Speculative, competitor, out WorkTicket competitorTicket))
+                {
+                    _competitorsRefused++;
+                    return;
+                }
+                competitor.enqueuedAt = CutSpatialSplit.TimelineClock();
+                competitor.ticket = competitorTicket;
+                _backwardOut = competitor;
+                _outstanding.Add(competitor);
+                _competitors.Add(competitor);
+                _competitorsIssued++;
+                Pump();
+            }
+        }
+
+        // The forward block: as many blockers of the long fixed amount as the pool has room for.
+        private void IssueBlockers()
+        {
+            for (int i = 0; i < _capacity; i++)
+            {
+                var blocker = new CompetitorWork(_blockerWork, this, _condition, _sample, Warmup, "blocker");
+                if (!_dispatcher.TryEnqueue(WorkPurpose.Speculative, blocker, out WorkTicket blockerTicket))
+                {
+                    _competitorsRefused++;
+                    break;
+                }
+                blocker.enqueuedAt = CutSpatialSplit.TimelineClock();
+                blocker.ticket = blockerTicket;
+                _outstanding.Add(blocker);
+                _competitors.Add(blocker);
+                _competitorsIssued++;
+            }
         }
 
         // The stop after a timeout: the dispatcher closes, waits for the running worker (the stop timeout) and collects what ended;
@@ -272,12 +401,13 @@ namespace Zantetsu.PhysicsCut
             bool added = false;
             while (_outstanding.Count < _level)
             {
-                var competitor = new CompetitorWork(_competitorWork, this, _condition, _sample, Warmup);
-                if (!_dispatcher.TryEnqueue(WorkPurpose.Speculative, competitor, out WorkTicket _))
+                var competitor = new CompetitorWork(_competitorWork, this, _condition, _sample, Warmup, "top-up");
+                if (!_dispatcher.TryEnqueue(WorkPurpose.Speculative, competitor, out WorkTicket competitorTicket))
                 {
                     _competitorsRefused++;
                     break;
                 }
+                competitor.ticket = competitorTicket;
                 competitor.enqueuedAt = CutSpatialSplit.TimelineClock();
                 _outstanding.Add(competitor);
                 _competitors.Add(competitor);
@@ -329,6 +459,7 @@ namespace Zantetsu.PhysicsCut
         {
             _outstanding.Remove(competitor);
             _competitorsCollected++;
+            if (ReferenceEquals(_backwardOut, competitor)) _backwardOut = null;   // the backward load replaces it at this tick while the work is out
         }
 
         /// <summary>The run's own record: the level, the ticks' actual intervals, the competitors (by warm-up and by condition), the drains, the pool's workers.</summary>
@@ -336,8 +467,14 @@ namespace Zantetsu.PhysicsCut
         {
             CultureInfo inv = CultureInfo.InvariantCulture;
             var text = new StringBuilder(768);
-            text.Append("pool replay: level L").Append(_level).Append(" (competitor work ").Append(_competitorWork).Append(" steps, Speculative; pool capacity ").Append(PoolCapacity)
-                .Append(", workers ").Append(_background.Workers.Count).Append("); attempts ").Append(Attempts).Append(" (warm-up ").Append(WarmupAttempts).Append(", ").Append(WarmupSeconds.ToString("F3", inv)).Append(" s wall, ")
+            text.Append("pool replay: level L").Append(_level).Append(" (competitor work ").Append(_competitorWork).Append(" steps, Speculative; pool capacity ").Append(_capacity)
+                .Append(", workers ").Append(_background.Workers.Count).Append(")")
+                .Append("; shape ").Append(_shape == SpatialSplitReplayPoolShape.Quest ? "quest" : "pc").Append(", load ").Append(LoadName)
+                .Append(_load == SpatialSplitReplayPoolLoad.Forward ? " (blocker work " + _blockerWork.ToString(inv) + " steps)" : "")
+                .Append("; work log ").Append(DispatchObservation.WorkLog
+                    ? "on (" + _dispatcher.WorkLogCount.ToString(inv) + " records, not kept " + _dispatcher.WorkLogNotKept.ToString(inv) + ", opportunities " + _dispatcher.WorkLogOpportunities.ToString(inv) + ")"
+                    : "OFF (own refusals: not measured)")
+                .Append("; attempts ").Append(Attempts).Append(" (warm-up ").Append(WarmupAttempts).Append(", ").Append(WarmupSeconds.ToString("F3", inv)).Append(" s wall, ")
                 .Append(WarmupBusySeconds.ToString("F3", inv)).Append(" s workers busy)")
                 .Append("; ticks ").Append(_intervals.Count).Append(": interval ms median ").Append(Ms(_intervals, 0.5, inv)).Append(", p95 ").Append(Ms(_intervals, 0.95, inv)).Append(", max ").Append(Ms(_intervals, 1.0, inv))
                 .Append(" (nominal ").Append((TickSeconds * 1000.0).ToString("F3", inv)).Append(")")
@@ -384,9 +521,19 @@ namespace Zantetsu.PhysicsCut
             int index = 0;
             foreach (CompetitorWork c in _competitors)
             {
+                // GRAPH-CONNECT-17 §3-E2: its role, its own amount, and its own refusals from the dispatcher's work log (null: the log off)
+                string refused = "null", firstRefusal = "null", lastRefusal = "null";
+                if (DispatchObservation.WorkLog && _dispatcher.TryFindWorkLog(c.ticket, out DispatchWorkRecord r))
+                {
+                    refused = r.refused.ToString(inv);
+                    firstRefusal = Stamp(r.firstRefusal);
+                    lastRefusal = Stamp(r.lastRefusal);
+                }
                 yield return "{\"index\":" + index++ + ",\"condition\":" + SpatialSplitCaptureSink.Json(c.condition) + ",\"sample\":" + SpatialSplitCaptureSink.Json(c.sample) + ",\"warmup\":" + (c.warmup ? "true" : "false")
-                    + ",\"steps\":" + _competitorWork + ",\"t0Ms\":" + Stamp(c.enqueuedAt) + ",\"t1Ms\":" + Stamp(c.acceptedAt) + ",\"t2Ms\":" + Stamp(c.beganAt) + ",\"t3Ms\":" + Stamp(c.endedAt) + ",\"t4Ms\":" + Stamp(c.collectedAt)
+                    + ",\"role\":" + SpatialSplitCaptureSink.Json(c.role)
+                    + ",\"steps\":" + c.Steps + ",\"t0Ms\":" + Stamp(c.enqueuedAt) + ",\"t1Ms\":" + Stamp(c.acceptedAt) + ",\"t2Ms\":" + Stamp(c.beganAt) + ",\"t3Ms\":" + Stamp(c.endedAt) + ",\"t4Ms\":" + Stamp(c.collectedAt)
                     + ",\"waitMs\":" + Interval(c.enqueuedAt, c.beganAt) + ",\"runMs\":" + Interval(c.beganAt, c.endedAt) + ",\"completionMs\":" + Interval(c.enqueuedAt, c.collectedAt)
+                    + ",\"refused\":" + refused + ",\"firstRefusalMs\":" + firstRefusal + ",\"lastRefusalMs\":" + lastRefusal
                     + ",\"collected\":" + (c.collectedAt != 0 || c.collectedWithoutClock ? "true" : "false") + "}";
             }
         }
@@ -408,6 +555,7 @@ namespace Zantetsu.PhysicsCut
                 catch (Exception) { /* the pool is disposed below either way */ }
             }
             _background.Dispose();
+            DispatchObservation.WorkLog = _workLogBefore;
         }
 
         /// <summary>A work whose own run is stamped (Begin's entry and end), for the overlap with the competitors.</summary>
@@ -424,6 +572,9 @@ namespace Zantetsu.PhysicsCut
             private readonly SpatialSplitReplayPool _owner;
             internal readonly string condition, sample;
             internal readonly bool warmup;
+            /// <summary>Its part in the load (GRAPH-CONNECT-17 §3-E2): "top-up" (the level's), "blocker" (the forward block) or "backward".</summary>
+            internal readonly string role;
+            internal WorkTicket ticket;
             internal long enqueuedAt, acceptedAt, beganAt, endedAt, collectedAt;
             internal bool collectedWithoutClock;
             private ulong _result;
@@ -431,14 +582,17 @@ namespace Zantetsu.PhysicsCut
             /// <summary>The last competitor's result: read nowhere, written so that the loop is not removed.</summary>
             public static ulong Sink;
 
-            public CompetitorWork(long steps, SpatialSplitReplayPool owner, string condition, string sample, bool warmup)
+            public CompetitorWork(long steps, SpatialSplitReplayPool owner, string condition, string sample, bool warmup, string role = "top-up")
             {
                 _steps = steps;
                 _owner = owner;
                 this.condition = condition;
                 this.sample = sample;
                 this.warmup = warmup;
+                this.role = role;
             }
+
+            public long Steps => _steps;
 
             public long BeganAt => beganAt;
             public long EndedAt => endedAt;
@@ -539,6 +693,14 @@ namespace Zantetsu.PhysicsCut
         internal double wallSeconds;
         internal double? overlapSeconds;            // null: not measured
         internal double[] workerBusyDeltaSeconds;   // null: not measured
+        // GRAPH-CONNECT-17 §3-E2: the pool's shape and the load, and the work's OWN refusals (null: the work log off) with the first and
+        // the last refused opportunity's clock (0: none), and the load's competitors by their index in competitors.jsonl
+        internal string shape = "pc", load = "L0";
+        internal int capacity = SpatialSplitReplayPool.PoolCapacity;
+        internal long blockerWork;
+        internal int? ownRefused;
+        internal long firstRefusal, lastRefusal;
+        internal int[] blockers, backward;
 
         /// <summary>The record as JSON: the stamps as ms from the run's origin (null where absent), the intervals where both stamps are present (null otherwise).</summary>
         internal string Json(long origin, CultureInfo inv)
@@ -560,7 +722,21 @@ namespace Zantetsu.PhysicsCut
                 + ",\"competitorsDuring\":" + (competitorsDuring.HasValue ? competitorsDuring.Value.ToString(inv) : "null")
                 + ",\"overlapMs\":" + (overlapSeconds.HasValue ? (overlapSeconds.Value * 1000.0).ToString("F3", inv) : "null")
                 + ",\"workerBusyDeltaMs\":" + busy + ",\"wallMs\":" + (wallSeconds * 1000.0).ToString("F3", inv)
+                + ",\"shape\":" + SpatialSplitCaptureSink.Json(shape) + ",\"load\":" + SpatialSplitCaptureSink.Json(load) + ",\"capacity\":" + capacity.ToString(inv)
+                + ",\"blockerWork\":" + blockerWork.ToString(inv)
+                + ",\"ownRefused\":" + (ownRefused.HasValue ? ownRefused.Value.ToString(inv) : "null")
+                + ",\"firstRefusalMs\":" + Stamp(firstRefusal) + ",\"lastRefusalMs\":" + Stamp(lastRefusal)
+                + ",\"blockers\":" + Indices(blockers) + ",\"backward\":" + Indices(backward)
+                + ",\"workLogObserved\":" + (ownRefused.HasValue ? "true" : "false")
                 + ",\"observed\":{\"dispatch\":" + (blocked.HasValue ? "true" : "false") + ",\"timeline\":" + (t0 != 0 ? "true" : "false") + "}}";
+        }
+
+        private static string Indices(int[] values)
+        {
+            if (values == null) return "null";
+            var b = new StringBuilder("[");
+            for (int i = 0; i < values.Length; i++) b.Append(i > 0 ? "," : "").Append(values[i].ToString(CultureInfo.InvariantCulture));
+            return b.Append(']').ToString();
         }
     }
 }

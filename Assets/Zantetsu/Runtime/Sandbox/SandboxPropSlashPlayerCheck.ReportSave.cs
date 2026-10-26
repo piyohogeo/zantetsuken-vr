@@ -141,6 +141,7 @@ namespace Zantetsu.Sandbox
                 IEnumerator written = WaitForWrite(write, final);
                 while (written.MoveNext()) yield return written.Current;
                 _timelineWrite = null;
+                if (final) WriteDispatchClockFiles();   // GRAPH-CONNECT-17: this path's WriteTimeline(true) returns early, so the clock files are written here
                 if (final) PrepareFinalTimelineResult(write.Failure);
                 else Guarded("timeline at cuts complete", write.ThrowIfFailed);
             }

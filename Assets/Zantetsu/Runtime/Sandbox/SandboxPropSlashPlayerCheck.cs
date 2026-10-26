@@ -1304,6 +1304,7 @@ namespace Zantetsu.Sandbox
                 }
                 else Log("metrics: off for this run (" + MetricsArgument + " off): no frame timeline, no frames.csv");
                 _clockStart = Zantetsu.Core.GamePause.UnscaledTimeAsDouble;
+                NoteScriptStartClock();   // GRAPH-CONNECT-17: the script's origin on every clock (an evaluation run's record only)
                 _replaying = MobPlanMode || _recorder.TryBeginReplay(_clockStart);
                 if (!MobPlanMode) _npcPose?.Restart();
                 if (MobPlanMode)
@@ -1369,6 +1370,7 @@ namespace Zantetsu.Sandbox
 
                 _replaying = false;
                 _scriptCompleted = cutsComplete;
+                NoteScriptEndClock();   // GRAPH-CONNECT-17: the script's end on every clock, as it happens (the walk window's end; apart from the saves)
                 ManualPhysicsClock stepClock = CutPhysicsStep.Clock;
                 if (cutsComplete)
                 {
@@ -1906,6 +1908,7 @@ namespace Zantetsu.Sandbox
                 taken.phase = _phase;
                 taken.real = Zantetsu.Core.GamePause.UnscaledTimeAsDouble - _clockStart;
                 taken.delta = Zantetsu.Core.GamePause.UnscaledDeltaTime;
+                NoteDispatchClock(taken);   // GRAPH-CONNECT-17: the row's clocks at this sample (an evaluation run's record only)
                 taken.fed = fed;
                 taken.recorded = replayInRealtime && fed > 0 ? _recorder.ReplayLastTimestamp - _clockStart
                     : fed > 0 && fed <= _rowTimes.Count ? _rowTimes[fed - 1] - _rowTimes[0] : double.NaN;
@@ -2017,6 +2020,7 @@ namespace Zantetsu.Sandbox
                 if (_timelineRecorders == null) return;
                 File.WriteAllText(Path.Combine(directory, final ? "frames.csv" : "frames-at-cuts-complete.csv"),
                     FormatTimeline(_timeline, _timelineMarkers.Select(marker => marker.name).ToArray(), NumericTimelineDiagnosis));
+                if (final) WriteDispatchClockFiles();   // GRAPH-CONNECT-17: the clock points and the pause events beside frames.csv
                 if (final) CloseTimelineRecorders();
             }
 
@@ -2034,6 +2038,7 @@ namespace Zantetsu.Sandbox
                     text.Append(',').Append(name);
                 }
 
+                AppendDispatchClockHeader(text);   // GRAPH-CONNECT-17: the row clocks' columns, last (an evaluation run's record only)
                 text.Append('\n');
                 FrameRow nativeBefore = null;   // the last row whose plugin counts are known: a row's counts are its difference from it
                 foreach (FrameRow r in rows)
@@ -2218,6 +2223,7 @@ namespace Zantetsu.Sandbox
                         text.Append(',').Append(r.markers != null ? r.markers[i] : -1);
                     }
 
+                    AppendDispatchClockValues(text, r);
                     text.Append('\n');
                 }
 

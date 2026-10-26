@@ -3,6 +3,7 @@
 #endif
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Zantetsu.MeshCut
 {
@@ -431,6 +432,9 @@ namespace Zantetsu.MeshCut
             public WorkDestination destination;
             public int sequence;
             public IDispatchWork work;
+#if ZANTETSU_OBSERVE
+            public int log;   // GRAPH-CONNECT-17 §3-E4: the work's record in _workLog, plus one (0: not logged)
+#endif
         }
 
         // The order destinations are offered in within one opportunity: urgent first where there is a choice.
@@ -452,6 +456,13 @@ namespace Zantetsu.MeshCut
         private readonly int[] _submittedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
         private readonly int[] _collectedByPurpose = new int[(int)WorkPurpose.MobPlanning + 1];
         private readonly int[] _capacityBlocked = new int[4];
+
+        // GRAPH-CONNECT-17 §3-E4: every Background work's own way while DispatchObservation.WorkLog is on (a record a work, kept to
+        // WorkLogRoom), and the dispatch opportunities taken while it was on. A reading only: nothing here decides, orders or delays anything.
+        private readonly List<DispatchWorkRecord> _workLog = new List<DispatchWorkRecord>();
+        private long _workLogNotKept;
+        private long _workLogOpportunities;
+        private long _workLogMovedIn;
 #endif
 
         private int _lastTicket;
@@ -594,6 +605,122 @@ namespace Zantetsu.MeshCut
 #endif
         }
 
+#if ZANTETSU_OBSERVE
+        /// <summary>The works logged while <see cref="DispatchObservation.WorkLog"/> was on, as they stand (GRAPH-CONNECT-17 §3-E4; development builds).</summary>
+        public int WorkLogCount => _workLog.Count;
+
+        /// <summary>Works offered while the log was on that found its room full (counted, not kept).</summary>
+        public long WorkLogNotKept => _workLogNotKept;
+
+        /// <summary>Dispatch opportunities taken while the log was on.</summary>
+        public long WorkLogOpportunities => _workLogOpportunities;
+
+        /// <summary>Works reclassified into Background from another destination while the log was on (not logged: counted).</summary>
+        public long WorkLogMovedIn => _workLogMovedIn;
+
+        /// <summary>One logged work as recorded so far (a work still held reads as it was last recorded; see <see cref="SnapshotWorkLog"/>).</summary>
+        public DispatchWorkRecord WorkLogAt(int index) => _workLog[index];
+
+        /// <summary>The logged work of a ticket (its serial), as recorded so far; false when it was not logged. The newest records are looked at first.</summary>
+        public bool TryFindWorkLog(WorkTicket ticket, out DispatchWorkRecord record)
+        {
+            for (int i = _workLog.Count - 1; i >= 0; i--)
+            {
+                if (_workLog[i].serial == ticket.value)
+                {
+                    record = _workLog[i];
+                    return true;
+                }
+            }
+            record = default;
+            return false;
+        }
+
+        /// <summary>
+        /// The log as of now, every record once: a work still waiting here reads Waiting; one a destination still holds reads Accepted,
+        /// Running (its begin and worker) or FinishedNotCollected (its begin, end and worker) as a pool reports it; the rest as they ended.
+        /// A copy (main thread; development builds). Nothing is moved, collected or delayed by it.
+        /// </summary>
+        public DispatchWorkRecord[] SnapshotWorkLog()
+        {
+            var copy = _workLog.ToArray();
+            foreach (Entry e in _waiting)
+            {
+                if (e.log > 0) copy[e.log - 1].end = DispatchWorkEnd.Waiting;
+            }
+            foreach (Entry e in _submitted)
+            {
+                if (e.log <= 0) continue;
+                ref DispatchWorkRecord r = ref copy[e.log - 1];
+                r.end = DispatchWorkEnd.Accepted;
+                if (_executors[(int)e.destination] is WorkerPoolExecutor pool && pool.TryObserveHeld(e.work, out long began, out long ended, out int worker))
+                {
+                    r.t2 = began;
+                    r.t3 = ended;
+                    r.worker = worker;
+                    r.end = ended != 0 ? DispatchWorkEnd.FinishedNotCollected : (began != 0 ? DispatchWorkEnd.Running : DispatchWorkEnd.Accepted);
+                }
+            }
+            return copy;
+        }
+
+        private int LogEnqueue(WorkTicket ticket, WorkPurpose purpose, IDispatchWork work)
+        {
+            if (!DispatchObservation.WorkLog) return 0;
+            // the Background works only (GRAPH-CONNECT-17 §3-E4: one row a work put to Background): their worker's clocks t2 and t3
+            // are a worker pool's; the Unity Job destination has none, and the Geometry and Planning pools are other workers
+            if (WorkPurposes.DestinationOf(purpose) != WorkDestination.BackgroundPool) return 0;
+            if (_workLog.Count >= DispatchObservation.WorkLogRoom)
+            {
+                _workLogNotKept++;
+                return 0;
+            }
+            _workLog.Add(new DispatchWorkRecord
+            {
+                serial = ticket.value, purpose = purpose, destination = WorkPurposes.DestinationOf(purpose), kind = work.GetType().Name,
+                label = work is IDispatchLabeled labeled ? labeled.DispatchLabel : -1,
+                t0 = Stopwatch.GetTimestamp(), worker = -1, end = DispatchWorkEnd.Waiting,
+            });
+            return _workLog.Count;
+        }
+
+        private void LogRefused(int log, long now)
+        {
+            if (log <= 0) return;
+            DispatchWorkRecord r = _workLog[log - 1];
+            r.refused++;
+            if (r.firstRefusal == 0) r.firstRefusal = now;
+            r.lastRefusal = now;
+            _workLog[log - 1] = r;
+        }
+
+        private void LogEnd(int log, DispatchWorkEnd end)
+        {
+            if (log <= 0) return;
+            DispatchWorkRecord r = _workLog[log - 1];
+            r.end = end;
+            r.tEnd = Stopwatch.GetTimestamp();
+            _workLog[log - 1] = r;
+        }
+
+        private void LogCollected(int log, IWorkExecutor executor, WorkCompletion completion)
+        {
+            if (log <= 0) return;
+            DispatchWorkRecord r = _workLog[log - 1];
+            r.t4 = Stopwatch.GetTimestamp();
+            r.tEnd = r.t4;
+            if (executor is WorkerPoolExecutor pool && pool.LastTaken(out long began, out long ended, out int worker))
+            {
+                r.t2 = began;
+                r.t3 = ended;
+                r.worker = worker;
+            }
+            r.end = completion.outcome == WorkOutcome.Finished ? DispatchWorkEnd.Collected
+                : completion.outcome == WorkOutcome.Failed ? DispatchWorkEnd.Failed : DispatchWorkEnd.NotRun;
+            _workLog[log - 1] = r;
+        }
+#endif
+
         /// <summary>The destination, as the dispatcher holds it. For reading its capacity and load.</summary>
         public IWorkExecutor Executor(WorkDestination destination)
         {
@@ -692,6 +819,9 @@ namespace Zantetsu.MeshCut
                 destination = WorkPurposes.DestinationOf(purpose),
                 sequence = checked(++_lastSequence),
                 work = work,
+#if ZANTETSU_OBSERVE
+                log = LogEnqueue(ticket, purpose, work),
+#endif
             });
             return true;
         }
@@ -707,6 +837,9 @@ namespace Zantetsu.MeshCut
             {
                 if (_waiting[i].ticket == ticket)
                 {
+#if ZANTETSU_OBSERVE
+                    LogEnd(_waiting[i].log, DispatchWorkEnd.Withdrawn);
+#endif
                     _waiting.RemoveAt(i);
                     return true;
                 }
@@ -750,9 +883,41 @@ namespace Zantetsu.MeshCut
                 if (_executors[(int)WorkPurposes.DestinationOf(purpose)] == null || !HasPlaceFor(purpose, ticket))
                     return false;
 
+#if ZANTETSU_OBSERVE
+                WorkDestination movedFrom = entry.destination;
+#endif
                 entry.purpose = purpose;
                 entry.destination = WorkPurposes.DestinationOf(purpose);
                 _waiting[i] = entry;
+#if ZANTETSU_OBSERVE
+                if (entry.log > 0)
+                {
+                    // GRAPH-CONNECT-17: a work reclassified within Background follows its new purpose; a work moved out of Background
+                    // ends its record there (MovedOut: t0 and the move's clock, the destination it went to in movedTo) and is followed
+                    // no further. The record keeps the destination and the purpose it had in Background (TL review 9, P2-1: the log is
+                    // of Background's works, every row's destination is Background)
+                    int at = entry.log - 1;
+                    DispatchWorkRecord moved = _workLog[at];
+                    if (entry.destination != WorkDestination.BackgroundPool)
+                    {
+                        moved.end = DispatchWorkEnd.MovedOut;
+                        moved.tEnd = Stopwatch.GetTimestamp();
+                        moved.moved = true;
+                        moved.movedTo = entry.destination;
+                        entry.log = 0;
+                        _waiting[i] = entry;
+                    }
+                    else
+                    {
+                        moved.purpose = purpose;
+                    }
+                    _workLog[at] = moved;
+                }
+                else if (DispatchObservation.WorkLog && entry.destination == WorkDestination.BackgroundPool && movedFrom != WorkDestination.BackgroundPool)
+                {
+                    _workLogMovedIn++;   // moved into Background from elsewhere: not logged (its t0 is not Background's), counted
+                }
+#endif
                 return true;
             }
 
@@ -813,6 +978,9 @@ namespace Zantetsu.MeshCut
             }
 
             _dispatching = true;
+#if ZANTETSU_OBSERVE
+            if (DispatchObservation.WorkLog) _workLogOpportunities++;
+#endif
             try
             {
                 // Collection first, and on its own terms: whether anything could be submitted afterwards has no
@@ -837,9 +1005,12 @@ namespace Zantetsu.MeshCut
                     {
                         // Taken out and paid for before the callback runs: a Collect that throws is not collected
                         // again and not re-run, and the work is the caller's from that moment.
-                        WorkPurpose collectedPurpose = Forget(work);
 #if ZANTETSU_OBSERVE
+                        WorkPurpose collectedPurpose = Forget(work, out int collectedLog);
                         if (DispatchObservation.Enabled && WorkPurposes.IsDefined(collectedPurpose)) _collectedByPurpose[(int)collectedPurpose]++;
+                        LogCollected(collectedLog, executor, completion);
+#else
+                        Forget(work);
 #endif
                         RemainingBudget--;
                         collected++;
@@ -867,6 +1038,9 @@ namespace Zantetsu.MeshCut
                         _capacityBlocked[(int)destination]++;
                     }
 #endif
+#if ZANTETSU_OBSERVE
+                    int refusedLog = 0;   // GRAPH-CONNECT-17: a work its destination refused at TryAccept in this opportunity
+#endif
                     while (RemainingBudget > 0 && executor.CanAccept && TryTakeNextWaiting(destination, out Entry next))
                     {
                         // Acceptance first, and nothing is charged or moved until it is decided. A destination that
@@ -878,9 +1052,21 @@ namespace Zantetsu.MeshCut
                             _waiting.Add(next);
 #if ZANTETSU_OBSERVE
                             if (DispatchObservation.Enabled) _capacityBlocked[(int)destination]++;   // refused between the question and the answer: the same want of room
+                            refusedLog = next.log;
 #endif
                             break;
                         }
+#if ZANTETSU_OBSERVE
+                        if (next.log > 0)
+                        {
+                            // t1: the pool's own acceptance stamp, taken inside its lock before its queue has the work -- the boundary of
+                            // the observed works' acceptedAt (only Background works are logged, and Background is a worker pool)
+                            DispatchWorkRecord accepted = _workLog[next.log - 1];
+                            accepted.t1 = executor is WorkerPoolExecutor acceptingPool ? acceptingPool.LastAcceptedAt : 0;
+                            accepted.end = DispatchWorkEnd.Accepted;
+                            _workLog[next.log - 1] = accepted;
+                        }
+#endif
 
                         // Accepted: ownership passed at that moment, and the submitted record is settled here,
                         // before anything of it can be collected. A pool's worker may already be running it — the
@@ -897,6 +1083,26 @@ namespace Zantetsu.MeshCut
                         _submitted.Add(next);
                         executor.BeginAccepted(next.work);
                     }
+#if ZANTETSU_OBSERVE
+                    // GRAPH-CONNECT-17 §3-E4: every work still waiting for this destination that this opportunity could not submit for
+                    // want of its room (budget left, the destination full) is told so, once, with this opportunity's clock -- the
+                    // refusal of a work at the question as well as at the answer. A work left waiting because the budget ran out is not.
+                    if (DispatchObservation.WorkLog && RemainingBudget > 0)
+                    {
+                        long now = Stopwatch.GetTimestamp();
+                        if (!executor.CanAccept)
+                        {
+                            for (int i = 0; i < _waiting.Count; i++)
+                            {
+                                if (_waiting[i].destination == destination) LogRefused(_waiting[i].log, now);
+                            }
+                        }
+                        else if (refusedLog > 0)
+                        {
+                            LogRefused(refusedLog, now);   // refused at the answer although the question said yes
+                        }
+                    }
+#endif
                 }
 
                 return new DispatchProgress(collected, submitted);
@@ -953,6 +1159,9 @@ namespace Zantetsu.MeshCut
                     Entry entry = _waiting[_waiting.Count - 1];
                     _waiting.RemoveAt(_waiting.Count - 1);
                     cancelled++;
+#if ZANTETSU_OBSERVE
+                    LogEnd(entry.log, DispatchWorkEnd.CancelledWaiting);
+#endif
                     entry.work.Collect(WorkCompletion.Cancelled);
                 }
 
@@ -973,9 +1182,12 @@ namespace Zantetsu.MeshCut
                     {
                         // GRAPH-CONNECT-14: the stop's collection counts by purpose as the frame's does (a work that ended during the
                         // stop is collected here and nowhere else); the cancelled were never submitted and are not collections
-                        WorkPurpose collectedPurpose = Forget(work);
 #if ZANTETSU_OBSERVE
+                        WorkPurpose collectedPurpose = Forget(work, out int collectedLog);
                         if (DispatchObservation.Enabled && WorkPurposes.IsDefined(collectedPurpose)) _collectedByPurpose[(int)collectedPurpose]++;
+                        LogCollected(collectedLog, executor, completion);
+#else
+                        Forget(work);
 #endif
                         collected++;
                         TotalCollected++;
@@ -1018,6 +1230,25 @@ namespace Zantetsu.MeshCut
             }
             return (WorkPurpose)(-1);
         }
+
+#if ZANTETSU_OBSERVE
+        // The same, also handing out the entry's log index (GRAPH-CONNECT-17; 0 when not logged or not there).
+        private WorkPurpose Forget(IDispatchWork work, out int log)
+        {
+            for (int i = 0; i < _submitted.Count; i++)
+            {
+                if (ReferenceEquals(_submitted[i].work, work))
+                {
+                    WorkPurpose purpose = _submitted[i].purpose;
+                    log = _submitted[i].log;
+                    _submitted.RemoveAt(i);
+                    return purpose;
+                }
+            }
+            log = 0;
+            return (WorkPurpose)(-1);
+        }
+#endif
 
         // The next waiting work for one destination. Which one that is within a destination is this queue's own
         // business: no order is promised there, and none is relied on.

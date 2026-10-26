@@ -259,11 +259,21 @@ namespace Zantetsu.PhysicsCut
         public int competitorLevel;
         public long competitorWork = DefaultCompetitorWork;
 
+        /// <summary>
+        /// GRAPH-CONNECT-17 §3-E2: the pool's shape (pc: the product's Background pool, 2 workers and room for 2; quest: 1 worker, room for
+        /// 1), the load (the level L0..L2, F the forward block, B the backward load) and the forward blocker's fixed amount of steps.
+        /// </summary>
+        public bool questShape;
+        public SpatialSplitReplayPoolLoad poolLoad = SpatialSplitReplayPoolLoad.Level;
+        public long blockerWork = SpatialSplitReplayPool.DefaultBlockerWork;
+
         /// <summary>The competitor's fixed amount of steps (about 2 ms on the development machine of 2026-10; the amount is what is fixed, not the time).</summary>
         public const long DefaultCompetitorWork = 2000000;
 
         public static SpatialSplitReplayOptions Default => new SpatialSplitReplayOptions();
-        public string PoolName => pool ? "L" + competitorLevel.ToString(System.Globalization.CultureInfo.InvariantCulture) : "off";
+        public string PoolName => !pool ? "off"
+            : (poolLoad == SpatialSplitReplayPoolLoad.Forward ? "F" : poolLoad == SpatialSplitReplayPoolLoad.Backward ? "B" : "L" + competitorLevel.ToString(System.Globalization.CultureInfo.InvariantCulture))
+              + (questShape ? " (quest shape)" : "");
 
         public string InputName => spanInput ? "span" : "compact";
         public string BentName => bentOff ? "off" : "saved";
@@ -290,7 +300,16 @@ namespace Zantetsu.PhysicsCut
         /// and is refused together with the graph, order or bent arguments; the competitor work argument takes a positive count.
         /// </summary>
         public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument,
-            string poolArgument, string competitorWorkArgument, out SpatialSplitReplayOptions options, out string refusal)
+            string poolArgument, string competitorWorkArgument, out SpatialSplitReplayOptions options, out string refusal) =>
+            TryRead(arguments, inputArgument, graphArgument, listArgument, bentArgument, orderArgument, poolArgument, competitorWorkArgument, null, null, out options, out refusal);
+
+        /// <summary>
+        /// As above, with GRAPH-CONNECT-17's (§3-E2): the pool argument also takes F (the forward block) and B (the backward load); the shape
+        /// argument takes pc or quest and needs the pool; the blocker work argument takes a positive count and needs the pool at F. A level
+        /// above the shape's room (L2 in the quest shape) is refused.
+        /// </summary>
+        public static bool TryRead(string[] arguments, string inputArgument, string graphArgument, string listArgument, string bentArgument, string orderArgument,
+            string poolArgument, string competitorWorkArgument, string shapeArgument, string blockerWorkArgument, out SpatialSplitReplayOptions options, out string refusal)
         {
             options = new SpatialSplitReplayOptions();
             refusal = null;
@@ -340,10 +359,13 @@ namespace Zantetsu.PhysicsCut
             if (poolAt >= 0)
             {
                 string value = ValueAt(poolAt);
-                if (value == null) { refusal = poolArgument + " has no value (L0, L1 or L2)"; return false; }
-                if (value.Length != 2 || (value[0] != 'L' && value[0] != 'l') || value[1] < '0' || value[1] > '2') { refusal = poolArgument + " takes L0, L1 or L2, not '" + value + "'"; return false; }
+                bool loads = shapeArgument != null;   // the GRAPH-CONNECT-17 values are read only by a caller that knows them
+                if (value == null) { refusal = poolArgument + " has no value (L0, L1 or L2" + (loads ? ", F or B)" : ")"); return false; }
+                if (loads && (value == "F" || value == "f")) options.poolLoad = SpatialSplitReplayPoolLoad.Forward;
+                else if (loads && (value == "B" || value == "b")) options.poolLoad = SpatialSplitReplayPoolLoad.Backward;
+                else if (value.Length != 2 || (value[0] != 'L' && value[0] != 'l') || value[1] < '0' || value[1] > '2') { refusal = poolArgument + " takes L0, L1 or L2" + (loads ? ", F or B" : "") + ", not '" + value + "'"; return false; }
+                else options.competitorLevel = value[1] - '0';
                 options.pool = true;
-                options.competitorLevel = value[1] - '0';
                 if (!options.spanInput) { refusal = poolArgument + " needs " + inputArgument + " span (the product's shape)"; return false; }
                 if (options.graph || orderAt >= 0 || bentAt >= 0) { refusal = poolArgument + " runs its own conditions D and C: not together with " + graphArgument + ", " + (orderArgument ?? "the order argument") + " or " + (bentArgument ?? "the bent argument"); return false; }
             }
@@ -355,6 +377,29 @@ namespace Zantetsu.PhysicsCut
                 if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long steps) || steps <= 0) { refusal = competitorWorkArgument + " takes a positive count of steps, not '" + value + "'"; return false; }
                 if (!options.pool) { refusal = competitorWorkArgument + " needs " + poolArgument; return false; }
                 options.competitorWork = steps;
+            }
+            int shapeAt = shapeArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, shapeArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (shapeAt >= 0)
+            {
+                string value = ValueAt(shapeAt);
+                if (value == null) { refusal = shapeArgument + " has no value (pc or quest)"; return false; }
+                if (string.Equals(value, "quest", StringComparison.OrdinalIgnoreCase)) options.questShape = true;
+                else if (!string.Equals(value, "pc", StringComparison.OrdinalIgnoreCase)) { refusal = shapeArgument + " takes pc or quest, not '" + value + "'"; return false; }
+                if (!options.pool) { refusal = shapeArgument + " needs " + poolArgument; return false; }
+            }
+            if (options.pool && options.questShape && options.poolLoad == SpatialSplitReplayPoolLoad.Level && options.competitorLevel > SpatialSplitReplayPool.QuestPoolCapacity)
+            {
+                refusal = poolArgument + " L" + options.competitorLevel + " is above the quest shape's room (" + SpatialSplitReplayPool.QuestPoolCapacity + ")";
+                return false;
+            }
+            int blockerAt = blockerWorkArgument != null ? Array.FindIndex(arguments, a => string.Equals(a, blockerWorkArgument, StringComparison.OrdinalIgnoreCase)) : -1;
+            if (blockerAt >= 0)
+            {
+                string value = ValueAt(blockerAt);
+                if (value == null) { refusal = blockerWorkArgument + " has no value"; return false; }
+                if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long steps) || steps <= 0) { refusal = blockerWorkArgument + " takes a positive count of steps, not '" + value + "'"; return false; }
+                if (!options.pool || options.poolLoad != SpatialSplitReplayPoolLoad.Forward) { refusal = blockerWorkArgument + " needs " + poolArgument + " F"; return false; }
+                options.blockerWork = steps;
             }
 
             return true;
@@ -471,7 +516,11 @@ namespace Zantetsu.PhysicsCut
             bool graphPrepared = false;
             if (options.graph || options.pool) graphPrepared = SpatialSplitGraph.IsPrepared || SpatialSplitGraph.Prepare();
             // GRAPH-CONNECT-14 §3-1: the pool replay's dispatcher and real Background pool, for the whole session (disposed at its end)
-            using (SpatialSplitReplayPool pool = options.pool ? new SpatialSplitReplayPool(options.competitorLevel, options.competitorWork, TestPoolAttemptTicks, TestPoolStopMilliseconds) : null)
+            // GRAPH-CONNECT-17 §3-E2: the shape (pc as before, or the quest's one worker) and the load (the level, the forward block, the backward load)
+            using (SpatialSplitReplayPool pool = options.pool
+                ? new SpatialSplitReplayPool(options.questShape ? SpatialSplitReplayPoolShape.Quest : SpatialSplitReplayPoolShape.Pc, options.poolLoad,
+                    options.competitorLevel, options.competitorWork, options.blockerWork, TestPoolAttemptTicks, TestPoolStopMilliseconds)
+                : null)
             {
             if (pool != null) pool.TestBeginGate = TestPoolBeginGate;   // tests: a worker holds the attempt's input at the gate (TL P1)
             if (pool != null)

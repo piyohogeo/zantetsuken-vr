@@ -33,10 +33,13 @@ namespace Zantetsu.Sandbox
         /// <summary>GRAPH-CONNECT-14: the pool replay (L0 | L1 | L2: the competitor level) and the competitor's fixed amount of steps.</summary>
         public const string PoolArgument = "-zantetsuSplitReplayPool";
         public const string CompetitorWorkArgument = "-zantetsuSplitReplayCompetitorWork";
+        /// <summary>GRAPH-CONNECT-17 §3-E2: the pool's shape (pc | quest), and the forward blocker's fixed amount of steps (with the pool at F).</summary>
+        public const string PoolShapeArgument = "-zantetsuSplitReplayPoolShape";
+        public const string BlockerWorkArgument = "-zantetsuSplitReplayBlockerWork";
 
         /// <summary>Reads the options (<see cref="SpatialSplitReplayOptions.TryRead"/> with this entry's argument names).</summary>
         internal static bool TryReadOptions(string[] arguments, out SpatialSplitReplayOptions options, out string refusal) =>
-            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, BentArgument, OrderArgument, PoolArgument, CompetitorWorkArgument, out options, out refusal);
+            SpatialSplitReplayOptions.TryRead(arguments, InputArgument, GraphArgument, ListArgument, BentArgument, OrderArgument, PoolArgument, CompetitorWorkArgument, PoolShapeArgument, BlockerWorkArgument, out options, out refusal);
 
         /// <summary>
         /// Whether the launch asks for a replay at all (either argument named), and -- when it does -- its two folders,
@@ -85,6 +88,8 @@ namespace Zantetsu.Sandbox
                 Zantetsu.MeshCut.DispatchObservation.Enabled = false;
                 Debug.Log("SPLIT REPLAY (Player): timeline off -- asked for by " + CutWorldRoot.SplitTimelineOffArgument);
             }
+            // GRAPH-CONNECT-17 §3-E5: the new observation (the dispatcher's work log) kept off by -zantetsuDispatchObserveOff
+            DispatchRecord.ReadArguments(Environment.GetCommandLineArgs());
             int code = 1;
             if (refusal != null)
             {

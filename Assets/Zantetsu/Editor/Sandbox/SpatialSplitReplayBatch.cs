@@ -30,7 +30,7 @@ namespace Zantetsu.Editor.Sandbox
 
                 // the options (GRAPH-CONNECT-6 §2), read as the Player reads its own: a named argument without its value, an unknown
                 // value, a relative list or the graph without the span input is refused before anything runs (never "no list")
-                if (!SpatialSplitReplayOptions.TryRead(Environment.GetCommandLineArgs(), "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", "-splitReplayOrder", "-splitReplayPool", "-splitReplayCompetitorWork", out SpatialSplitReplayOptions options, out string refusal))
+                if (!SpatialSplitReplayOptions.TryRead(Environment.GetCommandLineArgs(), "-splitReplayInput", "-splitReplayGraph", "-splitReplayList", "-splitReplayBent", "-splitReplayOrder", "-splitReplayPool", "-splitReplayCompetitorWork", "-splitReplayPoolShape", "-splitReplayBlockerWork", out SpatialSplitReplayOptions options, out string refusal))
                 {
                     throw new ArgumentException(refusal);
                 }
@@ -40,6 +40,11 @@ namespace Zantetsu.Editor.Sandbox
                     // GRAPH-CONNECT-14 §7: the timeline's new clock readings off for this replay (the existing clocks stand)
                     CutSpatialSplit.TimelineObserve = false;
                     Zantetsu.MeshCut.DispatchObservation.Enabled = false;
+                }
+                if (Array.FindIndex(Environment.GetCommandLineArgs(), a => string.Equals(a, "-splitDispatchObserveOff", StringComparison.OrdinalIgnoreCase)) >= 0)
+                {
+                    // GRAPH-CONNECT-17 §3-E5: the new observation (the dispatcher's work log) off for this replay
+                    DispatchRecord.Off = true;
                 }
                 string summary = SpatialSplitReplay.RunSession(session, output, options, out bool allSame, out bool noSample);
                 Debug.Log("SPLIT REPLAY:\n" + summary);

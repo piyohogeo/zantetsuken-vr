@@ -2722,12 +2722,15 @@ namespace Zantetsu.PhysicsCut
         /// before the work that uses it was collected. (Internal for the capture's offline replay, which runs
         /// <see cref="Begin"/> on a saved input: SpatialSplitReplay.)
         /// </summary>
-        internal sealed unsafe class Attempt : IDispatchWork, IDispatchObserved
+        internal sealed unsafe class Attempt : IDispatchWork, IDispatchObserved, IDispatchLabeled
 #if ZANTETSU_OBSERVE
             , SpatialSplitReplayPool.IRunStamped   // the run stamps for the pool replay (development builds only)
 #endif
         {
             internal long serial;   // the attempt's number in this world, from 1 (diagnosis: the hold streak's key)
+
+            /// <summary>The attempt's serial, as the dispatcher's work log names it (GRAPH-CONNECT-17 §3-E4): the timeline rows' key.</summary>
+            public long DispatchLabel => serial;
 
 #if ZANTETSU_OBSERVE
             // The capture (SpatialSplitCapture): whether this attempt's input was copied, what the copy took on Main,

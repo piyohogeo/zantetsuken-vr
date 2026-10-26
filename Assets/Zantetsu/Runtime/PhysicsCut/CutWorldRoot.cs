@@ -273,6 +273,10 @@ namespace Zantetsu.PhysicsCut
                 catch (Exception e) { UnityEngine.Debug.LogError("CUT WORLD " + name + ": the timeline's rows could not be written: " + e.GetType().Name + ": " + e.Message, this); }
 #endif
             }
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // GRAPH-CONNECT-17 §3-E4: the world's works and their whole tally (files), the tally in short lines (an evaluation run only)
+            DispatchRecord.WriteWorld(name, Dispatcher, SpatialSplit != null ? SpatialSplit.DescribeTimeline() : null);
+#endif
         }
 
         private void OnDestroy()
@@ -675,6 +679,10 @@ namespace Zantetsu.PhysicsCut
             _backgroundPool = destinations?.Invoke(WorkDestination.BackgroundPool)
                               ?? WorkerPoolExecutor.BackgroundPool(profile.BackgroundWorkerCount);
             _planningPool = destinations?.Invoke(WorkDestination.PlanningPool) ?? WorkerPoolExecutor.PlanningPool();
+            // GRAPH-CONNECT-17 §3-E4: the dispatch record of an evaluation run (development builds; nothing in a Release Player), on
+            // before the dispatcher takes its first work. A reading only.
+            DispatchRecord.ReadArguments(Environment.GetCommandLineArgs());
+            DispatchRecord.BeginWorld(name);
             Dispatcher = new SharedWorkDispatcher(
                 profile.WaitingCapacity, profile.ReservedForUrgent, profile.FrameBudget, _unityJob, _geometryPool,
                 _backgroundPool, _planningPool);
