@@ -85,6 +85,7 @@ $env:ZANTETSU_KEYSTORE_PASSWORD = ...; $env:ZANTETSU_KEY_PASSWORD = ...
 
 - Manifest 後処理は `QuestDistributionManifest.Hook`（`IPostGenerateGradleAndroidProject`、order 10000＝XR Management の 1 の後）。配布ビルド中（`QuestDistributionManifest.Required`）だけ動き、生成された Gradle プロジェクトの **2 つの Manifest** を扱う：unityLibrary 本体 `unityLibrary/src/main/AndroidManifest.xml`（installLocation、起動 Activity の excludeFromRecents、intent-filter の VR category）と、XR Management が feature の要件を書く自前のライブラリ `unityLibrary/xrmanifest.androidlib/AndroidManifest.xml`（supportedDevices の meta-data、headtracking、focusaware）。Gradle のマージで、完成 APK では supportedDevices の meta-data が `application` 直下に、headtracking の `uses-feature` が `manifest` 直下に入る。足りない属性を最小限追加し（headtracking はどちらかに在ればそこで値を揃え、どちらにも無いときだけ本体に追加）、PackageCache の編集や Manifest の置き換えはしない。`ConfigureCommon` は呼ばない。
 - min／target SDK と installLocation は `SettingsScope` が保存・適用・復元する（成功時・例外時とも）。
+- 通常のログ行（`LogType.Log`）のスタックトレースは、配布ビルドの間だけ「なし」にする（D-257、`QuestDistributionBuild.LogStackTrace`）。`SettingsScope` が保存・適用・復元する。ログの行そのもの（世界の開始・終了の行など）は残り、警告・エラー・アサート・例外のスタックトレースはプロジェクトの設定のまま。APK の検査では確かめない（設定は Unity の中で適用され、ビルドのログの `QUEST DISTRIBUTION BUILD:` の行に `log stack trace None` が出る）。
 
 ## 配布対象の機種（D-240）
 

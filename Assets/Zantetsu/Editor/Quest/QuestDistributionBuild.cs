@@ -50,6 +50,12 @@ namespace Zantetsu.EditorTools.Quest
         public const AndroidSdkVersions MinSdk = AndroidSdkVersions.AndroidApiLevel32;
         public const AndroidSdkVersions TargetSdk = AndroidSdkVersions.AndroidApiLevel34;
         public const AndroidPreferredInstallLocation InstallLocation = AndroidPreferredInstallLocation.Auto;
+        /// <summary>
+        /// The stack trace of an ordinary log line (<see cref="LogType.Log"/>) in a distribution build (D-257, 2026-10-26): none.
+        /// The lines themselves stay (the world's start and end lines are what a device check reads); warnings, errors,
+        /// assertions and exceptions keep the project's stack traces.
+        /// </summary>
+        public const StackTraceLogType LogStackTrace = StackTraceLogType.None;
 
         /// <summary>What a distribution build is asked for, from the command line (the passwords are not here).</summary>
         public sealed class Request
@@ -120,8 +126,8 @@ namespace Zantetsu.EditorTools.Quest
 
         /// <summary>
         /// The player settings a distribution build sets, put back when disposed -- the identifier, the version name
-        /// and code, the custom keystore, its name and the alias, the SDK levels and the install location -- and the
-        /// two passwords, which are cleared then.
+        /// and code, the custom keystore, its name and the alias, the SDK levels, the install location and the ordinary
+        /// log line's stack trace -- and the two passwords, which are cleared then.
         /// </summary>
         public sealed class SettingsScope : IDisposable
         {
@@ -130,6 +136,7 @@ namespace Zantetsu.EditorTools.Quest
             private readonly bool _customKeystore;
             private readonly AndroidSdkVersions _minSdk, _targetSdk;
             private readonly AndroidPreferredInstallLocation _installLocation;
+            private readonly StackTraceLogType _logStackTrace;
             private bool _disposed;
 
             public SettingsScope(Request request, string keystorePassword, string keyPassword)
@@ -143,6 +150,7 @@ namespace Zantetsu.EditorTools.Quest
                 _minSdk = PlayerSettings.Android.minSdkVersion;
                 _targetSdk = PlayerSettings.Android.targetSdkVersion;
                 _installLocation = PlayerSettings.Android.preferredInstallLocation;
+                _logStackTrace = PlayerSettings.GetStackTraceLogType(LogType.Log);
                 PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, ApplicationIdentifier);
                 PlayerSettings.bundleVersion = request.versionName;
                 PlayerSettings.Android.bundleVersionCode = request.versionCode;
@@ -154,6 +162,7 @@ namespace Zantetsu.EditorTools.Quest
                 PlayerSettings.Android.minSdkVersion = MinSdk;
                 PlayerSettings.Android.targetSdkVersion = TargetSdk;   // named, never the automatic (highest installed) level
                 PlayerSettings.Android.preferredInstallLocation = InstallLocation;
+                PlayerSettings.SetStackTraceLogType(LogType.Log, LogStackTrace);
             }
 
             public void Dispose()
@@ -171,6 +180,7 @@ namespace Zantetsu.EditorTools.Quest
                 PlayerSettings.Android.minSdkVersion = _minSdk;
                 PlayerSettings.Android.targetSdkVersion = _targetSdk;
                 PlayerSettings.Android.preferredInstallLocation = _installLocation;
+                PlayerSettings.SetStackTraceLogType(LogType.Log, _logStackTrace);
             }
         }
 
@@ -305,7 +315,7 @@ namespace Zantetsu.EditorTools.Quest
 
             Debug.Log("QUEST DISTRIBUTION BUILD: package=" + ApplicationIdentifier + " versionName=" + request.versionName + " versionCode=" + request.versionCode
                 + " keystore=" + Path.GetFileName(request.keystore) + " alias=" + request.keyAlias + " output=" + request.output + "; " + statisticsState + " (" + StatisticsArgument + " " + request.statistics + "); " + inputSourcesState
-                + "; Release, commercial, custom keystore; minSdk " + (int)MinSdk + ", targetSdk " + (int)TargetSdk + ", install location " + InstallLocation + ", the manifest's guarantees");
+                + "; Release, commercial, custom keystore; minSdk " + (int)MinSdk + ", targetSdk " + (int)TargetSdk + ", install location " + InstallLocation + ", log stack trace " + LogStackTrace + ", the manifest's guarantees");
             bool built = false;
             try
             {

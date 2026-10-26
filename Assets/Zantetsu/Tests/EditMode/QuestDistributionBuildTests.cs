@@ -2,6 +2,7 @@ using System;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Build;
+using UnityEngine;
 using Zantetsu.EditorTools.Quest;
 using Zantetsu.EditorTools.Sandbox;
 
@@ -135,6 +136,38 @@ namespace Zantetsu.Core.Tests
             }
             finally
             {
+                PlayerSettings.Android.keystorePass = "";
+                PlayerSettings.Android.keyaliasPass = "";
+            }
+        }
+
+        /// <summary>D-257: the ordinary log line carries no stack trace in a distribution build; the other kinds keep theirs, and the project's is put back.</summary>
+        [Test]
+        public void TheSettingsScope_TakesTheOrdinaryLogLinesStackTraceAway_AndPutsItBack()
+        {
+            LogType[] others = { LogType.Warning, LogType.Error, LogType.Assert, LogType.Exception };
+            StackTraceLogType log = PlayerSettings.GetStackTraceLogType(LogType.Log);
+            StackTraceLogType[] before = Array.ConvertAll(others, PlayerSettings.GetStackTraceLogType);
+            Assert.That(QuestDistributionBuild.TryRead(Commercial(), out var r), Is.Null);
+            try
+            {
+                // a project whose ordinary lines carry a stack trace, as this project's do
+                PlayerSettings.SetStackTraceLogType(LogType.Log, StackTraceLogType.ScriptOnly);
+                using (new QuestDistributionBuild.SettingsScope(r, "store-pass", "key-pass"))
+                {
+                    Assert.That(PlayerSettings.GetStackTraceLogType(LogType.Log), Is.EqualTo(StackTraceLogType.None));
+                    Assert.That(Array.ConvertAll(others, PlayerSettings.GetStackTraceLogType), Is.EqualTo(before), "warnings, errors, assertions and exceptions keep theirs");
+                }
+                Assert.That(PlayerSettings.GetStackTraceLogType(LogType.Log), Is.EqualTo(StackTraceLogType.ScriptOnly), "put back");
+                Assert.Throws<InvalidOperationException>(() =>
+                {
+                    using (new QuestDistributionBuild.SettingsScope(r, "store-pass", "key-pass")) throw new InvalidOperationException("the build failed");
+                });
+                Assert.That(PlayerSettings.GetStackTraceLogType(LogType.Log), Is.EqualTo(StackTraceLogType.ScriptOnly), "put back when the build throws");
+            }
+            finally
+            {
+                PlayerSettings.SetStackTraceLogType(LogType.Log, log);
                 PlayerSettings.Android.keystorePass = "";
                 PlayerSettings.Android.keyaliasPass = "";
             }
