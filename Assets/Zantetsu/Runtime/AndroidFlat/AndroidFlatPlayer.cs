@@ -54,6 +54,8 @@ namespace Zantetsu.AndroidFlat
         private AndroidFlatDrawCapabilities drawCapabilities;
         private VpBodyRouteRequest launchBodyRoute;
         private bool appliedMultiDrawIndirect, appliedDrawIndirectCount;
+        // Strict native draws use their own MDI policy; keep Unity's applied setting for pending-change checks.
+        private bool EffectiveMultiDrawIndirect => launchBodyRoute == VpBodyRouteRequest.Native || appliedMultiDrawIndirect;
         private bool RequestedMultiDrawIndirect => drawCapabilities.MultiDrawIndirect && settings.MultiDrawIndirect;
         private bool RequestedDrawIndirectCount => RequestedMultiDrawIndirect && drawCapabilities.DrawIndirectCount && settings.DrawIndirectCount;
         private bool RenderingChangesPending => RequestedMultiDrawIndirect != appliedMultiDrawIndirect
@@ -97,7 +99,7 @@ namespace Zantetsu.AndroidFlat
                 ? launchBodyRoute : VpBodyRouteRequest.UnityApi;
             VpNativeDrawPlugin.VulkanIndirectCount = appliedDrawIndirectCount;
             layoutDirty = true;
-            Debug.Log(Prefix + "rendering applied: MultiDrawIndirect=" + appliedMultiDrawIndirect
+            Debug.Log(Prefix + "rendering applied: MultiDrawIndirect=" + EffectiveMultiDrawIndirect
                 + "; DrawIndirectCount=" + appliedDrawIndirectCount + "; routeRequest=" + VpNativeDrawSetup.Request
                 + "; availableMulti=" + drawCapabilities.MultiDrawIndirect + "; availableCount=" + drawCapabilities.DrawIndirectCount);
         }
@@ -114,7 +116,7 @@ namespace Zantetsu.AndroidFlat
                 && conditions.RenderScale < 1f;
             conditions.MsaaSamples = pipeline != null ? pipeline.msaaSampleCount : QualitySettings.antiAliasing;
             // Saved preferences can be waiting for Apply, and a native route may itself have fallen back.
-            conditions.MultiDrawIndirect = appliedMultiDrawIndirect;
+            conditions.MultiDrawIndirect = EffectiveMultiDrawIndirect;
             conditions.DrawIndirectCount = appliedDrawIndirectCount && drawing != null
                 && drawing.NativeRoute != null && drawing.NativeRoute.CommandCompactionActive;
         }

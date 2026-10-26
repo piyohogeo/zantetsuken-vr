@@ -4,6 +4,7 @@ using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.UI;
+using Zantetsu.Core.Statistics;
 using Zantetsu.Rendering;
 using Object = UnityEngine.Object;
 
@@ -93,6 +94,12 @@ namespace Zantetsu.AndroidFlat.Tests
             VpBodyRouteRequest previousRoute = VpNativeDrawSetup.Request;
             bool previousMulti = VpNativeDrawSetup.UnityMultiDrawIndirect;
             bool previousCount = VpNativeDrawPlugin.VulkanIndirectCount;
+            string appliedLog = null;
+            Application.LogCallback captureLog = (message, stackTrace, type) =>
+            {
+                if (message.StartsWith("ANDROID FLAT: rendering applied: ", StringComparison.Ordinal)) appliedLog = message;
+            };
+            Application.logMessageReceived += captureLog;
             try
             {
                 new AndroidFlatSettings { MultiDrawIndirect = false }.Save();
@@ -108,9 +115,17 @@ namespace Zantetsu.AndroidFlat.Tests
                 Assert.That(VpNativeDrawSetup.UnityMultiDrawIndirect, Is.False, "the preference still applies to Unity-API draws");
                 Assert.That(((AndroidFlatSettings)Field(player, "settings")).MultiDrawIndirect, Is.False);
                 Assert.That(PlayerPrefs.GetInt(Prefix + "multiDrawIndirect"), Is.Zero, "route selection does not rewrite the saved preference");
+                var conditions = new PlayConditions();
+                player.ReadStatisticsConditions(ref conditions);
+                Assert.That(conditions.MultiDrawIndirect, Is.True, "strict native draws use MDI despite Unity's saved OFF preference");
+                Assert.That(conditions.DrawIndirectCount, Is.False, "reporting does not enable the count path");
+                StringAssert.Contains("MultiDrawIndirect=True; DrawIndirectCount=False; routeRequest=Native;", appliedLog);
+                Assert.That((bool)typeof(AndroidFlatPlayer).GetProperty("RenderingChangesPending", Fields).GetValue(player), Is.False,
+                    "native's effective MDI state must not create a pending Unity setting change");
             }
             finally
             {
+                Application.logMessageReceived -= captureLog;
                 VpNativeDrawSetup.Request = previousRoute;
                 VpNativeDrawSetup.UnityMultiDrawIndirect = previousMulti;
                 VpNativeDrawPlugin.VulkanIndirectCount = previousCount;
