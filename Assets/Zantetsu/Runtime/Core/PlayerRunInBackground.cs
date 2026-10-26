@@ -18,7 +18,7 @@ namespace Zantetsu.Core
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Apply()
         {
-            if (AppliesTo(Application.isEditor))
+            if (AppliesTo(Application.isEditor) && !PlayerPlatform.IsAndroidFlat)
             {
                 Application.runInBackground = true;
             }

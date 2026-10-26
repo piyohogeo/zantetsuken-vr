@@ -841,6 +841,42 @@ namespace Zantetsu.Rendering.Tests
         }
 
         [Test]
+        public void Setup_NativePreferred_AllowsFallback_WhileExplicitNativeRemainsStrict_AndUnityApiRemainsExplicit()
+        {
+            foreach ((GraphicsDeviceType device, bool editor, RuntimePlatform platform) in new[]
+                     {
+                         (GraphicsDeviceType.Vulkan, false, RuntimePlatform.Android),
+                         (GraphicsDeviceType.Direct3D12, false, RuntimePlatform.WindowsPlayer),
+                         (GraphicsDeviceType.Direct3D12, true, RuntimePlatform.WindowsEditor),
+                         (GraphicsDeviceType.Direct3D11, true, RuntimePlatform.WindowsEditor),
+                     })
+            {
+                VpNativeDrawSetup.Selection preferred = VpNativeDrawSetup.Select(VpBodyRouteRequest.NativePreferred, device, editor, platform);
+                Assert.That(preferred.Native, Is.True, "the plugin is considered before checking its availability");
+                Assert.That(preferred.Asked, Is.False, "preference does not impose the strict native-only contract");
+                Assert.That(preferred.FallbackExpected, Is.True);
+                Assert.That(preferred.Reason, Is.Not.Null.And.Not.Empty);
+
+                VpNativeDrawSetup.Selection strict = VpNativeDrawSetup.Select(VpBodyRouteRequest.Native, device, editor, platform);
+                Assert.That(strict.Native, Is.True);
+                Assert.That(strict.Asked, Is.True);
+                Assert.That(strict.FallbackExpected, Is.False, "the explicit native request still refuses another route");
+
+                VpNativeDrawSetup.Selection unity = VpNativeDrawSetup.Select(VpBodyRouteRequest.UnityApi, device, editor, platform);
+                Assert.That(unity.Native, Is.False);
+                Assert.That(unity.Asked, Is.True);
+                Assert.That(unity.FallbackExpected, Is.False, "an explicit Unity API request is not a native fallback");
+            }
+
+            Assert.That(new VpNativeDrawSetup.Selection(true, false, "existing default").FallbackExpected, Is.False,
+                "existing three-argument selections retain their recorded-error default failure policy");
+            Assert.That(VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.Argument }),
+                Is.EqualTo(VpBodyRouteRequest.Native), "the native command-line argument remains strict");
+            Assert.That(VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.Argument, VpNativeDrawSetup.UnityApiArgument }),
+                Is.EqualTo(VpBodyRouteRequest.UnityApi), "an explicit Unity API request still wins");
+        }
+
+        [Test]
         public void SphericalHarmonics_PackAsUnitysSevenConstants()
         {
             var sh = new SphericalHarmonicsL2();

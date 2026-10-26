@@ -1,11 +1,185 @@
-// Runs the real SPIR-V descriptor parser on Android without creating a graphics device.
+// Runs the real device negotiation, SPIR-V parser and draw validation without a graphics device.
+#include <vulkan/vulkan.h>
+static VKAPI_ATTR void VKAPI_CALL ProbeGetFeatures(VkPhysicalDevice, VkPhysicalDeviceFeatures*);
+static VKAPI_ATTR void VKAPI_CALL ProbeGetProperties(VkPhysicalDevice, VkPhysicalDeviceProperties*);
+static VKAPI_ATTR VkResult VKAPI_CALL ProbeEnumerateExtensions(VkPhysicalDevice, const char*, uint32_t*, VkExtensionProperties*);
+#define vkGetPhysicalDeviceFeatures ProbeGetFeatures
+#define vkGetPhysicalDeviceProperties ProbeGetProperties
+#define vkEnumerateDeviceExtensionProperties ProbeEnumerateExtensions
 #include "ZantetsuVpVulkan.cpp"
+#undef vkGetPhysicalDeviceFeatures
+#undef vkGetPhysicalDeviceProperties
+#undef vkEnumerateDeviceExtensionProperties
 #include <fstream>
 #include <iterator>
 #include <cassert>
 #include <cstddef>
+namespace {
+struct DeviceCall {
+    std::vector<std::string> extensions;
+    VkPhysicalDeviceFeatures core{};
+    bool hasVulkan12 = false;
+    VkBool32 drawIndirectCount = VK_FALSE;
+};
+bool probeCountSupported = false, probeRejectCountExtension = false;
+bool probeMultiSupported = true, probeClipSupported = false;
+VkResult probeCreateResult = VK_SUCCESS;
+std::vector<DeviceCall> deviceCalls;
+}
+static VKAPI_ATTR void VKAPI_CALL ProbeGetFeatures(VkPhysicalDevice, VkPhysicalDeviceFeatures* result) {
+    *result = {};
+    result->multiDrawIndirect = probeMultiSupported ? VK_TRUE : VK_FALSE;
+    result->drawIndirectFirstInstance = result->samplerAnisotropy = VK_TRUE;
+    result->shaderClipDistance = probeClipSupported ? VK_TRUE : VK_FALSE;
+}
+static VKAPI_ATTR void VKAPI_CALL ProbeGetProperties(VkPhysicalDevice, VkPhysicalDeviceProperties* result) {
+    *result = {};
+    result->apiVersion = VK_API_VERSION_1_2;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL ProbeEnumerateExtensions(VkPhysicalDevice, const char* layer,
+    uint32_t* count, VkExtensionProperties* result) {
+    assert(layer == nullptr);
+    if (!result) { *count = probeCountSupported ? 1 : 0; return VK_SUCCESS; }
+    if (!probeCountSupported) { *count = 0; return VK_SUCCESS; }
+    if (*count == 0) return VK_INCOMPLETE;
+    *result = {};
+    std::strcpy(result->extensionName, VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+    result->specVersion = VK_KHR_DRAW_INDIRECT_COUNT_SPEC_VERSION;
+    *count = 1;
+    return VK_SUCCESS;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL ProbeCreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* input,
+    const VkAllocationCallbacks* allocator, VkDevice* device) {
+    assert(physical != VK_NULL_HANDLE && allocator == nullptr);
+    DeviceCall call;
+    for (uint32_t i = 0; i < input->enabledExtensionCount; ++i) call.extensions.emplace_back(input->ppEnabledExtensionNames[i]);
+    if (input->pEnabledFeatures) call.core = *input->pEnabledFeatures;
+    for (auto* item = reinterpret_cast<const VkBaseInStructure*>(input->pNext); item; item = item->pNext) {
+        if (item->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+            call.core = reinterpret_cast<const VkPhysicalDeviceFeatures2*>(item)->features;
+        if (item->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+            call.hasVulkan12 = true;
+            call.drawIndirectCount = reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(item)->drawIndirectCount;
+        }
+    }
+    deviceCalls.push_back(call);
+    if (probeRejectCountExtension && std::find(call.extensions.begin(), call.extensions.end(),
+        VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME) != call.extensions.end()) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if (probeCreateResult != VK_SUCCESS) return probeCreateResult;
+    *device = reinterpret_cast<VkDevice>(uintptr_t(2));
+    return VK_SUCCESS;
+}
+static void CheckDeviceNegotiation() {
+    struct Case {
+        const char* name;
+        bool supported;
+        int coreCount; // -1: no Vulkan12 feature structure; 0/1: Unity's requested feature value.
+        bool unityExtension, rejectAddition, enabled, added;
+        std::vector<bool> callHasCountExtension;
+    };
+    const Case cases[] = {
+        {"unsupported: fixed", false, -1, false, false, false, false, {false}},
+        {"disabled Vulkan12 feature: fixed", true, 0, false, false, false, false, {false}},
+        {"KHR addition", true, -1, false, false, true, true, {true}},
+        {"KHR addition rejected: retry fixed", true, -1, false, true, false, false, {true, false}},
+        {"core feature without KHR", false, 1, false, false, true, false, {false}},
+        {"Unity enabled KHR", true, -1, true, false, true, false, {true}},
+    };
+    const auto previousCreate = originalCreateDevice;
+    originalCreateDevice = ProbeCreateDevice;
+    for (const auto& test : cases) {
+        probeCountSupported = test.supported;
+        probeRejectCountExtension = test.rejectAddition;
+        deviceCalls.clear();
+        featuresObserved = enabledMulti = enabledFirst = false;
+        indirectCountSupported = indirectCountEnabledByUnity = indirectCountEnabled = indirectCountAddedHere = false;
+        VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        v12.drawIndirectCount = test.coreCount == 1 ? VK_TRUE : VK_FALSE;
+        VkPhysicalDeviceFeatures2 core{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        core.features.samplerAnisotropy = VK_TRUE; // Existing unrelated features must survive both attempts.
+        core.pNext = test.coreCount < 0 ? nullptr : &v12;
+        const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME};
+        VkDeviceCreateInfo input{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        input.pNext = &core;
+        input.enabledExtensionCount = test.unityExtension ? 2 : 1;
+        input.ppEnabledExtensionNames = extensions;
+        VkDevice device = VK_NULL_HANDLE;
+        assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == VK_SUCCESS);
+        assert(device != VK_NULL_HANDLE && deviceCalls.size() == test.callHasCountExtension.size());
+        for (size_t i = 0; i < deviceCalls.size(); ++i) {
+            std::vector<std::string> expected{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+            if (test.callHasCountExtension[i]) expected.emplace_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+            const auto& call = deviceCalls[i];
+            assert(call.extensions == expected);
+            assert(call.core.multiDrawIndirect && call.core.drawIndirectFirstInstance && call.core.samplerAnisotropy);
+            assert(call.hasVulkan12 == (test.coreCount >= 0));
+            if (call.hasVulkan12) assert(call.drawIndirectCount == v12.drawIndirectCount);
+        }
+        assert(featuresObserved && enabledMulti && enabledFirst);
+        assert(indirectCountSupported == test.supported && indirectCountEnabledByUnity == test.unityExtension);
+        assert(indirectCountEnabled == test.enabled && indirectCountAddedHere == test.added);
+        assert(!core.features.multiDrawIndirect && !core.features.drawIndirectFirstInstance); // Never mutate Unity's chain.
+        assert(input.enabledExtensionCount == (test.unityExtension ? 2u : 1u));
+        std::printf("device negotiation: %s passed\n", test.name);
+    }
+    originalCreateDevice = previousCreate;
+}
+static void CheckClipDistanceObservation() {
+    const auto previousCreate = originalCreateDevice;
+    originalCreateDevice = ProbeCreateDevice;
+    probeCountSupported = probeRejectCountExtension = false;
+    available = false;
+    clipDistanceInfo.store(0);
+    uint32_t supported = 7, enabled = 7;
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    struct Case { bool supported, enabled, multi; int layout; };
+    const Case cases[] = {
+        {false, false, true, 0}, // Legacy pEnabledFeatures.
+        {true, false, true, 1},  // Hardware support does not enable the feature on Unity's device.
+        {true, true, false, 1},  // Native multi-draw unavailable; the observation still serves VP3C.
+        {true, true, false, 2},  // Features2 behind another structure is observed without modifying it.
+        {true, false, false, 3}, // No enabled core features supplied.
+    };
+    for (const auto& test : cases) {
+        probeMultiSupported = test.multi;
+        probeClipSupported = test.supported;
+        deviceCalls.clear();
+        VkPhysicalDeviceFeatures2 core{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        core.features.shaderClipDistance = test.enabled ? VK_TRUE : VK_FALSE;
+        VkPhysicalDeviceVulkan12Features preceding{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        preceding.pNext = &core;
+        VkDeviceCreateInfo input{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        if (test.layout == 0) input.pEnabledFeatures = &core.features;
+        else if (test.layout == 1) input.pNext = &core;
+        else if (test.layout == 2) input.pNext = &preceding;
+        VkDevice device = VK_NULL_HANDLE;
+        assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == VK_SUCCESS);
+        assert(deviceCalls.size() == 1 && bool(deviceCalls[0].core.shaderClipDistance) == test.enabled);
+        assert(bool(core.features.shaderClipDistance) == test.enabled); // Never enable or mutate Unity's choice.
+        assert(ZvnReadClipDistanceInfo(&supported, &enabled) == 1);
+        assert(bool(supported) == test.supported && bool(enabled) == test.enabled);
+        assert(!ZvnIsAvailable()); // The query does not depend on native draw availability.
+        if (!test.multi) assert(!enabledMulti && !deviceCalls[0].core.multiDrawIndirect);
+    }
+    // A failed creation must not report an earlier device's observation.
+    VkDeviceCreateInfo input{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    VkDevice device = VK_NULL_HANDLE;
+    probeCreateResult = VK_ERROR_INITIALIZATION_FAILED;
+    assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == probeCreateResult);
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    probeCreateResult = VK_SUCCESS;
+    assert(CreateDevice(reinterpret_cast<VkPhysicalDevice>(uintptr_t(1)), &input, nullptr, &device) == VK_SUCCESS);
+    assert(ZvnReadClipDistanceInfo(nullptr, nullptr) == 1);
+    Device(kUnityGfxDeviceEventShutdown);
+    assert(!ZvnReadClipDistanceInfo(&supported, &enabled) && !supported && !enabled);
+    probeMultiSupported = true;
+    probeClipSupported = false;
+    originalCreateDevice = previousCreate;
+    std::puts("ClipDistance observation: support, enablement, native unavailable, failure and shutdown passed");
+}
 int main(int argc, char** argv) {
-    if(argc<2)return 2;
+    CheckClipDistanceObservation();
+    CheckDeviceNegotiation(); // With no arguments, the negotiation and ABI checks run; shader inputs are optional.
     for(int i=1;i<argc;i++) {
         std::ifstream stream(argv[i],std::ios::binary);
         std::vector<char> bytes((std::istreambuf_iterator<char>(stream)),std::istreambuf_iterator<char>());
@@ -88,6 +262,9 @@ int main(int argc, char** argv) {
     counted.extension={ZvnDrawMode_IndirectCount,uint32_t(offsetof(CountBlock,record)),1,0};
     counted.record={&counted,12,1024,&counted,0,0};
     indirectCountReady=false;assert(ValidateDraw(&counted.draw)==ZvnResult_NotAvailable);
+    // Ordinary indirect arguments remain valid without the count extension or a count buffer.
+    ZvnDraw fixed = counted.draw;fixed.version=ZVN_CONTRACT_VERSION;fixed.totalBytes=sizeof fixed;
+    assert(ValidateDraw(&fixed)==ZvnResult_Recorded && !Direct(&fixed) && !IndirectCountMode(&fixed));
     indirectCountReady=true;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded && !Direct(&counted.draw) && IndirectCountMode(&counted.draw));
     counted.record.zeroBytes=0;assert(ValidateDraw(&counted.draw)==ZvnResult_Recorded);   // a snapshot slot (2026-10-10)
     counted.record.zeroBytes=1022;

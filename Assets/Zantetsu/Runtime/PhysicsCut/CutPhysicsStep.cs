@@ -13,7 +13,7 @@ namespace Zantetsu.PhysicsCut
     /// <summary>
     /// **The one place the default physics scene is advanced** (DESIGN 4.4): with
     /// <see cref="SimulationMode.Script"/>, a fixed step of 45 or 90 Hz chosen at start -- or, on PCVR, the display's
-    /// step of 72 or 90 Hz with one double step when two are owed (CutPhysicsStep.Pcvr.cs) -- at most one
+    /// step of 72 or 90 Hz, or non-VR Android's 60 Hz step, with one double step when two are owed -- at most one
     /// <see cref="Physics.Simulate"/> per rendered frame, taken only when a whole step is owed and its expected cost fits
     /// what is left of the frame's Main budget.
     /// <para>
@@ -46,7 +46,7 @@ namespace Zantetsu.PhysicsCut
     /// **Chosen once, here, before the first simulation.** The frequency belongs to the physics scene, not to any world:
     /// it is settled when a play session starts (<see cref="ResetForSession"/>), from the start-up argument
     /// <c>-zantetsuPhysicsHz 45|90</c>, or else from the PCVR display once at the session's start (no step is taken
-    /// before), or else 45 Hz. Nothing a world does later -- whenever it is loaded -- changes it.
+    /// before), or else 45 Hz. Non-VR Android settles at 60 Hz with a 1/30 s catch-up step. Nothing a world does later -- whenever it is loaded -- changes it.
     /// </para>
     /// <para>
     /// **The shared Main budget** (DESIGN 4.4, 2026-10-19; margin 2026-10-20) is the application's target frame period
@@ -56,7 +56,7 @@ namespace Zantetsu.PhysicsCut
     /// split, the collections, the compaction, the crowd's refill -- reads this one remainder, from the one start: no
     /// reader has a frame of its own, no reading or change of work starts it again, and a negative remainder is a
     /// shortfall as it stands. The period is settled at each frame's start from the host's source
-    /// (<see cref="SetApplicationFrameSource"/>: a Quest under frame synthesis renders at 45 Hz, 22.2 ms), else from the
+    /// (non-VR Android: 60 Hz; <see cref="SetApplicationFrameSource"/>: Quest under frame synthesis is 45 Hz), else from the
     /// PCVR display's rate settled at the session's start (72 or 90 Hz), and is one 90 Hz frame
     /// (<see cref="DefaultApplicationFrameSeconds"/>) when there is neither, the source has no answer, or its answer is
     /// not a frame period (<see cref="AcceptedFrameSeconds"/>). Never from measured frame times or fps.
@@ -67,13 +67,19 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The physics frequency when nothing else was chosen (DESIGN 4.4: 45 Hz by default).</summary>
         public const int DefaultFrequencyHz = 45;
 
+        /// <summary>Non-VR Android targets 60 rendered frames and normal physics steps per second, with one 1/30 s catch-up step.</summary>
+        public const int AndroidFlatFrequencyHz = 60;
+
+        /// <summary>The non-VR Android target frame period. A double physics step does not enlarge it.</summary>
+        public const double AndroidFlatFrameSeconds = 1.0 / AndroidFlatFrequencyHz;
+
         /// <summary>The application's frame period taken when the host gives none (or none usable): one 90 Hz frame.</summary>
         public const double DefaultApplicationFrameSeconds = 1.0 / 90.0;
 
         /// <summary>
         /// The one margin the shared Main budget leaves in every frame for what follows its Main readers (the cameras'
         /// preparations and the rendering), this frame's: <see cref="MarginFor"/> of this frame's period with the
-        /// session's <see cref="MarginKind"/> -- 9 % of the period (90 Hz: 1.00 ms, 72 Hz: 1.25 ms, 45 Hz: 2.00 ms), or
+        /// session's <see cref="MarginKind"/> -- 9 % of the period (90 Hz: 1.00 ms, 72 Hz: 1.25 ms, 60 Hz: 1.50 ms, 45 Hz: 2.00 ms), or
         /// the fixed 2 ms of 2026-10-19 for comparison. **Provisional** -- not a measured right value. Kept here alone; a
         /// reader's own reserve for the same purpose is not taken again, and none is given back for a smaller margin
         /// (<see cref="CutWorldProfile.ReserveFrameTailSeconds"/>).
@@ -130,14 +136,15 @@ namespace Zantetsu.PhysicsCut
         /// <summary>The shared Main budget of this frame, in seconds: <see cref="ApplicationFrameSeconds"/> less <see cref="CommonMarginSeconds"/>.</summary>
         public static double MainBudgetSeconds => BudgetFor(s_frameSeconds);
 
-        /// <summary>Whether this frame's period came from a source -- the host's or the PCVR display's settled rate (false: the default, for want of a usable answer).</summary>
+        /// <summary>Whether this frame's period came from a source: a host, the settled PCVR display rate, or the non-VR Android target (false: the fallback).</summary>
         public static bool ApplicationFrameFromSource => ApplicationFrameSource != ApplicationFrameSourceKind.Default;
 
-        /// <summary>Where this frame's period came from: the host's source (a Quest's frame synthesis), the PCVR display's settled rate, or the default.</summary>
+        /// <summary>Where this frame's period came from: a host, the settled PCVR rate, the non-VR Android target, or the default.</summary>
         public static ApplicationFrameSourceKind ApplicationFrameSource { get; private set; }
 
         /// <summary>This frame's period source in words, for records.</summary>
         public static string ApplicationFrameSourceName => ApplicationFrameSource == ApplicationFrameSourceKind.Host ? "frame synthesis"
+            : ApplicationFrameSource == ApplicationFrameSourceKind.AndroidFlat ? "Android non-VR target 60 Hz"
             : ApplicationFrameSource == ApplicationFrameSourceKind.PcvrDisplay ? "PCVR display " + s_pcvrHz + " Hz (settled at start)"
             : "default";
 
@@ -170,7 +177,7 @@ namespace Zantetsu.PhysicsCut
         /// <summary>
         /// The host's source of the application's target frame period, read once at each frame's start (null: none, the
         /// default from the next frame on). The Quest's demo gives the frame synthesis's period while AppSW is applied
-        /// and NaN otherwise; a source that throws is taken as having no answer. Replaces the source before it.
+        /// and NaN otherwise; a source that throws is taken as having no answer. Non-VR Android always keeps its 60 Hz target. Replaces the source before it.
         /// </summary>
         public static void SetApplicationFrameSource(Func<double> source) => s_frameSource = source;
 
@@ -186,6 +193,14 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Settles the frame's period from the source (the frame's start; tests call it to stand for one).</summary>
         internal static void SettleFramePeriod()
         {
+            if (s_stepMode == PhysicsStepMode.AndroidFlat)
+            {
+                // The phone's render target is fixed at 60 Hz, independent of XR, measured fps and the chosen physics step.
+                s_frameSeconds = AndroidFlatFrameSeconds;
+                ApplicationFrameSource = ApplicationFrameSourceKind.AndroidFlat;
+                return;
+            }
+
             double answer = double.NaN;
             if (s_frameSource != null)
             {
@@ -495,8 +510,9 @@ namespace Zantetsu.PhysicsCut
             s_marginKind = MarginFromCommandLine(arguments);
             int explicitHz = FrequencyFromCommandLine(arguments);
             PhysicsStepRequest request = StepRequestFromCommandLine(arguments);
-            bool pc = Application.platform != RuntimePlatform.Android;
-            ChooseStepAtSessionStart(pc, explicitHz, request);
+            bool androidFlat = Zantetsu.Core.PlayerPlatform.IsAndroidFlat;
+            bool pc = !androidFlat && Application.platform != RuntimePlatform.Android;
+            ChooseStepAtSessionStart(pc, explicitHz, request, androidFlat);
             s_doubleCosts.Clear();
             NormalSimulateSeconds = DoubleSimulateSeconds = MaxNormalSimulateSeconds = MaxDoubleSimulateSeconds = 0.0;
             BudgetShortDecisions = DoubleFellBackToNormal = 0;
@@ -504,9 +520,9 @@ namespace Zantetsu.PhysicsCut
             s_doubleReevaluateAsked = false;
             s_doubleFellBackInARow = 0;
             LastDecisionStepSeconds = LastDecisionCandidateSeconds = 0.0;
-            s_frameSeconds = DefaultApplicationFrameSeconds;
+            s_frameSeconds = androidFlat ? AndroidFlatFrameSeconds : DefaultApplicationFrameSeconds;
             s_frameSource = null;
-            ApplicationFrameSource = ApplicationFrameSourceKind.Default;
+            ApplicationFrameSource = androidFlat ? ApplicationFrameSourceKind.AndroidFlat : ApplicationFrameSourceKind.Default;
             s_frameStart = 0;
             s_explicitPaused = false;
             s_gamePaused = false;

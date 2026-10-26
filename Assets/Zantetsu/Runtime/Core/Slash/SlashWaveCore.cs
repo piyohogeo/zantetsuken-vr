@@ -212,7 +212,7 @@ namespace Zantetsu.Core.Slash
     /// update's candidate), and gives the sweep of this update. Nothing of a finished update is evaluated again.
     /// </para>
     /// <para>
-    /// **Capacity.** A fixed <see cref="Capacity"/>. A slot is looked for only when a wave is about to be published, never
+    /// **Capacity.** A fixed <see cref="WaveCapacity"/>, selected at construction. A slot is looked for only when a wave is about to be published, never
     /// reserved at a stroke's begin. A stroke that finds none has had its one chance: it is not queued, retried or
     /// latched later, and no live wave is moved or ended for it. A new stroke after re-arming can use a slot freed in
     /// the same update.
@@ -226,8 +226,11 @@ namespace Zantetsu.Core.Slash
     /// </summary>
     public sealed class SlashWaveCore
     {
-        /// <summary>How many waves can be alive at once (U6: the saved device runs never had more than two).</summary>
+        /// <summary>The default VR capacity. Screen input may choose a larger preallocated store.</summary>
         public const int Capacity = 4;
+
+        /// <summary>The maximum supported mobile capacity, including hit-query scratch and lineage tracking.</summary>
+        public const int MaximumCapacity = 16;
 
         /// <summary>The fixed gate window and the speed above which a motion is not a swing.</summary>
         public const double GateMinimumWindowSeconds = 0.030;
@@ -261,6 +264,11 @@ namespace Zantetsu.Core.Slash
             public Vector3 CurrentSegmentStart;
             public Vector3 CurrentSegmentEnd;
             public SlashWaveFlight Flight;
+            public bool IsScreenSlash;
+            public Vector3 StartTravelPerMetre;
+            public Vector3 EndTravelPerMetre;
+            public float ScreenInitialTravelDistance;
+            public double LastAdvancedAt;
             public ISlashSpanCandidateEstimator Candidate;
             public ISlashSpanCloseEstimator Close;
 
@@ -290,11 +298,11 @@ namespace Zantetsu.Core.Slash
         private Vector3 _strokeBeginView;
         private double _quietSince = double.NaN;   // when the gate first judged the motion under the minimum speed, in a row
 
-        private readonly Wave[] _waves = new Wave[Capacity];
+        private readonly Wave[] _waves;
         private int _waveCount;
         private long _lastSlashId;
 
-        private readonly SlashSweep[] _sweeps = new SlashSweep[Capacity];
+        private readonly SlashSweep[] _sweeps;
         private int _sweepCount;
 
         private SlashBlade _blade;
@@ -308,10 +316,19 @@ namespace Zantetsu.Core.Slash
         // One update's observation (19.1.12): written after each decision below and read by nothing that decides.
         private SlashUpdateObservation _observing;
 
-        public SlashWaveCore(in SlashBlade blade)
+        public SlashWaveCore(in SlashBlade blade, int capacity = Capacity)
         {
+            if (capacity < 1 || capacity > MaximumCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capacity));
+            }
+
             _blade = blade;
+            _waves = new Wave[capacity];
+            _sweeps = new SlashSweep[capacity];
         }
+
+        public int WaveCapacity => _waves.Length;
 
         // ---- settings: the current ones; a wave keeps what it latched with ----------------------------------------
 
@@ -427,6 +444,97 @@ namespace Zantetsu.Core.Slash
             _observing.LatchSpent = _strokeLatchSpent;
             LastUpdate = _observing;
             return outcome;
+        }
+
+        /// <summary>
+        /// Advances and expires waves without feeding a blade gesture. Call once per mobile update before latching
+        /// that update's flicks, then consume SweepAt after all latches. A camera or input device is not needed in flight.
+        /// </summary>
+        public void Tick(double now)
+        {
+            _sweepCount = 0;
+            _observing = default;
+            if (!double.IsNaN(now) && !double.IsInfinity(now))
+            {
+                RemoveExpired(now);
+                Advance(now, _waveCount, false, Vector3.zero, Vector3.zero);
+            }
+
+            LastUpdate = _observing;
+        }
+
+        /// <summary>
+        /// Publishes an already recognized screen flick, with its plane and two expanding endpoint rays frozen now.
+        /// Flight speed/lifetime are captured from Flight. This appends the latch sweep to this Tick's sweeps.
+        /// </summary>
+        public bool TryLatchScreenSlash(double now, in ScreenSlashFrame frame, out long slashId)
+        {
+            slashId = 0;
+            _observing.LatchReady = true;
+            _observing.LatchSpent = true;
+            SlashWaveFlight flight = _flight;
+            if (double.IsNaN(now) || double.IsInfinity(now) || !frame.IsValid || !flight.IsValid
+                || !(now + flight.LifetimeSeconds > now) || double.IsInfinity(now + flight.LifetimeSeconds))
+            {
+                _observing.Latch = SlashLatchAttempt.NotFinite;
+                LastUpdate = _observing;
+                return false;
+            }
+
+            RemoveExpired(now);
+            if (_waveCount >= _waves.Length)
+            {
+                _observing.Latch = SlashLatchAttempt.NoSlot;
+                LastUpdate = _observing;
+                return false;
+            }
+
+            float distance = flight.Speed * flight.LifetimeSeconds;
+            float initialSpan = (frame.InitialB - frame.InitialA).magnitude;
+            Vector3 finalA = frame.InitialA + frame.StartTravelPerMetre * distance;
+            Vector3 finalB = frame.InitialB + frame.EndTravelPerMetre * distance;
+            if (!float.IsFinite(distance) || !float.IsFinite(initialSpan)
+                || !float.IsFinite((finalB - finalA).sqrMagnitude)
+                || !SlashMath.IsFinite(finalA) || !SlashMath.IsFinite(finalB))
+            {
+                _observing.Latch = SlashLatchAttempt.NotFinite;
+                LastUpdate = _observing;
+                return false;
+            }
+
+            slashId = ++_lastSlashId;
+            _waves[_waveCount++] = new Wave
+            {
+                SlashId = slashId,
+                LatchedAt = now,
+                SourceSlashPlane = frame.SourceSlashPlane,
+                WaveOrigin = frame.Origin,
+                TravelAxis = frame.TravelAxis,
+                SpanAxis = frame.SpanAxis,
+                AcceptedSpan = initialSpan,
+                PreviousSegmentStart = frame.InitialA,
+                PreviousSegmentEnd = frame.InitialB,
+                CurrentSegmentStart = frame.InitialA,
+                CurrentSegmentEnd = frame.InitialB,
+                Flight = flight,
+                IsScreenSlash = true,
+                StartTravelPerMetre = frame.StartTravelPerMetre,
+                EndTravelPerMetre = frame.EndTravelPerMetre,
+                ScreenInitialTravelDistance = frame.InitialTravelDistance,
+                LastAdvancedAt = now,
+                Candidate = _candidate,
+                Close = _close,
+                SpanClosedAt = now,
+                FrozenGuideOrigin = frame.Origin,
+                FrozenGuideDirection = frame.EndTravelPerMetre.normalized,
+                LastCandidateAt = double.NaN,
+            };
+            _observing.Latch = SlashLatchAttempt.Latched;
+            _observing.LatchedSlashId = slashId;
+            LastUpdate = _observing;
+            AddSweep(new SlashSweep(slashId, now, true, frame.SourceSlashPlane, frame.TravelAxis, frame.SpanAxis,
+                frame.InitialA, frame.InitialB, frame.InitialA, frame.InitialB));
+            return true;
         }
 
         /// <summary>Ends the stroke under way: no history, no accepted samples, the latch chance back. Waves stay.</summary>
@@ -838,7 +946,7 @@ namespace Zantetsu.Core.Slash
             float acceptedSpan)
         {
             // The slot is looked for here, just before publishing, and nowhere else.
-            if (_waveCount >= Capacity)
+            if (_waveCount >= _waves.Length)
             {
                 _observing.Latch = SlashLatchAttempt.NoSlot;
                 return false;
@@ -937,6 +1045,12 @@ namespace Zantetsu.Core.Slash
                     continue;
                 }
 
+                if (_waves[i].IsScreenSlash)
+                {
+                    AdvanceScreenWave(i, now, (float)travelDistance);
+                    continue;
+                }
+
                 Vector3 a = _waves[i].WaveOrigin + _waves[i].TravelAxis * (float)travelDistance;
                 if (!SlashMath.IsFinite(a))
                 {
@@ -1022,6 +1136,34 @@ namespace Zantetsu.Core.Slash
                     _waves[i].SlashId, now, false, _waves[i].SourceSlashPlane, _waves[i].TravelAxis, _waves[i].SpanAxis,
                     _waves[i].PreviousSegmentStart, _waves[i].PreviousSegmentEnd, a, b));
             }
+        }
+
+        private void AdvanceScreenWave(int index, double now, float distance)
+        {
+            ref Wave wave = ref _waves[index];
+            if (now < wave.LastAdvancedAt)
+            {
+                return;
+            }
+
+            // Absolute latch time and fixed rays avoid accumulating frame-to-frame drift.
+            float rayDistance = wave.ScreenInitialTravelDistance + distance;
+            Vector3 a = wave.WaveOrigin + wave.StartTravelPerMetre * rayDistance;
+            Vector3 b = wave.WaveOrigin + wave.EndTravelPerMetre * rayDistance;
+            float span = (b - a).magnitude;
+            if (!SlashMath.IsFinite(a) || !SlashMath.IsFinite(b) || !float.IsFinite(span))
+            {
+                return;
+            }
+
+            wave.LastAdvancedAt = now;
+            wave.AcceptedSpan = span;
+            wave.PreviousSegmentStart = wave.CurrentSegmentStart;
+            wave.PreviousSegmentEnd = wave.CurrentSegmentEnd;
+            wave.CurrentSegmentStart = a;
+            wave.CurrentSegmentEnd = b;
+            AddSweep(new SlashSweep(wave.SlashId, now, false, wave.SourceSlashPlane, wave.TravelAxis, wave.SpanAxis,
+                wave.PreviousSegmentStart, wave.PreviousSegmentEnd, a, b));
         }
 
         private static SlashSpanCandidate EvaluateCandidate(in Wave wave, Vector3 a, Vector3 guideOrigin, Vector3 guideDirection)

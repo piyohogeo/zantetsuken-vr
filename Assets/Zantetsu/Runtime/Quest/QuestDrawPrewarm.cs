@@ -29,7 +29,7 @@ namespace Zantetsu.Quest
     /// (the consent dialog, the menu) and only says the outcome.
     /// </para>
     /// </summary>
-    internal sealed class QuestDrawPrewarm
+    public sealed class QuestDrawPrewarm
     {
         public const double DefaultTimeoutSeconds = 30.0;
         public const int UnityWarmFrames = 3;

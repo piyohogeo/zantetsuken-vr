@@ -7,8 +7,8 @@
 // shadow call casts shadows with "Zantetsu/VP Indexed Indirect Shadow Caster".
 // A logical instance may also keep one half of a cut plane and be drawn moved apart (DESIGN 5.1): the side is tested
 // on the world position the object-to-world transform leaves, with no displacement of the renderer's own, and the plane is
-// evaluated with SV_ClipDistance as DESIGN 5.2 requires. An instance whose record has side 0 is drawn exactly as
-// before.
+// evaluated by raster clipping, or pixel discard on devices without clip distances. An instance whose record has
+// side 0 is drawn exactly as before.
 // An opaque base texture is sampled with the vertex uv0 and multiplied into the colour. It is the one texture this
 // pass has: no normal map, no transparency, no alpha clipping, and no attempt to stand in for an arbitrary URP
 // material. Leaving _BaseMap unset gives Unity's default white texture, so a caller that sets only a colour sees
@@ -58,6 +58,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
             // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
             #pragma multi_compile_local _ VP_NO_CLIP
+            #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex Vertex
             #pragma fragment Fragment
@@ -102,38 +103,12 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
         #endif
         #endif
             #include "VpNativeDirectClip.hlsl"
+            #include "VpClipDistances.hlsl"
 
         #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             // The instances the compute pass kept for this view's body: each command's in the slots of its own
             // instance run, the kept ones first. The arguments it wrote count and start those slots.
             StructuredBuffer<uint> _VpVisible;
-        #endif
-
-            // One clip distance per plane, so the region kept is the intersection of the valid half-spaces: the
-            // hardware drops a fragment wherever any component is negative. Past the valid count the component is a
-            // positive constant, which is what DESIGN 5.2 asks of the unused components at every vertex, so a record
-            // of count zero clips nothing at all. The same eight components serve every count: there is no
-            // pixel-shader clip() path and no SV_CullDistance.
-        #if !defined(VP_NO_CLIP)
-            float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
-            {
-                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
-            }
-
-            void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
-            {
-                uint count = (uint)clipState.planeCount;
-                first = float4(
-                    VpHalfSpace(clipState.planes[0], positionWS, 0, count),
-                    VpHalfSpace(clipState.planes[1], positionWS, 1, count),
-                    VpHalfSpace(clipState.planes[2], positionWS, 2, count),
-                    VpHalfSpace(clipState.planes[3], positionWS, 3, count));
-                second = float4(
-                    VpHalfSpace(clipState.planes[4], positionWS, 4, count),
-                    VpHalfSpace(clipState.planes[5], positionWS, 5, count),
-                    VpHalfSpace(clipState.planes[6], positionWS, 6, count),
-                    VpHalfSpace(clipState.planes[7], positionWS, 7, count));
-            }
         #endif
 
             // Physical instances per logical instance in the forward arguments, set by the batch: 2 for Single Pass
@@ -173,12 +148,17 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
                 float4 positionCS : SV_POSITION;
 
-                // DESIGN 5.2 evaluates the selected cut planes with SV_ClipDistance and has no pixel-shader clip()
-                // path. All eight components are used, four here and four in SV_ClipDistance1, one per plane of the
-                // record; the components past its count are a positive finite value at every vertex.
+                // One signed distance per selected plane. Pixel clipping changes the interpolation semantic,
+                // not the eight half-spaces or the positive values of unused components.
             #if !defined(VP_NO_CLIP)
+            #if defined(VP_PIXEL_CLIP)
+                // Full-precision, perspective-correct distances; every plane remains independent until the fragment.
+                float4 clipDistance0 : TEXCOORD4;
+                float4 clipDistance1 : TEXCOORD5;
+            #else
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
             #endif
 
                 float3 normalWS : TEXCOORD0;
@@ -271,6 +251,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             half4 Fragment(Varyings input) : SV_Target
             {
+            #if defined(VP_PIXEL_CLIP) && !defined(VP_NO_CLIP)
+                VpDiscardOutsideClip(input.clipDistance0, input.clipDistance1);
+            #endif
                 // The eye this fragment is drawn for, under Single Pass Instanced: the lighting's view direction is that
                 // eye's own.
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
@@ -327,6 +310,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // does not write. With the keyword seen by the vertex stage alone, Direct3D 12 refuses the pipeline of
             // Unity's own draw (the two signatures do not link) and nothing is drawn; Direct3D 11 draws all the same.
             #pragma multi_compile_local _ VP_NO_CLIP
+            #pragma multi_compile _ VP_PIXEL_CLIP
             #pragma shader_feature_local VP_NATIVE_DIRECT
             #pragma vertex VertexMotion
             #pragma fragment FragmentMotion
@@ -363,20 +347,13 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
         #endif
         #endif
             #include "VpNativeDirectClip.hlsl"
+            #include "VpClipDistances.hlsl"
 
         #if defined(VP_GPU_CULLED) && !defined(VP_NATIVE_DIRECT)
             StructuredBuffer<uint> _VpVisible;
         #endif
 
             uint _VpInstanceMultiplier;
-
-
-        #if !defined(VP_NO_CLIP)
-            float VpHalfSpaceM(float4 signedPlane, float3 positionWS, uint index, uint count)
-            {
-                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
-            }
-        #endif
 
             #define VP_REJECTED_POSITION_CS float4(2.0, 2.0, 2.0, 1.0)
 
@@ -394,8 +371,14 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
                 float4 positionCS : SV_POSITION;
             #if !defined(VP_NO_CLIP)
+            #if defined(VP_PIXEL_CLIP)
+                // Full-precision, perspective-correct distances; every plane remains independent until the fragment.
+                float4 clipDistance0 : TEXCOORD2;
+                float4 clipDistance1 : TEXCOORD3;
+            #else
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+            #endif
             #endif
                 float4 positionCSNoJitter : TEXCOORD0;
                 float4 previousPositionCSNoJitter : TEXCOORD1;
@@ -449,17 +432,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #else
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
             #endif
-                uint count = (uint)clipState.planeCount;
-                output.clipDistance0 = float4(
-                    VpHalfSpaceM(clipState.planes[0], positionWS, 0, count),
-                    VpHalfSpaceM(clipState.planes[1], positionWS, 1, count),
-                    VpHalfSpaceM(clipState.planes[2], positionWS, 2, count),
-                    VpHalfSpaceM(clipState.planes[3], positionWS, 3, count));
-                output.clipDistance1 = float4(
-                    VpHalfSpaceM(clipState.planes[4], positionWS, 4, count),
-                    VpHalfSpaceM(clipState.planes[5], positionWS, 5, count),
-                    VpHalfSpaceM(clipState.planes[6], positionWS, 6, count),
-                    VpHalfSpaceM(clipState.planes[7], positionWS, 7, count));
+                VpClipDistances(clipState, positionWS, output.clipDistance0, output.clipDistance1);
             #endif
 
                 // As URP's ObjectMotionVectors.hlsl under APPLICATION_SPACE_WARP_MOTION, with the instance transform
@@ -472,6 +445,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             float4 FragmentMotion(VaryingsM input) : SV_Target
             {
+            #if defined(VP_PIXEL_CLIP) && !defined(VP_NO_CLIP)
+                VpDiscardOutsideClip(input.clipDistance0, input.clipDistance1);
+            #endif
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 return float4(CalcAswNdcMotionVectorFromCsPositions(input.positionCSNoJitter, input.previousPositionCSNoJitter), 1);
             }

@@ -83,6 +83,68 @@ namespace Zantetsu.Core.Tests
             Assert.That(s.EpochAt(0).Frames, Is.EqualTo(11));
         }
 
+        [TestCase("screenWidth")]
+        [TestCase("screenHeight")]
+        [TestCase("orientation")]
+        [TestCase("fsr")]
+        [TestCase("renderScale")]
+        [TestCase("multiDrawIndirect")]
+        [TestCase("drawIndirectCount")]
+        public void AndroidDrawingChanges_SeparateEpochs_AndSetAsideLateTimes(string change)
+        {
+            var s = new PlayStatistics();
+            var c = new PlayStatisticsCollector(s);
+            c.Agree();
+            var original = new PlayConditions
+            {
+                Scene = "WalkCity", Mode = "play", DrawRoute = "VP3C-NATIVE", XrRuntime = PlayEnvironment.NoXr,
+                ScreenWidth = 1080, ScreenHeight = 2400, FsrEnabled = true,
+                RenderScale = change == "fsr" ? 1f : .75f, MultiDrawIndirect = true,
+                DrawIndirectCount = change != "multiDrawIndirect", MsaaSamples = 4
+            };
+            int lag = PlayStatisticsCollector.AttributionLagFrames;
+            for (int i = 0; i < lag + 4; i++) c.Frame(true, false, true, in original, 16.7f, Full(), 1);
+            PlayEpoch first = s.Current;
+            ulong firstFrames = first.Frames;
+            Assert.That(first.Main.Samples, Is.EqualTo(2), "the old conditions already have attributed timing samples");
+
+            PlayConditions changed = original;
+            switch (change)
+            {
+                case "screenWidth": changed.ScreenWidth = 1440; break;
+                case "screenHeight": changed.ScreenHeight = 2560; break;
+                case "orientation": changed.ScreenWidth = original.ScreenHeight; changed.ScreenHeight = original.ScreenWidth; break;
+                case "fsr": changed.FsrEnabled = false; break;
+                case "renderScale": changed.RenderScale = .85f; break;
+                case "multiDrawIndirect": changed.MultiDrawIndirect = false; break;
+                case "drawIndirectCount": changed.DrawIndirectCount = false; break;
+            }
+            Assert.That(c.Frame(true, false, true, in changed, 16.7f, Full(), 1), Is.False, "the change frame belongs to neither distribution");
+            Assert.That(s.EpochCount, Is.EqualTo(2), "this condition alone separates epochs even when the route label is unchanged");
+            PlayEpoch second = s.Current;
+            for (int i = 0; i < lag; i++)
+                Assert.That(c.Frame(true, false, true, in changed, 16.7f, Full(), 1), Is.True);
+            Assert.That(first.Frames, Is.EqualTo(firstFrames));
+            Assert.That(first.Main.Samples, Is.EqualTo(2));
+            Assert.That(second.Frames, Is.EqualTo(lag));
+            Assert.That(second.Unattributed, Is.EqualTo(lag));
+            Assert.That(second.Main.Samples, Is.Zero);
+            Assert.That(second.Render.Samples, Is.Zero);
+            Assert.That(second.Gpu.Samples, Is.Zero);
+            Assert.That(second.MainMissing, Is.EqualTo(lag));
+            Assert.That(second.RenderMissing, Is.EqualTo(lag));
+            Assert.That(second.GpuMissing, Is.EqualTo(lag));
+            Assert.That(second.Interval.Samples, Is.EqualTo(lag), "current frame intervals remain usable");
+            Assert.That(c.Frame(true, false, true, in changed, 16.7f, Full(), 1), Is.True);
+            Assert.That(second.Main.Samples, Is.EqualTo(1));
+            Assert.That(second.Render.Samples, Is.EqualTo(1));
+            Assert.That(second.Gpu.Samples, Is.EqualTo(1));
+
+            Assert.That(c.Frame(true, false, true, in original, 16.7f, Full(), 1), Is.False);
+            Assert.That(s.Current, Is.SameAs(first), "returning to an earlier drawing setup reuses its epoch");
+            Assert.That(s.EpochCount, Is.EqualTo(2));
+        }
+
         [Test]
         public void TheLateTimes_AreSetAsideAfterEveryBoundary_UntilTheLagHasPassed_AndAStructureThatDiffersAcrossAGapIsNoChange()
         {

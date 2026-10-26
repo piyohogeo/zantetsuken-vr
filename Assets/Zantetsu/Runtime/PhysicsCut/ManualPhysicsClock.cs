@@ -20,7 +20,7 @@ namespace Zantetsu.PhysicsCut
     /// not to simulate advances neither.
     /// </para>
     /// <para>
-    /// **The double step (PCVR, DESIGN 4.4, 2026-10-20).** A clock made with <c>doubleStep</c> may take, once, a single
+    /// **The double step (PCVR and non-VR Android).** A clock made with <c>doubleStep</c> may take, once, a single
     /// simulation of twice the normal step when two steps are owed -- one <c>Physics.Simulate(2h)</c>, never two of
     /// <c>h</c> -- if its own expected cost fits. **Its cap is on what a decision carries over** (TL review, 2026-10-20):
     /// at most two normal steps go from one decision to the next (<see cref="CarryOver"/>, applied again at the next
@@ -40,14 +40,14 @@ namespace Zantetsu.PhysicsCut
         private bool _started;
         private bool _paused;
 
-        /// <param name="frequencyHz">The physics frequency, 45, 72 or 90 (DESIGN 4.4).</param>
+        /// <param name="frequencyHz">The physics frequency: 45, 60, 72 or 90 Hz.</param>
         /// <param name="ticksPerSecond">The frequency of the monotonic clock the timestamps come from.</param>
-        /// <param name="doubleStep">Whether a decision may take one step of twice the normal step when two are owed (PCVR's display step).</param>
+        /// <param name="doubleStep">Whether a decision may take one step of twice the normal step when two are owed (PCVR's display step or non-VR Android's 60/30 Hz step).</param>
         public ManualPhysicsClock(int frequencyHz, long ticksPerSecond, bool doubleStep = false)
         {
             if (!IsSupportedFrequency(frequencyHz))
             {
-                throw new ArgumentOutOfRangeException(nameof(frequencyHz), "the physics frequency is 45, 72 or 90 Hz");
+                throw new ArgumentOutOfRangeException(nameof(frequencyHz), "the physics frequency is 45, 60, 72 or 90 Hz");
             }
 
             if (ticksPerSecond <= 0)
@@ -111,10 +111,10 @@ namespace Zantetsu.PhysicsCut
         /// <summary>Whether time is not being accumulated.</summary>
         public bool IsPaused => _paused;
 
-        /// <summary>The frequencies DESIGN 4.4 allows: 45 or 90 chosen at start, 72 or 90 as a PCVR display's step.</summary>
+        /// <summary>The supported frequencies: 45 or 90 chosen at start, 72 or 90 for PCVR, and 60 for non-VR Android.</summary>
         public static bool IsSupportedFrequency(int frequencyHz)
         {
-            return frequencyHz == 45 || frequencyHz == 72 || frequencyHz == 90;
+            return frequencyHz == 45 || frequencyHz == 60 || frequencyHz == 72 || frequencyHz == 90;
         }
 
         /// <summary>

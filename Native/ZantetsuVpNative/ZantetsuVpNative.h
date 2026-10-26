@@ -12,6 +12,12 @@
 #define ZVN_NAME_LENGTH 64
 #define ZVN_MAX_VIEWPORTS 4
 
+// Optional Vulkan export, without a draw-contract version change:
+// int ZvnReadClipDistanceInfo(uint32_t* supported, uint32_t* enabled);
+// Returns 1 after successful device creation was observed; 0 before it or after shutdown/failure (outputs 0).
+// Outputs are 0/1 and describe physical support and actual device enablement independently of ZvnIsAvailable.
+// Either output pointer may be null. Older libraries may omit this export; callers then use pixel clipping.
+
 // What a shader stage binds, as Unity reported it when the Editor compiled the variant (VpNativeShaderBake).
 enum ZvnBindingKind
 {

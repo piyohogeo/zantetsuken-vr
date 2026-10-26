@@ -183,14 +183,19 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private float emptyOwnerCollectionSeedExpectedSeconds = 0.0003f;
 
         [Header("Fragment group collection (DESIGN 7.10, Phase 7.1)")]
-        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are outside both eyes' views, at any distance, the farther of those looked at first, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started. On by default (TL, 2026-10-10).")]
+        [Tooltip("Once more live cut fragments stand than the maximum, end whole groups -- every piece of one building, prop or NPC -- that are outside both eyes' views, at any distance, the oldest first-cut registration of those looked at first, and bring a building's or a prop's own instance back. On, the piece lifetime above does not run. Off: nothing is looked at and nothing new is started. On by default (TL, 2026-10-10).")]
         [SerializeField] private bool fragmentGroupCollectionEnabled = true;
 
         [Tooltip("Live cut fragments (every kind, a building's display fragments too; uncut objects not counted) above which groups are looked at. Where a collection starts, not a limit kept. 256: the piece lifetime's threshold as a start.")]
         [SerializeField] private int fragmentGroupMaxLiveCutFragments = 256;
 
-        [Tooltip("Groups looked at per frame at most (4: each is read whole, piece by piece); one group is retired a frame at most -- of those a frame looked at and could end, the farthest.")]
+        [Tooltip("Groups looked at per frame at most (4: each is read whole, piece by piece); one group is retired a frame at most -- of those a frame looked at and could end, the oldest first-cut registration.")]
         [SerializeField] private int fragmentGroupExaminePerFrame = 4;
+
+        [Tooltip("Safety collection while fragments exceed twice the normal threshold OR vertex block usage reaches the percentage below. Ignores view and frame/time budgets, but keeps reader and in-flight safety checks. No lower exit threshold or selected family is retained.")]
+        [SerializeField] private bool fragmentGroupSafetyEnabled = true;
+        [Range(1, 100)]
+        [SerializeField] private int fragmentGroupVertexBlockSafetyPercent = 75;
 
         [Tooltip("The expected cost of retiring one piece of a group, and of a group besides its pieces, in seconds, before any was measured (from no Player measurement). A piece's becomes the median of the last five measured.")]
         [SerializeField] private float fragmentGroupSeedSecondsPerFragment = 0.00005f;
@@ -481,7 +486,8 @@ namespace Zantetsu.PhysicsCut
         public CutFragmentGroupSettings FragmentGroupCollection =>
             new CutFragmentGroupSettings(
                 fragmentGroupCollectionEnabled, fragmentGroupMaxLiveCutFragments, fragmentGroupExaminePerFrame,
-                CutWorldRoot.CompactionReserveSeconds, fragmentGroupSeedSecondsPerFragment, fragmentGroupSeedSecondsPerGroup);
+                CutWorldRoot.CompactionReserveSeconds, fragmentGroupSeedSecondsPerFragment, fragmentGroupSeedSecondsPerGroup,
+                fragmentGroupSafetyEnabled, (int)System.Math.Max(1L, (long)vertexBlockCapacity * fragmentGroupVertexBlockSafetyPercent / 100));
 
         public CutEmptyOwnerCollectionSettings EmptyOwnerCollection =>
             new CutEmptyOwnerCollectionSettings(
@@ -633,7 +639,7 @@ namespace Zantetsu.PhysicsCut
             {
                 reason = "the piece lifetime's counts and times must be positive and its threshold and distance not negative";
             }
-            else if (!FragmentGroupCollection.IsValid)
+            else if (!FragmentGroupCollection.IsValid || fragmentGroupVertexBlockSafetyPercent < 1 || fragmentGroupVertexBlockSafetyPercent > 100)
             {
                 reason = "the fragment group collection's maximum must not be negative, its count positive and its expected costs not negative";
             }

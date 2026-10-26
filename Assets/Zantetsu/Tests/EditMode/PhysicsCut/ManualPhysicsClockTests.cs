@@ -21,11 +21,12 @@ namespace Zantetsu.PhysicsCut.Tests
         }
 
         [Test]
-        public void TheStep_IsTheInverseOf45Or90Hz_AndNoOtherFrequencyIsAccepted()
+        public void TheStep_IsTheInverseOfASupportedFrequency_AndNoOtherFrequencyIsAccepted()
         {
             Assert.That(new ManualPhysicsClock(45, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 45.0));
             Assert.That(new ManualPhysicsClock(90, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 90.0));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(60, TicksPerSecond));
+            Assert.That(new ManualPhysicsClock(60, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 60.0));
+            Assert.That(new ManualPhysicsClock(72, TicksPerSecond).StepSeconds, Is.EqualTo(1.0 / 72.0));
             Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(50, TicksPerSecond));
         }
 

@@ -49,8 +49,8 @@ namespace Zantetsu.Quest
             if (camera == null || materials == null || materials.ColorCount < 1)
                 throw new ArgumentException("The real camera and display stencil materials are required.");
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline)
-                || pipeline.name != "Quest_RPAsset")
-                throw new InvalidOperationException("Unity prewarm requires the Quest_RPAsset drawing conditions.");
+                || (!Zantetsu.Core.PlayerPlatform.IsAndroidFlat && pipeline.name != "Quest_RPAsset"))
+                throw new InvalidOperationException("Unity prewarm requires URP with the Quest drawing conditions.");
             if (camera.TryGetComponent<UniversalAdditionalCameraData>(out var data) && data.renderType != CameraRenderType.Base)
                 throw new InvalidOperationException("Unity prewarm requires the Base camera's ordinary depth/stencil clear.");
             if (camera.clearFlags == CameraClearFlags.Nothing)

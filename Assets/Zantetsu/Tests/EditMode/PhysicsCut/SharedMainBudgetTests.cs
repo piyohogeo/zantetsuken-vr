@@ -29,7 +29,7 @@ namespace Zantetsu.PhysicsCut.Tests
         /// 2026-10-19 stays for comparison.
         /// </summary>
         [Test]
-        public void TheBudget_IsTheTargetPeriodLess9Percent_At90_72And45Hz_AndTheFixed2MsIsKeptForComparison()
+        public void TheBudget_IsTheTargetPeriodLess9Percent_At90_72_60And45Hz_AndTheFixed2MsIsKeptForComparison()
         {
             const MainMarginKind nine = MainMarginKind.PeriodFraction, two = MainMarginKind.Fixed2Ms;
             Assert.That(CutPhysicsStep.MarginFraction, Is.EqualTo(0.09));
@@ -37,11 +37,13 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(CutPhysicsStep.BudgetFor(1.0 / 90.0, nine) * 1000.0, Is.EqualTo(10.1111).Within(1e-3), "budget ~10.11 ms");
             Assert.That(CutPhysicsStep.MarginFor(1.0 / 72.0, nine) * 1000.0, Is.EqualTo(1.25).Within(1e-9), "PCVR 72 Hz: 1.25 ms");
             Assert.That(CutPhysicsStep.BudgetFor(1.0 / 72.0, nine) * 1000.0, Is.EqualTo(12.6389).Within(1e-3), "budget ~12.64 ms");
+            Assert.That(CutPhysicsStep.MarginFor(1.0 / 60.0, nine) * 1000.0, Is.EqualTo(1.50).Within(1e-9), "Android non-VR 60 Hz: 1.50 ms");
+            Assert.That(CutPhysicsStep.BudgetFor(1.0 / 60.0, nine) * 1000.0, Is.EqualTo(15.1667).Within(1e-3), "budget ~15.17 ms, including catch-up frames");
             Assert.That(CutPhysicsStep.MarginFor(1.0 / 45.0, nine) * 1000.0, Is.EqualTo(2.00).Within(1e-9), "Quest AppSW 45 Hz: 2.00 ms, as before");
             Assert.That(CutPhysicsStep.BudgetFor(1.0 / 45.0, nine) * 1000.0, Is.EqualTo(20.2222).Within(1e-3), "budget ~20.22 ms, as before");
             Assert.That(CutPhysicsStep.BudgetFor(1.0 / 45.0, nine), Is.EqualTo(CutPhysicsStep.BudgetFor(1.0 / 45.0, two)).Within(1e-12), "at 45 Hz the two margins agree");
 
-            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 45.0 })
+            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 60.0, 1.0 / 45.0 })
             {
                 Assert.That(CutPhysicsStep.MarginFor(frame, two), Is.EqualTo(0.002), "the fixed 2 ms whatever the period");
                 Assert.That(CutPhysicsStep.BudgetFor(frame, two), Is.EqualTo(frame - 0.002).Within(1e-15));
@@ -61,7 +63,7 @@ namespace Zantetsu.PhysicsCut.Tests
         public void TheMargin_IsTakenOnce_AndTheDoubleStepDoesNotEnlargeTheBudget()
         {
             long f = Stopwatch.Frequency, start = 5_000_000;
-            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 45.0 })
+            foreach (double frame in new[] { 1.0 / 90.0, 1.0 / 72.0, 1.0 / 60.0, 1.0 / 45.0 })
             {
                 double remaining = CutPhysicsStep.RemainingAt(frame, start, start + (2 * f / 1000), f);
                 Assert.That(remaining, Is.EqualTo(frame - (0.09 * frame) - 0.002).Within(1e-9), "period, less 9 % once, less 2 ms spent");

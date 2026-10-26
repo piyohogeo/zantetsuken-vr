@@ -4,7 +4,7 @@ using NUnit.Framework;
 namespace Zantetsu.PhysicsCut.Tests
 {
     /// <summary>
-    /// PCVR's display step (DESIGN 4.4, 2026-10-20) in the clock's arithmetic: the normal step at 72 or 90 Hz, one
+    /// PCVR's display step and non-VR Android's 60/30 Hz step in the clock's arithmetic: the normal step at 60, 72 or 90 Hz, one
     /// double step (one simulation of 2h) when two normal steps are owed and its own estimate fits, else the normal step
     /// when it fits, else none; the cap of two normal steps applied before the choice; the physics time the sum of what
     /// was really simulated; nothing owed or advanced while paused or on a skip.
@@ -25,6 +25,7 @@ namespace Zantetsu.PhysicsCut.Tests
             return clock;
         }
 
+        [TestCase(60)]
         [TestCase(72)]
         [TestCase(90)]
         public void TheNormalStep_IsTheDisplaysPeriod_AndTheDoubleStepTwiceIt(int hz)
@@ -33,12 +34,13 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.StepSeconds, Is.EqualTo(1.0 / hz));
             Assert.That(clock.DoubleStep, Is.True);
             ManualPhysicsClock owing = Owing(hz, 2.5);
-            Assert.That(owing.Choose(0.0, 0.0, 1.0), Is.EqualTo(2.0 / hz).Within(1e-15), hz == 90 ? "1/45 s" : "1/36 s");
+            Assert.That(owing.Choose(0.0, 0.0, 1.0), Is.EqualTo(2.0 / hz).Within(1e-15), "one double step: " + (2.0 / hz) + " s");
             Assert.That(new ManualPhysicsClock(45, TicksPerSecond).DoubleStep, Is.False, "the fixed step of before has none");
-            Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(60, TicksPerSecond, true));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(50, TicksPerSecond, true));
             Assert.Throws<ArgumentOutOfRangeException>(() => new ManualPhysicsClock(36, TicksPerSecond, true));
         }
 
+        [TestCase(60)]
         [TestCase(72)]
         [TestCase(90)]
         public void TheCandidate_FollowsTheOwing_AtItsBoundaries(int hz)
@@ -59,10 +61,11 @@ namespace Zantetsu.PhysicsCut.Tests
         /// (at most 2h) plus the time since; afterwards at most 2h is carried and the rest dropped and counted. A stall adds
         /// at most 2h of catch-up, never more.
         /// </summary>
-        [Test]
-        public void TheCap_IsOnWhatADecisionCarriesOver_AndAStallAddsAtMostTwoStepsOfCatchUp()
+        [TestCase(60)]
+        [TestCase(90)]
+        public void TheCap_IsOnWhatADecisionCarriesOver_AndAStallAddsAtMostTwoStepsOfCatchUp(int hz)
         {
-            var clock = new ManualPhysicsClock(90, TicksPerSecond, doubleStep: true);
+            var clock = new ManualPhysicsClock(hz, TicksPerSecond, doubleStep: true);
             double h = clock.StepSeconds;
             clock.Accumulate(0);
             clock.Accumulate(Seconds(1.5 * h));   // 1.5 steps owed
@@ -107,6 +110,7 @@ namespace Zantetsu.PhysicsCut.Tests
         /// half the rate (23 ms on 90 Hz) the double step every frame is the most there is: the physics follows at 2h a
         /// frame, the rest dropped, at most 2h carried.
         /// </summary>
+        [TestCase(60, 0.033333)]
         [TestCase(90, 0.022222)]
         [TestCase(72, 0.027777)]
         public void FramesAlittleUnderTwoSteps_KeepTheRealTime_NothingDropped(int hz, double interval)
@@ -159,6 +163,32 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.DroppedSeconds, Is.GreaterThan(0.0), "the rest dropped, not caught up later");
         }
 
+        [TestCase(60, 1)]
+        [TestCase(30, 2)]
+        public void AndroidAt60Or30RenderedFrames_TakesOneNormalOrDoubleSimulationPerFrame_AndKeepsRealTime(int renderHz, int normalStepsPerFrame)
+        {
+            const long frequency = 60_000_000;
+            var clock = new ManualPhysicsClock(60, frequency, doubleStep: true);
+            long interval = frequency / renderHz;
+            clock.Accumulate(0);
+            int frames = 10 * renderHz;
+            for (int frame = 1; frame <= frames; frame++)
+            {
+                clock.Accumulate(frame * interval);
+                double chosen = clock.Choose(0.001, 0.0015, 0.015);
+                Assert.That(chosen, Is.EqualTo(normalStepsPerFrame / 60.0).Within(1e-15));
+                clock.Stepped(chosen);
+                clock.CarryOver();
+            }
+
+            Assert.That(clock.StepId, Is.EqualTo(frames), "one simulation per decision, including 30 fps");
+            Assert.That(clock.PhysicsSeconds, Is.EqualTo(10.0).Within(1e-10));
+            Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(0.0).Within(1e-12));
+            Assert.That(clock.DroppedSeconds, Is.Zero);
+            Assert.That(clock.NormalSteps, Is.EqualTo(normalStepsPerFrame == 1 ? frames : 0));
+            Assert.That(clock.DoubleSteps, Is.EqualTo(normalStepsPerFrame == 2 ? frames : 0));
+        }
+
         [Test]
         public void TheFixedStep_KeepsItsCapAtTheAccumulation_AsBefore()
         {
@@ -172,10 +202,11 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(2.0 * h).Within(Tick), "the carry-over does nothing on it");
         }
 
-        [Test]
-        public void ADoubleStepThatDoesNotFit_FallsBackToTheNormalStep_AndOneThatNeitherFits_IsASkip()
+        [TestCase(60)]
+        [TestCase(90)]
+        public void ADoubleStepThatDoesNotFit_FallsBackToTheNormalStep_AndOneThatNeitherFits_IsASkip(int hz)
         {
-            ManualPhysicsClock clock = Owing(90, 2.0);
+            ManualPhysicsClock clock = Owing(hz, 2.0);
             double h = clock.StepSeconds;
             Assert.That(clock.Choose(0.002, 0.004, 0.005), Is.EqualTo(2.0 * h).Within(1e-15), "the double's own estimate fits");
             Assert.That(clock.Choose(0.002, 0.006, 0.005), Is.EqualTo(h), "the double's does not, the normal's does: the normal step");
@@ -184,7 +215,7 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.StepId, Is.Zero, "a decision is not a step");
             Assert.That(clock.PhysicsSeconds, Is.Zero);
             Assert.That(clock.UnsimulatedSeconds, Is.EqualTo(2.0 * h).Within(Tick), "a skip advances nothing and the owing stays");
-            Assert.That(Owing(90, 1.5).Choose(0.002, 0.0, 0.001), Is.Zero, "one step owed: only the normal step's estimate is compared");
+            Assert.That(Owing(hz, 1.5).Choose(0.002, 0.0, 0.001), Is.Zero, "one step owed: only the normal step's estimate is compared");
         }
 
         [Test]
@@ -221,10 +252,11 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(clock.StepId, Is.EqualTo(1));
         }
 
-        [Test]
-        public void WhilePaused_NothingIsOwedOrChosen_AndTheResumeCatchesNothingOfThePauseUp()
+        [TestCase(60)]
+        [TestCase(90)]
+        public void WhilePaused_NothingIsOwedOrChosen_AndTheResumeCatchesNothingOfThePauseUp(int hz)
         {
-            ManualPhysicsClock clock = Owing(90, 1.5);
+            ManualPhysicsClock clock = Owing(hz, 1.5);
             double h = clock.StepSeconds;
             double before = clock.UnsimulatedSeconds;
             clock.SetPaused(true);

@@ -16,7 +16,8 @@ namespace Zantetsu.Sandbox
     /// <see cref="PlayStatisticsCollector"/>. Each frame it reads the conditions, the frame times
     /// (<see cref="FrameTimeSampler"/>) and the world's counters -- the ledger, display, storage, driver, collections,
     /// the draw route -- from the values those already keep, and hands them to the collector; it sends by
-    /// <see cref="PlayStatisticsSender"/> at the loss of focus. Nothing is read, counted or sent before the player's
+    /// <see cref="PlayStatisticsSender"/> at the loss of focus, and on Android phones at an app pause as well.
+    /// Nothing is read, counted or sent before the player's
     /// agreement; a withdrawal clears what was collected, drops what waits and abandons what is under way. The game's own
     /// clocks and counts run whatever the consent: this reads them and adds nothing to their path.
     /// <para>
@@ -39,6 +40,9 @@ namespace Zantetsu.Sandbox
         public PlayStatisticsConsent Consent { get; private set; }
         public PlayStatisticsSender Sender { get; private set; }
         public FrameTimeSampler Sampler { get; private set; }
+
+        /// <summary>Optional touch-screen host: its preparation gates collection and it supplies effective flat settings.</summary>
+        public IPlayStatisticsFlatSource FlatSource { get; set; }
 
         /// <summary>The quit's last offer and its wait (a PC Player's: DESIGN 21.18).</summary>
         public PlayStatisticsQuit Quit { get; private set; }
@@ -147,6 +151,7 @@ namespace Zantetsu.Sandbox
         {
             Statistics.Platform = Application.platform.ToString();
             Statistics.OperatingSystem = SystemInfo.operatingSystem ?? "";
+            Statistics.DeviceModel = PlayerPlatform.IsAndroidFlat ? PlayEnvironment.OrNull(SystemInfo.deviceModel) : null;
             Statistics.Cpu = SystemInfo.processorType ?? "";
             Statistics.Gpu = SystemInfo.graphicsDeviceName ?? "";
             Statistics.GraphicsApi = SystemInfo.graphicsDeviceVersion ?? "";
@@ -161,6 +166,7 @@ namespace Zantetsu.Sandbox
         {
             Statistics.Platform = "";
             Statistics.OperatingSystem = "";
+            Statistics.DeviceModel = null;
             Statistics.Cpu = "";
             Statistics.Gpu = "";
             Statistics.GraphicsApi = "";
@@ -376,7 +382,8 @@ namespace Zantetsu.Sandbox
                 }
             }
 
-            bool worldReady = _world != null && _world.IsReady && !_world.IsEnding;
+            bool worldReady = _world != null && _world.IsReady && !_world.IsEnding
+                && (FlatSource == null || FlatSource.StatisticsReady);
             bool active = XRSettings.isDeviceActive;
             if (active != _xrActive) NoteXrState(active);
 
@@ -446,7 +453,7 @@ namespace Zantetsu.Sandbox
         // The conditions this frame, from values at hand (no string is made here: the names are cached on change).
         private PlayConditions ReadConditions(bool xrActive)
         {
-            return new PlayConditions
+            var c = new PlayConditions
             {
                 Scene = _scene,
                 Mode = _mode,
@@ -460,6 +467,10 @@ namespace Zantetsu.Sandbox
                 MsaaSamples = xrActive ? XRSettings.eyeTextureDesc.msaaSamples : QualitySettings.antiAliasing,
                 CutSurfaceDebug = VpCutSurfaceColour.DebugEnabled,
             };
+            // Called only after Update's agreement gate. XR conditions remain the runtime's own, even if a flat
+            // source was attached; the touch-screen host supplies effective settings without a per-frame allocation.
+            if (!xrActive && FlatSource != null) FlatSource.ReadStatisticsConditions(ref c);
+            return c;
         }
 
         // The world's counters as they stand: totals with the generation of what keeps them, peaks where a source keeps one.
@@ -646,16 +657,26 @@ namespace Zantetsu.Sandbox
             if (!focus)
             {
                 // A trigger of a send (DESIGN 21.18): the focus lost -- the system menu, another window. The other is the
-                // ordinary quit of a PC Player (RequestQuit); there is no timer and no third event.
+                // ordinary quit of a PC Player (RequestQuit), or an Android phone sent to the background; no timer.
                 if (Quit.Requested) return;   // the quit has taken the last record and made the last offer already
                 Debug.Log(Prefix + "focus lost: " + Sender.OnFocusLost());
                 LogRecord("at the loss of focus");
             }
         }
 
-        private void OnApplicationPause(bool paused)
+        private void OnApplicationPause(bool paused) => ApplicationPause(paused, PlayerPlatform.IsAndroidFlat);
+
+        // The platform decision is explicit so EditMode tests can exercise Android and the unchanged Quest/PC path.
+        private void ApplicationPause(bool paused, bool androidFlat)
         {
             Collector.Interrupt();
+            if (paused && androidFlat && !Quit.Requested)
+            {
+                // Android can pause without a focus callback. Both notifications offer the same revision through
+                // the sender: one send while in flight, and none after that revision was accepted.
+                Debug.Log(Prefix + "app backgrounded: " + Sender.OnFocusLost());
+                LogRecord("at the app entering the background");
+            }
         }
 
         private void OnDestroy()
@@ -672,7 +693,7 @@ namespace Zantetsu.Sandbox
         /// <summary>
         /// The first-run dialog's text (version <see cref="PlayStatisticsConsent.CurrentTextVersion"/>, unit 9-B): what is
         /// sent, what never, for what, to where, when (as this Player really sends: on a loss of focus; a desktop Player
-        /// also at an ordinary quit; never when the app is killed or crashes), how long it is kept (the receiver's 90-day
+        /// also at an ordinary quit; an Android phone also on backgrounding; never when the app is killed or crashes), how long it is kept (the receiver's 90-day
         /// rule, whose deletion runs after the period, not at the instant), and how to withdraw (collection and sending
         /// stop from then on; what was already sent stays until the rule deletes it).
         /// </summary>
@@ -699,6 +720,29 @@ namespace Zantetsu.Sandbox
                 + "Withdraw any time in the menu (left menu button): collection and sending stop from then on;\n"
                 + "records already sent stay until the 90-day rule deletes them.";
         }
+
+        /// <summary>The touch-screen Android dialog: the same data policy with phone settings and phone lifecycle events.</summary>
+        public static string ConsentBodyForAndroid =>
+            "May this game send anonymous play statistics?\n"
+            + "What: frame time histograms (CPU, GPU), counts of cuts and fragments, buffer sizes, failure counts,\n"
+            + "scene and settings, screen dimensions, resolution scale, upscaling and indirect draw settings,\n"
+            + "device/OS/CPU/GPU model, graphics API and GPU driver version, random IDs.\n"
+            + "Never: your name, device name, hardware IDs, touch positions or movement, images.\n"
+            + "For: improving performance and stability; statistical analysis only.\n"
+            + "To: our Cloudflare Worker, stored in Cloudflare R2 (cloud storage).\n"
+            + "When: sent when the app goes into the background or loses focus;\n"
+            + "nothing is sent if the app is killed or crashes.\n"
+            + "Retention: each record becomes eligible for automatic deletion 90 days after it is stored;\n"
+            + "the deletion itself may take some time after that.\n"
+            + "Withdraw or agree again any time in Menu > Statistics: collection and sending stop from withdrawal on;\n"
+            + "records already sent stay until the 90-day rule deletes them.";
+
+        /// <summary>The short policy beside the Android statistics control; touch Menu > Statistics to withdraw or agree again.</summary>
+        public static string MenuExplanationForAndroid =>
+            "Anonymous play statistics (frame times, cuts, fragments, buffer sizes, device model, screen dimensions and settings) "
+            + "to our Cloudflare Worker/R2, sent when the app goes into the background or loses focus; "
+            + "kept up to 90 days (automatic deletion after that may take time). "
+            + "Use Menu > Statistics to withdraw or agree again. OFF stops collecting and sending from then on; sent records stay until deleted.";
 
         public const string ConsentAgree = "Agree";
         public const string ConsentDecline = "Don't send";

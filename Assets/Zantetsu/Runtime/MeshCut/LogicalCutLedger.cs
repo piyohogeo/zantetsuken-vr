@@ -1285,6 +1285,20 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// One current entry of a family's dense live-cut list, without copying it. Main-thread read only.
+        /// Publication/retirement may reorder entries; an index is only a cursor, not a stable fragment identity.
+        /// </summary>
+        public bool TryGetLiveCutFragmentAt(LogicalFragmentId root, int at, out LogicalFragmentId fragment)
+        {
+            fragment = default;
+            if (!TryIndex(root, out int index) || _fragments[index].family.root != root) return false;
+            List<int> live = _fragments[index].family.liveCut;
+            if ((uint)at >= (uint)live.Count) return false;
+            fragment = new LogicalFragmentId(live[at] + 1);
+            return true;
+        }
+
+        /// <summary>
         /// The live fragments a cut made that descend from <paramref name="root"/>, added to <paramref name="into"/>
         /// in no particular order. What is handed out is the caller's own list: a change here afterwards does not
         /// change it.

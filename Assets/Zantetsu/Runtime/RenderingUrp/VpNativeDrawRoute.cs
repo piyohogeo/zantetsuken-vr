@@ -578,6 +578,9 @@ namespace Zantetsu.Rendering.Urp
         /// <summary>What this route chose between the compaction and the fixed draw, and why (DESIGN 4.5.10); null until its first frame.</summary>
         public string CommandCompactionChoice { get; private set; }
 
+        /// <summary>The route's already selected count path, without asking the device or changing the selection.</summary>
+        public bool CommandCompactionActive => _compactionChoiceMade && _compactionChosen && CompactionHalted == null;
+
         /// <summary>Experiment: zero events recorded (one a column of a set a frame), runs drawn fixed because their column's zeroing was not reserved, and zero events the plugin refused.</summary>
         public long IndirectCountZeroEvents { get; private set; }
         public long IndirectCountZeroMissed { get; private set; }
@@ -813,6 +816,7 @@ namespace Zantetsu.Rendering.Urp
 
         private static bool AppendBlocks(StringBuilder text, string variant, uint[] words, List<(VpNativePipeline.BindingInfo binding, int offset, int size, int split)> blocks)
         {
+            variant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
             var asset = Resources.Load<TextAsset>((Plugin.Vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder) + "/" + variant);
             if (asset == null || !VpNativeShaderBinary.TryRead(asset.bytes, out VpNativeShaderBinary binary, out string _))
             {
@@ -879,12 +883,20 @@ namespace Zantetsu.Rendering.Urp
             return true;
         }
 
+#if UNITY_EDITOR
+        /// <summary>Tests may simulate an unavailable native device without changing route selection or Unity rendering.</summary>
+        public static string EnvironmentFailureForTest;
+#endif
+
         /// <summary>
         /// Whether the route can draw at all: URP recording through the render graph, Direct3D 12, the plugin
         /// loaded and of this contract, its compute shader in the build. Null when it can; otherwise why not.
         /// </summary>
         public static string CheckEnvironment()
         {
+#if UNITY_EDITOR
+            if (EnvironmentFailureForTest != null) return EnvironmentFailureForTest;
+#endif
             string failure = VpGpuCullCameraRoute.CheckEnvironment();
             if (failure != null)
             {
@@ -1634,6 +1646,7 @@ namespace Zantetsu.Rendering.Urp
         private PipelineEntry PipelineFor(Material material, string variant, VpNativeRenderState state, out string failure)
         {
             failure = null;
+            variant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
             var key = new PipelineKey(material, variant, state);
             if (_pipelines.TryGetValue(key, out PipelineEntry entry))
             {
@@ -2274,7 +2287,7 @@ namespace Zantetsu.Rendering.Urp
                 string variant = _route.BodyVariantOverride ?? VariantName(BodyVariantFor(frameData.Get<UniversalLightData>(), frameData.Get<UniversalShadowData>()), stereo);
                 if (_motion) variant = "motion-plugin-stereo";
                 if (Plugin.Vulkan && (_motion ? Plugin.VulkanNoClipMotionShaders : Plugin.VulkanNoClipColourShaders)) variant += "-noclip";
-                if (!_motion) _route.LastBodyVariant = variant;
+                if (!_motion) _route.LastBodyVariant = VpClipShaderPolicy.NativeVariant(variant, Plugin.Vulkan);
                 TextureHandle shadowMap = _motion ? TextureHandle.nullHandle : resourceData.mainShadowsTexture;
                 if (_motion)
                 {

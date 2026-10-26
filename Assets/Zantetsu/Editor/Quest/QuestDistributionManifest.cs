@@ -35,6 +35,9 @@ namespace Zantetsu.EditorTools.Quest
         /// <summary>Set by the distribution build for the time of its build; every other build leaves the manifest alone.</summary>
         public static bool Required { get; set; }
 
+        /// <summary>Explicit build scope for a non-XR Android APK; restored after the build.</summary>
+        public static bool NonXrBuildInProgress { get; set; }
+
         /// <summary>
         /// Applies the guarantees to <paramref name="manifest"/> (the unityLibrary AndroidManifest.xml as generated)
         /// and lists what was set. Refuses, by <see cref="BuildFailedException"/>, a manifest without exactly one
@@ -129,7 +132,7 @@ namespace Zantetsu.EditorTools.Quest
 
             public void OnPostGenerateGradleAndroidProject(string path)
             {
-                if (!Required) return;
+                if (!Required || NonXrBuildInProgress) return;
                 string file = Path.Combine(path, "src", "main", "AndroidManifest.xml");
                 if (!File.Exists(file)) throw new BuildFailedException("the generated unityLibrary manifest is not at " + file);
                 var manifest = new XmlDocument { PreserveWhitespace = true };

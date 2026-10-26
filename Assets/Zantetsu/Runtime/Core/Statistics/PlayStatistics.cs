@@ -10,8 +10,12 @@ namespace Zantetsu.Core.Statistics
         public string DrawRoute;      // the display's route (VP3C-NATIVE, ...)
         public string XrRuntime;      // the OpenXR runtime's name, or "none"
         public float RefreshRateHz;   // the XR display's refresh rate; 0 where unknown
-        public float RenderScale;     // XRSettings.eyeTextureResolutionScale; 0 where no XR
+        public float RenderScale;     // XR resolution scale, or Android flat effective render scale; 0 where unspecified
         public int EyeTextureWidth, EyeTextureHeight;   // per eye; 0 where no XR
+        public int ScreenWidth, ScreenHeight;           // Android flat output pixels; 0 where unspecified
+        public bool FsrEnabled;          // Android flat effective upscaling and draw settings; false where unspecified
+        public bool MultiDrawIndirect;
+        public bool DrawIndirectCount;
         public int MsaaSamples;
         public bool CutSurfaceDebug;  // the menu's cut surface debug colour (a rendering setting)
 
@@ -20,6 +24,8 @@ namespace Zantetsu.Core.Statistics
             return Scene == o.Scene && Mode == o.Mode && DrawRoute == o.DrawRoute && XrRuntime == o.XrRuntime
                 && RefreshRateHz.Equals(o.RefreshRateHz) && RenderScale.Equals(o.RenderScale)
                 && EyeTextureWidth == o.EyeTextureWidth && EyeTextureHeight == o.EyeTextureHeight
+                && ScreenWidth == o.ScreenWidth && ScreenHeight == o.ScreenHeight && FsrEnabled == o.FsrEnabled
+                && MultiDrawIndirect == o.MultiDrawIndirect && DrawIndirectCount == o.DrawIndirectCount
                 && MsaaSamples == o.MsaaSamples && CutSurfaceDebug == o.CutSurfaceDebug;
         }
 
@@ -164,9 +170,10 @@ namespace Zantetsu.Core.Statistics
         /// tracking over) and, in XR, by the XR session's focus; "graphicsApi" apart from "gpuDriver" (the driver's
         /// version, or null); the OpenXR runtime's own name and version; the XR device null where only a generic name
         /// is to be had. 3 (2026-10-20): the settings' "turnOnRightStick" (the sticks' layout); "turn" and
-        /// "turnContinuous" keep their meaning (the snap angle or the turn speed, and which).
+        /// "turnContinuous" keep their meaning (the snap angle or the turn speed, and which). 4: the device model and
+        /// Android flat screen size, FSR and effective indirect draw settings; renderScale also describes its effective scale.
         /// </summary>
-        public const int FormatVersion = 3;
+        public const int FormatVersion = 4;
 
         public const int MaxEpochs = 4;
 
@@ -211,6 +218,7 @@ namespace Zantetsu.Core.Statistics
         public string SessionId = "";
         public string Platform = "";
         public string OperatingSystem = "";
+        public string DeviceModel;      // model only, never the user-given device name or an identifier; null where not obtained
         public string Cpu = "";
         public string Gpu = "";
         public string GraphicsApi = ""; // SystemInfo.graphicsDeviceVersion: the graphics API and its level (not a driver's version)

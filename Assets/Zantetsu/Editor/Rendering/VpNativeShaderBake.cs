@@ -28,10 +28,12 @@ namespace Zantetsu.EditorTools.Rendering
     {
         public const string ForwardShader = "Zantetsu/VP Indexed Indirect Unlit";
         public const string ShadowCasterShader = "Zantetsu/VP Indexed Indirect Shadow Caster";
+        public const string StencilVolumeShader = "Zantetsu/VP Stencil Volume";
         public const string PluginKeyword = "VP_NATIVE_MULTIDRAW";
         public const string GpuCulledKeyword = "VP_GPU_CULLED";
         public const string NoClipKeyword = "VP_NO_CLIP";
         public const string DirectKeyword = "VP_NATIVE_DIRECT";
+        public const string PixelClipKeyword = "VP_PIXEL_CLIP";
 
         public readonly struct Variant
         {
@@ -90,37 +92,14 @@ namespace Zantetsu.EditorTools.Rendering
                 var report = new StringBuilder();
                 report.AppendLine("VpNativeShaderBake " + DateTime.Now.ToString("o") + " Unity " + Application.unityVersion);
                 bool allCompiled = true;
-                var variants = new List<Variant>(Variants);
-                if (s_vulkan) variants.Add(new Variant("motion-plugin-stereo", ForwardShader, GpuCulledKeyword, PluginKeyword, "STEREO_MULTIVIEW_ON"));
-                // Keep the historical Clip-enabled assets unchanged, and bake ordinary-object variants separately.
-                // Direct Clip draws are the Vulkan route's. The Direct3D 12 route draws the clipped instances from a
-                // clip list instead (DESIGN 4.5.9): the plugin's variant without the selection ("-list"), which reads
-                // the instance's transform and clip record by the entry's own start instance.
-                foreach (Variant original in variants.ToArray())
-                {
-                    var noClipKeys = new List<string>(original.Keywords) { NoClipKeyword };
-                    variants.Add(new Variant(original.Name + "-noclip", original.Shader, noClipKeys.ToArray()));
-                    if (!s_vulkan && original.Name.Contains("-plugin"))
-                    {
-                        var listKeys = new List<string>(original.Keywords);
-                        listKeys.Remove(GpuCulledKeyword);
-                        variants.Add(new Variant(original.Name.Replace("-plugin", "-list"), original.Shader, listKeys.ToArray()));
-                    }
-                    if (s_vulkan && original.Name.Contains("-plugin"))
-                    {
-                        var directKeys = new List<string>(original.Keywords);
-                        directKeys.Remove(GpuCulledKeyword);
-                        directKeys.Remove(PluginKeyword);
-                        directKeys.Add(DirectKeyword);
-                        variants.Add(new Variant(original.Name.Replace("-plugin", "-direct"), original.Shader, directKeys.ToArray()));
-                    }
-                }
-                foreach (Variant original in variants)
-                {
-                    var keys = (string[])original.Keywords.Clone();
-                    if (s_vulkan) for (int i = 0; i < keys.Length; i++) if (keys[i] == StereoKeyword) keys[i] = "STEREO_MULTIVIEW_ON";
-                    var variant = new Variant(original.Name, original.Shader, keys);
+                foreach (Variant variant in GetVariants(s_vulkan))
                     allCompiled &= Bake(variant, folder, report);
+                if (s_vulkan)
+                {
+                    // Stencil uses Unity draws, not native pipeline assets. Still compile its fallback here: forced
+                    // early tests would update stencil before discard and mark the part that should have been cut away.
+                    allCompiled &= Bake(new Variant("stencil-volume-pixelclip", StencilVolumeShader, PixelClipKeyword), folder, report, false);
+                    allCompiled &= Bake(new Variant("stencil-volume-stereo-pixelclip", StencilVolumeShader, PixelClipKeyword, "STEREO_MULTIVIEW_ON"), folder, report, false);
                 }
 
                 File.WriteAllText(Path.Combine(folder, "bake.txt"), report.ToString());
@@ -136,7 +115,55 @@ namespace Zantetsu.EditorTools.Rendering
             EditorApplication.Exit(code);
         }
 
-        private static bool Bake(Variant variant, string folder, StringBuilder report)
+        /// <summary>
+        /// Preserve the hardware-Clip and ordinary-object assets. Vulkan additionally gets a pixel-Clip version of
+        /// each Clip-enabled variant; ordinary objects retain their existing variant, with no Clip work in either stage.
+        /// </summary>
+        public static Variant[] GetVariants(bool vulkan)
+        {
+            var variants = new List<Variant>(Variants);
+            if (vulkan) variants.Add(new Variant("motion-plugin-stereo", ForwardShader, GpuCulledKeyword, PluginKeyword, "STEREO_MULTIVIEW_ON"));
+            // Direct Clip draws are the Vulkan route's. Direct3D 12 draws clipped instances from a clip list instead:
+            // the plugin's variant without selection ("-list"), reading the entry's instance transform and clip record.
+            foreach (Variant original in variants.ToArray())
+            {
+                var noClipKeys = new List<string>(original.Keywords) { NoClipKeyword };
+                variants.Add(new Variant(original.Name + "-noclip", original.Shader, noClipKeys.ToArray()));
+                if (!vulkan && original.Name.Contains("-plugin"))
+                {
+                    var listKeys = new List<string>(original.Keywords);
+                    listKeys.Remove(GpuCulledKeyword);
+                    variants.Add(new Variant(original.Name.Replace("-plugin", "-list"), original.Shader, listKeys.ToArray()));
+                }
+                if (vulkan && original.Name.Contains("-plugin"))
+                {
+                    var directKeys = new List<string>(original.Keywords);
+                    directKeys.Remove(GpuCulledKeyword);
+                    directKeys.Remove(PluginKeyword);
+                    directKeys.Add(DirectKeyword);
+                    variants.Add(new Variant(original.Name.Replace("-plugin", "-direct"), original.Shader, directKeys.ToArray()));
+                }
+            }
+            if (vulkan)
+            {
+                foreach (Variant original in variants.ToArray())
+                {
+                    if (Array.IndexOf(original.Keywords, NoClipKeyword) >= 0) continue;
+                    var pixelClipKeys = new List<string>(original.Keywords) { PixelClipKeyword };
+                    variants.Add(new Variant(original.Name + "-pixelclip", original.Shader, pixelClipKeys.ToArray()));
+                }
+                for (int v = 0; v < variants.Count; v++)
+                {
+                    Variant original = variants[v];
+                    var keys = (string[])original.Keywords.Clone();
+                    for (int i = 0; i < keys.Length; i++) if (keys[i] == StereoKeyword) keys[i] = "STEREO_MULTIVIEW_ON";
+                    variants[v] = new Variant(original.Name, original.Shader, keys);
+                }
+            }
+            return variants.ToArray();
+        }
+
+        private static bool Bake(Variant variant, string folder, StringBuilder report, bool writeAsset = true)
         {
             report.AppendLine();
             report.AppendLine("== " + variant.Name + ": " + variant.Shader + " [" + string.Join(" ", variant.Keywords) + "]");
@@ -190,6 +217,12 @@ namespace Zantetsu.EditorTools.Rendering
                 return false;
             }
 
+            if (!writeAsset)
+            {
+                report.AppendLine("  validation-only shader; no native asset");
+                return true;
+            }
+
             // The asset a Player loads (Resources/VpNative/<name>.bytes), with a meta whose GUID is the name's, so a
             // re-bake replaces the asset in place.
             string assets = Path.Combine(folder, "assets", s_vulkan ? "VpNativeVulkan" : VpNativeShaderBinary.ResourceFolder);
@@ -233,15 +266,30 @@ namespace Zantetsu.EditorTools.Rendering
         private static bool VerifyClipVariant(Variant variant, VpNativeShaderBinary binary, StringBuilder report)
         {
             VpNativeShaderBinary.Stage vertex = binary.FindStage(VpNativeShaderBinary.StageKind.Vertex);
+            VpNativeShaderBinary.Stage pixel = binary.FindStage(VpNativeShaderBinary.StageKind.Pixel);
+            bool pixelClip = Array.IndexOf(variant.Keywords, PixelClipKeyword) >= 0;
             bool noClip = Array.IndexOf(variant.Keywords, NoClipKeyword) >= 0;
             bool direct = Array.IndexOf(variant.Keywords, DirectKeyword) >= 0;
-            bool valid = vertex != null;
+            bool valid = vertex != null && pixel != null;
             if (noClip)
             {
                 valid &= vertex != null && !vertex.Buffers.Exists(b => b.Name == "_VpInstanceClip");
-                if (s_vulkan && vertex != null) valid &= !HasSpirvClipDistance(vertex.Bytecode);
+                valid &= pixel != null && !pixel.Buffers.Exists(b => b.Name == "_VpInstanceClip");
+                if (s_vulkan && vertex != null && pixel != null)
+                    valid &= !HasSpirvClipDistance(vertex.Bytecode) && !HasSpirvClipDistance(pixel.Bytecode) && !HasSpirvDiscard(pixel.Bytecode);
                 if (!s_vulkan && vertex != null) valid &= !HasDxbcClipDistanceOutput(vertex.Bytecode, report);
-                report.AppendLine("  no-Clip VS gate: " + (valid ? "passed" : "FAILED (Clip buffer/capability/output remains)"));
+                report.AppendLine("  no-Clip stages gate: " + (valid ? "passed" : "FAILED (Clip buffer/capability/output/discard remains)"));
+            }
+            else if (pixelClip)
+            {
+                bool noHardwareClip = s_vulkan && vertex != null && pixel != null
+                    && !HasSpirvClipDistance(vertex.Bytecode) && !HasSpirvClipDistance(pixel.Bytecode);
+                bool discards = pixel != null && s_vulkan && HasSpirvDiscard(pixel.Bytecode);
+                bool stencilOrder = variant.Shader != StencilVolumeShader || (pixel != null && s_vulkan && !HasSpirvEarlyFragmentTests(pixel.Bytecode));
+                valid &= noHardwareClip && discards && stencilOrder;
+                report.AppendLine("  pixel-Clip stages gate: " + (noHardwareClip && discards && stencilOrder
+                    ? "passed (no hardware Clip in VS/PS; PS discards; stencil order safe)"
+                    : "FAILED (no hardware Clip " + noHardwareClip + ", PS discards " + discards + ", stencil order safe " + stencilOrder + ")"));
             }
             else if (!s_vulkan && !direct && vertex != null)
             {
@@ -271,10 +319,10 @@ namespace Zantetsu.EditorTools.Rendering
                     VpNativeShaderBinary.ConstantBuffer records = vertex.FindConstantBuffer("VpNativeDirect");
                     valid &= records != null && records.Size == 32 * 208;
                     valid &= vertex.Buffers.Count == 1 && vertex.Buffers[0].Name == "_VpVertices";
-                    if (s_vulkan) valid &= HasSpirvClipDistance(vertex.Bytecode);
+                    if (s_vulkan) valid &= pixelClip ? !HasSpirvClipDistance(vertex.Bytecode) : HasSpirvClipDistance(vertex.Bytecode);
                 }
                 valid &= !noClip;
-                report.AppendLine("  direct Clip VS gate: " + (valid ? "passed (vertices + 6656-byte record UBO; Clip output)" : "FAILED (unexpected buffer/record layout/output)"));
+                report.AppendLine("  direct Clip VS gate: " + (valid ? "passed (vertices + 6656-byte record UBO; Clip)" : "FAILED (unexpected buffer/record layout/output)"));
             }
             return valid;
         }
@@ -320,8 +368,10 @@ namespace Zantetsu.EditorTools.Rendering
             return found;
         }
 
-        private static bool HasSpirvClipDistance(byte[] bytes)
+        /// <summary>Whether SPIR-V requires ClipDistance or actively accesses its built-in output.</summary>
+        public static bool HasSpirvClipDistance(byte[] bytes)
         {
+            VerifySpirvHeader(bytes);
             // Unity declares a dormant float[1] ClipDistance member in its common gl_PerVertex block even without
             // the capability or a write. A decoration alone therefore cannot establish an active Clip output.
             // Check the capability, standalone built-in, and actual accesses to the decorated output member.
@@ -362,6 +412,51 @@ namespace Zantetsu.EditorTools.Rendering
                 if (pointerTargets.TryGetValue(output.Value, out uint structure) && clipMembers.ContainsKey(structure)
                     && wholeStores.Contains(output.Key)) return true;
             return false;
+        }
+
+        /// <summary>Whether compiled SPIR-V contains an instruction that discards a fragment invocation.</summary>
+        public static bool HasSpirvDiscard(byte[] bytes)
+        {
+            VerifySpirvHeader(bytes);
+            bool found = false;
+            for (int at = 20; at < bytes.Length;)
+            {
+                uint instruction = BitConverter.ToUInt32(bytes, at);
+                int length = (int)(instruction >> 16) * 4;
+                if (length < 4 || at + length > bytes.Length) throw new InvalidDataException("invalid SPIR-V instruction");
+                uint op = instruction & 65535;
+                // OpKill, OpTerminateInvocation, OpDemoteToHelperInvocation (also its EXT alias).
+                found |= op == 252 || op == 4416 || op == 5380;
+                at += length;
+            }
+            return found;
+        }
+
+        /// <summary>Whether SPIR-V forces depth/stencil tests before fragment discard.</summary>
+        public static bool HasSpirvEarlyFragmentTests(byte[] bytes)
+        {
+            VerifySpirvHeader(bytes);
+            bool found = false;
+            for (int at = 20; at < bytes.Length;)
+            {
+                uint instruction = BitConverter.ToUInt32(bytes, at);
+                int length = (int)(instruction >> 16) * 4;
+                if (length < 4 || at + length > bytes.Length) throw new InvalidDataException("invalid SPIR-V instruction");
+                // OpExecutionMode's first operand is the entry point, its second is the execution mode (9).
+                if ((instruction & 65535) == 16)
+                {
+                    if (length < 12) throw new InvalidDataException("invalid SPIR-V execution mode");
+                    found |= BitConverter.ToUInt32(bytes, at + 8) == 9;
+                }
+                at += length;
+            }
+            return found;
+        }
+
+        private static void VerifySpirvHeader(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length < 20 || bytes.Length % 4 != 0 || BitConverter.ToUInt32(bytes, 0) != 0x07230203)
+                throw new InvalidDataException("not SPIR-V");
         }
 
         private static VpNativeShaderBinary.Stage ToStage(VpNativeShaderBinary.StageKind kind, ShaderData.VariantCompileInfo info)

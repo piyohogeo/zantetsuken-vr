@@ -84,6 +84,7 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            VpClipShaderPolicy.EnsureConfigured();
             Shader init = Shader.Find(InitShaderName);
             Shader volume = Shader.Find(VolumeShaderName);
             Shader cap = Shader.Find(CapShaderName);

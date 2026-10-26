@@ -93,10 +93,10 @@ namespace Zantetsu.PhysicsCut
 
             UnityEngine.Debug.Log(
                 "FRAGMENT GROUPS: on -- asked for by " + FragmentGroupsArgument + " " + maximum + ": whole groups are collected above " + maximum
-                + " live cut fragments, outside both eyes' views at any distance, the farther of those looked at first; the piece lifetime does not run", this);
+                + " live cut fragments, outside both eyes' views at any distance, the oldest first-cut registration of those looked at first; the piece lifetime does not run", this);
             return new CutFragmentGroupSettings(
                 true, maximum, settings.examinePerFrame, settings.reserveSeconds,
-                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
+                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup, settings.safetyEnabled, settings.safetyVertexBlockThreshold);
         }
 
         /// <summary>The optional lifetime of cut fragments by the object they came from (DESIGN 7.10, Phase 7.1).</summary>
@@ -117,10 +117,10 @@ namespace Zantetsu.PhysicsCut
             CutFragmentGroupSettings settings = Groups.Settings;
             Groups.Settings = new CutFragmentGroupSettings(
                 true, maximum, settings.examinePerFrame, settings.reserveSeconds,
-                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup);
+                settings.seedSecondsPerFragment, settings.seedSecondsPerGroup, settings.safetyEnabled, settings.safetyVertexBlockThreshold);
             UnityEngine.Debug.Log(
                 "FRAGMENT GROUPS: on -- asked for by " + askedBy + " " + maximum + ": whole groups are collected above " + maximum
-                + " live cut fragments, outside both eyes' views at any distance, the farther of those looked at first; the piece lifetime does not run", this);
+                + " live cut fragments, outside both eyes' views at any distance, the oldest first-cut registration of those looked at first; the piece lifetime does not run", this);
             return true;
         }
 

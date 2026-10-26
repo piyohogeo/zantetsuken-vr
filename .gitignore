@@ -67,3 +67,8 @@ Tools/StanfordBunny/**/*.pyc
 # Play statistics: the local send configuration (endpoint, ingest token) is never committed (DESIGN 21.18)
 Assets/Zantetsu/Runtime/Sandbox/Resources/ZantetsuPlayStatisticsConfig.asset
 Assets/Zantetsu/Runtime/Sandbox/Resources/ZantetsuPlayStatisticsConfig.asset.meta
+
+# Android upload keys and Windows-protected signing credentials stay outside Git.
+*.jks
+*.keystore
+*.credential.clixml

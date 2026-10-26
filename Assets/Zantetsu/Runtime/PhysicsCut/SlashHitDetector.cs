@@ -177,8 +177,8 @@ namespace Zantetsu.PhysicsCut
         private readonly List<ISlashPlacedTarget> _placed = new List<ISlashPlacedTarget>(8);
         private readonly List<ISlashPlacedTarget> _placedTargets = new List<ISlashPlacedTarget>(8);
         private BuildingHullFusion _hulls;
-        private readonly long[] _live = new long[SlashWaveCore.Capacity];
-        private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.Capacity];
+        private readonly long[] _live = new long[SlashWaveCore.MaximumCapacity];
+        private readonly SlashSweep[] _sweeps = new SlashSweep[SlashWaveCore.MaximumCapacity];
         private float3[] _section = new float3[64];
         private TraceLaneWriter _trace;
 
@@ -217,7 +217,7 @@ namespace Zantetsu.PhysicsCut
 
             _settings = settings;
             _open = open;
-            _consumption = new SlashLineageConsumption(ledger, SlashWaveCore.Capacity);
+            _consumption = new SlashLineageConsumption(ledger, SlashWaveCore.MaximumCapacity);
             _adoptedPlanes = 0;
         }
 
