@@ -43,6 +43,18 @@ namespace Zantetsu.EditorTools.Sandbox
 
         public const string StatsVerifySymbol = "ZANTETSU_STATS_VERIFY";
 
+        /// <summary>
+        /// With this argument the Player's graphics APIs are Direct3D 12 first, then Direct3D 11 (2026-10-27): it starts on
+        /// Direct3D 12, where a Windows Player draws the cut bodies through the native plugin by default (VP3C-NATIVE, D-215),
+        /// and falls back to Direct3D 11 (Unity's calls) where Direct3D 12 cannot start. For this build only: the project's
+        /// own setting (Direct3D 11 alone, 0ea76d04) is put back afterwards.
+        /// </summary>
+        public const string Direct3D12Argument = "-zantetsuPlayerD3D12";
+
+        /// <summary>The graphics APIs of <see cref="Direct3D12Argument"/>, in order.</summary>
+        public static readonly UnityEngine.Rendering.GraphicsDeviceType[] Direct3D12Apis =
+            { UnityEngine.Rendering.GraphicsDeviceType.Direct3D12, UnityEngine.Rendering.GraphicsDeviceType.Direct3D11 };
+
         /// <summary>The boot scene, made if it is not there: an empty scene, saved under its fixed name.</summary>
         [MenuItem("Zantetsu/Make the scenario boot scene")]
         public static string EnsureBootScene()
@@ -89,9 +101,15 @@ namespace Zantetsu.EditorTools.Sandbox
             string directory = null;
             bool development = true;
             bool statsVerify = false, statsVerifyDevelopment = false;
+            bool direct3D12 = false;
             string[] arguments = Environment.GetCommandLineArgs();
             for (int i = 0; i < arguments.Length; i++)
             {
+                if (string.Equals(arguments[i], Direct3D12Argument, StringComparison.OrdinalIgnoreCase))
+                {
+                    direct3D12 = true;
+                }
+
                 if (i < arguments.Length - 1 && string.Equals(arguments[i], OutArgument, StringComparison.OrdinalIgnoreCase))
                 {
                     directory = arguments[i + 1];
@@ -116,10 +134,21 @@ namespace Zantetsu.EditorTools.Sandbox
             }
 
             bool before = PlayerSettings.enableFrameTimingStats;
+            const BuildTarget windows = BuildTarget.StandaloneWindows64;
+            bool apisAutomaticBefore = PlayerSettings.GetUseDefaultGraphicsAPIs(windows);
+            UnityEngine.Rendering.GraphicsDeviceType[] apisBefore = PlayerSettings.GetGraphicsAPIs(windows);
             bool built = false;
             try
             {
                 PlayerSettings.enableFrameTimingStats = true;
+                if (direct3D12)
+                {
+                    PlayerSettings.SetUseDefaultGraphicsAPIs(windows, false);
+                    PlayerSettings.SetGraphicsAPIs(windows, Direct3D12Apis);
+                    Debug.Log("SCENARIO PLAYER BUILD: graphics APIs " + string.Join(",", apisBefore) + " (automatic " + apisAutomaticBefore + ") -> "
+                        + string.Join(",", PlayerSettings.GetGraphicsAPIs(windows)) + " for this build (" + Direct3D12Argument + ")");
+                }
+
                 if (statsVerifyDevelopment) development = true;   // whatever the order of the arguments
                 Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats " + before + " -> true for this build; kind "
                     + (statsVerifyDevelopment ? "Development with " + StatsVerifySymbol + " (" + StatsVerifyDevelopmentArgument + "): the statistics' VERIFICATION build for the allocation check, not for distribution"
@@ -135,8 +164,14 @@ namespace Zantetsu.EditorTools.Sandbox
             finally
             {
                 PlayerSettings.enableFrameTimingStats = before;
+                if (direct3D12)
+                {
+                    PlayerSettings.SetGraphicsAPIs(windows, apisBefore);
+                    PlayerSettings.SetUseDefaultGraphicsAPIs(windows, apisAutomaticBefore);
+                }
                 AssetDatabase.SaveAssets();
-                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats back to " + PlayerSettings.enableFrameTimingStats);
+                Debug.Log("SCENARIO PLAYER BUILD: enableFrameTimingStats back to " + PlayerSettings.enableFrameTimingStats
+                    + (direct3D12 ? "; graphics APIs back to " + string.Join(",", PlayerSettings.GetGraphicsAPIs(windows)) + " (automatic " + PlayerSettings.GetUseDefaultGraphicsAPIs(windows) + ")" : ""));
             }
 
             EditorApplication.Exit(built ? 0 : 1);
