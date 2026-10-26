@@ -96,14 +96,20 @@ Questの単体版（APK）のビルド、Bunnyのデータを元データから�
 | `docs/` | 配布の手順、診断の記録 |
 | `DESIGN.md` | 技術設計書と決定の記録 |
 
-## 出典とライセンス
+## ライセンス
+
+このリポジトリは [MIT License](LICENSE) です（Copyright (c) 2026 hogehogeo）。ゲームの名前とロゴも含みます。
+
+ただし、次のものはMITではなく、それぞれの条件に従います。
 
 - **Stanford Bunny**：Stanford University Computer Graphics Laboratory の [3D Scanning Repository](https://graphics.stanford.edu/data/3Dscanrep/) のデータです。
-  - 元データとそこから作ったメッシュには、Stanfordの非商用の条件が適用されます。
-  - デモは非商用でだけ使えます。
-  - この動画もBunnyを使ったデモの映像です。
-- Bunnyの準備に使う道具のライセンスは次のとおりです。範囲は [Tools/StanfordBunny/THIRD-PARTY-NOTICES.md](Tools/StanfordBunny/THIRD-PARTY-NOTICES.md) を参照してください。
-  - MeshRepairとレシピ：MIT
-  - Convexアドオン：Apache-2.0
-  - V-HACD：BSD-3-Clause
-- アプリに含まれる第三者のソフトウェアの表記は、[Assets/StreamingAssets/ThirdPartyNotices.txt](Assets/StreamingAssets/ThirdPartyNotices.txt) にあります。
+  - 対象は、元データとそこから作ったもの（修復したメッシュ、Convex、.blend、Unityへの書き出し）です。
+  - 置き場所は `Assets/NonCommercialDemo/StanfordBunny/` と、`Tools/StanfordBunny/` の `source/` と `generated/` です。
+  - Stanfordの非商用の条件が適用され、デモは非商用でだけ使えます。
+  - 条件の要約は [STANFORD-NOTICE.txt](Assets/NonCommercialDemo/StanfordBunny/STANFORD-NOTICE.txt) にあります。
+  - README の動画も、Bunnyを使ったデモの映像です。
+- **Bunnyの準備に使う第三者の道具**：範囲は [Tools/StanfordBunny/THIRD-PARTY-NOTICES.md](Tools/StanfordBunny/THIRD-PARTY-NOTICES.md) を参照してください。
+  - Convexアドオン（`Tools/StanfordBunny/addons/convex_decomposition.py`）：Apache-2.0
+  - V-HACD（`Tools/StanfordBunny/vhacd/`）：BSD-3-Clause
+- **Unityのプロジェクトテンプレートのファイル**（`Assets/TutorialInfo/`）：Unityの条件に従います。
+- **アプリに含まれる第三者のソフトウェア**：表記は [Assets/StreamingAssets/ThirdPartyNotices.txt](Assets/StreamingAssets/ThirdPartyNotices.txt) にあります。
