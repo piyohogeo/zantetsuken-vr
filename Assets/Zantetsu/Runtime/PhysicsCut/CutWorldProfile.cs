@@ -234,11 +234,11 @@ namespace Zantetsu.PhysicsCut
         [SerializeField] private int spatialSplitBentMaxIterations = SpatialSplitBentLimits.DefaultIterations;
         [SerializeField] private int spatialSplitBentMaxPieces = SpatialSplitBentLimits.DefaultPieces;
 
-        [Tooltip("With the split on: where neither a plane nor the bent partition leaves the convexes and the triangles whole, ask the graph engine for a placement of the convexes and the mesh components into two groups apart by the margin (GRAPH-CONNECT-1), before the convex cut is tried; owners without anchors only. Off by default (2026-10-23): the connection is verified, the stage is not adopted.")]
-        [SerializeField] private bool spatialSplitGraphSearch = false;
+        [Tooltip("With the split on: where neither a plane nor the bent partition leaves the convexes and the triangles whole, ask the graph engine for a placement of the convexes and the mesh components into two groups apart by the margin (GRAPH-CONNECT-1), before the convex cut is tried; owners without anchors only. On by default since 2026-10-26 (D-256, the configuration C): adopted without an overall performance verdict (partial measurements exist); -zantetsuSpatialSplitGraphOff switches it off for a run.")]
+        [SerializeField] private bool spatialSplitGraphSearch = true;   // on by default since 2026-10-26 (D-256); off on 2026-10-23
 
-        [Tooltip("With the graph stage on: run it before the bent partition where it applies, and the bent partition only after an unfinished graph stage (GRAPH-CONNECT-12, the product trial of the configuration C). Off: the order as before (plane, bent, graph, mesh-led). Nothing without the graph stage.")]
-        [SerializeField] private bool spatialSplitGraphFirst = false;
+        [Tooltip("With the graph stage on: run it before the bent partition where it applies, and the bent partition only after an unfinished graph stage (GRAPH-CONNECT-12, the configuration C). Off: the order as before (plane, bent, graph, mesh-led). Nothing without the graph stage. On by default since 2026-10-26 (D-256); -zantetsuSpatialSplitGraphFirstOff keeps the order as before for a run.")]
+        [SerializeField] private bool spatialSplitGraphFirst = true;    // on by default since 2026-10-26 (D-256); off on 2026-10-24
 
         [Tooltip("The graph stage's limits: triangles, convexes, the referenced vertex span, nodes, candidate pairs, native bytes held at once, work units (the engine stops at any of them: unfinished, tried again later), and the wait in frames before such a retry (first, then doubled up to the greatest). Provisional (2026-10-23), from the tuning set's maxima.")]
         [SerializeField] private int spatialSplitGraphMaxTriangles = SpatialSplitGraphLimits.DefaultTriangles;

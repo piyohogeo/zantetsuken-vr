@@ -710,11 +710,11 @@ namespace Zantetsu.PhysicsCut.Tests
             Assert.That(CutWorldRoot.TryReadGraphFirstSwitch(null, out on), Is.False);
         }
         /// <summary>
-        /// **The profile's spatialSplitGraphFirst is copied into the settings** (GRAPH-CONNECT-12 §1-1, TL review 1 P2-3): off in the
-        /// code's defaults; set on the profile, it arrives as settings.graphFirst, and graphSearch is not touched by it.
+        /// **The profile's spatialSplitGraphFirst is copied into the settings** (GRAPH-CONNECT-12 §1-1, TL review 1 P2-3): on in the
+        /// code's defaults since D-256 (2026-10-26); set on the profile, it arrives as settings.graphFirst, and graphSearch is not touched by it.
         /// </summary>
         [Test]
-        public void CutWorldProfile_SpatialSplitGraphFirst_IsCopiedIntoTheSettings_AndIsOffByDefault()
+        public void CutWorldProfile_SpatialSplitGraphFirst_IsCopiedIntoTheSettings_AndIsOnByDefault()
         {
             var profile = UnityEngine.ScriptableObject.CreateInstance<CutWorldProfile>();
             try
@@ -722,11 +722,12 @@ namespace Zantetsu.PhysicsCut.Tests
                 FieldInfo first = typeof(CutWorldProfile).GetField("spatialSplitGraphFirst", BindingFlags.Instance | BindingFlags.NonPublic);
                 FieldInfo graph = typeof(CutWorldProfile).GetField("spatialSplitGraphSearch", BindingFlags.Instance | BindingFlags.NonPublic);
                 Assert.That(first, Is.Not.Null); Assert.That(graph, Is.Not.Null);
-                Assert.That((bool)first.GetValue(profile), Is.False, "the code's default: off");
-                Assert.That(profile.SpatialSplit.graphFirst, Is.False, "and so the settings");
-                first.SetValue(profile, true);
-                Assert.That(profile.SpatialSplit.graphFirst, Is.True, "the profile's value arrives in the settings");
+                Assert.That((bool)first.GetValue(profile), Is.True, "the code's default: on (D-256)");
+                Assert.That(profile.SpatialSplit.graphFirst, Is.True, "and so the settings");
+                first.SetValue(profile, false);
+                Assert.That(profile.SpatialSplit.graphFirst, Is.False, "the profile's value arrives in the settings");
                 Assert.That(profile.SpatialSplit.graphSearch, Is.EqualTo((bool)graph.GetValue(profile)), "graphSearch is the profile's own, untouched by the order");
+                first.SetValue(profile, true);
                 graph.SetValue(profile, true);
                 CutSpatialSplitSettings both = profile.SpatialSplit;
                 Assert.That(both.graphSearch, Is.True); Assert.That(both.graphFirst, Is.True);

@@ -39,23 +39,26 @@ namespace Zantetsu.PhysicsCut
         public const string SpatialSplitBentOffArgument = "-zantetsuSpatialSplitBentOff";
 
         /// <summary>
-        /// The Player argument that switches the graph stage on for a run (GRAPH-CONNECT-4; off in the profile's default of
-        /// 2026-10-23), with the profile's own limits where they are valid and the provisional ones otherwise. Nothing
-        /// without the split itself on; nothing with the capture on (the split says why).
+        /// The Player argument that switches the graph stage on for a run (GRAPH-CONNECT-4; on in the profile's default since
+        /// 2026-10-26, D-256; off on 2026-10-23), with the profile's own limits where they are valid and the provisional ones
+        /// otherwise. Nothing without the split itself on; nothing with the capture on (the split says why).
         /// </summary>
         public const string SpatialSplitGraphArgument = "-zantetsuSpatialSplitGraph";
 
-        /// <summary>The Player argument that switches the graph stage off for a run: the comparison's control.</summary>
+        /// <summary>
+        /// The Player argument that switches the graph stage off for a run: with <see cref="SpatialSplitGraphFirstOffArgument"/>, the way
+        /// back to the configuration D (D-256). Given with <see cref="SpatialSplitGraphArgument"/>, on wins.
+        /// </summary>
         public const string SpatialSplitGraphOffArgument = "-zantetsuSpatialSplitGraphOff";
 
         /// <summary>
         /// The Player argument that asks for the graph-first order for a run (GRAPH-CONNECT-12: the graph stage before the bent
-        /// partition, the bent partition only after an unfinished graph; off in the profile's default): applied only where the
-        /// graph stage is on and effective -- without it the request is logged and the order stays as before.
+        /// partition, the bent partition only after an unfinished graph; on in the profile's default since 2026-10-26, D-256): applied
+        /// only where the graph stage is on and effective -- without it the request is logged and the order stays as before.
         /// </summary>
         public const string SpatialSplitGraphFirstArgument = "-zantetsuSpatialSplitGraphFirst";
 
-        /// <summary>The Player argument that keeps the order as before for a run (the trial's control).</summary>
+        /// <summary>The Player argument that keeps the order as before for a run (the configuration D's order; D-256). Given with <see cref="SpatialSplitGraphFirstArgument"/>, on wins.</summary>
         public const string SpatialSplitGraphFirstOffArgument = "-zantetsuSpatialSplitGraphFirstOff";
 
         /// <summary>
