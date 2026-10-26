@@ -23,6 +23,14 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 | XR | OpenXR |
 | スクリプト | C#、IL2CPP、Burst |
 
+## Android版（非VR）
+
+Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きAPKを、[GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases)から配布する準備を進めています。現在の候補は `0.1.0-alpha.1`（versionCode 7）で、まだ公開していません。
+
+縦画面・横画面に対応しています。左下の仮想ジョイスティックで前後移動と旋回、画面のフリックで切断します。Galaxy S25 UltraとPixel 6 Proで基本動作を確認しました。
+
+導入・更新・操作方法と確認範囲は [Android版の利用案内](docs/android.md)、任意の統計送信については [プライバシーポリシー](docs/android-privacy-policy.md) を参照してください。
+
 ## このリポジトリでビルドできるもの
 
 製品の都市や人物の素材（`Assets/Licensed`、`Assets/ThirdPartyPrivate`）はリポジトリに含めていません。
@@ -112,4 +120,4 @@ Questの単体版（APK）のビルド、Bunnyのデータを元データから�
   - Convexアドオン（`Tools/StanfordBunny/addons/convex_decomposition.py`）：Apache-2.0
   - V-HACD（`Tools/StanfordBunny/vhacd/`）：BSD-3-Clause
 - **Unityのプロジェクトテンプレートのファイル**（`Assets/TutorialInfo/`）：Unityの条件に従います。
-- **アプリに含まれる第三者のソフトウェア**：表記は [Assets/StreamingAssets/ThirdPartyNotices.txt](Assets/StreamingAssets/ThirdPartyNotices.txt) にあります。
+- **アプリに含まれる第三者のソフトウェア**：各配布物の第三者表記に従います。Android版ではAPKに同梱し、Releaseにも `ThirdPartyNotices.txt` を添付します。参照先は [Android版の利用案内](docs/android.md) にまとめています。

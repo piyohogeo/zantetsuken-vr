@@ -1,8 +1,8 @@
-# WORLD CUTTER Android版 プライバシーポリシー 草案
+# WORLD CUTTER Android版 プライバシーポリシー
 
 本ポリシーは、Android版の任意のプレイ統計について説明します。統計の送信に同意しなくてもゲームを利用できます。
 
-開発者の公開名はhogehogeo、問い合わせ窓口はGitHub Issuesです。施行日は初回公開日とします。現在は未公開の配布準備版です。
+開発者の公開名はhogehogeo、問い合わせ窓口はGitHub Issuesです。本ポリシーは、本アプリの初回公開日から適用します。
 
 ## 収集と利用目的
 
@@ -34,6 +34,6 @@ Menu > Statisticsでいつでも撤回できます。撤回後は新たな収集
 
 Issuesへの投稿にはGitHubアカウントが必要で、投稿内容は公開されます。氏名・メールアドレスや個人情報を含むログなどは投稿しないでください。
 
-施行日：本アプリの初回公開日。現在は未公開です。
+施行日：本アプリの初回公開日。
 
 通信・ログの説明は2026-10-23時点の本番設定と配信コードを確認して記載しています。Cloudflareの運用ログ保持期間については [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/) を参照してください。

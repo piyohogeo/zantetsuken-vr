@@ -12,6 +12,17 @@ $Destination=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
 if(!$Destination.StartsWith($project+'\Build\',[StringComparison]::OrdinalIgnoreCase)){throw 'Local staging must stay below this repository Build directory'}
 if(Test-Path -LiteralPath $Destination){throw 'Local staging already exists; nothing is overwritten'}
 $draft=Get-Content -Raw -Encoding utf8 (Join-Path $PSScriptRoot 'DistributionDraft.json') | ConvertFrom-Json
+if($draft.candidate.versionCode -ne $inspection.VersionCode -or $draft.candidate.versionName -cne $inspection.VersionName -or $draft.candidate.sha256 -ine $hash){throw 'Update the distribution draft for this inspected APK before preparing release documents'}
+$validationPath=$Apk+'.record\device-validation.json'
+if(!(Test-Path -LiteralPath $validationPath -PathType Leaf)){throw 'The APK build-source record is missing'}
+$validation=Get-Content -Raw -Encoding utf8 $validationPath | ConvertFrom-Json
+$sourceCommit=[string]$validation.SourceCommit
+if($validation.ApkSha256 -ine $hash -or $sourceCommit -notmatch '^[0-9a-fA-F]{40}$' -or $draft.candidate.sourceCommit -ine $sourceCommit){throw 'The build-source record does not match the inspected APK and draft'}
+$templatePath=Join-Path $PSScriptRoot 'ReleaseNotes.template.md'
+$notes=[IO.File]::ReadAllText($templatePath,[Text.Encoding]::UTF8)
+$fileName=[IO.Path]::GetFileName($Apk)
+$notes=$notes.Replace('@VERSION@',$inspection.VersionName).Replace('@CODE@',[string]$inspection.VersionCode).Replace('@APK@',$fileName).Replace('@HASH@',$hash.ToLowerInvariant()).Replace('@CERT@',$inspection.CertificateSha256).Replace('@SOURCE@',$sourceCommit)
+if($notes -match '@[A-Z][A-Z0-9_]*@'){throw 'The release notes contain an unresolved placeholder'}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=[IO.Compression.ZipFile]::OpenRead($Apk)
 try {
@@ -25,32 +36,10 @@ try {$noticeHash=([BitConverter]::ToString($hasher.ComputeHash($noticeBytes))).R
 if($noticeHash -cne $inspection.ThirdPartyNoticesSha256){throw 'The bundled third-party notices have not passed inspection'}
 $assets=Join-Path $Destination 'assets';[IO.Directory]::CreateDirectory($assets) | Out-Null
 [IO.File]::WriteAllBytes((Join-Path $assets 'ThirdPartyNotices.txt'),$noticeBytes)
-$fileName=[IO.Path]::GetFileName($Apk)
 Copy-Item -LiteralPath $Apk -Destination (Join-Path $assets $fileName)
 [IO.File]::WriteAllText((Join-Path $assets ($fileName+'.sha256')),($hash.ToLowerInvariant()+'  '+$fileName+"`n"),[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $assets 'signing-certificate-sha256.txt'),($inspection.CertificateSha256+"`n"),[Text.UTF8Encoding]::new($false))
-$notes=@'
-WORLD CUTTER Android @VERSION@ 配布説明の草案
-
-ARM64・Vulkanを利用できるAndroid 12L（API 32）以降向けの初期検証版です。動作確認端末はGalaxy S25 UltraとPixel 6 Proです。他端末の動作保証はまだありません。
-
-APKをダウンロードし、ブラウザまたはファイル管理アプリから開いてインストールしてください。Androidが求める場合は、その提供元からのインストールを許可し、端末の検査・確認を通して導入してください。更新も新しいAPKを開く手動方式です。
-
-左下の円で前後移動と旋回、画面上のフリックで切断します。Menuで描画・ジョイスティックを調整できます。人型キャラクターの切断・欠損表現を含みます。
-
-統計送信は任意です。Menu > Statisticsで変更し、Privacy policyで通信せずに詳細を読めます。
-
-versionCode: @CODE@
-APK: @APK@
-SHA-256: @HASH@
-署名証明書SHA-256: @CERT@
-
-長時間負荷ではS25 Ultraの縦画面は30分継続しました。Pixel 6 Proの横画面は切断片が多い場面でFPSが低下し、旋回しながらでも約11分で切断データの容量不足により終了しました。Pixelの容量・保持条件と重い場面の性能は未解決です。
-
-16KB環境では公式エミュレーターとGalaxy A56 5G実機で起動・切断・中断復帰を確認しました。A56は縦画面のみの確認で、横画面はRemote Test Labの保護表示・表示回転の制約により未確認です。S25 UltraとPixel 6 ProのDexFile.finalize警告は、ゲーム継続を確認していますが原因未確定です。
-'@
-$notes=$notes.Replace('@VERSION@',$inspection.VersionName).Replace('@CODE@',[string]$inspection.VersionCode).Replace('@APK@',$fileName).Replace('@HASH@',$hash.ToLowerInvariant()).Replace('@CERT@',$inspection.CertificateSha256)
 [IO.File]::WriteAllText((Join-Path $Destination 'release-notes.draft.md'),$notes.Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
-$plan=[ordered]@{Status='local staging only';Published=$false;TagCreated=$false;GitHubDraftCreated=$false;VersionName=$inspection.VersionName;VersionCode=$inspection.VersionCode;Assets=@($fileName,"$fileName.sha256",'signing-certificate-sha256.txt','ThirdPartyNotices.txt');ApkContentType='application/vnd.android.package-archive';SourceCommit=(git -C $project rev-parse HEAD);SourceDirty=([bool](git -C $project status --porcelain));Remaining=$draft.checks}
+$plan=[ordered]@{Status='local staging only';Published=$false;TagCreated=$false;GitHubDraftCreated=$false;VersionName=$inspection.VersionName;VersionCode=$inspection.VersionCode;Assets=@($fileName,"$fileName.sha256",'signing-certificate-sha256.txt','ThirdPartyNotices.txt');ApkContentType='application/vnd.android.package-archive';SourceCommit=$sourceCommit;SourceDirty=if($null -ne $validation.SourceClean){-not [bool]$validation.SourceClean}else{$null};DocumentationCommit=(git -C $project rev-parse HEAD);DocumentationDirty=([bool](git -C $project status --porcelain));VerificationScope=$draft.verificationScope;Checks=$draft.checks;Remaining=$draft.remaining}
 $plan | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $Destination 'publication-plan.json')
 "Local assets prepared: $Destination (no upload, release, draft or tag created)"

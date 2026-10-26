@@ -2,13 +2,33 @@
 
 Android版はGitHub Releasesから署名付きAPKを手動配布します。現在はローカルの配布候補を準備する段階であり、Release・タグ・GitHub上のDraftは作成しません。
 
+直近の正式署名候補は `0.1.0-alpha.1`／versionCode 7です。ビルド元はmainの `21b57d77` で、安全回収とgraph版の追加空間分割を含みます。S25 Ultraの縦画面起動確認に加え、2026-10-27にS25の横画面とPixel 6 Proの縦横の基本動作を確認しました。詳細は末尾のcode 7の記録を参照してください。code 6以前の結果は履歴として保持します。
+
+利用者向けの導入・更新・操作方法は [Android版の利用案内](android.md)、統計の説明は [プライバシーポリシー](android-privacy-policy.md) にまとめています。この文書は配布準備と検証の記録です。
+
+## 公開用文書と候補情報
+
+| ファイル | 用途 |
+|---|---|
+| `README.md` | Android版の入口と公開準備中であることの案内 |
+| `docs/android.md` | 対応環境、導入・更新、操作、設定、任意統計、確認範囲、問い合わせ |
+| `docs/android-privacy-policy.md` | 同梱ポリシーと意味を揃えた公開用本文。施行日は初回公開日 |
+| `Tools/AndroidFlat/DistributionDraft.json` | code 7の版・ハッシュ・ビルド元、確認結果、受け入れた検証範囲、残件 |
+| `Tools/AndroidFlat/ReleaseNotes.template.md` | GitHub Release本文の原稿。版・ハッシュ・ビルド元は検査記録から埋める |
+
+`Prepare-ReleaseAssets.ps1` は、原稿とcode 7の検査・ビルド元記録を使って、`Build/github-assets-0.1.0-alpha.1-7/release-notes.draft.md` とローカルの配布一式を生成します。Release本文には公開後の導入手順と、旧版／最新版それぞれの確認範囲を明記します。GitHubへの作成・アップロードは行いません。
+
+`publication-plan.json` の `SourceCommit`／`SourceDirty` はAPKのビルド時点を示し、`DocumentationCommit`／`DocumentationDirty` は配布文書を準備した時点を示します。code 7のビルド元を、その後のREADME・ライセンス変更や現在の未コミット文書で置き換えません。公開タグの対象と文書のコミット・pushは公開前に確定します。
+
 ## ビルドと検査
 
 `Tools/AndroidFlat/Build-Distribution.ps1` は、既存のAndroid専用鍵を使って、API 36・min API 32・ARM64・Vulkan・IL2CPP ReleaseのAPKを生成します。applicationIdは `com.zantetsuken.androidflat` です。設定・非公開入力のsource欄・統計の一時設定は成功・失敗とも復元します。署名パスワードは環境変数またはWindowsで保護された資格情報から読み、コマンドラインへ出しません。
 
 ```powershell
-Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode 6 -Keystore <外部のandroid-play-upload.jks> -KeyAlias android-play-upload -SigningCredential <外部のandroid-play-upload.credential.clixml> -AsideDirectory <外部のビルド原本退避先>
+Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode 7 -Keystore <外部のandroid-play-upload.jks> -KeyAlias android-play-upload -SigningCredential <外部のandroid-play-upload.credential.clixml> -AsideDirectory <外部のビルド原本退避先>
 ```
+
+これはビルド引数の例です。検査済みcode 7のAPKは既に存在するため、現在の配布文書の更新では再ビルドしません。新しいAPKを作る場合は、出力先と版を更新します。
 
 `Inspect-DistributionApk.ps1` は最終APKの署名証明書・v2署名・非debuggable・版・非VR Manifest・16KB整列・展開したファイル名と内容の禁止語を検査し、隣の `.record` へ結果を置きます。APKの隣の `.sha256` は配布用です。ビルドログや `.record` は開発用の記録であり、配布ファイルには含めません。
 
@@ -16,7 +36,7 @@ Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode
 
 ## 初回導入と更新
 
-配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。実機検証済みはGalaxy S25 UltraとPixel 6 Proです。16KB互換性はRemote Test LabのGalaxy A56 5Gでも縦画面の基本動作を確認しました。他端末やA56の横画面・長時間性能の動作保証はまだありません。
+配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。実機検証済みはGalaxy S25 UltraとPixel 6 Proです。16KB環境での実行は旧code 6でRemote Test LabのGalaxy A56 5Gの縦画面などを確認しました。code 7は16KB整列検査に合格していますが、16KB環境での実行は未確認です。他端末やA56の横画面・長時間性能の動作保証はまだありません。
 
 APKのContent-Typeは `application/vnd.android.package-archive` として配布し、実際のダウンロード応答でも確認します。ローカル検証では汎用のContent-TypeだとEdgeがパッケージインストーラーへ渡さず、正しいAPK形式の応答で導入・更新できました。GitHubからの実ダウンロードは、公開指示を受けた後の確認とします。[GitHub Release Assets API](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)
 
@@ -30,11 +50,21 @@ APKのContent-Typeは `application/vnd.android.package-archive` として配布�
 
 ## 公開前の残件
 
-- 最新ソース56e463a9の長時間負荷は2026-10-26に実施し、S25 Ultra縦・Pixel 6 Pro横とも30分の連続操作を完走した。S25では既定の頂点ブロック閾値による安全回収を確認し、容量不足は両端末ともなかった。Pixelは操作終了後の最終採取で44.0℃・熱状態4へ達したため、熱負荷の余裕と常時60FPS維持は残件とする。現在の正式署名候補code 6には最新回収実装が入っておらず、更新APKの再作成・導入確認が残る。詳細は末尾の2026-10-26の結果を参照する。
-- 通信失敗の制御試験と16KB環境の確認は下記の範囲で完了。Galaxy A56 5Gの横画面はラボで確認できなかった項目として残す。
+- 最新回収とgraphを含む正式署名code 7の作成と両端末の基本動作確認、配布文書のcode 7への更新は完了した。梱包元の差分照合、公開タグの対象確定、配布文書のコミット・pushと公開指示後のアップロードが残る。
+- 長時間負荷と16KB実行の確認範囲は、2026-10-27のユーザー指定により「旧版で確認済み、最新版では未確認」と明記して初回公開する方針に決定した。graph有効版の長時間負荷とcode 7の16KB実行の再試験は、初回公開の前提条件にしない。下記の確認範囲を配布説明へ反映する。
+- 通信失敗の制御試験は下記の範囲で完了。Galaxy A56 5Gの横画面は未確認として明記する。
 - タグとReleaseの作成は別の明示指示を受けてから行う。公開後にGitHubの実ダウンロード応答と導入を確認する。配布対応のコミットとAPKの対応はローカル検証記録へ残す。
 
 両端末で記録した `DexFile.finalize` のAssertionErrorは、ゲームが継続していたことと原因未確定を既知事項として残します。Play Console・AAB提出・Data safetyフォーム・IARC・ストア画像・テスター登録・pre-launch reportは今回の配布工程から外します。API 36は維持します。
+
+## 初回公開で明記する確認範囲（2026-10-27決定）
+
+| 項目 | 旧版で確認した範囲 | 最新候補code 7での範囲 |
+|---|---|---|
+| 長時間負荷 | graph導入前の回収変更 `56e463a9` の検証用ビルドで、S25縦・Pixel横とも30分の連続操作を完走。両端末とも容量不足なし。Pixelは終了後の最終採取で44.0℃・熱状態4に達した | 短時間の基本動作のみ確認。graph有効版の長時間負荷・熱負荷は未確認 |
+| 16KB環境での実行 | code 6で公式16KBエミュレーターとGalaxy A56 5Gの縦画面の起動・切断・中断復帰を確認 | ELF／ZIPの16KB整列検査に合格。16KB環境での実行は未確認 |
+
+この範囲を明記して初回公開する。Pixelの熱負荷の余裕、常時60FPS維持、A56の横画面は確認済みとは扱わない。旧版の長時間負荷はgraph導入前の結果であり、graph自体の長時間動作を検証した結果へ読み替えない。
 
 ## テスター向け操作説明
 
@@ -44,9 +74,9 @@ APKのContent-Typeは `application/vnd.android.package-archive` として配布�
 
 統計送信は任意です。Menu > Statisticsで切り替え、Privacy policyで詳細を読めます。不具合の連絡にはアプリ版、端末モデル、OS、画面方向、描画設定、再現手順を添えます。個人情報を含む端末ログをそのまま公開しないでください。
 
-## 今回の確認結果
+## code 6までの確認結果（履歴）
 
-最新の候補は `0.1.0-alpha.1`／versionCode 6です。公開名・窓口・運用ログ説明を含む5ページのポリシーと第三者表記を同梱しました。署名・Manifest・版・非debuggable・全8個のsoの16KB整列・展開した禁止語検査に合格し、第三者表記435,739バイトがレビュー済み本文と一致しました。APKのSHA-256は `5A7502FCF9996E97856C3232E0D9BCD353C70960C9858164C4C9932550CACFC5` です。更新後のEditModeは133件成功です。code 6はS25で導入と縦横画面の実機確認を完了しました。以下のPixelの端末結果はcode 4までの履歴です。
+2026-10-23の候補は `0.1.0-alpha.1`／versionCode 6です。公開名・窓口・運用ログ説明を含む5ページのポリシーと第三者表記を同梱しました。署名・Manifest・版・非debuggable・全8個のsoの16KB整列・展開した禁止語検査に合格し、第三者表記435,739バイトがレビュー済み本文と一致しました。APKのSHA-256は `5A7502FCF9996E97856C3232E0D9BCD353C70960C9858164C4C9932550CACFC5` です。更新後のEditModeは133件成功です。code 6はS25で導入と縦横画面の実機確認を完了しました。以下のPixelの端末結果はcode 4までの履歴です。
 
 Pixel 6 Proはユーザーの承認を受けて旧debug署名アプリを削除し、Edgeで取得したcode 3を通常のパッケージインストーラーから導入しました。続いて同じ正式署名のcode 4を同じ導線で更新し、移動速度1.74と統計の拒否状態が保持されること、インストールされたAPKのSHA-256が候補と一致することを確認しました。移動速度は確認後に1.49へ戻しています。統計はOFFのままです。切断・中断復帰・ポリシーの縦画面表示とページ送りも確認しました。
 
@@ -56,7 +86,7 @@ Pixel 6 Proはユーザーの承認を受けて旧debug署名アプリを削除�
 
 可搬バックアップの補助処理は、破棄用の鍵で再暗号化・再読込・証明書一致・元パスワードでの読込拒否を確認しました。その後、ユーザーがOneDrive内のリポジトリ外フォルダへ本番鍵の可搬バックアップを作成し、ランダム生成したパスフレーズを保存しました。バックアップファイルの存在・PKCS12形式と、元とは異なる暗号化コンテナーであることを確認しました。作成スクリプトは成功時に新しいバックアップの再読込と証明書照合を行います。続いて、OneDriveからブラウザーでダウンロードしたコピーに対し、保存済みパスフレーズのみで `keytool -certreq` による署名を行う手順を案内し、ユーザーから「復旧確認OK」の報告を受けました。元のDPAPI資格情報を使わない復旧確認を完了として記録しました。公開名・問い合わせ先は、その後のユーザーの指定によりhogehogeoとGitHub Issuesへ決定しました。code 6で確定文面を反映した再ビルドとパッケージ検査を完了しました。
 
-最新のローカル配布候補一式は `Build/github-distribution-0.1.0-alpha.1-6`、検証記録はAPK隣の `.record/device-validation.json` です。旧code 4の一式と実機記録は履歴として保持します。Release・タグ・GitHub上のDraftは作成していません。配布対応のコミットとAPKの対応は、同じ検証記録とローカルの `publication-plan.json` へ記録します。
+当時のローカル配布候補一式は `Build/github-distribution-0.1.0-alpha.1-6`、検証記録はAPK隣の `.record/device-validation.json` です。旧code 4の一式と実機記録は履歴として保持します。Release・タグ・GitHub上のDraftは作成していません。配布対応のコミットとAPKの対応は、同じ検証記録とローカルの `publication-plan.json` へ記録します。
 
 ## 第三者表記と通信・ログの確認（2026-10-23）
 
@@ -326,4 +356,21 @@ Pixelは30分の操作を完走し、容量不足やアプリ死亡はありま�
 
 証拠は `Logs/android-flat/stateless-long-20261026/validation.json`、端末別の `analysis.json`・`summary.json`・`probe-samples.json`・`safety-events.json`・実present時間列・画像・ログです。Pixelの終了後の熱は `pixel-rotation30/thermal-stop.json`、S25の発動前後は `s25-safety-observation.json` に保存しました。端末は正式署名アプリと回転設定が不変で、検証APKは両方から削除しました。S25は終了後にも統計OFFを画像で確認しました。Pixelは初回拒否のまま変更せず、終了後は熱状態4を受けて再撮影のための起動を行っていません。入力・ログ採取と、この試験専用ADBサーバーを終了しました。元のADBサーバーには停止操作をしていません。
 
-配布候補code 6とGitHub上のRelease・タグ・Draftは、この試験では変更していません。最新ソースを含む正式署名APKの作成・導入と、配布一式の更新が次の作業です。この試験記録は未コミットです。
+配布候補code 6とGitHub上のRelease・タグ・Draftは、この試験では変更していません。その後、下記のcode 7を作成して導入・基本動作を確認しました。現在の配布文書とローカル配布一式は冒頭の案内を参照してください。
+
+## code 7の基本動作確認（2026-10-27）
+
+正式署名の `Build/android-github-0.1.0-alpha.1-7.apk` を使用しました。SHA-256は `63FC5189A5335169C754CA8C178CD1560DCFDAFEE3DF73AD444532613E6A143D`、ビルド元はmainの `21b57d77` です。graph処理とgraph優先はプロファイルで有効です。署名・版・非VR Manifest・非debuggable・16KB整列・第三者表記との一致・禁止語のAPK検査に合格しています。
+
+| 端末 | 確認範囲 | 結果 |
+|---|---|---|
+| S25 Ultra／Android 16・API 36 | 横2340×1080、Safe Area 2244×1080、垂直FOV 49.55028度 | メニュー、横用ジョイスティック、前進・旋回、フリックのVFX、ホーム中断から同じPIDでの復帰を確認。VP3C-NATIVEで動作し、対応するMultiDrawIndirect／DrawIndirectCountは有効表示 |
+| Pixel 6 Pro／Android 17・API 37 | 横3120×1440／Safe Area 2975×1440、縦1440×3120／Safe Area 1440×2975 | 縦横のメニュー、ジョイスティック、前進・旋回、フリック切断、分離した木・人物の破片表示を確認。各向きでホーム中断から同じPIDで復帰 |
+
+Pixelはcode 6から `install -r` で更新し、初回インストール時刻と既存データを維持しました。両端末の導入済みAPKのSHA-256は上記と一致しました。移動速度1.49・旋回120・FSR 1 ON／75%／Sharpness 0.50を確認しました。Pixelの縦横とS25の横用ジョイスティックは左15%・下30%です。検証操作による設定変更は行っていません。
+
+PixelではMultiDrawIndirect／DrawIndirectCountの非対応を検出してVP3Cへ、shaderClipDistanceの非対応を検出してPixel Shaderのclip経路へフォールバックしました。非対応の描画チェックボックスはグレー表示です。更新前後で統計OFFを維持し、中断時にも未同意のため集計・送信しないことをログで確認しました。S25は今回の開始時点で統計ONだったため、その状態を維持しました。同意の切り替えは両端末とも行っていません。
+
+採取したログにクラッシュ、Unityの実行エラー、StorageCapacityはありませんでした。Pixelでは既知の非致命的なdex finalizer assertionを確認しましたが、ゲームは継続しました。両端末ともページサイズ4096です。今回は短時間の基本動作確認であり、graph有効版の長時間負荷・熱負荷や16KB環境での実行の再確認は含みません。graph段階の実行回数・性能も計測していません。
+
+画像・入力履歴・ログと集約記録は `Logs/android-flat/code7-devices-20261027/validation.json` および端末別フォルダに保存し、APK隣の `.record/device-validation.json` にも確認結果を追記しました。回転はユーザーによる実際の向き変更を使用し、端末の回転設定や画面サイズの上書きは行っていません。確認後はS25を横画面、Pixelを縦画面のゲーム前面表示に戻しました。Release・タグ・GitHub上のDraftは作成していません。
