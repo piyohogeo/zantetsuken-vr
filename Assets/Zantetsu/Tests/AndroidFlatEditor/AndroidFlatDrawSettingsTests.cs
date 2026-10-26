@@ -87,6 +87,36 @@ namespace Zantetsu.AndroidFlat.Tests
             Assert.That(restored.DrawIndirectCount, Is.False);
         }
 
+        [Test]
+        public void ExplicitNativeArgument_IsNotOverriddenBySavedDisabledMultiDraw()
+        {
+            VpBodyRouteRequest previousRoute = VpNativeDrawSetup.Request;
+            bool previousMulti = VpNativeDrawSetup.UnityMultiDrawIndirect;
+            bool previousCount = VpNativeDrawPlugin.VulkanIndirectCount;
+            try
+            {
+                new AndroidFlatSettings { MultiDrawIndirect = false }.Save();
+                VpNativeDrawSetup.Request = VpNativeDrawSetup.ReadRequest(new[] { "player.exe", VpNativeDrawSetup.Argument });
+                var host = new GameObject("Android explicit native launch under test");
+                host.SetActive(false);
+                made.Add(host);
+                AndroidFlatPlayer player = host.AddComponent<AndroidFlatPlayer>();
+
+                typeof(AndroidFlatPlayer).GetMethod("InitializeRenderingSettings", Fields).Invoke(player, null);
+
+                Assert.That(VpNativeDrawSetup.Request, Is.EqualTo(VpBodyRouteRequest.Native), "the explicit launch route wins over the saved MDI preference");
+                Assert.That(VpNativeDrawSetup.UnityMultiDrawIndirect, Is.False, "the preference still applies to Unity-API draws");
+                Assert.That(((AndroidFlatSettings)Field(player, "settings")).MultiDrawIndirect, Is.False);
+                Assert.That(PlayerPrefs.GetInt(Prefix + "multiDrawIndirect"), Is.Zero, "route selection does not rewrite the saved preference");
+            }
+            finally
+            {
+                VpNativeDrawSetup.Request = previousRoute;
+                VpNativeDrawSetup.UnityMultiDrawIndirect = previousMulti;
+                VpNativeDrawPlugin.VulkanIndirectCount = previousCount;
+            }
+        }
+
         [TestCase(false, false, false)]
         [TestCase(false, true, false)]
         [TestCase(true, false, false)]

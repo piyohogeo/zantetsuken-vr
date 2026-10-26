@@ -93,7 +93,8 @@ namespace Zantetsu.AndroidFlat
             appliedDrawIndirectCount = RequestedDrawIndirectCount;
             VpNativeDrawSetup.UnityMultiDrawIndirect = appliedMultiDrawIndirect;
             // NativePreferred keeps compatibility fallback; an explicit Native retains its strict failure contract.
-            VpNativeDrawSetup.Request = settings.MultiDrawIndirect ? launchBodyRoute : VpBodyRouteRequest.UnityApi;
+            VpNativeDrawSetup.Request = launchBodyRoute == VpBodyRouteRequest.Native || settings.MultiDrawIndirect
+                ? launchBodyRoute : VpBodyRouteRequest.UnityApi;
             VpNativeDrawPlugin.VulkanIndirectCount = appliedDrawIndirectCount;
             layoutDirty = true;
             Debug.Log(Prefix + "rendering applied: MultiDrawIndirect=" + appliedMultiDrawIndirect
