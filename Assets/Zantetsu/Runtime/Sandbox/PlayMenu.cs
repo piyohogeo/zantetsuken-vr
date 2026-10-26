@@ -1040,11 +1040,16 @@ namespace Zantetsu.Sandbox
         {
             _view = new PlayMenuView();
             var bunny = FindFirstObjectByType<BunnyDemo>();
-            _view.Build(Rows(), bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
+            _view.Build(Rows(), WithVersion(bunny != null ? "NONCOMMERCIAL Stanford Bunny demo" : Scenario == SandboxScenarioKind.Play
                 ? "play"
-                : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", bunny != null ? bunny.ResetScene : (System.Action)null,
+                : SandboxScenario.Name(Scenario) + ": the script waits; speed and turn are the script's", Application.version), bunny != null ? bunny.ResetScene : (System.Action)null,
                 Debug.isDebugBuild ? SwingsText : (System.Func<string>)null);
         }
+
+        // The line under the title ends with the app's version (its versionName on Android), so that a tester can tell which
+        // build runs (2026-10-26). ASCII alone: the menu's built-in font.
+        internal static string WithVersion(string note, string version) =>
+            string.IsNullOrEmpty(version) ? note : note + " - version " + version;
 
         // The same menu with its rows as the settings now are, where it stood (a select held when it is shown again presses nothing).
         private void RebuildView()

@@ -153,6 +153,15 @@ namespace Zantetsu.Core.Tests
             Assert.That(menu.View.Rows.Count, Is.EqualTo(9), "the rows are the settings alone (volume, speed, right stick turn, snap turn, snap angle -- or turn, continuous --, cut surface debug, depenetration, grip offset, blade angle)");
         }
 
+        // The line under the title ends with the app's version (2026-10-26), in ASCII for the menu's built-in font; no version, no suffix.
+        [Test]
+        public void TheLineUnderTheTitle_EndsWithTheVersion()
+        {
+            Assert.That(PlayMenu.WithVersion("play", "0.2.0-alpha.4"), Is.EqualTo("play - version 0.2.0-alpha.4"));
+            Assert.That(PlayMenu.WithVersion("play", ""), Is.EqualTo("play"));
+            Assert.That(PlayMenu.WithVersion("play", null), Is.EqualTo("play"));
+        }
+
         [Test]
         public void TheConsentDialog_PausesAndTakesTheControllers_ItsAnswerGoesToTheService_AndItIsNotAskedAgain()
         {
