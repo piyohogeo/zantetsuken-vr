@@ -1,8 +1,8 @@
-# WORLD CUTTER Android版の配布準備
+# WORLD CUTTER Android版の配布と検証記録
 
-Android版はGitHub Releasesから署名付きAPKを手動配布します。現在はローカルの配布候補を準備する段階であり、Release・タグ・GitHub上のDraftは作成しません。
+Android版はGitHub Releasesから署名付きAPKを手動配布します。2026-10-27に [WORLD CUTTER Android 0.1.0-alpha.1](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) をプレリリースとして公開しました。
 
-直近の正式署名候補は `0.1.0-alpha.1`／versionCode 7です。ビルド元はmainの `21b57d77` で、安全回収とgraph版の追加空間分割を含みます。S25 Ultraの縦画面起動確認に加え、2026-10-27にS25の横画面とPixel 6 Proの縦横の基本動作を確認しました。詳細は末尾のcode 7の記録を参照してください。code 6以前の結果は履歴として保持します。
+公開した正式署名APKは `0.1.0-alpha.1`／versionCode 7です。ビルド元はmainの `21b57d77` で、安全回収とgraph版の追加空間分割を含みます。S25 Ultraの縦画面起動確認に加え、2026-10-27にS25の横画面とPixel 6 Proの縦横の基本動作を確認しました。詳細は末尾のcode 7の記録を参照してください。code 6以前の結果は履歴として保持します。
 
 利用者向けの導入・更新・操作方法は [Android版の利用案内](android.md)、統計の説明は [プライバシーポリシー](android-privacy-policy.md) にまとめています。この文書は配布準備と検証の記録です。
 
@@ -10,23 +10,23 @@ Android版はGitHub Releasesから署名付きAPKを手動配布します。現�
 
 | ファイル | 用途 |
 |---|---|
-| `README.md` | Android版の入口と公開準備中であることの案内 |
+| `README.md` | Android版の入口、公開ReleaseとAPKへのリンク |
 | `docs/android.md` | 対応環境、導入・更新、操作、設定、任意統計、確認範囲、問い合わせ |
 | `docs/android-privacy-policy.md` | 同梱ポリシーと意味を揃えた公開用本文。施行日は初回公開日 |
 | `Tools/AndroidFlat/DistributionDraft.json` | code 7の版・ハッシュ・ビルド元、確認結果、受け入れた検証範囲、残件 |
 | `Tools/AndroidFlat/ReleaseNotes.template.md` | GitHub Release本文の原稿。版・ハッシュ・ビルド元は検査記録から埋める |
 | `Tools/AndroidFlat/CONTENT-AUDIT.md` | 圧縮シェーダーを含む梱包内容・禁止語検査の再実行手順 |
 
-`Prepare-ReleaseAssets.ps1` は、原稿とcode 7の検査・ビルド元記録を使って、ローカルの配布一式を生成します。最終照合済みの一式は `Build/github-distribution-0.1.0-alpha.1-7` です。Release本文の `release-notes.draft.md` には導入手順と、旧版／最新版それぞれの確認範囲を明記しています。GitHubへの作成・アップロードは行っていません。
+`Prepare-ReleaseAssets.ps1` は、原稿とcode 7の検査・ビルド元記録を使って、ローカルの配布一式を生成します。公開に使った最終照合済みの一式は `Build/github-publication-0.1.0-alpha.1-7` です。Release本文の `release-notes.draft.md` には導入手順と、旧版／最新版それぞれの確認範囲を明記しています。公開では検査済みの4ファイルだけを添付しました。
 
-`publication-plan.json` の `SourceCommit`／`SourceDirty` はAPKのビルド時点を示し、`DocumentationCommit`／`DocumentationDirty` は配布文書を準備した時点を示します。code 7のビルド元を、その後のREADME・ライセンス変更や配布文書の更新で置き換えません。公開タグの対象は次のとおり確定しました。配布文書と生成・検査ツールのpushは残っています。
+`publication-plan.json` の `SourceCommit`／`SourceDirty` はAPKのビルド時点を示し、`DocumentationCommit`／`DocumentationDirty` は配布文書を準備した時点を示します。code 7のビルド元を、その後のREADME・ライセンス変更や配布文書の更新で置き換えません。公開タグの対象は次のとおり確定しました。配布文書と生成・検査ツールは公開前にmainへpushしました。
 
 ## 公開タグとAPKの対応（2026-10-27確定）
 
 | 項目 | 確定値 |
 |---|---|
 | 公開タグ名 | `android-v0.1.0-alpha.1` |
-| タグ種別 | 注釈付きタグ。作成は公開の明示指示後 |
+| タグ種別 | 注釈付きタグ。2026-10-27に作成・push済み |
 | 対象コミット＝APKビルド元 | `21b57d77c3bca233a69bf4f39e28176ea652028d`（ビルド時クリーン） |
 | 対象Git tree | `7d605c7c5e7a07aba36961ec3d8cd1b9ad50e51f` |
 | アプリ版 | `0.1.0-alpha.1`／versionCode 7 |
@@ -34,11 +34,11 @@ Android版はGitHub Releasesから署名付きAPKを手動配布します。現�
 | APK SHA-256 | `63FC5189A5335169C754CA8C178CD1560DCFDAFEE3DF73AD444532613E6A143D` |
 | 署名証明書SHA-256 | `17B0499FEA78738183428B08464D4BACABD6900DE3060A97A12B6478B2F66B4D` |
 
-タグは上記の完全なコミットSHAへ直接作成します。GitHub Releaseの `tag_name` は上記の名前、`target_commitish` は同じ完全SHAを指定します。ビルド後のREADME・ライセンス・配布文書の更新はmain側に保持し、Release本文のソースリンクはこの固定SHA、利用案内とプライバシーポリシーへのリンクはmainを参照します。
+タグは上記の完全なコミットSHAへ直接作成しました。GitHub Releaseの `tag_name` は上記の名前、`target_commitish` は同じ完全SHAを指定しました。ビルド後のREADME・ライセンス・配布文書の更新はmain側に保持し、Release本文のソースリンクはこの固定SHA、利用案内とプライバシーポリシーへのリンクはmainを参照します。
 
 `DistributionDraft.json` のタグ対象と候補APKの対応を、生成処理がビルド元・クリーン状態・実在コミットとtreeまで照合します。ローカルの `publication-plan.json` の `ReleaseTag` にタグ名・対象コミット・tree・APKハッシュ・未作成状態を記録し、内容検査でも再照合します。APK隣の `.record/release-tag-binding.json` に同じ対応と確認記録を保持します。
 
-2026-10-27の照合時点では、ローカルに同名タグはなく、GitHubにも一致するタグ参照はありませんでした。対象コミットとtreeがGitHubにも存在することを読み取り専用で確認しました。公開直前には名前の空きを再確認し、既存タグを移動・上書きしません。現在は対象の確定だけで、タグ・Release・GitHub上のDraftは作成していません。
+公開前に同名タグが存在しないことを再確認してから作成しました。公開後もリモートのタグオブジェクト `fe6502f6e1f9911aede8794c21c84bf24c2a843c` が上記APKビルド元を指すことを照合しました。準備時の `publication-plan.json` は未公開時点の記録として残し、公開後の結果は別の `.record/publication.json` へ保存します。
 
 ## ビルドと検査
 
@@ -52,13 +52,13 @@ Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode
 
 `Inspect-DistributionApk.ps1` は最終APKの署名証明書・v2署名・非debuggable・版・非VR Manifest・16KB整列・展開したファイル名と内容の禁止語を検査し、隣の `.record` へ結果を置きます。APKの隣の `.sha256` は配布用です。ビルドログや `.record` は開発用の記録であり、配布ファイルには含めません。
 
-統計は既存送信先・external区分で有効にします。ゲーム内で同意した場合に限り収集・送信します。追加の統計項目はありません。プライバシー文書は [android-privacy-policy.md](android-privacy-policy.md) に置き、アプリ内にも通信せずに読める本文を持たせます。公開名はhogehogeo、問い合わせ先は [GitHub Issues](https://github.com/piyohogeo/zantetsuken-vr/issues) です。施行日は初回公開日とし、本番で確認したCloudflare側のログ説明とともにcode 6のアプリ内本文へ反映しました。現在は未公開です。
+統計は既存送信先・external区分で有効にします。ゲーム内で同意した場合に限り収集・送信します。追加の統計項目はありません。プライバシー文書は [android-privacy-policy.md](android-privacy-policy.md) に置き、アプリ内にも通信せずに読める本文を持たせます。公開名はhogehogeo、問い合わせ先は [GitHub Issues](https://github.com/piyohogeo/zantetsuken-vr/issues) です。施行日は初回公開日とし、本番で確認したCloudflare側のログ説明とともにcode 6のアプリ内本文へ反映しました。初回公開日は2026-10-27です。
 
 ## 初回導入と更新
 
 配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。基本動作を実機確認した端末はGalaxy S25 UltraとPixel 6 Proです。Pixel 7／Mali-G710とPixel 10／PowerVRは末尾に記載した短時間の描画確認のみ実施しました。16KB環境での実行は旧code 6でRemote Test LabのGalaxy A56 5Gの縦画面などを確認しました。code 7は16KB整列検査に合格していますが、16KB環境での実行は未確認です。他端末やA56の横画面・長時間性能の動作保証はまだありません。
 
-APKのContent-Typeは `application/vnd.android.package-archive` として配布し、実際のダウンロード応答でも確認します。ローカル検証では汎用のContent-TypeだとEdgeがパッケージインストーラーへ渡さず、正しいAPK形式の応答で導入・更新できました。GitHubからの実ダウンロードは、公開指示を受けた後の確認とします。[GitHub Release Assets API](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)
+APKのContent-Typeは `application/vnd.android.package-archive` として配布し、実際のダウンロード応答でも確認しました。ローカル検証では汎用のContent-TypeだとEdgeがパッケージインストーラーへ渡さず、正しいAPK形式の応答で導入・更新できました。公開後、認証なしのGitHub実ダウンロードでHTTP 200・同Content-Type・SHA-256一致を確認しました。[GitHub Release Assets API](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)
 
 利用者は公式のGitHub ReleaseからAPKをダウンロードし、ブラウザまたはファイル管理アプリから開きます。Androidが求める場合は、その提供元からのインストールを許可します。端末の検査・確認を通して導入します。更新も新しいAPKを同じ方法で開きます。
 
@@ -70,12 +70,12 @@ APKのContent-Typeは `application/vnd.android.package-archive` として配布�
 
 署名鍵の保管先はリポジトリ外です。現在のDPAPI資格情報は同じWindowsユーザーとPCに依存します。鍵と、別PCでも復旧できるパスワードの保管を別媒体で行い、公開前に復旧方法を確認します。`Backup-SigningKey.ps1` は、プロセス環境変数 `ZANTETSU_SIGNING_BACKUP_PASSWORD` から新しいパスフレーズを読み、元の鍵を変更せず外部の新規 `.jks` へ可搬PKCS12として書き出して証明書を照合します。パスフレーズは安全な入力やパスワードマネージャーから設定し、チャットやコマンドラインに書かないでください。
 
-## 公開前の残件
+## 初回公開工程の状況
 
-- 最新回収とgraphを含む正式署名code 7の作成と両端末の基本動作確認、配布文書の更新、梱包元の差分照合、圧縮データを含む禁止語検査、ローカル配布一式の作成、公開タグとAPKの対応確定は完了した。配布対応のpushと公開指示後のタグ・Release作成とアップロードが残る。
+- 最新回収とgraphを含む正式署名code 7の作成、両端末の基本動作確認、配布文書、梱包元照合、圧縮データを含む禁止語検査、配布一式作成、公開タグとAPKの対応確定、mainとタグのpush、Release公開と4ファイルの添付を完了した。
 - 長時間負荷と16KB実行の確認範囲は、2026-10-27のユーザー指定により「旧版で確認済み、最新版では未確認」と明記して初回公開する方針に決定した。graph有効版の長時間負荷とcode 7の16KB実行の再試験は、初回公開の前提条件にしない。下記の確認範囲を配布説明へ反映する。
 - 通信失敗の制御試験は下記の範囲で完了。Galaxy A56 5Gの横画面は未確認として明記する。
-- タグとReleaseの作成は別の明示指示を受けてから行う。公開後にGitHubの実ダウンロード応答と導入を確認する。配布対応のコミットとAPKの対応はローカル検証記録へ残す。
+- ユーザーの「公開・ダウンロード確認」の指示で公開し、公開URLの応答・全添付ファイルのハッシュとPixel 6 Proでの通常インストーラーによる更新を確認した。配布対応コミットとAPKの対応はローカル検証記録へ残した。
 
 両端末で記録した `DexFile.finalize` のAssertionErrorは、ゲームが継続していたことと原因未確定を既知事項として残します。Play Console・AAB提出・Data safetyフォーム・IARC・ストア画像・テスター登録・pre-launch reportは今回の配布工程から外します。API 36は維持します。
 
@@ -463,3 +463,17 @@ GoogleのAndroid CLI 1.1.16717390からDevice Streamingで予約した物理Pixe
 この端末・OS・ドライバーでの短時間の縦画面描画を確認した結果です。移動・旋回、横画面、Indirect設定の切替、断面の正しさ、長時間性能・熱負荷は未試験で、PowerVR全体への対応保証には使いません。終了時に検証アプリを削除し、CLIを切断、予約をキャンセルしました。予約一覧が `No reservations found` であることを確認しています。Sparkプランのまま実施し、課金プランや支払方法は変更していません。
 
 画像とログ、集約結果は `Logs/android-flat/powervr-remote/validation.json` と端末別フォルダー、APK隣の `.record/device-validation.json` に保持します。再ビルド・コミット・タグ作成・GitHub公開は行っていません。
+
+## GitHub公開と実ダウンロード確認（2026-10-27）
+
+ユーザーの公開指示を受け、配布準備のコミットをmainへpushした後、上記APKビルド元へ注釈付きタグを作成・pushしました。[WORLD CUTTER Android 0.1.0-alpha.1](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) は同日13:16:44 JSTにプレリリースとして公開しています。Release IDは `425027978`、Draftではなく、Latestには指定していません。APKは再ビルドしていません。
+
+添付は `android-github-0.1.0-alpha.1-7.apk`、同名の `.sha256`、`signing-certificate-sha256.txt`、`ThirdPartyNotices.txt` の4点だけです。アップロード後のサーバー側のサイズ・SHA-256、本文、タグの対象を再照合しました。APK・本文・添付ファイルとソース履歴の禁止語検査に合格しています。秘密情報・署名鍵・検査用ツール・生ログは添付していません。
+
+PCで認証なしの公開URLから4点ともHTTP 200で取得し、すべてのサイズ・SHA-256が検査済み原本と一致しました。APKの実応答Content-Typeも `application/vnd.android.package-archive` でした。
+
+Pixel 6 ProのEdgeでも実際の公開APK URLからダウンロードし、120,035,435バイト・SHA-256一致を確認しました。Edgeのダウンロード一覧から通常のパッケージインストーラーへ渡し、更新・開く操作が完了しました。端末には既に同じcode 7が入っていたため、今回はcode 7の同版上書きです。初回インストール日時は変わらず、最終更新日時が進み、インストール後のAPKハッシュも一致しました。異なる版へのブラウザー更新は前述のcode 3→4の履歴で区別します。
+
+更新後に起動・街の描画とメニューを確認しました。Move 1.49・Turn 120・FSR1 ON／75%／Sharpness 0.50、非対応Indirect機能のグレー表示、統計OFF／Declinedを保持しています。初回同意は再表示されず、アンインストール・データ削除・設定変更は行っていません。採取したゲームプロセスのログにFatal exception／signalやUnity初期化失敗はなく、確認後はメニューを閉じてゲームを前面に戻しました。今回の導入確認は性能試験ではありません。
+
+証拠は `Logs/android-flat/github-publication/publication-validation.json` と同フォルダーの端末画像・ログ、APK隣の `.record/publication.json` へ保存しています。準備時の未公開状態を記録した `publication-plan.json` は履歴として保持します。graph版の長時間負荷とcode 7の16KB環境実行は、前述どおり未確認のまま公開範囲に明記しています。

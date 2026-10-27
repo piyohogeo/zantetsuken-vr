@@ -2,7 +2,7 @@
 
 Androidの非VR版です。縦画面・横画面で、都市や人物をフリックで切断できます。人型キャラクターの切断・欠損表現を含みます。
 
-現在は公開準備中です。配布候補は **0.1.0-alpha.1／versionCode 7** です。
+現在のプレリリースは **0.1.0-alpha.1／versionCode 7** です。2026-10-27に[GitHub Release](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1)で公開しました。
 
 ## 対応環境と確認した端末
 
@@ -20,7 +20,7 @@ Androidの非VR版です。縦画面・横画面で、都市や人物をフリ�
 
 ## インストールと更新
 
-公開後は、[GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases)の **WORLD CUTTER Android 0.1.0-alpha.1** から `android-github-0.1.0-alpha.1-7.apk` をダウンロードしてください。
+[WORLD CUTTER Android 0.1.0-alpha.1](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) の [android-github-0.1.0-alpha.1-7.apk](https://github.com/piyohogeo/zantetsuken-vr/releases/download/android-v0.1.0-alpha.1/android-github-0.1.0-alpha.1-7.apk) をダウンロードしてください。
 
 1. ダウンロードしたAPKを、ブラウザまたはファイル管理アプリから開きます。
 2. Androidが求めた場合は、その提供元からのインストールを許可し、端末の検査・確認画面に従ってインストールします。
@@ -28,7 +28,7 @@ Androidの非VR版です。縦画面・横画面で、都市や人物をフリ�
 
 更新も、新しいAPKを同じ手順で開く手動方式です。同じ正式署名の版からは、設定を保持して更新できます。開発用のdebug署名版からは上書きできません。
 
-ReleaseにはAPKのSHA-256、署名証明書の指紋、第三者表記も添付する予定です。
+ReleaseにはAPKのSHA-256、署名証明書の指紋、第三者表記も添付しています。
 
 ## 遊び方
 

@@ -1,5 +1,5 @@
 {
-  "status": "local preparation only; no GitHub release, draft, tag or upload",
+  "status": "published GitHub prerelease; public downloads and Pixel browser update verified",
   "repository": "https://github.com/piyohogeo/zantetsuken-vr",
   "applicationId": "com.zantetsuken.androidflat",
   "identity": {
@@ -7,20 +7,21 @@
     "publicSupportEmail": null,
     "publicSupportUrl": "https://github.com/piyohogeo/zantetsuken-vr/issues",
     "privacyPolicyUrl": "https://github.com/piyohogeo/zantetsuken-vr/blob/main/docs/android-privacy-policy.md",
-    "policyEffectiveDate": "first public release"
+    "policyEffectiveDate": "2026-10-27"
   },
   "candidate": {
     "versionName": "0.1.0-alpha.1",
     "versionCode": 7,
     "apk": "Build/android-github-0.1.0-alpha.1-7.apk",
-    "published": false,
+    "published": true,
     "sha256": "63FC5189A5335169C754CA8C178CD1560DCFDAFEE3DF73AD444532613E6A143D",
     "certificateSha256": "17B0499FEA78738183428B08464D4BACABD6900DE3060A97A12B6478B2F66B4D",
     "sourceCommit": "21b57d77c3bca233a69bf4f39e28176ea652028d",
     "sourceCleanAtBuild": true,
     "inspectionRecord": "Build/android-github-0.1.0-alpha.1-7.apk.record/inspection.json",
     "deviceRecord": "Build/android-github-0.1.0-alpha.1-7.apk.record/device-validation.json",
-    "localReleaseDirectory": "Build/github-distribution-0.1.0-alpha.1-7"
+    "localReleaseDirectory": "Build/github-publication-0.1.0-alpha.1-7",
+    "releaseUrl": "https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1"
   },
   "privacyDocument": "docs/android-privacy-policy.md",
   "distributionGuide": "docs/android-distribution.md",
@@ -29,27 +30,27 @@
   "tagTargetCommit": "21b57d77c3bca233a69bf4f39e28176ea652028d",
   "tagTargetTree": "7d605c7c5e7a07aba36961ec3d8cd1b9ad50e51f",
   "tagKind": "annotated",
-  "tagTargetPolicy": "exact APK build-source commit; create only after explicit publication instruction",
+  "tagTargetPolicy": "published annotated tag targets the exact clean APK build-source commit; never move the released tag",
   "prereleaseSuggested": true,
   "checks": {
     "formalApkInspection": "Code 7 passed: v2 signature, the existing dedicated certificate, SDK32/36, ARM64, non-VR manifest, non-debuggable, ELF/ZIP 16KB alignment and forbidden-text scan. Bundled notices match the reviewed text (435739 bytes).",
-    "formalApkBrowserInstall": "Historical browser workflow only: Pixel code 3 downloaded with Edge and installed through the normal package installer; code 3 to 4 browser update also passed. Code 7 was installed with Wi-Fi ADB. Actual GitHub download and browser installation remain a post-publication check.",
+    "formalApkBrowserInstall": "Code 7 passed using the real public GitHub APK URL in Pixel 6 Pro Edge. Downloaded bytes and SHA256 match. Normal Package Installer Update/Open completed without uninstall or data clear; the already-installed code 7 was reinstalled at the same version. Original first-install time retained, last-update time advanced. Move 1.49, Turn 120, FSR1 ON/75%/0.50 and Statistics OFF/Declined retained; no fresh consent dialog. Game startup and rendering passed, no captured fatal error. Historical code 3 to 4 browser version upgrade remains separate evidence.",
     "formalApkUpdate": "Code 7 signed update passed on S25 and Pixel via Wi-Fi ADB install -r, without uninstall or data deletion. Installed hashes match the inspected artifact and original installation times are retained. Pixel Move 1.49, Turn 120, FSR1/75%/0.50 and Declined consent match the pre-update UI.",
     "physicalRotation": "Code 7: S25 portrait startup (1080x2340) and physical landscape (2340x1080, safe 2244x1080); Pixel physical landscape (3120x1440, safe 2975x1440) and portrait (1440x3120, safe 1440x2975). Long-side FOV 90; landscape vertical FOV 49.55028. No rotation or display-size overrides were used.",
     "16kRuntime": "native ARM64 physical 16KB portrait smoke passed on Samsung Remote Test Lab Galaxy A56 5G (SM-A566B), Android16/API36, PAGE_SIZE=16384, aarch64, native bridge 0; exact installed code 6 APK hash matched; startup, forward/turn, slash and separated fragments, menu, all 5 policy pages, same-PID home resume and Statistics OFF verified. VP3C-NATIVE/compaction, MultiDrawIndirect and DrawIndirectCount enabled, subgroup64. No Unity/fatal/Dex-finalizer errors. A56 landscape not verified: provider Content blocked/FLAG_SECURE notice during rotation, and web-client rotation left Android content portrait; no protection disabled. Official x86_64 16KB emulator/ARM64 translation smoke also passed previously. No sustained-load/performance claim. Current candidate code 7 passed ELF/ZIP 16KB alignment inspection, but runtime execution on a 16KB system has not been retested. On 2026-10-27 the user accepted initial publication with the old-version runtime evidence and this current-version limitation disclosed; no additional 16KB execution test is a prerequisite to initial release.",
     "longPlayAndOffline": "Code 7 basic device checks passed on 2026-10-27: S25 landscape and Pixel portrait/landscape controls, visible slash/fragments and same-process Home resume; Pixel settings and Declined consent preserved across the signed code 6 to 7 update. For old-version sustained-load evidence and the accepted current-version scope, see sustainedLoad. S25 separate-package probe using production sender/Unity transport passed refused connection, HTTP503, timeout recovery, identical snapshot/bytes, duplicate suppression and withdrawal abort; synthetic loopback only, not a full-game physical radio-outage test.",
-    "publisherAndContact": "Public name hogehogeo, GitHub Issues and the previously audited Cloudflare log explanation are bundled in the unchanged code 7 policy. Effective date is the first public release. The Markdown policy has the same collection, consent and retention meaning as the bundled policy.",
+    "publisherAndContact": "Public name hogehogeo, GitHub Issues and the previously audited Cloudflare log explanation are bundled in the unchanged code 7 policy. Effective date is the first public release, 2026-10-27. The Markdown policy has the same collection, consent and retention meaning as the bundled policy.",
     "portableKeyBackup": "completed: production encrypted PKCS12 backup stored outside the repository in OneDrive, random passphrase saved; user reported recovery OK after the browser-download and keytool -certreq procedure using only the saved passphrase; original DPAPI credential not used for recovery; secrets not read by agent",
     "thirdPartyNotices": "Code 7 original APK build log lists 3801 packed sources, versus 3791 reviewed sources in code 6. The only additions are 10 own Assets/Zantetsu C# files; no source removed, licensed art added or package added. The same 17 packages are present. Notices regenerated from this inventory exactly match the bundled 435739 bytes, SHA256 30B8DC39B990C2958EEE818ADD90CD1343AC399B0D979A857D67D883526C004A. No loose licensed source art is packaged. Purchased Fab tier remains unconfirmed as previously recorded; the art set is unchanged.",
     "deepContentInspection": "Code 7 and the final local staging set passed the read-only deep forbidden-word scan with zero matches. Coverage includes all 1024 expanded ZIP entries, 417 reconstructed Unity split segments, native ELF and PNG metadata, 63 shaders and 12 compute shaders, 69 LZ4 segments, 980 SMOL-V modules decoded to SPIR-V, and 2 DXIL disassemblies. Encoding, boundary, Unicode escape, LZ4, SMOL-V and DXIL positive controls and a negative control passed. Full scope and counts remain in the private APK-adjacent .record/deep-content-inspection.json; audit dependencies, logs, source inventories and signing material are not release assets.",
     "sourceCommit": "Code 7 APK source is 21b57d77c3bca233a69bf4f39e28176ea652028d, clean at build. Later PC build, README and license commits and the current documentation edits are not the APK build source. Local release preparation reads the inspected APK source record instead of substituting the current HEAD.",
-    "releaseTagBinding": "Target fixed: annotated android-v0.1.0-alpha.1 -> 21b57d77c3bca233a69bf4f39e28176ea652028d (tree 7d605c7c5e7a07aba36961ec3d8cd1b9ad50e51f), exactly the clean code 7 APK build source. The candidate SHA256 and certificate above identify the binary; the GitHub Release target_commitish will use this full commit SHA. Later documentation stays on main. No tag or GitHub Release has been created; remote name availability must be checked again at publication.",
+    "releaseTagBinding": "Published annotated android-v0.1.0-alpha.1 (object fe6502f6e1f9911aede8794c21c84bf24c2a843c) targets 21b57d77c3bca233a69bf4f39e28176ea652028d exactly, the clean code 7 build source. Remote ref and annotation target verified after publication. Release target_commitish uses that full SHA; later documentation stays on main. APK hash and certificate above identify the binary.",
     "bundledPrivacy": "Historical code 6: 133 related EditMode checks and all 5 policy pages in tested orientations passed. The code 7 device check verified the Statistics screen and consent preservation; it did not repeat every policy page or fresh-install consent. The bundled policy implementation is unchanged.",
     "pixelRuntime": "Code 7 passed portrait/landscape movement, turn, flick, visible cut tree/character fragments, menus and same-process Home resume. VP3C and Pixel Shader clip fallbacks selected automatically; unsupported indirect controls are greyed. No new Unity runtime error or fatal event in captured logs; known nonfatal dex-finalizer warnings remain.",
     "s25CurrentCandidate": "Code 7 installed hash matches; portrait startup and landscape menu, joystick, movement, turn, Slash VFX and same-process Home resume passed. VP3C-NATIVE; supported indirect controls enabled. Consent was ON at the start of the later landscape check and was left ON.",
     "maliCsfSmoke": "Code 7 drawing-only smoke passed on a remote physical Pixel 7, Mali-G710 (CSF), Android13/API33, ARM64, 4096-byte pages, portrait 1080x2400. Installed APK SHA256 matched the candidate. City, trees and characters rendered; a horizontal flick produced a visible Slash, separated character fragments and a fallen tree that remained visible. VP3C-NATIVE with command compaction and both MultiDrawIndirect and DrawIndirectCount enabled; shaderClipDistance unsupported, Pixel Shader clip fallback active; subgroup16. Driver 38.1.0 (0x09801000); physical Vulkan1.3.219, Unity device string Vulkan1.1.0. No captured Unity error, VK_ERROR or fatal event; three SwappyDisplayManager libgame.so lookup errors were nonfatal. Statistics Declined. Cut-face correctness, landscape, movement, fallback toggles and sustained performance not tested. App removed and reservation cancelled; no active reservations remain. Spark and Billing No retained; no payment or billing settings changed. This verifies this device/OS/driver, not all CSF GPUs.",
     "powerVrSmoke": "Code 7 drawing-only smoke passed on a remote physical Pixel 10, PowerVR D-Series DXT-48-1536 MC1, Android16/API36, ARM64, 4096-byte pages, portrait 1080x2424. Installed APK SHA256 matched the same candidate. City, trees, characters and menu rendered; a horizontal flick produced separated character fragments and a fallen tree that remained visible. VP3C-NATIVE with command compaction and both MultiDrawIndirect and DrawIndirectCount enabled; hardware Clip selected with shaderClipDistance supported/enabled; subgroup128. Driver 1.634.2906 (0x0067ab5a); physical Vulkan1.4.303, Unity device string Vulkan1.1.0. No captured Unity error, VK_ERROR or fatal event. Three SwappyDisplayManager libgame.so lookup errors and two same-timestamp DexFile.finalize AssertionError log entries were nonfatal. Statistics Declined; render settings unchanged. Cut-face correctness, landscape, movement, fallback toggles and sustained performance not tested. App removed, CLI disconnected and reservation cancelled; no reservations remain. No billing or payment settings changed. This verifies this device/OS/driver, not all PowerVR configurations.",
-    "githubDownload": "No GitHub publication performed. Verify Content-Type application/vnd.android.package-archive, hash and normal installer behavior using the real download URL after publication is explicitly instructed.",
+    "githubDownload": "All four approved assets returned HTTP 200 through anonymous public GitHub download URLs; sizes and SHA256 values matched local inspected files and GitHub server digests. APK final Content-Type is application/vnd.android.package-archive. Pixel Edge download and normal package-installer same-version update/open passed with settings and Declined consent preserved.",
     "firstRunLandscapeConsent": "Historical code 6 only: S25 physical landscape first consent text and both buttons were visible, Dont send selected and game playable. The code 7 update check preserved existing data and did not reopen first-run consent.",
     "pixelCurrentCandidate": "Code 7: Android 17/API37, 4096-byte pages; signed code 6 to 7 update and both physical orientations passed. Settings and Declined consent retained; background/focus-loss logs confirm nothing counted or sent. Game left foreground in portrait; no consent or rendering settings changed by the test.",
     "native16kCleanup": "A56 test package removed, temporary orientation overrides restored, task RDB disconnected/stopped; user advised to end the reserved web-client session. Only candidate APK uploaded to user-approved Samsung RTL; no release/tag/draft/upload to GitHub.",
@@ -92,9 +93,19 @@
     "disclose_old_version_evidence_and_current_version_not_verified": true,
     "github_publication_authorized_by_this_decision": false
   },
-  "remaining": [
-    "Push the committed distribution documentation and local preparation tools before publishing.",
-    "Create the tag and GitHub Release only after an explicit publication instruction; upload only the approved distribution files.",
-    "After publication, verify the actual GitHub APK download Content-Type, SHA-256 and normal Android package-installer workflow."
-  ]
+  "remaining": [],
+  "publication": {
+    "releaseUrl": "https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1",
+    "releaseId": 425027978,
+    "publishedAtUtc": "2026-10-27T04:16:44Z",
+    "prerelease": true,
+    "draft": false,
+    "tagObjectSha": "fe6502f6e1f9911aede8794c21c84bf24c2a843c",
+    "tagTargetCommit": "21b57d77c3bca233a69bf4f39e28176ea652028d",
+    "approvedAssetCount": 4,
+    "anonymousDownloadsVerified": true,
+    "pixelBrowserUpdateVerified": true,
+    "explicitPublicationInstruction": "2026-10-27: user requested publication and download verification",
+    "record": "Build/android-github-0.1.0-alpha.1-7.apk.record/publication.json"
+  }
 }

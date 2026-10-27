@@ -25,7 +25,7 @@ PCVR（Meta Quest Link）でStanford Bunnyを切っている様子です（16秒
 
 ## Android版（非VR）
 
-Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きAPKを、[GitHub Releases](https://github.com/piyohogeo/zantetsuken-vr/releases)から配布する準備を進めています。現在の候補は `0.1.0-alpha.1`（versionCode 7）で、まだ公開していません。
+Android 12L（API 32）以降・ARM64・Vulkan対応端末向けの署名付きAPKを公開しています。現在のプレリリースは [0.1.0-alpha.1（versionCode 7）](https://github.com/piyohogeo/zantetsuken-vr/releases/tag/android-v0.1.0-alpha.1) です。[APKをダウンロード](https://github.com/piyohogeo/zantetsuken-vr/releases/download/android-v0.1.0-alpha.1/android-github-0.1.0-alpha.1-7.apk)できます。
 
 縦画面・横画面に対応しています。左下の仮想ジョイスティックで前後移動と旋回、画面のフリックで切断します。Galaxy S25 UltraとPixel 6 Proで基本動作を確認しました。
 
