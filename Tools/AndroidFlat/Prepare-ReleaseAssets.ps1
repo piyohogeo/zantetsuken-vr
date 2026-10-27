@@ -1,12 +1,18 @@
 ﻿#Requires -Version 5.1
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$Apk,[string]$Destination)
+param([Parameter(Mandatory=$true)][string]$Apk,[string]$Destination,[string]$DeepInspectionRecord)
 $ErrorActionPreference='Stop'
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
 $Apk=[IO.Path]::GetFullPath($Apk)
 $inspection=Get-Content -Raw -Encoding utf8 ($Apk+'.record\inspection.json') | ConvertFrom-Json
 $hash=(Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
 if($hash -cne $inspection.Sha256 -or !$inspection.SignatureV2 -or $inspection.Debuggable -or $inspection.ForbiddenText -ne 'passed'){throw 'The current APK has not passed the distribution inspection'}
+$deepSummary=$null
+if($DeepInspectionRecord){
+    $deep=Get-Content -Raw -Encoding utf8 $DeepInspectionRecord | ConvertFrom-Json
+    if($deep.status -cne 'passed' -or $deep.apk_sha256 -ine $hash -or !$deep.apk_unchanged -or $deep.forbidden_matches -ne 0 -or $deep.scanner_controls.positive_controls_passed -lt 1 -or !$deep.scanner_controls.negative_control_passed){throw 'The deep content inspection does not match this APK or has not passed'}
+    $deepSummary=[ordered]@{Status='passed';ApkSha256=$hash;ForbiddenMatches=0;Record='APK-adjacent .record/deep-content-inspection.json (private; not an upload asset)'}
+}
 if(!$Destination){$Destination=Join-Path $project ('Build\github-assets-'+$inspection.VersionName+'-'+$inspection.VersionCode)}
 $Destination=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
 if(!$Destination.StartsWith($project+'\Build\',[StringComparison]::OrdinalIgnoreCase)){throw 'Local staging must stay below this repository Build directory'}
@@ -18,10 +24,21 @@ if(!(Test-Path -LiteralPath $validationPath -PathType Leaf)){throw 'The APK buil
 $validation=Get-Content -Raw -Encoding utf8 $validationPath | ConvertFrom-Json
 $sourceCommit=[string]$validation.SourceCommit
 if($validation.ApkSha256 -ine $hash -or $sourceCommit -notmatch '^[0-9a-fA-F]{40}$' -or $draft.candidate.sourceCommit -ine $sourceCommit){throw 'The build-source record does not match the inspected APK and draft'}
+$tagName=[string]$draft.tagDraft
+$tagTarget=[string]$draft.tagTargetCommit
+if($tagTarget -cne $sourceCommit -or $draft.tagKind -cne 'annotated' -or $validation.SourceClean -ne $true){throw 'The release tag must target the exact clean APK build-source commit'}
+& git -C $project check-ref-format ('refs/tags/'+$tagName)
+if($LASTEXITCODE -ne 0){throw 'The release tag name is invalid'}
+$tagTargetType=git -C $project cat-file -t $tagTarget
+if($LASTEXITCODE -ne 0 -or $tagTargetType -cne 'commit'){throw 'The release tag target is not an existing commit'}
+$tagTree=git -C $project rev-parse ($tagTarget+'^{tree}')
+if($LASTEXITCODE -ne 0 -or $tagTree -cne $draft.tagTargetTree){throw 'The release tag target tree differs from the fixed source record'}
+$releaseTag=[ordered]@{Name=$tagName;Kind='annotated';TargetCommit=$tagTarget;TargetTree=$tagTree;ApkSha256=$hash;GitHubTargetCommitish=$tagTarget;Created=$false}
 $templatePath=Join-Path $PSScriptRoot 'ReleaseNotes.template.md'
 $notes=[IO.File]::ReadAllText($templatePath,[Text.Encoding]::UTF8)
 $fileName=[IO.Path]::GetFileName($Apk)
 $notes=$notes.Replace('@VERSION@',$inspection.VersionName).Replace('@CODE@',[string]$inspection.VersionCode).Replace('@APK@',$fileName).Replace('@HASH@',$hash.ToLowerInvariant()).Replace('@CERT@',$inspection.CertificateSha256).Replace('@SOURCE@',$sourceCommit)
+$notes=$notes.Replace('@TAG@',$tagName)
 if($notes -match '@[A-Z][A-Z0-9_]*@'){throw 'The release notes contain an unresolved placeholder'}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=[IO.Compression.ZipFile]::OpenRead($Apk)
@@ -41,5 +58,7 @@ Copy-Item -LiteralPath $Apk -Destination (Join-Path $assets $fileName)
 [IO.File]::WriteAllText((Join-Path $assets 'signing-certificate-sha256.txt'),($inspection.CertificateSha256+"`n"),[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $Destination 'release-notes.draft.md'),$notes.Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
 $plan=[ordered]@{Status='local staging only';Published=$false;TagCreated=$false;GitHubDraftCreated=$false;VersionName=$inspection.VersionName;VersionCode=$inspection.VersionCode;Assets=@($fileName,"$fileName.sha256",'signing-certificate-sha256.txt','ThirdPartyNotices.txt');ApkContentType='application/vnd.android.package-archive';SourceCommit=$sourceCommit;SourceDirty=if($null -ne $validation.SourceClean){-not [bool]$validation.SourceClean}else{$null};DocumentationCommit=(git -C $project rev-parse HEAD);DocumentationDirty=([bool](git -C $project status --porcelain));VerificationScope=$draft.verificationScope;Checks=$draft.checks;Remaining=$draft.remaining}
+if($deepSummary){$plan.DeepContentInspection=$deepSummary}
+$plan.ReleaseTag=$releaseTag
 $plan | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $Destination 'publication-plan.json')
 "Local assets prepared: $Destination (no upload, release, draft or tag created)"

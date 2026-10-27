@@ -15,10 +15,30 @@ Android版はGitHub Releasesから署名付きAPKを手動配布します。現�
 | `docs/android-privacy-policy.md` | 同梱ポリシーと意味を揃えた公開用本文。施行日は初回公開日 |
 | `Tools/AndroidFlat/DistributionDraft.json` | code 7の版・ハッシュ・ビルド元、確認結果、受け入れた検証範囲、残件 |
 | `Tools/AndroidFlat/ReleaseNotes.template.md` | GitHub Release本文の原稿。版・ハッシュ・ビルド元は検査記録から埋める |
+| `Tools/AndroidFlat/CONTENT-AUDIT.md` | 圧縮シェーダーを含む梱包内容・禁止語検査の再実行手順 |
 
-`Prepare-ReleaseAssets.ps1` は、原稿とcode 7の検査・ビルド元記録を使って、`Build/github-assets-0.1.0-alpha.1-7/release-notes.draft.md` とローカルの配布一式を生成します。Release本文には公開後の導入手順と、旧版／最新版それぞれの確認範囲を明記します。GitHubへの作成・アップロードは行いません。
+`Prepare-ReleaseAssets.ps1` は、原稿とcode 7の検査・ビルド元記録を使って、ローカルの配布一式を生成します。最終照合済みの一式は `Build/github-distribution-0.1.0-alpha.1-7` です。Release本文の `release-notes.draft.md` には導入手順と、旧版／最新版それぞれの確認範囲を明記しています。GitHubへの作成・アップロードは行っていません。
 
-`publication-plan.json` の `SourceCommit`／`SourceDirty` はAPKのビルド時点を示し、`DocumentationCommit`／`DocumentationDirty` は配布文書を準備した時点を示します。code 7のビルド元を、その後のREADME・ライセンス変更や現在の未コミット文書で置き換えません。公開タグの対象と文書のコミット・pushは公開前に確定します。
+`publication-plan.json` の `SourceCommit`／`SourceDirty` はAPKのビルド時点を示し、`DocumentationCommit`／`DocumentationDirty` は配布文書を準備した時点を示します。code 7のビルド元を、その後のREADME・ライセンス変更や配布文書の更新で置き換えません。公開タグの対象は次のとおり確定しました。配布文書と生成・検査ツールのpushは残っています。
+
+## 公開タグとAPKの対応（2026-10-27確定）
+
+| 項目 | 確定値 |
+|---|---|
+| 公開タグ名 | `android-v0.1.0-alpha.1` |
+| タグ種別 | 注釈付きタグ。作成は公開の明示指示後 |
+| 対象コミット＝APKビルド元 | `21b57d77c3bca233a69bf4f39e28176ea652028d`（ビルド時クリーン） |
+| 対象Git tree | `7d605c7c5e7a07aba36961ec3d8cd1b9ad50e51f` |
+| アプリ版 | `0.1.0-alpha.1`／versionCode 7 |
+| APK | `android-github-0.1.0-alpha.1-7.apk`（120,035,435バイト） |
+| APK SHA-256 | `63FC5189A5335169C754CA8C178CD1560DCFDAFEE3DF73AD444532613E6A143D` |
+| 署名証明書SHA-256 | `17B0499FEA78738183428B08464D4BACABD6900DE3060A97A12B6478B2F66B4D` |
+
+タグは上記の完全なコミットSHAへ直接作成します。GitHub Releaseの `tag_name` は上記の名前、`target_commitish` は同じ完全SHAを指定します。ビルド後のREADME・ライセンス・配布文書の更新はmain側に保持し、Release本文のソースリンクはこの固定SHA、利用案内とプライバシーポリシーへのリンクはmainを参照します。
+
+`DistributionDraft.json` のタグ対象と候補APKの対応を、生成処理がビルド元・クリーン状態・実在コミットとtreeまで照合します。ローカルの `publication-plan.json` の `ReleaseTag` にタグ名・対象コミット・tree・APKハッシュ・未作成状態を記録し、内容検査でも再照合します。APK隣の `.record/release-tag-binding.json` に同じ対応と確認記録を保持します。
+
+2026-10-27の照合時点では、ローカルに同名タグはなく、GitHubにも一致するタグ参照はありませんでした。対象コミットとtreeがGitHubにも存在することを読み取り専用で確認しました。公開直前には名前の空きを再確認し、既存タグを移動・上書きしません。現在は対象の確定だけで、タグ・Release・GitHub上のDraftは作成していません。
 
 ## ビルドと検査
 
@@ -36,7 +56,7 @@ Tools/AndroidFlat/Build-Distribution.ps1 -VersionName 0.1.0-alpha.1 -VersionCode
 
 ## 初回導入と更新
 
-配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。実機検証済みはGalaxy S25 UltraとPixel 6 Proです。16KB環境での実行は旧code 6でRemote Test LabのGalaxy A56 5Gの縦画面などを確認しました。code 7は16KB整列検査に合格していますが、16KB環境での実行は未確認です。他端末やA56の横画面・長時間性能の動作保証はまだありません。
+配布対象はARM64とVulkanを利用できるAndroid 12L（API 32）以降です。基本動作を実機確認した端末はGalaxy S25 UltraとPixel 6 Proです。Pixel 7／Mali-G710とPixel 10／PowerVRは末尾に記載した短時間の描画確認のみ実施しました。16KB環境での実行は旧code 6でRemote Test LabのGalaxy A56 5Gの縦画面などを確認しました。code 7は16KB整列検査に合格していますが、16KB環境での実行は未確認です。他端末やA56の横画面・長時間性能の動作保証はまだありません。
 
 APKのContent-Typeは `application/vnd.android.package-archive` として配布し、実際のダウンロード応答でも確認します。ローカル検証では汎用のContent-TypeだとEdgeがパッケージインストーラーへ渡さず、正しいAPK形式の応答で導入・更新できました。GitHubからの実ダウンロードは、公開指示を受けた後の確認とします。[GitHub Release Assets API](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)
 
@@ -46,11 +66,13 @@ APKのContent-Typeは `application/vnd.android.package-archive` として配布�
 
 `Prepare-ReleaseAssets.ps1 -Apk <検査済みAPK>` はAPK・チェックサム・公開証明書指紋・APKから取り出した第三者表記をBuild下へまとめます。公開前の残件と配布説明の草案も同じローカルフォルダへ置き、アップロードはしません。
 
+深い内容検査の記録を `-DeepInspectionRecord <監査JSON>` へ指定すると、合格・APKハッシュ一致・禁止語0件・検査器の対照試験合格も照合します。生成後の最終一式を再び深い内容検査へ渡し、添付物と説明文まで確認します。code 7の手順と検査結果は末尾に記録します。
+
 署名鍵の保管先はリポジトリ外です。現在のDPAPI資格情報は同じWindowsユーザーとPCに依存します。鍵と、別PCでも復旧できるパスワードの保管を別媒体で行い、公開前に復旧方法を確認します。`Backup-SigningKey.ps1` は、プロセス環境変数 `ZANTETSU_SIGNING_BACKUP_PASSWORD` から新しいパスフレーズを読み、元の鍵を変更せず外部の新規 `.jks` へ可搬PKCS12として書き出して証明書を照合します。パスフレーズは安全な入力やパスワードマネージャーから設定し、チャットやコマンドラインに書かないでください。
 
 ## 公開前の残件
 
-- 最新回収とgraphを含む正式署名code 7の作成と両端末の基本動作確認、配布文書のcode 7への更新は完了した。梱包元の差分照合、公開タグの対象確定、配布文書のコミット・pushと公開指示後のアップロードが残る。
+- 最新回収とgraphを含む正式署名code 7の作成と両端末の基本動作確認、配布文書の更新、梱包元の差分照合、圧縮データを含む禁止語検査、ローカル配布一式の作成、公開タグとAPKの対応確定は完了した。配布対応のpushと公開指示後のタグ・Release作成とアップロードが残る。
 - 長時間負荷と16KB実行の確認範囲は、2026-10-27のユーザー指定により「旧版で確認済み、最新版では未確認」と明記して初回公開する方針に決定した。graph有効版の長時間負荷とcode 7の16KB実行の再試験は、初回公開の前提条件にしない。下記の確認範囲を配布説明へ反映する。
 - 通信失敗の制御試験は下記の範囲で完了。Galaxy A56 5Gの横画面は未確認として明記する。
 - タグとReleaseの作成は別の明示指示を受けてから行う。公開後にGitHubの実ダウンロード応答と導入を確認する。配布対応のコミットとAPKの対応はローカル検証記録へ残す。
@@ -374,3 +396,70 @@ PixelではMultiDrawIndirect／DrawIndirectCountの非対応を検出してVP3C�
 採取したログにクラッシュ、Unityの実行エラー、StorageCapacityはありませんでした。Pixelでは既知の非致命的なdex finalizer assertionを確認しましたが、ゲームは継続しました。両端末ともページサイズ4096です。今回は短時間の基本動作確認であり、graph有効版の長時間負荷・熱負荷や16KB環境での実行の再確認は含みません。graph段階の実行回数・性能も計測していません。
 
 画像・入力履歴・ログと集約記録は `Logs/android-flat/code7-devices-20261027/validation.json` および端末別フォルダに保存し、APK隣の `.record/device-validation.json` にも確認結果を追記しました。回転はユーザーによる実際の向き変更を使用し、端末の回転設定や画面サイズの上書きは行っていません。確認後はS25を横画面、Pixelを縦画面のゲーム前面表示に戻しました。Release・タグ・GitHub上のDraftは作成していません。
+
+## code 7の梱包照合と配布一式（2026-10-27）
+
+対象は上記と同じ正式署名APKで、検査中もSHA-256 `63FC5189A5335169C754CA8C178CD1560DCFDAFEE3DF73AD444532613E6A143D` が不変であることを確認しました。APKの元の `.record/build.log` にある使用素材一覧を復元して比較しています。後のWindows向けビルドで上書きされた最新BuildReportは、このAPKの照合元には使っていません。
+
+code 6の3,791件に対してcode 7は3,801件で、追加は `Assets/Zantetsu/` の自作C#ファイル10件だけです。削除、有償素材の追加、パッケージの追加はなく、17パッケージは同じです。非商用素材と単体のblend・FBX・uasset等は含まれていません。この一覧から第三者表記を再生成し、APK内の435,739バイト、SHA-256 `30B8DC39B990C2958EEE818ADD90CD1343AC399B0D979A857D67D883526C004A` と完全一致しました。Fabの購入時区分は従来どおり未確認として残します。
+
+`Inspect-DistributionApk.ps1` で署名・Manifest・非debuggable・16KB整列を再照合しました。さらに [深い内容検査](../Tools/AndroidFlat/CONTENT-AUDIT.md) で、APK全体、全1,024個のZIP展開エントリーと名前・コメント、417個のUnity分割セグメントの連結境界、8個のELF、177個のPNGのメタデータを検査しました。シェーダー63件・ComputeShader 12件、LZ4セグメント69件、SMOL-Vから復元したSPIR-V 980件、DXILの逆アセンブル2件も含め、外部一覧の禁止語は0件でした。UTF-8／UTF-16 LE・BE／UTF-32 LE・BEとUnicodeエスケープ、符号化・読み取り境界・圧縮・逆アセンブルの陽性対照14件と陰性対照が合格しています。対象は文字列・メタデータで、画像画素からのOCRは含みません。
+
+最終一式は `Build/github-distribution-0.1.0-alpha.1-7` に作成し、その全ファイルも禁止語0件でした。`assets/` の添付候補は次の4点だけです。
+
+| 添付候補 | バイト数 |
+|---|---:|
+| `android-github-0.1.0-alpha.1-7.apk` | 120,035,435 |
+| `android-github-0.1.0-alpha.1-7.apk.sha256` | 101 |
+| `signing-certificate-sha256.txt` | 65 |
+| `ThirdPartyNotices.txt` | 435,739 |
+
+APKと第三者表記のハッシュ、チェックサム本文、証明書指紋、版とビルド元の対応、説明文の置換完了も照合しました。フォルダー直下の `release-notes.draft.md` はRelease本文用、`publication-plan.json` はローカル管理用で、4つの添付物には加えません。署名鍵、資格情報、元の有償素材、デバッグシンボル、ビルドログ、監査用ツール・記録は添付物に含めていません。
+
+詳細は `Logs/android-flat/code7-package-audit/` とAPK隣の `.record/deep-content-inspection.json`、`.record/asset-inventory.json`、`.record/third-party-notices-reproduced.json` に保存しました。APKのビルド元は引き続き `21b57d77` です。再ビルド・端末操作・GitHubへの公開は行っていません。公開タグとAPKの対応も冒頭のとおり確定しました。配布対応のpush、明示指示後のタグ・Release作成と実ダウンロード確認が残ります。
+
+## Mali CSF世代の描画確認（2026-10-27）
+
+GoogleのAndroid CLI 1.1.16717390からDevice Streamingで予約した物理Pixel 7へ、同じ正式署名code 7を導入しました。インストール後のAPKハッシュが上記候補と一致しています。CLIはGoogle署名の公式配布物をBuild下へ配置し、プロセス内だけの設定で既存ADBを使用しました。Firebaseは検証専用のSparkプロジェクトを使い、試験後もCLIの課金状態は `No` でした。課金プランや支払方法は変更していません。
+
+| 項目 | 実測・選択された状態 |
+|---|---|
+| 端末・GPU | Pixel 7／Mali-G710（CSF世代） |
+| OS | Android 13／API 33、ARM64、ページサイズ4096バイト |
+| 画面 | 縦1080×2400、Safe Area 1080×2264 |
+| Vulkan・ドライバー | 物理デバイスはVulkan 1.3.219対応。Unityのデバイス文字列はVulkan 1.1.0、ドライバー38.1.0（`0x09801000`） |
+| 描画経路 | VP3C-NATIVE、Command Compaction有効、subgroup 16 |
+| Indirect機能 | MultiDrawIndirect／DrawIndirectCountともに対応・有効。メニューでも両方のチェックを確認 |
+| Clip | shaderClipDistance非対応。Pixel Shaderのclip経路へ自動フォールバック |
+| 描画設定 | FSR 1 ON、3D解像度75%、Sharpness 0.50。設定値は変更していない |
+
+街・木・人物を目視し、通常描画を確認しました。初回同意はDon't sendを選び、未集計・未送信のログを確認しています。横方向のフリック1回の後、Slash、分離した人物の破片、倒れた木が表示され続けることを画像で確認しました。ユーザー指定どおり、断面の正しさの判定は省略しています。設定メニューの描画も確認しました。
+
+採取したゲームプロセスのログ4,672行には、Unityエラー・`VK_ERROR`・Fatal exception／signalはありませんでした。`SwappyDisplayManager` の `libgame.so` 探索失敗が3件ありますが、起動・描画・切断後の表示は継続しました。この3件はDexFile.finalizeのAssertionErrorとは別で、今回のログにそのAssertionErrorはありません。
+
+確認範囲は、このPixel 7・Android 13・ドライバーでの短時間の縦画面描画です。移動・旋回、横画面、Indirect設定の切替、断面の正しさ、長時間安定性・熱負荷は試験していません。画面上のFPS表示を性能保証には使いません。Mali-G610や他のCSF世代全体を確認済みとは扱いません。
+
+終了時にゲームを停止して検証アプリを予約端末から削除し、CLIを切断、予約をキャンセルしました。予約一覧が `No reservations found` であることも確認しています。手元の端末は操作していません。詳細は `Logs/android-flat/csf-remote/validation.json` と端末別画像・ログ、APK隣の `.record/device-validation.json` に記録します。再ビルド・コミット・タグ作成・GitHub公開は行っていません。
+
+## Pixel 10／PowerVRの描画確認（2026-10-27）
+
+同じ検証専用プロジェクトとAndroid CLIから物理Pixel 10（`frankel/36`）を予約し、正式署名code 7を導入しました。導入後のAPKハッシュが既存候補と一致しています。Windowsの接続用バックグラウンド処理が通常の起動では立ち上がらなかったため、公式CLIを非表示の独立プロセスから起動して接続しました。システムのPATHや描画設定は変更していません。
+
+| 項目 | 実測・選択された状態 |
+|---|---|
+| 端末・GPU | Pixel 10／PowerVR D-Series DXT-48-1536 MC1 |
+| OS | Android 16／API 36、ARM64、ページサイズ4096バイト |
+| 画面 | 縦1080×2424、Safe Area 1080×2251 |
+| Vulkan・ドライバー | 物理デバイスはVulkan 1.4.303対応。Unityのデバイス文字列はVulkan 1.1.0、ドライバー1.634.2906（`0x0067ab5a`） |
+| 描画経路 | VP3C-NATIVE、Command Compaction有効、subgroup 128 |
+| Indirect機能 | MultiDrawIndirect／DrawIndirectCountともに対応・有効。メニューでも両方のチェックを確認 |
+| Clip | shaderClipDistanceに対応・有効。Hardware経路を選択 |
+| 描画設定 | FSR 1 ON、3D解像度75%、Sharpness 0.50。設定値は変更していない |
+
+街・木・人物と設定メニューの描画を目視しました。初回同意はDon't sendを選び、未集計・未送信のログを確認しています。横方向のフリック1回の後、分離した人物の破片と倒れた木が描画され続けることを画像で確認しました。断面の正しさは精査していません。
+
+採取したゲームプロセスのログ4,716行には、Unityエラー・`VK_ERROR`・Fatal exception／signalはありませんでした。`SwappyDisplayManager` の `libgame.so` 探索失敗が3件、同時刻のDexFile.finalize AssertionErrorのログが2件あります。これらの後もゲームの起動・描画・切断後の表示が継続しました。原因をPowerVR固有と断定しません。
+
+この端末・OS・ドライバーでの短時間の縦画面描画を確認した結果です。移動・旋回、横画面、Indirect設定の切替、断面の正しさ、長時間性能・熱負荷は未試験で、PowerVR全体への対応保証には使いません。終了時に検証アプリを削除し、CLIを切断、予約をキャンセルしました。予約一覧が `No reservations found` であることを確認しています。Sparkプランのまま実施し、課金プランや支払方法は変更していません。
+
+画像とログ、集約結果は `Logs/android-flat/powervr-remote/validation.json` と端末別フォルダー、APK隣の `.record/device-validation.json` に保持します。再ビルド・コミット・タグ作成・GitHub公開は行っていません。

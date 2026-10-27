@@ -60,6 +60,8 @@ Tools/StanfordBunny/generated/*
 !Tools/StanfordBunny/generated/repair-report.json
 Tools/StanfordBunny/**/__pycache__/
 Tools/StanfordBunny/**/*.pyc
+Tools/AndroidFlat/**/__pycache__/
+Tools/AndroidFlat/**/*.pyc
 
 # Private build staging must never be committed.
 .bunny-demo-content-staging/
